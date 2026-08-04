@@ -119,6 +119,7 @@ func newTestDriver(t *testing.T) (*Driver, *scriptedServer) {
 		toClient: serverWrites,
 		responses: map[string]string{
 			"initialize":     `{"userAgent":"ao/test","codexHome":"/tmp/.codex"}`,
+			"model/list":     `{"data":[{"id":"gpt-test","displayName":"GPT Test","isDefault":true}]}`,
 			"thread/start":   `{"thread":{"id":"thread-1"},"model":"gpt-test","cwd":"/tmp/ws"}`,
 			"turn/start":     `{"turn":{"id":"turn-1","status":"inProgress","items":[]}}`,
 			"turn/interrupt": `{}`,
@@ -557,16 +558,26 @@ func TestProbeReportsAuthRequired(t *testing.T) {
 // An inconclusive auth probe is not proof of failure, matching how AO already
 // treats runtime probes.
 func TestProbeTreatsUnknownAuthAsUsable(t *testing.T) {
-	d := &Driver{
-		plugin: fakePlugin{bin: "codex", authStatus: ports.AgentAuthStatusUnknown, authErr: errors.New("probe timed out")},
-		log:    slog.New(slog.DiscardHandler),
-	}
+	d, _ := newTestDriver(t)
+	d.plugin = fakePlugin{bin: "codex", authStatus: ports.AgentAuthStatusUnknown, authErr: errors.New("probe timed out")}
 	caps, err := d.Probe(context.Background())
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
 	if missing := ports.MissingProductionCapabilities(caps); len(missing) != 0 {
 		t.Fatalf("codex is missing production capabilities: %v", missing)
+	}
+}
+
+func TestProbeRejectsIncompatibleProtocolBeforeCreation(t *testing.T) {
+	d, srv := newTestDriver(t)
+	srv.mu.Lock()
+	delete(srv.responses, "model/list")
+	srv.failures["model/list"] = `{"code":-32601,"message":"method not found"}`
+	srv.mu.Unlock()
+
+	if _, err := d.Probe(context.Background()); !errors.Is(err, ports.ErrChatDriverIncompatible) {
+		t.Fatalf("err = %v, want ErrChatDriverIncompatible", err)
 	}
 }
 

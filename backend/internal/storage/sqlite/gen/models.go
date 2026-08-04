@@ -32,6 +32,7 @@ type Conversation struct {
 	Scope                      domain.ConversationScope
 	ProjectID                  domain.ProjectID
 	SessionID                  *domain.SessionID
+	CurrentSessionID           *domain.SessionID
 	LatestSequence             int64
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
@@ -124,15 +125,16 @@ type ConversationTurn struct {
 }
 
 type Notification struct {
-	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
-	PRURL     string
-	Type      domain.NotificationType
-	Title     string
-	Body      string
-	Status    domain.NotificationStatus
-	CreatedAt time.Time
+	ID         string
+	SessionID  domain.SessionID
+	ProjectID  domain.ProjectID
+	PRURL      string
+	Type       domain.NotificationType
+	Title      string
+	Body       string
+	Status     domain.NotificationStatus
+	CreatedAt  time.Time
+	ResolvedAt sql.NullTime
 }
 
 type PR struct {
@@ -291,6 +293,7 @@ type Session struct {
 	TerminateOnPRMerge     bool
 	DiffBaseSha            string
 	DiffBaseRef            string
+	ReviewerHarness        domain.ReviewerHarness
 	SessionMode            domain.SessionMode
 	ProviderConversationID string
 	ControllerGeneration   string

@@ -230,6 +230,22 @@ func (q *Queries) BindConversationTurnProviderID(ctx context.Context, arg BindCo
 	return err
 }
 
+const bindProjectConversationSession = `-- name: BindProjectConversationSession :exec
+UPDATE conversations SET current_session_id = ?, updated_at = ?
+WHERE id = ? AND scope = 'project'
+`
+
+type BindProjectConversationSessionParams struct {
+	CurrentSessionID *domain.SessionID
+	UpdatedAt        time.Time
+	ID               string
+}
+
+func (q *Queries) BindProjectConversationSession(ctx context.Context, arg BindProjectConversationSessionParams) error {
+	_, err := q.db.ExecContext(ctx, bindProjectConversationSession, arg.CurrentSessionID, arg.UpdatedAt, arg.ID)
+	return err
+}
+
 const cancelQueuedConversationTurns = `-- name: CancelQueuedConversationTurns :exec
 UPDATE conversation_turns
 SET state = 'interrupted', completed_at = ?
@@ -317,17 +333,18 @@ func (q *Queries) FailRolledBackConversationApprovals(ctx context.Context, arg F
 
 const insertConversation = `-- name: InsertConversation :exec
 
-INSERT INTO conversations (id, scope, project_id, session_id, latest_sequence, created_at, updated_at)
-VALUES (?, ?, ?, ?, 0, ?, ?)
+INSERT INTO conversations (id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 0, ?, ?)
 `
 
 type InsertConversationParams struct {
-	ID        string
-	Scope     domain.ConversationScope
-	ProjectID domain.ProjectID
-	SessionID *domain.SessionID
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID               string
+	Scope            domain.ConversationScope
+	ProjectID        domain.ProjectID
+	SessionID        *domain.SessionID
+	CurrentSessionID *domain.SessionID
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // Chat conversation storage.
@@ -342,6 +359,7 @@ func (q *Queries) InsertConversation(ctx context.Context, arg InsertConversation
 		arg.Scope,
 		arg.ProjectID,
 		arg.SessionID,
+		arg.CurrentSessionID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -435,8 +453,8 @@ func (q *Queries) InsertConversationMessage(ctx context.Context, arg InsertConve
 	return err
 }
 
-const insertConversationProviderEvent = `-- name: InsertConversationProviderEvent :exec
-INSERT INTO conversation_provider_events (
+const insertConversationProviderEvent = `-- name: InsertConversationProviderEvent :execrows
+INSERT OR IGNORE INTO conversation_provider_events (
     conversation_id, session_id, provider_event_id, method, payload_json, received_at
 ) VALUES (?, ?, ?, ?, ?, ?)
 `
@@ -452,8 +470,8 @@ type InsertConversationProviderEventParams struct {
 
 // The raw provider event archive. Append-only, and the only way to answer "what
 // did the provider actually say" once a projection turns out to be wrong.
-func (q *Queries) InsertConversationProviderEvent(ctx context.Context, arg InsertConversationProviderEventParams) error {
-	_, err := q.db.ExecContext(ctx, insertConversationProviderEvent,
+func (q *Queries) InsertConversationProviderEvent(ctx context.Context, arg InsertConversationProviderEventParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, insertConversationProviderEvent,
 		arg.ConversationID,
 		arg.SessionID,
 		arg.ProviderEventID,
@@ -461,7 +479,10 @@ func (q *Queries) InsertConversationProviderEvent(ctx context.Context, arg Inser
 		arg.PayloadJson,
 		arg.ReceivedAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const insertConversationTurn = `-- name: InsertConversationTurn :exec
@@ -688,6 +709,66 @@ func (q *Queries) SelectConversationActivities(ctx context.Context, arg SelectCo
 	return items, nil
 }
 
+const selectConversationActivitiesPage = `-- name: SelectConversationActivitiesPage :many
+SELECT id, conversation_id, turn_id, sequence, revision, kind, status, summary, detail_json, request_id, provider_item_id, created_at, updated_at, command_output, command_output_truncated, streamed_text, streamed_text_truncated FROM conversation_activities
+WHERE conversation_activities.conversation_id = ?1
+  AND conversation_activities.sequence < ?2
+  AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = ?1
+        AND discarded.rolled_back_at IS NOT NULL
+  ))
+ORDER BY conversation_activities.sequence DESC
+LIMIT ?3
+`
+
+type SelectConversationActivitiesPageParams struct {
+	ConversationID string
+	BeforeSequence int64
+	PageLimit      int64
+}
+
+func (q *Queries) SelectConversationActivitiesPage(ctx context.Context, arg SelectConversationActivitiesPageParams) ([]ConversationActivity, error) {
+	rows, err := q.db.QueryContext(ctx, selectConversationActivitiesPage, arg.ConversationID, arg.BeforeSequence, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ConversationActivity{}
+	for rows.Next() {
+		var i ConversationActivity
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.TurnID,
+			&i.Sequence,
+			&i.Revision,
+			&i.Kind,
+			&i.Status,
+			&i.Summary,
+			&i.DetailJson,
+			&i.RequestID,
+			&i.ProviderItemID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CommandOutput,
+			&i.CommandOutputTruncated,
+			&i.StreamedText,
+			&i.StreamedTextTruncated,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const selectConversationActivityByProviderItem = `-- name: SelectConversationActivityByProviderItem :one
 SELECT id, conversation_id, turn_id, sequence, revision, kind, status, summary, detail_json, request_id, provider_item_id, created_at, updated_at, command_output, command_output_truncated, streamed_text, streamed_text_truncated FROM conversation_activities
 WHERE conversation_id = ? AND provider_item_id = ?
@@ -725,7 +806,7 @@ func (q *Queries) SelectConversationActivityByProviderItem(ctx context.Context, 
 }
 
 const selectConversationByID = `-- name: SelectConversationByID :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency FROM conversations WHERE id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency FROM conversations WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conversation, error) {
@@ -736,6 +817,7 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 		&i.Scope,
 		&i.ProjectID,
 		&i.SessionID,
+		&i.CurrentSessionID,
 		&i.LatestSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -767,17 +849,18 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 }
 
 const selectConversationBySession = `-- name: SelectConversationBySession :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency FROM conversations WHERE session_id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency FROM conversations WHERE current_session_id = ? LIMIT 1
 `
 
-func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *domain.SessionID) (Conversation, error) {
-	row := q.db.QueryRowContext(ctx, selectConversationBySession, sessionID)
+func (q *Queries) SelectConversationBySession(ctx context.Context, currentSessionID *domain.SessionID) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, selectConversationBySession, currentSessionID)
 	var i Conversation
 	err := row.Scan(
 		&i.ID,
 		&i.Scope,
 		&i.ProjectID,
 		&i.SessionID,
+		&i.CurrentSessionID,
 		&i.LatestSequence,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -900,6 +983,63 @@ type SelectConversationMessagesParams struct {
 // offset, so a multi-byte character here silently corrupts later queries.
 func (q *Queries) SelectConversationMessages(ctx context.Context, arg SelectConversationMessagesParams) ([]ConversationMessage, error) {
 	rows, err := q.db.QueryContext(ctx, selectConversationMessages, arg.ConversationID, arg.ConversationID_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ConversationMessage{}
+	for rows.Next() {
+		var i ConversationMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.TurnID,
+			&i.Sequence,
+			&i.Revision,
+			&i.Role,
+			&i.Origin,
+			&i.Text,
+			&i.Streaming,
+			&i.ProviderItemID,
+			&i.ClientMessageID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeliveryContentJson,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const selectConversationMessagesPage = `-- name: SelectConversationMessagesPage :many
+SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at, delivery_content_json FROM conversation_messages
+WHERE conversation_messages.conversation_id = ?1
+  AND conversation_messages.sequence < ?2
+  AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = ?1
+        AND discarded.rolled_back_at IS NOT NULL
+  ))
+ORDER BY conversation_messages.sequence DESC
+LIMIT ?3
+`
+
+type SelectConversationMessagesPageParams struct {
+	ConversationID string
+	BeforeSequence int64
+	PageLimit      int64
+}
+
+func (q *Queries) SelectConversationMessagesPage(ctx context.Context, arg SelectConversationMessagesPageParams) ([]ConversationMessage, error) {
+	rows, err := q.db.QueryContext(ctx, selectConversationMessagesPage, arg.ConversationID, arg.BeforeSequence, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -1087,6 +1227,73 @@ func (q *Queries) SelectConversationTurns(ctx context.Context, conversationID st
 	return items, nil
 }
 
+const selectConversationTurnsPage = `-- name: SelectConversationTurnsPage :many
+SELECT id, conversation_id, handled_by_session_id, provider_turn_id, controller_generation, state, error_message, requested_at, started_at, completed_at, diff_json, rolled_back_at, plan_json FROM conversation_turns
+WHERE conversation_turns.conversation_id = ?1
+  AND (
+    state IN ('queued', 'running')
+    OR id IN (
+      SELECT turn_id FROM conversation_messages
+      WHERE conversation_messages.conversation_id = ?1
+        AND turn_id IS NOT NULL
+        AND conversation_messages.sequence >= ?2
+        AND conversation_messages.sequence < ?3
+      UNION
+      SELECT turn_id FROM conversation_activities
+      WHERE conversation_activities.conversation_id = ?1
+        AND turn_id IS NOT NULL
+        AND conversation_activities.sequence >= ?2
+        AND conversation_activities.sequence < ?3
+    )
+  )
+ORDER BY requested_at, rowid
+`
+
+type SelectConversationTurnsPageParams struct {
+	ConversationID string
+	OldestSequence int64
+	BeforeSequence int64
+}
+
+// Turns represented by one bounded timeline page. Active turns are included
+// even before their first item arrives, so the live-turn controls never vanish.
+func (q *Queries) SelectConversationTurnsPage(ctx context.Context, arg SelectConversationTurnsPageParams) ([]ConversationTurn, error) {
+	rows, err := q.db.QueryContext(ctx, selectConversationTurnsPage, arg.ConversationID, arg.OldestSequence, arg.BeforeSequence)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ConversationTurn{}
+	for rows.Next() {
+		var i ConversationTurn
+		if err := rows.Scan(
+			&i.ID,
+			&i.ConversationID,
+			&i.HandledBySessionID,
+			&i.ProviderTurnID,
+			&i.ControllerGeneration,
+			&i.State,
+			&i.ErrorMessage,
+			&i.RequestedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.DiffJson,
+			&i.RolledBackAt,
+			&i.PlanJson,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const selectNextQueuedConversationTurn = `-- name: SelectNextQueuedConversationTurn :one
 SELECT conversation_turns.id,
        conversation_messages.text,
@@ -1125,6 +1332,49 @@ func (q *Queries) SelectNextQueuedConversationTurn(ctx context.Context, conversa
 		&i.ClientMessageID,
 		&i.Origin,
 		&i.DeliveryContentJson,
+	)
+	return i, err
+}
+
+const selectProjectConversation = `-- name: SelectProjectConversation :one
+SELECT id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency FROM conversations WHERE project_id = ? AND scope = 'project' LIMIT 1
+`
+
+func (q *Queries) SelectProjectConversation(ctx context.Context, projectID domain.ProjectID) (Conversation, error) {
+	row := q.db.QueryRowContext(ctx, selectProjectConversation, projectID)
+	var i Conversation
+	err := row.Scan(
+		&i.ID,
+		&i.Scope,
+		&i.ProjectID,
+		&i.SessionID,
+		&i.CurrentSessionID,
+		&i.LatestSequence,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Model,
+		&i.ReasoningEffort,
+		&i.ApprovalMode,
+		&i.CompactedAt,
+		&i.ContextUsed,
+		&i.ContextWindow,
+		&i.UsageInputTokens,
+		&i.UsageOutputTokens,
+		&i.UsageCachedTokens,
+		&i.UsageTotalTokens,
+		&i.RateLimitPrimaryPercent,
+		&i.RateLimitSecondaryPercent,
+		&i.RateLimitPrimaryResetsIn,
+		&i.RateLimitSecondaryResetsIn,
+		&i.RateLimitPlan,
+		&i.ProviderTitle,
+		&i.AppliedTitle,
+		&i.ModelRerouteJson,
+		&i.AccountJson,
+		&i.ThreadStateJson,
+		&i.McpServersJson,
+		&i.UsageCost,
+		&i.UsageCurrency,
 	)
 	return i, err
 }

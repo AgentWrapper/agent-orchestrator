@@ -47,6 +47,7 @@ type ChatLauncher interface {
 type ChatStart struct {
 	SessionID     domain.SessionID
 	ProjectID     domain.ProjectID
+	Kind          domain.SessionKind
 	Harness       domain.AgentHarness
 	DataDir       string
 	WorkspacePath string
@@ -100,6 +101,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	started, err := m.chat.StartChat(ctx, ChatStart{
 		SessionID:             id,
 		ProjectID:             in.cfg.ProjectID,
+		Kind:                  in.cfg.Kind,
 		Harness:               in.cfg.Harness,
 		DataDir:               m.dataDir,
 		WorkspacePath:         in.workspace.Path,
@@ -255,6 +257,7 @@ func (m *Manager) resumeChatController(
 	started, err := m.chat.StartChat(ctx, ChatStart{
 		SessionID:             rec.ID,
 		ProjectID:             rec.ProjectID,
+		Kind:                  rec.Kind,
 		Harness:               rec.Harness,
 		DataDir:               m.dataDir,
 		WorkspacePath:         ws.Path,

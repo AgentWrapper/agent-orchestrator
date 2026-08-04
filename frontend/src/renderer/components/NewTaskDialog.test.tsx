@@ -22,6 +22,10 @@ vi.mock("../lib/api-client", () => ({
 		}
 		return fallback;
 	},
+	apiErrorCode: (error: unknown) =>
+		typeof error === "object" && error !== null && "code" in error
+			? String((error as { code: unknown }).code)
+			: undefined,
 }));
 
 function renderDialog() {
@@ -107,11 +111,37 @@ describe("NewTaskDialog", () => {
 				harness: undefined,
 				issueId: "Fix fallback renderer",
 				prompt: "Restore the fallback renderer after WebGL init fails.",
+				mode: undefined,
 			},
 		});
 		expect(onCreated).toHaveBeenCalledWith("task-1");
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	}, 20_000);
+
+	it("offers an explicit Terminal UI retry when Chat preflight fails", async () => {
+		postMock
+			.mockResolvedValueOnce({
+				data: undefined,
+				error: { code: "CHAT_AUTH_REQUIRED", message: "Claude Code needs login" },
+			})
+			.mockResolvedValueOnce({ data: { session: { id: "task-tui" } }, error: undefined });
+		const { onCreated } = renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Title"), "T");
+		await user.type(screen.getByLabelText("Brief"), "B");
+		await user.click(screen.getByRole("button", { name: "Start task" }));
+
+		const fallback = await screen.findByRole("button", { name: "Create as Terminal UI" });
+		expect(spawnBody().mode).toBeUndefined();
+		await user.click(fallback);
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+		const retryBody = (postMock.mock.calls[1][1] as { body: Record<string, unknown> }).body;
+		expect(retryBody.mode).toBe("tui");
+		expect(onCreated).toHaveBeenCalledWith("task-tui");
+	});
 
 	it("sends the chosen harness when the user overrides the default", async () => {
 		renderDialog();

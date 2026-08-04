@@ -75,6 +75,13 @@ type deferredConversation struct {
 	start func(string) error
 }
 
+type stuckConversation struct {
+	*fakeConversation
+	closeErr error
+}
+
+func (s *stuckConversation) Close() error { return s.closeErr }
+
 func (f *deferredConversation) StartDeferredTurn(providerTurnID string) error {
 	return f.start(providerTurnID)
 }
@@ -394,6 +401,22 @@ func TestProjectsAFullTurnIntoDurableRows(t *testing.T) {
 	if len(snapshot.Activities) != 1 || snapshot.Activities[0].Summary != "git status --short" {
 		t.Fatalf("activities = %+v", snapshot.Activities)
 	}
+}
+
+func TestControllerCloseHonorsContextWhenProviderStreamStaysOpen(t *testing.T) {
+	providerErr := errors.New("provider close failed")
+	conv := &stuckConversation{fakeConversation: newFakeConversation(), closeErr: providerErr}
+	h := newHarnessWithConversation(t, conv)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	err := h.ctrl.Close(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, providerErr) {
+		t.Fatalf("Close error = %v, want provider error joined with deadline", err)
+	}
+	// Let the projection goroutine exit so the harness cleanup remains bounded.
+	close(conv.events)
+	h.ctrl.Wait()
 }
 
 // A retried send under the same client message id must not create a second turn.

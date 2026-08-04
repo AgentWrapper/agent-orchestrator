@@ -57,6 +57,7 @@ func Run() error {
 	if err := stabilizeWorkingDirectory(cfg.DataDir); err != nil {
 		return err
 	}
+	ignoreBrokenPipeSignal()
 
 	log := newLogger()
 	browserRuntimeToken := strings.TrimSpace(os.Getenv(browserruntime.RuntimeTokenEnv))
@@ -142,9 +143,17 @@ func Run() error {
 	// Built before the Lifecycle Manager so the LCM can use it for SCM-driven
 	// agent nudges (CI failure, review feedback, merge conflict).
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
+	lifecycleMessenger := newModeAwareMessenger()
 	notificationHub := notify.NewHub()
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
+	// Resolution transitions that happened while the daemon was down never
+	// reached lifecycle, so re-check open notifications against the durable
+	// session/PR facts before serving. Best-effort: a failure here only leaves
+	// stale rows in the unresolved list, never blocks startup.
+	if err := notificationWriter.Reconcile(ctx); err != nil {
+		log.Warn("notification resolution reconcile failed", "err", err)
+	}
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
@@ -164,7 +173,7 @@ func Run() error {
 		return fmt.Errorf("wire agent resolver: %w", err)
 	}
 
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, agents, log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, lifecycleMessenger, notificationWriter, telemetrySink, agents, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// selected runtime, routed git/scratch workspaces, the per-session agent
@@ -200,6 +209,20 @@ func Run() error {
 				Activities:   rows.Activities,
 			}, nil
 		}),
+		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, beforeSequence, limit int64) (chatsvc.ConversationRows, error) {
+			rows, err := store.LoadConversationSnapshotPage(ctx, conversationID, beforeSequence, limit)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation:   rows.Conversation,
+				Turns:          rows.Turns,
+				Messages:       rows.Messages,
+				Activities:     rows.Activities,
+				OldestSequence: rows.OldestSequence,
+				HasMoreBefore:  rows.HasMoreBefore,
+			}, nil
+		}),
 		Drivers: chatDrivers,
 		// The LCM satisfies ActivityRecorder directly: a chat turn is a pure
 		// lifecycle reduction, same as a hook signal from a terminal session.
@@ -217,6 +240,7 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+	lifecycleMessenger.Bind(sessMgr)
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})

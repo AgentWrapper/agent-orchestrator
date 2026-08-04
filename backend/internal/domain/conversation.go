@@ -132,7 +132,9 @@ const (
 type ConversationRecord struct {
 	ID    string            `json:"id"`
 	Scope ConversationScope `json:"scope"`
-	// ProjectID is set for both scopes; SessionID only for session scope.
+	// ProjectID is set for both scopes. SessionID is the session currently
+	// controlling the conversation; for project-scoped orchestrators it changes
+	// on clean replacement while the conversation identity remains stable.
 	ProjectID ProjectID `json:"projectId"`
 	SessionID SessionID `json:"sessionId,omitempty"`
 	// LatestSequence is the highest sequence handed out in this conversation.

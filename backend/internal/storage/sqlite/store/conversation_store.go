@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
+	"sort"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -34,11 +34,14 @@ var ErrConversationNotFound = domain.ErrNoConversation
 // draining, not a failure.
 var ErrNoQueuedTurn = domain.ErrNoQueuedTurn
 
-// CreateConversation opens a session-scoped conversation. Returns the existing
-// one if it is already there, so a controller restart is idempotent.
+// CreateConversation opens a worker's session-scoped conversation or rebinds an
+// orchestrator's project-scoped narrative to its current session. Returning the
+// existing row makes controller restart and clean orchestrator replacement
+// idempotent without splitting the project history.
 func (s *Store) CreateConversation(
 	ctx context.Context,
 	id string,
+	scope domain.ConversationScope,
 	project domain.ProjectID,
 	session domain.SessionID,
 	now time.Time,
@@ -46,26 +49,49 @@ func (s *Store) CreateConversation(
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	if existing, err := s.qr.SelectConversationBySession(ctx, &session); err == nil {
-		return conversationToDomain(existing), nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return domain.ConversationRecord{}, fmt.Errorf("select conversation for %s: %w", session, err)
+	if scope == domain.ConversationScopeProject {
+		if existing, err := s.qw.SelectProjectConversation(ctx, project); err == nil {
+			if err := s.qw.BindProjectConversationSession(ctx, gen.BindProjectConversationSessionParams{
+				CurrentSessionID: &session,
+				UpdatedAt:        now,
+				ID:               existing.ID,
+			}); err != nil {
+				return domain.ConversationRecord{}, fmt.Errorf("bind project conversation %s to %s: %w", existing.ID, session, err)
+			}
+			existing.CurrentSessionID = &session
+			existing.UpdatedAt = now
+			return conversationToDomain(existing), nil
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return domain.ConversationRecord{}, fmt.Errorf("select project conversation for %s: %w", project, err)
+		}
+	} else {
+		scope = domain.ConversationScopeSession
+		if existing, err := s.qw.SelectConversationBySession(ctx, &session); err == nil {
+			return conversationToDomain(existing), nil
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return domain.ConversationRecord{}, fmt.Errorf("select conversation for %s: %w", session, err)
+		}
 	}
 
+	var ownerSession *domain.SessionID
+	if scope == domain.ConversationScopeSession {
+		ownerSession = &session
+	}
 	if err := s.qw.InsertConversation(ctx, gen.InsertConversationParams{
-		ID:        id,
-		Scope:     domain.ConversationScopeSession,
-		ProjectID: project,
-		SessionID: &session,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:               id,
+		Scope:            scope,
+		ProjectID:        project,
+		SessionID:        ownerSession,
+		CurrentSessionID: &session,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}); err != nil {
 		return domain.ConversationRecord{}, fmt.Errorf("insert conversation %s: %w", id, err)
 	}
 
 	return domain.ConversationRecord{
 		ID:        id,
-		Scope:     domain.ConversationScopeSession,
+		Scope:     scope,
 		ProjectID: project,
 		SessionID: session,
 		CreatedAt: now,
@@ -175,9 +201,9 @@ func (s *Store) AdoptProviderTurn(
 	generation, turnID, providerTurnID string,
 	now time.Time,
 ) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.AdoptProviderConversationTurn(ctx, gen.AdoptProviderConversationTurnParams{
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.AdoptProviderConversationTurn(ctx, gen.AdoptProviderConversationTurnParams{
 		ID:                   turnID,
 		ConversationID:       conversationID,
 		HandledBySessionID:   session,
@@ -221,10 +247,10 @@ func (s *Store) SettleTurn(
 	errMessage string,
 	now time.Time,
 ) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
 
-	turn, err := s.qr.SelectConversationTurnByProviderID(ctx,
+	turn, err := q.SelectConversationTurnByProviderID(ctx,
 		gen.SelectConversationTurnByProviderIDParams{
 			ConversationID: conversationID,
 			ProviderTurnID: providerTurnID,
@@ -238,7 +264,7 @@ func (s *Store) SettleTurn(
 		return fmt.Errorf("select turn %s: %w", providerTurnID, err)
 	}
 
-	if err := s.qw.SettleConversationTurn(ctx, gen.SettleConversationTurnParams{
+	if err := q.SettleConversationTurn(ctx, gen.SettleConversationTurnParams{
 		State:        state,
 		ErrorMessage: errMessage,
 		CompletedAt:  sql.NullTime{Time: now, Valid: true},
@@ -253,9 +279,9 @@ func (s *Store) SettleTurn(
 // controller was running is not evidence the work finished, so it settles as
 // failed rather than silently completing.
 func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionID, now time.Time) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.SettleOrphanedConversationTurns(ctx,
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.SettleOrphanedConversationTurns(ctx,
 		gen.SettleOrphanedConversationTurnsParams{
 			CompletedAt:        sql.NullTime{Time: now, Valid: true},
 			HandledBySessionID: session,
@@ -299,9 +325,9 @@ func (s *Store) SetConversationSettings(
 // generic activity writer has no business knowing which kinds move a column on the
 // conversation.
 func (s *Store) MarkCompacted(ctx context.Context, conversationID string, at time.Time) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.MarkConversationCompacted(ctx, gen.MarkConversationCompactedParams{
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.MarkConversationCompacted(ctx, gen.MarkConversationCompactedParams{
 		CompactedAt: sql.NullTime{Time: at, Valid: true},
 		UpdatedAt:   at,
 		ID:          conversationID,
@@ -329,9 +355,9 @@ func (s *Store) RecordUsage(
 	conversationID string,
 	usage domain.ConversationUsage,
 ) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.UpdateConversationUsage(ctx, gen.UpdateConversationUsageParams{
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.UpdateConversationUsage(ctx, gen.UpdateConversationUsageParams{
 		ContextUsed:       nullablePositive(usage.ContextUsed),
 		ContextWindow:     nullablePositive(usage.ContextWindow),
 		UsageInputTokens:  nullablePositive(usage.InputTokens),
@@ -354,9 +380,9 @@ func (s *Store) RecordRateLimits(
 	conversationID string,
 	limits domain.ConversationRateLimits,
 ) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.UpdateConversationRateLimits(ctx, gen.UpdateConversationRateLimitsParams{
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.UpdateConversationRateLimits(ctx, gen.UpdateConversationRateLimitsParams{
 		RateLimitPrimaryPercent:    nullablePercent(limits.PrimaryUsedPercent),
 		RateLimitSecondaryPercent:  nullablePercent(limits.SecondaryUsedPercent),
 		RateLimitPrimaryResetsIn:   nullablePositive(limits.PrimaryResetsInSeconds),
@@ -405,9 +431,9 @@ func (s *Store) RecordModelReroute(
 	if err != nil {
 		return fmt.Errorf("encode model reroute for %s: %w", conversationID, err)
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.UpdateConversationModelReroute(ctx,
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.UpdateConversationModelReroute(ctx,
 		gen.UpdateConversationModelRerouteParams{
 			ModelRerouteJson: sql.NullString{String: string(encoded), Valid: true},
 			UpdatedAt:        reroute.At,
@@ -435,9 +461,9 @@ func (s *Store) RecordAccount(
 	if err != nil {
 		return fmt.Errorf("encode account for %s: %w", conversationID, err)
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.UpdateConversationAccount(ctx, gen.UpdateConversationAccountParams{
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.UpdateConversationAccount(ctx, gen.UpdateConversationAccountParams{
 		AccountJson: sql.NullString{String: string(encoded), Valid: true},
 		UpdatedAt:   now,
 		ID:          conversationID,
@@ -461,9 +487,9 @@ func (s *Store) RecordThreadState(
 	if err != nil {
 		return fmt.Errorf("encode thread state for %s: %w", conversationID, err)
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.UpdateConversationThreadState(ctx,
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.UpdateConversationThreadState(ctx,
 		gen.UpdateConversationThreadStateParams{
 			ThreadStateJson: sql.NullString{String: string(encoded), Valid: true},
 			ID:              conversationID,
@@ -492,9 +518,9 @@ func (s *Store) RecordMCPServers(
 	if err != nil {
 		return fmt.Errorf("encode mcp servers for %s: %w", conversationID, err)
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.UpdateConversationMcpServers(ctx,
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.UpdateConversationMcpServers(ctx,
 		gen.UpdateConversationMcpServersParams{
 			McpServersJson: sql.NullString{String: string(encoded), Valid: true},
 			ID:             conversationID,
@@ -524,9 +550,9 @@ func (s *Store) SetTurnPlan(
 		return false, fmt.Errorf("encode plan for %s: %w", providerTurnID, err)
 	}
 
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	rows, err := s.qw.UpdateConversationTurnPlan(ctx, gen.UpdateConversationTurnPlanParams{
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	rows, err := q.UpdateConversationTurnPlan(ctx, gen.UpdateConversationTurnPlanParams{
 		PlanJson:       string(encoded),
 		ConversationID: conversationID,
 		ProviderTurnID: providerTurnID,
@@ -562,10 +588,10 @@ func (s *Store) AppendActivityStreamedText(
 	if delta == "" {
 		return false, nil
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
 
-	rows, err := s.qw.AppendConversationActivityStreamedText(ctx,
+	rows, err := q.AppendConversationActivityStreamedText(ctx,
 		gen.AppendConversationActivityStreamedTextParams{
 			Delta:          delta,
 			MaxTextChars:   MaxStreamedTextChars,
@@ -593,10 +619,10 @@ func (s *Store) SettleActivityStreamedText(
 	if providerItemID == "" {
 		return false, nil
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
 
-	rows, err := s.qw.SettleConversationActivityStreamedText(ctx,
+	rows, err := q.SettleConversationActivityStreamedText(ctx,
 		gen.SettleConversationActivityStreamedTextParams{
 			StreamedText:   text,
 			UpdatedAt:      now,
@@ -687,17 +713,17 @@ func (s *Store) AppendAssistantDelta(
 	conversationID, providerItemID, providerTurnID, delta, messageID string,
 	now time.Time,
 ) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
 
-	_, err := s.qr.SelectConversationMessageByProviderItem(ctx,
+	_, err := q.SelectConversationMessageByProviderItem(ctx,
 		gen.SelectConversationMessageByProviderItemParams{
 			ConversationID: conversationID,
 			ProviderItemID: providerItemID,
 		})
 	switch {
 	case err == nil:
-		if appendErr := s.qw.AppendConversationMessageDelta(ctx,
+		if appendErr := q.AppendConversationMessageDelta(ctx,
 			gen.AppendConversationMessageDeltaParams{
 				Text:           delta,
 				UpdatedAt:      now,
@@ -745,10 +771,10 @@ func (s *Store) SettleAssistantMessage(
 	conversationID, providerItemID, providerTurnID, text, messageID string,
 	now time.Time,
 ) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
 
-	_, err := s.qr.SelectConversationMessageByProviderItem(ctx,
+	_, err := q.SelectConversationMessageByProviderItem(ctx,
 		gen.SelectConversationMessageByProviderItemParams{
 			ConversationID: conversationID,
 			ProviderItemID: providerItemID,
@@ -783,7 +809,7 @@ func (s *Store) SettleAssistantMessage(
 		return fmt.Errorf("lookup message %s: %w", providerItemID, err)
 	}
 
-	if err := s.qw.SettleConversationMessage(ctx, gen.SettleConversationMessageParams{
+	if err := q.SettleConversationMessage(ctx, gen.SettleConversationMessageParams{
 		Text:           text,
 		UpdatedAt:      now,
 		ConversationID: conversationID,
@@ -801,19 +827,19 @@ func (s *Store) UpsertActivity(
 	activity domain.ConversationActivity,
 	now time.Time,
 ) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
 
 	detail := string(activity.Detail)
 
 	if activity.ProviderItemID != "" {
-		_, err := s.qr.SelectConversationActivityByProviderItem(ctx,
+		_, err := q.SelectConversationActivityByProviderItem(ctx,
 			gen.SelectConversationActivityByProviderItemParams{
 				ConversationID: conversationID,
 				ProviderItemID: activity.ProviderItemID,
 			})
 		if err == nil {
-			if settleErr := s.qw.SettleConversationActivity(ctx,
+			if settleErr := q.SettleConversationActivity(ctx,
 				gen.SettleConversationActivityParams{
 					Status:         activity.Status,
 					Summary:        activity.Summary,
@@ -882,10 +908,10 @@ func (s *Store) AppendCommandOutput(
 	if delta == "" {
 		return false, nil
 	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
 
-	rows, err := s.qw.AppendConversationActivityOutput(ctx,
+	rows, err := q.AppendConversationActivityOutput(ctx,
 		gen.AppendConversationActivityOutputParams{
 			Delta:          delta,
 			MaxOutputChars: MaxCommandOutputChars,
@@ -920,9 +946,9 @@ func (s *Store) SetTurnDiff(
 		return false, fmt.Errorf("encode turn diff for %s: %w", providerTurnID, err)
 	}
 
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	rows, err := s.qw.UpdateConversationTurnDiff(ctx, gen.UpdateConversationTurnDiffParams{
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	rows, err := q.UpdateConversationTurnDiff(ctx, gen.UpdateConversationTurnDiffParams{
 		DiffJson:       string(encoded),
 		ConversationID: conversationID,
 		ProviderTurnID: providerTurnID,
@@ -940,9 +966,9 @@ func (s *Store) ResolveApproval(
 	conversationID, requestID, detailJSON string,
 	now time.Time,
 ) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.ResolveConversationApproval(ctx, gen.ResolveConversationApprovalParams{
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.ResolveConversationApproval(ctx, gen.ResolveConversationApprovalParams{
 		DetailJson:     detailJSON,
 		UpdatedAt:      now,
 		ConversationID: conversationID,
@@ -956,9 +982,9 @@ func (s *Store) ResolveApproval(
 // FailPendingApprovals closes out anything the user can no longer answer, because
 // the provider call it was blocking is gone.
 func (s *Store) FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.FailPendingConversationApprovals(ctx,
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.FailPendingConversationApprovals(ctx,
 		gen.FailPendingConversationApprovalsParams{
 			UpdatedAt:      now,
 			ConversationID: conversationID,
@@ -973,9 +999,9 @@ func (s *Store) FailPendingApprovals(ctx context.Context, conversationID string,
 // the activity-kind boundary even though both use the same pending/resolved state
 // machine.
 func (s *Store) FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.FailPendingConversationInputs(ctx,
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.FailPendingConversationInputs(ctx,
 		gen.FailPendingConversationInputsParams{
 			UpdatedAt:      now,
 			ConversationID: conversationID,
@@ -985,18 +1011,27 @@ func (s *Store) FailPendingInputs(ctx context.Context, conversationID string, no
 	return nil
 }
 
-// RecordProviderEvent archives a raw provider event. Deduplicated on the
-// provider's own event id where it has one.
-func (s *Store) RecordProviderEvent(
+// ProjectProviderEvent commits a raw provider event and the durable projection
+// derived from it together. A real provider event identity deduplicates the
+// entire unit; an empty identity is deliberately never deduplicated.
+func (s *Store) ProjectProviderEvent(
 	ctx context.Context,
 	conversationID string,
 	session domain.SessionID,
 	providerEventID, method, payloadJSON string,
 	now time.Time,
+	project func(context.Context) error,
 ) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	err := s.qw.InsertConversationProviderEvent(ctx, gen.InsertConversationProviderEventParams{
+
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin provider event projection: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	q := s.qw.WithTx(tx)
+	inserted, err := q.InsertConversationProviderEvent(ctx, gen.InsertConversationProviderEventParams{
 		ConversationID:  conversationID,
 		SessionID:       session,
 		ProviderEventID: providerEventID,
@@ -1005,11 +1040,17 @@ func (s *Store) RecordProviderEvent(
 		ReceivedAt:      now,
 	})
 	if err != nil {
-		// A duplicate is the dedupe index doing its job, not a failure.
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return nil
-		}
 		return fmt.Errorf("archive provider event %s: %w", method, err)
+	}
+	if inserted == 0 {
+		return tx.Commit()
+	}
+	txCtx := context.WithValue(ctx, conversationProjectionTxKey{}, q)
+	if err := project(txCtx); err != nil {
+		return fmt.Errorf("project provider event %s: %w", method, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit provider event %s: %w", method, err)
 	}
 	return nil
 }
@@ -1110,9 +1151,9 @@ func (s *Store) SetProviderTitle(
 	conversationID, title string,
 	now time.Time,
 ) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if err := s.qw.UpdateConversationProviderTitle(ctx,
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+	if err := q.UpdateConversationProviderTitle(ctx,
 		gen.UpdateConversationProviderTitleParams{
 			ProviderTitle: title,
 			UpdatedAt:     now,
@@ -1142,10 +1183,10 @@ func (s *Store) ApplyProviderTitle(
 	title string,
 	now time.Time,
 ) (bool, error) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
 
-	conversation, err := s.qr.SelectConversationByID(ctx, conversationID)
+	conversation, err := q.SelectConversationByID(ctx, conversationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, ErrConversationNotFound
 	}
@@ -1184,10 +1225,108 @@ func (s *Store) ApplyProviderTitle(
 
 // ConversationSnapshot is the durable read model for one conversation.
 type ConversationSnapshot struct {
-	Conversation domain.ConversationRecord
-	Turns        []domain.ConversationTurn
-	Messages     []domain.ConversationMessage
-	Activities   []domain.ConversationActivity
+	Conversation   domain.ConversationRecord
+	Turns          []domain.ConversationTurn
+	Messages       []domain.ConversationMessage
+	Activities     []domain.ConversationActivity
+	OldestSequence int64
+	HasMoreBefore  bool
+}
+
+const DefaultConversationPageSize = 200
+
+// LoadConversationSnapshotPage reads a bounded slice ending immediately before
+// beforeSequence. Zero starts at the live edge. Messages and activities share one
+// sequence, so the store merges their bounded reads and trims them as one page;
+// a noisy command cannot crowd prose out by making either table unbounded.
+func (s *Store) LoadConversationSnapshotPage(
+	ctx context.Context,
+	conversationID string,
+	beforeSequence int64,
+	limit int64,
+) (ConversationSnapshot, error) {
+	conv, err := s.qr.SelectConversationByID(ctx, conversationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ConversationSnapshot{}, ErrConversationNotFound
+	}
+	if err != nil {
+		return ConversationSnapshot{}, fmt.Errorf("select conversation %s: %w", conversationID, err)
+	}
+	if limit <= 0 {
+		limit = DefaultConversationPageSize
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if beforeSequence <= 0 || beforeSequence > conv.LatestSequence+1 {
+		beforeSequence = conv.LatestSequence + 1
+	}
+	fetchLimit := limit + 1
+
+	messageRows, err := s.qr.SelectConversationMessagesPage(ctx, gen.SelectConversationMessagesPageParams{
+		ConversationID: conversationID,
+		BeforeSequence: beforeSequence,
+		PageLimit:      fetchLimit,
+	})
+	if err != nil {
+		return ConversationSnapshot{}, fmt.Errorf("select message page: %w", err)
+	}
+	activityRows, err := s.qr.SelectConversationActivitiesPage(ctx, gen.SelectConversationActivitiesPageParams{
+		ConversationID: conversationID,
+		BeforeSequence: beforeSequence,
+		PageLimit:      fetchLimit,
+	})
+	if err != nil {
+		return ConversationSnapshot{}, fmt.Errorf("select activity page: %w", err)
+	}
+
+	sequences := make([]int64, 0, len(messageRows)+len(activityRows))
+	for _, row := range messageRows {
+		sequences = append(sequences, row.Sequence)
+	}
+	for _, row := range activityRows {
+		sequences = append(sequences, row.Sequence)
+	}
+	sort.Slice(sequences, func(i, j int) bool { return sequences[i] > sequences[j] })
+	hasMore := int64(len(sequences)) > limit
+	if int64(len(sequences)) > limit {
+		sequences = sequences[:limit]
+	}
+	oldest := beforeSequence
+	if len(sequences) > 0 {
+		oldest = sequences[len(sequences)-1]
+	}
+
+	turnRows, err := s.qr.SelectConversationTurnsPage(ctx, gen.SelectConversationTurnsPageParams{
+		ConversationID: conversationID,
+		OldestSequence: oldest,
+		BeforeSequence: beforeSequence,
+	})
+	if err != nil {
+		return ConversationSnapshot{}, fmt.Errorf("select turn page: %w", err)
+	}
+
+	snapshot := ConversationSnapshot{
+		Conversation:   conversationToDomain(conv),
+		OldestSequence: oldest,
+		HasMoreBefore:  hasMore,
+	}
+	for _, row := range turnRows {
+		snapshot.Turns = append(snapshot.Turns, turnToDomain(row))
+	}
+	// SQL returns newest-first so LIMIT is useful; the API contract remains
+	// oldest-first inside each page.
+	for i := len(messageRows) - 1; i >= 0; i-- {
+		if messageRows[i].Sequence >= oldest {
+			snapshot.Messages = append(snapshot.Messages, messageToDomain(messageRows[i]))
+		}
+	}
+	for i := len(activityRows) - 1; i >= 0; i-- {
+		if activityRows[i].Sequence >= oldest {
+			snapshot.Activities = append(snapshot.Activities, activityToDomain(activityRows[i]))
+		}
+	}
+	return snapshot, nil
 }
 
 // LoadConversationSnapshot reads a whole conversation. Items come back ordered by
@@ -1250,7 +1389,7 @@ func (s *Store) turnIDFor(ctx context.Context, conversationID, providerTurnID st
 	if providerTurnID == "" {
 		return sql.NullString{}
 	}
-	row, err := s.qr.SelectConversationTurnByProviderID(ctx,
+	row, err := s.conversationReader(ctx).SelectConversationTurnByProviderID(ctx,
 		gen.SelectConversationTurnByProviderIDParams{
 			ConversationID: conversationID,
 			ProviderTurnID: providerTurnID,
@@ -1277,8 +1416,8 @@ func conversationToDomain(row gen.Conversation) domain.ConversationRecord {
 		CreatedAt:     row.CreatedAt,
 		UpdatedAt:     row.UpdatedAt,
 	}
-	if row.SessionID != nil {
-		rec.SessionID = *row.SessionID
+	if row.CurrentSessionID != nil {
+		rec.SessionID = *row.CurrentSessionID
 	}
 	rec.Usage = usageFromRow(row)
 	rec.RateLimits = rateLimitsFromRow(row)

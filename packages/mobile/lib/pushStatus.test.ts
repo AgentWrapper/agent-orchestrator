@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { classifyServerFailure, describePush, describeRegisterFailure, hasServer, type PushStatus } from "./pushStatus";
+import {
+	classifyServerFailure,
+	describePushToggle,
+	describeRegisterFailure,
+	hasServer,
+	type PushStatus,
+} from "./pushStatus";
 
 const status = (over: Partial<PushStatus> = {}): PushStatus => ({
 	supported: true,
@@ -9,68 +15,67 @@ const status = (over: Partial<PushStatus> = {}): PushStatus => ({
 	...over,
 });
 
-describe("describePush", () => {
-	it("shows a neutral placeholder before status loads", () => {
-		const d = describePush(null, { host: "192.168.1.5" });
-		expect(d.action).toBeNull();
-		expect(d.label).toBe("Checking…");
+// Push is one switch in Settings, so the state machine has to answer: where
+// does the switch sit, and can the user move it?
+describe("describePushToggle", () => {
+	const server = { host: "192.168.1.5" };
+
+	it("is off and disabled while the status is still loading", () => {
+		const t = describePushToggle(null, server);
+		expect(t.value).toBe(false);
+		expect(t.disabled).toBe(true);
 	});
 
-	it("offers nothing on a simulator", () => {
-		const d = describePush(status({ supported: false }), { host: "192.168.1.5" });
-		expect(d.action).toBeNull();
-		expect(d.label).toBe("Not available");
+	it("is disabled on a simulator, where no token can be minted", () => {
+		const t = describePushToggle(status({ supported: false }), server);
+		expect(t.disabled).toBe(true);
+		expect(t.footer).toMatch(/physical device/i);
 	});
 
-	it("reports On with no action once granted and registered", () => {
-		const d = describePush(status({ registered: true }), { host: "192.168.1.5" });
-		expect(d.action).toBeNull();
-		expect(d.label).toBe("On");
+	// Regression: an unpaired app still holds a config object with an empty host,
+	// so `!!config` is truthy. Turning the switch on there could only burn the
+	// one-shot OS permission prompt and then fail against an empty host.
+	it("is disabled with no server paired, since there is nothing to register with", () => {
+		const t = describePushToggle(status({ registered: true }), { host: "" });
+		expect(t.value).toBe(false);
+		expect(t.disabled).toBe(true);
+		expect(t.footer).toMatch(/connect to your ao server/i);
 	});
 
-	// Regression: an unpaired app still has a default config with an empty host.
-	// Offering Register there always fails, which is what shipped to testers.
-	it("does NOT offer Register when the config exists but has no host (unpaired)", () => {
-		// This is the exact shape an unpaired app holds: a real config object with
-		// an empty host. Passing `!!config` here (truthy!) is what shipped a
-		// broken Register button to TestFlight users.
-		const d = describePush(status({ granted: true, registered: false }), { host: "" });
-		expect(d.action).toBeNull();
-		expect(d.actionLabel).toBeNull();
-		expect(d.hint).toMatch(/connect to your ao server first/i);
+	it("reads on only when permission is granted and the device is registered", () => {
+		expect(describePushToggle(status({ registered: true }), server).value).toBe(true);
+		expect(describePushToggle(status({ registered: false }), server).value).toBe(false);
+		expect(describePushToggle(status({ granted: false, registered: true }), server).value).toBe(false);
 	});
 
-	it("offers Register once a server host is set", () => {
-		const d = describePush(status({ granted: true, registered: false }), { host: "192.168.1.5" });
-		expect(d.action).toBe("register");
-		expect(d.actionLabel).toBe("Register");
+	it("stays interactive when granted but not yet registered", () => {
+		const t = describePushToggle(status({ registered: false }), server);
+		expect(t.disabled).toBe(false);
+		expect(t.blocked).toBe(false);
+		expect(t.footer).toMatch(/isn't registered/i);
 	});
 
-	it("offers Enable when permission has not been asked yet", () => {
-		const d = describePush(status({ granted: false, canAskAgain: true }), { host: "192.168.1.5" });
-		expect(d.action).toBe("enable");
+	it("offers a normal turn-on when permission has not been asked for yet", () => {
+		const t = describePushToggle(status({ granted: false }), server);
+		expect(t.disabled).toBe(false);
+		expect(t.blocked).toBe(false);
 	});
 
-	// Regression: the unpaired guard was only on the Register branch, so a fresh
-	// install — permission never asked, no host — still got an Enable button that
-	// spent the one-shot OS prompt and then failed against an empty host.
-	it("does NOT offer Enable when unpaired", () => {
-		const d = describePush(status({ granted: false, canAskAgain: true }), { host: "" });
-		expect(d.action).toBeNull();
-		expect(d.actionLabel).toBeNull();
-		expect(d.hint).toMatch(/connect to your ao server first/i);
+	// Blocked must stay tappable: the tap is the only chance to explain that the
+	// switch can now only be moved from system settings.
+	it("marks a permanent denial as blocked but leaves the switch tappable", () => {
+		const t = describePushToggle(status({ granted: false, canAskAgain: false }), server);
+		expect(t.blocked).toBe(true);
+		expect(t.disabled).toBe(false);
+		expect(t.footer).toMatch(/system settings/i);
 	});
 
-	// A permanent denial can only be undone in system settings, and that is true
-	// whether or not a server is configured — so this one stays offered.
-	it("still offers Open settings when unpaired and permanently denied", () => {
-		const d = describePush(status({ granted: false, canAskAgain: false }), { host: "" });
-		expect(d.action).toBe("open-settings");
-	});
-
-	it("offers Open settings after a permanent denial", () => {
-		const d = describePush(status({ granted: false, canAskAgain: false }), { host: "192.168.1.5" });
-		expect(d.action).toBe("open-settings");
+	// A permanent denial outranks a leftover registration: the switch must never
+	// read "on" when the OS will not deliver anything.
+	it("reports blocked even if a stale registration is still held", () => {
+		const t = describePushToggle(status({ granted: false, canAskAgain: false, registered: true }), server);
+		expect(t.value).toBe(false);
+		expect(t.blocked).toBe(true);
 	});
 });
 

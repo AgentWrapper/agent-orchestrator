@@ -58,12 +58,15 @@ type SessionMetadata struct {
 // facts: identity, agent harness, activity_state, is_terminated, and operational
 // metadata. The user-facing Status is derived from these facts plus PR facts.
 type SessionRecord struct {
-	ID          SessionID    `json:"id"`
-	ProjectID   ProjectID    `json:"projectId"`
-	IssueID     IssueID      `json:"issueId,omitempty"`
-	Kind        SessionKind  `json:"kind"`
-	Harness     AgentHarness `json:"harness,omitempty"`
-	DisplayName string       `json:"displayName,omitempty"`
+	ID        SessionID    `json:"id"`
+	ProjectID ProjectID    `json:"projectId"`
+	IssueID   IssueID      `json:"issueId,omitempty"`
+	Kind      SessionKind  `json:"kind"`
+	Harness   AgentHarness `json:"harness,omitempty"`
+	// ReviewerHarness is this session's preferred reviewer. Empty delegates to
+	// the project configuration.
+	ReviewerHarness ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,opencode"`
+	DisplayName     string          `json:"displayName,omitempty"`
 	// Mode is the conversation controller this session was created with. It is
 	// immutable: every later spawn, send, restore, kill, and reaper decision
 	// dispatches from this field, not from the current default setting. Rows

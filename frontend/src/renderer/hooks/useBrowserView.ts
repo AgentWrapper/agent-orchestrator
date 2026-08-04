@@ -80,6 +80,19 @@ const EMPTY_TABS_STATE: BrowserTabsState = {
 	tabs: [],
 };
 
+type PreviewTrigger = { revision: number | null; target: string };
+
+// Last preview trigger consumed per session, outliving the hook instance. The
+// native view survives session switches in the main process — with whatever URL
+// the user last navigated to — so the consumed trigger must survive too:
+// keeping it only in a component ref made every remount (session switch-back)
+// re-assert previewUrl and clobber manual navigation (#3536).
+const consumedPreviewTriggers = new Map<string, PreviewTrigger>();
+
+export function resetConsumedPreviewTriggersForTest(): void {
+	consumedPreviewTriggers.clear();
+}
+
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 const VISUAL_TRANSITION_DURATION_MS = 240;
 const VISUAL_TRANSITION_CAPTURE_TIMEOUT_MS = 120;
@@ -305,10 +318,15 @@ export function useBrowserView({
 
 	useEffect(() => {
 		let disposed = false;
-		// Preview revisions are scoped to a session. Reset the trigger before
-		// ensuring a different worker so equal revision numbers cannot suppress
-		// that worker's own target.
-		previewTriggerRef.current = null;
+		// Preview revisions are scoped to a session, so never carry the trigger
+		// over from a previously shown worker: equal revision numbers must not
+		// suppress this worker's own target. With a native browser, seed from the
+		// per-session consumed map instead of null — the main-process view kept
+		// the user's last URL across the switch, and re-consuming an already-seen
+		// trigger would navigate it back to previewUrl. Without a native browser
+		// the view state died with the previous mount, so re-applying the preview
+		// is what restores it.
+		previewTriggerRef.current = hasNativeBrowser ? (consumedPreviewTriggers.get(sessionId) ?? null) : null;
 		setTabsState(EMPTY_TABS_STATE);
 		setTabNotice("");
 		setAgentBrowserActive(false);
@@ -650,13 +668,15 @@ export function useBrowserView({
 		const previous = previewTriggerRef.current;
 		if (previous?.revision === revision && previous.target === target) return;
 		if (revision !== null && previous?.revision === revision) return;
-		previewTriggerRef.current = { revision, target };
+		const consumed: PreviewTrigger = { revision, target };
+		previewTriggerRef.current = consumed;
+		if (hasNativeBrowser) consumedPreviewTriggers.set(sessionId, consumed);
 		if (target) {
 			void navigate(target);
 		} else if ((revision !== null && revision > 0) || previous?.target) {
 			void clear();
 		}
-	}, [clear, navigate, previewRevision, previewUrl, terminated, viewId]);
+	}, [clear, hasNativeBrowser, navigate, previewRevision, previewUrl, sessionId, terminated, viewId]);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
@@ -684,8 +704,11 @@ export function useBrowserView({
 	// explicit preview-reset operation.
 	useEffect(() => {
 		if (!terminated || !viewId) return;
+		// The browser target is gone for good; if the session ID is ever reused,
+		// a stale consumed trigger must not suppress the new worker's preview.
+		consumedPreviewTriggers.delete(sessionId);
 		destroy();
-	}, [destroy, terminated, viewId]);
+	}, [destroy, sessionId, terminated, viewId]);
 
 	return {
 		viewId,

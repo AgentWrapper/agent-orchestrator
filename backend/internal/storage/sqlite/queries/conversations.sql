@@ -6,11 +6,18 @@
 -- concurrent writers cannot mint the same position.
 
 -- name: InsertConversation :exec
-INSERT INTO conversations (id, scope, project_id, session_id, latest_sequence, created_at, updated_at)
-VALUES (?, ?, ?, ?, 0, ?, ?);
+INSERT INTO conversations (id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 0, ?, ?);
 
 -- name: SelectConversationBySession :one
-SELECT * FROM conversations WHERE session_id = ? LIMIT 1;
+SELECT * FROM conversations WHERE current_session_id = ? LIMIT 1;
+
+-- name: SelectProjectConversation :one
+SELECT * FROM conversations WHERE project_id = ? AND scope = 'project' LIMIT 1;
+
+-- name: BindProjectConversationSession :exec
+UPDATE conversations SET current_session_id = ?, updated_at = ?
+WHERE id = ? AND scope = 'project';
 
 -- name: SelectConversationByID :one
 SELECT * FROM conversations WHERE id = ? LIMIT 1;
@@ -214,6 +221,29 @@ SELECT * FROM conversation_turns
 WHERE conversation_id = ?
 ORDER BY requested_at, rowid;
 
+-- Turns represented by one bounded timeline page. Active turns are included
+-- even before their first item arrives, so the live-turn controls never vanish.
+-- name: SelectConversationTurnsPage :many
+SELECT * FROM conversation_turns
+WHERE conversation_turns.conversation_id = sqlc.arg(conversation_id)
+  AND (
+    state IN ('queued', 'running')
+    OR id IN (
+      SELECT turn_id FROM conversation_messages
+      WHERE conversation_messages.conversation_id = sqlc.arg(conversation_id)
+        AND turn_id IS NOT NULL
+        AND conversation_messages.sequence >= sqlc.arg(oldest_sequence)
+        AND conversation_messages.sequence < sqlc.arg(before_sequence)
+      UNION
+      SELECT turn_id FROM conversation_activities
+      WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
+        AND turn_id IS NOT NULL
+        AND conversation_activities.sequence >= sqlc.arg(oldest_sequence)
+        AND conversation_activities.sequence < sqlc.arg(before_sequence)
+    )
+  )
+ORDER BY requested_at, rowid;
+
 -- Everything from the named turn to the end of the conversation, which is the range
 -- an undo discards. Inclusive of the named turn: the state a person wants back is
 -- the one from before they sent the message they pointed at.
@@ -334,6 +364,18 @@ WHERE conversation_messages.conversation_id = ?
   ))
 ORDER BY conversation_messages.sequence;
 
+-- name: SelectConversationMessagesPage :many
+SELECT * FROM conversation_messages
+WHERE conversation_messages.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_messages.sequence < sqlc.arg(before_sequence)
+  AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = sqlc.arg(conversation_id)
+        AND discarded.rolled_back_at IS NOT NULL
+  ))
+ORDER BY conversation_messages.sequence DESC
+LIMIT sqlc.arg(page_limit);
+
 -- name: InsertConversationActivity :exec
 INSERT INTO conversation_activities (
     id, conversation_id, turn_id, sequence, revision, kind, status,
@@ -451,6 +493,18 @@ WHERE conversation_activities.conversation_id = ?
   ))
 ORDER BY conversation_activities.sequence;
 
+-- name: SelectConversationActivitiesPage :many
+SELECT * FROM conversation_activities
+WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
+  AND conversation_activities.sequence < sqlc.arg(before_sequence)
+  AND (conversation_activities.turn_id IS NULL OR conversation_activities.turn_id NOT IN (
+      SELECT discarded.id FROM conversation_turns AS discarded
+      WHERE discarded.conversation_id = sqlc.arg(conversation_id)
+        AND discarded.rolled_back_at IS NOT NULL
+  ))
+ORDER BY conversation_activities.sequence DESC
+LIMIT sqlc.arg(page_limit);
+
 -- Push a provider thread title into the session label, without ever overwriting a
 -- name a person chose.
 --
@@ -470,8 +524,8 @@ WHERE id = ?
 
 -- The raw provider event archive. Append-only, and the only way to answer "what
 -- did the provider actually say" once a projection turns out to be wrong.
--- name: InsertConversationProviderEvent :exec
-INSERT INTO conversation_provider_events (
+-- name: InsertConversationProviderEvent :execrows
+INSERT OR IGNORE INTO conversation_provider_events (
     conversation_id, session_id, provider_event_id, method, payload_json, received_at
 ) VALUES (?, ?, ?, ?, ?, ?);
 

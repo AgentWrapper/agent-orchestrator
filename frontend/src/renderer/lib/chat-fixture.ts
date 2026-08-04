@@ -37,6 +37,8 @@ export const chatFixture: ConversationSnapshot = {
 	mode: "chat",
 	controller: { state: "busy" },
 	latestSequence: 14,
+	oldestSequence: 1,
+	hasMoreBefore: false,
 	settings: { model: "gpt-5.6-terra", reasoningEffort: "high" },
 	// Healthy servers as the baseline, so the failed-server fixture is visibly the
 	// exception rather than the only time this field is populated.
@@ -589,6 +591,8 @@ export function chatFixtureLongHistory(turns: number): ConversationSnapshot {
 		mode: "chat",
 		controller: { state: "ready" },
 		latestSequence: sequence,
+		oldestSequence: 1,
+		hasMoreBefore: false,
 		settings: { model: "gpt-5.6-terra", reasoningEffort: "medium" },
 		turns: conversationTurns,
 		items,
@@ -764,6 +768,8 @@ export const chatFixtureEmpty: ConversationSnapshot = {
 	mode: "chat",
 	controller: { state: "ready" },
 	latestSequence: 0,
+	oldestSequence: 1,
+	hasMoreBefore: false,
 	settings: {},
 	turns: [],
 	items: [],

@@ -22,7 +22,15 @@ import { can } from "../../types/conversation";
 import type { WorkspaceSession } from "../../types/workspace";
 
 export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
-	const { snapshot, isLoading, unavailable, error } = useConversation(session.id);
+	const {
+		snapshot,
+		isLoading,
+		unavailable,
+		error,
+		hasOlder,
+		isLoadingOlder,
+		loadOlder,
+	} = useConversation(session.id);
 	const commands = useConversationCommands(session.id);
 	const hasProviderConfig = Boolean(snapshot && can(snapshot, "config_options"));
 	// Only asked for once the conversation is actually readable: the catalog comes
@@ -80,6 +88,9 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 	return (
 		<ChatWorkspace
 			snapshot={snapshot}
+			hasOlder={hasOlder}
+			loadingOlder={isLoadingOlder}
+			onLoadOlder={loadOlder}
 			busy={commands.busy}
 			onSend={(text, attachments) => commands.send({ text, attachments })}
 			onDecide={commands.resolve}

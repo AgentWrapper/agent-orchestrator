@@ -7,7 +7,7 @@
 -- so that distinction survives persistence and every client refresh.
 --
 -- SQLite cannot alter a CHECK constraint in place, so this follows migration
--- 0049's table rebuild. The full column/index/CDC shape is recreated verbatim;
+-- 0051's table rebuild. The full column/index/CDC shape is recreated verbatim;
 -- losing the insert trigger here would silently stop chat invalidation events.
 PRAGMA foreign_keys=OFF;
 
@@ -61,11 +61,27 @@ AFTER INSERT ON conversation_activities
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'activity', s.activity_state,
+		   json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+					   'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
            NEW.updated_at
     FROM conversations c
-    JOIN sessions s ON s.id = c.session_id
+    JOIN sessions s ON s.id = c.current_session_id
+    WHERE c.id = NEW.conversation_id;
+END;
+
+CREATE TRIGGER conversation_activities_cdc_update
+AFTER UPDATE ON conversation_activities
+WHEN OLD.revision <> NEW.revision
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    SELECT s.project_id, s.id, 'session_updated',
+		   json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+					   'activity', s.activity_state,
+                       'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
+           NEW.updated_at
+    FROM conversations c
+    JOIN sessions s ON s.id = c.current_session_id
     WHERE c.id = NEW.conversation_id;
 END;
 
@@ -76,6 +92,6 @@ PRAGMA foreign_key_check;
 -- +goose Down
 -- +goose StatementBegin
 -- Existing user_input rows cannot fit the old CHECK, so downgrade keeps the
--- widened constraint, matching the additive-kind policy in migration 0049.
+-- widened constraint, matching the additive-kind policy in migration 0051.
 SELECT 1;
 -- +goose StatementEnd

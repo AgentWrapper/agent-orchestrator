@@ -14,6 +14,12 @@ import {
 } from "./update-settings";
 import { reconcileFeaturePin } from "./feature-builds";
 import { evaluateEscalation } from "./escalation-evaluator";
+import {
+  updateFailureOutcome,
+  type UpdateOutcome,
+  type UpdatePhase,
+  type UpdateTrigger,
+} from "../shared/update-telemetry";
 
 // reconcileAndPersist clears a pinned feature build whose PR has been retired
 // (merged/closed/deleted/expired) and persists the change, so the next check
@@ -99,6 +105,32 @@ let automaticCheckPreviousStatus:
   { status: UpdateStatus; independentRevision: number } | undefined;
 let updaterOperationQueue: Promise<void> = Promise.resolve();
 let automaticCheckInFlight = false;
+// Which stage the active operation reached, and what it was fetching. Tracked
+// here because the renderer cannot know either: automatic failures never
+// broadcast a status, and error statuses carry no version.
+let activeUpdaterPhase: UpdatePhase = "check";
+let pendingUpdateVersion: string | undefined;
+
+// emitUpdateOutcome pushes an update outcome to renderers on a channel separate
+// from "updates:status", so suppressing a status for UI reasons (as the
+// automatic path does) never suppresses the telemetry for it.
+function emitUpdateOutcome(outcome: UpdateOutcome): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) win.webContents.send("updates:telemetry", outcome);
+  }
+}
+
+function activeUpdateTrigger(): UpdateTrigger {
+  return activeUpdaterOperation === "automatic-check" ? "automatic" : "manual";
+}
+
+function emitUpdateFailure(err: unknown): void {
+  const message =
+    err instanceof Error ? err.message : err === undefined ? undefined : String(err);
+  emitUpdateOutcome(
+    updateFailureOutcome(message, activeUpdaterPhase, activeUpdateTrigger(), pendingUpdateVersion),
+  );
+}
 
 // broadcast pushes the latest update status to every renderer window so the
 // Global Settings Updates section can reflect check/download progress live.
@@ -281,6 +313,8 @@ async function runSerializedUpdaterOperation(
   const run = async () => {
     activeUpdaterOperation = operation;
     activeUpdaterRequestId = requestId;
+    activeUpdaterPhase = operation === "manual-download" ? "download" : "check";
+    pendingUpdateVersion = undefined;
     try {
       await runOperation();
     } finally {
@@ -385,6 +419,7 @@ function wireUpdaterEvents(): void {
       broadcastUpdaterStatus(stagedDownloadedStatus());
       return;
     }
+    pendingUpdateVersion = info?.version;
     broadcastUpdaterStatus({ state: "available", version: info?.version });
   });
   autoUpdater.on("update-not-available", () => {
@@ -394,13 +429,22 @@ function wireUpdaterEvents(): void {
     if (stagedAtMs !== undefined)
       broadcastUpdaterStatus(stagedDownloadedStatus());
   });
-  autoUpdater.on("download-progress", (p) =>
-    broadcastUpdaterStatus({
+  autoUpdater.on("download-progress", (p) => {
+    // Any progress proves the check succeeded, so a later error is a download
+    // failure even when the operation began life as a check.
+    activeUpdaterPhase = "download";
+    return broadcastUpdaterStatus({
       state: "downloading",
       percent: Math.max(0, Math.min(100, Math.round(p?.percent ?? 0))),
-    }),
-  );
+    });
+  });
   autoUpdater.on("update-downloaded", (info) => {
+    emitUpdateOutcome({
+      event: "ao.renderer.update_downloaded",
+      phase: "download",
+      trigger: activeUpdateTrigger(),
+      ...(info?.version ? { to_version: info.version } : {}),
+    });
     stagedVersion = info?.version;
     stagedAtMs = Date.now();
     stagedEscalated = false;
@@ -422,6 +466,11 @@ function wireUpdaterEvents(): void {
   });
   autoUpdater.on("error", (err) => {
     // Never crash on update failure (offline, unsigned macOS, etc.).
+    // Automatic failures restore the previous status so the UI does not flash
+    // an error the user never asked for. That suppression is a UI decision and
+    // must not suppress the telemetry: automatic checks run hourly and are the
+    // main way an install goes silently stale.
+    emitUpdateFailure(err);
     if (activeUpdaterOperation === "automatic-check") {
       console.error("auto-update check failed:", err);
       restoreAutomaticCheckPreviousStatus();
@@ -577,6 +626,12 @@ export async function checkForUpdatesNow(
   escalationStateDir = stateDir;
   wireUpdaterEvents();
   if (!app.isPackaged) {
+    emitUpdateOutcome({
+      event: "ao.renderer.update_unsupported",
+      phase: activeUpdaterPhase,
+      trigger: activeUpdateTrigger(),
+      error_category: "not_supported",
+    });
     broadcast({
       state: "unsupported",
       message: "Updates are only available in the installed app.",
@@ -636,6 +691,12 @@ export async function returnToHome(
   escalationStateDir = stateDir;
   wireUpdaterEvents();
   if (!app.isPackaged) {
+    emitUpdateOutcome({
+      event: "ao.renderer.update_unsupported",
+      phase: activeUpdaterPhase,
+      trigger: activeUpdateTrigger(),
+      error_category: "not_supported",
+    });
     broadcast({
       state: "unsupported",
       message: "Updates are only available in the installed app.",
@@ -673,6 +734,12 @@ export async function returnToHome(
 export async function downloadUpdateNow(requestId?: string): Promise<void> {
   wireUpdaterEvents();
   if (!app.isPackaged) {
+    emitUpdateOutcome({
+      event: "ao.renderer.update_unsupported",
+      phase: activeUpdaterPhase,
+      trigger: activeUpdateTrigger(),
+      error_category: "not_supported",
+    });
     broadcast({
       state: "unsupported",
       message: "Updates are only available in the installed app.",

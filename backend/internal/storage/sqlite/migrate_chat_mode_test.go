@@ -20,11 +20,11 @@ func openTestDB(t *testing.T) *sql.DB {
 // The whole backward-compatibility promise of the Chat feature: a database that
 // already has sessions must come out of the migration with every one of them in
 // TUI mode, so an upgrade changes nobody's workflow.
-func TestMigration0041BackfillsExistingSessionsToTUI(t *testing.T) {
+func TestMigration0043BackfillsExistingSessionsToTUI(t *testing.T) {
 	db := openTestDB(t)
 
-	// Stop just before 0041: sessions exist, session_mode does not.
-	upTo(t, db, 40)
+	// Stop just before 0043: sessions exist, session_mode does not.
+	upTo(t, db, 42)
 
 	now := time.Now().UTC()
 	if _, err := db.Exec(`INSERT INTO projects (id, path, display_name, registered_at)
@@ -38,7 +38,7 @@ func TestMigration0041BackfillsExistingSessionsToTUI(t *testing.T) {
 		}
 	}
 
-	upTo(t, db, 41)
+	upTo(t, db, 43)
 
 	rows, err := db.Query(`SELECT id, session_mode, provider_conversation_id, controller_generation FROM sessions ORDER BY id`)
 	if err != nil {
@@ -73,9 +73,9 @@ func TestMigration0041BackfillsExistingSessionsToTUI(t *testing.T) {
 
 // A fresh install must also default to TUI: the mode is only ever Chat because
 // something explicitly asked for it.
-func TestMigration0041FreshDatabaseDefaultsToTUI(t *testing.T) {
+func TestMigration0043FreshDatabaseDefaultsToTUI(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 41)
+	upTo(t, db, 43)
 
 	now := time.Now().UTC()
 	if _, err := db.Exec(`INSERT INTO projects (id, path, display_name, registered_at)
@@ -96,16 +96,16 @@ func TestMigration0041FreshDatabaseDefaultsToTUI(t *testing.T) {
 	}
 }
 
-func TestMigration0041ConversationSchemaConstraints(t *testing.T) {
+func TestMigration0043ConversationSchemaConstraints(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 41)
+	upTo(t, db, 43)
 
 	now := time.Now().UTC()
 	mustExec(t, db, `INSERT INTO projects (id, path, display_name, registered_at) VALUES ('p1','/tmp/p1','proj',?)`, now)
 	mustExec(t, db, `INSERT INTO sessions (id, project_id, num, kind, activity_state, activity_last_at, is_terminated, session_mode, created_at, updated_at)
 		VALUES ('ao-1','p1',1,'orchestrator','idle',?,0,'chat',?,?)`, now, now, now)
-	mustExec(t, db, `INSERT INTO conversations (id, scope, project_id, session_id, latest_sequence, created_at, updated_at)
-		VALUES ('conv-1','session','p1','ao-1',0,?,?)`, now, now)
+	mustExec(t, db, `INSERT INTO conversations (id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at)
+		VALUES ('conv-1','session','p1','ao-1','ao-1',0,?,?)`, now, now)
 
 	t.Run("one conversation per session", func(t *testing.T) {
 		_, err := db.Exec(`INSERT INTO conversations (id, scope, project_id, session_id, latest_sequence, created_at, updated_at)
@@ -192,16 +192,18 @@ func TestMigration0041ConversationSchemaConstraints(t *testing.T) {
 
 // Chat changes must reach clients through the existing trigger-backed CDC rather
 // than a parallel emission path in store code.
-func TestMigration0041EmitsConversationCDC(t *testing.T) {
+func TestChatMigrationsEmitConversationCDC(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 41)
+	// Exercise the final schema: later activity-kind migrations rebuild the table
+	// and must preserve the trigger introduced with Chat mode.
+	upTo(t, db, 53)
 
 	now := time.Now().UTC()
 	mustExec(t, db, `INSERT INTO projects (id, path, display_name, registered_at) VALUES ('p1','/tmp/p1','proj',?)`, now)
 	mustExec(t, db, `INSERT INTO sessions (id, project_id, num, kind, activity_state, activity_last_at, is_terminated, session_mode, created_at, updated_at)
 		VALUES ('ao-1','p1',1,'orchestrator','idle',?,0,'chat',?,?)`, now, now, now)
-	mustExec(t, db, `INSERT INTO conversations (id, scope, project_id, session_id, latest_sequence, created_at, updated_at)
-		VALUES ('conv-1','session','p1','ao-1',0,?,?)`, now, now)
+	mustExec(t, db, `INSERT INTO conversations (id, scope, project_id, session_id, current_session_id, latest_sequence, created_at, updated_at)
+		VALUES ('conv-1','session','p1','ao-1','ao-1',0,?,?)`, now, now)
 	mustExec(t, db, `INSERT INTO conversation_turns (id, conversation_id, handled_by_session_id, state, requested_at)
 		VALUES ('turn-1','conv-1','ao-1','running',?)`, now)
 
@@ -213,6 +215,11 @@ func TestMigration0041EmitsConversationCDC(t *testing.T) {
 
 	if got := countChangeLog(t, db, "session_updated"); got != before+2 {
 		t.Fatalf("session_updated invalidations = %d, want %d", got, before+2)
+	}
+	mustExec(t, db, `UPDATE conversation_messages SET text='hi there', revision=revision+1, updated_at=? WHERE id='m1'`, now)
+	mustExec(t, db, `UPDATE conversation_activities SET summary='ran date -u', revision=revision+1, updated_at=? WHERE id='a1'`, now)
+	if got := countChangeLog(t, db, "session_updated"); got != before+4 {
+		t.Fatalf("streamed-row invalidations = %d, want %d", got, before+4)
 	}
 
 	// A turn reaching a terminal state changes derived session activity even

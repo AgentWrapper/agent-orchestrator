@@ -30,14 +30,15 @@ type SessionReader interface {
 
 // Service owns the live Chat controllers.
 type Service struct {
-	store    Store
-	reader   SnapshotReader
-	sessions SessionReader
-	drivers  ports.ChatDriverRegistry
-	activity ActivityRecorder
-	log      *slog.Logger
-	newID    IDFactory
-	now      Clock
+	store      Store
+	reader     SnapshotReader
+	pageReader SnapshotPageReader
+	sessions   SessionReader
+	drivers    ports.ChatDriverRegistry
+	activity   ActivityRecorder
+	log        *slog.Logger
+	newID      IDFactory
+	now        Clock
 
 	mu          sync.RWMutex
 	controllers map[domain.SessionID]*Controller
@@ -46,10 +47,11 @@ type Service struct {
 // Options configures a Service. The id factory and clock are injected so tests
 // are deterministic.
 type Options struct {
-	Store    Store
-	Reader   SnapshotReader
-	Sessions SessionReader
-	Drivers  ports.ChatDriverRegistry
+	Store      Store
+	Reader     SnapshotReader
+	PageReader SnapshotPageReader
+	Sessions   SessionReader
+	Drivers    ports.ChatDriverRegistry
 	// Activity feeds derived session status from turn events. Nil leaves a chat
 	// session reading as idle while it works, so production always wires it.
 	Activity ActivityRecorder
@@ -71,6 +73,7 @@ func New(opts Options) *Service {
 	return &Service{
 		store:       opts.Store,
 		reader:      opts.Reader,
+		pageReader:  opts.PageReader,
 		sessions:    opts.Sessions,
 		drivers:     opts.Drivers,
 		activity:    opts.Activity,
@@ -85,6 +88,7 @@ func New(opts Options) *Service {
 type StartConfig struct {
 	SessionID             domain.SessionID
 	ProjectID             domain.ProjectID
+	Kind                  domain.SessionKind
 	Harness               domain.AgentHarness
 	DataDir               string
 	WorkspacePath         string
@@ -144,8 +148,12 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, fmt.Errorf("%w: %s lacks %v", ports.ErrChatUnsupported, cfg.Harness, missing)
 	}
 
+	scope := domain.ConversationScopeSession
+	if cfg.Kind == domain.KindOrchestrator {
+		scope = domain.ConversationScopeProject
+	}
 	conversation, err := s.store.CreateConversation(
-		ctx, s.newID(), cfg.ProjectID, cfg.SessionID, s.now())
+		ctx, s.newID(), scope, cfg.ProjectID, cfg.SessionID, s.now())
 	if err != nil {
 		return nil, fmt.Errorf("open conversation: %w", err)
 	}
@@ -336,14 +344,16 @@ func (s *Service) StopAll(ctx context.Context) {
 
 // Snapshot is the durable read model a client bootstraps from.
 type Snapshot struct {
-	Conversation domain.ConversationRecord
-	SessionID    domain.SessionID
-	Harness      domain.AgentHarness
-	Mode         domain.SessionMode
-	Controller   ports.ChatControllerState
-	Turns        []domain.ConversationTurn
-	Messages     []domain.ConversationMessage
-	Activities   []domain.ConversationActivity
+	Conversation   domain.ConversationRecord
+	SessionID      domain.SessionID
+	Harness        domain.AgentHarness
+	Mode           domain.SessionMode
+	Controller     ports.ChatControllerState
+	Turns          []domain.ConversationTurn
+	Messages       []domain.ConversationMessage
+	Activities     []domain.ConversationActivity
+	OldestSequence int64
+	HasMoreBefore  bool
 	// Usage and RateLimits are current state carried on the snapshot the client
 	// already polls, rather than timeline entries or a second request. Both are nil
 	// until the provider has reported, so a client can tell "not known yet" from a
@@ -368,12 +378,21 @@ type SnapshotReader interface {
 	LoadConversationSnapshot(ctx context.Context, conversationID string) (ConversationRows, error)
 }
 
+// SnapshotPageReader is the production bounded-history path. It is separate from
+// SnapshotReader so existing tests and recovery tools can still request a full
+// snapshot explicitly.
+type SnapshotPageReader interface {
+	LoadConversationSnapshotPage(ctx context.Context, conversationID string, beforeSequence, limit int64) (ConversationRows, error)
+}
+
 // ConversationRows is the raw durable read.
 type ConversationRows struct {
-	Conversation domain.ConversationRecord
-	Turns        []domain.ConversationTurn
-	Messages     []domain.ConversationMessage
-	Activities   []domain.ConversationActivity
+	Conversation   domain.ConversationRecord
+	Turns          []domain.ConversationTurn
+	Messages       []domain.ConversationMessage
+	Activities     []domain.ConversationActivity
+	OldestSequence int64
+	HasMoreBefore  bool
 }
 
 // Snapshot reads a session's conversation.
@@ -431,6 +450,57 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 	}, nil
 }
 
+// SnapshotPage reads one bounded timeline page. The live conversation metadata
+// remains current on every page; only turns/messages/activities are windowed.
+func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeSequence, limit int64) (Snapshot, error) {
+	record, err := s.requireChatSession(ctx, id)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	conversation, err := s.store.ConversationForSession(ctx, id)
+	if errors.Is(err, domain.ErrNoConversation) {
+		return Snapshot{
+			SessionID:  id,
+			Harness:    record.Harness,
+			Mode:       domain.NormalizeSessionMode(record.Mode),
+			Controller: ports.ChatControllerStopped,
+		}, nil
+	}
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("conversation for %s: %w", id, err)
+	}
+	if s.pageReader == nil {
+		// A non-production reader (normally a focused test fake) can retain the
+		// old full read. Production always wires PageReader.
+		return s.Snapshot(ctx, id)
+	}
+	rows, err := s.pageReader.LoadConversationSnapshotPage(ctx, conversation.ID, beforeSequence, limit)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("load conversation page %s: %w", conversation.ID, err)
+	}
+	state := ports.ChatControllerStopped
+	var caps ports.ChatCapabilities
+	if controller, err := s.Controller(id); err == nil {
+		state = controller.State()
+		caps = controller.Capabilities()
+	}
+	return Snapshot{
+		Conversation:   rows.Conversation,
+		SessionID:      id,
+		Harness:        record.Harness,
+		Mode:           domain.NormalizeSessionMode(record.Mode),
+		Controller:     state,
+		Turns:          rows.Turns,
+		Messages:       rows.Messages,
+		Activities:     rows.Activities,
+		OldestSequence: rows.OldestSequence,
+		HasMoreBefore:  rows.HasMoreBefore,
+		Capabilities:   caps,
+		Usage:          rows.Conversation.Usage,
+		RateLimits:     rows.Conversation.RateLimits,
+	}, nil
+}
+
 // SnapshotReaderFunc adapts a plain function to SnapshotReader. The daemon wiring
 // uses it to convert the store's own snapshot type, so this package never has to
 // import the storage layer.
@@ -442,6 +512,16 @@ func (f SnapshotReaderFunc) LoadConversationSnapshot(
 	conversationID string,
 ) (ConversationRows, error) {
 	return f(ctx, conversationID)
+}
+
+type SnapshotPageReaderFunc func(ctx context.Context, conversationID string, beforeSequence, limit int64) (ConversationRows, error)
+
+func (f SnapshotPageReaderFunc) LoadConversationSnapshotPage(
+	ctx context.Context,
+	conversationID string,
+	beforeSequence, limit int64,
+) (ConversationRows, error) {
+	return f(ctx, conversationID, beforeSequence, limit)
 }
 
 /* ---- session_manager.ChatLauncher ---------------------------------------- */
@@ -475,6 +555,7 @@ func (s *Service) StartChat(ctx context.Context, cfg ChatStartRequest) (ChatStar
 	controller, err := s.Start(ctx, StartConfig{
 		SessionID:              cfg.SessionID,
 		ProjectID:              cfg.ProjectID,
+		Kind:                   cfg.Kind,
 		Harness:                cfg.Harness,
 		DataDir:                cfg.DataDir,
 		WorkspacePath:          cfg.WorkspacePath,
@@ -500,6 +581,7 @@ func (s *Service) StartChat(ctx context.Context, cfg ChatStartRequest) (ChatStar
 type ChatStartRequest struct {
 	SessionID             domain.SessionID
 	ProjectID             domain.ProjectID
+	Kind                  domain.SessionKind
 	Harness               domain.AgentHarness
 	DataDir               string
 	WorkspacePath         string

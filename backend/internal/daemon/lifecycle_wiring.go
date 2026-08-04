@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/activitydispatch"
@@ -31,6 +32,7 @@ import (
 
 type notificationSink interface {
 	Notify(context.Context, ports.NotificationIntent) error
+	Resolve(context.Context, ports.NotificationResolution) error
 }
 
 // lifecycleStack owns the runtime reaper goroutine started with the lifecycle
@@ -121,6 +123,7 @@ type sessionLifecycle interface {
 	Reconcile(ctx context.Context) error
 	RestoreAll(ctx context.Context) error
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+	Send(ctx context.Context, id domain.SessionID, message string) error
 	// SetShellTerminalCloser late-binds Kill/Cleanup to close a session's
 	// scoped shell terminals before its worktree is torn down. shellterm.Service
 	// is built after Session Manager during boot (see startShellTerminals), so
@@ -257,6 +260,48 @@ func newSessionMessenger(store *sqlite.Store, runtime runtimeMessageSender, _ *s
 	return runtimeMessenger{store: store, runtime: runtime}
 }
 
+// modeAwareMessenger lets lifecycle start before the session manager while
+// ensuring every reaction crosses the same persisted-mode dispatcher as an
+// explicit `ao send`. A send in the short boot window waits for Bind instead of
+// falling through to the terminal runtime, which would be wrong for Chat sessions.
+type modeAwareMessenger struct {
+	mu     sync.RWMutex
+	target ports.AgentMessenger
+	ready  chan struct{}
+	once   sync.Once
+}
+
+func newModeAwareMessenger() *modeAwareMessenger {
+	return &modeAwareMessenger{ready: make(chan struct{})}
+}
+
+func (m *modeAwareMessenger) Bind(target ports.AgentMessenger) {
+	m.mu.Lock()
+	m.target = target
+	m.mu.Unlock()
+	m.once.Do(func() { close(m.ready) })
+}
+
+func (m *modeAwareMessenger) Send(ctx context.Context, id domain.SessionID, message string) error {
+	m.mu.RLock()
+	target := m.target
+	m.mu.RUnlock()
+	if target == nil {
+		select {
+		case <-m.ready:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		m.mu.RLock()
+		target = m.target
+		m.mu.RUnlock()
+	}
+	if target == nil {
+		return fmt.Errorf("mode-aware lifecycle messenger bound without a target")
+	}
+	return target.Send(ctx, id, message)
+}
+
 // buildAgentRegistry returns a registry populated with the agent adapters the
 // daemon ships, keyed by manifest id. Registration only fails on an
 // empty/duplicate id — a programmer error, not a runtime condition.
@@ -352,6 +397,7 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 	out, err := c.svc.StartChat(ctx, chatsvc.ChatStartRequest{
 		SessionID:              cfg.SessionID,
 		ProjectID:              cfg.ProjectID,
+		Kind:                   cfg.Kind,
 		Harness:                cfg.Harness,
 		DataDir:                cfg.DataDir,
 		WorkspacePath:          cfg.WorkspacePath,

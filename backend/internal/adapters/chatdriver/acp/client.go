@@ -547,7 +547,7 @@ func (c *conversation) mergeToolUpdate(update *acpsdk.SessionToolCallUpdate) *to
 }
 
 func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool) ports.ChatEvent {
-	output := tool.rawOutput
+	output := toolOutputText(tool.rawOutput)
 	if tool.terminalOutput != "" {
 		output = tool.terminalOutput
 	}
@@ -587,6 +587,36 @@ func (c *conversation) toolEvent(turnID string, tool *toolState, completed bool)
 		ActivityKind: activityKindFromTool(tool.kind), ActivityStatus: status,
 		Summary: summary, Detail: detail,
 	}
+}
+
+// toolOutputText translates ACP's provider-defined rawOutput into AO's neutral
+// command-detail contract, where output is always text. ACP deliberately permits
+// any JSON value here; OpenCode, for example, wraps the text as
+// {"output":"...","metadata":{...}}. Persisting that object unchanged makes the
+// typed frontend contract untrue and crashes text-only renderers such as ANSI
+// cleanup.
+func toolOutputText(raw any) string {
+	switch value := raw.(type) {
+	case nil:
+		return ""
+	case string:
+		return value
+	case map[string]any:
+		for _, key := range []string{"output", "text", "error"} {
+			if text := toolOutputText(value[key]); text != "" {
+				return text
+			}
+		}
+		if text := toolOutputText(value["metadata"]); text != "" {
+			return text
+		}
+	}
+
+	encoded, err := json.Marshal(raw)
+	if err != nil || string(encoded) == "null" {
+		return ""
+	}
+	return string(encoded)
 }
 
 func parentToolUseID(meta map[string]any) string {

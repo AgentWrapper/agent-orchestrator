@@ -48,6 +48,8 @@ function snapshot(
 		turns,
 		items,
 		latestSequence: items.length,
+		oldestSequence: items[0]?.sequence ?? 1,
+		hasMoreBefore: false,
 		settings: {},
 		...extra,
 	};

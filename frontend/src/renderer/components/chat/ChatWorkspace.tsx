@@ -72,6 +72,10 @@ import {
 
 export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
+	/** Older durable history is available but not loaded into the DOM yet. */
+	hasOlder?: boolean;
+	loadingOlder?: boolean;
+	onLoadOlder?: () => void;
 	onSend?: (text: string, attachments?: { mimeType: string; data: string }[]) => void;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: (
@@ -138,6 +142,9 @@ export interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
 	snapshot,
+	hasOlder,
+	loadingOlder,
+	onLoadOlder,
 	onSend,
 	onDecide,
 	onResolveInput,
@@ -215,6 +222,9 @@ export function ChatWorkspace({
 			/>
 			<Timeline
 				snapshot={snapshot}
+				hasOlder={hasOlder}
+				loadingOlder={loadingOlder}
+				onLoadOlder={onLoadOlder}
 				onDecide={onDecide}
 				onResolveInput={onResolveInput}
 				busy={busy}
@@ -574,22 +584,24 @@ function ControllerBanner({
  * Once they scroll up to read, new output must not yank them away — it surfaces a
  * jump control instead.
  *
- * Everything below the scroller is memoized per turn, and the reason is the poll
- * loop rather than the item count: `useConversation` rebuilds the snapshot from
- * JSON every second while a turn runs, so an idle conversation re-renders on a
- * timer. Measured on a 1,400-item history that cost 60ms of main-thread work per
- * poll — four dropped frames a second for a conversation nobody was touching.
- * Scrolling the same history never exceeded a 16.7ms frame, which is why this is
- * memoization and not virtualization: the DOM was never the problem.
+ * Finished turns are memoized so a targeted live-event invalidation only redraws
+ * the turn that changed. Older pages are prepended explicitly instead of keeping
+ * an unbounded history in every snapshot response.
  */
 function Timeline({
 	snapshot,
+	hasOlder,
+	loadingOlder,
+	onLoadOlder,
 	onDecide,
 	onResolveInput,
 	busy,
 	onRollback,
 }: {
 	snapshot: ConversationSnapshot;
+	hasOlder?: boolean;
+	loadingOlder?: boolean;
+	onLoadOlder?: () => void;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
@@ -635,6 +647,21 @@ function Timeline({
 				aria-label="Conversation"
 			>
 				<div className="mx-auto flex max-w-3xl flex-col gap-5">
+					{hasOlder ? (
+						<div className="flex justify-center pb-1">
+							<Button
+								type="button"
+								size="sm"
+								variant="ghost"
+								disabled={loadingOlder}
+								onClick={onLoadOlder}
+								className="gap-1.5 text-muted-foreground"
+							>
+								{loadingOlder ? <Loader2 aria-hidden="true" className="size-3.5 animate-spin" /> : null}
+								Load earlier messages
+							</Button>
+						</div>
+					) : null}
 					{groups.map((group) => (
 						<TurnGroup
 							key={group.key}

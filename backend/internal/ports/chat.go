@@ -666,6 +666,10 @@ const (
 // bumps its revision; it never allocates a new timeline position per token.
 type ChatEvent struct {
 	Kind ChatEventKind
+	// ProviderEventID is an identity for this exact native event, when the
+	// provider supplies one. It is deliberately distinct from ProviderItemID:
+	// start, delta and completion events commonly share one item id.
+	ProviderEventID string
 
 	// ProviderTurnID is set on every event that belongs to a turn.
 	ProviderTurnID string

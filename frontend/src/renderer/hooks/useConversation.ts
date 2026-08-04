@@ -5,12 +5,11 @@
  * the wire shape onto the view model and does not re-sort, re-derive turn state,
  * or decide which approvals are actionable. Those are daemon decisions.
  *
- * Polling for now. The mux conversation channel replaces the interval later; the
- * component contract does not change when it does, because both produce the same
- * snapshot.
+ * Live changes arrive through the daemon event channel. Older history is fetched
+ * in bounded pages only when the reader asks for it.
  */
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
@@ -56,12 +55,8 @@ export function conversationQueryKey(sessionId: string) {
 	return ["conversation", sessionId] as const;
 }
 
-/**
- * A turn is in flight while the agent is working, so the snapshot is refetched
- * quickly. An idle conversation does not need to be polled hard.
- */
-const ACTIVE_INTERVAL_MS = 1000;
-const IDLE_INTERVAL_MS = 5000;
+const CONVERSATION_PAGE_SIZE = 200;
+const CONFIG_OPTIONS_POLL_INTERVAL_MS = 5_000;
 
 /**
  * Answers that will never change on a retry. SESSION_MODE_MISMATCH is permanent
@@ -81,19 +76,28 @@ export interface ConversationQueryResult {
 	/** Set when the session exists but has no chat conversation to show. */
 	unavailable?: { code: string; message: string };
 	error?: string;
+	hasOlder: boolean;
+	isLoadingOlder: boolean;
+	loadOlder: () => void;
 }
 
 export function useConversation(sessionId: string | undefined): ConversationQueryResult {
-	const query = useQuery({
+	const query = useInfiniteQuery({
 		queryKey: conversationQueryKey(sessionId ?? ""),
 		enabled: Boolean(sessionId),
-		queryFn: async () => {
+		initialPageParam: undefined as number | undefined,
+		queryFn: async ({ pageParam }) => {
 			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/conversation", {
-				params: { path: { sessionId: sessionId as string } },
+				params: {
+					path: { sessionId: sessionId as string },
+					query: { beforeSequence: pageParam, limit: CONVERSATION_PAGE_SIZE },
+				},
 			});
 			if (error) throw error;
 			return toSnapshot(data as WireSnapshot);
 		},
+		getNextPageParam: (page) => (page.hasMoreBefore ? page.oldestSequence : undefined),
+		select: (data) => mergeConversationPages(data.pages),
 		// A mode mismatch is permanent: the mode is immutable, so retrying cannot
 		// help and retrying would leave the surface stuck on a loading state
 		// instead of explaining why there is no conversation. Only genuinely
@@ -102,14 +106,6 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 			const code = apiErrorCode(error);
 			if (code && PERMANENT_CODES.has(code)) return false;
 			return attempt < 2;
-		},
-		refetchInterval: (query) => {
-			const snapshot = query.state.data;
-			if (!snapshot) return IDLE_INTERVAL_MS;
-			const busy =
-				snapshot.controller.state === "busy" ||
-				snapshot.turns.some((turn) => turn.state === "running" || turn.state === "queued");
-			return busy ? ACTIVE_INTERVAL_MS : IDLE_INTERVAL_MS;
 		},
 	});
 
@@ -121,12 +117,29 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 			return {
 				isLoading: false,
 				unavailable: { code, message: apiErrorMessage(query.error) },
+				hasOlder: false,
+				isLoadingOlder: false,
+				loadOlder: () => {},
 			};
 		}
-		return { isLoading: false, error: apiErrorMessage(query.error) };
+		return {
+			isLoading: false,
+			error: apiErrorMessage(query.error),
+			hasOlder: false,
+			isLoadingOlder: false,
+			loadOlder: () => {},
+		};
 	}
 
-	return { snapshot: query.data, isLoading: query.isLoading };
+	return {
+		snapshot: query.data,
+		isLoading: query.isLoading,
+		hasOlder: query.hasNextPage,
+		isLoadingOlder: query.isFetchingNextPage,
+		loadOlder: () => {
+			void query.fetchNextPage();
+		},
+	};
 }
 
 /** Commands against a conversation. Each refetches the snapshot on success. */
@@ -438,7 +451,7 @@ export function useConversationConfigOptions(sessionId: string | undefined, enab
 		// ACP can push a replacement catalog when one option changes. Until the
 		// renderer consumes daemon change events, a light poll keeps those updates
 		// visible without coupling them to conversation history polling.
-		refetchInterval: IDLE_INTERVAL_MS,
+		refetchInterval: CONFIG_OPTIONS_POLL_INTERVAL_MS,
 		queryFn: async () => {
 			const { data, error } = await apiClient.GET(
 				"/api/v1/sessions/{sessionId}/conversation/config-options",
@@ -600,6 +613,8 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 		mode: wire.mode as SessionMode,
 		controller: { state: wire.controller as ControllerState },
 		latestSequence: wire.latestSequence,
+		oldestSequence: wire.oldestSequence ?? wire.latestSequence + 1,
+		hasMoreBefore: wire.hasMoreBefore ?? false,
 		settings: {
 			model: wire.settings?.model || undefined,
 			reasoningEffort: wire.settings?.reasoningEffort || undefined,
@@ -691,6 +706,32 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 			rolledBack: turn.rolledBack ?? undefined,
 		})),
 		items,
+	};
+}
+
+/** Merge the newest live page with any older pages loaded on demand. */
+function mergeConversationPages(
+	pages: ConversationSnapshot[],
+): ConversationSnapshot | undefined {
+	const live = pages[0];
+	if (!live) return undefined;
+
+	const items = new Map<string, ConversationItem>();
+	const turns = new Map<string, ConversationSnapshot["turns"][number]>();
+	// Walk oldest to newest so the live page wins when a row changed after an older
+	// page was fetched (for example, a streamed message settling).
+	for (const page of [...pages].reverse()) {
+		for (const item of page.items) items.set(`${item.kind}:${item.id}`, item);
+		for (const turn of page.turns) turns.set(turn.id, turn);
+	}
+
+	const oldest = pages[pages.length - 1] ?? live;
+	return {
+		...live,
+		oldestSequence: oldest.oldestSequence,
+		hasMoreBefore: oldest.hasMoreBefore,
+		items: [...items.values()].sort((a, b) => a.sequence - b.sequence),
+		turns: [...turns.values()].sort((a, b) => a.requestedAt.localeCompare(b.requestedAt)),
 	};
 }
 

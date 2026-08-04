@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,10 @@ type ConversationService interface {
 	Rollback(ctx context.Context, session domain.SessionID, turnID string) (int, error)
 	SetTitle(ctx context.Context, session domain.SessionID, title string) (string, error)
 	ReloadMCPServers(ctx context.Context, session domain.SessionID) ([]domain.ConversationMCPServer, error)
+}
+
+type pagedConversationService interface {
+	SnapshotPage(ctx context.Context, session domain.SessionID, beforeSequence, limit int64) (chatsvc.Snapshot, error)
 }
 
 // ConversationsController owns the Chat routes for a session.
@@ -338,12 +343,41 @@ func (c *ConversationsController) snapshot(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	session := domain.SessionID(chi.URLParam(r, "sessionId"))
-	snapshot, err := c.Svc.Snapshot(r.Context(), session)
+	before, err := optionalPositiveInt64(r.URL.Query().Get("beforeSequence"))
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "CONVERSATION_CURSOR_INVALID", err.Error(), nil)
+		return
+	}
+	limit := int64(200)
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		limit, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || limit < 1 || limit > 500 {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "CONVERSATION_LIMIT_INVALID", "limit must be between 1 and 500", nil)
+			return
+		}
+	}
+	var snapshot chatsvc.Snapshot
+	if paged, ok := c.Svc.(pagedConversationService); ok {
+		snapshot, err = paged.SnapshotPage(r.Context(), session, before, limit)
+	} else {
+		snapshot, err = c.Svc.Snapshot(r.Context(), session)
+	}
 	if err != nil {
 		writeConversationError(w, r, err)
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, conversationSnapshotResponse(snapshot))
+}
+
+func optionalPositiveInt64(raw string) (int64, error) {
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value < 1 {
+		return 0, fmt.Errorf("beforeSequence must be a positive integer")
+	}
+	return value, nil
 }
 
 func (c *ConversationsController) send(w http.ResponseWriter, r *http.Request) {
@@ -619,6 +653,14 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"SESSION_MODE_UNSUPPORTED", err.Error(), nil)
 
+	case errors.Is(err, ports.ErrChatDriverUnavailable):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_DRIVER_UNAVAILABLE", err.Error(), nil)
+
+	case errors.Is(err, ports.ErrChatDriverIncompatible):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_DRIVER_INCOMPATIBLE", err.Error(), nil)
+
 	case errors.Is(err, ports.ErrChatAuthRequired):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_AUTH_REQUIRED", "the agent is installed but not authenticated", nil)
@@ -645,6 +687,8 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 		Mode:           string(s.Mode),
 		Controller:     string(s.Controller),
 		LatestSequence: s.Conversation.LatestSequence,
+		OldestSequence: s.OldestSequence,
+		HasMoreBefore:  s.HasMoreBefore,
 		Turns:          make([]ConversationTurnResponse, 0, len(s.Turns)),
 		Messages:       make([]ConversationMessageResponse, 0, len(s.Messages)),
 		Activities:     make([]ConversationActivityResponse, 0, len(s.Activities)),

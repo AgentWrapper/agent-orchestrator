@@ -2,6 +2,7 @@ package codexappserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -129,6 +130,28 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 	}
 	if err != nil {
 		d.log.Debug("codex auth probe inconclusive; continuing", "error", err)
+	}
+
+	// Binary presence is not protocol compatibility. Complete the same initialize
+	// handshake a real controller uses, then exercise model/list: it is part of
+	// the surface AO advertises and a harmless read that catches older app-server
+	// builds before a session row or worktree exists.
+	workdir, err := os.Getwd()
+	if err != nil || !filepath.IsAbs(workdir) {
+		workdir = os.TempDir()
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+	conv, err := d.connect(probeCtx, workdir, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conv.Close() }()
+	var models struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := conv.conn.request(probeCtx, "model/list", map[string]any{}, &models); err != nil {
+		return nil, fmt.Errorf("%w: model/list: %v", ports.ErrChatDriverIncompatible, err)
 	}
 
 	return capabilities(), nil

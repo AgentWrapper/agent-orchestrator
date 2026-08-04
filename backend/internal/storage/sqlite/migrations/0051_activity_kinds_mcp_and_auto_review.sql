@@ -20,7 +20,7 @@
 -- foreign_keys pragma dance and the foreign_key_check that proves the copy did not
 -- orphan anything.
 --
--- The column list is 0041 plus 0045's command output columns plus 0048's streamed
+-- The column list is 0043 plus 0047's command output columns plus 0050's streamed
 -- text columns. Dropping the table also drops its indexes and its CDC trigger, so
 -- all five are recreated verbatim below; a missing trigger would silently stop
 -- chat activity from invalidating the session on every client.
@@ -81,11 +81,27 @@ AFTER INSERT ON conversation_activities
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'activity', s.activity_state,
+		   json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+					   'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
            NEW.updated_at
     FROM conversations c
-    JOIN sessions s ON s.id = c.session_id
+    JOIN sessions s ON s.id = c.current_session_id
+    WHERE c.id = NEW.conversation_id;
+END;
+
+CREATE TRIGGER conversation_activities_cdc_update
+AFTER UPDATE ON conversation_activities
+WHEN OLD.revision <> NEW.revision
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    SELECT s.project_id, s.id, 'session_updated',
+		   json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+					   'activity', s.activity_state,
+                       'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
+           NEW.updated_at
+    FROM conversations c
+    JOIN sessions s ON s.id = c.current_session_id
     WHERE c.id = NEW.conversation_id;
 END;
 

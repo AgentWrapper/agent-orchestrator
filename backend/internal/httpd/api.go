@@ -128,6 +128,7 @@ func (a *API) Register(root chi.Router) {
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
 		a.notifications.RegisterStream(r)
+		a.sessions.RegisterStreams(r)
 		a.events.Register(r)
 	})
 }

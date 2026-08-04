@@ -30,7 +30,7 @@ import (
 // Store is the durable conversation surface the controller needs. Implemented by
 // the SQLite store.
 type Store interface {
-	CreateConversation(ctx context.Context, id string, project domain.ProjectID, session domain.SessionID, now time.Time) (domain.ConversationRecord, error)
+	CreateConversation(ctx context.Context, id string, scope domain.ConversationScope, project domain.ProjectID, session domain.SessionID, now time.Time) (domain.ConversationRecord, error)
 	ConversationForSession(ctx context.Context, session domain.SessionID) (domain.ConversationRecord, error)
 
 	AdoptProviderTurn(ctx context.Context, conversationID string, session domain.SessionID, generation, turnID, providerTurnID string, now time.Time) error
@@ -85,7 +85,7 @@ type Store interface {
 	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
 	FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error
 
-	RecordProviderEvent(ctx context.Context, conversationID string, session domain.SessionID, providerEventID, method, payloadJSON string, now time.Time) error
+	ProjectProviderEvent(ctx context.Context, conversationID string, session domain.SessionID, providerEventID, method, payloadJSON string, now time.Time, project func(context.Context) error) error
 }
 
 // ActivityRecorder feeds derived session status.
@@ -156,8 +156,9 @@ type Controller struct {
 	mcpServers     map[string]domain.ConversationMCPServer
 	mcpServerOrder []string
 
-	stopped chan struct{}
-	once    sync.Once
+	stopped  chan struct{}
+	once     sync.Once
+	closeErr error
 }
 
 // ErrNoActiveTurn reports an interrupt with nothing to cancel.
@@ -758,12 +759,19 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 // happens when the event stream ends, which covers a provider that died on its
 // own as well as a shutdown AO initiated. Close only has to make the stream end
 // and wait for that to finish.
-func (c *Controller) Close(context.Context) error {
+func (c *Controller) Close(ctx context.Context) error {
 	c.once.Do(func() {
-		_ = c.conv.Close()
-		<-c.stopped
+		c.closeErr = c.conv.Close()
 	})
-	return nil
+	select {
+	case <-c.stopped:
+		return c.closeErr
+	case <-ctx.Done():
+		if c.closeErr != nil {
+			return errors.Join(c.closeErr, ctx.Err())
+		}
+		return ctx.Err()
+	}
 }
 
 // Wait blocks until the controller's event stream has ended.
@@ -779,13 +787,15 @@ func (c *Controller) project() {
 	ctx := context.WithoutCancel(context.Background())
 
 	for event := range c.conv.Events() {
-		c.archive(ctx, event)
-		if err := c.apply(ctx, event); err != nil {
-			// A projection failure must not kill the stream: the raw event is
-			// already archived, so the timeline can be repaired later.
+		if err := c.projectEvent(ctx, event); err != nil {
+			// A projection failure must not kill the provider stream. The store
+			// rolls the archive back with its projection, so durable state remains
+			// internally consistent and a later provider replay may retry it.
 			c.log.Error("failed to project chat event",
 				"session", c.sessionID, "kind", event.Kind, "error", err)
+			continue
 		}
+		c.afterProject(ctx, event)
 	}
 
 	c.mu.Lock()
@@ -813,41 +823,47 @@ func (c *Controller) project() {
 	}
 }
 
-// archive records the raw event. This is what makes a projection bug recoverable:
-// without it, a wrong projection is the only surviving account of what happened.
-func (c *Controller) archive(ctx context.Context, event ports.ChatEvent) {
+// projectEvent archives one normalized provider event and applies its durable
+// projection in the same SQLite transaction.
+func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) error {
 	record := map[string]any{
-		"kind":           event.Kind,
-		"providerTurnId": event.ProviderTurnID,
-		"providerItemId": event.ProviderItemID,
-		"summary":        event.Summary,
-		"detail":         json.RawMessage(nonEmptyJSON(event.Detail)),
-		"requestId":      event.RequestID,
-		"turnState":      event.TurnState,
+		"kind":            event.Kind,
+		"providerEventId": event.ProviderEventID,
+		"providerTurnId":  event.ProviderTurnID,
+		"providerItemId":  event.ProviderItemID,
+		"turnState":       event.TurnState,
+		"delta":           event.Delta,
+		"text":            event.Text,
+		"activityKind":    event.ActivityKind,
+		"activityStatus":  event.ActivityStatus,
+		"summary":         event.Summary,
+		"detail":          json.RawMessage(nonEmptyJSON(event.Detail)),
+		"requestId":       event.RequestID,
+		"decisions":       event.Decisions,
+		"controllerState": event.ControllerState,
+		"usage":           event.Usage,
+		"rateLimits":      event.RateLimits,
+		"title":           event.Title,
+		"plan":            event.Plan,
+		"reroute":         event.Reroute,
+		"account":         event.Account,
+		"threadState":     event.ThreadState,
+		"mcpServers":      event.MCPServers,
 	}
-	if event.Diff != nil {
-		// A turn diff is low-frequency and IS the payload, so archiving it is what
-		// makes a wrong diff projection recoverable. Deltas are deliberately not
-		// archived by content: they arrive many times per command, and doubling that
-		// write volume to duplicate text the projection already accumulates would
-		// cost more than it could ever repay.
-		record["diff"] = event.Diff
-	}
+	record["diff"] = event.Diff
 	if event.Input != nil {
 		record["input"] = event.Input
 	}
+	if event.Err != nil {
+		record["error"] = event.Err.Error()
+	}
 	payload, err := json.Marshal(record)
 	if err != nil {
-		c.log.Error("failed to encode provider event for archive", "error", err)
-		return
+		return fmt.Errorf("encode provider event archive: %w", err)
 	}
-	// Provider event ids are only stable for some events; where absent the row is
-	// kept unconditionally rather than dropped, since the archive's job is
-	// completeness.
-	if err := c.store.RecordProviderEvent(ctx, c.conversation.ID, c.sessionID,
-		event.ProviderItemID, string(event.Kind), string(payload), c.now()); err != nil {
-		c.log.Error("failed to archive provider event", "error", err)
-	}
+	return c.store.ProjectProviderEvent(ctx, c.conversation.ID, c.sessionID,
+		event.ProviderEventID, string(event.Kind), string(payload), c.now(),
+		func(txCtx context.Context) error { return c.apply(txCtx, event) })
 }
 
 func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
@@ -862,7 +878,6 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		c.ackedTurnID = event.ProviderTurnID
 		c.state = ports.ChatControllerBusy
 		c.mu.Unlock()
-		c.reportActivity(ctx, domain.ActivityActive, "chat.turn.started", now)
 		// A turn AO dispatched already has a row, bound in dispatch. This covers the
 		// turn AO did NOT dispatch: a compaction, or work the provider resumed from its
 		// own history. Adopting it is what keeps every item it emits correlated, and
@@ -871,8 +886,7 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		if event.ProviderTurnID != "" {
 			if err := c.store.AdoptProviderTurn(ctx, c.conversation.ID, c.sessionID,
 				c.generation, c.newID(), event.ProviderTurnID, now); err != nil {
-				c.log.Error("failed to adopt provider-started turn",
-					"session", c.sessionID, "providerTurn", event.ProviderTurnID, "error", err)
+				return fmt.Errorf("adopt provider-started turn %s: %w", event.ProviderTurnID, err)
 			}
 		}
 		return nil
@@ -896,16 +910,10 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			// A completion with no status is not evidence of success.
 			state = domain.TurnStateFailed
 		}
-		// The turn is over, so the session is waiting on the user again.
-		c.reportActivity(ctx, domain.ActivityIdle, "chat.turn.completed", now)
 		if err := c.store.SettleTurn(
 			ctx, c.conversation.ID, event.ProviderTurnID, state, message, now); err != nil {
 			return err
 		}
-		// The agent is free: send whatever the user typed while it was busy. After
-		// the settle, so a drain can never dispatch on top of a turn that still
-		// looks live.
-		c.drain(ctx)
 		return nil
 
 	case ports.ChatEventMessageDelta:
@@ -1123,9 +1131,6 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		return c.store.MarkCompacted(ctx, c.conversation.ID, now)
 
 	case ports.ChatEventApprovalRequested:
-		// Blocked on a person, which is distinct from working and from idle: the
-		// board should surface it as needing attention.
-		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.approval.requested", now)
 		detail := mergeApprovalDetail(event)
 		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
 			domain.ConversationActivity{
@@ -1151,7 +1156,6 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		if event.Input == nil {
 			return nil
 		}
-		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.input.requested", now)
 		detail, _ := json.Marshal(map[string]any{
 			"inputMode":     event.Input.Mode,
 			"message":       event.Input.Message,
@@ -1200,7 +1204,6 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		c.state = event.ControllerState
 		c.mu.Unlock()
 		if event.ControllerState == ports.ChatControllerStopped {
-			c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
 			if err := c.store.SettleOrphanedTurns(ctx, c.sessionID, now); err != nil {
 				return err
 			}
@@ -1229,6 +1232,34 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 	default:
 		// An event kind this build does not model is archived but not projected.
 		return nil
+	}
+}
+
+// afterProject performs effects that intentionally live outside the SQLite
+// archive/projection transaction. Lifecycle writes touch the sessions table and
+// draining may call the provider, so either one inside the store transaction
+// would hold the single writer connection across another subsystem.
+func (c *Controller) afterProject(ctx context.Context, event ports.ChatEvent) {
+	now := c.now()
+	switch event.Kind {
+	case ports.ChatEventTurnStarted:
+		c.reportActivity(ctx, domain.ActivityActive, "chat.turn.started", now)
+	case ports.ChatEventTurnCompleted:
+		c.reportActivity(ctx, domain.ActivityIdle, "chat.turn.completed", now)
+		// The settled turn is committed before another queued turn can dispatch.
+		c.drain(ctx)
+	case ports.ChatEventApprovalRequested:
+		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.approval.requested", now)
+	case ports.ChatEventInputRequested:
+		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.input.requested", now)
+	case ports.ChatEventControllerState:
+		if event.ControllerState == ports.ChatControllerStopped {
+			c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
+		}
+	case ports.ChatEventAccountChanged:
+		if event.Account != nil && event.Account.ReauthRequired {
+			c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.account.reauth", now)
+		}
 	}
 }
 
@@ -1304,10 +1335,6 @@ func (c *Controller) applyAccount(
 	if !update.ReauthRequired {
 		return nil
 	}
-	// Waiting on a person, and on something they have to do outside AO. Reported
-	// through the same lifecycle reduction an approval uses, because from the board's
-	// point of view the session is equally stuck.
-	c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.account.reauth", now)
 	detail, _ := json.Marshal(map[string]string{
 		"event":  "auth.reauth_required",
 		"reason": update.ReauthReason,

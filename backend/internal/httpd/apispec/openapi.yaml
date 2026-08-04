@@ -448,16 +448,19 @@ paths:
     get:
       operationId: listNotifications
       parameters:
-      - description: Notification status filter. Defaults to unread; all includes
+      - description: Notification filter. Defaults to unread (unseen); unresolved
+          returns notifications whose underlying issue is still open; all includes
           read history.
         in: query
         name: status
         schema:
-          description: Notification status filter. Defaults to unread; all includes
+          description: Notification filter. Defaults to unread (unseen); unresolved
+            returns notifications whose underlying issue is still open; all includes
             read history.
           enum:
           - unread
           - all
+          - unresolved
           type: string
       - description: Maximum notifications to return. Defaults to 100.
         in: query
@@ -555,6 +558,12 @@ paths:
   /api/v1/notifications/read-all:
     post:
       operationId: markAllNotificationsRead
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkAllNotificationsReadRequest'
+        required: true
       responses:
         "200":
           content:
@@ -562,6 +571,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MarkAllNotificationsReadResponse'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "500":
           content:
             application/json:
@@ -574,7 +589,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Mark all unread notifications read
+      summary: Mark notifications read
       tags:
       - notifications
   /api/v1/notifications/stream:
@@ -1411,6 +1426,29 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      - description: Read items older than this conversation sequence. Omit for the
+          newest page.
+        in: query
+        name: beforeSequence
+        schema:
+          description: Read items older than this conversation sequence. Omit for
+            the newest page.
+          minimum: 1
+          type:
+          - "null"
+          - integer
+      - description: Maximum combined messages and activities to return. Defaults
+          to 200.
+        in: query
+        name: limit
+        schema:
+          description: Maximum combined messages and activities to return. Defaults
+            to 200.
+          maximum: 500
+          minimum: 1
+          type:
+          - "null"
+          - integer
       responses:
         "200":
           content:
@@ -2820,6 +2858,63 @@ paths:
       summary: Resume an exited agent in its existing session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/reviewer:
+    put:
+      operationId: setSessionReviewer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionReviewerRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set the reviewer harness for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/reviews:
     get:
       operationId: listReviews
@@ -2954,6 +3049,11 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerReviewRequest'
       responses:
         "200":
           content:
@@ -3077,6 +3177,45 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Send a message to a running session's agent
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/workspace/events:
+    get:
+      operationId: streamSessionWorkspaceChanges
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stream session workspace file changes
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/workspace/file:
@@ -3656,6 +3795,12 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        reviewerHarness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
+          type: string
         scmStatus:
           enum:
           - pr_open
@@ -4099,6 +4244,8 @@ components:
           type: string
         harness:
           type: string
+        hasMoreBefore:
+          type: boolean
         latestSequence:
           format: int64
           type: integer
@@ -4117,6 +4264,9 @@ components:
           type: string
         modelReroute:
           $ref: '#/components/schemas/ConversationModelReroutePayload'
+        oldestSequence:
+          format: int64
+          type: integer
         rateLimits:
           $ref: '#/components/schemas/ConversationRateLimitsPayload'
         sessionId:
@@ -4139,6 +4289,7 @@ components:
       - mode
       - controller
       - latestSequence
+      - hasMoreBefore
       - turns
       - messages
       - activities
@@ -4460,9 +4611,12 @@ components:
           type: array
         unreadCount:
           type: integer
+        unresolvedCount:
+          type: integer
       required:
       - notifications
       - unreadCount
+      - unresolvedCount
       type: object
     ListProjectsResponse:
       properties:
@@ -4481,9 +4635,14 @@ components:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
+        runs:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - reviewerHandleId
       - reviews
+      - runs
       type: object
     ListSessionPRsResponse:
       properties:
@@ -4538,6 +4697,16 @@ components:
       - sessionId
       - files
       - truncated
+      type: object
+    MarkAllNotificationsReadRequest:
+      properties:
+        ids:
+          description: Acknowledge exactly these notifications. Omit to acknowledge
+            every unread notification; paginating clients should send the ids they
+            actually rendered so later pages stay unread.
+          items:
+            type: string
+          type: array
       type: object
     MarkAllNotificationsReadResponse:
       properties:
@@ -4617,9 +4786,16 @@ components:
           type: string
         projectId:
           type: string
+        resolvedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         sessionId:
           type: string
         status:
+          description: Seen state. unread means the user has not opened the notification
+            panel since it arrived.
           enum:
           - unread
           - read
@@ -5589,6 +5765,15 @@ components:
             entry point in the session workspace.
           type: string
       type: object
+    SetSessionReviewerRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
+          type: string
+      type: object
     SettingsResponse:
       properties:
         chatHarnesses:
@@ -5684,7 +5869,6 @@ components:
           - vibe
           - pi
           - autohand
-          - fake
           type: string
         issueId:
           type: string
@@ -5814,6 +5998,15 @@ components:
           - github
           type: string
         repo:
+          type: string
+      type: object
+    TriggerReviewRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
           type: string
       type: object
     TriggerReviewResponse:

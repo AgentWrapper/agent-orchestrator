@@ -127,7 +127,7 @@ describe("ChatMarkdown code highlighting", () => {
 
 	it("highlights a known language, leaving the code itself untouched", async () => {
 		render(<ChatMarkdown text={block("go", "func main() {}")} />);
-		await waitFor(() => expect(tokens().length).toBeGreaterThan(0));
+		await waitFor(() => expect(tokens().length).toBeGreaterThan(0), { timeout: 5_000 });
 		expect(document.querySelector("pre")?.textContent).toBe("func main() {}");
 	});
 

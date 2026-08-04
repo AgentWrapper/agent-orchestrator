@@ -135,6 +135,7 @@ export type BrowserViewHostOptions = {
 	isMac?: boolean;
 	getKeybindingOverrides?: () => KeybindingOverrides;
 	isKeybindingRecording?: () => boolean;
+	isCloseShellTerminalShortcutEnabled?: () => boolean;
 };
 
 export type BrowserViewHost = {
@@ -418,6 +419,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
+			(id) => id !== "close-shell-terminal" || Boolean(options.isCloseShellTerminalShortcutEnabled?.()),
 		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;

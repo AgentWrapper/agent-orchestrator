@@ -38,8 +38,12 @@ ALTER TABLE sessions ADD COLUMN controller_generation TEXT NOT NULL DEFAULT '';
 CREATE TABLE conversations (
     id              TEXT PRIMARY KEY,
     scope           TEXT NOT NULL CHECK (scope IN ('session', 'project')),
-    project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    session_id      TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+	project_id      TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+	session_id      TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+	-- The controller currently responsible for the narrative. For workers this
+	-- equals session_id. For project-scoped orchestrators it is rebound whenever
+	-- AO creates a clean replacement, while session_id remains NULL by scope.
+	current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
     latest_sequence INTEGER NOT NULL DEFAULT 0,
     created_at      TIMESTAMP NOT NULL,
     updated_at      TIMESTAMP NOT NULL,
@@ -51,7 +55,9 @@ CREATE TABLE conversations (
 CREATE UNIQUE INDEX idx_conversations_session ON conversations(session_id)
     WHERE session_id IS NOT NULL;
 CREATE UNIQUE INDEX idx_conversations_project_scope ON conversations(project_id)
-    WHERE scope = 'project';
+	WHERE scope = 'project';
+CREATE INDEX idx_conversations_current_session ON conversations(current_session_id)
+	WHERE current_session_id IS NOT NULL;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -187,9 +193,9 @@ CREATE INDEX idx_conversation_provider_events_replay
 
 -- +goose StatementBegin
 -- CDC. Change events come from triggers, following the existing rule, and the
--- payload is a compact invalidation signal — never chat prose. High-frequency
--- streaming deltas do not come through here at all; they travel over the mux.
--- These fire on new timeline rows and turn-state transitions only.
+-- payload is a compact invalidation signal — never chat prose. These fire on new
+-- timeline rows, streamed row revisions, and turn-state transitions; the client
+-- debounces them and refetches only the bounded live page.
 --
 -- They emit 'session_updated' rather than a new event type on purpose.
 -- change_log.event_type carries a CHECK allowlist, and SQLite cannot alter a
@@ -205,11 +211,12 @@ AFTER INSERT ON conversation_messages
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'activity', s.activity_state,
+		   json_object('id', s.id, 'sessionId', s.id, 'conversationId', NEW.conversation_id,
+					   'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
            NEW.updated_at
     FROM conversations c
-    JOIN sessions s ON s.id = c.session_id
+	JOIN sessions s ON s.id = c.current_session_id
     WHERE c.id = NEW.conversation_id;
 END;
 -- +goose StatementEnd
@@ -220,11 +227,49 @@ AFTER INSERT ON conversation_activities
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'activity', s.activity_state,
+           json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+					   'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
            NEW.updated_at
     FROM conversations c
-    JOIN sessions s ON s.id = c.session_id
+	JOIN sessions s ON s.id = c.current_session_id
+    WHERE c.id = NEW.conversation_id;
+END;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+-- Streaming rewrites an existing row. Emit the same semantic invalidation as an
+-- insert so clients fetch the bounded live page only when something changed,
+-- rather than polling the entire conversation on a timer.
+CREATE TRIGGER conversation_messages_cdc_update
+AFTER UPDATE ON conversation_messages
+WHEN OLD.revision <> NEW.revision
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    SELECT s.project_id, s.id, 'session_updated',
+           json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+					   'activity', s.activity_state,
+                       'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
+           NEW.updated_at
+    FROM conversations c
+    JOIN sessions s ON s.id = c.current_session_id
+    WHERE c.id = NEW.conversation_id;
+END;
+-- +goose StatementEnd
+
+-- +goose StatementBegin
+CREATE TRIGGER conversation_activities_cdc_update
+AFTER UPDATE ON conversation_activities
+WHEN OLD.revision <> NEW.revision
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    SELECT s.project_id, s.id, 'session_updated',
+           json_object('id', s.id, 'sessionId', s.id, 'conversationId', c.id,
+					   'activity', s.activity_state,
+                       'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
+           NEW.updated_at
+    FROM conversations c
+    JOIN sessions s ON s.id = c.current_session_id
     WHERE c.id = NEW.conversation_id;
 END;
 -- +goose StatementEnd
@@ -240,7 +285,8 @@ WHEN OLD.state <> NEW.state
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     SELECT s.project_id, s.id, 'session_updated',
-           json_object('id', s.id, 'activity', s.activity_state,
+		   json_object('id', s.id, 'sessionId', s.id, 'conversationId', NEW.conversation_id,
+					   'activity', s.activity_state,
                        'isTerminated', json(CASE WHEN s.is_terminated THEN 'true' ELSE 'false' END)),
            COALESCE(NEW.completed_at, NEW.started_at, NEW.requested_at)
     FROM sessions s
@@ -251,6 +297,8 @@ END;
 -- +goose Down
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS conversation_turns_cdc_update;
+DROP TRIGGER IF EXISTS conversation_activities_cdc_update;
+DROP TRIGGER IF EXISTS conversation_messages_cdc_update;
 DROP TRIGGER IF EXISTS conversation_activities_cdc_insert;
 DROP TRIGGER IF EXISTS conversation_messages_cdc_insert;
 DROP TABLE IF EXISTS conversation_provider_events;

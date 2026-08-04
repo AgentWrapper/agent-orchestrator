@@ -1,5 +1,8 @@
-import { MessageSquare, Monitor, Moon, Palette, Smartphone, SquareTerminal, Sun } from "lucide-react";
+import { Languages, MessageSquare, Monitor, Moon, Palette, Smartphone, SquareTerminal, Sun } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import type { ThemePreference } from "../../lib/theme";
+import type { AppLocale } from "../../i18n";
+import { useLocaleStore } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
@@ -7,25 +10,6 @@ import { SettingsSection } from "./SettingsSection";
 import { cn } from "../../lib/utils";
 import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
 import type { SessionMode } from "../../types/workspace";
-
-const THEME_OPTIONS = [
-	{ value: "light", label: "Light", icon: <Sun className="size-icon-lg" aria-hidden="true" /> },
-	{ value: "dark", label: "Dark", icon: <Moon className="size-icon-lg" aria-hidden="true" /> },
-	{ value: "system", label: "System", icon: <Monitor className="size-icon-lg" aria-hidden="true" /> },
-] satisfies SettingsOption<ThemePreference>[];
-
-const INTERFACE_OPTIONS = [
-	{
-		value: "tui",
-		label: "Terminal",
-		icon: <SquareTerminal className="size-icon-lg" aria-hidden="true" />,
-	},
-	{
-		value: "chat",
-		label: "Chat",
-		icon: <MessageSquare className="size-icon-lg" aria-hidden="true" />,
-	},
-] satisfies SettingsOption<SessionMode>[];
 
 /**
  * The default interface for new sessions.
@@ -36,23 +20,36 @@ const INTERFACE_OPTIONS = [
  * agents that have a structured driver today.
  */
 function SessionInterfaceRow() {
+	const { t } = useTranslation();
 	const { settings, isLoading, error } = useSettings();
 	const { update, saving, error: saveError } = useUpdateSessionInterface();
+	const interfaceOptions = [
+		{
+			value: "tui",
+			label: t("settings.sessionInterface.terminal"),
+			icon: <SquareTerminal className="size-icon-lg" aria-hidden="true" />,
+		},
+		{
+			value: "chat",
+			label: t("settings.sessionInterface.chat"),
+			icon: <MessageSquare className="size-icon-lg" aria-hidden="true" />,
+		},
+	] satisfies SettingsOption<SessionMode>[];
 
 	const chatAvailable = (settings?.chatHarnesses.length ?? 0) > 0;
 	const help = !chatAvailable
-		? "Applies to new sessions. No installed agent supports chat yet."
-		: `Applies to new sessions. Chat currently supports ${settings?.chatHarnesses.join(", ")}.`;
+		? t("settings.sessionInterface.unavailable")
+		: t("settings.sessionInterface.available", { harnesses: settings?.chatHarnesses.join(", ") });
 
 	const note = saveError ?? error ?? help;
 
 	return (
 		<div className="flex flex-col">
-			<SettingsRow icon={MessageSquare} label="Default session interface">
+			<SettingsRow icon={MessageSquare} label={t("settings.sessionInterface.label")}>
 				<SettingsOptionMenu
-					aria-label="Default session interface"
+					aria-label={t("settings.sessionInterface.label")}
 					value={settings?.defaultSessionMode ?? "tui"}
-					options={INTERFACE_OPTIONS}
+					options={interfaceOptions}
 					onChange={(mode) => update(mode)}
 					disabled={isLoading || saving || !chatAvailable}
 				/>
@@ -73,21 +70,63 @@ function SessionInterfaceRow() {
 }
 
 export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: () => void }) {
+	const { t } = useTranslation();
 	const themePreference = useUiStore((state) => state.themePreference);
 	const setThemePreference = useUiStore((state) => state.setThemePreference);
+	const locale = useLocaleStore((state) => state.locale);
+	const setLocale = useLocaleStore((state) => state.setLocale);
+	const localeSaving = useLocaleStore((state) => state.saving);
+	const localeSaveError = useLocaleStore((state) => state.saveError);
+
+	const themeOptions = [
+		{ value: "light", label: t("settings.theme.light"), icon: <Sun className="size-icon-lg" aria-hidden="true" /> },
+		{ value: "dark", label: t("settings.theme.dark"), icon: <Moon className="size-icon-lg" aria-hidden="true" /> },
+		{
+			value: "system",
+			label: t("settings.theme.system"),
+			icon: <Monitor className="size-icon-lg" aria-hidden="true" />,
+		},
+	] satisfies SettingsOption<ThemePreference>[];
+
+	const languageOptions = [
+		{ value: "en", label: t("settings.language.en") },
+		{ value: "zh-CN", label: t("settings.language.zhCN") },
+		{ value: "ja", label: t("settings.language.ja") },
+		{ value: "ko", label: t("settings.language.ko") },
+		{ value: "es", label: t("settings.language.es") },
+		{ value: "fr", label: t("settings.language.fr") },
+		{ value: "de", label: t("settings.language.de") },
+		{ value: "pt-BR", label: t("settings.language.ptBR") },
+	] satisfies SettingsOption<AppLocale>[];
 
 	return (
-		<SettingsSection title="General">
-			<SettingsRow icon={Palette} label="Theme">
+		<SettingsSection title={t("settings.general")}>
+			<SettingsRow icon={Palette} label={t("settings.theme")}>
 				<SettingsOptionMenu
-					aria-label="Theme"
+					aria-label={t("settings.theme")}
 					value={themePreference}
-					options={THEME_OPTIONS}
+					options={themeOptions}
 					onChange={setThemePreference}
 				/>
 			</SettingsRow>
+			<SettingsRow icon={Languages} label={t("settings.language")}>
+				<SettingsOptionMenu
+					aria-label={t("settings.language")}
+					disabled={localeSaving}
+					value={locale}
+					options={languageOptions}
+					onChange={(next) => {
+						void setLocale(next);
+					}}
+				/>
+			</SettingsRow>
+			{localeSaveError ? (
+				<p role="alert" className="px-3 text-caption leading-4 text-error">
+					{t("settings.language.saveFailed")}
+				</p>
+			) : null}
 			<SessionInterfaceRow />
-			<SettingsLinkRow icon={Smartphone} label="Connect Mobile" onClick={onConnectMobile} />
+			<SettingsLinkRow icon={Smartphone} label={t("settings.connectMobile")} onClick={onConnectMobile} />
 		</SettingsSection>
 	);
 }

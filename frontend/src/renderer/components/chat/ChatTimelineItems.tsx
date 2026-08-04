@@ -421,7 +421,11 @@ function TerminalInput({ text, truncated }: { text: string; truncated?: boolean 
 function CommandOutput({ activity }: { activity: ConversationActivity }) {
 	const pre = useRef<HTMLPreElement>(null);
 	const detail = activity.detail;
-	const raw = detail?.output ?? "";
+	// Older ACP-backed conversations may contain the provider's structured
+	// rawOutput even though AO's view model promises a string. New events are
+	// normalized at the adapter boundary; this compatibility read keeps those
+	// already-durable rows from taking down the entire session surface.
+	const raw = commandOutputText(detail?.output as unknown);
 	// Memoized per row: the timeline re-renders once a second while a turn runs, and
 	// only the rows a reader has opened pay for this at all.
 	const output = useMemo(() => stripAnsi(raw), [raw]);
@@ -460,6 +464,23 @@ function CommandOutput({ activity }: { activity: ConversationActivity }) {
 			) : null}
 		</>
 	);
+}
+
+function commandOutputText(raw: unknown): string {
+	if (typeof raw === "string") return raw;
+	if (!raw || typeof raw !== "object") return "";
+
+	const value = raw as Record<string, unknown>;
+	for (const key of ["output", "text", "error", "metadata"]) {
+		const text = commandOutputText(value[key]);
+		if (text) return text;
+	}
+
+	try {
+		return JSON.stringify(raw);
+	} catch {
+		return "";
+	}
 }
 
 /**

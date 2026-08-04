@@ -636,6 +636,8 @@ export interface ConversationSnapshot {
 	/** Already ordered by sequence. The renderer does not re-sort. */
 	items: ConversationItem[];
 	latestSequence: number;
+	oldestSequence: number;
+	hasMoreBefore: boolean;
 	/** What the next turn will be sent with. Daemon-owned, so it survives a
 	 *  restart and applies to turns AO dispatches on the user's behalf. */
 	settings: TurnSettings;

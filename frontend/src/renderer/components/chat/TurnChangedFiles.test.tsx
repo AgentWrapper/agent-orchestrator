@@ -157,6 +157,18 @@ describe("ActivityRow command output", () => {
 		);
 		expect(screen.queryByText("ok")).not.toBeInTheDocument();
 	});
+
+	it("renders structured ACP output from conversations written by older builds", async () => {
+		const structuredOutput = {
+			metadata: { exit: 0, output: "metadata copy" },
+			output: "command output\n",
+		};
+		const activity = commandActivity({ output: structuredOutput as unknown as string });
+		render(<ActivityRow activity={activity} />);
+
+		await userEvent.click(screen.getByRole("button"));
+		expect(screen.getByText("command output")).toBeInTheDocument();
+	});
 });
 
 // A run collapses consecutive tool calls to one line. Without the same auto-open

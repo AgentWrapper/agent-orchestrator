@@ -563,6 +563,42 @@ func TestACPDriverPreservesNestedToolAndTerminalMetadata(t *testing.T) {
 	}
 }
 
+func TestToolOutputTextNormalizesProviderDefinedRawOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  any
+		want string
+	}{
+		{name: "plain text", raw: "ok\n", want: "ok\n"},
+		{
+			name: "OpenCode output envelope",
+			raw: map[string]any{
+				"metadata": map[string]any{"exit": float64(0), "output": "metadata copy"},
+				"output":   "command output\n",
+			},
+			want: "command output\n",
+		},
+		{
+			name: "error envelope",
+			raw:  map[string]any{"error": "Tool execution aborted"},
+			want: "Tool execution aborted",
+		},
+		{
+			name: "unknown structured output remains visible",
+			raw:  map[string]any{"result": true},
+			want: `{"result":true}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := toolOutputText(tt.raw); got != tt.want {
+				t.Fatalf("toolOutputText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestACPDriverMapsCostRateLimitsAndAuthRecovery(t *testing.T) {
 	agent := &fakeAgent{promptNoPermission: true}
 	driver := New(Config{

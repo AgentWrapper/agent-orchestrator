@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -68,7 +70,6 @@ type SessionsBoardProps = {
 // Live merged sessions remain in-flow. A terminated runtime is archived even
 // when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
-const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone));
 
 function isArchivedSession(session: WorkspaceSession): boolean {
 	return session.isTerminated === true || session.status === "terminated";
@@ -79,8 +80,10 @@ const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) :
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const COLUMNS: Column[] = boardAttentionZoneOrder.map((zone) => getAttentionZoneViewForZone(zone, t));
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
@@ -92,10 +95,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
 	// Same crumb as ShellTopbar: project name in scope, else root-board "Board".
-	const boardLabel = workspace?.name ?? (projectId ? "" : "Board");
+	const boardLabel = workspace?.name ?? (projectId ? "" : t("shell.board"));
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
-	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity).label : undefined;
+	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
@@ -231,7 +234,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// Never fail silently: the daemon's message (e.g. a worktree/branch
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", err);
-			setSpawnError(err instanceof Error ? err.message : "Could not spawn orchestrator");
+			setSpawnError(err instanceof Error ? err.message : t("shell.couldNotSpawn"));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -250,23 +253,26 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 			{visibleSpawnError && !showProjectEmpty && (
 				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
 					{visibleSpawnError}
 				</TopbarKillError>
 			)}
 			<TopbarButton
-				aria-label="New task"
+				aria-label={t("shell.newTask")}
 				disabled={isProjectRestarting}
 				onClick={() => projectId && requestNewTask(projectId)}
 				variant="accent"
 			>
 				<Plus className="size-icon-md" aria-hidden="true" />
-				New task
+				{t("shell.newTask")}
 			</TopbarButton>
 			<TopbarButton
-				aria-label={orchestratorActivityLabel ? `Orchestrator, ${orchestratorActivityLabel}` : "Spawn Orchestrator"}
+				aria-label={
+					orchestratorActivityLabel
+						? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
+						: t("shell.spawnOrchestrator")
+				}
 				disabled={isSpawning || isProjectRestarting}
 				onClick={() => void openOrchestrator()}
 				variant="primary"
@@ -274,13 +280,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
 				{isProjectRestarting
-					? "Restarting..."
+					? t("shell.restartingDots")
 					: isSpawning
-						? "Spawning..."
+						? t("shell.spawningDots")
 						: orchestrator
-							? "Orchestrator"
-							: "Spawn Orchestrator"}
+							? t("shell.orchestrator")
+							: t("shell.spawnOrchestrator")}
 			</TopbarButton>
+			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
 		</>
 	) : boardOwnsNotificationCenter ? (
 		<NotificationCenter />
@@ -295,7 +302,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			    chooser was review feedback on #2432. */}
 			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
 				<div
-					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4.5"
+					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4"
 					style={dragStyle}
 				>
 					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
@@ -314,9 +321,9 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						<AlertTriangle className="size-icon-base shrink-0 text-warning" aria-hidden="true" />
 						<span className="min-w-0 flex-1">{health.message}</span>
 						{health.state === "restart_needed" || health.state === "duplicates" ? (
-							<TopbarButton disabled={isProjectRestarting} onClick={() => void restartOrchestrator()} variant="primary">
-								<RotateCw className="size-3.5" aria-hidden="true" />
-								Restart
+								<TopbarButton disabled={isProjectRestarting} onClick={() => void restartOrchestrator()} variant="primary">
+									<RotateCw className="size-3.5" aria-hidden="true" />
+									{t("shell.restart")}
 							</TopbarButton>
 						) : null}
 					</div>
@@ -324,7 +331,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				{showStartup ? (
 					<DaemonStartupLoader />
 				) : workspaceStartupState === "error" || workspaceQuery.isError ? (
-					<p className="py-10 text-center text-xs text-passive">Could not load sessions.</p>
+					<p className="py-10 text-center text-xs text-passive">{t("shell.couldNotLoadSessions")}</p>
 				) : showWelcome ? (
 					<BoardWelcome />
 				) : showProjectEmpty ? (
@@ -370,7 +377,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					<div className={cn("flex items-center gap-2", archiveExpanded ? "min-h-11" : "min-h-row-md")}>
 						<button
 							aria-expanded={archiveExpanded}
-							aria-label={`Archive, ${archived.length} ${archived.length === 1 ? "session" : "sessions"}`}
+							aria-label={t("shell.archiveSessionsAria", { count: archived.length })}
 							className="group flex min-w-0 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
 							onClick={() => setArchiveExpanded((v) => !v)}
 							type="button"
@@ -388,13 +395,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							>
 								<path d="m9 18 6-6-6-6" />
 							</svg>
-							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">Archive</span>
+							<span className="font-mono text-2xs font-medium uppercase tracking-wide-sm">{t("shell.archive")}</span>
 							<span className="ml-1.5 font-mono text-micro text-passive">{archived.length}</span>
 						</button>
 					</div>
 					{archiveExpanded && (
 						<div
-							aria-label="Archived sessions"
+							aria-label={t("shell.archivedSessions")}
 							className="board-scrollbar grid max-h-[45vh] grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2 overflow-y-auto pb-3"
 							role="list"
 						>
@@ -455,9 +462,10 @@ function ZoneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
+	const { t } = useTranslation();
 	return (
 		<section
-			aria-label={`${col.label} sessions`}
+			aria-label={t("shell.sessionsAria", { label: col.label })}
 			className="flex min-w-0 flex-col overflow-hidden"
 			data-testid="board-column"
 			data-column={col.zone}
@@ -501,45 +509,51 @@ type SplitLaneTone = {
 	dotGlow: boolean;
 };
 
-const idleLaneTone: SplitLaneTone = {
-	label: "Idle",
-	countLabel: "idle",
-	regionLabel: "Idle sessions",
-	dotClassName: "bg-status-idle",
-	titleClassName: "text-status-idle",
-	color: "var(--color-status-idle)",
-	dotGlow: false,
-};
-
-const workingLaneTone: SplitLaneTone = {
-	label: "Working",
-	countLabel: "working",
-	regionLabel: "Working sessions",
-	dotClassName: "bg-status-working",
-	titleClassName: "text-status-working",
-	color: "var(--color-status-working)",
-	dotGlow: true,
-};
-
-const readyLaneTone: SplitLaneTone = {
-	label: "Ready to merge",
-	countLabel: "ready to merge",
-	regionLabel: "Ready to merge sessions",
-	dotClassName: "bg-status-ready",
-	titleClassName: "text-status-ready",
-	color: "var(--color-status-ready)",
-	dotGlow: true,
-};
-
-const mergedLaneTone: SplitLaneTone = {
-	label: "Merged",
-	countLabel: "merged",
-	regionLabel: "Merged sessions",
-	dotClassName: "bg-status-merged",
-	titleClassName: "text-status-merged",
-	color: "var(--color-status-merged)",
-	dotGlow: false,
-};
+function splitLaneTones(t: TFunction): {
+	idle: SplitLaneTone;
+	working: SplitLaneTone;
+	ready: SplitLaneTone;
+	merged: SplitLaneTone;
+} {
+	return {
+		idle: {
+			label: t("status.idle"),
+			countLabel: t("shell.countLabel.idle"),
+			regionLabel: t("shell.idleSessions"),
+			dotClassName: "bg-status-idle",
+			titleClassName: "text-status-idle",
+			color: "var(--color-status-idle)",
+			dotGlow: false,
+		},
+		working: {
+			label: t("status.working"),
+			countLabel: t("shell.countLabel.working"),
+			regionLabel: t("shell.workingSessions"),
+			dotClassName: "bg-status-working",
+			titleClassName: "text-status-working",
+			color: "var(--color-status-working)",
+			dotGlow: true,
+		},
+		ready: {
+			label: t("zone.merge"),
+			countLabel: t("shell.countLabel.readyToMerge"),
+			regionLabel: t("shell.readyToMergeSessions"),
+			dotClassName: "bg-status-ready",
+			titleClassName: "text-status-ready",
+			color: "var(--color-status-ready)",
+			dotGlow: true,
+		},
+		merged: {
+			label: t("status.merged"),
+			countLabel: t("shell.countLabel.merged"),
+			regionLabel: t("shell.mergedSessions"),
+			dotClassName: "bg-status-merged",
+			titleClassName: "text-status-merged",
+			color: "var(--color-status-merged)",
+			dotGlow: false,
+		},
+	};
+}
 
 function WorkLaneColumn({
 	sessions,
@@ -550,17 +564,19 @@ function WorkLaneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
+	const { t } = useTranslation();
+	const tones = splitLaneTones(t);
 	const idleSessions = sessions.filter(isSessionIdle);
 	const workingSessions = sessions.filter((session) => !isSessionIdle(session));
 
 	return (
 		<SplitLaneColumn
-			ariaLabel="Idle / Working sessions"
+			ariaLabel={t("shell.idleWorkingSessions")}
 			zone="working"
 			primarySessions={idleSessions}
-			primaryTone={idleLaneTone}
+			primaryTone={tones.idle}
 			secondarySessions={workingSessions}
-			secondaryTone={workingLaneTone}
+			secondaryTone={tones.working}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
 		/>
@@ -576,6 +592,8 @@ function MergeLaneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
+	const { t } = useTranslation();
+	const tones = splitLaneTones(t);
 	const mergedSessions = sessions
 		.filter((session) => session.status === "merged")
 		.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
@@ -585,12 +603,12 @@ function MergeLaneColumn({
 
 	return (
 		<SplitLaneColumn
-			ariaLabel="Ready to merge / Merged sessions"
+			ariaLabel={t("shell.readyMergedSessions")}
 			zone="merge"
 			primarySessions={readySessions}
-			primaryTone={readyLaneTone}
+			primaryTone={tones.ready}
 			secondarySessions={mergedSessions}
-			secondaryTone={mergedLaneTone}
+			secondaryTone={tones.merged}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
 		/>
@@ -616,6 +634,7 @@ function SplitLaneColumn({
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
 }) {
+	const { t } = useTranslation();
 	const showPrimary = primarySessions.length > 0;
 	const showSecondary = secondarySessions.length > 0;
 
@@ -628,7 +647,7 @@ function SplitLaneColumn({
 		>
 			<div className="flex h-12 shrink-0 items-center gap-2.5 px-4">
 				<div
-					aria-label={`${primaryTone.label} / ${secondaryTone.label} lane summary`}
+					aria-label={t("shell.laneSummaryAria", { primary: primaryTone.label, secondary: secondaryTone.label })}
 					className="flex min-w-0 items-center gap-2 font-mono text-2xs font-medium uppercase tracking-wide-sm"
 					role="group"
 				>
@@ -693,7 +712,8 @@ function LaneStatusLabel({ tone }: { tone: SplitLaneTone }) {
 }
 
 function SessionCount({ count, label }: { count: number; label: string }) {
-	return <span aria-label={`${count} ${label} ${count === 1 ? "session" : "sessions"}`}>{count}</span>;
+	const { t } = useTranslation();
+	return <span aria-label={t("shell.countSessionsAria", { count, label })}>{count}</span>;
 }
 
 function SecondaryLaneSection({
@@ -749,9 +769,10 @@ function SessionCard({
 	onTerminate?: () => void;
 	interactive?: boolean;
 }) {
+	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const badge = getSessionStatusView(session.status);
+	const badge = getSessionStatusView(session.status, t);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -796,7 +817,11 @@ function SessionCard({
 					session={session}
 					trigger={
 						<button
-							aria-label={termination.isPending ? `Killing ${session.title}` : `Terminate ${session.title}`}
+							aria-label={
+								termination.isPending
+									? t("shell.killingNamedAria", { title: session.title })
+									: t("shell.terminateNamed", { title: session.title })
+							}
 							className={cn(
 								"absolute right-2 top-1.5 z-10 inline-flex size-control-md items-center justify-center rounded-sm text-passive transition-[color,background-color,opacity] hover:bg-error/10 hover:text-error focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
 								keepTerminateVisible || termination.isPending
@@ -808,7 +833,7 @@ function SessionCard({
 								clearTerminateSessionState(queryClient, session.id);
 							}}
 							disabled={termination.isPending}
-							title={termination.isPending ? "Killing session" : "Terminate session"}
+							title={termination.isPending ? t("shell.killingSession") : t("shell.terminateSession")}
 							type="button"
 						>
 							{termination.isPending ? (
@@ -849,7 +874,7 @@ function SessionCard({
 					</span>
 					<span
 						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"
-						title={`Updated ${session.updatedAt}`}
+						title={t("shell.updatedAt", { time: session.updatedAt })}
 					>
 						{formatTimeCompact(session.updatedAt)}
 					</span>
@@ -864,7 +889,7 @@ function SessionCard({
 				{issueId && (
 					<span
 						className="inline-flex max-w-branch-chip items-center self-start truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent"
-						title={`Intake issue: ${issueId}`}
+						title={t("shell.intakeIssue", { id: issueId })}
 					>
 						{issueId}
 					</span>
@@ -892,7 +917,8 @@ function ArchiveSessionItem({
 	isRestoring: boolean;
 	isRestoreDisabled: boolean;
 }) {
-	const badge = getSessionStatusView(session.status);
+	const { t } = useTranslation();
+	const badge = getSessionStatusView(session.status, t);
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const branch = session.branch || "";
@@ -904,7 +930,7 @@ function ArchiveSessionItem({
 				))}
 			</div>
 		) : (
-			<span>no PR yet</span>
+			<span>{t("pr.noPRYet")}</span>
 		);
 	const restoreButton = (
 		<ArchiveRestoreButton
@@ -968,6 +994,7 @@ function ArchiveRestoreButton({
 	isRestoring: boolean;
 	isDisabled: boolean;
 }) {
+	const { t } = useTranslation();
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
@@ -981,7 +1008,7 @@ function ArchiveRestoreButton({
 					<RotateCcw className={cn("size-icon-md", isRestoring && "animate-spin")} aria-hidden="true" />
 				</button>
 			</TooltipTrigger>
-			<TooltipContent side="top">{isRestoring ? "Restoring session" : "Restore session"}</TooltipContent>
+			<TooltipContent side="top">{isRestoring ? t("shell.restoringSession") : t("shell.restoreSession")}</TooltipContent>
 		</Tooltip>
 	);
 }
@@ -998,14 +1025,16 @@ type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; c
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
 function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup; linksInteractive?: boolean }) {
+	const { t } = useTranslation();
+	const statusLabel = t(`pr.state.${group.status.label}`);
 	return (
 		<span
-			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${group.status.label}`}
+			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${statusLabel}`}
 			className="inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
 		>
-			<span>PR</span>
+			<span>{t("pr.short")}</span>
 			{group.prs.map((pr, index) => (
-				<span className="inline-flex items-center" key={pr.number}>
+				<span className="inline-flex items-center" key={pr.url || pr.htmlUrl || pr.number}>
 					{linksInteractive ? (
 						<a
 							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
@@ -1022,7 +1051,7 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}
-			<span className={cn("font-medium", group.status.className)}>{group.status.label}</span>
+			<span className={cn("font-medium", group.status.className)}>{statusLabel}</span>
 		</span>
 	);
 }

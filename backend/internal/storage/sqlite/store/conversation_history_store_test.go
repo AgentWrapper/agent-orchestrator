@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -33,11 +35,137 @@ func conversationFixture(t *testing.T) (*sqlite.Store, domain.SessionID, string)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	conversation, err := s.CreateConversation(ctx, "conv-1", "hist", session.ID, histClock)
+	conversation, err := s.CreateConversation(ctx, "conv-1", domain.ConversationScopeSession, "hist", session.ID, histClock)
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
 	}
 	return s, session.ID, conversation.ID
+}
+
+func TestProjectConversationRebindsAcrossOrchestratorReplacement(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "project-chat")
+
+	firstRecord := sampleRecord("project-chat")
+	firstRecord.Kind = domain.KindOrchestrator
+	firstRecord.Mode = domain.SessionModeChat
+	first, err := s.CreateSession(ctx, firstRecord)
+	if err != nil {
+		t.Fatalf("create first orchestrator: %v", err)
+	}
+	conversation, err := s.CreateConversation(ctx, "project-conversation", domain.ConversationScopeProject,
+		"project-chat", first.ID, histClock)
+	if err != nil {
+		t.Fatalf("create project conversation: %v", err)
+	}
+
+	secondRecord := sampleRecord("project-chat")
+	secondRecord.Kind = domain.KindOrchestrator
+	secondRecord.Mode = domain.SessionModeChat
+	second, err := s.CreateSession(ctx, secondRecord)
+	if err != nil {
+		t.Fatalf("create replacement orchestrator: %v", err)
+	}
+	rebound, err := s.CreateConversation(ctx, "must-not-be-used", domain.ConversationScopeProject,
+		"project-chat", second.ID, histClock.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("rebind project conversation: %v", err)
+	}
+	if rebound.ID != conversation.ID || rebound.SessionID != second.ID {
+		t.Fatalf("rebound = %+v, want conversation %s on session %s", rebound, conversation.ID, second.ID)
+	}
+	lookup, err := s.ConversationForSession(ctx, second.ID)
+	if err != nil || lookup.ID != conversation.ID {
+		t.Fatalf("replacement lookup = %+v, %v; want %s", lookup, err, conversation.ID)
+	}
+	if _, err := s.ConversationForSession(ctx, first.ID); !errors.Is(err, store.ErrConversationNotFound) {
+		t.Fatalf("retired orchestrator still owns project conversation: %v", err)
+	}
+}
+
+func TestProviderArchiveAndProjectionCommitAtomically(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	projectionErr := errors.New("projection failed")
+
+	err := s.ProjectProviderEvent(ctx, conversation, session, "event-1", "activity.started", `{}`,
+		histClock, func(txCtx context.Context) error {
+			if err := s.UpsertActivity(txCtx, conversation, "", domain.ConversationActivity{
+				ID: "activity-1", Kind: domain.ActivityKindCommand,
+				Status: domain.ActivityStatusRunning, Summary: "go test",
+			}, histClock); err != nil {
+				return err
+			}
+			return projectionErr
+		})
+	if !errors.Is(err, projectionErr) {
+		t.Fatalf("ProjectProviderEvent error = %v, want projection failure", err)
+	}
+	events, err := s.ProviderEventsSince(ctx, conversation, 0, 10)
+	if err != nil || len(events) != 0 {
+		t.Fatalf("rolled-back archive = %+v, %v; want none", events, err)
+	}
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation)
+	if err != nil || len(snapshot.Activities) != 0 {
+		t.Fatalf("rolled-back projection activities = %+v, %v; want none", snapshot.Activities, err)
+	}
+}
+
+func TestProviderEventIdentityDeduplicatesTheWholeProjection(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	projected := 0
+	project := func(context.Context) error {
+		projected++
+		return nil
+	}
+	for range 2 {
+		if err := s.ProjectProviderEvent(ctx, conversation, session, "provider-event-1", "turn.started", `{}`,
+			histClock, project); err != nil {
+			t.Fatalf("ProjectProviderEvent: %v", err)
+		}
+	}
+	if projected != 1 {
+		t.Fatalf("projection count = %d, want 1", projected)
+	}
+	events, err := s.ProviderEventsSince(ctx, conversation, 0, 10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %+v, %v; want one", events, err)
+	}
+}
+
+func TestConversationSnapshotPagesCombinedTimelineBySequence(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	for i, text := range []string{"one", "two", "three", "four", "five"} {
+		turnID := fmt.Sprintf("turn-page-%d", i+1)
+		created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1", domain.ConversationMessage{
+			ID: turnID + "-message", Text: text, Origin: domain.MessageOriginHuman,
+		}, turnID, histClock.Add(time.Duration(i)*time.Second))
+		if err != nil || !created {
+			t.Fatalf("append %s: created=%v err=%v", text, created, err)
+		}
+	}
+
+	newest, err := s.LoadConversationSnapshotPage(ctx, conversation, 0, 2)
+	if err != nil {
+		t.Fatalf("newest page: %v", err)
+	}
+	if got := []string{newest.Messages[0].Text, newest.Messages[1].Text}; !reflect.DeepEqual(got, []string{"four", "five"}) {
+		t.Fatalf("newest messages = %v", got)
+	}
+	if !newest.HasMoreBefore || newest.OldestSequence != 4 {
+		t.Fatalf("newest cursor = (%d, %v), want (4, true)", newest.OldestSequence, newest.HasMoreBefore)
+	}
+
+	older, err := s.LoadConversationSnapshotPage(ctx, conversation, newest.OldestSequence, 2)
+	if err != nil {
+		t.Fatalf("older page: %v", err)
+	}
+	if got := []string{older.Messages[0].Text, older.Messages[1].Text}; !reflect.DeepEqual(got, []string{"two", "three"}) {
+		t.Fatalf("older messages = %v", got)
+	}
 }
 
 // seedTurn records one dispatched turn with a user message and an activity, which is
@@ -234,7 +362,7 @@ func TestRollbackRefusesATurnFromAnotherConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create second session: %v", err)
 	}
-	otherConversation, err := s.CreateConversation(ctx, "conv-2", "hist", otherSession.ID, histClock)
+	otherConversation, err := s.CreateConversation(ctx, "conv-2", domain.ConversationScopeSession, "hist", otherSession.ID, histClock)
 	if err != nil {
 		t.Fatalf("create second conversation: %v", err)
 	}

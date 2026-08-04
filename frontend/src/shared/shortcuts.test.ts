@@ -50,44 +50,16 @@ describe("matchesNewSessionShortcut", () => {
 });
 
 describe("matchesNewShellTerminalShortcut", () => {
-	it("matches Ctrl+` on both platforms", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true }), false)).toBe(true);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true }), true)).toBe(true);
+	it("matches Command+T on macOS and Ctrl+T on Windows/Linux", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ key: "t", meta: true }), true)).toBe(true);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "T", ctrl: true }), false)).toBe(true);
 	});
 
-	// Layouts that need a modifier for the backtick report the physical key.
-	it("matches the Backquote key name", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "Backquote", ctrl: true }), false)).toBe(true);
-	});
-
-	// ⌘` is the macOS "cycle windows" binding and must stay with the OS.
-	it("does not match Command+backtick on macOS", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", meta: true }), true)).toBe(false);
-	});
-
-	// Shift is optional: Ctrl+Shift+` is the advertised "Create New Terminal" chord.
-	it("matches Ctrl+Shift+` on both platforms", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, shift: true }), false)).toBe(true);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, shift: true }), true)).toBe(true);
-	});
-
-	// With Shift held the character shifts (US "~"), but the physical code is
-	// stable — matching on code is what makes Ctrl+Shift+` actually fire.
-	it("matches on the physical Backquote code even when the character is shifted", () => {
-		expect(
-			matchesNewShellTerminalShortcut(chord({ key: "~", code: "Backquote", ctrl: true, shift: true }), false),
-		).toBe(true);
-	});
-
-	it("requires Ctrl and rejects ⌘/Alt", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`" }), false)).toBe(false);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, alt: true }), false)).toBe(false);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true, meta: true }), false)).toBe(false);
-	});
-
-	it("ignores other keys", () => {
-		expect(matchesNewShellTerminalShortcut(chord({ key: "1", ctrl: true }), false)).toBe(false);
-		expect(matchesNewShellTerminalShortcut(chord({ key: "~", ctrl: true }), false)).toBe(false);
+	it("rejects the wrong platform modifier, old backtick chord, and extra modifiers", () => {
+		expect(matchesNewShellTerminalShortcut(chord({ key: "t", ctrl: true }), true)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "t", meta: true }), false)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "`", ctrl: true }), false)).toBe(false);
+		expect(matchesNewShellTerminalShortcut(chord({ key: "t", ctrl: true, shift: true }), false)).toBe(false);
 	});
 });
 
@@ -125,6 +97,12 @@ describe("additional application shortcuts", () => {
 		expect(matchesFocusTerminalShortcut(chord({ key: "T", meta: true, shift: true }), true)).toBe(true);
 		expect(matchesFocusTerminalShortcut(chord({ key: "t", ctrl: true, shift: true }), false)).toBe(true);
 		expect(matchesFocusTerminalShortcut(chord({ key: "t", ctrl: true, shift: true, alt: true }), false)).toBe(false);
+	});
+
+	it("matches close terminal on each platform", () => {
+		expect(matchesAppShortcut("close-shell-terminal", chord({ key: "w", meta: true }), true)).toBe(true);
+		expect(matchesAppShortcut("close-shell-terminal", chord({ key: "w", ctrl: true }), false)).toBe(true);
+		expect(matchesAppShortcut("close-shell-terminal", chord({ key: "w", meta: true }), false)).toBe(false);
 	});
 });
 

@@ -18,6 +18,8 @@ const base: ConversationSnapshot = {
 	mode: "chat",
 	controller: { state: "ready" },
 	latestSequence: 0,
+	oldestSequence: 1,
+	hasMoreBefore: false,
 	settings: {},
 	turns: [],
 	items: [],
