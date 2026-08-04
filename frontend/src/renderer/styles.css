@@ -438,13 +438,22 @@
 	border-radius: 0;
 }
 
-/* Session chrome is portaled above the sidebar/content row. Join that topbar
- * to the center surface so the workspace reads as one continuous frame. */
+/* Session topbar now lives inside .center-panel-surface. When it's rendered
+ * there, drop the outer border and radius (the surface provides both) and keep
+ * only a bottom divider separating the tabs from the terminal below.
+ * When it's rendered in-place (native fullscreen), keep the legacy surface
+ * treatment so the topbar still looks like a standalone panel header. */
 .session-topbar-surface {
 	overflow: hidden;
 	border: 1px solid var(--color-border-strong);
 	border-radius: var(--radius-center-panel) var(--radius-center-panel) 0 0;
 	background-color: var(--color-bg-primary);
+}
+
+.center-panel-surface .session-topbar-surface {
+	border: none;
+	border-bottom: 1px solid var(--color-border-strong);
+	border-radius: 0;
 }
 
 /* When the sidebar is off-canvas, clear only the fixed navigation cluster.
@@ -465,13 +474,14 @@
 }
 
 .center-panel-shell.center-panel-shell--session {
-	padding-top: 0;
+	/* No padding override: session pages use the same inset as other pages now
+	 * that SessionTopbarHost lives inside the surface. Class is kept for
+	 * identification (e.g. tests). */
 }
 
 .center-panel-shell--session > .center-panel-surface {
-	border-top: 0;
-	border-top-left-radius: 0;
-	border-top-right-radius: 0;
+	/* Session surface uses standard border-radius; topbar clips to rounded corners
+	 * inside the surface. No override needed. */
 }
 
 .center-panel-titlebar {
