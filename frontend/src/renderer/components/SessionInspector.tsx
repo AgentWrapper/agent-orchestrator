@@ -35,7 +35,6 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
 import { PRCardStatusSummary, PRSummaryMeta } from "./PRSummaryDisplay";
-import { StatusPill } from "./StatusPill";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
@@ -267,23 +266,20 @@ function Section({
 }) {
 	const heading =
 		title || action ? (
-			<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+			<div className="mb-1 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
 				{title ? <span>{title}</span> : <span />}
 				{action ?? null}
 			</div>
 		) : null;
 	return (
-		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
+		<section className={cn("mb-4 last:mb-0", className)} data-testid="inspector-section">
+			{heading}
 			{surface ? (
-				<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
-					{heading}
+				<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-1.5">
 					{children}
 				</div>
 			) : (
-				<>
-					{heading}
-					{children}
-				</>
+				children
 			)}
 		</section>
 	);
@@ -301,19 +297,21 @@ function SummaryView({
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
-	const showCompletion = session.kind !== "orchestrator" && (hasPRs || session.status === "merged");
+	const showCompletion = session.kind !== "orchestrator";
 
 	return (
 		<div role="tabpanel">
-			{hasPRs ? (
-				<Section surface={false} title={prSectionTitle}>
-					<div className="flex flex-col gap-1.5">
-						{prSummaries.map((pr) => (
+			<Section surface={false} title={prSectionTitle}>
+				<div className="flex flex-col gap-1.5">
+					{hasPRs ? (
+						prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
-						))}
-					</div>
-				</Section>
-			) : null}
+						))
+					) : (
+						<p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>
+					)}
+				</div>
+			</Section>
 
 			{hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 
@@ -539,7 +537,13 @@ const timelineNodeTone: Record<TimelineTone, string> = {
 };
 
 function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
-	const history: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
+	const history: {
+		tone: TimelineTone;
+		node: ReactNode;
+		ts: string | null;
+		markerTone?: string;
+		markerBreathe?: boolean;
+	}[] = [];
 
 	history.push({
 		tone: "neutral",
@@ -582,6 +586,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	// Current activity is a live reading, not a historical event. Keep it above
 	// the optional reverse-chronological history and do not imply that its last
 	// hook time is when the state transition occurred.
+	const activityView = getAgentActivityView(session.activity);
 	const current = {
 		tone: "now",
 		node: (
@@ -602,7 +607,15 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 			</span>
 		),
 		ts: null,
-	} satisfies { tone: TimelineTone; node: ReactNode; ts: null };
+		markerTone: activityView.tone,
+		markerBreathe: activityView.breathe,
+	} satisfies {
+		tone: TimelineTone;
+		node: ReactNode;
+		ts: null;
+		markerTone: string;
+		markerBreathe: boolean;
+	};
 	const events = [current, ...history.reverse()];
 
 	return (
@@ -626,7 +639,9 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 								"absolute -left-4.5 size-icon-xs rounded-full",
 								event.tone === "now" ? "top-1/2 -translate-y-1/2" : "top-1.5",
 								timelineNodeTone[event.tone],
+								event.markerBreathe && "animate-status-pulse",
 							)}
+							style={event.markerTone ? { background: event.markerTone } : undefined}
 						/>
 						<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
 					</div>
@@ -689,8 +704,12 @@ function InspectorScmPill({ state }: { state: ScmTimelineState }) {
 	return <TimelinePill {...getSessionTimelinePillView(state)} />;
 }
 
-function TimelinePill({ label, tone, breathe }: { label: string; tone: string; breathe: boolean }) {
-	return <StatusPill label={label} tone={tone} breathe={breathe} />;
+function TimelinePill({ label, tone }: { label: string; tone: string; breathe: boolean }) {
+	return (
+		<span className="inline-flex shrink-0 whitespace-nowrap text-xs font-semibold" style={{ color: tone }}>
+			{label}
+		</span>
+	);
 }
 
 function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {

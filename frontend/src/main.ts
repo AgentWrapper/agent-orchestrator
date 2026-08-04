@@ -321,7 +321,6 @@ function createWindow(): void {
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
-		(id) => id !== "close-shell-terminal" || closeShellTerminalShortcutEnabled,
 	);
 
 	browserViewHost = createBrowserViewHost({

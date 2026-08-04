@@ -111,6 +111,13 @@ function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[], s
 
 function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
 	getMock.mockImplementation(async (path: string) => {
+		if (path === "/api/v1/agents") {
+			const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+			return { data: { supported: agents, installed: agents, authorized: agents } };
+		}
+		if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+			return { data: { sessionId: "sess-1", files: [], truncated: false }, error: undefined };
+		}
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
 			return { data: { reviewerHandleId, reviews } };
 		}
@@ -171,12 +178,7 @@ beforeEach(() => {
 	patchMock.mockReset();
 	postMock.mockReset();
 	putMock.mockReset();
-	getMock.mockImplementation(async (path: string) => {
-		if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
-			return { data: { sessionId: "sess-1", files: [], truncated: false }, error: undefined };
-		}
-		return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-	});
+	mockCommonGets();
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 	putMock.mockResolvedValue({ data: { session: {} }, error: undefined, response: { status: 200 } });
@@ -608,6 +610,40 @@ describe("SessionInspector Activity section", () => {
 		const activityMarker = activityRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
 		expect(activityMarker.parentElement).toHaveClass("relative", "flex", "items-center");
 		expect(activityMarker).toHaveClass("top-1/2", "-translate-y-1/2");
+	});
+
+	it("uses the timeline node as the single live activity indicator", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "working",
+					activity: { state: "active", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		const activityRow = activitySection()
+			.getByText("Working")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const marker = activityRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
+		expect(marker).toHaveClass("animate-status-pulse");
+		expect(within(activityRow).getByText("Working").querySelector(".rounded-full")).not.toBeInTheDocument();
+	});
+
+	it("aligns summary section headings on one shared inset", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(7, "open")], {
+					status: "working",
+					activity: { state: "active", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		for (const title of ["Pull request", "Completion", "Activity"]) {
+			const heading = screen.getByText(title).parentElement;
+			expect(heading?.parentElement).toHaveAttribute("data-testid", "inspector-section");
+		}
 	});
 
 	it("keeps workspace, PR, and SCM context rows in the Activity timeline", () => {

@@ -33,7 +33,7 @@ export function PRSummaryMeta({
 }) {
 	const branchRange = prBranchRange(pr);
 	const hasDiff = hasDiffMetadata(pr);
-	const authorHandle = pr.author.replace(/^@/, "");
+	const authorHandle = pr.author?.replace(/^@/, "") ?? "";
 	const primary: ReactNode[] = [leading, branchRange].filter(Boolean);
 	if (authorHandle) {
 		primary.push(
