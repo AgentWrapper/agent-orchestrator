@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,11 +16,15 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
+	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 	shareddomain "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/coder/websocket"
+	"github.com/creack/pty"
 )
 
 func TestPrepareClaudeCloudExperienceSkipsFirstRunPrompts(t *testing.T) {
@@ -223,6 +229,168 @@ func TestNonClaudeTerminalReadyImmediately(t *testing.T) {
 	ready := newAgentTerminalReady("codex")
 	if err := ready.wait(context.Background()); err != nil {
 		t.Fatalf("wait() error = %v", err)
+	}
+}
+
+func TestClaudeTerminalReadyToleratesStyledComposerFooter(t *testing.T) {
+	output := "\x1b[2m bypass\x1b[0m \x1b[1mpermissions\x1b[0m on"
+	if !claudeTerminalReady(output) {
+		t.Fatal("styled Claude composer footer was not detected")
+	}
+}
+
+func TestClaudePromptCanWaitForComposerBeforeActivityHook(t *testing.T) {
+	if !promptDeliveryCanWaitForTerminal(false, newAgentTerminalReady("claude-code")) {
+		t.Fatal("Claude prompt remained dependent on the activity hook")
+	}
+	if promptDeliveryCanWaitForTerminal(false, newAgentTerminalReady("codex")) {
+		t.Fatal("non-Claude prompt bypassed the activity hook")
+	}
+	if !promptDeliveryCanWaitForTerminal(true, newAgentTerminalReady("codex")) {
+		t.Fatal("ready non-Claude agent could not receive its prompt")
+	}
+}
+
+func TestClaudePromptPrecedesBrowserCommandsDuringStartup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	terminal, agentSide, err := pty.Open()
+	if err != nil {
+		t.Fatalf("pty.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = terminal.Close()
+		_ = agentSide.Close()
+	})
+
+	promptAccepted := make(chan struct{})
+	commandsSent := make(chan struct{})
+	serverErrors := make(chan error, 1)
+	var acceptedOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/cloud/v1/worker/connect":
+			socket, acceptErr := websocket.Accept(w, r, nil)
+			if acceptErr != nil {
+				serverErrors <- acceptErr
+				return
+			}
+			defer socket.Close(websocket.StatusNormalClosure, "test complete")
+			commands := []cloudworkerhub.Command{
+				{
+					Type:     "prompt",
+					Sequence: 1,
+					Data:     base64.StdEncoding.EncodeToString([]byte("startup task")),
+				},
+				{Type: "resize", Rows: 40, Cols: 120},
+				{
+					Type: "input",
+					Data: base64.StdEncoding.EncodeToString([]byte("premature browser input\r")),
+				},
+				{Type: "agent_ready"},
+				{
+					Type: "input",
+					Data: base64.StdEncoding.EncodeToString([]byte("accepted browser input\r")),
+				},
+			}
+			for _, command := range commands {
+				encoded, marshalErr := json.Marshal(command)
+				if marshalErr != nil {
+					serverErrors <- marshalErr
+					return
+				}
+				if writeErr := socket.Write(r.Context(), websocket.MessageText, encoded); writeErr != nil {
+					serverErrors <- writeErr
+					return
+				}
+			}
+			close(commandsSent)
+			<-r.Context().Done()
+		case "/api/cloud/v1/worker/events":
+			var event struct {
+				Type string `json:"type"`
+			}
+			if decodeErr := json.NewDecoder(r.Body).Decode(&event); decodeErr != nil {
+				serverErrors <- decodeErr
+				http.Error(w, decodeErr.Error(), http.StatusBadRequest)
+				return
+			}
+			if event.Type == "worker.prompt_accepted" {
+				acceptedOnce.Do(func() { close(promptAccepted) })
+			}
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient(server.URL, server.Client())
+	client.acceptToken("worker-token")
+	runner := &Runner{client: client}
+	terminalReady := newAgentTerminalReady("claude-code")
+	var writeMu sync.Mutex
+	var workspaceWriteMu sync.Mutex
+	go runner.commandLoop(
+		ctx,
+		terminal,
+		terminalReady,
+		terminal,
+		&writeMu,
+		&workspaceWriteMu,
+	)
+
+	select {
+	case <-commandsSent:
+	case err := <-serverErrors:
+		t.Fatalf("send startup commands: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("startup commands were not sent")
+	}
+	select {
+	case <-promptAccepted:
+		t.Fatal("prompt was accepted before Claude rendered its composer")
+	case err := <-serverErrors:
+		t.Fatalf("startup command stream error: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	terminalReady.observe([]byte("\x1b[2m bypass\x1b[0m \x1b[1mpermissions\x1b[0m on"))
+
+	select {
+	case <-promptAccepted:
+	case err := <-serverErrors:
+		t.Fatalf("accept startup prompt: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("styled Claude composer did not release the startup prompt")
+	}
+
+	terminalInput := make(chan string, 1)
+	go func() {
+		var received strings.Builder
+		buffer := make([]byte, 256)
+		for !strings.Contains(received.String(), "accepted browser input") {
+			count, readErr := agentSide.Read(buffer)
+			if readErr != nil {
+				return
+			}
+			received.Write(buffer[:count])
+		}
+		terminalInput <- received.String()
+	}()
+	select {
+	case received := <-terminalInput:
+		if !strings.Contains(received, "startup task") {
+			t.Fatalf("terminal input %q does not contain startup prompt", received)
+		}
+		if strings.Contains(received, "premature browser input") {
+			t.Fatalf("browser input interrupted startup: %q", received)
+		}
+	case err := <-serverErrors:
+		t.Fatalf("process startup commands: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("browser input was not restored after startup prompt")
 	}
 }
 

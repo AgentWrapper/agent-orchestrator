@@ -106,9 +106,39 @@ func (r *agentTerminalReady) markReady() {
 }
 
 func claudeTerminalReady(output string) bool {
-	output = strings.ToLower(output)
+	output = strings.ToLower(stripANSICSI(output))
 	return strings.Contains(output, "bypass permissions") ||
 		strings.Contains(output, "shift+tab to cycle")
+}
+
+func stripANSICSI(value string) string {
+	var plain strings.Builder
+	plain.Grow(len(value))
+	for index := 0; index < len(value); index++ {
+		if value[index] == '\x1b' &&
+			index+1 < len(value) &&
+			value[index+1] == '[' {
+			index += 2
+			for index < len(value) {
+				final := value[index] >= 0x40 && value[index] <= 0x7e
+				if final {
+					break
+				}
+				index++
+			}
+			continue
+		}
+		plain.WriteByte(value[index])
+	}
+	return plain.String()
+}
+
+func promptDeliveryCanWaitForTerminal(
+	agentReady bool,
+	terminalReady *agentTerminalReady,
+) bool {
+	return agentReady ||
+		(terminalReady != nil && terminalReady.harness == "claude-code")
 }
 
 // NewRunner creates a worker runner from bootstrap launch data.
@@ -502,7 +532,7 @@ func (r *Runner) commandLoop(
 				if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
 					return nil
 				}
-				if !agentReady {
+				if !promptDeliveryCanWaitForTerminal(agentReady, agentTerminalReady) {
 					pendingPrompts = append(pendingPrompts, command)
 					return nil
 				}
