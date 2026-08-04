@@ -1442,11 +1442,11 @@ describe("SessionInspector summary reviews", () => {
 	});
 
 	it.each([
-		["needs_review", "changes_requested", "Not run", "Run review"],
-		["running", "approved", "Reviewing...", "Cancel review"],
+		["needs_review", "changes_requested", "Changes requested", "Run review", true],
+		["running", "approved", "Reviewing...", "Stop review", false],
 	] as const)(
 		"keeps the current AO review state clear while the current head is %s",
-		async (status, previousVerdict, runLabel, actionLabel) => {
+		async (status, previousVerdict, runLabel, actionLabel, showPreviousReview) => {
 			const current = {
 				...reviewState(3, status, "sha-current"),
 				previousRun: {
@@ -1474,13 +1474,21 @@ describe("SessionInspector summary reviews", () => {
 			await openReviewsSection();
 
 			expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
-			expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
+			if (showPreviousReview) {
+				expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
+			} else {
+				expect(screen.queryByText("Previous review summary with actionable detail.")).not.toBeInTheDocument();
+			}
 			expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
-			expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
-			expect(screen.getByRole("link", { name: "View review" })).toHaveAttribute(
-				"href",
-				"https://example.com/pr/3#pullrequestreview-98765",
-			);
+			if (status !== "needs_review") {
+				expect(screen.queryByText("Changes requested")).not.toBeInTheDocument();
+			}
+			if (showPreviousReview) {
+				expect(screen.getByRole("link", { name: "View review" })).toHaveAttribute(
+					"href",
+					"https://example.com/pr/3#pullrequestreview-98765",
+				);
+			}
 			// A run in flight gets its own live strip naming the harness, not just a
 			// word on the button.
 			if (status === "running") {
@@ -1761,9 +1769,9 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		await waitFor(() => expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled());
+		await waitFor(() => expect(screen.getByRole("button", { name: "Stop review" })).toBeEnabled());
 		expect(screen.queryByRole("button", { name: /re-run review/i })).not.toBeInTheDocument();
-		await userEvent.click(screen.getByRole("button", { name: /cancel review/i }));
+		await userEvent.click(screen.getByRole("button", { name: /stop review/i }));
 
 		await waitFor(() => {
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/cancel", {
