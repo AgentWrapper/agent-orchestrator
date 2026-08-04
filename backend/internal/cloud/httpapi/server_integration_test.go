@@ -239,7 +239,7 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	sessionInput := map[string]any{
 		"projectId":   projectBody.Project.ID,
 		"kind":        "worker",
-		"harness":     "fake",
+		"harness":     "cursor",
 		"displayName": "verify-cloud",
 		"prompt":      "Verify the cloud flow",
 	}
@@ -317,7 +317,7 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	orchestratorInput := map[string]any{
 		"projectId":   projectBody.Project.ID,
 		"kind":        "orchestrator",
-		"harness":     "fake",
+		"harness":     "cursor",
 		"displayName": "Orchestrator",
 		"prompt":      "",
 	}
@@ -1051,7 +1051,7 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 		t.Fatalf("append follow-up without live notification: %v", err)
 	}
 	var periodicPrompt *cloudworkerhub.Command
-	for range 4 {
+	for periodicPrompt == nil {
 		_, encodedCommand, err := socket.Read(ctx)
 		if err != nil {
 			t.Fatalf("read periodically replayed prompt: %v", err)
@@ -1060,19 +1060,19 @@ func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 		if err := json.Unmarshal(encodedCommand, &command); err != nil {
 			t.Fatalf("decode periodically replayed prompt: %v", err)
 		}
+		if command.Type == "keepalive" {
+			continue
+		}
 		if command.Type != "prompt" {
 			t.Fatalf("periodically replayed command = %#v", command)
 		}
 		if command.Sequence == followUp.Sequence {
 			periodicPrompt = &command
-			break
+			continue
 		}
 		if command.Sequence > followUp.Sequence {
 			t.Fatalf("unexpected replay sequence = %d", command.Sequence)
 		}
-	}
-	if periodicPrompt == nil {
-		t.Fatal("follow-up prompt was not periodically replayed")
 	}
 	decodedPrompt, err := base64.StdEncoding.DecodeString(periodicPrompt.Data)
 	if err != nil {
