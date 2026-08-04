@@ -391,13 +391,13 @@
 	--radius-welcome-panel: var(--radius-center-panel);
 
 	/* Import mode picker */
-	--color-bg-import-modal: var(--popover);
+	--color-bg-import-modal: var(--card);
 	--color-border-import-modal: var(--border);
 	--color-text-import-title: var(--foreground);
 	--color-text-import-muted: var(--muted-foreground);
-	--color-bg-import-card: var(--card);
+	--color-bg-import-card: var(--popover);
 	--color-bg-import-card-hover: var(--accent);
-	--color-bg-import-illustration: var(--color-bg-import-modal);
+	--color-bg-import-illustration: var(--color-bg-import-chip);
 	--color-bg-import-chip: var(--secondary);
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 	--size-import-modal-max: 896px;
@@ -450,7 +450,7 @@
 	--color-border-settings-input: var(--color-border-settings-dialog);
 	--color-text-settings-input: var(--foreground);
 	--color-text-settings-placeholder: var(--muted-foreground);
-	--color-text-import-sep: var(--color-text-settings-placeholder);
+	--color-text-import-sep: var(--color-text-import-muted);
 	--color-settings-accent: var(--primary);
 	--color-settings-switch-on: var(--primary);
 
@@ -732,6 +732,7 @@
 	--color-text-import-muted: var(--muted-foreground);
 	--color-bg-import-card: var(--card);
 	--color-bg-import-card-hover: var(--accent);
+	--color-bg-import-illustration: var(--color-bg-import-chip);
 	--color-bg-import-chip: var(--secondary);
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 
