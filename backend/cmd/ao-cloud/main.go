@@ -19,6 +19,7 @@ import (
 	cloudsandbox "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox"
 	"github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/daytona"
 	clouddocker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/docker"
+	cloudecs "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandbox/ecs"
 	cloudsandboxresolve "github.com/aoagents/agent-orchestrator/backend/internal/cloud/sandboxresolve"
 	cloudscm "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm"
 	cloudgithubapp "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm/githubapp"
@@ -26,6 +27,8 @@ import (
 	cloudsecrets "github.com/aoagents/agent-orchestrator/backend/internal/cloud/secrets"
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
 )
 
 func main() {
@@ -140,6 +143,28 @@ func run(log *slog.Logger) error {
 	if cfg.SandboxProvider == "docker" {
 		dockerProvider = clouddocker.New(cfg.DockerWorkerImage)
 	}
+	var ecsProvider cloudsandbox.Provider
+	if cfg.SandboxProvider == "ecs" {
+		loadOptions := []func(*awsconfig.LoadOptions) error{}
+		if cfg.ECSRegion != "" {
+			loadOptions = append(loadOptions, awsconfig.WithRegion(cfg.ECSRegion))
+		}
+		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOptions...)
+		if err != nil {
+			return err
+		}
+		ecsProvider, err = cloudecs.New(awsecs.NewFromConfig(awsCfg), cloudecs.Config{
+			Cluster:        cfg.ECSCluster,
+			TaskDefinition: cfg.ECSTaskDefinition,
+			ContainerName:  cfg.ECSContainerName,
+			Subnets:        cfg.ECSSubnets,
+			SecurityGroups: cfg.ECSSecurityGroups,
+			AssignPublicIP: cfg.ECSAssignPublicIP,
+		})
+		if err != nil {
+			return err
+		}
+	}
 	providerResolver := cloudsandboxresolve.New(
 		store,
 		secretCipher,
@@ -147,6 +172,7 @@ func run(log *slog.Logger) error {
 		cfg.DaytonaTarget,
 		daytonaProvider,
 		dockerProvider,
+		ecsProvider,
 	)
 	var workerBinary []byte
 	if cfg.WorkerBinaryPath != "" {

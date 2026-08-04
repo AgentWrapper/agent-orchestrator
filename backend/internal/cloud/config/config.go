@@ -43,6 +43,13 @@ type Config struct {
 	DaytonaWorkerSnapshot    string
 	MaxActiveSandboxesPerOrg int
 	DockerWorkerImage        string
+	ECSRegion                string
+	ECSCluster               string
+	ECSTaskDefinition        string
+	ECSContainerName         string
+	ECSSubnets               []string
+	ECSSecurityGroups        []string
+	ECSAssignPublicIP        bool
 	EncryptionKey            []byte
 	WorkerSigningKey         []byte
 	ReconcileInterval        time.Duration
@@ -108,6 +115,13 @@ func Load() (Config, error) {
 		DaytonaWorkerSnapshot:    strings.TrimSpace(os.Getenv("AO_DAYTONA_WORKER_SNAPSHOT")),
 		MaxActiveSandboxesPerOrg: maxActiveSandboxesPerOrg,
 		DockerWorkerImage:        envOr("AO_DOCKER_WORKER_IMAGE", "ao-cloud-worker:local"),
+		ECSRegion:                strings.TrimSpace(os.Getenv("AO_ECS_REGION")),
+		ECSCluster:               strings.TrimSpace(os.Getenv("AO_ECS_CLUSTER")),
+		ECSTaskDefinition:        strings.TrimSpace(os.Getenv("AO_ECS_TASK_DEFINITION")),
+		ECSContainerName:         envOr("AO_ECS_CONTAINER_NAME", "worker"),
+		ECSSubnets:               envList("AO_ECS_SUBNETS"),
+		ECSSecurityGroups:        envList("AO_ECS_SECURITY_GROUPS"),
+		ECSAssignPublicIP:        envBool("AO_ECS_ASSIGN_PUBLIC_IP", false),
 		EncryptionKey:            encryptionKey,
 		WorkerSigningKey:         workerSigningKey,
 		ReconcileInterval:        2 * time.Second,
@@ -236,6 +250,19 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(c.DockerWorkerImage) == "" {
 			return errors.New("AO_DOCKER_WORKER_IMAGE is required when AO_SANDBOX_PROVIDER=docker")
 		}
+	case "ecs":
+		if strings.TrimSpace(c.ECSCluster) == "" {
+			return errors.New("AO_ECS_CLUSTER is required when AO_SANDBOX_PROVIDER=ecs")
+		}
+		if strings.TrimSpace(c.ECSTaskDefinition) == "" {
+			return errors.New("AO_ECS_TASK_DEFINITION is required when AO_SANDBOX_PROVIDER=ecs")
+		}
+		if strings.TrimSpace(c.ECSContainerName) == "" {
+			return errors.New("AO_ECS_CONTAINER_NAME is required when AO_SANDBOX_PROVIDER=ecs")
+		}
+		if len(c.ECSSubnets) == 0 {
+			return errors.New("AO_ECS_SUBNETS is required when AO_SANDBOX_PROVIDER=ecs")
+		}
 	case "daytona":
 		if strings.TrimSpace(c.DaytonaAPIKey) == "" {
 			return errors.New("AO_DAYTONA_API_KEY is required when AO_SANDBOX_PROVIDER=daytona")
@@ -249,7 +276,7 @@ func (c Config) Validate() error {
 			return fmt.Errorf("AO_DAYTONA_TARGET must be us or eu, got %q", c.DaytonaTarget)
 		}
 	default:
-		return fmt.Errorf("AO_SANDBOX_PROVIDER must be docker or daytona, got %q", c.SandboxProvider)
+		return fmt.Errorf("AO_SANDBOX_PROVIDER must be docker, daytona, or ecs, got %q", c.SandboxProvider)
 	}
 	return nil
 }
@@ -270,6 +297,22 @@ func envBool(name string, fallback bool) bool {
 	default:
 		return fallback
 	}
+}
+
+func envList(name string) []string {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return nil
+	}
+	values := strings.Split(raw, ",")
+	out := values[:0]
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func envInt(name string, fallback int) (int, error) {

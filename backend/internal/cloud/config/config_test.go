@@ -196,6 +196,57 @@ func TestLoadRequiresDaytonaWorkerSnapshot(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsECSProvider(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "ecs")
+	t.Setenv("AO_ECS_REGION", "eu-north-1")
+	t.Setenv("AO_ECS_CLUSTER", "ao-cloud-workers")
+	t.Setenv("AO_ECS_TASK_DEFINITION", "ao-cloud-worker:1")
+	t.Setenv("AO_ECS_CONTAINER_NAME", "worker")
+	t.Setenv("AO_ECS_SUBNETS", "subnet-one, subnet-two")
+	t.Setenv("AO_ECS_SECURITY_GROUPS", "sg-one,sg-two")
+	t.Setenv("AO_ECS_ASSIGN_PUBLIC_IP", "true")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.SandboxProvider != "ecs" {
+		t.Fatalf("SandboxProvider = %q", cfg.SandboxProvider)
+	}
+	if cfg.ECSRegion != "eu-north-1" {
+		t.Fatalf("ECSRegion = %q", cfg.ECSRegion)
+	}
+	if cfg.ECSCluster != "ao-cloud-workers" {
+		t.Fatalf("ECSCluster = %q", cfg.ECSCluster)
+	}
+	if cfg.ECSTaskDefinition != "ao-cloud-worker:1" {
+		t.Fatalf("ECSTaskDefinition = %q", cfg.ECSTaskDefinition)
+	}
+	if got := strings.Join(cfg.ECSSubnets, ","); got != "subnet-one,subnet-two" {
+		t.Fatalf("ECSSubnets = %q", got)
+	}
+	if got := strings.Join(cfg.ECSSecurityGroups, ","); got != "sg-one,sg-two" {
+		t.Fatalf("ECSSecurityGroups = %q", got)
+	}
+	if !cfg.ECSAssignPublicIP {
+		t.Fatal("ECSAssignPublicIP = false")
+	}
+}
+
+func TestLoadRequiresECSProviderConfiguration(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "ecs")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want missing ECS configuration")
+	}
+}
+
 func TestLoadWorkOSRequiresGitHubAppMode(t *testing.T) {
 	setBaseCloudEnv(t)
 	t.Setenv("AO_CLOUD_AUTH_MODE", "workos")

@@ -56,6 +56,7 @@ func TestResolveUsesEncryptedUserConnection(t *testing.T) {
 		"us",
 		nil,
 		nil,
+		nil,
 	)
 	provider, err := resolver.Resolve(context.Background(), clouddomain.Sandbox{
 		AccountID:            "account-one",

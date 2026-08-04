@@ -25,6 +25,7 @@ type Resolver struct {
 	defaultTarget   string
 	defaultProvider cloudsandbox.Provider
 	dockerProvider  cloudsandbox.Provider
+	ecsProvider     cloudsandbox.Provider
 }
 
 // New creates a sandbox provider resolver.
@@ -34,6 +35,7 @@ func New(
 	defaultAPIURL, defaultTarget string,
 	defaultProvider cloudsandbox.Provider,
 	dockerProvider cloudsandbox.Provider,
+	ecsProvider cloudsandbox.Provider,
 ) *Resolver {
 	return &Resolver{
 		store:           store,
@@ -42,6 +44,7 @@ func New(
 		defaultTarget:   defaultTarget,
 		defaultProvider: defaultProvider,
 		dockerProvider:  dockerProvider,
+		ecsProvider:     ecsProvider,
 	}
 }
 
@@ -55,6 +58,12 @@ func (r *Resolver) Resolve(
 			return nil, fmt.Errorf("docker sandbox provider is not configured")
 		}
 		return r.dockerProvider, nil
+	}
+	if sandbox.Provider == "ecs" {
+		if r.ecsProvider == nil {
+			return nil, fmt.Errorf("ecs sandbox provider is not configured")
+		}
+		return r.ecsProvider, nil
 	}
 	if sandbox.Provider != "daytona" {
 		return nil, fmt.Errorf("unsupported sandbox provider %q", sandbox.Provider)
