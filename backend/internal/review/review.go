@@ -293,7 +293,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 		// another agent is precisely a request for a second opinion on this commit,
 		// so refusing it makes the reviewer choice inert exactly when it is most
 		// useful. Ineligible PRs stay excluded: nothing can review those.
-		eligible := reviewState.Status == ReviewStateNeedsReview
+		eligible := reviewState.Status == ReviewStateNeedsReview || reviewState.Status == ReviewStateChangesRequested
 		if !eligible && !secondOpinionWanted(reviewState, override, harness) {
 			continue
 		}

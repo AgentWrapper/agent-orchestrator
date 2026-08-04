@@ -1,8 +1,9 @@
 -- Reviewer lifecycle/restore support:
 -- - persist the reviewer's native agent session id so restored reviewer
 --   terminals can resume the original conversation
--- - prevent duplicate review runs for the same PR target SHA/harness once a
---   non-failed/non-cancelled review run exists
+-- - keep duplicate protection per PR target SHA/harness for running or terminal
+--   non-changes-requested review runs, while preserving changes_requested retry
+--   behavior
 
 -- +goose Up
 -- +goose StatementBegin
@@ -17,6 +18,7 @@ DROP INDEX idx_review_run_session_pr_sha_harness;
 DELETE FROM review_run
 WHERE target_sha != ''
   AND status NOT IN ('failed', 'cancelled')
+  AND (status = 'running' OR verdict NOT IN ('', 'changes_requested'))
   AND rowid NOT IN (
     SELECT rowid FROM (
       SELECT rowid,
@@ -29,6 +31,7 @@ WHERE target_sha != ''
       FROM review_run
       WHERE target_sha != ''
         AND status NOT IN ('failed', 'cancelled')
+        AND (status = 'running' OR verdict NOT IN ('', 'changes_requested'))
     )
     WHERE rn = 1
   );
@@ -38,7 +41,8 @@ WHERE target_sha != ''
 CREATE UNIQUE INDEX idx_review_run_session_pr_sha_harness
     ON review_run (session_id, pr_url, target_sha, harness)
     WHERE target_sha != ''
-        AND status NOT IN ('failed', 'cancelled');
+        AND status NOT IN ('failed', 'cancelled')
+        AND (status = 'running' OR verdict NOT IN ('', 'changes_requested'));
 -- +goose StatementEnd
 
 -- +goose Down

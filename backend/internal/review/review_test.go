@@ -1191,7 +1191,7 @@ func TestTriggerRerunsApprovedAndReusesRunningCurrentHead(t *testing.T) {
 	}
 }
 
-func TestTriggerReusesChangesRequestedCurrentHead(t *testing.T) {
+func TestTriggerRerunsChangesRequestedCurrentHead(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
 		runs: []domain.ReviewRun{{
@@ -1206,8 +1206,11 @@ func TestTriggerReusesChangesRequestedCurrentHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if res.Created || len(res.CreatedRuns) != 0 || launcher.notified || launcher.spawned {
-		t.Fatalf("expected changes_requested current head to be reused: res=%+v launcher=%+v", res, launcher)
+	if !res.Created || len(res.CreatedRuns) != 1 || !launcher.notified || launcher.spawned {
+		t.Fatalf("expected changes_requested current head to rerun on same reviewer: res=%+v launcher=%+v", res, launcher)
+	}
+	if res.CreatedRuns[0].Harness != domain.ReviewerClaudeCode || res.CreatedRuns[0].TargetSHA != "sha1" {
+		t.Fatalf("created run = %+v, want same-harness retry for sha1", res.CreatedRuns[0])
 	}
 }
 

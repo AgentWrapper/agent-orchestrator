@@ -108,7 +108,7 @@ func TestInsertReviewRunAllowsADifferentHarnessForTheSameCommit(t *testing.T) {
 	}
 }
 
-func TestInsertReviewRunRejectsRerunAfterChangesRequested(t *testing.T) {
+func TestInsertReviewRunAllowsRerunAfterChangesRequested(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
@@ -139,12 +139,12 @@ func TestInsertReviewRunRejectsRerunAfterChangesRequested(t *testing.T) {
 	rerun := run
 	rerun.ID = "run-2"
 	rerun.CreatedAt = now.Add(time.Second)
-	if err := s.InsertReviewRun(ctx, rerun); !errors.Is(err, domain.ErrDuplicateReviewRun) {
-		t.Fatalf("rerun after changes_requested insert err = %v, want duplicate", err)
+	if err := s.InsertReviewRun(ctx, rerun); err != nil {
+		t.Fatalf("rerun after changes_requested insert: %v", err)
 	}
 }
 
-func TestInsertReviewRunRejectsRerunAfterTerminalEmptyVerdict(t *testing.T) {
+func TestInsertReviewRunAllowsRerunAfterTerminalEmptyVerdict(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
@@ -171,8 +171,8 @@ func TestInsertReviewRunRejectsRerunAfterTerminalEmptyVerdict(t *testing.T) {
 	rerun.ID = "run-2"
 	rerun.Status = domain.ReviewRunRunning
 	rerun.CreatedAt = now.Add(time.Second)
-	if err := s.InsertReviewRun(ctx, rerun); !errors.Is(err, domain.ErrDuplicateReviewRun) {
-		t.Fatalf("rerun after terminal empty-verdict insert err = %v, want duplicate", err)
+	if err := s.InsertReviewRun(ctx, rerun); err != nil {
+		t.Fatalf("rerun after terminal empty-verdict insert: %v", err)
 	}
 }
 
