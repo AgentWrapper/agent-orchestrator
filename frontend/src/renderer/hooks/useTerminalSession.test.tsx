@@ -640,7 +640,7 @@ describe("useTerminalSession", () => {
 			act(() => void vi.advanceTimersByTime(60));
 			expect(terminal.lines).toEqual(["a".repeat(256 * 1024)]);
 			act(() => muxes[0].emitData("handle-1", "TAIL"));
-			act(() => void vi.advanceTimersByTime(0));
+			act(() => void vi.runOnlyPendingTimers());
 
 			expect(terminal.lines.join("")).toBe(`${replay}TAIL`);
 		});

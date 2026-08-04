@@ -610,27 +610,25 @@ function ShellLayout() {
 	return (
 		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
 			<SessionTopbarProvider>
-   <SessionTopbarProvider>
-	<TerminalCacheProvider
-		daemonReady={daemonStatus.state === "ready"}
-		theme={resolvedTheme}
-	>
-		<NotificationRuntime />
-		<GlobalNewTaskDialog />
-		<SettingsDialog />
-		<KeyboardShortcutsDialog
-			open={isKeyboardShortcutsOpen}
-			onOpenChange={setIsKeyboardShortcutsOpen}
-			onCustomize={() => {
-				setIsKeyboardShortcutsOpen(false);
-				setIsKeyboardShortcutsSettingsOpen(true);
-			}}
-		/>
-		<KeyboardShortcutsSettingsDialog
-			open={isKeyboardShortcutsSettingsOpen}
-			onOpenChange={setIsKeyboardShortcutsSettingsOpen}
-		/>
-
+				<TerminalCacheProvider
+					daemonReady={daemonStatus.state === "ready"}
+					theme={resolvedTheme}
+				>
+					<NotificationRuntime />
+					<GlobalNewTaskDialog />
+					<SettingsDialog />
+					<KeyboardShortcutsDialog
+						open={isKeyboardShortcutsOpen}
+						onOpenChange={setIsKeyboardShortcutsOpen}
+						onCustomize={() => {
+							setIsKeyboardShortcutsOpen(false);
+							setIsKeyboardShortcutsSettingsOpen(true);
+						}}
+					/>
+					<KeyboardShortcutsSettingsDialog
+						open={isKeyboardShortcutsSettingsOpen}
+						onOpenChange={setIsKeyboardShortcutsSettingsOpen}
+					/>
 
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
