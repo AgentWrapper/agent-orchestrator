@@ -250,7 +250,7 @@ type RenameSessionRequest struct {
 // session workspace; a non-empty url is resolved relative to the supplied
 // working directory when it looks like a workspace path.
 type SetSessionPreviewRequest struct {
-	URL             string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
+	URL              string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
 	WorkingDirectory string `json:"workingDirectory,omitempty" description:"Optional effective working directory for resolving workspace-relative preview paths."`
 }
 
