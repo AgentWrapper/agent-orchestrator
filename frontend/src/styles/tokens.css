@@ -317,6 +317,7 @@
 	--size-settings-menu-width: 18rem; /* settings option menus — max width cap */
 	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — wider rows */
 	--size-notification-icon: 26px;
+	--size-session-topbar: calc(var(--size-inspector-tabs) + (2 * var(--space-1)));
 	/* DaemonFailureBanner floating toast (was w-[min(22rem,…)] / max-h-40). */
 	--size-daemon-failure-toast: 22rem;
 	--size-daemon-failure-details-max: 10rem;
