@@ -1059,11 +1059,13 @@ export interface components {
             sessionId: string;
         };
         ListAgentsResponse: {
-            /** @description Compatibility list of installed agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail. */
+            /** @description Compatibility list of installed worker agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail. */
             authorized: components["schemas"]["AgentInfo"][];
-            /** @description Agents whose binary resolved during the latest best-effort local catalog probe. */
+            /** @description Worker agents whose binary resolved during the latest best-effort local catalog probe. */
             installed: components["schemas"]["AgentInfo"][];
-            /** @description Agents supported by this daemon build. */
+            /** @description Reviewer-only CLIs whose binary resolved during the latest best-effort local catalog probe. */
+            reviewerInstalled: components["schemas"]["AgentInfo"][];
+            /** @description Worker agents supported by this daemon build. */
             supported: components["schemas"]["AgentInfo"][];
         };
         ListNotificationsResponse: {

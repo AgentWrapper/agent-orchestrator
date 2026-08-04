@@ -204,18 +204,15 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 	if len(cmd.Argv) == 0 {
 		return fmt.Errorf("reviewer produced empty command")
 	}
+	if resolved, resolveErr := resolveReviewerCommand(ctx, reviewer, cmd); resolveErr == nil {
+		cmd = resolved
+	} else if ctx.Err() != nil {
+		return resolveErr
+	}
 	// Unwrap any leading env KEY=value ... prefix so the real binary is
 	// validated. Mirrors launchBinary in the session manager, which already
 	// skips the same prefix to validate the worker agent binary.
-	bin := cmd.Argv[0]
-	if filepath.Base(bin) == "env" {
-		for _, arg := range cmd.Argv[1:] {
-			if !strings.Contains(arg, "=") {
-				bin = arg
-				break
-			}
-		}
-	}
+	bin := cmd.Argv[reviewerCommandBinaryIndex(cmd.Argv)]
 	if _, err := exec.LookPath(bin); err != nil {
 		// Keep the executable name and the platform diagnostic while wrapping
 		// the typed port sentinel used by the service/controller mapping.
@@ -223,6 +220,15 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 			return fmt.Errorf("Greptile CLI is not installed (binary not found). Install it, then run greptile login and retry: %w", ports.ErrAgentBinaryNotFound)
 		}
 		return fmt.Errorf("reviewer binary %q not found: %v: %w", bin, err, ports.ErrAgentBinaryNotFound)
+	}
+	if checker, ok := reviewer.(ports.ReviewerAuthChecker); ok {
+		status, _ := checker.AuthStatus(ctx)
+		if status == ports.AgentAuthStatusUnauthorized {
+			if harness == domain.ReviewerGreptile {
+				return fmt.Errorf("Greptile CLI is not authenticated. Run greptile login and retry: %w", ports.ErrReviewerNotAuthenticated)
+			}
+			return fmt.Errorf("reviewer %q is not authenticated: %w", harness, ports.ErrReviewerNotAuthenticated)
+		}
 	}
 	return nil
 }
@@ -309,6 +315,11 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 	if err != nil {
 		return "", fmt.Errorf("reviewer command: %w", err)
 	}
+	if resolved, resolveErr := resolveReviewerCommand(ctx, reviewer, cmd); resolveErr == nil {
+		cmd = resolved
+	} else if ctx.Err() != nil {
+		return "", resolveErr
+	}
 	// The reviewer handle is stable per worker, so a still-live pane from a
 	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
 	// worse, keep serving under its old harness. Destroy any stale pane on this
@@ -328,6 +339,41 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 		return "", fmt.Errorf("reviewer runtime: %w", err)
 	}
 	return handle.ID, nil
+}
+
+// resolveReviewerCommand replaces a logical reviewer executable with the
+// adapter's resolved path when the adapter supports an install-location probe.
+// This keeps GUI-launched daemons working when a CLI is installed outside the
+// daemon's inherited PATH, while adapters without the optional capability keep
+// their existing command unchanged.
+func resolveReviewerCommand(ctx context.Context, reviewer ports.Reviewer, command ports.ReviewCommandSpec) (ports.ReviewCommandSpec, error) {
+	if len(command.Argv) == 0 {
+		return command, nil
+	}
+	resolver, ok := reviewer.(ports.ReviewerBinaryResolver)
+	if !ok {
+		return command, nil
+	}
+	path, err := resolver.ResolveBinary(ctx)
+	if err != nil {
+		return command, err
+	}
+	index := reviewerCommandBinaryIndex(command.Argv)
+	argv := append([]string(nil), command.Argv...)
+	argv[index] = path
+	command.Argv = argv
+	return command, nil
+}
+
+func reviewerCommandBinaryIndex(argv []string) int {
+	if len(argv) > 0 && filepath.Base(argv[0]) == "env" {
+		for index, arg := range argv[1:] {
+			if !strings.Contains(arg, "=") {
+				return index + 1
+			}
+		}
+	}
+	return 0
 }
 
 // pinnedEnv returns the reviewer command's env with PATH pinned to the daemon's

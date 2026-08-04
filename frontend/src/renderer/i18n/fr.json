@@ -460,7 +460,6 @@
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.preferences": "Préférences",
 	"settings.project.agents": "Agents",
-	"settings.project.cliCheckedWhenRun": "CLI vérifiée à l’exécution",
 	"settings.project.agentsRequired": "Les agents worker et orchestrateur sont obligatoires.",
 	"settings.project.agentDefault": "(valeur par défaut de l'agent)",
 	"settings.project.childReposEmpty": "Aucun dépôt enfant n'est enregistré.",

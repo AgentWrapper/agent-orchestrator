@@ -451,7 +451,6 @@
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.preferences": "환경설정",
 	"settings.project.agents": "에이전트",
-	"settings.project.cliCheckedWhenRun": "실행 시 CLI 확인",
 	"settings.project.agentsRequired": "워커 및 오케스트레이터 에이전트는 필수입니다.",
 	"settings.project.agentDefault": "(에이전트 기본값)",
 	"settings.project.childReposEmpty": "등록된 하위 저장소가 없습니다.",

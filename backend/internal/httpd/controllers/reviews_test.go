@@ -91,6 +91,21 @@ func TestReviewsTrigger_MissingReviewerBinaryReturns422WithCause(t *testing.T) {
 	}
 }
 
+func TestReviewsTrigger_UnauthenticatedReviewerReturns422WithCause(t *testing.T) {
+	err := fmt.Errorf("reviewer preflight: Greptile CLI is not authenticated. Run greptile login and retry: %w", ports.ErrReviewerNotAuthenticated)
+	srv := newReviewTestServer(t, &fakeReviewService{triggerErr: err})
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/trigger", "")
+	assertJSON(t, headers)
+	assertErrorCode(t, body, status, http.StatusUnprocessableEntity, "REVIEWER_NOT_AUTHENTICATED")
+
+	var got errorBody
+	mustJSON(t, body, &got)
+	if !strings.Contains(got.Message, "Greptile CLI is not authenticated") || !strings.Contains(got.Message, "greptile login") {
+		t.Fatalf("message = %q, want authentication guidance", got.Message)
+	}
+}
+
 func TestReviewsListIncludesReviewStates(t *testing.T) {
 	srv := newReviewTestServer(t, &fakeReviewService{list: reviewcore.SessionReviews{
 		ReviewerHandleID: "review-mer-1",

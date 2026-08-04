@@ -736,7 +736,7 @@ function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
 /** Reviewer harness the daemon accepts, typed from the generated schema. */
 type ReviewerHarness = NonNullable<components["schemas"]["TriggerReviewRequest"]["harness"]>;
 type AgentInfo = components["schemas"]["AgentInfo"];
-type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[] };
+type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[]; reviewerInstalled?: AgentInfo[] };
 
 function ReviewsSection({
 	session,
@@ -1249,6 +1249,7 @@ function ReviewPanel({
 							defaultTriggerLabel={reviewerDisplayName(harness) || projectDefaultLabel}
 							disabled={reviewRunning}
 							installed={agentCatalog?.installed}
+							reviewerInstalled={agentCatalog?.reviewerInstalled}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select h-control-md w-36 shrink-0 text-xs"

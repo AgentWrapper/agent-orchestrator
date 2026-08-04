@@ -71,6 +71,8 @@ func (f *fakeCancellableReviewer) ReviewCancel(context.Context) (ports.ReviewCan
 type fakeReviewerForPreflight struct {
 	CommandErr error
 	Argv       []string
+	Auth       ports.AgentAuthStatus
+	AuthErr    error
 }
 
 func (f *fakeReviewerForPreflight) ReviewCommand(_ context.Context, _ ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
@@ -82,6 +84,10 @@ func (f *fakeReviewerForPreflight) ReviewCommand(_ context.Context, _ ports.Revi
 
 func (f *fakeReviewerForPreflight) ReviewMessage(_ context.Context, _ ports.ReviewInvocation) (string, error) {
 	return "", nil
+}
+
+func (f *fakeReviewerForPreflight) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
+	return f.Auth, f.AuthErr
 }
 
 type fakeReviewerResolver struct {
@@ -482,6 +488,20 @@ func TestLauncherPreflightResolvesAdapter(t *testing.T) {
 	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
 	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err != nil {
 		t.Fatalf("Preflight: %v", err)
+	}
+}
+
+func TestLauncherPreflightRejectsUnauthenticatedReviewer(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{Argv: []string{"go"}, Auth: ports.AgentAuthStatusUnauthorized}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	err := l.Preflight(context.Background(), domain.ReviewerGreptile, "/ws/mer-1")
+	if err == nil || !errors.Is(err, ports.ErrReviewerNotAuthenticated) {
+		t.Fatalf("err = %v, want reviewer auth sentinel", err)
+	}
+	for _, want := range []string{"Greptile CLI is not authenticated", "greptile login", "retry"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want %q", err, want)
+		}
 	}
 }
 

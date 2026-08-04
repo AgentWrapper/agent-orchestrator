@@ -433,7 +433,6 @@
 	"settings.language.zhCN": "简体中文",
 	"settings.preferences": "偏好设置",
 	"settings.project.agents": "代理",
-	"settings.project.cliCheckedWhenRun": "运行时检查 CLI",
 	"settings.project.agentsRequired": "Worker 与编排代理为必填项。",
 	"settings.project.agentDefault": "（代理默认值）",
 	"settings.project.childReposEmpty": "尚未注册子仓库。",

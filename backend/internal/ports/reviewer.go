@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -20,6 +21,25 @@ type Reviewer interface {
 	// pane to ask it to review a new commit. It must be self-contained (carry
 	// the ids the reviewer needs to submit) since AO passes no environment.
 	ReviewMessage(ctx context.Context, inv ReviewInvocation) (string, error)
+}
+
+// ReviewerBinaryResolver is the optional capability a reviewer adapter exposes
+// when its CLI binary can be checked without launching a review. The result is
+// advisory UI metadata; the review launch remains the authoritative check.
+type ReviewerBinaryResolver interface {
+	ResolveBinary(ctx context.Context) (path string, err error)
+}
+
+// ErrReviewerNotAuthenticated is returned when a reviewer auth probe
+// conclusively reports that the CLI is signed out or its credentials are
+// invalid. Probe failures that cannot distinguish auth from connectivity stay
+// advisory and do not use this sentinel.
+var ErrReviewerNotAuthenticated = errors.New("reviewer: not authenticated")
+
+// ReviewerAuthChecker is the optional capability a reviewer adapter exposes
+// when its CLI has a cheap, non-interactive authentication probe.
+type ReviewerAuthChecker interface {
+	AuthStatus(ctx context.Context) (AgentAuthStatus, error)
 }
 
 // OneShotReviewer is a non-interactive reviewer that exits after emitting one

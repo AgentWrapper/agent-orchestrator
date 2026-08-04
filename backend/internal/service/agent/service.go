@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	reviewerregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -21,6 +22,11 @@ type probeResult struct {
 	info       Info
 	installed  bool
 	authorized bool
+}
+
+type reviewerProbeResult struct {
+	info      Info
+	installed bool
 }
 
 // ProbeResult describes a fresh readiness probe for one supported agent.
@@ -37,20 +43,23 @@ type Info struct {
 	AuthStatus ports.AgentAuthStatus `json:"authStatus,omitempty" enum:"authorized,unauthorized,unknown" description:"Advisory local auth probe result. authorized means a recent local probe passed; spawn remains the authoritative validation point."`
 }
 
-// Inventory describes all daemon-supported agents and best-effort local probe
-// results. Installed/authorized entries are advisory snapshots and can be stale;
-// session spawn is the authoritative validation point for binary availability,
-// runtime prerequisites, and model-call readiness.
+// Inventory describes daemon-supported worker agents and best-effort local
+// probe results for workers and reviewer-only CLIs. Installed/authorized
+// entries are advisory snapshots and can be stale; session spawn/review launch
+// is the authoritative validation point for binary availability, runtime
+// prerequisites, and model-call readiness.
 type Inventory struct {
-	Supported  []Info `json:"supported" description:"Agents supported by this daemon build."`
-	Installed  []Info `json:"installed" description:"Agents whose binary resolved during the latest best-effort local catalog probe."`
-	Authorized []Info `json:"authorized" description:"Compatibility list of installed agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail."`
+	Supported         []Info `json:"supported" description:"Worker agents supported by this daemon build."`
+	Installed         []Info `json:"installed" description:"Worker agents whose binary resolved during the latest best-effort local catalog probe."`
+	Authorized        []Info `json:"authorized" description:"Compatibility list of installed worker agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail."`
+	ReviewerInstalled []Info `json:"reviewerInstalled" description:"Reviewer-only CLIs whose binary resolved during the latest best-effort local catalog probe."`
 }
 
 // Service reports supported agent adapters and best-effort local readiness
 // probes. Catalog readiness is advisory UI metadata, not a spawn precheck.
 type Service struct {
-	agents []agentregistry.HarnessAgent
+	agents    []agentregistry.HarnessAgent
+	reviewers []reviewerregistry.Adapter
 
 	mu          sync.RWMutex
 	inventory   Inventory
@@ -61,16 +70,35 @@ type Service struct {
 // New returns an agent inventory service backed by the daemon's shipped
 // adapter registry.
 func New() *Service {
-	return NewWithAgents(agentregistry.Harnessed())
+	return NewWithAgentsAndReviewers(agentregistry.Harnessed(), reviewerregistry.Constructors())
 }
 
 // NewWithAgents returns an inventory service over a caller-provided adapter
 // slice. It is used by focused tests.
 func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
-	return &Service{agents: agents, inventory: Inventory{
-		Supported:  supportedInfos(agents),
-		Installed:  []Info{},
-		Authorized: []Info{},
+	return NewWithAgentsAndReviewers(agents, nil)
+}
+
+// NewWithAgentsAndReviewers returns an inventory service over caller-provided
+// worker and reviewer adapters. Reviewer adapters that share a worker harness
+// are omitted from ReviewerInstalled so the two catalog views cannot
+// overwrite each other's auth metadata in clients that combine them.
+func NewWithAgentsAndReviewers(agents []agentregistry.HarnessAgent, reviewers []reviewerregistry.Adapter) *Service {
+	workerIDs := make(map[string]struct{}, len(agents))
+	for _, item := range agents {
+		workerIDs[string(item.Harness)] = struct{}{}
+	}
+	reviewerOnly := make([]reviewerregistry.Adapter, 0, len(reviewers))
+	for _, item := range reviewers {
+		if _, isWorker := workerIDs[string(item.Harness())]; !isWorker {
+			reviewerOnly = append(reviewerOnly, item)
+		}
+	}
+	return &Service{agents: agents, reviewers: reviewerOnly, inventory: Inventory{
+		Supported:         supportedInfos(agents),
+		Installed:         []Info{},
+		Authorized:        []Info{},
+		ReviewerInstalled: []Info{},
 	}}
 }
 
@@ -106,6 +134,7 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	s.mu.RUnlock()
 
 	results := make(chan probeResult, len(s.agents))
+	reviewerResults := make(chan reviewerProbeResult, len(s.reviewers))
 	var wg sync.WaitGroup
 	for _, item := range s.agents {
 		if err := ctx.Err(); err != nil {
@@ -117,12 +146,24 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 			results <- probeAgent(ctx, item)
 		}(item)
 	}
+	for _, item := range s.reviewers {
+		if err := ctx.Err(); err != nil {
+			return Inventory{}, err
+		}
+		wg.Add(1)
+		go func(item reviewerregistry.Adapter) {
+			defer wg.Done()
+			reviewerResults <- probeReviewer(ctx, item)
+		}(item)
+	}
 	wg.Wait()
 	close(results)
+	close(reviewerResults)
 
 	supported := make([]Info, 0, len(s.agents))
 	installed := make([]Info, 0, len(s.agents))
 	authorized := make([]Info, 0, len(s.agents))
+	reviewerInstalled := make([]Info, 0, len(s.reviewers))
 	for res := range results {
 		supported = append(supported, res.info)
 		if res.installed {
@@ -132,13 +173,20 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 			authorized = append(authorized, res.info)
 		}
 	}
+	for res := range reviewerResults {
+		if res.installed {
+			reviewerInstalled = append(reviewerInstalled, res.info)
+		}
+	}
 	sortInfos(supported)
 	sortInfos(installed)
 	sortInfos(authorized)
+	sortInfos(reviewerInstalled)
 	next := Inventory{
-		Supported:  supported,
-		Installed:  installed,
-		Authorized: authorized,
+		Supported:         supported,
+		Installed:         installed,
+		Authorized:        authorized,
+		ReviewerInstalled: reviewerInstalled,
 	}
 	s.mu.Lock()
 	s.inventory = cloneInventory(next)
@@ -187,9 +235,10 @@ func supportedInfos(agents []agentregistry.HarnessAgent) []Info {
 
 func cloneInventory(in Inventory) Inventory {
 	return Inventory{
-		Supported:  cloneInfos(in.Supported),
-		Installed:  cloneInfos(in.Installed),
-		Authorized: cloneInfos(in.Authorized),
+		Supported:         cloneInfos(in.Supported),
+		Installed:         cloneInfos(in.Installed),
+		Authorized:        cloneInfos(in.Authorized),
+		ReviewerInstalled: cloneInfos(in.ReviewerInstalled),
 	}
 }
 
@@ -219,6 +268,37 @@ func probeAgent(ctx context.Context, item agentregistry.HarnessAgent) probeResul
 	return probeResult{info: info, installed: true, authorized: info.AuthStatus == ports.AgentAuthStatusAuthorized}
 }
 
+func probeReviewer(ctx context.Context, item reviewerregistry.Adapter) reviewerProbeResult {
+	info := reviewerInfo(item)
+	probeCtx, cancel := context.WithTimeout(ctx, agentInstallProbeTimeout)
+	defer cancel()
+	resolver, ok := item.(ports.ReviewerBinaryResolver)
+	if !ok {
+		return reviewerProbeResult{info: info}
+	}
+	if _, err := resolver.ResolveBinary(probeCtx); err != nil {
+		return reviewerProbeResult{info: info}
+	}
+	authCtx, authCancel := context.WithTimeout(ctx, agentAuthProbeTimeout)
+	defer authCancel()
+	info.AuthStatus = reviewerAuthStatus(authCtx, item)
+	return reviewerProbeResult{info: info, installed: true}
+}
+
+func reviewerInfo(item reviewerregistry.Adapter) Info {
+	id := string(item.Harness())
+	label := map[string]string{
+		"claude-code": "Claude Code",
+		"codex":       "Codex",
+		"greptile":    "Greptile CLI",
+		"opencode":    "OpenCode",
+	}[id]
+	if label == "" {
+		label = id
+	}
+	return Info{ID: id, Label: label}
+}
+
 func authStatus(ctx context.Context, a ports.Agent) ports.AgentAuthStatus {
 	checker, ok := a.(ports.AgentAuthChecker)
 	if !ok {
@@ -229,6 +309,23 @@ func authStatus(ctx context.Context, a ports.Agent) ports.AgentAuthStatus {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return ports.AgentAuthStatusUnknown
 		}
+		return ports.AgentAuthStatusUnknown
+	}
+	switch status {
+	case ports.AgentAuthStatusAuthorized, ports.AgentAuthStatusUnauthorized:
+		return status
+	default:
+		return ports.AgentAuthStatusUnknown
+	}
+}
+
+func reviewerAuthStatus(ctx context.Context, reviewer reviewerregistry.Adapter) ports.AgentAuthStatus {
+	checker, ok := reviewer.(ports.ReviewerAuthChecker)
+	if !ok {
+		return ports.AgentAuthStatusUnknown
+	}
+	status, err := checker.AuthStatus(ctx)
+	if err != nil {
 		return ports.AgentAuthStatusUnknown
 	}
 	switch status {

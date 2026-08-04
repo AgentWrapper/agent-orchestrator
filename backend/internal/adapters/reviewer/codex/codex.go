@@ -29,6 +29,17 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerBinaryResolver = (*Reviewer)(nil)
+
+// ResolveBinary reports whether the Codex CLI used by this reviewer is
+// available without constructing a real review launch.
+func (r *Reviewer) ResolveBinary(ctx context.Context) (string, error) {
+	resolver, ok := r.agent.(ports.AgentBinaryResolver)
+	if !ok {
+		return "", fmt.Errorf("codex reviewer: binary resolver unavailable: %w", ports.ErrAgentBinaryNotFound)
+	}
+	return resolver.ResolveBinary(ctx)
+}
 
 // ReviewCommand launches the reviewer with an enforced read-only filesystem
 // sandbox. Auto approval lets the headless session request the narrowly needed

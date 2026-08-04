@@ -460,7 +460,6 @@
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.preferences": "Preferências",
 	"settings.project.agents": "Agentes",
-	"settings.project.cliCheckedWhenRun": "CLI verificada ao executar",
 	"settings.project.agentsRequired": "Os agentes worker e orchestrator são obrigatórios.",
 	"settings.project.agentDefault": "(padrão do agente)",
 	"settings.project.childReposEmpty": "Nenhum repositório filho registrado.",

@@ -18,9 +18,10 @@ import (
 // ErrInvalid and ErrNotFound re-export the engine sentinels so the HTTP
 // controller maps service failures to 422/404 without importing the core.
 var (
-	ErrInvalid             = reviewcore.ErrInvalid
-	ErrNotFound            = reviewcore.ErrNotFound
-	ErrAgentBinaryNotFound = ports.ErrAgentBinaryNotFound
+	ErrInvalid                  = reviewcore.ErrInvalid
+	ErrNotFound                 = reviewcore.ErrNotFound
+	ErrAgentBinaryNotFound      = ports.ErrAgentBinaryNotFound
+	ErrReviewerNotAuthenticated = ports.ErrReviewerNotAuthenticated
 )
 
 // Manager is the reviews surface the HTTP controller depends on.

@@ -451,7 +451,6 @@
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.preferences": "設定",
 	"settings.project.agents": "エージェント",
-	"settings.project.cliCheckedWhenRun": "CLIは実行時に確認",
 	"settings.project.agentsRequired": "ワーカーとオーケストレーターのエージェントは必須です。",
 	"settings.project.agentDefault": "（エージェントのデフォルト）",
 	"settings.project.childReposEmpty": "子リポジトリは登録されていません。",

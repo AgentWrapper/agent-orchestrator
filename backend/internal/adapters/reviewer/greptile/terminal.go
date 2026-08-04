@@ -384,6 +384,9 @@ func RunTerminal(ctx context.Context, requestPath string, out io.Writer) error {
 		item := terminalResultItem{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA}
 		var stdout []byte
 		if commandErr == nil {
+			if binary, resolveErr := adapter.ResolveBinary(ctx); resolveErr == nil && len(command.Argv) > 0 {
+				command.Argv[0] = binary
+			}
 			var stderr []byte
 			stdout, stderr, commandErr = runCommand(ctx, task.WorkspacePath, command)
 			if commandErr != nil {
@@ -470,8 +473,7 @@ func commandFailure(err error, stderr string) error {
 	if errors.Is(err, exec.ErrNotFound) {
 		return fmt.Errorf("Greptile CLI is not installed. Install it, then run greptile login and retry: %w", ports.ErrAgentBinaryNotFound)
 	}
-	lower := strings.ToLower(stderr)
-	if strings.Contains(lower, "not signed in") || strings.Contains(lower, "session expired") || strings.Contains(lower, "api key invalid or revoked") || strings.Contains(lower, "greptile login") {
+	if status, ok := greptileAuthStatusFromOutput([]byte(stderr)); ok && status == ports.AgentAuthStatusUnauthorized {
 		return errors.New("Greptile CLI is not authenticated. Run greptile login and retry.")
 	}
 	detail := redactGreptileText(strings.TrimSpace(stderr))

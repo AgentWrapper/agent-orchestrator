@@ -460,7 +460,6 @@
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.preferences": "Preferencias",
 	"settings.project.agents": "Agentes",
-	"settings.project.cliCheckedWhenRun": "La CLI se comprueba al ejecutar",
 	"settings.project.agentsRequired": "Se requieren agentes de trabajo y orquestador.",
 	"settings.project.agentDefault": "(predeterminado del agente)",
 	"settings.project.childReposEmpty": "No hay repositorios secundarios registrados.",

@@ -28,6 +28,62 @@ func TestReviewCommandUsesJSONAndPRBaseBranch(t *testing.T) {
 	}
 }
 
+func TestGreptileAuthStatusFromWhoamiOutput(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   ports.AgentAuthStatus
+		known  bool
+	}{
+		{name: "signed in", output: "Signed in as reviewer@example.com", want: ports.AgentAuthStatusAuthorized, known: true},
+		{name: "not signed in", output: "Not signed in. Run `greptile login`.", want: ports.AgentAuthStatusUnauthorized, known: true},
+		{name: "invalid key", output: "error: API key invalid or revoked", want: ports.AgentAuthStatusUnauthorized, known: true},
+		{name: "network failure", output: "error: request failed", want: ports.AgentAuthStatusUnknown, known: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, known := greptileAuthStatusFromOutput([]byte(tt.output))
+			if got != tt.want || known != tt.known {
+				t.Fatalf("greptileAuthStatusFromOutput(%q) = (%q, %v), want (%q, %v)", tt.output, got, known, tt.want, tt.known)
+			}
+		})
+	}
+}
+
+func TestGreptileLocalAuthStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+		apiKey   string
+		want     ports.AgentAuthStatus
+		known    bool
+	}{
+		{name: "missing", want: ports.AgentAuthStatusUnknown, known: false},
+		{name: "oauth refresh token", contents: `{"method":"oauth","refreshToken":"refresh"}`, want: ports.AgentAuthStatusAuthorized, known: true},
+		{name: "legacy oauth file", contents: `{"accessToken":"access"}`, want: ports.AgentAuthStatusAuthorized, known: true},
+		{name: "api key file", contents: `{"method":"apikey","apiKey":"key"}`, want: ports.AgentAuthStatusAuthorized, known: true},
+		{name: "environment api key", apiKey: "key", want: ports.AgentAuthStatusAuthorized, known: true},
+		{name: "empty credentials", contents: `{"method":"oauth"}`, want: ports.AgentAuthStatusUnknown, known: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "auth.json")
+			if tt.contents != "" {
+				if err := os.WriteFile(path, []byte(tt.contents), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, known, err := greptileLocalAuthStatusAt(path, tt.apiKey)
+			if err != nil {
+				t.Fatalf("greptileLocalAuthStatusAt: %v", err)
+			}
+			if got != tt.want || known != tt.known {
+				t.Fatalf("greptileLocalAuthStatusAt = (%q, %v), want (%q, %v)", got, known, tt.want, tt.known)
+			}
+		})
+	}
+}
+
 func TestParseReviewResultWithFindings(t *testing.T) {
 	result, err := New().ParseReviewResult([]byte(`{
 		"summary":"Adds the reviewer integration.",

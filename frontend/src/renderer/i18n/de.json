@@ -451,7 +451,6 @@
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.preferences": "Einstellungen",
 	"settings.project.agents": "Agenten",
-	"settings.project.cliCheckedWhenRun": "CLI beim Ausführen geprüft",
 	"settings.project.agentsRequired": "Worker- und Orchestrator-Agenten sind erforderlich.",
 	"settings.project.agentDefault": "(Agent-Standard)",
 	"settings.project.childReposEmpty": "Keine untergeordneten Repositories registriert.",

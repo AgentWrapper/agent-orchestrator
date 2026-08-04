@@ -551,6 +551,11 @@ func (l *agentLauncher) runOneShotBatch(ctx context.Context, handleID string, jo
 			completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("reviewer command: %w", err)})
 			continue
 		}
+		if resolved, resolveErr := resolveReviewerCommand(ctx, reviewer, command); resolveErr == nil {
+			command = resolved
+		} else if ctx.Err() != nil {
+			return
+		}
 		if len(command.Argv) == 0 {
 			completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("reviewer produced empty command")})
 			continue

@@ -8,6 +8,7 @@ package claudecode
 
 import (
 	"context"
+	"fmt"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -31,6 +32,17 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerBinaryResolver = (*Reviewer)(nil)
+
+// ResolveBinary reports whether the Claude Code CLI used by this reviewer is
+// available without constructing a real review launch.
+func (r *Reviewer) ResolveBinary(ctx context.Context) (string, error) {
+	resolver, ok := r.agent.(ports.AgentBinaryResolver)
+	if !ok {
+		return "", fmt.Errorf("claude-code reviewer: binary resolver unavailable: %w", ports.ErrAgentBinaryNotFound)
+	}
+	return resolver.ResolveBinary(ctx)
+}
 
 // reviewerAllowedTools is the read-only tool allowlist the reviewer launches
 // with. The reviewer runs headless (no human to approve prompts) but must stay

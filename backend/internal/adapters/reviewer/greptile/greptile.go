@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -24,10 +25,31 @@ type Adapter struct{}
 var _ ports.OneShotReviewer = Adapter{}
 var _ ports.TerminalOneShotReviewer = Adapter{}
 var _ ports.ReviewerCanceller = Adapter{}
+var _ ports.ReviewerBinaryResolver = Adapter{}
 
 func New() Adapter { return Adapter{} }
 
 func (Adapter) Harness() domain.ReviewerHarness { return domain.ReviewerGreptile }
+
+// ResolveBinary checks the same executable name used by ReviewCommand. This
+// is advisory catalog metadata; the review launcher performs the authoritative
+// check immediately before starting a review.
+func (Adapter) ResolveBinary(ctx context.Context) (string, error) {
+	return binaryutil.ResolveBinary(ctx, greptileBinarySpec)
+}
+
+var greptileBinarySpec = binaryutil.BinarySpec{
+	Label:         "greptile",
+	Names:         []string{"greptile"},
+	WinNames:      []string{"greptile.cmd", "greptile.exe", "greptile"},
+	UnixPaths:     []string{"/usr/local/bin/greptile", "/opt/homebrew/bin/greptile"},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("greptile"),
+	NodeManaged:   true,
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "greptile.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "greptile.exe"}},
+	},
+}
 
 func (Adapter) ReviewCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv := []string{"greptile", "review", "--json"}

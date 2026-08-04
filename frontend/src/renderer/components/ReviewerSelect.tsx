@@ -1,4 +1,3 @@
-import { useTranslation } from "react-i18next";
 import type { components } from "../../api/schema";
 import { buildRankedAgentOptions } from "../lib/agent-select-options";
 import { AgentAvatar } from "./AgentAvatar";
@@ -46,6 +45,7 @@ export function ReviewerSelect({
 	disabled = false,
 	authorized,
 	installed,
+	reviewerInstalled,
 	supported,
 }: {
 	value: string;
@@ -58,9 +58,9 @@ export function ReviewerSelect({
 	disabled?: boolean;
 	authorized?: components["schemas"]["AgentInfo"][];
 	installed?: components["schemas"]["AgentInfo"][];
+	reviewerInstalled?: components["schemas"]["AgentInfo"][];
 	supported?: components["schemas"]["AgentInfo"][];
 }) {
-	const { t } = useTranslation();
 	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
 		id,
 		label: id === "greptile" ? "Greptile CLI" : id,
@@ -74,7 +74,7 @@ export function ReviewerSelect({
 		: fallbackAgents;
 	const options = buildRankedAgentOptions({
 		supported: supportedAgents,
-		installed,
+		installed: [...(installed ?? []), ...(reviewerInstalled ?? [])],
 		authorized,
 		priorityRank: REVIEWER_AGENT_PRIORITY_RANK,
 		fallbackAgents,
@@ -83,8 +83,6 @@ export function ReviewerSelect({
 			? {
 					...agent,
 					disabled: false,
-					status: t("settings.project.cliCheckedWhenRun"),
-					statusTone: "muted" as const,
 				}
 			: agent,
 	);

@@ -3094,20 +3094,26 @@ components:
     ListAgentsResponse:
       properties:
         authorized:
-          description: Compatibility list of installed agents whose local auth probe
-            recently returned authorized. Advisory and stale-prone; spawn may still
-            fail.
+          description: Compatibility list of installed worker agents whose local auth
+            probe recently returned authorized. Advisory and stale-prone; spawn may
+            still fail.
           items:
             $ref: '#/components/schemas/AgentInfo'
           type: array
         installed:
-          description: Agents whose binary resolved during the latest best-effort
+          description: Worker agents whose binary resolved during the latest best-effort
             local catalog probe.
           items:
             $ref: '#/components/schemas/AgentInfo'
           type: array
+        reviewerInstalled:
+          description: Reviewer-only CLIs whose binary resolved during the latest
+            best-effort local catalog probe.
+          items:
+            $ref: '#/components/schemas/AgentInfo'
+          type: array
         supported:
-          description: Agents supported by this daemon build.
+          description: Worker agents supported by this daemon build.
           items:
             $ref: '#/components/schemas/AgentInfo'
           type: array
@@ -3115,6 +3121,7 @@ components:
       - supported
       - installed
       - authorized
+      - reviewerInstalled
       type: object
     ListNotificationsResponse:
       properties:

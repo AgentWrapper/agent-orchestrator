@@ -83,6 +83,7 @@ const agentCatalogResponse = {
 			{ id: "goose", label: "Goose", authStatus: "authorized" },
 			{ id: "opencode", label: "OpenCode", authStatus: "authorized" },
 		],
+		reviewerInstalled: [{ id: "greptile", label: "Greptile CLI", authStatus: "authorized" }],
 	},
 	error: undefined,
 };
@@ -335,7 +336,11 @@ describe("ProjectSettingsForm", () => {
 		renderSettings("proj-1", undefined, "workflow");
 
 		const reviewerAgent = await screen.findByRole("button", { name: "Default reviewer agent" });
-		await chooseOption(reviewerAgent, "Greptile CLI");
+		await userEvent.click(reviewerAgent);
+		const greptileOption = await screen.findByRole("menuitem", { name: /Greptile CLI/i });
+		expect(greptileOption).not.toHaveAttribute("aria-disabled", "true");
+		expect(greptileOption).not.toHaveTextContent("Auth unknown");
+		await userEvent.click(greptileOption);
 		expect(reviewerAgent).toHaveTextContent("Greptile CLI");
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
