@@ -1551,6 +1551,115 @@ paths:
       summary: Summarize earlier history to reclaim context in a chat session
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/config-options:
+    get:
+      operationId: listSessionConversationConfigOptions
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationConfigOptionsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the live session controls the provider advertises
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/config-options/{configId}:
+    patch:
+      operationId: setSessionConversationConfigOption
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Provider session configuration option identifier.
+        in: path
+        name: configId
+        required: true
+        schema:
+          description: Provider session configuration option identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetConversationConfigOptionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationConfigOptionsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Choose one provider-advertised session configuration value
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/interrupt:
     post:
       operationId: interruptSessionConversationTurn
@@ -3612,6 +3721,61 @@ components:
       - summary
       - createdAt
       type: object
+    ConversationConfigChoiceResponse:
+      properties:
+        description:
+          type: string
+        group:
+          type: string
+        groupName:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+      required:
+      - value
+      - name
+      type: object
+    ConversationConfigOptionResponse:
+      properties:
+        category:
+          type: string
+        choices:
+          items:
+            $ref: '#/components/schemas/ConversationConfigChoiceResponse'
+          type: array
+        currentBoolean:
+          type:
+          - "null"
+          - boolean
+        currentValue:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          enum:
+          - select
+          - boolean
+          type: string
+      required:
+      - id
+      - name
+      - type
+      type: object
+    ConversationConfigOptionsResponse:
+      properties:
+        options:
+          items:
+            $ref: '#/components/schemas/ConversationConfigOptionResponse'
+          type: array
+      required:
+      - options
+      type: object
     ConversationDiffFileResponse:
       properties:
         additions:
@@ -3797,6 +3961,8 @@ components:
         description:
           type: string
         displayName:
+          type: string
+        inputHint:
           type: string
         name:
           type: string
@@ -5244,6 +5410,15 @@ components:
       - ok
       - sessionId
       - state
+      type: object
+    SetConversationConfigOptionRequest:
+      properties:
+        enabled:
+          type:
+          - "null"
+          - boolean
+        value:
+          type: string
       type: object
     SetConversationTitleRequest:
       properties:

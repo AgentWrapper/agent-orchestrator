@@ -12,6 +12,7 @@ import { ChatWorkspace } from "./ChatWorkspace";
 import {
 	useConversation,
 	useConversationCommands,
+	useConversationConfigOptions,
 	useConversationModels,
 	useConversationSkills,
 	useStageAttachments,
@@ -23,9 +24,17 @@ import type { WorkspaceSession } from "../../types/workspace";
 export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 	const { snapshot, isLoading, unavailable, error } = useConversation(session.id);
 	const commands = useConversationCommands(session.id);
+	const hasProviderConfig = Boolean(snapshot && can(snapshot, "config_options"));
 	// Only asked for once the conversation is actually readable: the catalog comes
 	// from the live controller, so there is nothing to fetch before then.
-	const { models } = useConversationModels(session.id, Boolean(snapshot));
+	const { models } = useConversationModels(
+		session.id,
+		Boolean(snapshot) && !hasProviderConfig,
+	);
+	const configOptions = useConversationConfigOptions(
+		session.id,
+		hasProviderConfig,
+	);
 	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
@@ -76,7 +85,11 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 			onDecide={commands.resolve}
 			onInterrupt={commands.interrupt}
 			models={models}
-			onChooseSettings={commands.chooseSettings}
+			onChooseSettings={hasProviderConfig ? undefined : commands.chooseSettings}
+			configOptions={configOptions.options}
+			onChooseConfigOption={configOptions.setOption}
+			configOptionPending={configOptions.pending}
+			configOptionError={configOptions.error}
 			onCompact={commands.compact}
 			compacting={commands.compacting}
 			compactUnavailable={commands.compactUnavailable}

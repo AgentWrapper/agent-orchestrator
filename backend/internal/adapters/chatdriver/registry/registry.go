@@ -10,7 +10,9 @@ package registry
 import (
 	"log/slog"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/claudeacp"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -38,14 +40,9 @@ func New(drivers ...ports.ChatDriver) *Registry {
 
 // Build returns the drivers the daemon ships.
 //
-// Codex only, deliberately, and only for now. It speaks a machine protocol AO has
-// exercised against a real install, and it clears the production floor —
-// streaming, approvals, interrupt, resume — rather than being here because a
-// protocol exists on paper. Chat mode ships one harness at a time so the first
-// release has one conversation surface to be judged on.
-//
-// A Claude Code driver exists on `feat/chat-session-mode-claude` and lands next;
-// it is held back from this release, not abandoned.
+// Codex uses its native app-server protocol. Claude Code uses AO's reusable ACP
+// transport plus claude-agent-acp, pointed at the user's own Claude executable.
+// Neither path scrapes terminal output or packages a second provider CLI.
 //
 // Every other harness stays TUI-only until the same is true of it. The driver
 // reuses the harness's existing agent plugin for binary resolution and auth, so
@@ -53,6 +50,7 @@ func New(drivers ...ports.ChatDriver) *Registry {
 func Build(log *slog.Logger) *Registry {
 	return New(
 		codexappserver.New(codex.New(), log),
+		claudeacp.New(claudecode.New(), log),
 	)
 }
 

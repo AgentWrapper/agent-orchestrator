@@ -511,6 +511,11 @@ func (s *Service) StartChatTurn(ctx context.Context, id domain.SessionID, text s
 // answer for a client to render than "you have no models available".
 var ErrModelsUnsupported = errors.New("chat driver cannot list models")
 
+// ErrConfigOptionsUnsupported reports a conversation whose provider does not
+// advertise live session controls. This is an ordinary capability answer: native
+// drivers can continue using AO's model/settings surface.
+var ErrConfigOptionsUnsupported = errors.New("chat driver has no session config options")
+
 // Models reports what the provider offers for this session, plus what is selected.
 //
 // Read from the live conversation rather than a table in AO: models are added,
@@ -532,6 +537,48 @@ func (s *Service) Models(ctx context.Context, id domain.SessionID) ([]ports.Chat
 		return nil, controller.Settings(), err
 	}
 	return models, controller.Settings(), nil
+}
+
+// ConfigOptions reports the provider's live session controls. Unlike AO's
+// durable turn settings, these are provider-owned session state and are read from
+// the connected conversation so model entitlements and model-dependent choices
+// cannot go stale in an AO table.
+func (s *Service) ConfigOptions(ctx context.Context, id domain.SessionID) ([]ports.ChatConfigOption, error) {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return nil, err
+	}
+	controller, err := s.Controller(id)
+	if err != nil {
+		return nil, err
+	}
+	configurer, ok := controller.conv.(ports.ChatConfigOptionController)
+	if !ok {
+		return nil, ErrConfigOptionsUnsupported
+	}
+	return configurer.ListConfigOptions(ctx)
+}
+
+// SetConfigOption applies one provider-advertised value and returns the complete
+// post-change catalog. Callers replace their list because changing the model can
+// add or remove effort, fast-mode, and other dependent controls.
+func (s *Service) SetConfigOption(
+	ctx context.Context,
+	id domain.SessionID,
+	configID string,
+	value ports.ChatConfigOptionValue,
+) ([]ports.ChatConfigOption, error) {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return nil, err
+	}
+	controller, err := s.Controller(id)
+	if err != nil {
+		return nil, err
+	}
+	configurer, ok := controller.conv.(ports.ChatConfigOptionController)
+	if !ok {
+		return nil, ErrConfigOptionsUnsupported
+	}
+	return configurer.SetConfigOption(ctx, configID, value)
 }
 
 // Compact asks the provider to summarize earlier history and reclaim context.

@@ -54,6 +54,7 @@ func conversationSkillsResponse(skills []ports.ChatSkill) ConversationSkillsResp
 			Name:        skill.Name,
 			DisplayName: display,
 			Description: skill.Description,
+			InputHint:   skill.InputHint,
 			Source:      skill.Source,
 		})
 	}

@@ -455,6 +455,34 @@ export interface ChatModel {
 	defaultEffort?: string;
 }
 
+/** One provider-owned setting advertised for this live chat session. */
+export interface ChatConfigOption {
+	id: string;
+	name: string;
+	description?: string;
+	/** ACP's semantic category, such as model, thought_level, or mode. */
+	category?: string;
+	type: "select" | "boolean";
+	currentValue?: string;
+	currentBoolean?: boolean;
+	choices: ChatConfigChoice[];
+}
+
+/** One value offered by a select config option. */
+export interface ChatConfigChoice {
+	value: string;
+	name: string;
+	description?: string;
+	/** Provider grouping is presentation data, not part of the value sent back. */
+	group?: string;
+	groupName?: string;
+}
+
+/** The two value shapes ACP session config supports. */
+export type ChatConfigOptionValue =
+	| { value: string }
+	| { enabled: boolean };
+
 /**
  * One named skill the provider will let this session invoke.
  *
@@ -465,6 +493,8 @@ export interface ChatSkill {
 	name: string;
 	displayName: string;
 	description?: string;
+	/** Short provider-authored placeholder for command arguments. */
+	inputHint?: string;
 	/** The provider's scope: user, repo, system, admin. */
 	source?: string;
 }

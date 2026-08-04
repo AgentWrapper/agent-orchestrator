@@ -572,6 +572,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation/config-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the live session controls the provider advertises */
+        get: operations["listSessionConversationConfigOptions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/conversation/config-options/{configId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Choose one provider-advertised session configuration value */
+        patch: operations["setSessionConversationConfigOption"];
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation/interrupt": {
         parameters: {
             query?: never;
@@ -1248,6 +1282,27 @@ export interface components {
             summary: string;
             turnId?: string;
         };
+        ConversationConfigChoiceResponse: {
+            description?: string;
+            group?: string;
+            groupName?: string;
+            name: string;
+            value: string;
+        };
+        ConversationConfigOptionResponse: {
+            category?: string;
+            choices?: components["schemas"]["ConversationConfigChoiceResponse"][];
+            currentBoolean?: null | boolean;
+            currentValue?: string;
+            description?: string;
+            id: string;
+            name: string;
+            /** @enum {string} */
+            type: "select" | "boolean";
+        };
+        ConversationConfigOptionsResponse: {
+            options: components["schemas"]["ConversationConfigOptionResponse"][];
+        };
         ConversationDiffFileResponse: {
             additions: number;
             deletions: number;
@@ -1323,6 +1378,7 @@ export interface components {
         ConversationSkillResponse: {
             description?: string;
             displayName: string;
+            inputHint?: string;
             name: string;
             source?: string;
         };
@@ -1882,6 +1938,10 @@ export interface components {
             ok: boolean;
             sessionId: string;
             state: string;
+        };
+        SetConversationConfigOptionRequest: {
+            enabled?: null | boolean;
+            value?: string;
         };
         SetConversationTitleRequest: {
             title: string;
@@ -4024,6 +4084,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CompactConversationResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listSessionConversationConfigOptions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationConfigOptionsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setSessionConversationConfigOption: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Provider session configuration option identifier. */
+                configId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetConversationConfigOptionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationConfigOptionsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */

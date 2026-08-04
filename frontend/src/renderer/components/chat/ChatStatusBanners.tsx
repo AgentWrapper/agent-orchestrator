@@ -13,7 +13,7 @@
  */
 
 import { memo } from "react";
-import { Brain, KeyRound, Plug, RefreshCw, TriangleAlert } from "lucide-react";
+import { KeyRound, Plug, RefreshCw, TriangleAlert } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import type { ConversationAccount, ConversationThreadState, McpServer } from "../../types/conversation";
@@ -222,50 +222,6 @@ export const McpServerBanner = memo(function McpServerBanner({
 					{reloading ? "Reloading…" : "Reload"}
 				</Button>
 			) : null}
-		</div>
-	);
-});
-
-/**
- * Why turning reasoning on showed nothing.
- *
- * On a default Codex install every reasoning item arrives with an empty body: the
- * provider only writes summaries when the user's own config asks for them, and AO
- * does not rewrite a user's config. Measured on codex-cli 0.146.0 — six empty items
- * on a turn by default, ten items with nine bodies once the setting was on.
- *
- * So the failure to design around is a toggle that looks broken. This is not an
- * error and is not drawn as one: it appears only while reasoning is on and nothing
- * has arrived, it says the one line that fixes it, and it says it once for the whole
- * conversation rather than once per empty row.
- */
-export const ReasoningUnavailableNote = memo(function ReasoningUnavailableNote({
-	harness,
-}: {
-	harness: string;
-}) {
-	const codex = harness === "codex";
-	return (
-		<div className="flex shrink-0 items-start gap-2.5 border-b border-border bg-surface/60 px-4 py-2">
-			<Brain aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/70" />
-			<p className="min-w-0 text-[11px] leading-relaxed text-muted-foreground">
-				This agent is not writing reasoning summaries, so there is nothing to show.{" "}
-				{codex ? (
-					<>
-						Set{" "}
-						<code className="rounded bg-background px-1 py-0.5 font-mono text-[10.5px] text-foreground">
-							model_reasoning_summary = &quot;detailed&quot;
-						</code>{" "}
-						in{" "}
-						<code className="rounded bg-background px-1 py-0.5 font-mono text-[10.5px] text-foreground">
-							~/.codex/config.toml
-						</code>{" "}
-						and start a new session. AO leaves that file alone on purpose.
-					</>
-				) : (
-					<>Turn reasoning summaries on in the agent&rsquo;s own configuration and start a new session.</>
-				)}
-			</p>
 		</div>
 	);
 });

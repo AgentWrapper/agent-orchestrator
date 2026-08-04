@@ -30,6 +30,8 @@ type ConversationService interface {
 	Interrupt(ctx context.Context, session domain.SessionID) error
 	Steer(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (chatsvc.SteerResult, error)
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
+	ConfigOptions(ctx context.Context, session domain.SessionID) ([]ports.ChatConfigOption, error)
+	SetConfigOption(ctx context.Context, session domain.SessionID, configID string, value ports.ChatConfigOptionValue) ([]ports.ChatConfigOption, error)
 	Skills(ctx context.Context, session domain.SessionID) ([]ports.ChatSkill, error)
 	SetTurnSettings(ctx context.Context, session domain.SessionID, settings domain.ConversationSettings) (domain.ConversationSettings, error)
 	Compact(ctx context.Context, session domain.SessionID) (ports.ChatCompactionResult, error)
@@ -56,11 +58,66 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/conversation/steer", c.steer)
 	r.Post("/sessions/{sessionId}/conversation/compact", c.compact)
 	r.Get("/sessions/{sessionId}/conversation/models", c.models)
+	r.Get("/sessions/{sessionId}/conversation/config-options", c.configOptions)
+	r.Patch("/sessions/{sessionId}/conversation/config-options/{configId}", c.setConfigOption)
 	r.Get("/sessions/{sessionId}/conversation/skills", c.skills)
 	r.Patch("/sessions/{sessionId}/conversation/settings", c.setSettings)
 	r.Post("/sessions/{sessionId}/conversation/turns/{turnId}/rollback", c.rollback)
 	r.Put("/sessions/{sessionId}/conversation/title", c.setTitle)
 	r.Post("/sessions/{sessionId}/conversation/mcp/reload", c.reloadMCPServers)
+}
+
+// configOptions serves every live control the provider advertises. Empty is a
+// real capability answer and keeps native drivers free to use AO's older typed
+// model/settings surface.
+func (c *ConversationsController) configOptions(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "GET", "/api/v1/sessions/{sessionId}/conversation/config-options")
+		return
+	}
+	options, err := c.Svc.ConfigOptions(r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")))
+	if err != nil {
+		if errors.Is(err, chatsvc.ErrConfigOptionsUnsupported) {
+			envelope.WriteJSON(w, http.StatusOK, ConversationConfigOptionsResponse{
+				Options: []ConversationConfigOptionResponse{},
+			})
+			return
+		}
+		writeConversationError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, configOptionsPayload(options))
+}
+
+// setConfigOption applies one advertised provider value and returns the complete
+// rebuilt catalog. This is immediate session state, not a preference to infer on
+// the next turn: changing models can alter the other available controls now.
+func (c *ConversationsController) setConfigOption(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "PATCH", "/api/v1/sessions/{sessionId}/conversation/config-options/{configId}")
+		return
+	}
+	var req SetConversationConfigOptionRequest
+	if !decodeConversationBody(w, r, &req) {
+		return
+	}
+	if (req.Value == "") == (req.Enabled == nil) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_CONFIG_OPTION_VALUE_REQUIRED",
+			"provide exactly one of value or enabled", nil)
+		return
+	}
+	options, err := c.Svc.SetConfigOption(
+		r.Context(),
+		domain.SessionID(chi.URLParam(r, "sessionId")),
+		chi.URLParam(r, "configId"),
+		ports.ChatConfigOptionValue{Select: req.Value, Boolean: req.Enabled},
+	)
+	if err != nil {
+		writeConversationError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, configOptionsPayload(options))
 }
 
 // reloadMCPServers restarts the provider's tool servers for a session.
@@ -231,6 +288,35 @@ func conversationModelsResponse(
 			Efforts:       model.Efforts,
 			DefaultEffort: model.DefaultEffort,
 		})
+	}
+	return out
+}
+
+func configOptionsPayload(options []ports.ChatConfigOption) ConversationConfigOptionsResponse {
+	out := ConversationConfigOptionsResponse{
+		Options: make([]ConversationConfigOptionResponse, 0, len(options)),
+	}
+	for _, option := range options {
+		item := ConversationConfigOptionResponse{
+			ID:             option.ID,
+			Name:           option.Name,
+			Description:    option.Description,
+			Category:       option.Category,
+			Type:           string(option.Type),
+			CurrentValue:   option.Current.Select,
+			CurrentBoolean: option.Current.Boolean,
+			Choices:        make([]ConversationConfigChoiceResponse, 0, len(option.Choices)),
+		}
+		for _, choice := range option.Choices {
+			item.Choices = append(item.Choices, ConversationConfigChoiceResponse{
+				Value:       choice.Value,
+				Name:        choice.Name,
+				Description: choice.Description,
+				Group:       choice.Group,
+				GroupName:   choice.GroupName,
+			})
+		}
+		out.Options = append(out.Options, item)
 	}
 	return out
 }
@@ -444,6 +530,10 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		// user can still answer it.
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
 			"CHAT_DECISION_NOT_OFFERED", err.Error(), nil)
+
+	case errors.Is(err, ports.ErrChatConfigOptionInvalid):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_CONFIG_OPTION_INVALID", err.Error(), nil)
 
 	case errors.Is(err, ports.ErrChatUnsupported):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",

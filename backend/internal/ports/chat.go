@@ -53,6 +53,9 @@ var (
 	// AO invented is not consent, and consuming the request on a bad decision
 	// would leave the real answer with nothing to answer.
 	ErrChatDecisionNotOffered = errors.New("chat decision was not offered for this request")
+	// ErrChatConfigOptionInvalid means a client named an unknown option, sent the
+	// wrong value type, or selected a value the provider did not advertise.
+	ErrChatConfigOptionInvalid = errors.New("chat config option value is invalid")
 )
 
 // ChatCapability names something a driver may or may not be able to do. AO gates
@@ -74,6 +77,10 @@ const (
 	// ChatCapabilityModels means the provider can enumerate the models it offers
 	// and accept one per turn.
 	ChatCapabilityModels ChatCapability = "models"
+	// ChatCapabilityConfigOptions means the provider advertises live, typed
+	// session controls such as model, thought level, mode, fast mode, or an agent
+	// persona. The catalog is provider-owned and may change after any selection.
+	ChatCapabilityConfigOptions ChatCapability = "config_options"
 	// ChatCapabilityCompaction means the provider can summarize earlier history to
 	// reclaim context.
 	ChatCapabilityCompaction ChatCapability = "compaction"
@@ -213,6 +220,59 @@ type ChatModelLister interface {
 	ListModels(ctx context.Context) ([]ChatModel, error)
 }
 
+// ChatConfigOptionType is the interaction an advertised provider setting needs.
+// ACP currently standardizes selects and is incubating booleans; keeping both in
+// AO's vocabulary prevents protocol DTOs from leaking out of the adapter.
+type ChatConfigOptionType string
+
+const (
+	ChatConfigOptionSelect  ChatConfigOptionType = "select"
+	ChatConfigOptionBoolean ChatConfigOptionType = "boolean"
+)
+
+// ChatConfigOptionValue is the current or requested value for one provider
+// setting. Exactly one field is meaningful according to the option's Type.
+type ChatConfigOptionValue struct {
+	Select  string
+	Boolean *bool
+}
+
+// ChatConfigOptionChoice is one value in a select. Group fields preserve an
+// agent's organization without making grouped menus a protocol concern above
+// the adapter.
+type ChatConfigOptionChoice struct {
+	Value       string
+	Name        string
+	Description string
+	Group       string
+	GroupName   string
+}
+
+// ChatConfigOption is one live provider-owned session control.
+//
+// Category is a presentation hint (model, thought_level, mode, or a provider
+// extension), never a correctness discriminator. Unknown categories must still
+// render: that is how a newly released agent feature reaches AO without an AO
+// release adding a new hardcoded setting.
+type ChatConfigOption struct {
+	ID          string
+	Name        string
+	Description string
+	Category    string
+	Type        ChatConfigOptionType
+	Current     ChatConfigOptionValue
+	Choices     []ChatConfigOptionChoice
+}
+
+// ChatConfigOptionController is implemented by conversations whose provider
+// exposes session configuration. Set returns the complete post-change catalog:
+// changing a model can add or remove effort and fast-mode choices, so callers
+// must replace rather than patch their cached list.
+type ChatConfigOptionController interface {
+	ListConfigOptions(ctx context.Context) ([]ChatConfigOption, error)
+	SetConfigOption(ctx context.Context, id string, value ChatConfigOptionValue) ([]ChatConfigOption, error)
+}
+
 // ChatUsage is token accounting for a conversation.
 //
 // ContextWindow and ContextUsed are what make a "how full is this conversation"
@@ -226,6 +286,11 @@ type ChatUsage struct {
 	// context, not a running total of the session's spend.
 	ContextUsed   int64
 	ContextWindow int64
+	// Providers may report context occupancy and cumulative accounting in
+	// separate notifications. These flags distinguish an omitted group from a
+	// meaningful zero (for example, context immediately after compaction).
+	ContextKnown bool
+	TotalsKnown  bool
 }
 
 // ChatRateLimits is the account's quota position.
@@ -311,6 +376,10 @@ type ChatSkill struct {
 	Name        string
 	DisplayName string
 	Description string
+	// InputHint is the provider's short argument placeholder, for example
+	// "<issue-number>". It is presentation only; invocation remains ordinary
+	// message text beginning with /Name.
+	InputHint string
 	// Source says where it came from (built-in, a plugin, the project), so a user
 	// can tell an AO-provided skill from one the provider ships.
 	Source string
@@ -369,6 +438,22 @@ type (
 // ChatTurnRef identifies a turn the provider accepted.
 type ChatTurnRef struct {
 	ProviderTurnID string
+}
+
+// ChatDeferredTurnStarter is implemented by protocols whose prompt call is the
+// whole lifetime of a turn rather than a quick "accepted" request. SendTurn
+// prepares such a turn and returns its id; the controller calls StartDeferredTurn
+// only after that id is durably bound to AO's turn row. This prevents a fast
+// provider notification from racing ahead of the correlation record needed to
+// project it.
+//
+// Drivers whose SendTurn already receives a provider acknowledgement (Codex's
+// app-server, for example) do not implement this interface.
+type ChatDeferredTurnStarter interface {
+	StartDeferredTurn(providerTurnID string) error
+	// DiscardDeferredTurn releases a prepared turn when AO could not persist its
+	// correlation id. No provider request has started at this point.
+	DiscardDeferredTurn(providerTurnID string)
 }
 
 // ChatDecisionOption is one choice the provider says is valid for a pending

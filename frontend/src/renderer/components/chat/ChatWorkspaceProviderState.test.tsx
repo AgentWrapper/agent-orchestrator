@@ -1,11 +1,9 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ChatWorkspace } from "./ChatWorkspace";
 import {
 	chatFixture,
 	chatFixtureMcpFailed,
-	chatFixtureReasoningEmpty,
 	chatFixtureReauth,
 	chatFixtureRerouted,
 	chatFixtureThreadError,
@@ -20,47 +18,10 @@ const MODELS = [
 	{ id: "gpt-5.6-terra-mini", displayName: "gpt-5.6-terra-mini", default: false },
 ];
 
-describe("reasoning toggle", () => {
-	it("hides reasoning by default, because the provider emits one per tool call", () => {
+describe("reasoning", () => {
+	it("keeps provider reasoning out of the conversation chrome", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 		expect(screen.queryByText(/Reading the worktree first/)).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /Reasoning/ })).toHaveAttribute(
-			"aria-pressed",
-			"false",
-		);
-	});
-
-	it("shows the summaries once asked, and nothing else", async () => {
-		render(<ChatWorkspace snapshot={chatFixture} />);
-		await userEvent.click(screen.getByRole("button", { name: /Reasoning/ }));
-		expect(screen.getByText("Reading the worktree first")).toBeInTheDocument();
-		// There is prose to read, so the explanation about an empty toggle stays away.
-		expect(screen.queryByText(/model_reasoning_summary/)).not.toBeInTheDocument();
-	});
-
-	// The default codex install: items arrive, all of them empty. An empty toggle that
-	// looks broken is the failure mode this exists to avoid.
-	it("explains an empty toggle once, naming the config key", async () => {
-		render(<ChatWorkspace snapshot={chatFixtureReasoningEmpty} />);
-		await userEvent.click(screen.getByRole("button", { name: /Reasoning/ }));
-		const notes = screen.getAllByText(/model_reasoning_summary/);
-		// Once for the conversation, not once per empty row — the fixture has several.
-		expect(notes).toHaveLength(1);
-	});
-
-	it("keeps the explanation out of the way while reasoning is off", () => {
-		render(<ChatWorkspace snapshot={chatFixtureReasoningEmpty} />);
-		expect(screen.queryByText(/model_reasoning_summary/)).not.toBeInTheDocument();
-	});
-
-	it("offers no toggle at all when the provider emits no reasoning", () => {
-		const withoutReasoning: ConversationSnapshot = {
-			...chatFixture,
-			items: chatFixture.items.filter(
-				(item) => !(item.kind === "activity" && item.activityKind === "reasoning"),
-			),
-		};
-		render(<ChatWorkspace snapshot={withoutReasoning} />);
 		expect(screen.queryByRole("button", { name: /Reasoning/ })).not.toBeInTheDocument();
 	});
 });

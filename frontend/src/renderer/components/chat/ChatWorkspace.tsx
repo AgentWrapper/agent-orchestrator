@@ -16,7 +16,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	Archive,
 	ArrowDown,
-	Brain,
 	Loader2,
 	MessageSquare,
 	Square,
@@ -45,7 +44,6 @@ import { TurnSettingsBar } from "./TurnSettingsBar";
 import { ContextMeter } from "./ContextMeter";
 import {
 	McpServerBanner,
-	ReasoningUnavailableNote,
 	ReauthBanner,
 	ThreadStateBanner,
 } from "./ChatStatusBanners";
@@ -60,6 +58,8 @@ import {
 	type ConversationPlan,
 	type ConversationSnapshot,
 	type ControllerState,
+	type ChatConfigOption,
+	type ChatConfigOptionValue,
 	type ChatModel,
 	type ChatSkill,
 	type ConversationActivity,
@@ -78,6 +78,14 @@ export interface ChatWorkspaceProps {
 	/** The provider's model catalog. Empty hides the model control. */
 	models?: ChatModel[];
 	onChooseSettings?: (settings: TurnSettings) => void;
+	/** Live provider-owned options, such as ACP model, effort, mode, and fast mode. */
+	configOptions?: ChatConfigOption[];
+	onChooseConfigOption?: (
+		optionId: string,
+		value: ChatConfigOptionValue,
+	) => Promise<unknown> | void;
+	configOptionPending?: boolean;
+	configOptionError?: string;
 	/** Summarize earlier history to reclaim context. */
 	onCompact?: () => void;
 	/** A compaction is running provider-side. It takes seconds, not milliseconds. */
@@ -127,6 +135,10 @@ export function ChatWorkspace({
 	busy,
 	models,
 	onChooseSettings,
+	configOptions,
+	onChooseConfigOption,
+	configOptionPending,
+	configOptionError,
 	onCompact,
 	compacting,
 	compactUnavailable,
@@ -147,11 +159,6 @@ export function ChatWorkspace({
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
 	const queuedCount = queuedTurnIds(snapshot).size;
-	// Reasoning is hidden by default. The provider emits a reasoning item per tool
-	// call, usually with no readable body, so showing them turns the timeline into
-	// a log. Kept behind a toggle rather than dropped, since they are occasionally
-	// the only explanation of why the agent did something.
-	const [showReasoning, setShowReasoning] = useState(false);
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
@@ -161,7 +168,6 @@ export function ChatWorkspace({
 	const rollbackTarget = onRollback && !turn ? (id: string) => setConfirming(id) : undefined;
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
-	const reasoning = useMemo(() => reasoningState(snapshot), [snapshot]);
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
 
 	return (
@@ -172,9 +178,6 @@ export function ChatWorkspace({
 		>
 			<ChatHeader
 				snapshot={snapshot}
-				showReasoning={showReasoning}
-				onToggleReasoning={() => setShowReasoning((prev) => !prev)}
-				hasReasoning={reasoning.any}
 				onCompact={onCompact}
 				compacting={compacting}
 				compactUnavailable={compactUnavailable}
@@ -198,17 +201,10 @@ export function ChatWorkspace({
 				turnInFlight={Boolean(turn)}
 				error={mcpReloadError}
 			/>
-			{/* Only while the toggle is on and the provider is sending nothing: this
-			    exists so an empty toggle explains itself instead of looking broken. */}
-			{showReasoning && reasoning.any && !reasoning.anyText ? (
-				<ReasoningUnavailableNote harness={snapshot.harness} />
-			) : null}
-
 			<Timeline
 				snapshot={snapshot}
 				onDecide={onDecide}
 				busy={busy}
-				showReasoning={showReasoning}
 				onRollback={rollbackTarget}
 			/>
 
@@ -226,13 +222,19 @@ export function ChatWorkspace({
 					<ChatComposer
 						onSend={(text) => onSend?.(text)}
 						settings={
-							onChooseSettings ? (
+							onChooseSettings || onChooseConfigOption ? (
 								<TurnSettingsBar
 									models={models ?? []}
 									settings={snapshot.settings}
 									reroute={snapshot.modelReroute}
 									onChange={onChooseSettings}
-									disabled={snapshot.controller.state === "stopped"}
+									configOptions={configOptions ?? []}
+									onChangeConfigOption={onChooseConfigOption}
+									configPending={configOptionPending}
+									error={configOptionError}
+									disabled={
+										snapshot.controller.state === "stopped" || configOptionPending
+									}
 								/>
 							) : null
 						}
@@ -367,8 +369,8 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
  *     recorded by an older build whose usage rows are still on disk. Rendering one
  *     row per report is what buried the actual conversation; it lives in the
  *     header meter instead.
- *   - reasoning, unless asked for. The provider emits one per tool call and they
- *     usually carry no readable body, so by default they are pure chrome.
+ *   - reasoning. Providers can emit one per tool call and they usually carry no
+ *     readable body, so they are internal signal rather than conversation chrome.
  *
  *   - a plan row whose turn already carries the plan. The daemon writes both, from
  *     one event, so they cannot disagree; the turn's copy renders as a checklist at
@@ -378,7 +380,7 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
  * Everything else is kept, including an activity this build does not fully
  * understand — dropping an unrecognized item would hide work the agent really did.
  */
-function readableItems(snapshot: ConversationSnapshot, showReasoning: boolean): ConversationItem[] {
+function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 	const plannedTurns = new Set(
 		snapshot.turns.filter((turn) => turn.plan?.steps.length).map((turn) => turn.id),
 	);
@@ -386,57 +388,21 @@ function readableItems(snapshot: ConversationSnapshot, showReasoning: boolean): 
 		if (item.kind !== "activity") return true;
 		if (item.activityKind === "usage") return false;
 		if (item.activityKind === "plan" && item.turnId && plannedTurns.has(item.turnId)) return false;
-		if (item.activityKind === "reasoning") {
-			// Even when shown, a reasoning item with nothing to read is just a label.
-			// Filtered rather than drawn empty, because six blank rows do not tell a
-			// reader why they are blank — the note above the timeline does that once.
-			return showReasoning && Boolean(item.detail?.reason || item.detail?.text);
-		}
+		if (item.activityKind === "reasoning") return false;
 		return true;
 	});
-}
-
-/**
- * Whether this conversation has reasoning at all, and whether any of it is readable.
- *
- * The two are different questions and the difference is the whole problem. On a
- * default Codex install the provider emits a reasoning item per tool call and leaves
- * every one of them empty, because summaries are off unless the user's own config
- * turns them on. So `any` decides whether the toggle is worth offering and `anyText`
- * decides whether turning it on will show anything — without the second, the control
- * silently does nothing and reads as broken.
- */
-function reasoningState(snapshot: ConversationSnapshot): { any: boolean; anyText: boolean } {
-	let any = false;
-	let anyText = false;
-	for (const item of snapshot.items) {
-		if (item.kind !== "activity" || item.activityKind !== "reasoning") continue;
-		any = true;
-		if (item.detail?.text || item.detail?.reason) {
-			anyText = true;
-			break;
-		}
-	}
-	return { any, anyText };
 }
 
 /* -------------------------------------------------------------------------- */
 
 function ChatHeader({
 	snapshot,
-	showReasoning,
-	onToggleReasoning,
-	hasReasoning,
 	onCompact,
 	compacting,
 	compactUnavailable,
 	turnInFlight,
 }: {
 	snapshot: ConversationSnapshot;
-	showReasoning: boolean;
-	onToggleReasoning: () => void;
-	/** The provider emits reasoning at all, so the toggle has something to govern. */
-	hasReasoning: boolean;
 	onCompact?: () => void;
 	compacting?: boolean;
 	compactUnavailable?: string;
@@ -470,19 +436,6 @@ function ChatHeader({
 					turnInFlight={turnInFlight}
 					compactedAt={snapshot.compactedAt}
 				/>
-				{hasReasoning ? (
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						onClick={onToggleReasoning}
-						aria-pressed={showReasoning}
-						className="h-5 gap-1 px-1.5 text-[11px]"
-					>
-						<Brain aria-hidden="true" className="size-3" />
-						{showReasoning ? "Hide reasoning" : "Reasoning"}
-					</Button>
-				) : null}
 				{/* The mode is a durable session fact, so it is stated rather than
 				    implied by which surface happens to be open. */}
 				<span className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -618,13 +571,11 @@ function Timeline({
 	snapshot,
 	onDecide,
 	busy,
-	showReasoning,
 	onRollback,
 }: {
 	snapshot: ConversationSnapshot;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	busy?: boolean;
-	showReasoning: boolean;
 	onRollback?: (turnId: string) => void;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
@@ -633,7 +584,7 @@ function Timeline({
 	const decide = useStableCallback(onDecide);
 	const rollback = useStableCallback(onRollback);
 
-	const readable = useMemo(() => readableItems(snapshot, showReasoning), [snapshot, showReasoning]);
+	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
 	const items = useStableList(readable, itemKey, sameContent);
 	const grouped = useMemo(() => groupByTurn({ ...snapshot, items }), [snapshot, items]);
 	const groups = useStableList(grouped, groupKey, sameGroup);

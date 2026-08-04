@@ -50,6 +50,14 @@ func (f *fakeChatService) Models(context.Context, domain.SessionID) ([]ports.Cha
 	return nil, domain.ConversationSettings{}, nil
 }
 
+func (f *fakeChatService) ConfigOptions(context.Context, domain.SessionID) ([]ports.ChatConfigOption, error) {
+	return nil, nil
+}
+
+func (f *fakeChatService) SetConfigOption(context.Context, domain.SessionID, string, ports.ChatConfigOptionValue) ([]ports.ChatConfigOption, error) {
+	return nil, nil
+}
+
 func (f *fakeChatService) SetTurnSettings(context.Context, domain.SessionID, domain.ConversationSettings) (domain.ConversationSettings, error) {
 	return domain.ConversationSettings{}, nil
 }

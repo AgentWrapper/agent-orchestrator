@@ -23,11 +23,15 @@ import (
 // JSON a client actually parses is what is checked.
 
 type fakeConversationService struct {
-	snapshot   chatsvc.Snapshot
-	skills     []ports.ChatSkill
-	skillErr   error
-	mcpServers []domain.ConversationMCPServer
-	reloadErr  error
+	snapshot       chatsvc.Snapshot
+	skills         []ports.ChatSkill
+	skillErr       error
+	configOptions  []ports.ChatConfigOption
+	configErr      error
+	setConfigID    string
+	setConfigValue ports.ChatConfigOptionValue
+	mcpServers     []domain.ConversationMCPServer
+	reloadErr      error
 }
 
 func (f *fakeConversationService) Snapshot(context.Context, domain.SessionID) (chatsvc.Snapshot, error) {
@@ -46,6 +50,16 @@ func (f *fakeConversationService) Interrupt(context.Context, domain.SessionID) e
 
 func (f *fakeConversationService) Models(context.Context, domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error) {
 	return nil, domain.ConversationSettings{}, nil
+}
+
+func (f *fakeConversationService) ConfigOptions(context.Context, domain.SessionID) ([]ports.ChatConfigOption, error) {
+	return f.configOptions, f.configErr
+}
+
+func (f *fakeConversationService) SetConfigOption(_ context.Context, _ domain.SessionID, id string, value ports.ChatConfigOptionValue) ([]ports.ChatConfigOption, error) {
+	f.setConfigID = id
+	f.setConfigValue = value
+	return f.configOptions, f.configErr
 }
 
 func (f *fakeConversationService) SetTurnSettings(context.Context, domain.SessionID, domain.ConversationSettings) (domain.ConversationSettings, error) {

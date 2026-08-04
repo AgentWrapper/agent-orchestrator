@@ -70,6 +70,17 @@ type fakeConversation struct {
 	closeOnce sync.Once
 }
 
+type deferredConversation struct {
+	*fakeConversation
+	start func(string) error
+}
+
+func (f *deferredConversation) StartDeferredTurn(providerTurnID string) error {
+	return f.start(providerTurnID)
+}
+
+func (f *deferredConversation) DiscardDeferredTurn(string) {}
+
 func newFakeConversation() *fakeConversation {
 	return &fakeConversation{
 		events:   make(chan ports.ChatEvent, 64),
@@ -370,6 +381,33 @@ func TestDuplicateSendDoesNotCreateASecondTurn(t *testing.T) {
 	}
 	if len(snapshot.Messages) != 1 {
 		t.Fatalf("messages = %d, want 1", len(snapshot.Messages))
+	}
+}
+
+func TestDeferredDriverStartsOnlyAfterProviderTurnIDIsDurable(t *testing.T) {
+	deferred := &deferredConversation{fakeConversation: newFakeConversation()}
+	h := newHarnessWithConversation(t, deferred)
+	deferred.start = func(providerTurnID string) error {
+		snapshot, err := h.st.LoadConversationSnapshot(context.Background(), h.ctrl.ConversationID())
+		if err != nil {
+			return err
+		}
+		for _, turn := range snapshot.Turns {
+			if turn.ProviderTurnID == providerTurnID {
+				return nil
+			}
+		}
+		return fmt.Errorf("provider turn %q was not bound before deferred start", providerTurnID)
+	}
+
+	turn, err := h.svc.Send(context.Background(), testSession, ports.ChatUserMessage{
+		Text: "start through ACP", ClientMessageID: "deferred-1", Origin: domain.MessageOriginHuman,
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if turn.ProviderTurnID == "" {
+		t.Fatal("deferred turn has no provider id")
 	}
 }
 
@@ -960,6 +998,33 @@ func TestUsageProjectionKeepsOnlyTheLatest(t *testing.T) {
 		if activity.Kind == domain.ActivityKindUsage {
 			t.Fatalf("usage was projected as an activity: %+v", activity)
 		}
+	}
+}
+
+// ACP reports context fullness and cumulative token totals in separate messages.
+// A later totals update must not erase the context window received just before it.
+func TestUsageProjectionMergesIndependentProviderUpdates(t *testing.T) {
+	h := newHarness(t)
+
+	h.conv.emit(
+		ports.ChatEvent{Kind: ports.ChatEventUsage, Usage: &ports.ChatUsage{
+			ContextUsed: 74300, ContextWindow: 1_000_000, ContextKnown: true,
+		}},
+		ports.ChatEvent{Kind: ports.ChatEventUsage, Usage: &ports.ChatUsage{
+			InputTokens: 2, OutputTokens: 59, CachedTokens: 74216,
+			TotalTokens: 74277, TotalsKnown: true,
+		}},
+	)
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return s.Conversation.Usage != nil && s.Conversation.Usage.TotalTokens == 74277
+	})
+	usage := snapshot.Conversation.Usage
+	if usage.ContextUsed != 74300 || usage.ContextWindow != 1_000_000 {
+		t.Fatalf("context usage was erased by totals update: %+v", usage)
+	}
+	if usage.CachedTokens != 74216 {
+		t.Fatalf("cumulative totals were not merged: %+v", usage)
 	}
 }
 

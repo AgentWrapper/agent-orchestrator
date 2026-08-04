@@ -566,6 +566,8 @@ func normalizeNotification(n notification, now time.Time) []ports.ChatEvent {
 			OutputTokens: p.TokenUsage.Total.OutputTokens,
 			CachedTokens: p.TokenUsage.Total.CachedInputTokens,
 			TotalTokens:  p.TokenUsage.Total.TotalTokens,
+			ContextKnown: true,
+			TotalsKnown:  true,
 			// Context fullness comes from the LAST request, not the cumulative
 			// total: a turn resends the whole conversation, so the last
 			// request's size is what is actually occupying the window. Using

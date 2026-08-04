@@ -35,7 +35,7 @@ func decodeSkills(t *testing.T, body []byte) controllers.ConversationSkillsRespo
 func TestSkillsRouteReturnsTheProvidersList(t *testing.T) {
 	status, body := skillsRequest(t, &fakeConversationService{
 		skills: []ports.ChatSkill{
-			{Name: "review", DisplayName: "Review", Description: "Look at the diff", Source: "repo"},
+			{Name: "review", DisplayName: "Review", Description: "Look at the diff", InputHint: "<branch>", Source: "repo"},
 		},
 	})
 	if status != http.StatusOK {
@@ -46,7 +46,7 @@ func TestSkillsRouteReturnsTheProvidersList(t *testing.T) {
 		t.Fatalf("skills = %+v, want 1", got.Skills)
 	}
 	if got.Skills[0] != (controllers.ConversationSkillResponse{
-		Name: "review", DisplayName: "Review", Description: "Look at the diff", Source: "repo",
+		Name: "review", DisplayName: "Review", Description: "Look at the diff", InputHint: "<branch>", Source: "repo",
 	}) {
 		t.Errorf("skill = %+v", got.Skills[0])
 	}

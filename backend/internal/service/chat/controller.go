@@ -145,6 +145,11 @@ type Controller struct {
 	// each report straight through would make every field blank the one before it.
 	account     domain.ConversationAccount
 	threadState domain.ConversationThreadState
+	// usage is merged in memory because providers may split context occupancy and
+	// cumulative accounting across separate events. Writing either half as a full
+	// replacement erases the other half and turns a percentage meter into a bare
+	// token count.
+	usage domain.ConversationUsage
 	// mcpServers is keyed by name; mcpServerOrder preserves first-seen order so the
 	// list a client renders does not reshuffle on every turn.
 	mcpServers     map[string]domain.ConversationMCPServer
@@ -191,6 +196,9 @@ func newController(
 	}
 	if conversation.ThreadState != nil {
 		c.threadState = *conversation.ThreadState
+	}
+	if conversation.Usage != nil {
+		c.usage = *conversation.Usage
 	}
 	for _, server := range conversation.MCPServers {
 		if _, seen := c.mcpServers[server.Name]; !seen {
@@ -350,6 +358,34 @@ func (c *Controller) turnSettings() ports.ChatTurnSettings {
 	}
 }
 
+// mergeUsage combines independently reported usage groups. Explicit flags are
+// authoritative, including a meaningful zero after compaction. The inference is
+// compatibility for existing drivers/tests that predate the flags and report a
+// complete non-zero snapshot in one event.
+func (c *Controller) mergeUsage(update ports.ChatUsage) domain.ConversationUsage {
+	contextKnown := update.ContextKnown
+	totalsKnown := update.TotalsKnown
+	if !contextKnown && !totalsKnown {
+		contextKnown = update.ContextUsed != 0 || update.ContextWindow != 0
+		totalsKnown = update.InputTokens != 0 || update.OutputTokens != 0 ||
+			update.CachedTokens != 0 || update.TotalTokens != 0
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if contextKnown {
+		c.usage.ContextUsed = update.ContextUsed
+		c.usage.ContextWindow = update.ContextWindow
+	}
+	if totalsKnown {
+		c.usage.InputTokens = update.InputTokens
+		c.usage.OutputTokens = update.OutputTokens
+		c.usage.CachedTokens = update.CachedTokens
+		c.usage.TotalTokens = update.TotalTokens
+	}
+	return c.usage
+}
+
 // busy reports whether a provider turn is in flight.
 func (c *Controller) busy() bool {
 	c.mu.Lock()
@@ -385,6 +421,9 @@ func (c *Controller) dispatch(
 	}
 
 	if err := c.store.BindTurnToProvider(ctx, turnID, ref.ProviderTurnID, c.now()); err != nil {
+		if deferred, ok := c.conv.(ports.ChatDeferredTurnStarter); ok {
+			deferred.DiscardDeferredTurn(ref.ProviderTurnID)
+		}
 		return domain.ConversationTurn{}, fmt.Errorf("bind turn: %w", err)
 	}
 
@@ -394,6 +433,23 @@ func (c *Controller) dispatch(
 	// provider's own turn-started notification is the one an interrupt needs.
 	c.ackedTurnID = ""
 	c.mu.Unlock()
+
+	// ACP's session/prompt request stays open until the turn finishes, so an ACP
+	// driver prepares the request in SendTurn and starts it here. The durable
+	// provider-id binding above must exist before the first streamed update can be
+	// projected. Eager drivers do not implement this optional interface.
+	if deferred, ok := c.conv.(ports.ChatDeferredTurnStarter); ok {
+		if err := deferred.StartDeferredTurn(ref.ProviderTurnID); err != nil {
+			c.mu.Lock()
+			c.pendingTurnID = ""
+			c.mu.Unlock()
+			if settleErr := c.store.SettleTurnByID(
+				ctx, turnID, domain.TurnStateFailed, err.Error(), c.now()); settleErr != nil {
+				c.log.Error("failed to settle turn after deferred start error", "error", settleErr)
+			}
+			return domain.ConversationTurn{}, fmt.Errorf("start turn: %w", err)
+		}
+	}
 
 	return domain.ConversationTurn{
 		ID:                 turnID,
@@ -1040,14 +1096,7 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		// Overwrites rather than appends. Deliberately not reported as activity
 		// either: token accounting arriving is not the agent doing work, and
 		// treating it as such would keep a finished session looking busy.
-		return c.store.RecordUsage(ctx, c.conversation.ID, domain.ConversationUsage{
-			ContextUsed:   event.Usage.ContextUsed,
-			ContextWindow: event.Usage.ContextWindow,
-			InputTokens:   event.Usage.InputTokens,
-			OutputTokens:  event.Usage.OutputTokens,
-			CachedTokens:  event.Usage.CachedTokens,
-			TotalTokens:   event.Usage.TotalTokens,
-		})
+		return c.store.RecordUsage(ctx, c.conversation.ID, c.mergeUsage(*event.Usage))
 
 	case ports.ChatEventRateLimits:
 		if event.RateLimits == nil {

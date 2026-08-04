@@ -28,6 +28,8 @@ import type {
 	McpServer,
 	MessageOrigin,
 	MessageRole,
+	ChatConfigOption,
+	ChatConfigOptionValue,
 	ChatModel,
 	ChatSkill,
 	PlanStep,
@@ -387,6 +389,66 @@ export function useConversationModels(sessionId: string | undefined, enabled: bo
 }
 
 /**
+ * Provider-owned controls advertised for this live session.
+ *
+ * Unlike AO's durable turn settings, these are an ACP catalog whose values and
+ * available choices may change after any selection (choosing a model can replace
+ * the effort choices, for example). The daemon therefore returns the complete
+ * catalog after every mutation and that response replaces the cache atomically.
+ */
+export function useConversationConfigOptions(sessionId: string | undefined, enabled: boolean) {
+	const queryClient = useQueryClient();
+	const queryKey = ["conversation-config-options", sessionId ?? ""] as const;
+	const query = useQuery({
+		queryKey,
+		enabled: Boolean(sessionId) && enabled,
+		retry: false,
+		// ACP can push a replacement catalog when one option changes. Until the
+		// renderer consumes daemon change events, a light poll keeps those updates
+		// visible without coupling them to conversation history polling.
+		refetchInterval: IDLE_INTERVAL_MS,
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET(
+				"/api/v1/sessions/{sessionId}/conversation/config-options",
+				{ params: { path: { sessionId: sessionId as string } } },
+			);
+			if (error) throw error;
+			return (data?.options ?? []) as ChatConfigOption[];
+		},
+	});
+	const mutation = useMutation({
+		mutationFn: async ({
+			optionId,
+			value,
+		}: {
+			optionId: string;
+			value: ChatConfigOptionValue;
+		}) => {
+			const { data, error } = await apiClient.PATCH(
+				"/api/v1/sessions/{sessionId}/conversation/config-options/{configId}",
+				{
+					params: {
+						path: { sessionId: sessionId as string, configId: optionId },
+					},
+					body: value,
+				},
+			);
+			if (error) throw error;
+			return (data?.options ?? []) as ChatConfigOption[];
+		},
+		onSuccess: (options) => queryClient.setQueryData(queryKey, options),
+	});
+
+	return {
+		options: query.data ?? [],
+		setOption: (optionId: string, value: ChatConfigOptionValue) =>
+			mutation.mutateAsync({ optionId, value }),
+		pending: mutation.isPending,
+		error: mutation.error ? apiErrorMessage(mutation.error) : undefined,
+	};
+}
+
+/**
  * The named skills this session's provider will accept.
  *
  * Read from the live conversation for the same reason the model catalog is: skills
@@ -401,10 +463,13 @@ export function useConversationSkills(sessionId: string | undefined, enabled: bo
 	const query = useQuery({
 		queryKey: ["conversation-skills", sessionId ?? ""],
 		enabled: Boolean(sessionId) && enabled,
-		// Skills change when someone edits a file on disk, not per turn. The provider
-		// emits a `skills/changed` notification AO does not yet surface, so this is a
-		// modest staleness window rather than a live subscription.
+		// ACP agents publish this catalog asynchronously and may replace it later.
+		// Polling also keeps Codex project skills current without introducing a
+		// second renderer event channel solely for ephemeral provider metadata. The
+		// catalog can be large and changes rarely, so it intentionally refreshes much
+		// less often than conversation state.
 		staleTime: 60 * 1000,
+		refetchInterval: 60 * 1000,
 		retry: false,
 		queryFn: async () => {
 			const { data, error } = await apiClient.GET(
@@ -554,6 +619,7 @@ function toSnapshot(wire: WireSnapshot): ConversationSnapshot {
 					}),
 				)
 			: undefined,
+		capabilities: wire.capabilities?.length ? wire.capabilities : undefined,
 		turns: (wire.turns ?? []).map((turn) => ({
 			id: turn.id,
 			state: turn.state as TurnState,

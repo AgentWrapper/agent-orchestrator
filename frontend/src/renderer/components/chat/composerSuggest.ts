@@ -137,6 +137,7 @@ export function rankSkills(skills: readonly ChatSkill[], query: string): Suggest
 			// Only searched when the user typed something; an empty query must not be
 			// ranked by description text.
 			needle === "" ? null : score(skill.description ?? "", needle, 40),
+			needle === "" ? null : score(skill.inputHint ?? "", needle, 50),
 		].filter((value): value is number => value !== null);
 		if (candidates.length === 0) continue;
 
@@ -146,7 +147,7 @@ export function rankSkills(skills: readonly ChatSkill[], query: string): Suggest
 			suggestion: {
 				value: skill.name,
 				label: skill.displayName || skill.name,
-				detail: firstLine(skill.description),
+				detail: skillDetail(skill),
 				badge: skill.source,
 			},
 		});
@@ -156,6 +157,13 @@ export function rankSkills(skills: readonly ChatSkill[], query: string): Suggest
 	// the same score must not swap places as the list is refetched.
 	scored.sort((a, b) => a.score - b.score || a.name.localeCompare(b.name));
 	return scored.slice(0, MAX_SUGGESTIONS).map((entry) => entry.suggestion);
+}
+
+function skillDetail(skill: ChatSkill): string | undefined {
+	const description = firstLine(skill.description);
+	const hint = firstLine(skill.inputHint);
+	if (description && hint) return `${description} · ${hint}`;
+	return description || hint;
 }
 
 /**

@@ -110,6 +110,15 @@ describe("rankSkills", () => {
 		});
 	});
 
+	it("shows and searches the provider's command argument hint", () => {
+		const command = { ...skill("review", "Review a change"), inputHint: "<pull-request>" };
+		const [row] = rankSkills([command], "pull-request");
+		expect(row).toMatchObject({
+			value: "review",
+			detail: "Review a change · <pull-request>",
+		});
+	});
+
 	it("orders equal scores by name so the list does not reshuffle on refetch", () => {
 		const a = rankSkills([skill("beta"), skill("alpha")], "");
 		expect(a.map((item) => item.value)).toEqual(["alpha", "beta"]);

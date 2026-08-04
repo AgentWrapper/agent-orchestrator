@@ -11,7 +11,17 @@
  * enumerate models reports none and the model control hides itself.
  */
 
-import { Brain, ChevronUp, Cpu, Shield, Shuffle } from "lucide-react";
+import { Fragment } from "react";
+import {
+	Bot,
+	Brain,
+	ChevronUp,
+	Cpu,
+	Shield,
+	Shuffle,
+	SlidersHorizontal,
+	Zap,
+} from "lucide-react";
 import { Button } from "../ui/button";
 import {
 	DropdownMenu,
@@ -23,6 +33,8 @@ import {
 import { cn } from "../../lib/utils";
 import type {
 	ApprovalMode,
+	ChatConfigOption,
+	ChatConfigOptionValue,
 	ChatModel,
 	ModelReroute,
 	TurnSettings,
@@ -51,6 +63,10 @@ export function TurnSettingsBar({
 	settings,
 	reroute,
 	onChange,
+	configOptions,
+	onChangeConfigOption,
+	configPending,
+	error,
 	disabled,
 }: {
 	models: ChatModel[];
@@ -62,7 +78,15 @@ export function TurnSettingsBar({
 	 * model that is not the one producing the answers.
 	 */
 	reroute?: ModelReroute;
-	onChange: (next: TurnSettings) => void;
+	onChange?: (next: TurnSettings) => void;
+	/** Controls advertised by an ACP agent for this exact live session. */
+	configOptions?: ChatConfigOption[];
+	onChangeConfigOption?: (
+		optionId: string,
+		value: ChatConfigOptionValue,
+	) => Promise<unknown> | void;
+	configPending?: boolean;
+	error?: string;
 	disabled?: boolean;
 }) {
 	const selected = models.find((model) => model.id === settings.model);
@@ -79,8 +103,9 @@ export function TurnSettingsBar({
 	const approvalLabel = APPROVAL_COPY[settings.approvalMode ?? "default"].label;
 
 	return (
-		<div className="flex flex-wrap items-center gap-1">
-			{models.length > 0 ? (
+		<div className="flex min-w-0 flex-col gap-0.5">
+			<div className="flex flex-wrap items-center gap-1">
+				{onChange && models.length > 0 ? (
 				<Picker
 					icon={Cpu}
 					// What is answering, not what was asked for. The substitution stays
@@ -159,76 +184,216 @@ export function TurnSettingsBar({
 							) : null}
 						</DropdownMenuItem>
 					))}
-				</Picker>
-			) : null}
+					</Picker>
+				) : null}
 
-			{efforts.length > 0 ? (
-				<Picker
-					icon={Brain}
-					label={effortLabel ? capitalize(effortLabel) : "Effort"}
-					title="Reasoning effort for the next turn"
-					disabled={disabled}
-					width="w-56"
-				>
-					<DropdownMenuLabel>Reasoning effort</DropdownMenuLabel>
-					{efforts.map((effort) => (
-						<DropdownMenuItem
-							key={effort}
-							onSelect={() => onChange({ ...settings, reasoningEffort: effort })}
-							className="text-xs"
-						>
-							<span
-								className={cn(
-									effort === settings.reasoningEffort ? "text-foreground" : "text-muted-foreground",
-								)}
+				{onChange && efforts.length > 0 ? (
+					<Picker
+						icon={Brain}
+						label={effortLabel ? capitalize(effortLabel) : "Effort"}
+						title="Reasoning effort for the next turn"
+						disabled={disabled}
+						width="w-56"
+					>
+						<DropdownMenuLabel>Reasoning effort</DropdownMenuLabel>
+						{efforts.map((effort) => (
+							<DropdownMenuItem
+								key={effort}
+								onSelect={() => onChange({ ...settings, reasoningEffort: effort })}
+								className="text-xs"
 							>
-								{capitalize(effort)}
-							</span>
-							{effort === settings.reasoningEffort ? (
-								<span className="ml-auto text-[10px] text-accent">selected</span>
-							) : null}
-						</DropdownMenuItem>
-					))}
-				</Picker>
-			) : null}
+								<span
+									className={cn(
+										effort === settings.reasoningEffort
+											? "text-foreground"
+											: "text-muted-foreground",
+									)}
+								>
+									{capitalize(effort)}
+								</span>
+								{effort === settings.reasoningEffort ? (
+									<span className="ml-auto text-[10px] text-accent">selected</span>
+								) : null}
+							</DropdownMenuItem>
+						))}
+					</Picker>
+				) : null}
 
-			<Picker
-				icon={Shield}
-				label={approvalLabel}
-				title="What the agent may do without asking"
-				disabled={disabled}
-				width="w-72"
-			>
-				<DropdownMenuLabel className="flex items-baseline justify-between gap-2">
-					<span>Approvals</span>
-					<span className="text-[11px] font-normal text-muted-foreground">
-						Applies to the next turn
+				{onChange ? (
+					<Picker
+						icon={Shield}
+						label={approvalLabel}
+						title="What the agent may do without asking"
+						disabled={disabled}
+						width="w-72"
+					>
+						<DropdownMenuLabel className="flex items-baseline justify-between gap-2">
+							<span>Approvals</span>
+							<span className="text-[11px] font-normal text-muted-foreground">
+								Applies to the next turn
+							</span>
+						</DropdownMenuLabel>
+						{APPROVAL_ORDER.map((mode) => (
+							<DropdownMenuItem
+								key={mode}
+								onSelect={() => onChange({ ...settings, approvalMode: mode })}
+								className="flex flex-col items-start gap-0.5"
+							>
+								<span
+									className={cn(
+										"text-xs",
+										mode === (settings.approvalMode ?? "default")
+											? "text-foreground"
+											: "text-muted-foreground",
+									)}
+								>
+									{APPROVAL_COPY[mode].label}
+								</span>
+								<span className="text-[11px] leading-snug text-muted-foreground">
+									{APPROVAL_COPY[mode].hint}
+								</span>
+							</DropdownMenuItem>
+						))}
+					</Picker>
+				) : null}
+
+				{onChangeConfigOption
+					? (configOptions ?? []).map((option) => (
+						<ConfigOptionPicker
+							key={option.id}
+							option={option}
+							disabled={disabled || configPending}
+							onChange={(value) => {
+								// The hook owns and renders any rejection. Swallowing here avoids an
+								// unhandled promise without pretending the selection succeeded.
+								void Promise.resolve(onChangeConfigOption(option.id, value)).catch(
+									() => {},
+								);
+							}}
+						/>
+						))
+					: null}
+			</div>
+			{error ? (
+				<p role="alert" className="px-1 text-[11px] leading-snug text-destructive">
+					{error}
+				</p>
+			) : null}
+		</div>
+	);
+}
+
+function ConfigOptionPicker({
+	option,
+	onChange,
+	disabled,
+}: {
+	option: ChatConfigOption;
+	onChange: (value: ChatConfigOptionValue) => void;
+	disabled?: boolean;
+}) {
+	const Icon = configOptionIcon(option);
+	const currentChoice = option.choices.find((choice) => choice.value === option.currentValue);
+	const label =
+		option.type === "boolean"
+			? option.currentBoolean
+				? "On"
+				: "Off"
+			: currentChoice?.name ?? option.currentValue ?? option.name;
+
+	return (
+		<Picker
+			icon={Icon}
+			label={label}
+			title={option.description || option.name}
+			disabled={disabled}
+			width="w-72"
+		>
+			<DropdownMenuLabel className="flex flex-col gap-0.5">
+				<span>{option.name}</span>
+				{option.description ? (
+					<span className="text-[11px] font-normal leading-snug text-muted-foreground">
+						{option.description}
 					</span>
-				</DropdownMenuLabel>
-				{APPROVAL_ORDER.map((mode) => (
+				) : null}
+			</DropdownMenuLabel>
+			{option.type === "boolean" ? (
+				[true, false].map((enabled) => (
 					<DropdownMenuItem
-						key={mode}
-						onSelect={() => onChange({ ...settings, approvalMode: mode })}
-						className="flex flex-col items-start gap-0.5"
+						key={String(enabled)}
+						onSelect={() => onChange({ enabled })}
+						className="text-xs"
 					>
 						<span
 							className={cn(
-								"text-xs",
-								mode === (settings.approvalMode ?? "default")
+								enabled === option.currentBoolean
 									? "text-foreground"
 									: "text-muted-foreground",
 							)}
 						>
-							{APPROVAL_COPY[mode].label}
+							{enabled ? "On" : "Off"}
 						</span>
-						<span className="text-[11px] leading-snug text-muted-foreground">
-							{APPROVAL_COPY[mode].hint}
-						</span>
+						{enabled === option.currentBoolean ? (
+							<span className="ml-auto text-[10px] text-accent">selected</span>
+						) : null}
 					</DropdownMenuItem>
-				))}
-			</Picker>
-		</div>
+				))
+			) : (
+				option.choices.map((choice, index) => {
+					const previousGroup = index > 0 ? option.choices[index - 1]?.group : undefined;
+					return (
+						<Fragment key={choice.value}>
+							{choice.group && choice.group !== previousGroup ? (
+								<DropdownMenuLabel className="pb-1 pt-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+									{choice.groupName || choice.group}
+								</DropdownMenuLabel>
+							) : null}
+							<DropdownMenuItem
+								onSelect={() => onChange({ value: choice.value })}
+								className="flex flex-col items-start gap-0.5"
+							>
+								<span className="flex w-full items-baseline gap-2">
+									<span
+										className={cn(
+											"text-xs",
+											choice.value === option.currentValue
+												? "text-foreground"
+												: "text-muted-foreground",
+										)}
+									>
+										{choice.name}
+									</span>
+									{choice.value === option.currentValue ? (
+										<span className="ml-auto text-[10px] text-accent">selected</span>
+									) : null}
+								</span>
+								{choice.description ? (
+									<span className="text-[11px] leading-snug text-muted-foreground">
+										{choice.description}
+									</span>
+								) : null}
+							</DropdownMenuItem>
+						</Fragment>
+					);
+				})
+			)}
+		</Picker>
 	);
+}
+
+function configOptionIcon(option: ChatConfigOption): typeof Cpu {
+	if (option.id === "fast") return Zap;
+	if (option.id === "agent") return Bot;
+	switch (option.category) {
+		case "model":
+			return Cpu;
+		case "thought_level":
+			return Brain;
+		case "mode":
+			return Shield;
+		default:
+			return SlidersHorizontal;
+	}
 }
 
 function Picker({

@@ -898,6 +898,41 @@ type ConversationModelsResponse struct {
 	Selected ConversationTurnSettingsPayload `json:"selected"`
 }
 
+// ConversationConfigOptionsResponse is the provider's complete live session
+// configuration catalog. Clients replace their cached list after a mutation:
+// model changes can add or remove dependent controls.
+type ConversationConfigOptionsResponse struct {
+	Options []ConversationConfigOptionResponse `json:"options"`
+}
+
+// ConversationConfigOptionResponse is one provider-advertised session control.
+type ConversationConfigOptionResponse struct {
+	ID             string                             `json:"id"`
+	Name           string                             `json:"name"`
+	Description    string                             `json:"description,omitempty"`
+	Category       string                             `json:"category,omitempty"`
+	Type           string                             `json:"type" enum:"select,boolean"`
+	CurrentValue   string                             `json:"currentValue,omitempty"`
+	CurrentBoolean *bool                              `json:"currentBoolean,omitempty"`
+	Choices        []ConversationConfigChoiceResponse `json:"choices,omitempty"`
+}
+
+// ConversationConfigChoiceResponse is one value in a provider select.
+type ConversationConfigChoiceResponse struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Group       string `json:"group,omitempty"`
+	GroupName   string `json:"groupName,omitempty"`
+}
+
+// SetConversationConfigOptionRequest selects one provider-advertised value.
+// Selects use Value; booleans use Enabled. Exactly one must be present.
+type SetConversationConfigOptionRequest struct {
+	Value   string `json:"value,omitempty"`
+	Enabled *bool  `json:"enabled,omitempty"`
+}
+
 // ConversationModelResponse is one model the provider offers.
 type ConversationModelResponse struct {
 	ID          string `json:"id"`
@@ -928,6 +963,8 @@ type ConversationSkillResponse struct {
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
 	Description string `json:"description,omitempty"`
+	// InputHint is the provider's short placeholder for command arguments.
+	InputHint string `json:"inputHint,omitempty"`
 	// Source is where the skill came from (the provider's scope: user, repo,
 	// system, admin), so a user can tell a repo skill from one of their own.
 	Source string `json:"source,omitempty"`
@@ -1258,6 +1295,11 @@ type ConversationRateLimitsPayload struct {
 // matches on it, so a card left on screen cannot answer a newer request.
 type ConversationRequestIDParam struct {
 	RequestID string `path:"requestId" description:"Provider approval request identifier. Zero is a legitimate value."`
+}
+
+// ConversationConfigIDParam names one provider-advertised session option.
+type ConversationConfigIDParam struct {
+	ConfigID string `path:"configId" description:"Provider session configuration option identifier."`
 }
 
 // ConversationTurnIDParam names one turn in a session's conversation.

@@ -1,12 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import {
-	McpServerBanner,
-	ReasoningUnavailableNote,
-	ReauthBanner,
-	ThreadStateBanner,
-} from "./ChatStatusBanners";
+import { McpServerBanner, ReauthBanner, ThreadStateBanner } from "./ChatStatusBanners";
 
 // Each of these answers a question the timeline structurally cannot, so the tests are
 // about what is said and when it is withheld — a banner for an ordinary state is noise
@@ -134,24 +129,5 @@ describe("McpServerBanner", () => {
 	it("says nothing when no server is broken", () => {
 		const { container } = render(<McpServerBanner servers={[]} />);
 		expect(container).toBeEmptyDOMElement();
-	});
-});
-
-describe("ReasoningUnavailableNote", () => {
-	it("names the config key that turns summaries on", () => {
-		render(<ReasoningUnavailableNote harness="codex" />);
-		expect(screen.getByText(/model_reasoning_summary = "detailed"/)).toBeInTheDocument();
-		expect(screen.getByText("~/.codex/config.toml")).toBeInTheDocument();
-	});
-
-	it("says AO leaves the user's own config alone", () => {
-		render(<ReasoningUnavailableNote harness="codex" />);
-		expect(screen.getByText(/leaves that file alone on purpose/)).toBeInTheDocument();
-	});
-
-	it("does not name a codex key for another harness", () => {
-		render(<ReasoningUnavailableNote harness="claude-code" />);
-		expect(screen.queryByText(/config\.toml/)).not.toBeInTheDocument();
-		expect(screen.getByText(/agent’s own configuration/)).toBeInTheDocument();
 	});
 });
