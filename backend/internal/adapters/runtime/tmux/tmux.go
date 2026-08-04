@@ -55,6 +55,10 @@ type Options struct {
 	ChunkSize  int           // default 16*1024
 	EnterDelay time.Duration // pause after pasting a non-empty message before pressing Enter; default defaultEnterDelay. Conpty already does this (ptyInputEnterDelay); tmux lacked it, so a large multiline paste could absorb the trailing Enter and leave the prompt unsubmitted (issue #2342).
 	ReapGrace  time.Duration // grace between SIGTERM and SIGKILL when reaping a pane's leftover background processes on Destroy; default defaultReapGrace.
+	// ProcessContainment selects an optional worker process boundary. The empty
+	// value preserves the historical tmux session-id reaper; "systemd" is an
+	// explicit Linux user-scope opt-in.
+	ProcessContainment string
 }
 
 // Runtime runs agent sessions inside tmux sessions, driving them via the tmux
@@ -68,6 +72,7 @@ type Runtime struct {
 	reapGrace    time.Duration
 	runner       runner
 	reapSessions func(ctx context.Context, pids []int, grace time.Duration)
+	containment  processContainment
 }
 
 var _ ports.Runtime = (*Runtime)(nil)
@@ -271,7 +276,7 @@ func New(opts Options) *Runtime {
 	if reapGrace <= 0 {
 		reapGrace = defaultReapGrace
 	}
-	return &Runtime{
+	r := &Runtime{
 		binary:       binary,
 		shell:        shellPath,
 		timeout:      timeout,
@@ -281,6 +286,12 @@ func New(opts Options) *Runtime {
 		runner:       execRunner{},
 		reapSessions: killSessionsByPID,
 	}
+	if strings.TrimSpace(opts.ProcessContainment) == processContainmentSystemd {
+		r.containment = newSystemdContainment(r.runner, timeout, reapGrace)
+	} else if strings.TrimSpace(opts.ProcessContainment) != "" {
+		r.containment = unavailableContainment{reason: fmt.Sprintf("unknown process containment %q", opts.ProcessContainment)}
+	}
+	return r
 }
 
 // Create starts a new tmux session in the workspace, running the agent's
@@ -299,11 +310,31 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	if err := validateEnvKeys(cfg.Env); err != nil {
 		return ports.RuntimeHandle{}, err
 	}
+	if r.containment != nil {
+		if err := r.containment.Validate(ctx); err != nil {
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: process containment unavailable: %w", err)
+		}
+	}
 
 	launchCmd := buildLaunchCommand(cfg)
+	unit := ""
+	if r.containment != nil {
+		unit = containmentUnitName(id)
+		launchCmd = r.containment.WrapCommand(r.shell, launchCmd, unit, r.reapGrace)
+	}
 	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
 	if _, err := r.run(ctx, args...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
+	}
+	if r.containment != nil {
+		if _, err := r.run(ctx, setRemainOnExitArgs(id)...); err != nil {
+			_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set remain-on-exit %s: %w", id, err)
+		}
+		if err := r.containment.WaitActive(ctx, unit); err != nil {
+			_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify process containment %s: %w", id, err)
+		}
 	}
 	if err := r.verifyPaneWorkingDirectory(ctx, id, cfg.WorkspacePath); err != nil {
 		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
@@ -371,8 +402,21 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	}
 
 	launchCmd := buildLaunchCommand(cfg)
+	unit := ""
+	if r.containment != nil {
+		unit = containmentUnitName(id)
+		if err := r.containment.Release(ctx, unit); err != nil {
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: release process containment %s: %w", id, err)
+		}
+		launchCmd = r.containment.WrapCommand(r.shell, launchCmd, unit, r.reapGrace)
+	}
 	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
+	}
+	if r.containment != nil {
+		if err := r.containment.WaitActive(ctx, unit); err != nil {
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: verify restarted process containment %s: %w", id, err)
+		}
 	}
 	alive, err := r.IsAlive(ctx, handle)
 	if err != nil {
@@ -446,25 +490,38 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	if err != nil {
 		return err
 	}
-	// Capture pane session ids while the session still exists; a missing
-	// session lists no panes and reaps nothing. Best-effort: failures here must
-	// not block the kill-session below.
-	sessionIDs := r.paneSessionIDs(ctx, id)
-
+	var sessionIDs []int
+	if r.containment == nil {
+		// Capture pane session ids while the session still exists; a missing
+		// session lists no panes and reaps nothing. Best-effort: failures here
+		// must not block the kill-session below.
+		sessionIDs = r.paneSessionIDs(ctx, id)
+	}
 	out, err := r.run(ctx, killSessionArgs(id)...)
-	// Reap regardless of the kill-session result: orphaned children outlive the
-	// session, so they must be cleaned up even when the session was already
-	// gone (a benign double-kill).
-	r.reapSessions(ctx, sessionIDs, r.reapGrace)
+	if r.containment == nil {
+		// Reap regardless of the kill-session result: orphaned children outlive
+		// the session, so they must be cleaned up even when the session was
+		// already gone (a benign double-kill).
+		r.reapSessions(ctx, sessionIDs, r.reapGrace)
+	}
+	var tmuxErr error
 
 	if err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && killSessionMissingOutput(string(out)) {
-			return nil
+		missing := errors.As(err, &exitErr) && killSessionMissingOutput(string(out))
+		if !missing {
+			tmuxErr = fmt.Errorf("tmux runtime: destroy session %s: %w", id, err)
 		}
-		return fmt.Errorf("tmux runtime: destroy session %s: %w", id, err)
 	}
-	return nil
+	if r.containment != nil {
+		if releaseErr := r.containment.Release(context.WithoutCancel(ctx), containmentUnitName(id)); releaseErr != nil {
+			if tmuxErr != nil {
+				return errors.Join(tmuxErr, fmt.Errorf("tmux runtime: release process containment %s: %w", id, releaseErr))
+			}
+			return fmt.Errorf("tmux runtime: release process containment %s: %w", id, releaseErr)
+		}
+	}
+	return tmuxErr
 }
 
 // paneSessionIDs lists the pid of every pane in the session. tmux launches each

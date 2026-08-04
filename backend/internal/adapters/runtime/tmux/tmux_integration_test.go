@@ -2,8 +2,11 @@ package tmux
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -215,6 +218,194 @@ func TestRuntimeIntegrationSupervisedExitKeepsInteractiveShell(t *testing.T) {
 	if !strings.Contains(out, "shell-after-managed-resume") {
 		t.Fatalf("post-resume shell output = %q", out)
 	}
+}
+
+// TestRuntimeIntegrationSystemdContainment is an explicit host canary, not a
+// default CI test. It proves the opt-in scope owns a child that calls setsid,
+// while an unrelated process outside the scope survives the worker teardown.
+func TestRuntimeIntegrationSystemdContainment(t *testing.T) {
+	if os.Getenv("AO_TEST_SYSTEMD_CONTAINMENT") != "1" {
+		t.Skip("set AO_TEST_SYSTEMD_CONTAINMENT=1 to run the host systemd canary")
+	}
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Fatal("tmux unavailable: explicit systemd containment canary cannot run")
+	}
+	if _, err := exec.LookPath("systemd-run"); err != nil {
+		t.Fatal("systemd-run unavailable: explicit systemd containment canary cannot run")
+	}
+	if _, err := exec.Command("systemctl", "--user", "show-environment").CombinedOutput(); err != nil {
+		t.Fatalf("systemd user manager unavailable: %v", err)
+	}
+
+	t.Setenv("TMUX", "")
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	ctx := context.Background()
+	id := strings.ReplaceAll(t.Name(), "/", "_")
+	workspace := t.TempDir()
+	oldPIDPath := filepath.Join(workspace, "old.pid")
+	newPIDPath := filepath.Join(workspace, "new.pid")
+	unit := containmentUnitName(SessionName(id))
+	r := New(Options{Timeout: 5 * time.Second, ProcessContainment: processContainmentSystemd})
+	handle := ports.RuntimeHandle{ID: SessionName(id)}
+	_ = r.Destroy(ctx, handle)
+
+	negative := exec.Command("sh", "-c", "trap '' TERM; while :; do sleep 1; done")
+	if err := negative.Start(); err != nil {
+		t.Fatalf("start negative-control process: %v", err)
+	}
+	negativePID := negative.Process.Pid
+	negativeStart := mustProcStartTime(t, negativePID)
+	t.Cleanup(func() {
+		_ = r.Destroy(context.Background(), handle)
+		_ = negative.Process.Kill()
+		_ = negative.Wait()
+	})
+
+	oldCommand := setsidPIDCommand(oldPIDPath)
+	created, err := r.Create(ctx, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(id),
+		WorkspacePath: workspace,
+		Argv:          []string{"sh", "-c", oldCommand},
+	})
+	if err != nil {
+		t.Fatalf("scoped Create: %v", err)
+	}
+	if created.ID != handle.ID {
+		t.Fatalf("Create handle = %+v, want %+v", created, handle)
+	}
+	oldPID := waitForPIDFile(t, oldPIDPath)
+	oldSID, oldStart := mustProcIdentity(t, oldPID)
+	panePIDs := r.paneSessionIDs(ctx, handle.ID)
+	if len(panePIDs) != 1 {
+		t.Fatalf("pane session pids = %#v, want one pane", panePIDs)
+	}
+	paneSID, _ := mustProcIdentity(t, panePIDs[0])
+	if oldSID == paneSID {
+		t.Fatalf("setsid child SID = pane SID = %d, want escaped session", oldSID)
+	}
+	if !procInUnit(oldPID, unit) {
+		t.Fatalf("escaped child pid %d is not in expected unit %s", oldPID, unit)
+	}
+
+	restarted, err := r.Restart(ctx, handle, ports.RuntimeConfig{
+		SessionID:     domain.SessionID(id),
+		WorkspacePath: workspace,
+		Argv:          []string{"sh", "-c", setsidPIDCommand(newPIDPath)},
+	})
+	if err != nil {
+		t.Fatalf("scoped Restart: %v", err)
+	}
+	if restarted != handle {
+		t.Fatalf("Restart handle = %+v, want %+v", restarted, handle)
+	}
+	waitForProcessGone(t, oldPID, oldStart)
+	newPID := waitForPIDFile(t, newPIDPath)
+	newSID, _ := mustProcIdentity(t, newPID)
+	if newSID == paneSID {
+		t.Fatalf("restarted setsid child SID = pane SID = %d, want escaped session", newSID)
+	}
+	if !procInUnit(newPID, unit) {
+		t.Fatalf("restarted child pid %d is not in expected unit %s", newPID, unit)
+	}
+	if err := r.SendMessage(ctx, restarted, "echo systemd-containment-terminal-ok"); err != nil {
+		t.Fatal(err)
+	}
+	if out := waitForOutput(t, r, restarted, "systemd-containment-terminal-ok", 5*time.Second); !strings.Contains(out, "systemd-containment-terminal-ok") {
+		t.Fatalf("terminal output = %q", out)
+	}
+
+	newStart := mustProcStartTime(t, newPID)
+	if err := r.Destroy(ctx, restarted); err != nil {
+		t.Fatalf("scoped Destroy: %v", err)
+	}
+	waitForProcessGone(t, newPID, newStart)
+	if alive, err := r.IsAlive(ctx, restarted); err != nil || alive {
+		t.Fatalf("tmux after scoped Destroy = (%v, %v), want (false, nil)", alive, err)
+	}
+	if state := systemdUnitStateForTest(t, unit); state != "" && !strings.Contains(state, "inactive") && !strings.Contains(state, "dead") && !strings.Contains(state, "not-found") {
+		t.Fatalf("scope state after Destroy = %q", state)
+	}
+	if !procIdentityAlive(negativePID, negativeStart) {
+		t.Fatal("negative-control process did not survive scoped Destroy")
+	}
+}
+
+func setsidPIDCommand(path string) string {
+	return fmt.Sprintf("setsid sh -c %s >/dev/null 2>&1 & echo $! > %s", shellQuote("trap '' TERM; while :; do sleep 1; done"), shellQuote(path))
+}
+
+func waitForPIDFile(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
+			if parseErr == nil && pid > 1 {
+				return pid
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("PID file %s did not become readable", path)
+	return 0
+}
+
+func mustProcIdentity(t *testing.T, pid int) (sid int, start string) {
+	t.Helper()
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		t.Fatalf("read /proc/%d/stat: %v", pid, err)
+	}
+	fields := strings.Fields(string(data)[strings.LastIndex(string(data), ")")+2:])
+	if len(fields) <= 19 {
+		t.Fatalf("/proc/%d/stat has too few fields", pid)
+	}
+	sid, err = strconv.Atoi(fields[3])
+	if err != nil {
+		t.Fatalf("parse /proc/%d session id: %v", pid, err)
+	}
+	return sid, fields[19]
+}
+
+func mustProcStartTime(t *testing.T, pid int) string {
+	_, start := mustProcIdentity(t, pid)
+	return start
+}
+
+func procIdentityAlive(pid int, start string) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(data)[strings.LastIndex(string(data), ")")+2:])
+	return len(fields) > 19 && fields[19] == start
+}
+
+func waitForProcessGone(t *testing.T, pid int, start string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if !procIdentityAlive(pid, start) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("process %d with start time %s remained alive", pid, start)
+}
+
+func procInUnit(pid int, unit string) bool {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	return err == nil && strings.Contains(string(data), unit)
+}
+
+func systemdUnitStateForTest(t *testing.T, unit string) string {
+	t.Helper()
+	out, err := exec.Command("systemctl", "--user", "show", "--no-pager", "--property=LoadState", "--property=ActiveState", "--property=SubState", unit).CombinedOutput()
+	if err != nil && len(out) == 0 {
+		return ""
+	}
+	return string(out)
 }
 
 func TestSupervisorProcessHelper(t *testing.T) {
