@@ -62,6 +62,7 @@ type LaunchSpec struct {
 
 // ReviewCompletion is one asynchronously completed one-shot review. Err is set
 // when the CLI failed before producing a usable result.
+//
 //nolint:revive // the explicit completion type name is part of the launcher API.
 type ReviewCompletion struct {
 	RunID     string

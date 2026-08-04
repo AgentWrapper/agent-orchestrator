@@ -156,7 +156,7 @@ func (l *agentLauncher) runTerminalBatch(ctx context.Context, handleID string, j
 					if l.onComplete != nil {
 						completions := make([]ReviewCompletion, 0, len(tasks))
 						for _, task := range tasks {
-						completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("greptile terminal ended before publishing a complete result")})
+							completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("greptile terminal ended before publishing a complete result")})
 						}
 						l.onComplete(ctx, spec.WorkerID, completions)
 					}
@@ -395,7 +395,7 @@ func (l *agentLauncher) RecoverTerminalReviews(ctx context.Context) error {
 			if l.onComplete != nil {
 				completions := make([]ReviewCompletion, 0, len(request.Tasks))
 				for _, task := range request.Tasks {
-				completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("greptile terminal ended before publishing a complete result")})
+					completions = append(completions, ReviewCompletion{RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA, Err: fmt.Errorf("greptile terminal ended before publishing a complete result")})
 				}
 				l.onComplete(ctx, workerID, completions)
 			}
