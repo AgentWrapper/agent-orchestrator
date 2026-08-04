@@ -1,7 +1,10 @@
 export type Theme = "light" | "dark";
 export type ThemePreference = Theme | "system";
 
+export type ThemeStyle = "orchestrate" | "github" | "catppuccin" | "dracula" | "tokyo-night" | "rose-pine";
+
 export const themeStorageKey = "ao.theme";
+export const themeStyleStorageKey = "ao.theme-style";
 
 function getLocalStorage() {
 	if (typeof window === "undefined" || !window.localStorage) return null;
@@ -29,8 +32,36 @@ export function resolveTheme(preference: ThemePreference = readStoredThemePrefer
 	return preference;
 }
 
+export function readStoredThemeStyle(): ThemeStyle {
+	try {
+		const stored = getLocalStorage()?.getItem(themeStyleStorageKey);
+		if (
+			stored === "orchestrate" ||
+			stored === "github" ||
+			stored === "catppuccin" ||
+			stored === "dracula" ||
+			stored === "tokyo-night" ||
+			stored === "rose-pine"
+		) {
+			return stored;
+		}
+	} catch {
+		// ignore
+	}
+	return "orchestrate";
+}
+
 export function applyDocumentTheme(theme: Theme): void {
 	if (typeof document === "undefined") return;
 	document.documentElement.dataset.theme = theme;
 	document.documentElement.style.colorScheme = theme;
+}
+
+export function applyDocumentThemeStyle(style: ThemeStyle): void {
+	if (typeof document === "undefined") return;
+	if (style === "orchestrate") {
+		delete document.documentElement.dataset.styleTheme;
+	} else {
+		document.documentElement.dataset.styleTheme = style;
+	}
 }
