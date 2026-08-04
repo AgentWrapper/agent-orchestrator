@@ -419,9 +419,10 @@ export function useBrowserView({
 	const prepareForOverlay = useCallback(async () => {
 		const id = viewIdRef.current;
 		if (!id || !hasNativeBrowser || !activeRef.current || !hasUrlRef.current) return;
+		const token = ++mirrorTokenRef.current;
 		clearMirrorTimer();
 		const frame = await (window.ao?.browser.capture?.(id) ?? Promise.resolve("")).catch(() => "");
-		if (frame && viewIdRef.current === id) setMirrorUrl(frame);
+		if (frame && mirrorTokenRef.current === token && viewIdRef.current === id) setMirrorUrl(frame);
 	}, [clearMirrorTimer, hasNativeBrowser]);
 
 	const finishOverlay = useCallback(() => {

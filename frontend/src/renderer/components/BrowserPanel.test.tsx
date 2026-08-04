@@ -270,6 +270,23 @@ describe("BrowserPanel", () => {
 		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
 
+	it("releases the tabs overlay when the menu is dismissed", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
+		];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
+		expect(await screen.findByRole("menu")).toBeInTheDocument();
+		hookState.finishOverlay.mockClear();
+
+		await userEvent.keyboard("{Escape}");
+
+		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalledTimes(1));
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+	});
+
 	it("surfaces a popup-created tab without adding a full tab strip", () => {
 		hookState.tabNotice = "Opened new tab";
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);

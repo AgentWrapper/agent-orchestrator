@@ -319,6 +319,41 @@ describe("useBrowserView", () => {
 		);
 	});
 
+	it("ignores a prepared frame that resolves after the overlay finishes", async () => {
+		let resolveCapture!: (frame: string) => void;
+		const bridge = setupBridge();
+		bridge.capture.mockImplementationOnce(
+			() =>
+				new Promise<string>((resolve) => {
+					resolveCapture = resolve;
+				}),
+		);
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "First tab",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+
+		let pending!: Promise<void>;
+		act(() => {
+			pending = result.current.prepareForOverlay();
+		});
+		act(() => result.current.finishOverlay());
+		await act(async () => {
+			resolveCapture("data:image/jpeg;base64,late-snapshot");
+			await pending;
+		});
+
+		expect(result.current.mirrorUrl).toBe("");
+	});
+
 	it("clamps the native view to its resizable-panel column when the slot overspills", async () => {
 		const bridge = setupBridge();
 		// The slot is wider than its column (e.g. the `min-w-[280px]` wrapper on a

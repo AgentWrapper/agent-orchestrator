@@ -883,6 +883,12 @@ describe("agent browser runtime", () => {
 			height: 720,
 		});
 		expect(views[1].setVisible).toHaveBeenLastCalledWith(true);
+		expect(views[1].setBounds).toHaveBeenLastCalledWith({
+			x: 10,
+			y: 20,
+			width: 320,
+			height: 240,
+		});
 		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
 			code: "STALE_REFERENCE",
 		});

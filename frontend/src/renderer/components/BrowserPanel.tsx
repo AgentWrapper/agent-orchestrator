@@ -486,7 +486,6 @@ export function BrowserPanelView({
 							aria-label={t("browser.tabsAria", { count: tabs.length })}
 							className={cn("browser-panel__tabs-trigger gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
 							disabled={tabs.length === 0}
-							onFocus={warmTabsMenuFrame}
 							onKeyDown={handleTabsTriggerKeyDown}
 							onPointerDown={handleTabsTriggerPointerDown}
 							onPointerEnter={warmTabsMenuFrame}
