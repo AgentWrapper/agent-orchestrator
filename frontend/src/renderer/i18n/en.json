@@ -330,7 +330,7 @@
 	"pr.card.checksFailing": "Checks failing",
 	"pr.card.checksLoading": "Checking merge readiness",
 	"pr.card.checksPassing": "Checks passing",
-	"pr.card.checksPending": "Checks pending",
+	"pr.card.checksPending": "Checks running",
 	"pr.card.closed": "Pull request closed",
 	"pr.card.draft": "Draft pull request",
 	"pr.card.mergeBlocked": "Merge blocked",

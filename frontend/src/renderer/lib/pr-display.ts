@@ -62,6 +62,8 @@ export type PRCardStatus = {
 	key: "ci" | "merge" | "review" | "lifecycle";
 	label: string;
 	detail?: string;
+	href?: string;
+	breathe?: boolean;
 	links: PRSummaryLink[];
 	tone: PRDisplayTone;
 };
@@ -77,6 +79,16 @@ export function comparePRDisplaySummaries(a: SessionPRSummary, b: SessionPRSumma
 
 export function prBrowserUrl(pr: SessionPRSummary): string {
 	return prBaseUrl(pr) ?? pr.htmlUrl ?? pr.url;
+}
+
+export function prChecksUrl(pr: SessionPRSummary): string | undefined {
+	try {
+		const url = new URL(prBrowserUrl(pr));
+		if (url.hostname.toLowerCase() !== "github.com" || !/\/pull\/\d+\/?$/.test(url.pathname)) return undefined;
+		return `${url.origin}${url.pathname.replace(/\/$/, "")}/checks`;
+	} catch {
+		return undefined;
+	}
 }
 
 export function sessionPRDisplaySummaries(
@@ -294,9 +306,9 @@ export function prCardPresentation(pr: SessionPRSummary): PRCardPresentation {
 	} else if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
 		primary = cardStatus("merge", "pr.card.mergeBlocked", "warning", mergeSummary(pr), mergeLinks(pr));
 	} else if (pr.ci.state === "pending") {
-		primary = cardStatus("ci", "pr.card.checksPending", "neutral");
+		primary = cardStatus("ci", "pr.card.checksPending", "neutral", undefined, [], prChecksUrl(pr), true);
 	} else if (pr.ci.state === "unknown") {
-		primary = cardStatus("ci", "pr.card.checksLoading", "passive");
+		primary = cardStatus("ci", "pr.card.checksLoading", "passive", undefined, [], prChecksUrl(pr), true);
 	} else if (pr.state === "draft") {
 		primary = cardStatus("lifecycle", "pr.card.draft", "neutral");
 	} else if (pr.mergeability.state === "mergeable") {
@@ -308,8 +320,14 @@ export function prCardPresentation(pr: SessionPRSummary): PRCardPresentation {
 	}
 
 	const supporting: PRCardStatus[] = [];
-	if (pr.state === "open" && pr.ci.state === "passing" && primary.key !== "ci") {
-		supporting.push(cardStatus("ci", "pr.card.checksPassing", "success"));
+	if (pr.state === "open" && primary.key !== "ci") {
+		if (pr.ci.state === "passing") {
+			supporting.push(cardStatus("ci", "pr.card.checksPassing", "success", undefined, [], prChecksUrl(pr)));
+		} else if (pr.ci.state === "pending") {
+			supporting.push(cardStatus("ci", "pr.card.checksPending", "neutral", undefined, [], prChecksUrl(pr), true));
+		} else if (pr.ci.state === "unknown") {
+			supporting.push(cardStatus("ci", "pr.card.checksLoading", "passive", undefined, [], prChecksUrl(pr), true));
+		}
 	}
 	return { primary, supporting };
 }
@@ -334,8 +352,10 @@ function cardStatus(
 	tone: PRDisplayTone,
 	detail?: string,
 	links: PRSummaryLink[] = [],
+	href?: string,
+	breathe = false,
 ): PRCardStatus {
-	return { key, label: appI18n.t(labelKey), detail, links, tone };
+	return { key, label: appI18n.t(labelKey), detail, href, breathe, links, tone };
 }
 
 export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {

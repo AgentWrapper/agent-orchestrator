@@ -276,6 +276,28 @@ describe("SessionsBoard", () => {
 		expect(working.querySelector("span")).toHaveClass("bg-status-working", "animate-status-pulse");
 	});
 
+	it("keeps a spawning card labeled Working when raw activity has not become active", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-spawning",
+						title: "spawning-card-task",
+						status: "working",
+						activity: { state: "exited", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+		const card = screen.getByText("spawning-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		expect(within(card).getByText("Working")).toBeInTheDocument();
+		expect(within(card).queryByText("Exited")).not.toBeInTheDocument();
+	});
+
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [

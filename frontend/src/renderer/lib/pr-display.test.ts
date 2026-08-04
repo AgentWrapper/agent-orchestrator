@@ -118,6 +118,27 @@ describe("prCardPresentation", () => {
 		expect(presentation.primary.links[0]).toMatchObject({ label: "unit", href: "https://ci/unit" });
 		expect(presentation.supporting).toEqual([]);
 	});
+
+	it("retains running checks as linked supporting state when review is the primary action", () => {
+		const presentation = prCardPresentation(
+			summary({
+				ci: { state: "pending", failingChecks: [] },
+				review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+				mergeability: {
+					state: "blocked",
+					reasons: ["review_required"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary.label).toBe("Review required");
+		expect(presentation.supporting[0]).toMatchObject({
+			label: "Checks running",
+			href: "https://github.com/acme/repo/pull/7/checks",
+			breathe: true,
+		});
+	});
 });
 
 describe("prBrowserUrl", () => {

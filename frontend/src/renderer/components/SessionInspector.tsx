@@ -495,7 +495,14 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	return (
 		<article className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
 			{pr.title ? (
-				<div className="text-sm font-semibold leading-snug tracking-tight text-settings-label">{pr.title}</div>
+				<a
+					className="inline text-sm font-semibold leading-snug tracking-tight text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					href={prBrowserUrl(pr)}
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					{pr.title}
+				</a>
 			) : null}
 			<div className={cn("flex min-w-0 items-center gap-2", pr.title && "mt-1.5")}>
 				<a

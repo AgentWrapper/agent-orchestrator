@@ -779,7 +779,7 @@ function SessionCard({
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status, t);
 	const activity = getAgentActivityView(session.activity, t);
-	const showLiveActivity = session.status === "working" || session.status === "idle";
+	const showLiveActivity = session.status === "working" && activity.state === "active";
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -888,7 +888,7 @@ function SessionCard({
 								showLiveActivity ? activity.indicatorClassName : "bg-current",
 							)}
 						/>
-						{showLiveActivity ? activity.label : badge.label}
+						{badge.label}
 					</span>
 					<span
 						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"

@@ -289,7 +289,11 @@ describe("SessionInspector PR section", () => {
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
 		expect(prSection("Pull request").getByText("Ready to merge")).toBeInTheDocument();
 		expect(prSection("Pull request").getByText("Checks passing")).toBeInTheDocument();
-		expect(prSection("Pull request").getByText("do the thing")).toHaveClass("text-sm");
+		expect(prSection("Pull request").getByRole("link", { name: "do the thing" })).toHaveClass("text-sm");
+		expect(prSection("Pull request").getByRole("link", { name: "do the thing" })).toHaveAttribute(
+			"href",
+			"https://example.com/pr/7",
+		);
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
 	});
 

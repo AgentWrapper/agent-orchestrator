@@ -33,13 +33,40 @@ export function PRSummaryMeta({
 }) {
 	const branchRange = prBranchRange(pr);
 	const hasDiff = hasDiffMetadata(pr);
-	const primary = [leading, branchRange, pr.author ? `@${pr.author.replace(/^@/, "")}` : undefined].filter(Boolean);
+	const authorHandle = pr.author.replace(/^@/, "");
+	const primary: ReactNode[] = [leading, branchRange].filter(Boolean);
+	if (authorHandle) {
+		primary.push(
+			pr.provider === "github" ? (
+				<a
+					className="text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					href={`https://github.com/${encodeURIComponent(authorHandle)}`}
+					key="author"
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					@{authorHandle}
+				</a>
+			) : (
+				<span key="author">@{authorHandle}</span>
+			),
+		);
+	}
 	if (primary.length === 0 && !hasDiff) {
 		return null;
 	}
 	return (
 		<div className={cn("min-w-0 font-mono text-2xs leading-4", className)}>
-			{primary.length > 0 ? <div className="truncate text-muted-foreground">{primary.join(" · ")}</div> : null}
+			{primary.length > 0 ? (
+				<div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-muted-foreground">
+					{primary.map((part, index) => (
+						<Fragment key={index}>
+							{index > 0 ? <span className="shrink-0 text-passive">·</span> : null}
+							<span className="min-w-0 truncate">{part}</span>
+						</Fragment>
+					))}
+				</div>
+			) : null}
 			{hasDiff ? <PRDiffMeta pr={pr} /> : null}
 		</div>
 	);
@@ -88,11 +115,15 @@ export function PRCardStatusSummary({ className, pr }: { className?: string; pr:
 			<div className="flex min-w-0 items-start gap-2">
 				<span
 					aria-hidden="true"
-					className={cn("mt-1.5 size-dot-sm shrink-0 rounded-full bg-current", toneClass[presentation.primary.tone])}
+					className={cn(
+						"mt-1.5 size-dot-sm shrink-0 rounded-full bg-current",
+						toneClass[presentation.primary.tone],
+						presentation.primary.breathe && "animate-status-pulse",
+					)}
 				/>
 				<div className="min-w-0 flex-1">
 					<div className={cn("text-xs font-semibold leading-4", toneClass[presentation.primary.tone])}>
-						{presentation.primary.label}
+						<PRCardStatusLink status={presentation.primary} />
 					</div>
 					{presentation.primary.detail ? (
 						<div className="mt-0.5 text-2xs leading-4 text-muted-foreground">{presentation.primary.detail}</div>
@@ -100,7 +131,12 @@ export function PRCardStatusSummary({ className, pr }: { className?: string; pr:
 					{presentation.primary.links.length > 0 ? (
 						<div className="mt-1 flex min-w-0 flex-wrap gap-x-1.5 gap-y-1 font-mono text-2xs">
 							{presentation.primary.links.slice(0, 3).map((link, index) => (
-								<SummaryLink interactive key={`${presentation.primary.key}-${index}-${link.label}`} link={link} />
+								<SummaryLink
+									className={toneClass[presentation.primary.tone]}
+									interactive
+									key={`${presentation.primary.key}-${index}-${link.label}`}
+									link={link}
+								/>
 							))}
 						</div>
 					) : null}
@@ -110,13 +146,31 @@ export function PRCardStatusSummary({ className, pr }: { className?: string; pr:
 				<div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 pl-4 font-mono text-2xs">
 					{presentation.supporting.map((status) => (
 						<span className={cn("inline-flex items-center gap-1", toneClass[status.tone])} key={status.key}>
-							<span aria-hidden="true" className="size-1 rounded-full bg-current" />
-							{status.label}
+							<span
+								aria-hidden="true"
+								className={cn("size-1 rounded-full bg-current", status.breathe && "animate-status-pulse")}
+							/>
+							<PRCardStatusLink status={status} />
 						</span>
 					))}
 				</div>
 			) : null}
 		</div>
+	);
+}
+
+function PRCardStatusLink({ status }: { status: ReturnType<typeof prCardPresentation>["primary"] }) {
+	if (!status.href) return status.label;
+	return (
+		<a
+			className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+			href={status.href}
+			rel="noopener noreferrer"
+			target="_blank"
+		>
+			{status.label}
+			<ArrowUpRight aria-hidden="true" className="size-icon-2xs shrink-0" strokeWidth={2} />
+		</a>
 	);
 }
 
@@ -181,11 +235,22 @@ function overflowPartLabel(extra: number, noun: PRNoun | undefined, t: TFunction
 	return noun ? `+${extra} ${t(prNounKeys[noun], { count: extra })}` : `+${extra}`;
 }
 
-function SummaryLink({ interactive, link }: { interactive: boolean; link: PRSummaryLink }) {
+function SummaryLink({
+	className,
+	interactive,
+	link,
+}: {
+	className?: string;
+	interactive: boolean;
+	link: PRSummaryLink;
+}) {
 	if (interactive && link.href) {
 		return (
 			<a
-				className="inline-flex max-w-full min-w-0 items-center gap-0.5 text-accent hover:underline"
+				className={cn(
+					"inline-flex max-w-full min-w-0 items-center gap-0.5 text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+					className,
+				)}
 				href={link.href}
 				onClick={(event) => event.stopPropagation()}
 				rel="noopener noreferrer"
