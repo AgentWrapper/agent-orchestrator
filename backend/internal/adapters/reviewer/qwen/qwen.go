@@ -99,14 +99,28 @@ func (r *Reviewer) prepareEnvironment(inv ports.ReviewInvocation) (reviewgateway
 	manifest := reviewgateway.Manifest{
 		ReviewerID: inv.ReviewerID, WorkerSessionID: inv.WorkerSessionID,
 		WorkspacePath: inv.WorkspacePath, TaskPromptRoot: inv.TaskPromptRoot,
-		Tasks: []reviewgateway.Task{{
-			RunID: inv.RunID, PRURL: inv.PRURL, TargetSHA: inv.TargetSHA,
-			TaskPromptFile: inv.TaskPromptFile,
-		}},
+		Tasks: reviewGatewayTasks(inv),
 	}
 	env, err := reviewgateway.PrepareEnvironment(dataDir, manifest)
 	if err != nil {
 		return reviewgateway.Environment{}, fmt.Errorf("qwen reviewer: prepare gateway environment: %w", err)
 	}
 	return env, nil
+}
+
+func reviewGatewayTasks(inv ports.ReviewInvocation) []reviewgateway.Task {
+	if len(inv.ReviewQueue) == 0 {
+		return []reviewgateway.Task{{
+			RunID: inv.RunID, PRURL: inv.PRURL, TargetSHA: inv.TargetSHA,
+			TaskPromptFile: inv.TaskPromptFile,
+		}}
+	}
+	tasks := make([]reviewgateway.Task, 0, len(inv.ReviewQueue))
+	for _, task := range inv.ReviewQueue {
+		tasks = append(tasks, reviewgateway.Task{
+			RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA,
+			TaskPromptFile: inv.TaskPromptFile,
+		})
+	}
+	return tasks
 }
