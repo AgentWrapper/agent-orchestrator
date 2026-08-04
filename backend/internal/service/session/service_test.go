@@ -148,8 +148,8 @@ func (f *fakeStore) SetSessionPinned(_ context.Context, id domain.SessionID, isP
 	if !ok {
 		return false, nil
 	}
-	r.Metadata.IsPinned = isPinned
-	r.Metadata.PinnedAt = pinnedAt
+	r.IsPinned = isPinned
+	r.PinnedAt = pinnedAt
 	r.UpdatedAt = updatedAt
 	f.sessions[id] = r
 	return true, nil

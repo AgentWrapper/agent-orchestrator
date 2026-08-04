@@ -71,7 +71,7 @@ type SessionRecord struct {
 	// durable cleanup facts with the generation they were written for so a
 	// finalize started under an earlier terminal episode cannot satisfy a later
 	// one. Internal fact, not part of the API read model.
-	CleanupGeneration int64     `json:"-"`
+	CleanupGeneration int64      `json:"-"`
 	CreatedAt         time.Time  `json:"createdAt"`
 	UpdatedAt         time.Time  `json:"updatedAt"`
 	IsPinned          bool       `json:"isPinned"`
