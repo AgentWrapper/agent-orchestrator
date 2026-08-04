@@ -1,8 +1,8 @@
-import { CircleHelp, RefreshCw, Settings2, Wrench, X } from "lucide-react";
+import { Bot, CircleHelp, GitBranch, Inbox, MonitorCog, RefreshCw, Settings2, Wrench, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
-import { ProjectSettingsForm } from "./ProjectSettingsForm";
+import { ProjectSettingsForm, type ProjectSettingsSection } from "./ProjectSettingsForm";
 import {
 	Dialog,
 	DialogClose,
@@ -39,14 +39,24 @@ export function SettingsDialog() {
 		{ id: "help", label: t("settings.help"), icon: CircleHelp },
 	];
 
+	const projectSections: Array<{ id: ProjectSettingsSection; label: string; icon: typeof Settings2 }> = [
+		{ id: "general", label: t("settings.project.identity"), icon: MonitorCog },
+		{ id: "agents", label: t("settings.project.agents"), icon: Bot },
+		{ id: "workflow", label: t("settings.project.workflow"), icon: GitBranch },
+		{ id: "intake", label: t("settings.project.intake"), icon: Inbox },
+	];
+
 	const isProjectSettings = displaySettings?.scope === "project";
 	const [activeSection, setActiveSection] = useState<Exclude<GlobalSettingsSection, "all">>("general");
+	const [activeProjectSection, setActiveProjectSection] = useState<ProjectSettingsSection>("general");
+
 	const activeLabel = isProjectSettings
-		? t("settings.project.settings")
+		? (projectSections.find((s) => s.id === activeProjectSection)?.label ?? t("settings.project.identity"))
 		: (globalSections.find((section) => section.id === activeSection)?.label ?? t("settings.general"));
 
 	useEffect(() => {
 		if (settingsModal?.scope === "global") setActiveSection("general");
+		if (settingsModal?.scope === "project") setActiveProjectSection("general");
 	}, [settingsModal]);
 
 	return (
@@ -59,48 +69,55 @@ export function SettingsDialog() {
 				showCloseButton={false}
 			>
 			{displaySettings && <div className="flex h-full min-h-0">
-					{/* Sidebar — only shown for global settings */}
-					{!isProjectSettings && (
-						<aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-card">
-							<p className="px-3 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-muted-foreground/60">{t("settings.title")}</p>
-							<nav aria-label={t("settings.navSectionsAria")} className="flex flex-col gap-0.5 p-2 pt-0">
-								{globalSections.map(({ id, label, icon }) => (
-									<SettingsNavItem
-										active={activeSection === id}
-										icon={icon}
-										key={id}
-										label={label}
-										onClick={() => setActiveSection(id)}
-									/>
-								))}
-							</nav>
-						</aside>
-					)}
+					<aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-card">
+						<p className="px-3 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-muted-foreground/60">{t("settings.title")}</p>
+						<nav aria-label={t("settings.navSectionsAria")} className="flex flex-col gap-0.5 p-2 pt-0">
+							{isProjectSettings
+								? projectSections.map(({ id, label, icon }) => (
+										<SettingsNavItem
+											active={activeProjectSection === id}
+											icon={icon}
+											key={id}
+											label={label}
+											onClick={() => setActiveProjectSection(id)}
+										/>
+									))
+								: globalSections.map(({ id, label, icon }) => (
+										<SettingsNavItem
+											active={activeSection === id}
+											icon={icon}
+											key={id}
+											label={label}
+											onClick={() => setActiveSection(id)}
+										/>
+									))}
+						</nav>
+					</aside>
 
-						{/* Main area — same bg as the app page */}
-						<div className="flex min-w-0 flex-1 flex-col bg-popover">
-							<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-14 shrink-0 flex-row items-center justify-between border-b border-(--color-border-settings-dialog-header) px-6")}>
-								<DialogTitle className="text-sm font-semibold text-foreground">{activeLabel}</DialogTitle>
+					{/* Main area — same bg as the app page */}
+					<div className="flex min-w-0 flex-1 flex-col bg-popover">
+						<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-14 shrink-0 flex-row items-center justify-between border-b border-(--color-border-settings-dialog-header) px-6")}>
+							<DialogTitle className="text-sm font-semibold text-foreground">{activeLabel}</DialogTitle>
 							<DialogDescription className="sr-only">
 								{isProjectSettings ? t("settings.project.dialogDescription") : t("settings.dialogDescription", { section: activeLabel.toLowerCase() })}
 							</DialogDescription>
-								<DialogClose
-									aria-label={t("settings.close")}
-									className="grid size-8 place-items-center rounded-md text-muted-foreground transition-[background-color,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-								>
-									<X aria-hidden="true" className="size-4" />
-								</DialogClose>
-							</DialogHeader>
-					<div className={cn(settingsDialogBodyClass, "flex-1 overflow-y-auto px-6 pt-5")}>
-					{displaySettings?.scope === "project" ? (
-						<ProjectSettingsForm projectId={displaySettings.projectId} />
-					) : (
-							<GlobalSettingsForm section={activeSection} />
-						)}
-							</div>
+							<DialogClose
+								aria-label={t("settings.close")}
+								className="grid size-8 place-items-center rounded-md text-muted-foreground transition-[background-color,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							>
+								<X aria-hidden="true" className="size-4" />
+							</DialogClose>
+						</DialogHeader>
+						<div className={cn(settingsDialogBodyClass, "flex-1 overflow-y-auto px-6 pt-5")}>
+							{displaySettings?.scope === "project" ? (
+								<ProjectSettingsForm projectId={displaySettings.projectId} section={activeProjectSection} />
+							) : (
+								<GlobalSettingsForm section={activeSection} />
+							)}
 						</div>
-				</div>}
-			</DialogContent>
+					</div>
+			</div>}
+		</DialogContent>
 	</Dialog>
 	);
 }
