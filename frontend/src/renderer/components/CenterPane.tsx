@@ -277,11 +277,6 @@ export function CenterPane({
 							</Tooltip>
 						) : null}
 					</div>
-					{/* Font-size and fullscreen controls sit here in the topbar — not
-				    floated over the terminal surface — so they never overlap the
-				    box-drawing borders rendered by agent TUIs (e.g. Claude Code's
-				    bordered UI). The topbar surface already provides the background
-				    that keeps the labels legible. */}
 					<div
 						aria-label={t("terminal.controlsAria")}
 						className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
