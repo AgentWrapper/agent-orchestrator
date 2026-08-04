@@ -1291,14 +1291,14 @@ function GithubReviewPanel({
 	return (
 		<div className="flex flex-col gap-3">
 			<div className="flex flex-col divide-y divide-border">
-				{prs.map((pr, index) => {
+				{prs.map((pr) => {
 					const entries = pr.review?.reviews ?? [];
 					const unresolved = (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0);
 					return (
 						<ReviewDisclosure
 							key={pr.number}
-							collapsible={prs.length > 1}
-							defaultOpen={index === 0}
+							collapsible
+							defaultOpen={false}
 							meta={`#${pr.number}${unresolved > 0 ? ` · ${unresolved} unresolved` : ""}`}
 							title={pr.title?.trim() || `PR #${pr.number}`}
 						>
@@ -1318,26 +1318,55 @@ type GithubReviewEntry = NonNullable<NonNullable<SessionPRSummary["review"]>["re
 
 function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 	const { t } = useTranslation();
+	const [expanded, setExpanded] = useState(false);
 	const verdict = githubVerdict(entry.verdict, t);
-	const body = entry.body?.trim();
+	const raw = entry.body?.trim();
+	const body = raw ? raw.replace(/\n{3,}/g, "\n\n") : raw;
+	const clamped = Boolean(body) && isClampedSummary(body!);
 	return (
-		<div className="flex min-w-0 flex-col gap-2">
+		<div className="flex min-w-0 flex-col gap-1">
 			<div className="flex min-w-0 items-center gap-2">
 				<span className="min-w-0 truncate text-2xs font-medium text-foreground">{entry.reviewerId}</span>
 				{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{t("inspector.bot")}</span> : null}
+				<span className="ml-auto">
+					<VerdictBadge label={verdict.label} tone={verdict.tone} />
+				</span>
 			</div>
-			<VerdictBadge label={verdict.label} tone={verdict.tone} />
-			{body ? <p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{body}</p> : null}
-			{entry.reviewUrl ? (
-				<a
-					className="inline-flex items-center gap-0.5 self-start text-2xs font-medium text-passive no-underline transition-colors hover:text-foreground"
-					href={entry.reviewUrl}
-					target="_blank"
-					rel="noopener noreferrer"
+			{body ? (
+				<p
+					className={cn(
+						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
+						clamped && !expanded && "line-clamp-4",
+					)}
+					data-testid="github-review-summary"
 				>
-					{t("inspector.viewReview")}
-					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
-				</a>
+					{body}
+				</p>
+			) : null}
+			{clamped || entry.reviewUrl ? (
+				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
+					{clamped ? (
+						<button
+							className="font-medium transition-colors hover:text-foreground"
+							onClick={() => setExpanded((open) => !open)}
+							type="button"
+						>
+							{expanded ? t("inspector.showLess") : t("inspector.showMore")}
+						</button>
+					) : null}
+					{clamped && entry.reviewUrl ? <span aria-hidden="true">·</span> : null}
+					{entry.reviewUrl ? (
+						<a
+							className="inline-flex items-center gap-0.5 font-medium no-underline transition-colors hover:text-foreground"
+							href={entry.reviewUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+						>
+							{t("inspector.viewReview")}
+							<ArrowUpRight aria-hidden="true" className="size-2.5 shrink-0" />
+						</a>
+					) : null}
+				</span>
 			) : null}
 		</div>
 	);
