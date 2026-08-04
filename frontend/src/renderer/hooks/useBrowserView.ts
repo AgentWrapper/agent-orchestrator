@@ -57,6 +57,7 @@ export type BrowserViewModel = {
 	selectTab: (tabId: string) => Promise<void>;
 	closeTab: (tabId: string) => Promise<void>;
 	prepareForOverlay: () => Promise<void>;
+	finishOverlay: () => void;
 	agentBrowserActive: boolean;
 	agentBrowserActivity: BrowserAgentActivityState | null;
 	visualTransition: BrowserVisualTransition | null;
@@ -452,6 +453,17 @@ export function useBrowserView({
 		if (frame && viewIdRef.current === id) setMirrorUrl(frame);
 	}, [clearMirrorTimer, hasNativeBrowser]);
 
+	const finishOverlay = useCallback(() => {
+		modalOpenRef.current = false;
+		mirrorTokenRef.current += 1;
+		clearMirrorTimer();
+		stopMirrorStream();
+		setMirrorUrl("");
+		setVisualTransition(null);
+		clearVisualTransitionTimer();
+		scheduleSettleMeasure();
+	}, [clearMirrorTimer, clearVisualTransitionTimer, scheduleSettleMeasure, stopMirrorStream]);
+
 	const runMirror = useCallback(
 		(id: string, liveFrames = true) => {
 			const token = ++mirrorTokenRef.current;
@@ -595,11 +607,10 @@ export function useBrowserView({
 		async (tabId: string) => {
 			const viewId = viewIdRef.current;
 			if (!viewId || !hasNativeBrowser) return;
-			await showVisualTransition("tab-switch");
 			const state = await window.ao!.browser.selectTab({ viewId, tabId });
 			if (viewIdRef.current === state.viewId) setTabsState(state);
 		},
-		[hasNativeBrowser, showVisualTransition],
+		[hasNativeBrowser],
 	);
 
 	const closeTab = useCallback(
@@ -727,6 +738,7 @@ export function useBrowserView({
 		selectTab,
 		closeTab,
 		prepareForOverlay,
+		finishOverlay,
 		agentBrowserActive,
 		agentBrowserActivity,
 		visualTransition,

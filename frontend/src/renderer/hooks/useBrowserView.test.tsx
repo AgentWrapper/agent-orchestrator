@@ -196,80 +196,26 @@ describe("useBrowserView", () => {
 		expect(result.current.agentBrowserActive).toBe(false);
 	});
 
-	it("holds a captured frame while selecting a tab so the native handoff does not flash", async () => {
+	it("switches tabs without placing the outgoing tab over the selected tab", async () => {
 		const bridge = setupBridge();
-		const slot = createSlot();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
 		act(() =>
 			bridge.emit({
 				viewId: "42:sess-1",
 				url: "http://localhost:3000/",
-				title: "",
+				title: "First tab",
 				canGoBack: false,
 				canGoForward: false,
 				isLoading: false,
 			}),
 		);
-		act(() => result.current.slotRef(slot));
 
-		vi.useFakeTimers();
-		try {
-			await act(async () => {
-				await result.current.selectTab("t2");
-			});
+		await act(() => result.current.selectTab("t2"));
 
-			expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
-			expect(result.current.visualTransition).toMatchObject({
-				kind: "tab-switch",
-				snapshotUrl: "data:image/jpeg;base64,snapshot",
-			});
-
-			act(() => {
-				vi.advanceTimersByTime(260);
-			});
-			expect(result.current.visualTransition).toBeNull();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it("does not block tab switching on a slow transition capture", async () => {
-		const bridge = setupBridge();
-		const slot = createSlot();
-		bridge.capture.mockImplementation(
-			() => new Promise((resolve) => window.setTimeout(() => resolve("data:image/jpeg;base64,late"), 10_000)),
-		);
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "http://localhost:3000/",
-				title: "",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-		act(() => result.current.slotRef(slot));
-
-		vi.useFakeTimers();
-		try {
-			let switchPromise: Promise<void> | undefined;
-			await act(async () => {
-				switchPromise = result.current.selectTab("t2");
-				await vi.advanceTimersByTimeAsync(180);
-			});
-
-			expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
-			expect(bridge.selectTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
-			await act(async () => {
-				await switchPromise;
-			});
-		} finally {
-			vi.useRealTimers();
-		}
+		expect(bridge.selectTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
+		expect(bridge.capture).not.toHaveBeenCalled();
+		expect(result.current.visualTransition).toBeNull();
 	});
 
 	it("remeasures the live native view while moving between panel and maximized browser slots", async () => {
@@ -337,6 +283,40 @@ describe("useBrowserView", () => {
 
 		expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
 		expect(result.current.mirrorUrl).toBe("data:image/jpeg;base64,snapshot");
+	});
+
+	it("explicitly finishes a prepared overlay and restores the live view", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "First tab",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+		await act(() => result.current.prepareForOverlay());
+		expect(result.current.mirrorUrl).toBe("data:image/jpeg;base64,snapshot");
+
+		bridge.setBounds.mockClear();
+		act(() => {
+			(result.current as typeof result.current & { finishOverlay?: () => void }).finishOverlay?.();
+		});
+
+		expect(result.current.mirrorUrl).toBe("");
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
 	});
 
 	it("clamps the native view to its resizable-panel column when the slot overspills", async () => {
