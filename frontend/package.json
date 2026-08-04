@@ -58,6 +58,9 @@
 		"vitest": "^4.1.8"
 	},
 	"dependencies": {
+		"@radix-ui/react-accordion": "^1.2.13",
+		"@fontsource-variable/geist": "^5.3.0",
+		"@fontsource-variable/geist-mono": "^5.3.0",
 		"@radix-ui/react-dialog": "^1.1.16",
 		"@radix-ui/react-slot": "^1.2.5",
 		"@radix-ui/react-tabs": "^1.1.14",
@@ -76,6 +79,7 @@
 		"cmdk": "^1.1.1",
 		"electron-updater": "^6.8.9",
 		"gsap": "^3.15.0",
+		"i18next": "^26.3.6",
 		"lucide-react": "^1.17.0",
 		"openapi-fetch": "^0.17.0",
 		"posthog-js": "^1.390.2",
@@ -83,6 +87,7 @@
 		"radix-ui": "^1.5.0",
 		"react": "^19.2.7",
 		"react-dom": "^19.2.7",
+		"react-i18next": "^17.0.11",
 		"react-resizable-panels": "^4.11.2",
 		"semver": "^7.8.5",
 		"tailwind-merge": "^3.6.0",

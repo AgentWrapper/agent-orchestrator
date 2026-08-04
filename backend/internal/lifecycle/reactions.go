@@ -361,7 +361,24 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 		return err
 	}
 	m.emitNotification(ctx, intent)
+	m.resolveNotifications(ctx, readyToMergeResolutions(id, o, m.clock())...)
 	return nil
+}
+
+// readyToMergeResolutions reports the ready-to-merge notification this
+// observation made stale. The PR either got merged/closed, or stopped being
+// mergeable — either way the "this is ready for you to merge" ping no longer
+// describes anything the user can act on.
+func readyToMergeResolutions(id domain.SessionID, o ports.SCMObservation, now time.Time) []ports.NotificationResolution {
+	if scmObservationIsReadyToMerge(o) {
+		return nil
+	}
+	return []ports.NotificationResolution{{
+		Type:       domain.NotificationReadyToMerge,
+		SessionID:  id,
+		PRURL:      firstSCMNonEmpty(o.PR.URL, o.PR.HTMLURL),
+		ResolvedAt: timeOr(o.ObservedAt, now),
+	}}
 }
 
 func (m *Manager) notificationIntentForCurrentSCM(ctx context.Context, id domain.SessionID, o ports.SCMObservation) (*ports.NotificationIntent, error) {
@@ -409,22 +426,20 @@ func (m *Manager) notificationIntentForSCM(rec domain.SessionRecord, o ports.SCM
 	return &base
 }
 
+// scmObservationIsReadyToMerge projects a live observation into the shared
+// readiness rule (domain.MergeReadiness). Startup reconciliation applies the
+// same rule to the stored facts, so the two paths cannot disagree about what
+// "ready to merge" means.
 func scmObservationIsReadyToMerge(o ports.SCMObservation) bool {
-	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
-		return false
-	}
-	ci := domain.CIState(o.CI.Summary)
-	if ci == "" {
-		ci = domain.CIUnknown
-	}
-	switch ci {
-	case domain.CIFailing, domain.CIPending, domain.CIUnknown:
-		return false
-	}
-	if domain.ReviewDecision(o.Review.Decision) == domain.ReviewChangesRequest || hasUnresolvedSCMComments(o.Review.Threads) {
-		return false
-	}
-	return domain.Mergeability(o.Mergeability.State) == domain.MergeMergeable
+	return domain.MergeReadiness{
+		Draft:              o.PR.Draft,
+		Merged:             o.PR.Merged,
+		Closed:             o.PR.Closed,
+		CI:                 domain.CIState(o.CI.Summary),
+		Review:             domain.ReviewDecision(o.Review.Decision),
+		Mergeability:       domain.Mergeability(o.Mergeability.State),
+		UnresolvedComments: hasUnresolvedSCMComments(o.Review.Threads),
+	}.ReadyToMerge()
 }
 
 func hasUnresolvedSCMComments(threads []ports.SCMReviewThreadObservation) bool {

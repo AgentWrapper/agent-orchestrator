@@ -14,7 +14,7 @@ import (
 // Subscriber is the notification fan-out source the dispatcher listens on,
 // satisfied by *notify.Hub. Empty projectID receives all projects.
 type Subscriber interface {
-	Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationRecord, func())
+	Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationEvent, func())
 }
 
 // DeviceStore is the registered-device view the dispatcher needs: enumerate
@@ -92,11 +92,16 @@ func (d *Dispatcher) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case rec, ok := <-ch:
+		case event, ok := <-ch:
 			if !ok {
 				return
 			}
-			d.dispatch(ctx, rec)
+			// Only a new notification buzzes a phone. Resolution events exist so
+			// open dashboards can drop a row; there is nothing to push about.
+			if event.Kind != domain.NotificationCreated {
+				continue
+			}
+			d.dispatch(ctx, event.Record)
 		case <-ticker.C:
 			d.sweepReceipts(ctx)
 		}

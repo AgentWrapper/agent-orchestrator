@@ -1,4 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
+import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -11,9 +12,10 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 // MigrationPopup is the first-run legacy-AO import offer. It shows only when the
 // app marker is non-terminal (pending/failed) AND the daemon reports legacy data
 // available. Proceed runs the idempotent import through the daemon; Skip dismisses
-// for this launch (re-prompts next launch); Don't Migrate declines permanently
+// for this launch (re-prompts next launch); {t("migration.dontMigrate")} declines permanently
 // (re-runnable later once the Settings entry point lands, issue #2205).
 export function MigrationPopup() {
+	const { t } = useTranslation();
 	const offer = useMigrationOffer();
 	const queryClient = useQueryClient();
 	const [skipped, setSkipped] = useState(false);
@@ -67,30 +69,29 @@ export function MigrationPopup() {
 			<Dialog.Portal>
 				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
-					<Dialog.Title className="text-sm font-medium text-foreground">
-						Import projects from your earlier AO?
-					</Dialog.Title>
+					<Dialog.Title className="text-sm font-medium text-foreground">{t("migration.title")}</Dialog.Title>
 					<Dialog.Description className="mt-2 text-control leading-body text-muted-foreground">
-						We found an existing install at <span className="font-mono text-caption text-foreground">{legacyRoot}</span>
-						. Importing brings in your projects. Your old files are never modified, and you can do this later.
+						{t("migration.bodyLead")}{" "}
+						<span className="font-mono text-caption text-foreground">{legacyRoot}</span>
+						. {t("migration.bodyTrail")}
 					</Dialog.Description>
 					{error && (
 						<div className="mt-3 text-xs text-destructive">
-							Migration failed: {error}. Your legacy projects are untouched (nothing is ever deleted). You can retry.
+							{t("migration.failed", { error })}
 						</div>
 					)}
-					<p className="mt-3 text-caption text-muted-foreground">You can run this again later.</p>
+					<p className="mt-3 text-caption text-muted-foreground">{t("migration.againLater")}</p>
 					<div className="mt-4 flex items-center justify-between gap-2">
 						<Button variant="ghost" className="text-destructive" onClick={dontMigrate} disabled={busy} type="button">
-							Don't Migrate
+							{t("migration.dontMigrate")}
 						</Button>
 						<div className="flex gap-2">
 							<Button variant="ghost" onClick={() => setSkipped(true)} disabled={busy} type="button">
-								Skip
+								{t("migration.skip")}
 							</Button>
 							<Button variant="primary" onClick={proceed} disabled={busy} type="button">
 								{busy && <Loader2 className="mr-2 size-icon-base animate-spin" />}
-								{error ? "Retry" : "Proceed"}
+								{error ? t("migration.retry") : t("migration.proceed")}
 							</Button>
 						</div>
 					</div>

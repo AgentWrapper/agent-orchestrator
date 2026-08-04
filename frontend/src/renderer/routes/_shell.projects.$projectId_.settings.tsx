@@ -1,5 +1,6 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { ProjectSettingsForm } from "../components/ProjectSettingsForm";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
+import { useUiStore } from "../stores/ui-store";
 
 export const Route = createFileRoute("/_shell/projects/$projectId_/settings")({
 	component: ProjectSettingsRoute,
@@ -7,5 +8,13 @@ export const Route = createFileRoute("/_shell/projects/$projectId_/settings")({
 
 function ProjectSettingsRoute() {
 	const { projectId } = Route.useParams();
-	return <ProjectSettingsForm projectId={projectId} />;
+	const navigate = useNavigate();
+	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
+
+	useEffect(() => {
+		openProjectSettings(projectId);
+		void navigate({ to: "/projects/$projectId", params: { projectId }, replace: true });
+	}, [navigate, openProjectSettings, projectId]);
+
+	return null;
 }

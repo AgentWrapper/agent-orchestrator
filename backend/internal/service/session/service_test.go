@@ -165,6 +165,17 @@ func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.Se
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.ReviewerHarness = harness
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) GetDisplayPRFactsForSession(_ context.Context, id domain.SessionID) (domain.PRFacts, bool, error) {
 	pr, ok := f.pr[id]
 	return pr, ok, nil
@@ -291,6 +302,31 @@ func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
 func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
 	if _, err := (&Service{store: newFakeStore()}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
 		t.Fatal("expected missing session error")
+	}
+}
+
+func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker}
+
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ReviewerHarness != domain.ReviewerOpenCode || st.sessions["mer-1"].ReviewerHarness != domain.ReviewerOpenCode {
+		t.Fatalf("reviewer harness was not persisted: session=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+	if got := st.sessions["mer-2"].ReviewerHarness; got != "" {
+		t.Fatalf("other session reviewer harness = %q, want empty", got)
+	}
+}
+
+func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
+	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown"); err == nil {
+		t.Fatal("expected invalid harness error")
 	}
 }
 
@@ -634,7 +670,16 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: childBase},
 	}
 
-	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ws-1")
+	svc := &Service{store: st}
+	paths, err := svc.WorkspaceWatchPaths(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[0] != root || paths[1] != child {
+		t.Fatalf("workspace watch paths = %v, want root and child repo", paths)
+	}
+
+	files, err := svc.ListWorkspaceFiles(context.Background(), "ws-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -650,7 +695,7 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 		t.Fatal("child .git internals must not be listed through the workspace root")
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ws-1", "api/service.go")
+	detail, err := svc.GetWorkspaceFile(context.Background(), "ws-1", "api/service.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2228,6 +2273,140 @@ func TestListPRSummariesOnlyEmitsMergeReasonsForBlockedStates(t *testing.T) {
 	}
 }
 
+func TestListPRSummariesCollapsesTransferredRepoAliases(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	oldURL := "https://github.com/AgentWrapper/agent-orchestrator/pull/3193"
+	newURL := "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193"
+	stList := &multiPRFakeStore{fakeStore: st, prs: []domain.PullRequest{
+		{
+			URL:          oldURL,
+			SessionID:    "mer-1",
+			Number:       3193,
+			Provider:     "github",
+			Host:         "github.com",
+			Repo:         "AgentWrapper/agent-orchestrator",
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			Title:        "old alias",
+			CI:           domain.CIFailing,
+			UpdatedAt:    now,
+		},
+		{
+			URL:          newURL,
+			HTMLURL:      newURL,
+			SessionID:    "mer-1",
+			Number:       3193,
+			Provider:     "github",
+			Host:         "github.com",
+			Repo:         "Untrivial-ai/agent-orchestrator",
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			Title:        "new alias",
+			CI:           domain.CIFailing,
+			UpdatedAt:    now.Add(time.Minute),
+		},
+	}}
+	stList.checks[oldURL] = []domain.PullRequestCheck{{
+		Name: "old-check", CommitHash: "same-head", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "https://ci.example/old",
+	}}
+	stList.checks[newURL] = []domain.PullRequestCheck{{
+		Name: "new-check", CommitHash: "same-head", Status: domain.PRCheckFailed, Conclusion: "failure", URL: "https://ci.example/new",
+	}}
+
+	got, err := (&Service{store: stList}).ListPRSummaries(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("summaries = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].URL != newURL || got[0].Title != "new alias" {
+		t.Fatalf("summary primary = %q %q, want new alias", got[0].URL, got[0].Title)
+	}
+	if names := failingCheckNames(got[0].CI.FailingChecks); !sameStrings(names, []string{"old-check", "new-check"}) {
+		t.Fatalf("failing checks = %v, want old and new alias checks", names)
+	}
+}
+
+func TestDeduplicatePRFactsKeepsSameNumberAcrossDifferentRepos(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	got := deduplicatePRFacts([]domain.PRFacts{
+		{
+			URL:          "https://github.com/acme/api/pull/7",
+			Number:       7,
+			SourceBranch: "fix-tests",
+			UpdatedAt:    now,
+		},
+		{
+			URL:          "https://github.com/acme/web/pull/7",
+			Number:       7,
+			SourceBranch: "fix-tests",
+			UpdatedAt:    now.Add(time.Minute),
+		},
+	})
+	if len(got) != 2 {
+		t.Fatalf("facts = %d, want distinct same-number PRs from different repos: %+v", len(got), got)
+	}
+}
+
+func TestDeduplicatePRFactsKeepsSameBasenameAcrossDifferentOwners(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	got := deduplicatePRFacts([]domain.PRFacts{
+		{
+			URL:          "https://github.com/acme/repo/pull/7",
+			Number:       7,
+			SourceBranch: "fix-tests",
+			TargetBranch: "main",
+			HeadSHA:      "acme-head",
+			UpdatedAt:    now,
+		},
+		{
+			URL:          "https://github.com/other/repo/pull/7",
+			Number:       7,
+			SourceBranch: "fix-tests",
+			TargetBranch: "main",
+			HeadSHA:      "other-head",
+			UpdatedAt:    now.Add(time.Minute),
+		},
+	})
+	if len(got) != 2 {
+		t.Fatalf("facts = %d, want distinct same-basename PRs from different owners: %+v", len(got), got)
+	}
+}
+
+func TestDeduplicatePRFactsCollapsesTransferredRepoAliasesWithSameHead(t *testing.T) {
+	now := time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)
+	got := deduplicatePRFacts([]domain.PRFacts{
+		{
+			URL:            "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+			Number:         3193,
+			ReviewComments: true,
+			SourceBranch:   "ao/mer-1/fix-sigpipe",
+			TargetBranch:   "main",
+			HeadSHA:        "same-head",
+			UpdatedAt:      now,
+		},
+		{
+			URL:          "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+			Number:       3193,
+			SourceBranch: "ao/mer-1/fix-sigpipe",
+			TargetBranch: "main",
+			HeadSHA:      "same-head",
+			UpdatedAt:    now.Add(time.Minute),
+		},
+	})
+	if len(got) != 1 {
+		t.Fatalf("facts = %d, want transferred aliases collapsed: %+v", len(got), got)
+	}
+	if got[0].URL != "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193" || !got[0].ReviewComments {
+		t.Fatalf("merged facts = %+v, want newest URL and preserved comments", got[0])
+	}
+}
+
 type multiPRFakeStore struct {
 	*fakeStore
 	prs []domain.PullRequest
@@ -2244,4 +2423,29 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func failingCheckNames(checks []PRFailingCheck) []string {
+	out := make([]string, 0, len(checks))
+	for _, check := range checks {
+		out = append(out, check.Name)
+	}
+	return out
+}
+
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, value := range got {
+		seen[value]++
+	}
+	for _, value := range want {
+		seen[value]--
+		if seen[value] < 0 {
+			return false
+		}
+	}
+	return true
 }

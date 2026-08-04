@@ -132,6 +132,7 @@ export function buildLlmsTxt(): string {
 		...buildWhenToUseSection({ referenceDocumentationSection: true }),
 		"",
 		...buildDeveloperResourcesSection({ includeDocumentationLinks: false }),
+		`- [Full LLM context](${baseUrl}/llms-full.txt): combined AO overview, developer resources, comparisons, and FAQ`,
 		"",
 		...buildDocumentationSection(),
 		"",

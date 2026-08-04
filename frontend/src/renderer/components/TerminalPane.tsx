@@ -1,6 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import type { TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { useUiStore, type Theme } from "../stores/ui-store";
@@ -205,22 +207,23 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 // Agents whose full-screen TUI keeps its own transcript and scrolls it only by
 // keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
 // PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard).
-// kilocode is a fork of opencode and shares its TUI surface, so it scrolls the
-// same way.
-const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode"]);
+// kilocode is a fork of opencode and shares its TUI surface; grok also uses a
+// full-screen keyboard-scroll TUI, so both scroll the same way.
+const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode", "grok"]);
 
 // Whether the given provider's TUI is one of the keyboard-scroll agents above.
 export function providerScrollsByKeyboard(provider?: string): boolean {
 	return provider ? KEYBOARD_SCROLL_PROVIDERS.has(provider) : false;
 }
 
-function bannerText(state: TerminalSessionState, error?: string): string | undefined {
-	if (state === "reattaching") return "Terminal disconnected — reattaching…";
-	if (state === "error") return `Terminal error: ${error ?? "connection failed"}`;
+function bannerText(state: TerminalSessionState, t: TFunction, error?: string): string | undefined {
+	if (state === "reattaching") return t("terminal.reattaching");
+	if (state === "error") return t("terminal.error", { error: error ?? t("terminal.connectionFailed") });
 	return undefined;
 }
 
 function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+	const { t } = useTranslation();
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
 			? { ...session, terminalHandleId: terminalTarget.handleId }
@@ -331,11 +334,11 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 				setRestoreError(result.message);
 			}
 		} catch (err) {
-			setRestoreError(err instanceof Error ? err.message : "Unable to restore session");
+			setRestoreError(err instanceof Error ? err.message : t("terminal.unableRestore"));
 		} finally {
 			setIsRestoring(false);
 		}
-	}, [canRestoreSession, isRestoring, restoreSessionById, session?.id]);
+	}, [canRestoreSession, isRestoring, restoreSessionById, session?.id, t]);
 
 	useEffect(() => {
 		if (!terminal) return;
@@ -357,12 +360,12 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	if (initFailed) {
 		return (
 			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground">
-				Terminal failed to initialize on this GPU/driver. Restart the app to retry.
+				{t("terminal.initFailed")}
 			</div>
 		);
 	}
 
-	const banner = bannerText(state, error);
+	const banner = bannerText(state, t, error);
 	const showEmptyState = !handleId;
 	// Cover xterm while the attachment buffers the initial replay, so the pane
 	// appears already drawn at the tail instead of visibly scrolling down to it.
@@ -377,12 +380,12 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	const showReplayCover =
 		Boolean(handleId) && !replaySettled && (state === "connecting" || state === "attached");
 	const showEndedState = state === "exited" || canRestoreSession;
-	const emptyStateTitle = session ? "Starting session" : "Agent Orchestrator";
+	const emptyStateTitle = session ? t("terminal.startingSession") : "Agent Orchestrator";
 	const emptyStateMessage = session
 		? session.kind === "orchestrator"
-			? "Preparing the orchestrator terminal. This can take a moment while AO creates the workspace and starts the agent."
-			: "Preparing the worker terminal. This can take a moment while AO creates the workspace and starts the agent."
-		: "No session selected. Pick a worker to attach its terminal.";
+			? t("terminal.preparingOrchestrator")
+			: t("terminal.preparingWorker")
+		: t("terminal.noSessionSelected");
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-terminal" data-testid="session-terminal">
@@ -403,7 +406,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 			    full padding box. */}
 			<div className="relative min-h-0 flex-1 p-2">
 				<XtermTerminal
-					ariaLabel={terminalTarget?.kind === "shell" ? "Shell terminal" : "Session terminal"}
+					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}
 					inputPolicy={terminalTarget?.kind === "reviewer" ? terminalTarget.interaction : "interactive"}
 					onError={handleInitError}
@@ -448,6 +451,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 const REPLAY_COVER_LABEL_MS = 120;
 
 function ReplayCover() {
+	const { t } = useTranslation();
 	const [showLabel, setShowLabel] = useState(false);
 	useEffect(() => {
 		const timer = window.setTimeout(() => setShowLabel(true), REPLAY_COVER_LABEL_MS);
@@ -461,7 +465,7 @@ function ReplayCover() {
 			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal"
 			data-testid="terminal-replay-cover"
 		>
-			{showLabel && <div className="font-mono text-caption text-terminal-dim">Loading latest output…</div>}
+			{showLabel && <div className="font-mono text-caption text-terminal-dim">{t("terminal.loadingOutput")}</div>}
 		</div>
 	);
 }
@@ -475,20 +479,21 @@ type TerminalEndedStripProps = {
 };
 
 function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant }: TerminalEndedStripProps) {
+	const { t } = useTranslation();
 	const message = canRestore
-		? "Restore the session to attach a live terminal and continue writing."
+		? t("terminal.restoreToContinue")
 		: variant === "reviewer"
-			? "This reviewer terminal has ended. Re-run review from the summary panel, or switch back to the agent terminal."
+			? t("terminal.reviewerEnded")
 			: variant === "shell"
-				? "This shell exited. Close the tab, or open a new terminal."
-				: "This terminal process ended, but the session is not marked terminated yet.";
+				? t("terminal.shellExited")
+				: t("terminal.sessionEndedNotTerminated");
 
 	return (
 		<div className="shrink-0 border-b border-border bg-surface/80 px-4 py-2">
 			<div className="flex min-h-control-board items-center gap-3">
 				<div className="min-w-0 flex-1">
 					<div className="font-mono text-caption font-medium uppercase tracking-wide-md text-muted-foreground">
-						Terminal ended
+						{t("terminal.ended")}
 					</div>
 					<div className="mt-0.5 truncate text-xs text-muted-foreground">{message}</div>
 				</div>
@@ -496,8 +501,8 @@ function TerminalEndedStrip({ canRestore, error, isRestoring, onRestore, variant
 				{canRestore && (
 					<button
 						type="button"
-						aria-label="Restore session"
-						title="Restore session"
+						aria-label={t("terminal.restoreSession")}
+						title={t("terminal.restoreSession")}
 						className="inline-flex size-control-form shrink-0 items-center justify-center rounded-md border border-border bg-raised text-foreground transition hover:bg-interactive-hover disabled:cursor-not-allowed disabled:opacity-50"
 						disabled={isRestoring}
 						onClick={onRestore}
