@@ -125,7 +125,11 @@ export const ThreadStateBanner = memo(function ThreadStateBanner({
 				};
 
 	return (
-		<div className="flex shrink-0 items-start gap-2.5 border-b border-border bg-surface px-4 py-2.5">
+		<div
+			role="alert"
+			aria-atomic="true"
+			className="flex shrink-0 items-start gap-2.5 border-b border-border bg-surface px-4 py-2.5"
+		>
 			<TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
 			<div className="flex min-w-0 flex-col gap-0.5">
 				<strong className="text-xs font-medium text-warning">{copy.title}</strong>
@@ -168,7 +172,11 @@ export const McpServerBanner = memo(function McpServerBanner({
 	if (servers.length === 0) return null;
 
 	return (
-		<div className="flex shrink-0 items-start gap-2.5 border-b border-border bg-surface px-4 py-2.5">
+		<div
+			role="status"
+			aria-atomic="true"
+			className="flex shrink-0 items-start gap-2.5 border-b border-border bg-surface px-4 py-2.5"
+		>
 			<Plug aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-warning" />
 			<div className="flex min-w-0 flex-1 flex-col gap-1">
 				<strong className="text-xs font-medium text-warning">

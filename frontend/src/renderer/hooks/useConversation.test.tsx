@@ -18,6 +18,7 @@ vi.mock("../lib/api-client", () => ({
 }));
 
 import { useConversation, useConversationCommands } from "./useConversation";
+import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 function wrapper({ children }: { children: ReactNode }) {
 	const queryClient = new QueryClient({
@@ -196,5 +197,24 @@ describe("tool server reload refusals", () => {
 			expect(result.current.mcpReloadUnsupported).toBe(false);
 			expect(result.current.mcpReloadError).toBe("a turn is running");
 		});
+	});
+});
+
+describe("controller recovery", () => {
+	it("resumes the agent and refreshes both chat and task state", async () => {
+		postMock.mockResolvedValue({ data: {}, error: undefined, response: { status: 200 } });
+		const invalidateSpy = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+
+		const { result } = renderHook(() => useConversationCommands("ao-1"), { wrapper });
+		await act(async () => {
+			await result.current.resumeAgent();
+		});
+
+		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/resume-agent", {
+			params: { path: { sessionId: "ao-1" } },
+		});
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["conversation", "ao-1"] });
+		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
+		invalidateSpy.mockRestore();
 	});
 });

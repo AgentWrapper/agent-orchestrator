@@ -21,7 +21,17 @@ import {
 import { can } from "../../types/conversation";
 import type { WorkspaceSession } from "../../types/workspace";
 
-export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
+export function SessionChatSurface({
+	session,
+	onOpenShell,
+	openingShell,
+	shellError,
+}: {
+	session: WorkspaceSession;
+	onOpenShell?: () => void;
+	openingShell?: boolean;
+	shellError?: string;
+}) {
 	const { snapshot, isLoading, unavailable, error } = useConversation(session.id);
 	const commands = useConversationCommands(session.id);
 	const hasProviderConfig = Boolean(snapshot && can(snapshot, "config_options"));
@@ -82,9 +92,18 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 			snapshot={snapshot}
 			busy={commands.busy}
 			onSend={(text, attachments) => commands.send({ text, attachments })}
+			commandError={commands.error}
 			onDecide={commands.resolve}
 			onResolveInput={commands.resolveInput}
 			onInterrupt={commands.interrupt}
+			onResumeAgent={() => {
+				void commands.resumeAgent().catch(() => {});
+			}}
+			resumingAgent={commands.resumingAgent}
+			resumeError={commands.resumeError}
+			onOpenShell={onOpenShell}
+			openingShell={openingShell}
+			shellError={shellError}
 			models={models}
 			onChooseSettings={hasProviderConfig ? undefined : commands.chooseSettings}
 			configOptions={configOptions.options}

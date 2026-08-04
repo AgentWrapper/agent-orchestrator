@@ -85,6 +85,23 @@ describe("send keys", () => {
 		await userEvent.keyboard("{Enter}");
 		expect(field.value).toBe("");
 	});
+
+	it("keeps the draft and reports the error when sending fails", async () => {
+		const onSend = vi.fn().mockRejectedValue(new Error("daemon unavailable"));
+		render(<ChatComposer onSend={onSend} />);
+		const field = screen.getByLabelText("Message the agent") as HTMLTextAreaElement;
+
+		await userEvent.type(field, "do not lose this task");
+		await userEvent.keyboard("{Enter}");
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("Your draft was kept");
+		expect(field.value).toBe("do not lose this task");
+	});
+
+	it("renders command failures from the live surface", () => {
+		render(<ChatComposer onSend={vi.fn()} commandError="The approval could not be submitted" />);
+		expect(screen.getByRole("alert")).toHaveTextContent("The approval could not be submitted");
+	});
 });
 
 /* ---- slash commands ------------------------------------------------------ */
@@ -330,6 +347,28 @@ describe("attachments", () => {
 		// The images are still staged, so the user can retry rather than re-paste.
 		expect(screen.getAllByRole("listitem")).toHaveLength(1);
 		expect(field.value).toBe("look");
+	});
+
+	it("keeps attachments after a failed send and reuses their staged paths on retry", async () => {
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-retry.png"]);
+		const onSend = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(undefined);
+		render(<ChatComposer onSend={onSend} onStageAttachments={stage} />);
+		const field = screen.getByLabelText("Message the agent") as HTMLTextAreaElement;
+
+		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
+		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+		await userEvent.type(field, "inspect this");
+		await userEvent.keyboard("{Enter}");
+
+		expect(await screen.findByRole("alert")).toHaveTextContent("attachments were kept");
+		expect(field.value).toBe("inspect this");
+		expect(screen.getAllByRole("listitem")).toHaveLength(1);
+
+		await userEvent.keyboard("{Enter}");
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(2));
+		expect(stage).toHaveBeenCalledTimes(1);
+		await waitFor(() => expect(screen.queryByRole("listitem")).not.toBeInTheDocument());
+		expect(field.value).toBe("");
 	});
 });
 

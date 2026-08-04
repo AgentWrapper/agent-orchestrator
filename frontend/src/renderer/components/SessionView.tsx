@@ -8,8 +8,6 @@ import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
 import { ShellTopbar } from "./ShellTopbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
-import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
-import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import {
 	useCloseShellTerminal,
@@ -18,10 +16,13 @@ import {
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { apiErrorMessage } from "../lib/api-client";
 import { hidesShellTopbar } from "../lib/platform";
-import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
-import type { TerminalTarget } from "../types/terminal";
+import { useShell } from "../lib/shell-context";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
+import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
+import type { TerminalTarget } from "../types/terminal";
+import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 
 const INSPECTOR_MIN_PERCENT = 22;
 const INSPECTOR_MAX_PERCENT = 45;
@@ -380,22 +381,29 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					    stays chat forever, and one created in terminal mode never grows a
 					    chat surface. Exactly one controller exists per session, so exactly
 					    one surface may render it. */}
-					{session?.mode === "chat" ? (
-						<SessionChatSurface session={session} />
+					{session?.mode === "chat" && terminalTarget.kind === "worker" ? (
+						<SessionChatSurface
+							session={session}
+							onOpenShell={addShellTerminal}
+							openingShell={openShellTerminal.isPending}
+							shellError={
+								openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
+							}
+						/>
 					) : (
-					<CenterPane
-						daemonReady={daemonStatus.state === "ready"}
-						onCloseShellTerminal={closeShellTerminalByHandle}
-						onNewShellTerminal={addShellTerminal}
-						onRenameShellTerminal={renameShellTerminalByHandle}
-						onSelectSessionTerminal={selectSessionTerminal}
-						onSelectShellTerminal={selectShellTerminal}
-						onSelectWorkerTerminal={selectSessionTerminal}
-						session={session}
-						shellTerminals={shellTerminals}
-						terminalTarget={terminalTarget}
-						theme={theme}
-					/>
+						<CenterPane
+							daemonReady={daemonStatus.state === "ready"}
+							onCloseShellTerminal={closeShellTerminalByHandle}
+							onNewShellTerminal={addShellTerminal}
+							onRenameShellTerminal={renameShellTerminalByHandle}
+							onSelectSessionTerminal={selectSessionTerminal}
+							onSelectShellTerminal={selectShellTerminal}
+							onSelectWorkerTerminal={selectSessionTerminal}
+							session={session}
+							shellTerminals={shellTerminals}
+							terminalTarget={terminalTarget}
+							theme={theme}
+						/>
 					)}
 				</ResizablePanel>
 				{hasInspector ? (
