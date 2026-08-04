@@ -24,15 +24,27 @@ type Runtime interface {
 	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
 }
 
+// Options configures the selected runtime backend. The zero value preserves
+// the historical runtime behavior.
+type Options struct {
+	// ProcessContainment is forwarded to the tmux backend on Unix. Windows uses
+	// ConPTY and ignores this option.
+	ProcessContainment string
+}
+
 // Compile-time assertions: both adapters must implement the union interface.
 var _ Runtime = (*tmux.Runtime)(nil)
 var _ Runtime = (*conpty.Runtime)(nil)
 
 // New returns the per-platform runtime: tmux on Darwin/Linux, conpty on Windows.
 // log is accepted for signature stability with callers but is currently unused.
-func New(_ *slog.Logger) Runtime {
+func New(_ *slog.Logger, options ...Options) Runtime {
 	if runtime.GOOS != "windows" {
-		return tmux.New(tmux.Options{})
+		opts := tmux.Options{}
+		if len(options) > 0 {
+			opts.ProcessContainment = options[0].ProcessContainment
+		}
+		return tmux.New(opts)
 	}
 	return conpty.New(conpty.Options{})
 }

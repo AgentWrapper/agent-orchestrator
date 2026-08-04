@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,17 @@ const (
 	TelemetryRemoteOff TelemetryRemote = "off"
 	// TelemetryRemotePostHog exports allowlisted events to PostHog.
 	TelemetryRemotePostHog TelemetryRemote = "posthog"
+)
+
+// ProcessContainment selects the operating-system boundary used for worker
+// processes. The zero value preserves the historical tmux session-id reaper.
+type ProcessContainment string
+
+const (
+	// ProcessContainmentNone keeps the existing tmux session-id reaper.
+	ProcessContainmentNone ProcessContainment = ""
+	// ProcessContainmentSystemd opts into Linux systemd user-scope containment.
+	ProcessContainmentSystemd ProcessContainment = "systemd"
 )
 
 // TelemetryConfig controls local and remote telemetry behavior.
@@ -119,6 +131,10 @@ type Config struct {
 	// normalizes it. The desktop uses this to identify dev daemons after the
 	// process cwd is moved to the stable data dir.
 	StartupWorkingDirectory string
+	// ProcessContainment selects the worker process ownership boundary.
+	// Unset preserves the historical tmux session-id reaper; systemd is an
+	// explicit Linux-only opt-in.
+	ProcessContainment ProcessContainment
 }
 
 // Addr returns the host:port the HTTP server binds. It uses net.JoinHostPort so
@@ -147,6 +163,7 @@ func (c Config) Addr() string {
 //	AO_TELEMETRY_REMOTE  remote exporter off|posthog (default off)
 //	AO_TELEMETRY_POSTHOG_KEY   PostHog project key
 //	AO_TELEMETRY_POSTHOG_HOST  PostHog host (default DefaultTelemetryPostHogHost)
+//	AO_PROCESS_CONTAINMENT     worker process boundary (unset|systemd)
 //
 // The bind host is not configurable: the daemon is loopback-only by design.
 func Load() (Config, error) {
@@ -192,6 +209,17 @@ func Load() (Config, error) {
 
 	if raw := os.Getenv("AO_AGENT"); raw != "" {
 		cfg.Agent = raw
+	}
+
+	if raw := os.Getenv("AO_PROCESS_CONTAINMENT"); strings.TrimSpace(raw) != "" {
+		containment := ProcessContainment(strings.ToLower(strings.TrimSpace(raw)))
+		if containment != ProcessContainmentSystemd {
+			return Config{}, fmt.Errorf("invalid AO_PROCESS_CONTAINMENT %q: must be unset|systemd", raw)
+		}
+		if runtime.GOOS != "linux" {
+			return Config{}, fmt.Errorf("invalid AO_PROCESS_CONTAINMENT %q: systemd is Linux-only (GOOS=%s)", raw, runtime.GOOS)
+		}
+		cfg.ProcessContainment = containment
 	}
 
 	// A missing AO_APP_RUN_ID means nothing is supervising this daemon, so this

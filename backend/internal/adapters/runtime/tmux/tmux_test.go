@@ -178,6 +178,9 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := setWindowSizeLargestArgs("sess-1"), []string{"set-option", "-t", "sess-1", "window-size", "largest"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("setWindowSizeLargestArgs = %#v, want %#v", got, want)
 	}
+	if got, want := setRemainOnExitArgs("sess-1"), []string{"set-option", "-t", "sess-1", "remain-on-exit", "on"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("setRemainOnExitArgs = %#v, want %#v", got, want)
+	}
 	if got, want := paneCurrentPathArgs("sess-1"), []string{"display-message", "-p", "-t", "sess-1", "#{pane_current_path}"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("paneCurrentPathArgs = %#v, want %#v", got, want)
 	}
@@ -209,6 +212,23 @@ func TestCommandBuilders(t *testing.T) {
 	}
 	if got, want := capturePaneArgs("sess-1", 10), []string{"capture-pane", "-t", "sess-1", "-p", "-S", "-10"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("capturePaneArgs = %#v, want %#v", got, want)
+	}
+}
+
+func TestUnknownProcessContainmentFailsBeforeTmux(t *testing.T) {
+	r := New(Options{Binary: "tmux-test", ProcessContainment: "cgroup"})
+	fr := &fakeRunner{}
+	r.runner = fr
+	_, err := r.Create(context.Background(), ports.RuntimeConfig{
+		SessionID:     "sess-1",
+		WorkspacePath: "/tmp/ws",
+		Argv:          []string{"codex"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown process containment") {
+		t.Fatalf("Create error = %v, want unknown containment error", err)
+	}
+	if len(fr.calls) != 0 {
+		t.Fatalf("tmux called before containment validation: %#v", fr.calls)
 	}
 }
 

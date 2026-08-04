@@ -55,6 +55,12 @@ func setWindowSizeLargestArgs(id string) []string {
 	return []string{"set-option", "-t", id, "window-size", "largest"}
 }
 
+// setRemainOnExitArgs keeps the scoped pane available for inspection and
+// respawn after systemd stops the old process group during Restart.
+func setRemainOnExitArgs(id string) []string {
+	return []string{"set-option", "-t", id, "remain-on-exit", "on"}
+}
+
 // panePIDArgs returns the pid of tmux's direct pane process. AO walks its
 // descendants to find the exact supervisor for the current launch.
 func panePIDArgs(id string) []string {

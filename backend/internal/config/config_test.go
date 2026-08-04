@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_PROCESS_CONTAINMENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION"} {
 		t.Setenv(k, "")
 	}
 
@@ -29,6 +29,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 	if cfg.ShutdownTimeout != DefaultShutdownTimeout {
 		t.Errorf("ShutdownTimeout = %s, want %s", cfg.ShutdownTimeout, DefaultShutdownTimeout)
+	}
+	if cfg.ProcessContainment != ProcessContainmentNone {
+		t.Fatalf("ProcessContainment = %q, want unset", cfg.ProcessContainment)
 	}
 	if cfg.RunFilePath == "" {
 		t.Error("RunFilePath is empty, want a resolved default path")
@@ -90,6 +93,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("AO_PORT", "4002")
 	t.Setenv("AO_REQUEST_TIMEOUT", "5s")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "3s")
+	t.Setenv("AO_PROCESS_CONTAINMENT", "systemd")
 	t.Setenv("AO_RUN_FILE", runFilePath)
 	t.Setenv("AO_DATA_DIR", dataDir)
 	t.Setenv("AO_TELEMETRY_EVENTS", "on")
@@ -110,6 +114,9 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.ShutdownTimeout != 3*time.Second {
 		t.Errorf("ShutdownTimeout = %s, want 3s", cfg.ShutdownTimeout)
+	}
+	if cfg.ProcessContainment != ProcessContainmentSystemd {
+		t.Errorf("ProcessContainment = %q, want systemd", cfg.ProcessContainment)
 	}
 	if cfg.RunFilePath != runFilePath {
 		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, runFilePath)
@@ -134,6 +141,7 @@ func TestLoadInvalid(t *testing.T) {
 		{"port out of range", map[string]string{"AO_PORT": "70000"}},
 		{"bad request timeout", map[string]string{"AO_REQUEST_TIMEOUT": "soon"}},
 		{"bad shutdown timeout", map[string]string{"AO_SHUTDOWN_TIMEOUT": "later"}},
+		{"bad process containment", map[string]string{"AO_PROCESS_CONTAINMENT": "cgroup"}},
 		{"zero request timeout", map[string]string{"AO_REQUEST_TIMEOUT": "0s"}},
 		{"negative request timeout", map[string]string{"AO_REQUEST_TIMEOUT": "-1s"}},
 		{"zero shutdown timeout", map[string]string{"AO_SHUTDOWN_TIMEOUT": "0s"}},
