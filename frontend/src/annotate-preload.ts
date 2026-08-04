@@ -3,7 +3,6 @@ import geistLatinWoff2 from "@fontsource-variable/geist/files/geist-latin-wght-n
 import geistMonoLatinWoff2 from "@fontsource-variable/geist-mono/files/geist-mono-latin-wght-normal.woff2?inline";
 import {
 	createBrowserAnnotationContext,
-	elementSummary,
 	type BrowserAnnotationCancelReason,
 	type BrowserAnnotationContext,
 	type BrowserAnnotationPageSubmitPayload,
@@ -218,19 +217,6 @@ function ensureOverlay(): ShadowRoot {
 				font-weight: 400;
 				pointer-events: auto;
 				animation: prompt-in 140ms ease-out;
-			}
-			.prompt__header {
-				display: block;
-				min-width: 0;
-				margin: 0 0 6px;
-				overflow: hidden;
-				color: var(--ao-passive);
-				font-family: var(--ao-font-sans);
-				font-size: var(--ao-text-xs);
-				line-height: 1.5;
-				font-weight: 400;
-				text-overflow: ellipsis;
-				white-space: nowrap;
 			}
 			.prompt textarea {
 				display: block;
@@ -478,8 +464,6 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	`;
 	const form = mount.querySelector<HTMLFormElement>("form")!;
 	repositionPrompt(element);
-	const header = form.querySelector<HTMLDivElement>(".prompt__header")!;
-	header.title = elementSummary(context);
 	const textarea = form.querySelector<HTMLTextAreaElement>("textarea")!;
 	const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]')!;
 	const updateSubmitState = (): void => {

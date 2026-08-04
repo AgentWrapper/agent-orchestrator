@@ -140,7 +140,7 @@ export function formatBrowserAnnotationMessage(payload: BrowserAnnotationSubmitP
 	return limitMessage(lines.join("\n"), MAX_BROWSER_ANNOTATION_MESSAGE_LENGTH);
 }
 
-export function elementSummary(context: BrowserAnnotationContext): string {
+function elementSummary(context: BrowserAnnotationContext): string {
 	const id = context.id ? `#${context.id}` : "";
 	const classes = context.classes.length > 0 ? `.${context.classes.join(".")}` : "";
 	return `${context.tag}${id}${classes}`;

@@ -174,15 +174,13 @@ describe("annotate preload", () => {
 		dispatchPageEvent(first, "click");
 
 		const root = overlayRoot();
-		const header = root.querySelector<HTMLElement>(".prompt__header");
 		const promptMeta = root.querySelector(".prompt__meta");
 		const textarea = root.querySelector<HTMLTextAreaElement>("textarea");
 		const primaryAction = Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(
-			(button) => button.textContent?.trim() === "Send feedback" && button.type === "submit",
+			(button) => button.textContent?.trim() === "Send" && button.type === "submit",
 		);
 
-		expect(header?.textContent).toBe("Annotate on selected components");
-		expect(header?.title).toBe("button#first");
+		expect(root.querySelector(".prompt__header")).toBeNull();
 		expect(fontMocks.families).toContain("Geist Variable");
 		expect(fontMocks.families).toContain("Geist Mono Variable");
 		expect(fontMocks.add).toHaveBeenCalledTimes(2);
