@@ -22,7 +22,15 @@ const approvedLiterals: Record<string, readonly string[]> = {
 	"components/CenterPane.tsx": ["px"],
 	"components/CreateProjectFlow.tsx": ["my-workspace/", "web-app", "main"],
 	"components/DaemonStartupLoader.tsx": ["Agent Orchestrator"],
-	"components/ProjectSettingsForm.tsx": ["main", "ao"],
+	"components/ProjectSettingsForm.tsx": [
+		"main", "ao",
+		"No workflow settings for scratch projects.",
+		"Tracker intake is not available for scratch projects.",
+	],
+	"components/settings/DevSettingsSection.tsx": [
+		"Dev Settings", "Fixture count", "Activity spread in minutes", "Reset &amp; Reload",
+		"Reset ", " Reload",
+	],
 	"components/SessionFilesView.tsx": ["-&gt;"],
 	"components/SessionInspector.tsx": ["PR #"],
 	"components/Sidebar.tsx": ["Agent Orchestrator", "daemon"],
@@ -77,12 +85,9 @@ function potentialDisplayText(value: string): boolean {
 	return /[A-Za-z]{2}/.test(value);
 }
 
-function toPosixRelative(file: string): string {
-	return path.relative(rendererDirectory, file).split(path.sep).join("/");
-}
-
 function approved(file: string, value: string): boolean {
-	return approvedLiterals[toPosixRelative(file)]?.includes(value) ?? false;
+	const relative = path.relative(rendererDirectory, file);
+	return approvedLiterals[relative]?.includes(value) ?? false;
 }
 
 describe("renderer localization coverage", () => {
@@ -95,7 +100,7 @@ describe("renderer localization coverage", () => {
 				const value = normalized(rawValue);
 				if (!value || !potentialDisplayText(value) || approved(file, value)) return;
 				const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
-				violations.push(`${toPosixRelative(file)}:${line} ${JSON.stringify(value)}`);
+				violations.push(`${path.relative(rendererDirectory, file)}:${line} ${JSON.stringify(value)}`);
 			};
 			const visit = (node: ts.Node) => {
 				if (ts.isJsxText(node)) record(node, node.getText(sourceFile));

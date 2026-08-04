@@ -167,13 +167,16 @@
 	--duration-fast: var(--duration-fast);
 	--duration-normal: var(--duration-normal);
 
+	/* Motion — press-feedback scale for interactive elements */
+	--scale-press: 0.97;
+
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
 	--spacing-window-titlebar: var(--size-window-titlebar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
 	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
-	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset-mac);
+	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
@@ -253,9 +256,15 @@
 	--color-interactive-hover: var(--bridge-interactive-hover);
 	--color-interactive-active: var(--bridge-interactive-active);
 
+	--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
-	--animate-overlay-in: overlay-in 150ms ease-out;
-	--animate-modal-in: modal-in 150ms ease-out;
+	--animate-overlay-in: overlay-in 130ms var(--ease-out);
+	--animate-modal-in: modal-in 180ms var(--ease-out);
+	/* Exits are shorter than entries: the system is responding, not deciding. */
+	--animate-overlay-out: overlay-out 90ms ease-in;
+	--animate-modal-out: modal-out 100ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -415,7 +424,7 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
-/* macOS: inset on all sides except left (flush with sidebar). */
+/* macOS + Linux: inset on all sides except left (flush with sidebar). */
 .center-panel-shell.center-panel-shell--mac {
 	padding-top: var(--size-center-panel-inset-mac);
 	padding-right: var(--size-center-panel-inset-mac);
@@ -438,42 +447,6 @@
 	border-radius: 0;
 }
 
-/* Session chrome is portaled above the sidebar/content row. Join that topbar
- * to the center surface so the workspace reads as one continuous frame. */
-.session-topbar-surface {
-	overflow: hidden;
-	border: 1px solid var(--color-border-strong);
-	border-radius: var(--radius-center-panel) var(--radius-center-panel) 0 0;
-	background-color: var(--color-bg-primary);
-}
-
-/* When the sidebar is off-canvas, clear only the fixed navigation cluster.
- * Native macOS fullscreen removes the traffic lights, so the cluster moves to
- * the compact panel inset instead of retaining the windowed 79px reserve. */
-.session-topbar-titlebar-clearance-mac {
-	padding-left: var(--size-titlebar-content-offset);
-}
-
-.native-fullscreen .session-topbar-titlebar-clearance-mac {
-	padding-left: calc(
-		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
-	);
-}
-
-.session-topbar-titlebar-clearance-linux {
-	padding-left: var(--size-titlebar-content-offset-linux);
-}
-
-.center-panel-shell.center-panel-shell--session {
-	padding-top: 0;
-}
-
-.center-panel-shell--session > .center-panel-surface {
-	border-top: 0;
-	border-top-left-radius: 0;
-	border-top-right-radius: 0;
-}
-
 .center-panel-titlebar {
 	padding-left: 1.125rem; /* matches former px-4.5 */
 }
@@ -493,12 +466,6 @@
 }
 [data-topbar-offset="trafficLights"] {
 	--sidebar-chrome-offset: var(--size-traffic-light-clearance);
-}
-[data-topbar-offset="session"] {
-	--sidebar-chrome-offset: var(--size-inspector-tabs);
-}
-.platform-windows [data-topbar-offset="session"] {
-	--sidebar-chrome-offset: calc(var(--size-window-titlebar) + var(--size-inspector-tabs));
 }
 
 /* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.
@@ -884,8 +851,6 @@ body {
 	font-size: var(--font-size-md);
 	line-height: var(--line-height-normal);
 	-webkit-font-smoothing: antialiased;
-	-webkit-user-select: none;
-	user-select: none;
 }
 
 button,
@@ -893,13 +858,6 @@ input,
 textarea,
 select {
 	font: inherit;
-}
-
-input,
-textarea,
-[contenteditable="true"] {
-	-webkit-user-select: text;
-	user-select: text;
 }
 
 :is(
@@ -1141,6 +1099,15 @@ textarea,
 	}
 }
 
+@keyframes overlay-out {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0;
+	}
+}
+
 @keyframes modal-in {
 	from {
 		opacity: 0;
@@ -1149,6 +1116,17 @@ textarea,
 	to {
 		opacity: 1;
 		scale: 1;
+	}
+}
+
+@keyframes modal-out {
+	from {
+		opacity: 1;
+		scale: 1;
+	}
+	to {
+		opacity: 0;
+		scale: 0.95;
 	}
 }
 
@@ -1403,8 +1381,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * The whole strip is the window-drag region; interactive children opt out with
  * -webkit-app-region: no-drag. */
 .window-titlebar {
-	position: relative;
-	z-index: var(--z-titlebar);
 	display: flex;
 	height: var(--size-window-titlebar);
 	flex-shrink: 0;
@@ -2346,8 +2322,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		var(--elevation-sm);
 }
 
-/* Maximized workspace overlays: fixed layers portaled to <body>, so they cover
-   the sidebar + topbar too, not just the session area.
+/* Maximized browser overlay: a fixed layer over the app workspace (portaled to
+   <body>, so it covers the sidebar + topbar too, not just the session area).
    Electron's Window Controls Overlay owns the top-right titlebar region on
    Windows, so start below its reported safe-area height. macOS hides the shell
    topbar; windowed mode reserves the native traffic-light band below, while
@@ -2355,8 +2331,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
    the overlay must start below --size-toolbar; env(titlebar-area-height)
    resolves to 0 on Linux (no titleBarOverlay), so we override the top with a
    platform class. */
-.browser-popout-overlay,
-.files-popout-overlay {
+.browser-popout-overlay {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
 	z-index: 40;
@@ -2368,9 +2343,9 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 /* macOS keeps the native traffic lights visible while the window is not in
-   native fullscreen. Reserve that band instead of rendering beneath them. */
-.browser-popout-overlay--mac-windowed,
-.files-popout-overlay--mac-windowed {
+   native fullscreen. The maximized browser is portaled to <body>, so reserve
+   that band here instead of allowing its toolbar to render beneath the lights. */
+.browser-popout-overlay--mac-windowed {
 	top: var(--size-traffic-light-clearance);
 }
 
@@ -2379,8 +2354,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	-webkit-app-region: no-drag;
 }
 
-.platform-linux .browser-popout-overlay,
-.platform-linux .files-popout-overlay {
+.platform-linux .browser-popout-overlay {
 	top: var(--size-shell-topbar);
 }
 
