@@ -185,10 +185,10 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
-		Sidebar: ({ isOverlay, onPreviewLeave }: { isOverlay?: boolean; onPreviewLeave?: () => void }) => {
+		Sidebar: ({ isOverlay, onPreviewLeave, topbarOffset }: { isOverlay?: boolean; onPreviewLeave?: () => void; topbarOffset?: string }) => {
 			const nonce = useStore((state) => state.createProjectNonce);
 			return (
-				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" onPointerLeave={onPreviewLeave}>
+				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" data-topbar-offset={topbarOffset} onPointerLeave={onPreviewLeave}>
 					{nonce > 0 ? <div data-testid="create-project-flow" /> : null}
 				</div>
 			);
@@ -283,6 +283,18 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
+	it("places a full-width host above the sidebar on session routes", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		const host = screen.getByTestId("session-topbar-host");
+		const sidebar = screen.getByTestId("sidebar");
+		expect(host.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+		expect(host).toHaveClass("h-inspector-tabs");
+		expect(sidebar).toHaveAttribute("data-topbar-offset", "session");
+		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")).toBeInTheDocument();
+	});
+
 	it("forces a confirmed fetch and preserves a collapsed sidebar preference", async () => {
 		let resolveFetch: ((value: WorkspaceSummary[]) => void) | undefined;
 		useUiStore.setState({ isSidebarOpen: false });

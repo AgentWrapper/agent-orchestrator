@@ -10,12 +10,12 @@ import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
-import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useImageAttachments } from "../hooks/useImageAttachments";
 import { cn } from "../lib/utils";
 
 type Project = components["schemas"]["Project"];
+type SpawnHarness = components["schemas"]["SpawnSessionRequest"]["harness"];
 
 type NewTaskDialogProps = {
 	open: boolean;
@@ -112,7 +112,7 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			const body: components["schemas"]["SpawnSessionRequest"] = {
 				projectId,
 				kind: "worker",
-				harness: agentTouched && agent ? (agent as AgentProvider) : undefined,
+				harness: agentTouched && agent ? (agent as SpawnHarness) : undefined,
 				issueId: cleanTitle,
 				prompt: cleanPrompt,
 			};

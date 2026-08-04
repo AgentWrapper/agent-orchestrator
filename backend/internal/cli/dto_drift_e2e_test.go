@@ -120,6 +120,10 @@ func (f *fakeSessionService) ListWorkspaceFiles(context.Context, domain.SessionI
 	return sessionsvc.WorkspaceFiles{}, nil
 }
 
+func (f *fakeSessionService) WorkspaceWatchPaths(context.Context, domain.SessionID) ([]string, error) {
+	return nil, nil
+}
+
 func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID, string) (sessionsvc.WorkspaceFileDetail, error) {
 	return sessionsvc.WorkspaceFileDetail{}, nil
 }

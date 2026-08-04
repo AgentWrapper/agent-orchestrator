@@ -18,7 +18,9 @@ import {
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
+import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { hidesShellTopbar } from "../lib/platform";
+import { cn } from "../lib/utils";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import type { TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
@@ -80,6 +82,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const isNativeFullScreen = useWindowFullScreen();
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 
@@ -148,7 +151,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
-	// and Ctrl+Shift+` work everywhere); this view only follows the result. When a new
+	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
 	// shell becomes active while a session is on screen, switch the pane to it —
 	// that is what makes the shortcut feel like it opened a terminal *here*.
 	useEffect(() => {
@@ -385,7 +388,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
-			{shellTopbarHiddenByPlatform ? <ShellTopbar /> : null}
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
@@ -402,6 +404,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						shellTerminals={shellTerminals}
 						terminalTarget={terminalTarget}
 						theme={theme}
+						topbarActions={<ShellTopbar embedded />}
 					/>
 				</ResizablePanel>
 				{hasInspector ? (
@@ -430,11 +433,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									browserPoppedOut={browserPoppedOut}
 									filesView={
 										session ? (
-											<SessionFilesView
-												onClose={() => setInspectorViewForSession(sessionId, "summary")}
-												onToggleMaximized={handleToggleFilesPopOut}
-												sessionId={session.id}
-											/>
+											<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
 										) : null
 									}
 									isInspectorVisible={isInspectorOpen}
@@ -453,19 +452,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</>
 				) : null}
 			</ResizablePanelGroup>
-			{filesPoppedOut && session ? (
-				<div className="absolute inset-0 z-30 bg-background">
-					<SessionFilesView
-						isMaximized
-						onClose={() => {
-							setFilesPoppedOut(false);
-							setInspectorViewForSession(sessionId, "summary");
-						}}
-						onToggleMaximized={handleToggleFilesPopOut}
-						sessionId={session.id}
-					/>
-				</div>
-			) : null}
+			{filesPoppedOut && session
+				? createPortal(
+						<div
+							className={cn(
+								"files-popout-overlay",
+								shellTopbarHiddenByPlatform && !isNativeFullScreen && "files-popout-overlay--mac-windowed",
+							)}
+						>
+							<SessionFilesView
+								isMaximized
+								onToggleMaximized={handleToggleFilesPopOut}
+								sessionId={session.id}
+							/>
+						</div>,
+						document.body,
+					)
+				: null}
 			{/* Maximized browser: a fixed overlay across the app workspace,
           portaled to <body> so it escapes the shell layout (covering the
           sidebar + topbar, not just the session area) and sits outside any
@@ -473,7 +476,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
           and fills the window below any native titlebar overlay. */}
 			{browserPoppedOut && session
 				? createPortal(
-						<div className="browser-popout-overlay">
+						<div
+							className={cn(
+								"browser-popout-overlay",
+								shellTopbarHiddenByPlatform && !isNativeFullScreen && "browser-popout-overlay--mac-windowed",
+							)}
+						>
 							<BrowserPanelView
 								active
 								annotationQueue={browserAnnotationQueue}

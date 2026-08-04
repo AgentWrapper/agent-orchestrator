@@ -19,10 +19,11 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { canonicalTrackerIssueId, findProjectOrchestrator, sortedPRs } from "../types/workspace";
+import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { BrowserPanelView, type BrowserAnnotationQueueModel } from "./BrowserPanel";
@@ -110,15 +111,6 @@ const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-3 pb-4 @max-[300px]
 
 const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
 
-const kvRowClass =
-	"flex items-center gap-2.5 px-1 py-1.5 text-md-sm @max-[300px]/inspector:flex-col @max-[300px]/inspector:items-start @max-[300px]/inspector:gap-1";
-
-const kvKeyClass = "w-kv-label shrink-0 text-settings-muted @max-[300px]/inspector:w-auto";
-
-const kvValueClass = "min-w-0 truncate text-settings-label @max-[300px]/inspector:w-full";
-
-const kvValueMonoClass = "font-mono text-sm-md";
-
 const reviewerVerdictTone: Record<"neutral" | "running" | "success" | "danger", string> = {
 	neutral: "text-muted-foreground",
 	running: "text-working",
@@ -185,6 +177,7 @@ export function SessionInspector({
 	const browserUnseen = useUiStore((state) =>
 		session ? Boolean(state.inspectorSessions[session.id]?.browserUnseen) : false,
 	);
+	const filesChangedCount = useSessionWorkspaceFilesChangedCount(session?.id);
 	const setView = (next: InspectorView) => {
 		setInternalView(next);
 		onViewChange?.(next);
@@ -230,7 +223,11 @@ export function SessionInspector({
 								</span>
 							) : null}
 						</span>
-						<span className="truncate @max-[350px]/inspector:hidden">{entry.label}</span>
+						<span className="truncate @max-[350px]/inspector:hidden">
+							{entry.id === "files" && filesChangedCount !== undefined
+								? t("files.tabCount", { count: filesChangedCount })
+								: entry.label}
+						</span>
 					</button>
 				))}
 			</div>
@@ -298,8 +295,6 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 	const query = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
-	const issueId = canonicalTrackerIssueId(session.issueId);
-
 	const hasPRs = prSummaries.length > 0;
 	const showCompletion =
 		session.kind !== "orchestrator" && (hasPRs || session.status === "merged");
@@ -321,16 +316,6 @@ function SummaryView({ session }: { session: WorkspaceSession }) {
 			<Section title={t("inspector.activity")}>
 				<ActivityTimeline prs={prSummaries} session={session} />
 				<ResumeAgentControl session={session} />
-			</Section>
-
-			<Section title={t("inspector.overview")}>
-				<dl className="flex flex-col gap-1">
-					<Row k={t("inspector.agent")} v={session.provider} mono />
-					{issueId && <Row k={t("inspector.issue")} v={issueId} mono />}
-					{session.branch && <Row k={t("inspector.branch")} v={session.branch} mono />}
-					<Row k={t("inspector.started")} v={formatTimeCompact(session.createdAt ?? session.updatedAt)} mono />
-					<Row k={t("inspector.session")} v={session.id} mono />
-				</dl>
 			</Section>
 		</div>
 	);
@@ -1212,15 +1197,6 @@ function FilesView({ filesView, onOpenFiles }: { filesView?: ReactNode; onOpenFi
 					{t("inspector.openFiles")}
 				</Button>
 			</div>
-		</div>
-	);
-}
-
-function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
-	return (
-		<div className={kvRowClass}>
-			<dt className={kvKeyClass}>{k}</dt>
-			<dd className={cn(kvValueClass, mono && kvValueMonoClass)}>{v}</dd>
 		</div>
 	);
 }

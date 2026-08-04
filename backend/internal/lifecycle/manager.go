@@ -37,6 +37,10 @@ type sessionStore interface {
 // notificationSink is the optional lifecycle-to-notification-producer boundary.
 type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
+	// Resolve closes notifications whose underlying issue went away. It is the
+	// only way a notification leaves the unresolved list: there is no manual
+	// user-facing resolve action.
+	Resolve(ctx context.Context, res ports.NotificationResolution) error
 }
 
 // projectConfigLoader resolves a project's config so MarkTerminated can check
@@ -200,22 +204,44 @@ func (m *Manager) finishLaunchLocked(id domain.SessionID, launchID string) {
 
 func (m *Manager) mutate(ctx context.Context, id domain.SessionID, fn func(domain.SessionRecord, time.Time) (domain.SessionRecord, bool)) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil || !ok {
+		m.mu.Unlock()
 		return err
 	}
 	now := m.clock()
 	next, changed := fn(rec, now)
 	if !changed {
+		m.mu.Unlock()
 		return nil
 	}
 	next.UpdatedAt = now
 	if err := m.store.UpdateSession(ctx, next); err != nil {
+		m.mu.Unlock()
 		return err
 	}
+	m.mu.Unlock()
+	// Notification side effects run outside the reducer lock, like the activity
+	// path does: a slow notification store must never stall lifecycle writes.
+	m.resolveNotifications(ctx, needsInputResolutions(rec, next, now)...)
 	return nil
+}
+
+// needsInputResolutions reports the needs-input notification a session write
+// just made stale. A session that stopped waiting on the user — because the
+// input arrived, or because the session ended — has nothing left to resolve.
+func needsInputResolutions(prev, next domain.SessionRecord, now time.Time) []ports.NotificationResolution {
+	if !prev.Activity.State.NeedsInput() {
+		return nil
+	}
+	if next.Activity.State.NeedsInput() && !next.IsTerminated {
+		return nil
+	}
+	return []ports.NotificationResolution{{
+		Type:       domain.NotificationNeedsInput,
+		SessionID:  next.ID,
+		ResolvedAt: now,
+	}}
 }
 
 // ApplyRuntimeObservation only writes when runtime liveness is unambiguous. A
@@ -399,12 +425,16 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 			SessionDisplayName: next.DisplayName,
 		}
 	}
+	// Leaving the needs-input family is the user answering: the notification
+	// that pinged them has nothing left to resolve.
+	resolutions := needsInputResolutions(rec, next, now)
 	waitingEvents := m.waitingInputEvents(next, prevState, prevAt, now)
 	m.mu.Unlock()
 	for _, ev := range waitingEvents {
 		m.emitTelemetry(ctx, ev)
 	}
 	m.emitNotification(ctx, intent)
+	m.resolveNotifications(ctx, resolutions...)
 	return nil
 }
 
@@ -615,6 +645,23 @@ func (m *Manager) emitNotification(ctx context.Context, intent *ports.Notificati
 	}
 	if err := m.notifications.Notify(ctx, *intent); err != nil {
 		slog.Default().Warn("lifecycle: notification failed", "session", intent.SessionID, "type", intent.Type, "err", err)
+	}
+}
+
+// resolveNotifications closes notifications the just-written facts made stale.
+// Best-effort like emitNotification: a failed resolve must never fail the
+// lifecycle write that produced it.
+func (m *Manager) resolveNotifications(ctx context.Context, resolutions ...ports.NotificationResolution) {
+	if m.notifications == nil {
+		return
+	}
+	for _, res := range resolutions {
+		if err := m.notifications.Resolve(ctx, res); err != nil {
+			slog.Default().Warn(
+				"lifecycle: notification resolve failed",
+				"session", res.SessionID, "pr", res.PRURL, "type", res.Type, "err", err,
+			)
+		}
 	}
 }
 

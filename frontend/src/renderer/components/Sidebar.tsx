@@ -63,13 +63,12 @@ import { useUiStore } from "../stores/ui-store"
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
+import { isMacPlatform } from "../lib/platform";
 
-// macOS + Linux paint framed chrome: the fixed TitlebarNav cluster carries the
+// macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
 // under its custom titlebar.
 const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -100,7 +99,7 @@ type SidebarProps = {
 	isOverlay?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
-	topbarOffset?: "toolbar" | "titlebar" | "trafficLights";
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
@@ -242,7 +241,7 @@ export function Sidebar({
 		>
 			<SidebarHeader
 				className={cn(
-					"gap-0 p-0 px-2 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
+					"gap-0 p-0 px-1 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
 					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
 				)}
 			>
@@ -250,7 +249,7 @@ export function Sidebar({
             36px board button wrapping the 22px accent mark. */}
 				<div
 					className={cn(
-						"flex shrink-0 items-center gap-1.5 px-1.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
+						"flex shrink-0 items-center gap-1.5 px-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
 						commandPaletteEnabled ? "pb-2" : "pb-3",
 					)}
 				>
@@ -369,14 +368,14 @@ export function Sidebar({
 			{/* Footer — Settings opens the global settings page directly.
 			    Top hairline matches the board Archive `border-t border-border-strong`.
 			    Row height matches Archive (`h-row-md`). Bottom margin is the shell
-			    inset minus 1px so the hairline meets Archive (the +1 surface-border
-			    compensation overshoots on mac/linux). */}
+			    inset plus the center-panel surface's 1px border so the hairline
+			    meets Archive (Archive sits inside that bordered surface). */}
 			<SidebarFooter
 				className={cn(
 					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 pb-0 pt-0 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
-					isMac || isLinux
-						? "mb-[calc(var(--size-center-panel-inset-mac)-1px)]"
-						: "mb-[calc(var(--size-center-panel-bottom-inset)-1px)]",
+					isMac
+						? "mb-[calc(var(--size-center-panel-inset-mac)+1px)]"
+						: "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
 				)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
@@ -460,7 +459,14 @@ function ProjectItem({
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const { t } = useTranslation();
-	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
+	const activeProjectMatches = selection.activeProjectId === workspace.id;
+	const dashboardActive = activeProjectMatches && !selection.activeSessionId;
+	const orchestratorActive =
+		activeProjectMatches &&
+		workspace.sessions.some(
+			(session) => session.id === selection.activeSessionId && session.kind === "orchestrator",
+		);
+	const projectActive = dashboardActive || orchestratorActive;
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
@@ -546,7 +552,7 @@ function ProjectItem({
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			{/* project-sidebar__proj-row */}
 			<SidebarMenuButton
-				aria-current={projectActive ? "page" : undefined}
+				aria-current={dashboardActive ? "page" : undefined}
 				aria-expanded={expanded}
 				isActive={projectActive}
 				onClick={onProjectClick}
@@ -589,12 +595,13 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
+							aria-current={dashboardActive ? "page" : undefined}
 							aria-label={t("shell.openProjectDashboard", { name: workspace.name })}
-							className={HOVER_ACTION_CLASS}
+							className={cn(HOVER_ACTION_CLASS, dashboardActive && "text-foreground")}
 							onClick={() => selection.goProject(workspace.id)}
 							type="button"
 						>
-							<LayoutDashboard aria-hidden="true" />
+							<LayoutDashboard aria-hidden="true" strokeWidth={dashboardActive ? 2.5 : 2} />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>{t("shell.dashboard")}</TooltipContent>
@@ -602,17 +609,18 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
+							aria-current={orchestratorActive ? "page" : undefined}
 							aria-label={
 								orchestrator
 									? t("shell.openProjectOrchestrator", { name: workspace.name })
 									: t("shell.spawnProjectOrchestrator", { name: workspace.name })
 							}
-							className={HOVER_ACTION_CLASS}
+							className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							type="button"
 						>
-							<OrchestratorIcon aria-hidden="true" />
+							<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>

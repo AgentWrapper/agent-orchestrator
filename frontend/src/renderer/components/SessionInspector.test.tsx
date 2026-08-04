@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { sessionWorkspaceFilesQueryKey } from "../hooks/useSessionWorkspaceFiles";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
@@ -94,11 +95,12 @@ const prSummary = (
 	};
 };
 
-function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[]) {
+function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[], seed?: (client: QueryClient) => void) {
 	const client = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 	});
 	if (workspaces) client.setQueryData(workspaceQueryKey, workspaces);
+	seed?.(client);
 	return render(<QueryClientProvider client={client}>{children}</QueryClientProvider>);
 }
 
@@ -194,6 +196,45 @@ describe("SessionInspector tabs", () => {
 
 		expect(onOpenFiles).toHaveBeenCalledTimes(1);
 		expect(screen.getByText("workspace file review")).toBeInTheDocument();
+	});
+
+	it("keeps the plain Files label until the workspace files cache has something to show", () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const filesTab = screen.getByRole("tab", { name: "Files" });
+		expect(within(filesTab).getByText("Files")).toBeInTheDocument();
+		expect(getMock).not.toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/files", expect.anything());
+	});
+
+	it("shows a live changed-file count on the Files tab once the shared cache is populated", () => {
+		renderWithQuery(<SessionInspector session={session([])} />, undefined, (client) => {
+			client.setQueryData(sessionWorkspaceFilesQueryKey("sess-1"), {
+				sessionId: "sess-1",
+				truncated: false,
+				files: [
+					{ path: "src/App.tsx", status: "modified", additions: 2, deletions: 1, size: 120, binary: false },
+					{ path: "README.md", status: "unmodified", additions: 0, deletions: 0, size: 80, binary: false },
+				],
+			});
+		});
+
+		const filesTab = screen.getByRole("tab", { name: "Files" });
+		expect(within(filesTab).getByText("1 File")).toBeInTheDocument();
+		// The accessible name stays static so existing name-based tab queries keep resolving.
+		expect(filesTab).toHaveAttribute("title", "Files");
+	});
+
+	it("distinguishes a checked-but-clean workspace (0 Files) from an unopened tab (Files)", () => {
+		renderWithQuery(<SessionInspector session={session([])} />, undefined, (client) => {
+			client.setQueryData(sessionWorkspaceFilesQueryKey("sess-1"), {
+				sessionId: "sess-1",
+				truncated: false,
+				files: [{ path: "README.md", status: "unmodified", additions: 0, deletions: 0, size: 80, binary: false }],
+			});
+		});
+
+		const filesTab = screen.getByRole("tab", { name: "Files" });
+		expect(within(filesTab).getByText("0 Files")).toBeInTheDocument();
 	});
 });
 
@@ -668,18 +709,13 @@ describe("SessionInspector tabs", () => {
 		expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
 	});
 
-	it("shows the intake issue id in the summary overview when present", () => {
+	it("does not render the overview card in the summary", () => {
 		renderWithQuery(<SessionInspector session={{ ...session([]), issueId: "github:acme/project-one#42" }} />);
 
-		expect(screen.getByText("Issue")).toBeInTheDocument();
-		expect(screen.getByText("github:acme/project-one#42")).toBeInTheDocument();
-	});
-
-	it("omits the branch overview row when the session has no branch", () => {
-		renderWithQuery(<SessionInspector session={session([], { branch: undefined })} />);
-
+		expect(screen.queryByText("Overview")).not.toBeInTheDocument();
+		expect(screen.queryByText("Issue")).not.toBeInTheDocument();
+		expect(screen.queryByText("github:acme/project-one#42")).not.toBeInTheDocument();
 		expect(screen.queryByText("Branch")).not.toBeInTheDocument();
-		expect(screen.queryByText("session/sess-1")).not.toBeInTheDocument();
 	});
 });
 

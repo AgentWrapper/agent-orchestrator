@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -71,6 +72,14 @@ func TestEveryHarnessReportsAuthStatus(t *testing.T) {
 		}
 		if _, ok := ha.Agent.(ports.AgentAuthChecker); !ok {
 			t.Errorf("%s does not implement ports.AgentAuthChecker", ha.Harness)
+		}
+	}
+}
+
+func TestHarnessedExcludesFakeHarness(t *testing.T) {
+	for _, ha := range Harnessed() {
+		if ha.Harness == domain.HarnessFake {
+			t.Fatal("fake harness must not be returned as a shipped selectable agent")
 		}
 	}
 }

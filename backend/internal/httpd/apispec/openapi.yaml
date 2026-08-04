@@ -448,16 +448,19 @@ paths:
     get:
       operationId: listNotifications
       parameters:
-      - description: Notification status filter. Defaults to unread; all includes
+      - description: Notification filter. Defaults to unread (unseen); unresolved
+          returns notifications whose underlying issue is still open; all includes
           read history.
         in: query
         name: status
         schema:
-          description: Notification status filter. Defaults to unread; all includes
+          description: Notification filter. Defaults to unread (unseen); unresolved
+            returns notifications whose underlying issue is still open; all includes
             read history.
           enum:
           - unread
           - all
+          - unresolved
           type: string
       - description: Maximum notifications to return. Defaults to 100.
         in: query
@@ -555,6 +558,12 @@ paths:
   /api/v1/notifications/read-all:
     post:
       operationId: markAllNotificationsRead
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkAllNotificationsReadRequest'
+        required: true
       responses:
         "200":
           content:
@@ -562,6 +571,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MarkAllNotificationsReadResponse'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "500":
           content:
             application/json:
@@ -574,7 +589,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
-      summary: Mark all unread notifications read
+      summary: Mark notifications read
       tags:
       - notifications
   /api/v1/notifications/stream:
@@ -2250,6 +2265,45 @@ paths:
       summary: Send a message to a running session's agent
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/workspace/events:
+    get:
+      operationId: streamSessionWorkspaceChanges
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stream session workspace file changes
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/workspace/file:
     get:
       operationId: getSessionWorkspaceFile
@@ -3004,9 +3058,12 @@ components:
           type: array
         unreadCount:
           type: integer
+        unresolvedCount:
+          type: integer
       required:
       - notifications
       - unreadCount
+      - unresolvedCount
       type: object
     ListProjectsResponse:
       properties:
@@ -3082,6 +3139,16 @@ components:
       - sessionId
       - files
       - truncated
+      type: object
+    MarkAllNotificationsReadRequest:
+      properties:
+        ids:
+          description: Acknowledge exactly these notifications. Omit to acknowledge
+            every unread notification; paginating clients should send the ids they
+            actually rendered so later pages stay unread.
+          items:
+            type: string
+          type: array
       type: object
     MarkAllNotificationsReadResponse:
       properties:
@@ -3161,9 +3228,16 @@ components:
           type: string
         projectId:
           type: string
+        resolvedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         sessionId:
           type: string
         status:
+          description: Seen state. unread means the user has not opened the notification
+            panel since it arrived.
           enum:
           - unread
           - read
@@ -4117,7 +4191,6 @@ components:
           - vibe
           - pi
           - autohand
-          - fake
           type: string
         issueId:
           type: string
