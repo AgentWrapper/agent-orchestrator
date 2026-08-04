@@ -72,6 +72,14 @@ func (s *Store) CreateOrganization(
 	`, account.ID, input.UserID); err != nil {
 		return clouddomain.UserOrganization{}, fmt.Errorf("create organization owner membership: %w", err)
 	}
+	if err := inheritGitHubInstallationsTx(
+		ctx,
+		tx,
+		clouddomain.OrgID(account.ID),
+		clouddomain.UserID(input.UserID),
+	); err != nil {
+		return clouddomain.UserOrganization{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return clouddomain.UserOrganization{}, fmt.Errorf("commit create organization: %w", err)
 	}

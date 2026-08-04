@@ -83,7 +83,7 @@ func (s *Server) processGitHubWebhookDelivery(
 	if delivery.InstallationID == nil || *delivery.InstallationID <= 0 {
 		return errors.New("GitHub webhook installation is missing")
 	}
-	binding, err := s.githubStore.FindGitHubInstallationByGitHubID(ctx, *delivery.InstallationID)
+	bindings, err := s.githubStore.ListGitHubInstallationsByGitHubID(ctx, *delivery.InstallationID)
 	if errors.Is(err, cloudpostgres.ErrGitHubInstallationNotFound) {
 		// Installation webhooks can arrive before the browser confirms an
 		// install. Confirmation performs the canonical initial sync.
@@ -92,6 +92,19 @@ func (s *Server) processGitHubWebhookDelivery(
 	if err != nil {
 		return err
 	}
+	for _, binding := range bindings {
+		if err := s.processGitHubWebhookBinding(ctx, delivery, binding); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) processGitHubWebhookBinding(
+	ctx context.Context,
+	delivery clouddomain.GitHubWebhookDelivery,
+	binding clouddomain.GitHubInstallation,
+) error {
 	action := strings.ToLower(strings.TrimSpace(delivery.Action))
 	switch delivery.Event {
 	case "installation":
@@ -102,7 +115,7 @@ func (s *Server) processGitHubWebhookDelivery(
 			}
 			return s.resyncGitHubBinding(ctx, binding)
 		case "deleted":
-			_, err = s.githubStore.UpdateGitHubInstallationStatus(
+			_, err := s.githubStore.UpdateGitHubInstallationStatus(
 				ctx,
 				binding.OrgID,
 				binding.GitHubInstallationID,

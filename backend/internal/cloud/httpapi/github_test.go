@@ -800,6 +800,60 @@ func TestGitHubWebhookProcessorAppliesLifecycleAndCanonicalResync(t *testing.T) 
 	}
 }
 
+func TestGitHubWebhookFansOutAcrossUserOwnedOrganizationBindings(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	store := &fakeGitHubStore{
+		bindings: []clouddomain.GitHubInstallation{
+			{OrgID: "org-1", GitHubInstallationID: 42, Status: "active", InstalledByUserID: "user-1"},
+			{OrgID: "org-2", GitHubInstallationID: 42, Status: "active", InstalledByUserID: "user-1"},
+		},
+	}
+	client := &fakeGitHubAppClient{
+		installation: cloudgithubapp.Installation{
+			ID:                  42,
+			AppID:               123,
+			ClientID:            "client-id",
+			Account:             cloudgithubapp.Account{ID: 7, Login: "aoagents", Type: "Organization"},
+			RepositorySelection: "selected",
+		},
+		repositories: []cloudgithubapp.Repository{{
+			ID:            84,
+			Owner:         cloudgithubapp.Account{ID: 7, Login: "aoagents"},
+			Name:          "agent-orchestrator",
+			FullName:      "aoagents/agent-orchestrator",
+			HTMLURL:       "https://github.com/aoagents/agent-orchestrator",
+			CloneURL:      "https://github.com/aoagents/agent-orchestrator.git",
+			DefaultBranch: "main",
+		}},
+	}
+	server := newGitHubTestServer(
+		store,
+		client,
+		now,
+		[]byte("independent-state-secret-at-least-32-bytes"),
+		[]byte("independent-webhook-secret-at-least-32"),
+	)
+	installationID := int64(42)
+	if err := server.processGitHubWebhookDelivery(
+		context.Background(),
+		clouddomain.GitHubWebhookDelivery{
+			Event:          "installation_repositories",
+			Action:         "added",
+			InstallationID: &installationID,
+		},
+	); err != nil {
+		t.Fatalf("process shared installation webhook: %v", err)
+	}
+	if store.bindCalls != 2 || store.fullSyncCalls != 2 {
+		t.Fatalf(
+			"fanout sync calls: bind=%d fullSync=%d, want 2 each",
+			store.bindCalls,
+			store.fullSyncCalls,
+		)
+	}
+}
+
 func TestGitHubSyncMarksMissingInstallationDeletedAndContinues(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
@@ -1080,6 +1134,7 @@ type fakeGitHubStore struct {
 	deliveries          map[string]cloudpostgres.GitHubWebhookDeliveryInput
 	lastDelivery        cloudpostgres.GitHubWebhookDeliveryInput
 	binding             *clouddomain.GitHubInstallation
+	bindings            []clouddomain.GitHubInstallation
 	activeGrant         *clouddomain.GitHubRepositoryGrant
 	activeGrantErr      error
 	statusUpdates       []cloudpostgres.GitHubInstallationStatusUpdate
@@ -1184,11 +1239,14 @@ func (s *fakeGitHubStore) ListGitHubInstallations(context.Context, clouddomain.O
 	return s.installations, nil
 }
 
-func (s *fakeGitHubStore) FindGitHubInstallationByGitHubID(context.Context, int64) (clouddomain.GitHubInstallation, error) {
-	if s.binding != nil {
-		return *s.binding, nil
+func (s *fakeGitHubStore) ListGitHubInstallationsByGitHubID(context.Context, int64) ([]clouddomain.GitHubInstallation, error) {
+	if len(s.bindings) > 0 {
+		return s.bindings, nil
 	}
-	return clouddomain.GitHubInstallation{}, cloudpostgres.ErrGitHubInstallationNotFound
+	if s.binding != nil {
+		return []clouddomain.GitHubInstallation{*s.binding}, nil
+	}
+	return nil, cloudpostgres.ErrGitHubInstallationNotFound
 }
 
 func (*fakeGitHubStore) DisconnectGitHubInstallation(context.Context, clouddomain.OrgID, int64) error {

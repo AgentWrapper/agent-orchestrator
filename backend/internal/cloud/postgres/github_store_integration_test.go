@@ -44,14 +44,23 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 	}
 	orgA := clouddomain.OrgID(accountA.ID)
 	orgB := clouddomain.OrgID(accountB.ID)
+	ownedBefore, err := store.CreateOrganization(ctx, CreateOrganizationInput{
+		UserID:      userA,
+		DisplayName: "GitHub integration A second org",
+		Kind:        "team",
+	})
+	if err != nil {
+		t.Fatalf("CreateOrganization(A second) error = %v", err)
+	}
+	orgA2 := ownedBefore.Organization.ID
 	repositoryID := integrationGitHubID()
 	rollbackRepositoryID := integrationGitHubID()
 	concurrentRepositoryID := integrationGitHubID()
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cleanupCancel()
-		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM ao_organizations WHERE id = ANY($1::uuid[])`, []string{string(orgA), string(orgB)})
-		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM ao_accounts WHERE id = ANY($1::uuid[])`, []string{string(accountA.ID), string(accountB.ID)})
+		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM ao_organizations WHERE created_by_user_id = ANY($1::uuid[])`, []string{userA, userB})
+		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM ao_accounts WHERE owner_user_id = ANY($1::uuid[])`, []string{userA, userB})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM ao_users WHERE id = ANY($1::uuid[])`, []string{userA, userB})
 		_, _ = store.pool.Exec(cleanupCtx, `DELETE FROM ao_github_repositories WHERE github_repository_id = ANY($1::bigint[])`, []int64{repositoryID, rollbackRepositoryID, concurrentRepositoryID})
 	})
@@ -74,6 +83,24 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 	}
 	if _, err := store.FindActiveGitHubRepositoryGrant(ctx, orgA, repositoryID); err != nil {
 		t.Fatalf("FindActiveGitHubRepositoryGrant(A) error = %v", err)
+	}
+	if _, err := store.FindActiveGitHubRepositoryGrant(ctx, orgA2, repositoryID); err != nil {
+		t.Fatalf("FindActiveGitHubRepositoryGrant(A second org) error = %v", err)
+	}
+	ownedAfter, err := store.CreateOrganization(ctx, CreateOrganizationInput{
+		UserID:      userA,
+		DisplayName: "GitHub integration A third org",
+		Kind:        "team",
+	})
+	if err != nil {
+		t.Fatalf("CreateOrganization(A third) error = %v", err)
+	}
+	if _, err := store.FindActiveGitHubRepositoryGrant(
+		ctx,
+		ownedAfter.Organization.ID,
+		repositoryID,
+	); err != nil {
+		t.Fatalf("FindActiveGitHubRepositoryGrant(A inherited org) error = %v", err)
 	}
 	if _, err := store.FindActiveGitHubRepositoryGrant(ctx, orgB, repositoryID); !errors.Is(err, ErrGitHubRepositoryGrantNotFound) {
 		t.Fatalf("cross-org active grant error = %v, want ErrGitHubRepositoryGrantNotFound", err)
@@ -146,7 +173,7 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 	}); err == nil {
 		t.Fatal("forced atomic confirmation error = nil")
 	}
-	if _, err := store.FindGitHubInstallationByGitHubID(ctx, rollbackInstallationID); !errors.Is(err, ErrGitHubInstallationNotFound) {
+	if _, err := store.ListGitHubInstallationsByGitHubID(ctx, rollbackInstallationID); !errors.Is(err, ErrGitHubInstallationNotFound) {
 		t.Fatalf("rolled-back installation lookup error = %v, want ErrGitHubInstallationNotFound", err)
 	}
 	if _, err := store.FindActiveGitHubRepositoryGrant(ctx, orgA, rollbackRepositoryID); !errors.Is(err, ErrGitHubRepositoryGrantNotFound) {

@@ -34,8 +34,8 @@ type GitHubPendingInstallation struct {
 	RepositoryCount     int    `json:"repositoryCount"`
 }
 
-// GitHubInstallation is a GitHub App installation exclusively bound to one AO
-// organization.
+// GitHubInstallation is one organization binding for a user-owned GitHub App
+// installation. The same user may bind it to each organization they create.
 type GitHubInstallation struct {
 	ID                   string          `json:"id"`
 	OrgID                OrgID           `json:"orgId"`

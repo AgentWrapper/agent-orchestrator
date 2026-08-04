@@ -261,27 +261,36 @@ func (s *Store) ConfirmGitHubInstallation(
 		return nil, ErrInvalidGitHubInstallAttempt
 	}
 
-	if _, err := bindGitHubInstallation(
-		ctx,
-		tx,
-		orgID,
-		userID,
-		confirmation.Installation,
-	); err != nil {
+	targetOrgIDs, err := ownedGitHubOrganizationIDs(ctx, tx, orgID, userID)
+	if err != nil {
 		return nil, err
 	}
-
 	grants := make([]clouddomain.GitHubRepositoryGrant, 0)
-	if confirmation.Installation.Status == "active" {
-		grants, err = fullSyncGitHubRepositoriesTx(
+	for _, targetOrgID := range targetOrgIDs {
+		if _, err := bindGitHubInstallation(
 			ctx,
 			tx,
-			orgID,
+			targetOrgID,
+			userID,
+			confirmation.Installation,
+		); err != nil {
+			return nil, err
+		}
+		if confirmation.Installation.Status != "active" {
+			continue
+		}
+		targetGrants, err := fullSyncGitHubRepositoriesTx(
+			ctx,
+			tx,
+			targetOrgID,
 			confirmation.Installation.InstallationID,
 			confirmation.Repositories,
 		)
 		if err != nil {
 			return nil, err
+		}
+		if targetOrgID == orgID {
+			grants = targetGrants
 		}
 	}
 
@@ -302,8 +311,51 @@ func (s *Store) ConfirmGitHubInstallation(
 	return grants, nil
 }
 
-// BindGitHubInstallation binds a numeric GitHub installation exclusively to
-// one AO organization and updates its GitHub-owned metadata.
+func ownedGitHubOrganizationIDs(
+	ctx context.Context,
+	tx pgx.Tx,
+	requestedOrgID clouddomain.OrgID,
+	userID clouddomain.UserID,
+) ([]clouddomain.OrgID, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT organization.id
+		FROM ao_organizations organization
+		JOIN ao_org_memberships membership
+			ON membership.org_id = organization.id
+			AND membership.user_id = $2
+			AND membership.status = 'active'
+		WHERE organization.status = 'active'
+			AND (
+				organization.id = $1
+				OR organization.created_by_user_id = $2
+			)
+		ORDER BY CASE WHEN organization.id = $1 THEN 0 ELSE 1 END,
+			organization.created_at,
+			organization.id
+	`, requestedOrgID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list user-owned organizations for GitHub installation: %w", err)
+	}
+	defer rows.Close()
+	orgIDs := make([]clouddomain.OrgID, 0)
+	for rows.Next() {
+		var orgID clouddomain.OrgID
+		if err := rows.Scan(&orgID); err != nil {
+			return nil, fmt.Errorf("scan user-owned GitHub organization: %w", err)
+		}
+		orgIDs = append(orgIDs, orgID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan user-owned GitHub organizations: %w", err)
+	}
+	if len(orgIDs) == 0 {
+		return nil, ErrInvalidGitHubInstallAttempt
+	}
+	return orgIDs, nil
+}
+
+// BindGitHubInstallation binds a user-owned numeric GitHub installation to an
+// AO organization and updates its GitHub-owned metadata.
 func (s *Store) BindGitHubInstallation(
 	ctx context.Context,
 	orgID clouddomain.OrgID,
@@ -329,13 +381,18 @@ func bindGitHubInstallation(
 			account_type, status, repository_selection, permissions, events,
 			installed_by_user_id, suspended_at, disconnected_at, deleted_at
 		)
-		VALUES (
+		SELECT
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 			CASE WHEN $6 = 'suspended' THEN now() END,
 			CASE WHEN $6 = 'disconnected' THEN now() END,
 			CASE WHEN $6 = 'deleted' THEN now() END
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM ao_github_installations
+			WHERE github_installation_id = $2
+				AND installed_by_user_id <> $10
 		)
-		ON CONFLICT (github_installation_id) DO UPDATE
+		ON CONFLICT (org_id, github_installation_id) DO UPDATE
 		SET github_account_id = EXCLUDED.github_account_id,
 			account_login = EXCLUDED.account_login,
 			account_type = EXCLUDED.account_type,
@@ -348,7 +405,8 @@ func bindGitHubInstallation(
 			disconnected_at = EXCLUDED.disconnected_at,
 			deleted_at = EXCLUDED.deleted_at,
 			updated_at = now()
-		WHERE ao_github_installations.org_id = EXCLUDED.org_id
+		WHERE ao_github_installations.installed_by_user_id =
+			EXCLUDED.installed_by_user_id
 		RETURNING id, org_id, github_installation_id, github_account_id,
 			account_login, account_type, status, repository_selection, permissions,
 			events, installed_by_user_id, suspended_at, disconnected_at, deleted_at,
@@ -363,6 +421,69 @@ func bindGitHubInstallation(
 		return clouddomain.GitHubInstallation{}, fmt.Errorf("bind GitHub installation: %w", err)
 	}
 	return installation, nil
+}
+
+func inheritGitHubInstallationsTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	orgID clouddomain.OrgID,
+	userID clouddomain.UserID,
+) error {
+	if _, err := tx.Exec(ctx, `
+		WITH source AS (
+			SELECT DISTINCT ON (github_installation_id)
+				github_installation_id, github_account_id, account_login,
+				account_type, status, repository_selection, permissions, events,
+				suspended_at, disconnected_at, deleted_at
+			FROM ao_github_installations
+			WHERE installed_by_user_id = $2
+				AND status = 'active'
+			ORDER BY github_installation_id, updated_at DESC, id
+		)
+		INSERT INTO ao_github_installations (
+			org_id, github_installation_id, github_account_id, account_login,
+			account_type, status, repository_selection, permissions, events,
+			installed_by_user_id, suspended_at, disconnected_at, deleted_at
+		)
+		SELECT $1, github_installation_id, github_account_id, account_login,
+			account_type, status, repository_selection, permissions, events,
+			$2, suspended_at, disconnected_at, deleted_at
+		FROM source
+		ON CONFLICT (org_id, github_installation_id) DO NOTHING
+	`, orgID, userID); err != nil {
+		return fmt.Errorf("inherit user GitHub installations: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ao_github_repository_grants (
+			org_id, installation_id, github_repository_id, repository_selection
+		)
+		SELECT DISTINCT ON (
+			target.id,
+			source_grant.github_repository_id
+		)
+			$1,
+			target.id,
+			source_grant.github_repository_id,
+			target.repository_selection
+		FROM ao_github_installations target
+		JOIN ao_github_installations source
+			ON source.github_installation_id = target.github_installation_id
+			AND source.installed_by_user_id = $2
+			AND source.status = 'active'
+		JOIN ao_github_repository_grants source_grant
+			ON source_grant.installation_id = source.id
+			AND source_grant.revoked_at IS NULL
+		WHERE target.org_id = $1
+			AND target.installed_by_user_id = $2
+			AND target.status = 'active'
+		ORDER BY target.id, source_grant.github_repository_id,
+			source_grant.last_synced_at DESC,
+			source_grant.id
+		ON CONFLICT DO NOTHING
+	`, orgID, userID); err != nil {
+		return fmt.Errorf("inherit user GitHub repository grants: %w", err)
+	}
+	return nil
 }
 
 // ListGitHubInstallations returns all current and historical installation
@@ -395,27 +516,40 @@ func (s *Store) ListGitHubInstallations(
 	return out, rows.Err()
 }
 
-// FindGitHubInstallationByGitHubID resolves webhook installation metadata to
-// its exclusive AO organization.
-func (s *Store) FindGitHubInstallationByGitHubID(
+// ListGitHubInstallationsByGitHubID resolves one provider installation to each
+// AO organization that inherited its user-owned connection.
+func (s *Store) ListGitHubInstallationsByGitHubID(
 	ctx context.Context,
 	githubInstallationID int64,
-) (clouddomain.GitHubInstallation, error) {
-	installation, err := scanGitHubInstallation(s.pool.QueryRow(ctx, `
+) ([]clouddomain.GitHubInstallation, error) {
+	rows, err := s.pool.Query(ctx, `
 		SELECT id, org_id, github_installation_id, github_account_id,
 			account_login, account_type, status, repository_selection, permissions,
 			events, installed_by_user_id, suspended_at, disconnected_at, deleted_at,
 			created_at, updated_at
 		FROM ao_github_installations
 		WHERE github_installation_id = $1
-	`, githubInstallationID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return clouddomain.GitHubInstallation{}, ErrGitHubInstallationNotFound
-	}
+		ORDER BY created_at, org_id
+	`, githubInstallationID)
 	if err != nil {
-		return clouddomain.GitHubInstallation{}, fmt.Errorf("find GitHub installation: %w", err)
+		return nil, fmt.Errorf("list GitHub installations by provider ID: %w", err)
 	}
-	return installation, nil
+	defer rows.Close()
+	installations := make([]clouddomain.GitHubInstallation, 0)
+	for rows.Next() {
+		installation, scanErr := scanGitHubInstallation(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("scan GitHub installation binding: %w", scanErr)
+		}
+		installations = append(installations, installation)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scan GitHub installation bindings: %w", err)
+	}
+	if len(installations) == 0 {
+		return nil, ErrGitHubInstallationNotFound
+	}
+	return installations, nil
 }
 
 // DisconnectGitHubInstallation disconnects an installation and revokes all of
@@ -1248,8 +1382,8 @@ var (
 	ErrGitHubInstallAttemptConflict = errors.New("GitHub install attempt already has another installation")
 	// ErrInvalidGitHubInstallation means installation metadata is invalid.
 	ErrInvalidGitHubInstallation = errors.New("GitHub installation is invalid")
-	// ErrGitHubInstallationConflict means an installation belongs to another AO organization.
-	ErrGitHubInstallationConflict = errors.New("GitHub installation is already bound to another organization")
+	// ErrGitHubInstallationConflict means another AO user owns the installation connection.
+	ErrGitHubInstallationConflict = errors.New("GitHub installation is already connected by another user")
 	// ErrGitHubInstallationNotFound means the org does not own an eligible installation.
 	ErrGitHubInstallationNotFound = errors.New("GitHub installation not found")
 	// ErrInvalidGitHubRepository means repository metadata is invalid.

@@ -55,7 +55,7 @@ type githubStore interface {
 	ConfirmGitHubInstallation(context.Context, clouddomain.OrgID, clouddomain.UserID, string, cloudpostgres.GitHubInstallationConfirmation) ([]clouddomain.GitHubRepositoryGrant, error)
 	BindGitHubInstallation(context.Context, clouddomain.OrgID, clouddomain.UserID, cloudpostgres.GitHubInstallationInput) (clouddomain.GitHubInstallation, error)
 	ListGitHubInstallations(context.Context, clouddomain.OrgID) ([]clouddomain.GitHubInstallation, error)
-	FindGitHubInstallationByGitHubID(context.Context, int64) (clouddomain.GitHubInstallation, error)
+	ListGitHubInstallationsByGitHubID(context.Context, int64) ([]clouddomain.GitHubInstallation, error)
 	DisconnectGitHubInstallation(context.Context, clouddomain.OrgID, int64) error
 	UpdateGitHubInstallationStatus(context.Context, clouddomain.OrgID, int64, cloudpostgres.GitHubInstallationStatusUpdate) (clouddomain.GitHubInstallation, error)
 	FullSyncGitHubRepositories(context.Context, clouddomain.OrgID, int64, []clouddomain.GitHubRepository) ([]clouddomain.GitHubRepositoryGrant, error)
@@ -454,7 +454,7 @@ func (s *Server) confirmGitHubInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, cloudpostgres.ErrGitHubInstallationConflict) {
-		writeError(w, r, http.StatusConflict, "GITHUB_INSTALLATION_CONFLICT", "This GitHub installation is already connected to another organization.")
+		writeError(w, r, http.StatusConflict, "GITHUB_INSTALLATION_CONFLICT", "This GitHub installation is already connected by another AO user.")
 		return
 	}
 	if err != nil {

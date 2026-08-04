@@ -88,7 +88,7 @@ tables, linked with foreign keys:
 | `ao_pull_requests` | Normalized pull-request facts observed for a session. |
 | `ao_pr_checks` | CI/check facts belonging to a normalized pull request. |
 | `ao_github_install_attempts` | Signed, expiring, single-use AO user/org installation attempts. |
-| `ao_github_installations` | Organization-bound GitHub App installations, permissions, events, and lifecycle status. |
+| `ao_github_installations` | Per-organization bindings for user-owned GitHub App installations; a connection is inherited by every AO organization that user creates. |
 | `ao_github_repositories` | Canonical GitHub repository identity and metadata. |
 | `ao_github_repository_grants` | Durable intervals in which an installation grants an AO organization access to a repository. |
 | `ao_github_webhook_deliveries` | Signed, deduplicated, retryable GitHub webhook inbox. |
