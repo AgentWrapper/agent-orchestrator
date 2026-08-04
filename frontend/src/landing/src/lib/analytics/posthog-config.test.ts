@@ -24,7 +24,13 @@ describe("marketing PostHog host", () => {
 });
 
 describe("marketing PostHog config", () => {
-  const config = buildMarketingPostHogConfig(DEFAULT_MARKETING_POSTHOG_HOST, undefined);
+  // Production always supplies a real bootstrap (getHeroFlagBootstrap returns
+// NonNullable), so the test mirrors that rather than widening the signature.
+const config = buildMarketingPostHogConfig(DEFAULT_MARKETING_POSTHOG_HOST, {
+  distinctID: "test-distinct-id",
+  isIdentifiedID: false,
+  featureFlags: {},
+});
 
   // AO records no sessions on any surface, by product decision. This is the
   // guard against replay being switched on by an edit that looks unrelated.
