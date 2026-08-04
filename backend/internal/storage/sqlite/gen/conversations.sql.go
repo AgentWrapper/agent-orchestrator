@@ -269,6 +269,25 @@ func (q *Queries) FailPendingConversationApprovals(ctx context.Context, arg Fail
 	return err
 }
 
+const failPendingConversationInputs = `-- name: FailPendingConversationInputs :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = ?
+WHERE conversation_id = ? AND kind = 'user_input' AND status = 'pending'
+`
+
+type FailPendingConversationInputsParams struct {
+	UpdatedAt      time.Time
+	ConversationID string
+}
+
+// A structured input request is held by an in-memory provider RPC just like an
+// approval. If that controller disappears, the old card must stop accepting
+// answers because there is no longer a provider call to receive one.
+func (q *Queries) FailPendingConversationInputs(ctx context.Context, arg FailPendingConversationInputsParams) error {
+	_, err := q.db.ExecContext(ctx, failPendingConversationInputs, arg.UpdatedAt, arg.ConversationID)
+	return err
+}
+
 const failRolledBackConversationApprovals = `-- name: FailRolledBackConversationApprovals :exec
 UPDATE conversation_activities
 SET status = 'failed', revision = revision + 1, updated_at = ?
@@ -374,24 +393,26 @@ func (q *Queries) InsertConversationActivity(ctx context.Context, arg InsertConv
 const insertConversationMessage = `-- name: InsertConversationMessage :exec
 INSERT INTO conversation_messages (
     id, conversation_id, turn_id, sequence, revision, role, origin,
-    text, streaming, provider_item_id, client_message_id, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    text, streaming, provider_item_id, client_message_id, delivery_content_json,
+    created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertConversationMessageParams struct {
-	ID              string
-	ConversationID  string
-	TurnID          sql.NullString
-	Sequence        int64
-	Revision        int64
-	Role            domain.MessageRole
-	Origin          domain.MessageOrigin
-	Text            string
-	Streaming       int64
-	ProviderItemID  string
-	ClientMessageID string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                  string
+	ConversationID      string
+	TurnID              sql.NullString
+	Sequence            int64
+	Revision            int64
+	Role                domain.MessageRole
+	Origin              domain.MessageOrigin
+	Text                string
+	Streaming           int64
+	ProviderItemID      string
+	ClientMessageID     string
+	DeliveryContentJson string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 func (q *Queries) InsertConversationMessage(ctx context.Context, arg InsertConversationMessageParams) error {
@@ -407,6 +428,7 @@ func (q *Queries) InsertConversationMessage(ctx context.Context, arg InsertConve
 		arg.Streaming,
 		arg.ProviderItemID,
 		arg.ClientMessageID,
+		arg.DeliveryContentJson,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
@@ -703,7 +725,7 @@ func (q *Queries) SelectConversationActivityByProviderItem(ctx context.Context, 
 }
 
 const selectConversationByID = `-- name: SelectConversationByID :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json FROM conversations WHERE id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency FROM conversations WHERE id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conversation, error) {
@@ -738,12 +760,14 @@ func (q *Queries) SelectConversationByID(ctx context.Context, id string) (Conver
 		&i.AccountJson,
 		&i.ThreadStateJson,
 		&i.McpServersJson,
+		&i.UsageCost,
+		&i.UsageCurrency,
 	)
 	return i, err
 }
 
 const selectConversationBySession = `-- name: SelectConversationBySession :one
-SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json FROM conversations WHERE session_id = ? LIMIT 1
+SELECT id, scope, project_id, session_id, latest_sequence, created_at, updated_at, model, reasoning_effort, approval_mode, compacted_at, context_used, context_window, usage_input_tokens, usage_output_tokens, usage_cached_tokens, usage_total_tokens, rate_limit_primary_percent, rate_limit_secondary_percent, rate_limit_primary_resets_in, rate_limit_secondary_resets_in, rate_limit_plan, provider_title, applied_title, model_reroute_json, account_json, thread_state_json, mcp_servers_json, usage_cost, usage_currency FROM conversations WHERE session_id = ? LIMIT 1
 `
 
 func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *domain.SessionID) (Conversation, error) {
@@ -778,12 +802,14 @@ func (q *Queries) SelectConversationBySession(ctx context.Context, sessionID *do
 		&i.AccountJson,
 		&i.ThreadStateJson,
 		&i.McpServersJson,
+		&i.UsageCost,
+		&i.UsageCurrency,
 	)
 	return i, err
 }
 
 const selectConversationMessageByClientID = `-- name: SelectConversationMessageByClientID :one
-SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at FROM conversation_messages
+SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at, delivery_content_json FROM conversation_messages
 WHERE conversation_id = ? AND client_message_id = ?
 LIMIT 1
 `
@@ -810,12 +836,13 @@ func (q *Queries) SelectConversationMessageByClientID(ctx context.Context, arg S
 		&i.ClientMessageID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeliveryContentJson,
 	)
 	return i, err
 }
 
 const selectConversationMessageByProviderItem = `-- name: SelectConversationMessageByProviderItem :one
-SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at FROM conversation_messages
+SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at, delivery_content_json FROM conversation_messages
 WHERE conversation_id = ? AND provider_item_id = ?
 LIMIT 1
 `
@@ -842,12 +869,13 @@ func (q *Queries) SelectConversationMessageByProviderItem(ctx context.Context, a
 		&i.ClientMessageID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeliveryContentJson,
 	)
 	return i, err
 }
 
 const selectConversationMessages = `-- name: SelectConversationMessages :many
-SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at FROM conversation_messages
+SELECT id, conversation_id, turn_id, sequence, revision, role, origin, text, streaming, provider_item_id, client_message_id, created_at, updated_at, delivery_content_json FROM conversation_messages
 WHERE conversation_messages.conversation_id = ?
   AND (conversation_messages.turn_id IS NULL OR conversation_messages.turn_id NOT IN (
       SELECT discarded.id FROM conversation_turns AS discarded
@@ -893,6 +921,7 @@ func (q *Queries) SelectConversationMessages(ctx context.Context, arg SelectConv
 			&i.ClientMessageID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeliveryContentJson,
 		); err != nil {
 			return nil, err
 		}
@@ -1062,7 +1091,8 @@ const selectNextQueuedConversationTurn = `-- name: SelectNextQueuedConversationT
 SELECT conversation_turns.id,
        conversation_messages.text,
        conversation_messages.client_message_id,
-       conversation_messages.origin
+       conversation_messages.origin,
+       conversation_messages.delivery_content_json
 FROM conversation_turns
 JOIN conversation_messages
     ON conversation_messages.turn_id = conversation_turns.id
@@ -1073,10 +1103,11 @@ LIMIT 1
 `
 
 type SelectNextQueuedConversationTurnRow struct {
-	ID              string
-	Text            string
-	ClientMessageID string
-	Origin          domain.MessageOrigin
+	ID                  string
+	Text                string
+	ClientMessageID     string
+	Origin              domain.MessageOrigin
+	DeliveryContentJson string
 }
 
 // The head of the send queue: the oldest message recorded while the agent was
@@ -1093,6 +1124,7 @@ func (q *Queries) SelectNextQueuedConversationTurn(ctx context.Context, conversa
 		&i.Text,
 		&i.ClientMessageID,
 		&i.Origin,
+		&i.DeliveryContentJson,
 	)
 	return i, err
 }
@@ -1473,7 +1505,9 @@ SET context_used = ?,
     usage_input_tokens = ?,
     usage_output_tokens = ?,
     usage_cached_tokens = ?,
-    usage_total_tokens = ?
+    usage_total_tokens = ?,
+    usage_cost = ?,
+    usage_currency = ?
 WHERE id = ?
 `
 
@@ -1484,6 +1518,8 @@ type UpdateConversationUsageParams struct {
 	UsageOutputTokens sql.NullInt64
 	UsageCachedTokens sql.NullInt64
 	UsageTotalTokens  sql.NullInt64
+	UsageCost         sql.NullFloat64
+	UsageCurrency     sql.NullString
 	ID                string
 }
 
@@ -1505,6 +1541,8 @@ func (q *Queries) UpdateConversationUsage(ctx context.Context, arg UpdateConvers
 		arg.UsageOutputTokens,
 		arg.UsageCachedTokens,
 		arg.UsageTotalTokens,
+		arg.UsageCost,
+		arg.UsageCurrency,
 		arg.ID,
 	)
 	return err

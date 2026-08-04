@@ -43,7 +43,8 @@ export type ActivityKind =
 	| "error"
 	| "system"
 	| "mcp_tool"
-	| "auto_review";
+	| "auto_review"
+	| "user_input";
 
 /**
  * `running` can be where an activity stops: a provider may start a command and
@@ -201,6 +202,30 @@ export interface CommandDetail {
 	terminalInputTruncated?: boolean;
 	/** The provider's own process handle, when it reported one. */
 	processId?: number;
+	/** ACP transcript hierarchy and richer provider terminal metadata. */
+	parentProviderItemId?: string;
+	nestedAgent?: boolean;
+	providerToolName?: string;
+	providerTitle?: string;
+	subagentType?: string;
+	subagentRetry?: unknown;
+	terminalId?: string;
+	signal?: string;
+}
+
+/** ACP form/URL elicitation projected into a durable AO activity. */
+export interface UserInputDetail {
+	inputMode?: "form" | "url";
+	message?: string;
+	schema?: {
+		title?: string;
+		description?: string;
+		type?: "object";
+		required?: string[];
+		properties?: Record<string, Record<string, unknown>>;
+	};
+	url?: string;
+	elicitationId?: string;
 }
 
 /**
@@ -409,6 +434,7 @@ export interface ConversationActivity {
 		CompactionDetail &
 		McpToolDetail &
 		AutoReviewDetail &
+		UserInputDetail &
 		SystemEventDetail &
 		PlanDetail;
 	/**
@@ -416,6 +442,8 @@ export interface ConversationActivity {
 	 * card left on screen cannot answer a request that replaced it.
 	 */
 	requestId?: string;
+	/** Provider correlation key used to attach nested agent activity to its parent. */
+	providerItemId?: string;
 	/**
 	 * Authoritative for an approval. The provider varies what it offers per
 	 * request and does not always include a decline, so buttons are rendered
@@ -520,6 +548,9 @@ export interface ConversationUsage {
 	outputTokens: number;
 	cachedTokens: number;
 	totalTokens: number;
+	/** Cumulative provider-reported money, when the account reports it. */
+	cost?: number | null;
+	currency?: string;
 }
 
 /**
@@ -715,5 +746,15 @@ export function pendingApproval(
 	return snapshot.items.find(
 		(item): item is ConversationActivity =>
 			item.kind === "activity" && item.activityKind === "approval" && item.status === "pending",
+	);
+}
+
+/** The structured question currently blocking the agent, if any. */
+export function pendingUserInput(
+	snapshot: ConversationSnapshot,
+): ConversationActivity | undefined {
+	return snapshot.items.find(
+		(item): item is ConversationActivity =>
+			item.kind === "activity" && item.activityKind === "user_input" && item.status === "pending",
 	);
 }

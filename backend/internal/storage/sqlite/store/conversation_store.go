@@ -141,17 +141,18 @@ func (s *Store) AppendUserMessage(
 		}
 
 		return q.InsertConversationMessage(ctx, gen.InsertConversationMessageParams{
-			ID:              msg.ID,
-			ConversationID:  conversationID,
-			TurnID:          sql.NullString{String: turnID, Valid: true},
-			Sequence:        sequence,
-			Role:            domain.MessageRoleUser,
-			Origin:          msg.Origin,
-			Text:            msg.Text,
-			ProviderItemID:  "",
-			ClientMessageID: msg.ClientMessageID,
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			ID:                  msg.ID,
+			ConversationID:      conversationID,
+			TurnID:              sql.NullString{String: turnID, Valid: true},
+			Sequence:            sequence,
+			Role:                domain.MessageRoleUser,
+			Origin:              msg.Origin,
+			Text:                msg.Text,
+			ProviderItemID:      "",
+			ClientMessageID:     msg.ClientMessageID,
+			DeliveryContentJson: msg.DeliveryContentJSON,
+			CreatedAt:           now,
+			UpdatedAt:           now,
 		})
 	})
 	if err != nil {
@@ -337,6 +338,8 @@ func (s *Store) RecordUsage(
 		UsageOutputTokens: nullablePositive(usage.OutputTokens),
 		UsageCachedTokens: nullablePositive(usage.CachedTokens),
 		UsageTotalTokens:  nullablePositive(usage.TotalTokens),
+		UsageCost:         nullableCost(usage.Cost),
+		UsageCurrency:     nullableString(usage.Currency),
 		ID:                conversationID,
 	}); err != nil {
 		return fmt.Errorf("record usage for %s: %w", conversationID, err)
@@ -621,10 +624,11 @@ func (s *Store) NextQueuedTurn(ctx context.Context, conversationID string) (doma
 		return domain.QueuedTurn{}, fmt.Errorf("select next queued turn for %s: %w", conversationID, err)
 	}
 	return domain.QueuedTurn{
-		TurnID:          row.ID,
-		Text:            row.Text,
-		ClientMessageID: row.ClientMessageID,
-		Origin:          row.Origin,
+		TurnID:              row.ID,
+		Text:                row.Text,
+		ClientMessageID:     row.ClientMessageID,
+		Origin:              row.Origin,
+		DeliveryContentJSON: row.DeliveryContentJson,
 	}, nil
 }
 
@@ -964,6 +968,23 @@ func (s *Store) FailPendingApprovals(ctx context.Context, conversationID string,
 	return nil
 }
 
+// FailPendingInputs closes structured input requests after the provider call
+// waiting for them has gone away. Keeping this separate from approvals preserves
+// the activity-kind boundary even though both use the same pending/resolved state
+// machine.
+func (s *Store) FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if err := s.qw.FailPendingConversationInputs(ctx,
+		gen.FailPendingConversationInputsParams{
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+		}); err != nil {
+		return fmt.Errorf("fail pending inputs for %s: %w", conversationID, err)
+	}
+	return nil
+}
+
 // RecordProviderEvent archives a raw provider event. Deduplicated on the
 // provider's own event id where it has one.
 func (s *Store) RecordProviderEvent(
@@ -1296,17 +1317,30 @@ func decodeJSONColumn[T any](column sql.NullString) *T {
 // happen, and showing an empty meter for the first would be a claim AO has not
 // earned.
 func usageFromRow(row gen.Conversation) *domain.ConversationUsage {
-	if !row.ContextUsed.Valid && !row.UsageTotalTokens.Valid {
+	if !row.ContextUsed.Valid && !row.UsageTotalTokens.Valid && !row.UsageCost.Valid {
 		return nil
 	}
-	return &domain.ConversationUsage{
+	usage := &domain.ConversationUsage{
 		ContextUsed:   row.ContextUsed.Int64,
 		ContextWindow: row.ContextWindow.Int64,
 		InputTokens:   row.UsageInputTokens.Int64,
 		OutputTokens:  row.UsageOutputTokens.Int64,
 		CachedTokens:  row.UsageCachedTokens.Int64,
 		TotalTokens:   row.UsageTotalTokens.Int64,
+		Currency:      row.UsageCurrency.String,
 	}
+	if row.UsageCost.Valid {
+		cost := row.UsageCost.Float64
+		usage.Cost = &cost
+	}
+	return usage
+}
+
+func nullableCost(value *float64) sql.NullFloat64 {
+	if value == nil {
+		return sql.NullFloat64{}
+	}
+	return sql.NullFloat64{Float64: *value, Valid: true}
 }
 
 // rateLimitsFromRow reconstitutes the quota position, restoring the port's

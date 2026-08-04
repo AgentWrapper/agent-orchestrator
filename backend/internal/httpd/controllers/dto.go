@@ -875,7 +875,24 @@ type SendConversationMessageRequest struct {
 	Text string `json:"text"`
 	// ClientMessageID makes delivery idempotent. A retry carrying the same value
 	// must not produce a second provider turn.
-	ClientMessageID string `json:"clientMessageId,omitempty"`
+	ClientMessageID string                               `json:"clientMessageId,omitempty"`
+	Attachments     []ConversationImageContentRequest    `json:"attachments,omitempty"`
+	Resources       []ConversationResourceContentRequest `json:"resources,omitempty"`
+}
+
+// ConversationImageContentRequest is a native raster image prompt block.
+type ConversationImageContentRequest struct {
+	MIMEType string `json:"mimeType"`
+	Data     string `json:"data"`
+}
+
+// ConversationResourceContentRequest is a resource link, or embedded text when
+// Text is present and the provider negotiated embedded context.
+type ConversationResourceContentRequest struct {
+	URI      string  `json:"uri"`
+	Name     string  `json:"name"`
+	MIMEType string  `json:"mimeType,omitempty"`
+	Text     *string `json:"text,omitempty"`
 }
 
 // SendConversationMessageResponse reports what the send did.
@@ -985,6 +1002,13 @@ type ConversationTurnSettingsPayload struct {
 // be one the provider offered for that request; AO does not invent options.
 type ResolveConversationApprovalRequest struct {
 	DecisionID string `json:"decisionId"`
+}
+
+// ResolveConversationInputRequest answers a structured form or URL-consent
+// request. Content is meaningful only for accept.
+type ResolveConversationInputRequest struct {
+	Action  string         `json:"action" enum:"accept,decline,cancel"`
+	Content map[string]any `json:"content,omitempty"`
 }
 
 // CompactConversationResponse reports a compaction the provider accepted.
@@ -1108,7 +1132,7 @@ type ConversationActivityResponse struct {
 	// the agent had run something in the worktree. auto_review is not approval: an
 	// approval is a question waiting on a person, while an auto-review is a decision
 	// the provider already made on their behalf, and those are opposites.
-	ActivityKind string `json:"activityKind" enum:"command,file_change,plan,reasoning,approval,usage,error,system,mcp_tool,auto_review"`
+	ActivityKind string `json:"activityKind" enum:"command,file_change,plan,reasoning,approval,usage,error,system,mcp_tool,auto_review,user_input"`
 	Status       string `json:"status" enum:"running,completed,failed,pending,resolved"`
 	Summary      string `json:"summary"`
 	// Detail is the provider-neutral typed payload for this kind. For an approval
@@ -1129,11 +1153,14 @@ type ConversationActivityResponse struct {
 	//   plan         event "plan", explanation, steps[] with text and status
 	//   auto_review  reviewId, targetItemId, actionType, command, riskLevel,
 	//                rationale, decisionSource, status, durationMs
+	//   user_input   inputMode, message, schema, url, elicitationId
 	//   system       event -- "compaction", "model.rerouted" or
 	//                "auth.reauth_required" -- plus that event's own fields
 	Detail    map[string]any `json:"detail,omitempty"`
 	RequestID string         `json:"requestId,omitempty"`
-	CreatedAt string         `json:"createdAt"`
+	// ProviderItemID is the stable parent key used by nested ACP transcripts.
+	ProviderItemID string `json:"providerItemId,omitempty"`
+	CreatedAt      string `json:"createdAt"`
 }
 
 // ConversationSnapshotResponse is the durable read model a client bootstraps from.
@@ -1268,10 +1295,12 @@ type ConversationUsagePayload struct {
 	ContextWindow int64 `json:"contextWindow"`
 	// The conversation's cumulative spend, which is a different question from
 	// fullness: it grows without bound while context rises and falls.
-	InputTokens  int64 `json:"inputTokens"`
-	OutputTokens int64 `json:"outputTokens"`
-	CachedTokens int64 `json:"cachedTokens"`
-	TotalTokens  int64 `json:"totalTokens"`
+	InputTokens  int64    `json:"inputTokens"`
+	OutputTokens int64    `json:"outputTokens"`
+	CachedTokens int64    `json:"cachedTokens"`
+	TotalTokens  int64    `json:"totalTokens"`
+	Cost         *float64 `json:"cost,omitempty"`
+	Currency     string   `json:"currency,omitempty"`
 }
 
 // ConversationRateLimitsPayload is the account's quota position, which is why a

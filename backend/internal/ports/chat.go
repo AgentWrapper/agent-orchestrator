@@ -99,13 +99,31 @@ const (
 	// without restarting the conversation. Named so a client can gate the control
 	// rather than offering it and reading the refusal.
 	ChatCapabilityMCPReload ChatCapability = "mcp_reload"
+	// ChatCapabilityImages means the provider accepts native image content in a
+	// prompt. AO may still stage a worktree copy for durable/local context, but it
+	// must not reduce an image to a path when this capability is available.
+	ChatCapabilityImages ChatCapability = "images"
+	// ChatCapabilityEmbeddedContext means the provider accepts embedded resources
+	// (for example the contents selected through an @ mention) in a prompt.
+	ChatCapabilityEmbeddedContext ChatCapability = "embedded_context"
+	// ChatCapabilityElicitation means the provider can stop a turn to request a
+	// structured form or an explicitly-consented external URL interaction.
+	ChatCapabilityElicitation ChatCapability = "elicitation"
+	// ChatCapabilityNestedAgents means child-agent activity carries its parent tool
+	// id, allowing clients to preserve the hierarchy instead of flattening it into
+	// the top-level command stream.
+	ChatCapabilityNestedAgents ChatCapability = "nested_agents"
+	// ChatCapabilityTerminalOutput means command results include the provider's
+	// terminal identity/output metadata. It is read-only transcript richness, not
+	// permission for the provider to execute through AO's terminal runtime.
+	ChatCapabilityTerminalOutput ChatCapability = "terminal_output"
 )
 
 // ChatCapabilities is the set a driver reports from Probe.
 type ChatCapabilities map[ChatCapability]bool
 
 // Has reports whether the capability is present and enabled.
-func (c ChatCapabilities) Has(cap ChatCapability) bool { return c[cap] }
+func (c ChatCapabilities) Has(capability ChatCapability) bool { return c[capability] }
 
 // chatProductionFloor is the minimum a driver must support before AO will let a
 // session that can mutate a workspace run in Chat mode. Without approvals a
@@ -147,6 +165,13 @@ type ChatStartConfig struct {
 	Permissions PermissionMode
 	// SystemPrompt carries AO's standing instructions for the session.
 	SystemPrompt string
+	// AdditionalDirectories are extra absolute workspace roots the provider may
+	// access alongside WorkspacePath. Workspace projects use this for child repo
+	// worktrees; it is not a replacement for AO's worktree ownership.
+	AdditionalDirectories []string
+	// MCPServers are client-supplied tool servers for this provider conversation.
+	// User/provider configuration still loads normally; these are additive.
+	MCPServers []ChatMCPServerConfig
 }
 
 // ChatResumeConfig reattaches to a provider conversation after a restart.
@@ -156,11 +181,43 @@ type ChatResumeConfig struct {
 	WorkspacePath          string
 	Env                    map[string]string
 	Permissions            PermissionMode
+	AdditionalDirectories  []string
+	MCPServers             []ChatMCPServerConfig
+}
+
+// ChatMCPServerConfig is the provider-neutral session-setup shape for a tool
+// server supplied by AO. Exactly one transport is meaningful according to Type.
+// Secrets stay in Env/Headers and are sent only to the local provider process;
+// this value is never part of a conversation snapshot.
+type ChatMCPServerConfig struct {
+	Name    string
+	Type    string
+	Command string
+	Args    []string
+	Env     map[string]string
+	URL     string
+	Headers map[string]string
+}
+
+// ChatContent is structured prompt context. Text remains on ChatUserMessage so
+// the durable transcript has an ordinary readable message; these blocks enrich
+// what the provider receives without leaking protocol DTOs above the adapter.
+type ChatContent struct {
+	Type     string `json:"type"`
+	Data     string `json:"data,omitempty"`
+	MIMEType string `json:"mimeType,omitempty"`
+	URI      string `json:"uri,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Text     string `json:"text,omitempty"`
 }
 
 // ChatUserMessage is one inbound request to the agent.
 type ChatUserMessage struct {
 	Text string
+	// Content carries native images and resources for providers that negotiated
+	// them. Drivers must reject an unsupported block rather than silently discard
+	// context the user believed they sent.
+	Content []ChatContent
 	// ClientMessageID makes delivery idempotent: a retry with the same key must
 	// not produce a second provider turn.
 	ClientMessageID string
@@ -226,7 +283,9 @@ type ChatModelLister interface {
 type ChatConfigOptionType string
 
 const (
-	ChatConfigOptionSelect  ChatConfigOptionType = "select"
+	// ChatConfigOptionSelect offers one value from provider-owned choices.
+	ChatConfigOptionSelect ChatConfigOptionType = "select"
+	// ChatConfigOptionBoolean offers a native on/off control.
 	ChatConfigOptionBoolean ChatConfigOptionType = "boolean"
 )
 
@@ -291,6 +350,10 @@ type ChatUsage struct {
 	// meaningful zero (for example, context immediately after compaction).
 	ContextKnown bool
 	TotalsKnown  bool
+	// Cost is cumulative provider-reported spend in Currency. Nil means the
+	// provider did not report money (common for subscription-backed sessions).
+	Cost     *float64
+	Currency string
 }
 
 // ChatRateLimits is the account's quota position.
@@ -477,6 +540,31 @@ type ChatDecision struct {
 	Raw []byte
 }
 
+// ChatInputResponse answers a structured user-input request. Action is one of
+// accept, decline, or cancel. Content is only meaningful for accept and must
+// match the provider-supplied restricted schema.
+type ChatInputResponse struct {
+	Action  string
+	Content map[string]any
+}
+
+// ChatInputRequest is a provider-neutral structured question. Schema is a flat,
+// restricted JSON Schema object for form mode. URL is only present for url mode
+// and must never be opened without the user's explicit consent.
+type ChatInputRequest struct {
+	Mode          string
+	Message       string
+	Schema        map[string]any
+	URL           string
+	ElicitationID string
+}
+
+// ChatInputResponder is optional because not every machine protocol supports
+// structured user input. AO gates the route/UI on the negotiated capability.
+type ChatInputResponder interface {
+	ResolveInput(ctx context.Context, requestID string, response ChatInputResponse) error
+}
+
 // ChatEventKind discriminates ChatEvent. These are provider-neutral: a driver
 // translates its native notifications into this set and drops what has no
 // meaning here rather than inventing semantics.
@@ -492,6 +580,8 @@ const (
 	ChatEventActivityCompleted ChatEventKind = "activity.completed"
 	ChatEventApprovalRequested ChatEventKind = "approval.requested"
 	ChatEventApprovalResolved  ChatEventKind = "approval.resolved"
+	ChatEventInputRequested    ChatEventKind = "input.requested"
+	ChatEventInputResolved     ChatEventKind = "input.resolved"
 	ChatEventControllerState   ChatEventKind = "controller.state"
 	ChatEventError             ChatEventKind = "error"
 
@@ -598,6 +688,9 @@ type ChatEvent struct {
 	// RequestID and Decisions are set on approval.requested.
 	RequestID string
 	Decisions []ChatDecisionOption
+	// Input is set on input.requested. It remains separate from Decisions because
+	// a form response is structured data, not one provider-owned button id.
+	Input *ChatInputRequest
 
 	// ControllerState is set on controller.state.
 	ControllerState ChatControllerState

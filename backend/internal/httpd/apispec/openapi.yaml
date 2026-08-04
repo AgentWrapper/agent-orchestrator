@@ -1660,6 +1660,67 @@ paths:
       summary: Choose one provider-advertised session configuration value
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/conversation/inputs/{requestId}/resolve:
+    post:
+      operationId: resolveSessionConversationInput
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Provider approval request identifier. Zero is a legitimate value.
+        in: path
+        name: requestId
+        required: true
+        schema:
+          description: Provider approval request identifier. Zero is a legitimate
+            value.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveConversationInputRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Answer a structured input request in a chat session
+      tags:
+      - conversations
   /api/v1/sessions/{sessionId}/conversation/interrupt:
     post:
       operationId: interruptSessionConversationTurn
@@ -3679,6 +3740,7 @@ components:
           - system
           - mcp_tool
           - auto_review
+          - user_input
           type: string
         createdAt:
           type: string
@@ -3690,6 +3752,8 @@ components:
         kind:
           enum:
           - activity
+          type: string
+        providerItemId:
           type: string
         requestId:
           type: string
@@ -3800,6 +3864,16 @@ components:
       - additions
       - deletions
       - status
+      type: object
+    ConversationImageContentRequest:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - mimeType
+      - data
       type: object
     ConversationMCPServerPayload:
       properties:
@@ -3955,6 +4029,22 @@ components:
       required:
       - primaryUsedPercent
       - secondaryUsedPercent
+      type: object
+    ConversationResourceContentRequest:
+      properties:
+        mimeType:
+          type: string
+        name:
+          type: string
+        text:
+          type:
+          - "null"
+          - string
+        uri:
+          type: string
+      required:
+      - uri
+      - name
       type: object
     ConversationSkillResponse:
       properties:
@@ -4150,6 +4240,12 @@ components:
         contextWindow:
           format: int64
           type: integer
+        cost:
+          type:
+          - "null"
+          - number
+        currency:
+          type: string
         inputTokens:
           format: int64
           type: integer
@@ -4893,6 +4989,20 @@ components:
       required:
       - decisionId
       type: object
+    ResolveConversationInputRequest:
+      properties:
+        action:
+          enum:
+          - accept
+          - decline
+          - cancel
+          type: string
+        content:
+          additionalProperties: {}
+          type: object
+      required:
+      - action
+      type: object
     RestoreSessionResponse:
       properties:
         ok:
@@ -5024,8 +5134,16 @@ components:
       type: object
     SendConversationMessageRequest:
       properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ConversationImageContentRequest'
+          type: array
         clientMessageId:
           type: string
+        resources:
+          items:
+            $ref: '#/components/schemas/ConversationResourceContentRequest'
+          type: array
         text:
           type: string
       required:

@@ -108,6 +108,10 @@ const (
 	// A decision made FOR the user is exactly the thing they need to be able to see
 	// after the fact.
 	ActivityKindAutoReview ActivityKind = "auto_review"
+	// ActivityKindUserInput is a structured question the provider is waiting for
+	// the person to answer. It is not an approval: accepting a tool and supplying
+	// form data have different response contracts and different UI.
+	ActivityKindUserInput ActivityKind = "user_input"
 )
 
 // ActivityStatus is the lifecycle of one activity. Started items are not
@@ -194,6 +198,10 @@ type ConversationUsage struct {
 	OutputTokens int64 `json:"outputTokens"`
 	CachedTokens int64 `json:"cachedTokens"`
 	TotalTokens  int64 `json:"totalTokens"`
+	// Cost is cumulative provider-reported spend. Nil is distinct from zero: most
+	// subscription sessions report token position but no monetary charge.
+	Cost     *float64 `json:"cost,omitempty"`
+	Currency string   `json:"currency,omitempty"`
 }
 
 // ContextFraction is how full the context is, in 0..1, or -1 when the provider
@@ -451,6 +459,9 @@ type QueuedTurn struct {
 	// after a crash cannot produce a second provider turn.
 	ClientMessageID string
 	Origin          MessageOrigin
+	// DeliveryContentJSON carries provider-neutral native prompt blocks through
+	// the durable queue. It is not rendered and never contains provider DTOs.
+	DeliveryContentJSON string
 }
 
 // ConversationMessage is one readable block of text.
@@ -471,9 +482,10 @@ type ConversationMessage struct {
 	ProviderItemID string `json:"providerItemId,omitempty"`
 	// ClientMessageID is the caller-supplied idempotency key for user messages.
 	// A retry carrying the same key must not create a second provider turn.
-	ClientMessageID string    `json:"clientMessageId,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ClientMessageID     string    `json:"clientMessageId,omitempty"`
+	DeliveryContentJSON string    `json:"-"`
+	CreatedAt           time.Time `json:"createdAt"`
+	UpdatedAt           time.Time `json:"updatedAt"`
 }
 
 // ConversationActivity is one non-message timeline entry: a command, a diff, a

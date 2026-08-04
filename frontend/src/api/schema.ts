@@ -606,6 +606,23 @@ export interface paths {
         patch: operations["setSessionConversationConfigOption"];
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/conversation/inputs/{requestId}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer a structured input request in a chat session */
+        post: operations["resolveSessionConversationInput"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation/interrupt": {
         parameters: {
             query?: never;
@@ -1264,7 +1281,7 @@ export interface components {
         };
         ConversationActivityResponse: {
             /** @enum {string} */
-            activityKind: "command" | "file_change" | "plan" | "reasoning" | "approval" | "usage" | "error" | "system" | "mcp_tool" | "auto_review";
+            activityKind: "command" | "file_change" | "plan" | "reasoning" | "approval" | "usage" | "error" | "system" | "mcp_tool" | "auto_review" | "user_input";
             createdAt: string;
             detail?: {
                 [key: string]: unknown;
@@ -1272,6 +1289,7 @@ export interface components {
             id: string;
             /** @enum {string} */
             kind: "activity";
+            providerItemId?: string;
             requestId?: string;
             /** Format: int64 */
             revision: number;
@@ -1311,6 +1329,10 @@ export interface components {
             rolledBack?: boolean;
             /** @enum {string} */
             status: "added" | "modified" | "deleted" | "renamed";
+        };
+        ConversationImageContentRequest: {
+            data: string;
+            mimeType: string;
         };
         ConversationMCPServerPayload: {
             error?: string;
@@ -1374,6 +1396,12 @@ export interface components {
             /** Format: double */
             secondaryUsedPercent: number;
             title?: string;
+        };
+        ConversationResourceContentRequest: {
+            mimeType?: string;
+            name: string;
+            text?: null | string;
+            uri: string;
         };
         ConversationSkillResponse: {
             description?: string;
@@ -1446,6 +1474,8 @@ export interface components {
             contextUsed: number;
             /** Format: int64 */
             contextWindow: number;
+            cost?: null | number;
+            currency?: string;
             /** Format: int64 */
             inputTokens: number;
             /** Format: int64 */
@@ -1741,6 +1771,13 @@ export interface components {
         ResolveConversationApprovalRequest: {
             decisionId: string;
         };
+        ResolveConversationInputRequest: {
+            /** @enum {string} */
+            action: "accept" | "decline" | "cancel";
+            content?: {
+                [key: string]: unknown;
+            };
+        };
         RestoreSessionResponse: {
             ok: boolean;
             /** @enum {string} */
@@ -1791,7 +1828,9 @@ export interface components {
             sessionId: string;
         };
         SendConversationMessageRequest: {
+            attachments?: components["schemas"]["ConversationImageContentRequest"][];
             clientMessageId?: string;
+            resources?: components["schemas"]["ConversationResourceContentRequest"][];
             text: string;
         };
         SendConversationMessageResponse: {
@@ -4209,6 +4248,78 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ConversationConfigOptionsResponse"];
                 };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    resolveSessionConversationInput: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+                /** @description Provider approval request identifier. Zero is a legitimate value. */
+                requestId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveConversationInputRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Bad Request */
             400: {

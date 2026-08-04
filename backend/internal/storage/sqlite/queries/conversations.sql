@@ -41,7 +41,9 @@ SET context_used = ?,
     usage_input_tokens = ?,
     usage_output_tokens = ?,
     usage_cached_tokens = ?,
-    usage_total_tokens = ?
+    usage_total_tokens = ?,
+    usage_cost = ?,
+    usage_currency = ?
 WHERE id = ?;
 
 -- Account quota position, latest wins. Percentages in 0..100; the resets columns
@@ -265,7 +267,8 @@ WHERE conversation_activities.conversation_id = ?
 SELECT conversation_turns.id,
        conversation_messages.text,
        conversation_messages.client_message_id,
-       conversation_messages.origin
+       conversation_messages.origin,
+       conversation_messages.delivery_content_json
 FROM conversation_turns
 JOIN conversation_messages
     ON conversation_messages.turn_id = conversation_turns.id
@@ -286,8 +289,9 @@ WHERE conversation_id = ? AND state = 'queued' AND requested_at <= ?;
 -- name: InsertConversationMessage :exec
 INSERT INTO conversation_messages (
     id, conversation_id, turn_id, sequence, revision, role, origin,
-    text, streaming, provider_item_id, client_message_id, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    text, streaming, provider_item_id, client_message_id, delivery_content_json,
+    created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- Folding a streaming delta: append to the existing text and bump the revision
 -- so a client can detect a gap. The provider item id is the correlation key
@@ -354,6 +358,14 @@ WHERE conversation_id = ? AND request_id = ? AND status = 'pending';
 UPDATE conversation_activities
 SET status = 'failed', revision = revision + 1, updated_at = ?
 WHERE conversation_id = ? AND kind = 'approval' AND status = 'pending';
+
+-- A structured input request is held by an in-memory provider RPC just like an
+-- approval. If that controller disappears, the old card must stop accepting
+-- answers because there is no longer a provider call to receive one.
+-- name: FailPendingConversationInputs :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = ?
+WHERE conversation_id = ? AND kind = 'user_input' AND status = 'pending';
 
 -- Append streamed command output, capped in one statement.
 --

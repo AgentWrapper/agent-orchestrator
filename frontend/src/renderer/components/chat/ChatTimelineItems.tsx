@@ -42,6 +42,7 @@ const activityIcon: Record<ActivityKind, typeof SquareTerminal> = {
 	system: CircleAlert,
 	mcp_tool: Plug,
 	auto_review: ShieldCheck,
+	user_input: Keyboard,
 };
 import { cn } from "../../lib/utils";
 import { caretNotation, stripAnsi } from "../../lib/ansi";

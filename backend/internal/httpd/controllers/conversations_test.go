@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -17,6 +18,16 @@ import (
 	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 )
 
+func conversationTestServer(t *testing.T, service *fakeConversationService) *httptest.Server {
+	t.Helper()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	server := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{
+		Sessions: newFakeSessionService(), Conversations: service,
+	}, httpd.ControlDeps{}))
+	t.Cleanup(server.Close)
+	return server
+}
+
 // The wire shape for streamed command output and turn diffs.
 //
 // Asserted through the real route rather than against the mapping helpers, so the
@@ -32,17 +43,27 @@ type fakeConversationService struct {
 	setConfigValue ports.ChatConfigOptionValue
 	mcpServers     []domain.ConversationMCPServer
 	reloadErr      error
+	sent           ports.ChatUserMessage
+	inputRequestID string
+	inputResponse  ports.ChatInputResponse
 }
 
 func (f *fakeConversationService) Snapshot(context.Context, domain.SessionID) (chatsvc.Snapshot, error) {
 	return f.snapshot, nil
 }
 
-func (f *fakeConversationService) Send(context.Context, domain.SessionID, ports.ChatUserMessage) (domain.ConversationTurn, error) {
-	return domain.ConversationTurn{}, nil
+func (f *fakeConversationService) Send(_ context.Context, _ domain.SessionID, message ports.ChatUserMessage) (domain.ConversationTurn, error) {
+	f.sent = message
+	return domain.ConversationTurn{ID: "turn-1", State: domain.TurnStateRunning}, nil
 }
 
 func (f *fakeConversationService) Resolve(context.Context, domain.SessionID, string, ports.ChatDecision) error {
+	return nil
+}
+
+func (f *fakeConversationService) ResolveInput(_ context.Context, _ domain.SessionID, requestID string, response ports.ChatInputResponse) error {
+	f.inputRequestID = requestID
+	f.inputResponse = response
 	return nil
 }
 
@@ -117,6 +138,65 @@ func conversationSnapshotBody(t *testing.T, snapshot chatsvc.Snapshot) map[strin
 		t.Fatalf("decode: %v", err)
 	}
 	return decoded
+}
+
+func TestSendConversationPreservesNativeImageAndResourceContent(t *testing.T) {
+	service := &fakeConversationService{}
+	server := conversationTestServer(t, service)
+	body := []byte(`{
+		"text":"inspect this",
+		"clientMessageId":"message-1",
+		"attachments":[{"mimeType":"image/png","data":"aW1hZ2U="}],
+		"resources":[
+			{"uri":"file:///repo/README.md","name":"README.md"},
+			{"uri":"file:///repo/notes.txt","name":"notes.txt","mimeType":"text/plain","text":"notes"}
+		]
+	}`)
+	request, err := http.NewRequest(http.MethodPost,
+		server.URL+"/api/v1/sessions/p1-1/conversation/messages", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("POST message: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusAccepted {
+		got, _ := io.ReadAll(response.Body)
+		t.Fatalf("status = %d, body = %s", response.StatusCode, got)
+	}
+	if service.sent.ClientMessageID != "message-1" || len(service.sent.Content) != 3 {
+		t.Fatalf("sent = %#v", service.sent)
+	}
+	if service.sent.Content[0].Type != "image" || service.sent.Content[1].Type != "resource_link" || service.sent.Content[2].Type != "resource" {
+		t.Fatalf("content = %#v", service.sent.Content)
+	}
+}
+
+func TestResolveConversationInputCarriesActionAndStructuredContent(t *testing.T) {
+	service := &fakeConversationService{}
+	server := conversationTestServer(t, service)
+	body := []byte(`{"action":"accept","content":{"choice":"native","fast":true}}`)
+	request, err := http.NewRequest(http.MethodPost,
+		server.URL+"/api/v1/sessions/p1-1/conversation/inputs/request-7/resolve", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("POST input: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusNoContent {
+		got, _ := io.ReadAll(response.Body)
+		t.Fatalf("status = %d, body = %s", response.StatusCode, got)
+	}
+	if service.inputRequestID != "request-7" || service.inputResponse.Action != "accept" || service.inputResponse.Content["choice"] != "native" {
+		t.Fatalf("input = %q %#v", service.inputRequestID, service.inputResponse)
+	}
 }
 
 func TestSnapshotExposesTurnDiff(t *testing.T) {

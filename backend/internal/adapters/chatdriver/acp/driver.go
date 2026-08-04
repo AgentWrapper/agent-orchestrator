@@ -68,6 +68,7 @@ func New(cfg Config, log *slog.Logger) *Driver {
 	return &Driver{cfg: cfg, log: log, spawn: spawnAgent}
 }
 
+// Harness identifies the AO harness this ACP transport adapts.
 func (d *Driver) Harness() domain.AgentHarness { return d.cfg.Harness }
 
 // Probe checks the provider binding without creating an ACP session or worktree.
@@ -94,6 +95,17 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 		_ = conv.Close()
 		return nil, fmt.Errorf("%w: ACP agent does not support session/resume", ports.ErrChatDriverIncompatible)
 	}
+	additional, err := normalizeAdditionalDirectories(cfg.WorkspacePath, cfg.AdditionalDirectories,
+		init.AgentCapabilities.SessionCapabilities.AdditionalDirectories != nil)
+	if err != nil {
+		_ = conv.Close()
+		return nil, err
+	}
+	mcpServers, err := normalizeMCPServers(cfg.MCPServers, init.AgentCapabilities.McpCapabilities)
+	if err != nil {
+		_ = conv.Close()
+		return nil, err
+	}
 
 	meta := map[string]any(nil)
 	if d.cfg.NewSessionMeta != nil {
@@ -102,13 +114,14 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	openCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	resp, err := conv.conn.NewSession(openCtx, acpsdk.NewSessionRequest{
-		Meta:       meta,
-		Cwd:        cfg.WorkspacePath,
-		McpServers: []acpsdk.McpServer{},
+		Meta:                  meta,
+		Cwd:                   cfg.WorkspacePath,
+		AdditionalDirectories: additional,
+		McpServers:            mcpServers,
 	})
 	if err != nil {
 		_ = conv.Close()
-		return nil, fmt.Errorf("ACP session/new: %w", err)
+		return nil, normalizeACPError("ACP session/new", err)
 	}
 	if resp.SessionId == "" {
 		_ = conv.Close()
@@ -142,17 +155,32 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		_ = conv.Close()
 		return nil, fmt.Errorf("%w: ACP agent does not support session/resume", ports.ErrChatResumeFailed)
 	}
+	additional, err := normalizeAdditionalDirectories(cfg.WorkspacePath, cfg.AdditionalDirectories,
+		init.AgentCapabilities.SessionCapabilities.AdditionalDirectories != nil)
+	if err != nil {
+		_ = conv.Close()
+		if isACPAuthRequired(err) {
+			return nil, normalizeACPError("ACP session/resume", err)
+		}
+		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
+	}
+	mcpServers, err := normalizeMCPServers(cfg.MCPServers, init.AgentCapabilities.McpCapabilities)
+	if err != nil {
+		_ = conv.Close()
+		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
+	}
 
 	resumeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 	resp, err := conv.conn.ResumeSession(resumeCtx, acpsdk.ResumeSessionRequest{
-		SessionId:  acpsdk.SessionId(cfg.ProviderConversationID),
-		Cwd:        cfg.WorkspacePath,
-		McpServers: []acpsdk.McpServer{},
+		SessionId:             acpsdk.SessionId(cfg.ProviderConversationID),
+		Cwd:                   cfg.WorkspacePath,
+		AdditionalDirectories: additional,
+		McpServers:            mcpServers,
 	})
 	if err != nil {
 		_ = conv.Close()
-		return nil, fmt.Errorf("%w: %v", ports.ErrChatResumeFailed, err)
+		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 	}
 	conv.start(
 		cfg.ProviderConversationID, conversationCapabilities(d.cfg.Capabilities, init),
@@ -160,7 +188,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Approval: cfg.Permissions}); err != nil {
 		_ = conv.Close()
-		return nil, fmt.Errorf("%w: configure ACP session: %v", ports.ErrChatResumeFailed, err)
+		return nil, fmt.Errorf("%w: configure ACP session: %w", ports.ErrChatResumeFailed, err)
 	}
 	return conv, nil
 }
@@ -179,7 +207,7 @@ func (d *Driver) connect(
 	}
 	proc, err := d.spawn(launch, workspace)
 	if err != nil {
-		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: launch ACP agent: %v", ports.ErrChatDriverUnavailable, err)
+		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: launch ACP agent: %w", ports.ErrChatDriverUnavailable, err)
 	}
 	conv := newConversation(proc, d.log)
 
@@ -192,11 +220,26 @@ func (d *Driver) connect(
 			Title:   pointer("Agent Orchestrator"),
 			Version: "0.1.0",
 		},
-		ClientCapabilities: acpsdk.ClientCapabilities{},
+		ClientCapabilities: acpsdk.ClientCapabilities{
+			// These two Claude bridge extensions enrich the transcript. They do
+			// not grant the agent access to AO's terminal or filesystem APIs.
+			Meta: map[string]any{
+				"subagent-transcript": true,
+				"terminal_output":     true,
+			},
+			Elicitation: &acpsdk.ElicitationCapabilities{
+				Form: &acpsdk.ElicitationFormCapabilities{},
+				Url:  &acpsdk.ElicitationUrlCapabilities{},
+			},
+			PlanCapabilities: &acpsdk.PlanCapabilities{},
+		},
 	})
 	if err != nil {
 		_ = conv.Close()
-		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: ACP initialize: %v", ports.ErrChatDriverIncompatible, err)
+		if isACPAuthRequired(err) {
+			return nil, acpsdk.InitializeResponse{}, normalizeACPError("ACP initialize", err)
+		}
+		return nil, acpsdk.InitializeResponse{}, fmt.Errorf("%w: ACP initialize: %w", ports.ErrChatDriverIncompatible, err)
 	}
 	return conv, init, nil
 }
@@ -220,6 +263,13 @@ func conversationCapabilities(
 	if extensionSupported(init.Meta, "steering") {
 		caps[ports.ChatCapabilitySteer] = true
 	}
+	caps[ports.ChatCapabilityImages] = init.AgentCapabilities.PromptCapabilities.Image
+	caps[ports.ChatCapabilityEmbeddedContext] = init.AgentCapabilities.PromptCapabilities.EmbeddedContext
+	// These are facilities AO itself negotiated as the ACP client. An agent that
+	// never uses them simply produces no matching events.
+	caps[ports.ChatCapabilityElicitation] = true
+	caps[ports.ChatCapabilityNestedAgents] = true
+	caps[ports.ChatCapabilityTerminalOutput] = true
 	return caps
 }
 
@@ -233,3 +283,15 @@ func extensionSupported(meta map[string]any, name string) bool {
 }
 
 func pointer[T any](value T) *T { return &value }
+
+func isACPAuthRequired(err error) bool {
+	var requestErr *acpsdk.RequestError
+	return errors.As(err, &requestErr) && requestErr.Code == -32000
+}
+
+func normalizeACPError(operation string, err error) error {
+	if isACPAuthRequired(err) {
+		return fmt.Errorf("%w: %s: %w", ports.ErrChatAuthRequired, operation, err)
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}

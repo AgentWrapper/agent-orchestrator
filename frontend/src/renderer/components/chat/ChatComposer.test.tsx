@@ -282,6 +282,21 @@ describe("attachments", () => {
 		);
 	});
 
+	it("also sends native image bytes when the provider negotiated image prompts", async () => {
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-native.png"]);
+		const { onSend, field } = renderComposer({ onStageAttachments: stage, nativeImages: true });
+
+		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
+		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
+		await userEvent.type(field, "inspect this{Enter}");
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/image-native.png");
+		expect(onSend.mock.calls[0]?.[1]).toEqual([
+			{ mimeType: "image/png", data: expect.any(String) },
+		]);
+	});
+
 	// A message claiming an attachment the agent cannot open is worse than a refusal.
 	it("sends nothing when staging fails, and says so", async () => {
 		const stage = vi.fn().mockRejectedValue(new Error("disk full"));

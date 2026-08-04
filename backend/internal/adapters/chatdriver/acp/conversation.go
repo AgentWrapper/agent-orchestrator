@@ -30,8 +30,8 @@ var (
 )
 
 type preparedTurn struct {
-	id      string
-	message ports.ChatUserMessage
+	id     string
+	prompt []acpsdk.ContentBlock
 }
 
 type parkedPermission struct {
@@ -39,15 +39,27 @@ type parkedPermission struct {
 	result  chan string
 }
 
+type parkedInput struct {
+	request ports.ChatInputRequest
+	result  chan ports.ChatInputResponse
+}
+
 type toolState struct {
-	id        string
-	title     string
-	kind      acpsdk.ToolKind
-	status    acpsdk.ToolCallStatus
-	locations []acpsdk.ToolCallLocation
-	content   []acpsdk.ToolCallContent
-	rawInput  any
-	rawOutput any
+	id             string
+	title          string
+	kind           acpsdk.ToolKind
+	status         acpsdk.ToolCallStatus
+	locations      []acpsdk.ToolCallLocation
+	content        []acpsdk.ToolCallContent
+	rawInput       any
+	rawOutput      any
+	meta           map[string]any
+	terminalOutput string
+}
+
+type nestedMessageState struct {
+	text     string
+	parentID string
 }
 
 type conversation struct {
@@ -55,22 +67,24 @@ type conversation struct {
 	proc *process
 	log  *slog.Logger
 
-	mu            sync.Mutex
-	sessionID     string
-	capabilities  ports.ChatCapabilities
-	prepared      *preparedTurn
-	activeTurn    string
-	turnCancel    context.CancelFunc
-	pending       map[string]*parkedPermission
-	messages      map[string]string
-	thoughts      map[string]string
-	tools         map[string]*toolState
-	configOptions []ports.ChatConfigOption
-	skills        []ports.ChatSkill
-	skillsKnown   bool
-	closed        bool
-	modeFor       func(ports.PermissionMode) string
-	optionsFor    func(ports.ChatTurnSettings) []SessionOption
+	mu             sync.Mutex
+	sessionID      string
+	capabilities   ports.ChatCapabilities
+	prepared       *preparedTurn
+	activeTurn     string
+	turnCancel     context.CancelFunc
+	pending        map[string]*parkedPermission
+	pendingInputs  map[string]*parkedInput
+	messages       map[string]string
+	thoughts       map[string]string
+	nestedMessages map[string]nestedMessageState
+	tools          map[string]*toolState
+	configOptions  []ports.ChatConfigOption
+	skills         []ports.ChatSkill
+	skillsKnown    bool
+	closed         bool
+	modeFor        func(ports.PermissionMode) string
+	optionsFor     func(ports.ChatTurnSettings) []SessionOption
 
 	eventMu      sync.RWMutex
 	events       chan ports.ChatEvent
@@ -83,17 +97,21 @@ var _ ports.ChatDeferredTurnStarter = (*conversation)(nil)
 var _ ports.ChatConfigOptionController = (*conversation)(nil)
 var _ ports.ChatSkillLister = (*conversation)(nil)
 var _ ports.ChatSteerer = (*conversation)(nil)
+var _ ports.ChatInputResponder = (*conversation)(nil)
 var _ acpsdk.Client = (*conversation)(nil)
+var _ acpsdk.ClientExperimental = (*conversation)(nil)
 
 func newConversation(proc *process, log *slog.Logger) *conversation {
 	c := &conversation{
-		proc:     proc,
-		log:      log,
-		pending:  make(map[string]*parkedPermission),
-		messages: make(map[string]string),
-		thoughts: make(map[string]string),
-		tools:    make(map[string]*toolState),
-		events:   make(chan ports.ChatEvent, eventBuffer),
+		proc:           proc,
+		log:            log,
+		pending:        make(map[string]*parkedPermission),
+		pendingInputs:  make(map[string]*parkedInput),
+		messages:       make(map[string]string),
+		thoughts:       make(map[string]string),
+		nestedMessages: make(map[string]nestedMessageState),
+		tools:          make(map[string]*toolState),
+		events:         make(chan ports.ChatEvent, eventBuffer),
 	}
 	c.conn = acpsdk.NewClientSideConnection(c, proc.stdin, proc.stdout)
 	c.conn.SetLogger(log)
@@ -144,8 +162,9 @@ func (c *conversation) SendTurn(ctx context.Context, msg ports.ChatUserMessage) 
 	if err := ctx.Err(); err != nil {
 		return ports.ChatTurnRef{}, err
 	}
-	if strings.TrimSpace(msg.Text) == "" {
-		return ports.ChatTurnRef{}, errors.New("chat message text is empty")
+	prompt, err := c.promptContent(msg)
+	if err != nil {
+		return ports.ChatTurnRef{}, err
 	}
 	c.mu.Lock()
 	busy := c.closed || c.prepared != nil || c.activeTurn != ""
@@ -165,7 +184,7 @@ func (c *conversation) SendTurn(ctx context.Context, msg ports.ChatUserMessage) 
 		return ports.ChatTurnRef{}, errors.New("ACP conversation already has a turn in flight")
 	}
 	id := uuid.NewString()
-	c.prepared = &preparedTurn{id: id, message: msg}
+	c.prepared = &preparedTurn{id: id, prompt: prompt}
 	return ports.ChatTurnRef{ProviderTurnID: id}, nil
 }
 
@@ -233,6 +252,7 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 	sessionID := c.sessionID
 	c.messages = make(map[string]string)
 	c.thoughts = make(map[string]string)
+	c.nestedMessages = make(map[string]nestedMessageState)
 	c.tools = make(map[string]*toolState)
 	c.mu.Unlock()
 
@@ -247,16 +267,22 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 	resp, err := c.conn.Prompt(ctx, acpsdk.PromptRequest{
 		SessionId: acpsdk.SessionId(sessionID),
 		MessageId: &messageID,
-		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(turn.message.Text)},
+		Prompt:    turn.prompt,
 	})
 
 	c.settleOpenItems(turn.id)
-	state := domain.TurnStateCompleted
+	var state domain.TurnState
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			state = domain.TurnStateInterrupted
 		} else {
 			state = domain.TurnStateFailed
+			if isACPAuthRequired(err) {
+				c.emit(ports.ChatEvent{Kind: ports.ChatEventAccountChanged, Account: &ports.ChatAccount{
+					ReauthRequired: true, ReauthReason: "Provider authentication expired",
+				}})
+				err = normalizeACPError("ACP session/prompt", err)
+			}
 			c.emit(ports.ChatEvent{Kind: ports.ChatEventError, ProviderTurnID: turn.id, Err: err})
 		}
 	} else {
@@ -362,6 +388,7 @@ func (c *conversation) Close() error {
 			cancel()
 		}
 		c.failPendingPermissions()
+		c.failPendingInputs()
 		if sessionID != "" {
 			closeCtx, cancelClose := context.WithTimeout(context.Background(), 2*time.Second)
 			_, _ = c.conn.CloseSession(closeCtx, acpsdk.CloseSessionRequest{SessionId: acpsdk.SessionId(sessionID)})
@@ -375,6 +402,7 @@ func (c *conversation) Close() error {
 func (c *conversation) watchConnection() {
 	<-c.conn.Done()
 	c.failPendingPermissions()
+	c.failPendingInputs()
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerStopped})
 	c.eventMu.Lock()
 	if !c.eventsClosed {
@@ -406,16 +434,11 @@ func (c *conversation) emit(event ports.ChatEvent) {
 	}
 }
 
-func (c *conversation) currentTurn() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.activeTurn
-}
-
 func (c *conversation) settleOpenItems(turnID string) {
 	c.mu.Lock()
 	messages := c.messages
 	thoughts := c.thoughts
+	nestedMessages := c.nestedMessages
 	tools := c.tools
 	c.mu.Unlock()
 	messageIDs := sortedKeys(messages)
@@ -430,13 +453,22 @@ func (c *conversation) settleOpenItems(turnID string) {
 			ProviderItemID: id, ActivityKind: domain.ActivityKindReasoning,
 			ActivityStatus: domain.ActivityStatusCompleted, Summary: "Reasoning", Text: text})
 	}
+	nestedIDs := sortedKeys(nestedMessages)
+	for _, id := range nestedIDs {
+		item := nestedMessages[id]
+		detail, _ := json.Marshal(map[string]any{"parentProviderItemId": item.parentID, "nestedAgent": true})
+		c.emit(ports.ChatEvent{Kind: ports.ChatEventActivityCompleted, ProviderTurnID: turnID,
+			ProviderItemID: id, ActivityKind: domain.ActivityKindMCPTool,
+			ActivityStatus: domain.ActivityStatusCompleted, Summary: "Subagent response",
+			Text: item.text, Detail: detail})
+	}
 	toolIDs := sortedKeys(tools)
 	for _, id := range toolIDs {
 		tool := tools[id]
 		if tool.status == acpsdk.ToolCallStatusPending || tool.status == acpsdk.ToolCallStatusInProgress || tool.status == "" {
-			copy := *tool
-			copy.status = acpsdk.ToolCallStatusFailed
-			c.emit(c.toolEvent(turnID, &copy, true))
+			snapshot := *tool
+			snapshot.status = acpsdk.ToolCallStatusFailed
+			c.emit(c.toolEvent(turnID, &snapshot, true))
 		}
 	}
 }
@@ -461,4 +493,66 @@ func (c *conversation) failPendingPermissions() {
 		default:
 		}
 	}
+}
+
+func (c *conversation) failPendingInputs() {
+	c.mu.Lock()
+	pending := c.pendingInputs
+	c.pendingInputs = make(map[string]*parkedInput)
+	c.mu.Unlock()
+	for _, request := range pending {
+		select {
+		case request.result <- ports.ChatInputResponse{Action: "cancel"}:
+		default:
+		}
+	}
+}
+
+func (c *conversation) promptContent(message ports.ChatUserMessage) ([]acpsdk.ContentBlock, error) {
+	c.mu.Lock()
+	caps := cloneCapabilities(c.capabilities)
+	c.mu.Unlock()
+	prompt := make([]acpsdk.ContentBlock, 0, 1+len(message.Content))
+	if strings.TrimSpace(message.Text) != "" {
+		prompt = append(prompt, acpsdk.TextBlock(message.Text))
+	}
+	for _, item := range message.Content {
+		switch item.Type {
+		case "image":
+			if !caps.Has(ports.ChatCapabilityImages) {
+				return nil, fmt.Errorf("ACP agent does not support image prompts")
+			}
+			if item.Data == "" || item.MIMEType == "" {
+				return nil, errors.New("image content requires data and MIME type")
+			}
+			prompt = append(prompt, acpsdk.ImageBlock(item.Data, item.MIMEType))
+		case "resource_link":
+			if item.URI == "" || item.Name == "" {
+				return nil, errors.New("resource link requires a URI and name")
+			}
+			prompt = append(prompt, acpsdk.ResourceLinkBlock(item.Name, item.URI))
+		case "resource":
+			if !caps.Has(ports.ChatCapabilityEmbeddedContext) {
+				return nil, fmt.Errorf("ACP agent does not support embedded context")
+			}
+			if item.URI == "" {
+				return nil, errors.New("embedded resource requires a URI")
+			}
+			mimeType := (*string)(nil)
+			if item.MIMEType != "" {
+				mimeType = pointer(item.MIMEType)
+			}
+			prompt = append(prompt, acpsdk.ResourceBlock(acpsdk.EmbeddedResourceResource{
+				TextResourceContents: &acpsdk.TextResourceContents{
+					Uri: item.URI, Text: item.Text, MimeType: mimeType,
+				},
+			}))
+		default:
+			return nil, fmt.Errorf("unsupported chat content type %q", item.Type)
+		}
+	}
+	if len(prompt) == 0 {
+		return nil, errors.New("chat message has no content")
+	}
+	return prompt, nil
 }

@@ -48,10 +48,10 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 		},
 		Probe: func(ctx context.Context) error {
 			if _, err := resolveRuntime(ctx); err != nil {
-				return fmt.Errorf("%w: %v", ports.ErrChatDriverUnavailable, err)
+				return fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 			}
 			if _, err := plugin.ResolveBinary(ctx); err != nil {
-				return fmt.Errorf("%w: %v", ports.ErrChatDriverUnavailable, err)
+				return fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 			}
 			status, err := plugin.AuthStatus(ctx)
 			if err == nil && status == ports.AgentAuthStatusUnauthorized {
@@ -67,11 +67,11 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 		Launch: func(ctx context.Context, _ string, sessionEnv map[string]string) (acpdriver.Launch, error) {
 			runtimeLaunch, err := resolveRuntime(ctx)
 			if err != nil {
-				return acpdriver.Launch{}, fmt.Errorf("%w: %v", ports.ErrChatDriverUnavailable, err)
+				return acpdriver.Launch{}, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 			}
 			claudeBinary, err := plugin.ResolveBinary(ctx)
 			if err != nil {
-				return acpdriver.Launch{}, fmt.Errorf("%w: %v", ports.ErrChatDriverUnavailable, err)
+				return acpdriver.Launch{}, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 			}
 			env := make(map[string]string, len(sessionEnv)+1)
 			for key, value := range sessionEnv {
@@ -202,7 +202,9 @@ func requireFile(path, label string) error {
 }
 
 func requireNodeVersion(ctx context.Context, node string) error {
-	out, err := exec.CommandContext(ctx, node, "--version").Output()
+	// node is the explicit AO override or the validated executable inside AO's
+	// packaged resources, never prompt/provider input.
+	out, err := exec.CommandContext(ctx, node, "--version").Output() //nolint:gosec // Resolved local executable, not provider input.
 	if err != nil {
 		return fmt.Errorf("run packaged Node: %w", err)
 	}

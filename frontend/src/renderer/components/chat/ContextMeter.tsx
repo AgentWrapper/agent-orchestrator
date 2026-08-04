@@ -84,6 +84,19 @@ function formatTokens(tokens: number): string {
 	return `${(tokens / 1_000_000).toFixed(1)}M`;
 }
 
+function formatCost(amount: number, currency = "USD"): string {
+	try {
+		return new Intl.NumberFormat(undefined, {
+			style: "currency",
+			currency,
+			minimumFractionDigits: amount < 1 ? 3 : 2,
+			maximumFractionDigits: amount < 1 ? 4 : 2,
+		}).format(amount);
+	} catch {
+		return `${amount.toFixed(3)} ${currency}`;
+	}
+}
+
 /**
  * A remaining duration as the largest useful unit. The provider's windows are
  * measured in days, so minute precision on a four-day reset would be noise.
@@ -161,6 +174,7 @@ function ContextReadout({ usage }: { usage: ConversationUsage }) {
 				<TooltipContent>
 					<p>This model does not report a context window, so how full the conversation is
 					is unknown.</p>
+					{usage.cost != null ? <p className="mt-1 tabular-nums">Provider-reported cost: {formatCost(usage.cost, usage.currency)}</p> : null}
 				</TooltipContent>
 			</Tooltip>
 		);
@@ -210,6 +224,11 @@ function ContextReadout({ usage }: { usage: ConversationUsage }) {
 				{usage.totalTokens > 0 ? (
 					<p className="mt-1 tabular-nums text-muted-foreground">
 						{usage.totalTokens.toLocaleString()} tokens spent in total
+					</p>
+				) : null}
+				{usage.cost != null ? (
+					<p className="mt-1 tabular-nums text-muted-foreground">
+						Provider-reported cost: {formatCost(usage.cost, usage.currency)}
 					</p>
 				) : null}
 			</TooltipContent>

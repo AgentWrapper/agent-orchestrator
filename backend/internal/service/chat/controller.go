@@ -83,6 +83,7 @@ type Store interface {
 	MarkCompacted(ctx context.Context, conversationID string, at time.Time) error
 	ResolveApproval(ctx context.Context, conversationID, requestID, detailJSON string, now time.Time) error
 	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
+	FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error
 
 	RecordProviderEvent(ctx context.Context, conversationID string, session domain.SessionID, providerEventID, method, payloadJSON string, now time.Time) error
 }
@@ -292,11 +293,20 @@ func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domai
 
 	now := c.now()
 	turnID := c.newID()
+	deliveryContent := ""
+	if len(msg.Content) > 0 {
+		encoded, err := json.Marshal(msg.Content)
+		if err != nil {
+			return domain.ConversationTurn{}, fmt.Errorf("encode chat delivery content: %w", err)
+		}
+		deliveryContent = string(encoded)
+	}
 	record := domain.ConversationMessage{
-		ID:              c.newID(),
-		Text:            msg.Text,
-		Origin:          normalizeOrigin(msg.Origin),
-		ClientMessageID: msg.ClientMessageID,
+		ID:                  c.newID(),
+		Text:                msg.Text,
+		Origin:              normalizeOrigin(msg.Origin),
+		ClientMessageID:     msg.ClientMessageID,
+		DeliveryContentJSON: deliveryContent,
 	}
 
 	created, err := c.store.AppendUserMessage(
@@ -382,6 +392,11 @@ func (c *Controller) mergeUsage(update ports.ChatUsage) domain.ConversationUsage
 		c.usage.OutputTokens = update.OutputTokens
 		c.usage.CachedTokens = update.CachedTokens
 		c.usage.TotalTokens = update.TotalTokens
+	}
+	if update.Cost != nil {
+		cost := *update.Cost
+		c.usage.Cost = &cost
+		c.usage.Currency = update.Currency
 	}
 	return c.usage
 }
@@ -500,8 +515,19 @@ func (c *Controller) drain(ctx context.Context) {
 		return
 	}
 
+	var content []ports.ChatContent
+	if queued.DeliveryContentJSON != "" {
+		if err := json.Unmarshal([]byte(queued.DeliveryContentJSON), &content); err != nil {
+			_ = c.store.SettleTurnByID(ctx, queued.TurnID, domain.TurnStateFailed,
+				"queued chat content is corrupt", c.now())
+			c.log.Error("failed to decode queued chat content",
+				"session", c.sessionID, "turn", queued.TurnID, "error", err)
+			return
+		}
+	}
 	if _, err := c.dispatch(ctx, queued.TurnID, ports.ChatUserMessage{
 		Text:            queued.Text,
+		Content:         content,
 		Origin:          queued.Origin,
 		ClientMessageID: queued.ClientMessageID,
 	}, c.now()); err != nil {
@@ -524,6 +550,32 @@ func (c *Controller) Resolve(ctx context.Context, requestID string, decision por
 	if err := c.store.ResolveApproval(
 		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
 		return fmt.Errorf("record approval %s: %w", requestID, err)
+	}
+	return nil
+}
+
+// ResolveInput answers a structured form/URL request through the optional driver
+// capability. The provider is told first for the same consent reason as an
+// approval: AO must not record an answer that the live provider rejected.
+func (c *Controller) ResolveInput(
+	ctx context.Context,
+	requestID string,
+	response ports.ChatInputResponse,
+) error {
+	responder, ok := c.conv.(ports.ChatInputResponder)
+	if !ok {
+		return fmt.Errorf("%w: structured input", ports.ErrChatUnsupported)
+	}
+	if err := responder.ResolveInput(ctx, requestID, response); err != nil {
+		return fmt.Errorf("resolve input %s: %w", requestID, err)
+	}
+	detail, _ := json.Marshal(map[string]any{
+		"action":  response.Action,
+		"content": response.Content,
+	})
+	if err := c.store.ResolveApproval(
+		ctx, c.conversation.ID, requestID, string(detail), c.now()); err != nil {
+		return fmt.Errorf("record input %s: %w", requestID, err)
 	}
 	return nil
 }
@@ -756,6 +808,9 @@ func (c *Controller) project() {
 	if err := c.store.FailPendingApprovals(ctx, c.conversation.ID, now); err != nil {
 		c.log.Error("failed to close pending approvals", "session", c.sessionID, "error", err)
 	}
+	if err := c.store.FailPendingInputs(ctx, c.conversation.ID, now); err != nil {
+		c.log.Error("failed to close pending input requests", "session", c.sessionID, "error", err)
+	}
 }
 
 // archive records the raw event. This is what makes a projection bug recoverable:
@@ -777,6 +832,9 @@ func (c *Controller) archive(ctx context.Context, event ports.ChatEvent) {
 		// write volume to duplicate text the projection already accumulates would
 		// cost more than it could ever repay.
 		record["diff"] = event.Diff
+	}
+	if event.Input != nil {
+		record["input"] = event.Input
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
@@ -1089,6 +1147,33 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		detail, _ := json.Marshal(map[string]string{"resolvedBy": "provider"})
 		return c.store.ResolveApproval(ctx, c.conversation.ID, event.RequestID, string(detail), now)
 
+	case ports.ChatEventInputRequested:
+		if event.Input == nil {
+			return nil
+		}
+		c.reportActivity(ctx, domain.ActivityWaitingInput, "chat.input.requested", now)
+		detail, _ := json.Marshal(map[string]any{
+			"inputMode":     event.Input.Mode,
+			"message":       event.Input.Message,
+			"schema":        event.Input.Schema,
+			"url":           event.Input.URL,
+			"elicitationId": event.Input.ElicitationID,
+		})
+		return c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
+			domain.ConversationActivity{
+				ID:             c.newID(),
+				Kind:           domain.ActivityKindUserInput,
+				Status:         domain.ActivityStatusPending,
+				Summary:        firstNonEmpty(event.Input.Message, "The agent needs more information"),
+				Detail:         detail,
+				RequestID:      event.RequestID,
+				ProviderItemID: event.ProviderItemID,
+			}, now)
+
+	case ports.ChatEventInputResolved:
+		detail, _ := json.Marshal(map[string]string{"resolvedBy": "provider"})
+		return c.store.ResolveApproval(ctx, c.conversation.ID, event.RequestID, string(detail), now)
+
 	case ports.ChatEventUsage:
 		if event.Usage == nil {
 			return nil
@@ -1119,7 +1204,10 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			if err := c.store.SettleOrphanedTurns(ctx, c.sessionID, now); err != nil {
 				return err
 			}
-			return c.store.FailPendingApprovals(ctx, c.conversation.ID, now)
+			if err := c.store.FailPendingApprovals(ctx, c.conversation.ID, now); err != nil {
+				return err
+			}
+			return c.store.FailPendingInputs(ctx, c.conversation.ID, now)
 		}
 		return nil
 

@@ -44,6 +44,10 @@ func (f *fakeChatService) Resolve(context.Context, domain.SessionID, string, por
 	return nil
 }
 
+func (f *fakeChatService) ResolveInput(context.Context, domain.SessionID, string, ports.ChatInputResponse) error {
+	return nil
+}
+
 func (f *fakeChatService) Interrupt(context.Context, domain.SessionID) error { return nil }
 
 func (f *fakeChatService) Models(context.Context, domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error) {

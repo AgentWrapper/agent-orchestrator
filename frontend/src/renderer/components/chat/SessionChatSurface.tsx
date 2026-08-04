@@ -81,8 +81,9 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 		<ChatWorkspace
 			snapshot={snapshot}
 			busy={commands.busy}
-			onSend={commands.send}
+			onSend={(text, attachments) => commands.send({ text, attachments })}
 			onDecide={commands.resolve}
+			onResolveInput={commands.resolveInput}
 			onInterrupt={commands.interrupt}
 			models={models}
 			onChooseSettings={hasProviderConfig ? undefined : commands.chooseSettings}
@@ -105,6 +106,7 @@ export function SessionChatSurface({ session }: { session: WorkspaceSession }) {
 			filePaths={paths}
 			filePathsTruncated={truncated}
 			onStageAttachments={stageAttachments}
+			nativeImages={can(snapshot, "images")}
 			// Gated on what the daemon advertises, so the control is never drawn for a
 			// harness that cannot steer. The refusal check stays as a backstop: it
 			// covers the window before the controller reports, and it is the last word

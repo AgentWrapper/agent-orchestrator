@@ -28,7 +28,8 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 
 	// A single call is its own best summary — collapsing one row into a count of
 	// one would be worse than just showing it.
-	if (activities.length === 1) {
+	const hierarchy = buildHierarchy(activities);
+	if (activities.length === 1 && hierarchy[0]?.children.length === 0) {
 		return <ActivityRow activity={activities[0]!} />;
 	}
 
@@ -67,13 +68,90 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 
 			{open ? (
 				<div className="mt-0.5 flex flex-col overflow-hidden rounded-lg border border-border bg-surface/40">
-					{activities.map((activity) => (
-						<ActivityRow key={activity.id} activity={activity} />
-					))}
+					{hierarchy.map((node) => <ActivityTree key={node.activity.id} node={node} />)}
 				</div>
 			) : null}
 		</div>
 	);
+}
+
+type ActivityNode = { activity: ConversationActivity; children: ActivityNode[] };
+
+function ActivityTree({ node }: { node: ActivityNode }) {
+	return (
+		<div className="flex flex-col">
+			<ActivityRow activity={node.activity} />
+			{node.children.length > 0 ? <NestedAgentRun nodes={node.children} /> : null}
+		</div>
+	);
+}
+
+function NestedAgentRun({ nodes }: { nodes: ActivityNode[] }) {
+	const [open, setOpen] = useState(false);
+	const count = countNodes(nodes);
+	const running = nodes.some(nodeRunning);
+	return (
+		<div className="mx-3 mb-2 ml-8 overflow-hidden rounded-md border border-border/70 bg-background/40">
+			<button
+				type="button"
+				onClick={() => setOpen((current) => !current)}
+				aria-label={`Subagent ${count} ${count === 1 ? "step" : "steps"}`}
+				aria-expanded={open}
+				className="flex min-h-8 w-full items-center gap-2 px-2.5 text-left text-[11px] text-muted-foreground transition-colors hover:bg-interactive-hover"
+			>
+				<ChevronRight aria-hidden="true" className={cn("size-3 transition-transform", open && "rotate-90")} />
+				<span className="font-medium text-foreground/80">Subagent</span>
+				<span>{count} {count === 1 ? "step" : "steps"}</span>
+				{running ? <Loader2 aria-hidden="true" className="ml-auto size-3 animate-spin" /> : null}
+			</button>
+			{open ? (
+				<div className="border-t border-border/70">
+					{nodes.map((node) => <ActivityTree key={node.activity.id} node={node} />)}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function buildHierarchy(activities: ConversationActivity[]): ActivityNode[] {
+	const byProvider = new Map<string, ActivityNode>();
+	const nodes = activities.map((activity) => {
+		const node = { activity, children: [] } satisfies ActivityNode;
+		if (activity.providerItemId) byProvider.set(activity.providerItemId, node);
+		return node;
+	});
+	const roots: ActivityNode[] = [];
+	for (const node of nodes) {
+		const parentId = node.activity.detail?.parentProviderItemId;
+		const parent = parentId ? byProvider.get(parentId) : undefined;
+		if (parent && !wouldCreateCycle(node, parent, byProvider)) parent.children.push(node);
+		else roots.push(node);
+	}
+	return roots;
+}
+
+function wouldCreateCycle(
+	node: ActivityNode,
+	parent: ActivityNode,
+	byProvider: Map<string, ActivityNode>,
+): boolean {
+	const visited = new Set<ActivityNode>([node]);
+	let current: ActivityNode | undefined = parent;
+	while (current) {
+		if (visited.has(current)) return true;
+		visited.add(current);
+		const parentId: string | undefined = current.activity.detail?.parentProviderItemId;
+		current = parentId ? byProvider.get(parentId) : undefined;
+	}
+	return false;
+}
+
+function countNodes(nodes: ActivityNode[]): number {
+	return nodes.reduce((count, node) => count + 1 + countNodes(node.children), 0);
+}
+
+function nodeRunning(node: ActivityNode): boolean {
+	return node.activity.status === "running" || node.children.some(nodeRunning);
 }
 
 /**

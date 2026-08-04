@@ -385,3 +385,77 @@ func TestSetProviderTitleIsRecordedIndependentlyOfTheLabel(t *testing.T) {
 			snapshot.Conversation.ProviderTitle)
 	}
 }
+
+func TestQueuedTurnRetainsNativeDeliveryContent(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	want := `[{"type":"image","data":"aW1hZ2U=","mimeType":"image/png"}]`
+	created, err := s.AppendUserMessage(ctx, conversation, session, "gen-1", domain.ConversationMessage{
+		ID:                  "native-message",
+		Text:                "inspect this image",
+		Origin:              domain.MessageOriginHuman,
+		DeliveryContentJSON: want,
+	}, "native-turn", histClock)
+	if err != nil || !created {
+		t.Fatalf("append native message: created=%v err=%v", created, err)
+	}
+
+	queued, err := s.NextQueuedTurn(ctx, conversation)
+	if err != nil {
+		t.Fatalf("NextQueuedTurn: %v", err)
+	}
+	if queued.DeliveryContentJSON != want {
+		t.Fatalf("delivery content = %q, want %q", queued.DeliveryContentJSON, want)
+	}
+}
+
+func TestConversationSnapshotRetainsProviderCost(t *testing.T) {
+	s, _, conversation := conversationFixture(t)
+	cost := 1.25
+	if err := s.RecordUsage(context.Background(), conversation, domain.ConversationUsage{
+		ContextUsed:   25,
+		ContextWindow: 100,
+		Cost:          &cost,
+		Currency:      "USD",
+	}); err != nil {
+		t.Fatalf("RecordUsage: %v", err)
+	}
+
+	snapshot, err := s.LoadConversationSnapshot(context.Background(), conversation)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if snapshot.Conversation.Usage == nil || snapshot.Conversation.Usage.Cost == nil ||
+		*snapshot.Conversation.Usage.Cost != cost || snapshot.Conversation.Usage.Currency != "USD" {
+		t.Fatalf("usage = %#v", snapshot.Conversation.Usage)
+	}
+}
+
+func TestFailPendingInputsDoesNotTouchApprovals(t *testing.T) {
+	s, _, conversation := conversationFixture(t)
+	ctx := context.Background()
+	for _, activity := range []domain.ConversationActivity{
+		{ID: "input", Kind: domain.ActivityKindUserInput, Status: domain.ActivityStatusPending,
+			Summary: "Choose", RequestID: "input-request", ProviderItemID: "input-item"},
+		{ID: "approval", Kind: domain.ActivityKindApproval, Status: domain.ActivityStatusPending,
+			Summary: "Run command", RequestID: "approval-request", ProviderItemID: "approval-item"},
+	} {
+		if err := s.UpsertActivity(ctx, conversation, "", activity, histClock); err != nil {
+			t.Fatalf("UpsertActivity(%s): %v", activity.ID, err)
+		}
+	}
+	if err := s.FailPendingInputs(ctx, conversation, histClock.Add(time.Minute)); err != nil {
+		t.Fatalf("FailPendingInputs: %v", err)
+	}
+	snapshot, err := s.LoadConversationSnapshot(ctx, conversation)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	states := make(map[string]domain.ActivityStatus, len(snapshot.Activities))
+	for _, activity := range snapshot.Activities {
+		states[activity.ID] = activity.Status
+	}
+	if states["input"] != domain.ActivityStatusFailed || states["approval"] != domain.ActivityStatusPending {
+		t.Fatalf("activity states = %#v", states)
+	}
+}

@@ -358,6 +358,7 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		Model:                  cfg.Model,
 		Permissions:            cfg.Permissions,
 		SystemPrompt:           cfg.SystemPrompt,
+		AdditionalDirectories:  cfg.AdditionalDirectories,
 		ProviderConversationID: cfg.ProviderConversationID,
 	})
 	if err != nil {

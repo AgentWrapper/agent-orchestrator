@@ -43,6 +43,14 @@ import type {
 type WireSnapshot = components["schemas"]["ConversationSnapshotResponse"];
 type WireMessage = components["schemas"]["ConversationMessageResponse"];
 type WireActivity = components["schemas"]["ConversationActivityResponse"];
+type WireImageContent = components["schemas"]["ConversationImageContentRequest"];
+type WireResourceContent = components["schemas"]["ConversationResourceContentRequest"];
+
+export interface ConversationSendInput {
+	text: string;
+	attachments?: WireImageContent[];
+	resources?: WireResourceContent[];
+}
 
 export function conversationQueryKey(sessionId: string) {
 	return ["conversation", sessionId] as const;
@@ -131,14 +139,14 @@ export function useConversationCommands(sessionId: string | undefined) {
 	}, [queryClient, sessionId]);
 
 	const send = useMutation({
-		mutationFn: async (text: string) => {
+		mutationFn: async (input: ConversationSendInput) => {
 			const { data, error } = await apiClient.POST(
 				"/api/v1/sessions/{sessionId}/conversation/messages",
 				{
 					params: { path: { sessionId: sessionId as string } },
 					// A stable id per attempt makes a retry idempotent: the daemon
 					// answers `duplicate` instead of opening a second provider turn.
-					body: { text, clientMessageId: crypto.randomUUID() },
+					body: { ...input, clientMessageId: crypto.randomUUID() },
 				},
 			);
 			if (error) throw error;
@@ -154,6 +162,24 @@ export function useConversationCommands(sessionId: string | undefined) {
 				{
 					params: { path: { sessionId: sessionId as string, requestId: input.requestId } },
 					body: { decisionId: input.decisionId },
+				},
+			);
+			if (error) throw error;
+		},
+		onSuccess: invalidate,
+	});
+
+	const resolveInput = useMutation({
+		mutationFn: async (input: {
+			requestId: string;
+			action: "accept" | "decline" | "cancel";
+			content?: Record<string, unknown>;
+		}) => {
+			const { error } = await apiClient.POST(
+				"/api/v1/sessions/{sessionId}/conversation/inputs/{requestId}/resolve",
+				{
+					params: { path: { sessionId: sessionId as string, requestId: input.requestId } },
+					body: { action: input.action, content: input.content },
 				},
 			);
 			if (error) throw error;
@@ -277,8 +303,14 @@ export function useConversationCommands(sessionId: string | undefined) {
 	});
 
 	return {
-		send: (text: string) => send.mutate(text),
+		send: (input: string | ConversationSendInput) =>
+			send.mutate(typeof input === "string" ? { text: input } : input),
 		resolve: (requestId: string, decisionId: string) => resolve.mutate({ requestId, decisionId }),
+		resolveInput: (
+			requestId: string,
+			action: "accept" | "decline" | "cancel",
+			content?: Record<string, unknown>,
+		) => resolveInput.mutateAsync({ requestId, action, content }),
 		interrupt: () => interrupt.mutate(),
 		compact: () => compact.mutate(),
 		chooseSettings: (settings: TurnSettings) => chooseSettings.mutate(settings),
@@ -322,7 +354,7 @@ export function useConversationCommands(sessionId: string | undefined) {
 			reloadMcp.error && apiErrorCode(reloadMcp.error) !== "CHAT_MCP_RELOAD_UNSUPPORTED"
 				? apiErrorMessage(reloadMcp.error)
 				: undefined,
-		busy: send.isPending || resolve.isPending || interrupt.isPending,
+		busy: send.isPending || resolve.isPending || resolveInput.isPending || interrupt.isPending,
 		error:
 			send.error || resolve.error || interrupt.error || chooseSettings.error
 				? apiErrorMessage(
@@ -689,6 +721,7 @@ function toActivity(wire: WireActivity): ConversationActivity {
 		status: wire.status as ActivityStatus,
 		summary: wire.summary,
 		requestId: wire.requestId,
+		providerItemId: wire.providerItemId,
 		// The provider's own offered decisions, carried through the detail payload.
 		// Rendering from this is what keeps the card from drawing a button the
 		// provider will reject.

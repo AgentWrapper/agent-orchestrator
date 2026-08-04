@@ -30,6 +30,13 @@ describe("ReauthBanner", () => {
 		expect(screen.getByText(/worktree is untouched/i)).toBeInTheDocument();
 	});
 
+	it("names Claude Code's non-interactive authentication command", () => {
+		render(
+			<ReauthBanner account={{ reauthRequiredAt: "2026-08-03T00:00:00Z" }} harness="claude-code" />,
+		);
+		expect(screen.getByText("claude auth login")).toBeInTheDocument();
+	});
+
 	it("falls back to generic wording rather than guessing a command", () => {
 		render(
 			<ReauthBanner account={{ reauthRequiredAt: "2026-08-03T00:00:00Z" }} harness="opencode" />,

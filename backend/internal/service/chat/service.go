@@ -83,14 +83,16 @@ func New(opts Options) *Service {
 
 // StartConfig opens a controller for a session.
 type StartConfig struct {
-	SessionID     domain.SessionID
-	ProjectID     domain.ProjectID
-	Harness       domain.AgentHarness
-	WorkspacePath string
-	Env           map[string]string
-	Model         string
-	Permissions   ports.PermissionMode
-	SystemPrompt  string
+	SessionID             domain.SessionID
+	ProjectID             domain.ProjectID
+	Harness               domain.AgentHarness
+	WorkspacePath         string
+	Env                   map[string]string
+	Model                 string
+	Permissions           ports.PermissionMode
+	SystemPrompt          string
+	AdditionalDirectories []string
+	MCPServers            []ports.ChatMCPServerConfig
 	// ProviderConversationID resumes an existing provider conversation when set.
 	ProviderConversationID string
 }
@@ -109,6 +111,9 @@ func (s *Service) settleOrphanedWork(ctx context.Context, session domain.Session
 	// blocking died with the process that was holding it.
 	if err := s.store.FailPendingApprovals(ctx, conversationID, now); err != nil {
 		s.log.Error("chat start: close pending approvals", "session", session, "error", err)
+	}
+	if err := s.store.FailPendingInputs(ctx, conversationID, now); err != nil {
+		s.log.Error("chat start: close pending input requests", "session", session, "error", err)
 	}
 }
 
@@ -152,15 +157,19 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			WorkspacePath:          cfg.WorkspacePath,
 			Env:                    cfg.Env,
 			Permissions:            cfg.Permissions,
+			AdditionalDirectories:  cfg.AdditionalDirectories,
+			MCPServers:             cfg.MCPServers,
 		})
 	} else {
 		conv, err = driver.Start(ctx, ports.ChatStartConfig{
-			SessionID:     cfg.SessionID,
-			WorkspacePath: cfg.WorkspacePath,
-			Env:           cfg.Env,
-			Model:         cfg.Model,
-			Permissions:   cfg.Permissions,
-			SystemPrompt:  cfg.SystemPrompt,
+			SessionID:             cfg.SessionID,
+			WorkspacePath:         cfg.WorkspacePath,
+			Env:                   cfg.Env,
+			Model:                 cfg.Model,
+			Permissions:           cfg.Permissions,
+			SystemPrompt:          cfg.SystemPrompt,
+			AdditionalDirectories: cfg.AdditionalDirectories,
+			MCPServers:            cfg.MCPServers,
 		})
 	}
 	if err != nil {
@@ -259,6 +268,25 @@ func (s *Service) Resolve(
 		return err
 	}
 	return controller.Resolve(ctx, requestID, decision)
+}
+
+// ResolveInput answers a structured user-input request. It remains a separate
+// command from approval resolution because the response carries typed form data
+// (or URL consent), not a provider-offered permission id.
+func (s *Service) ResolveInput(
+	ctx context.Context,
+	id domain.SessionID,
+	requestID string,
+	response ports.ChatInputResponse,
+) error {
+	if _, err := s.requireChatSession(ctx, id); err != nil {
+		return err
+	}
+	controller, err := s.Controller(id)
+	if err != nil {
+		return err
+	}
+	return controller.ResolveInput(ctx, requestID, response)
 }
 
 // Interrupt cancels a session's in-flight turn.
@@ -449,6 +477,8 @@ func (s *Service) StartChat(ctx context.Context, cfg ChatStartRequest) (ChatStar
 		Model:                  cfg.Model,
 		Permissions:            cfg.Permissions,
 		SystemPrompt:           cfg.SystemPrompt,
+		AdditionalDirectories:  cfg.AdditionalDirectories,
+		MCPServers:             cfg.MCPServers,
 		ProviderConversationID: cfg.ProviderConversationID,
 	})
 	if err != nil {
@@ -463,14 +493,16 @@ func (s *Service) StartChat(ctx context.Context, cfg ChatStartRequest) (ChatStar
 // ChatStartRequest mirrors session_manager.ChatStart. Duplicated rather than
 // imported so the manager and this service do not depend on each other's types.
 type ChatStartRequest struct {
-	SessionID     domain.SessionID
-	ProjectID     domain.ProjectID
-	Harness       domain.AgentHarness
-	WorkspacePath string
-	Env           map[string]string
-	Model         string
-	Permissions   ports.PermissionMode
-	SystemPrompt  string
+	SessionID             domain.SessionID
+	ProjectID             domain.ProjectID
+	Harness               domain.AgentHarness
+	WorkspacePath         string
+	Env                   map[string]string
+	Model                 string
+	Permissions           ports.PermissionMode
+	SystemPrompt          string
+	AdditionalDirectories []string
+	MCPServers            []ports.ChatMCPServerConfig
 	// ProviderConversationID resumes a stored conversation. Empty starts fresh.
 	ProviderConversationID string
 }

@@ -56,6 +56,8 @@ type Conversation struct {
 	AccountJson                sql.NullString
 	ThreadStateJson            sql.NullString
 	McpServersJson             sql.NullString
+	UsageCost                  sql.NullFloat64
+	UsageCurrency              sql.NullString
 }
 
 type ConversationActivity struct {
@@ -79,19 +81,20 @@ type ConversationActivity struct {
 }
 
 type ConversationMessage struct {
-	ID              string
-	ConversationID  string
-	TurnID          sql.NullString
-	Sequence        int64
-	Revision        int64
-	Role            domain.MessageRole
-	Origin          domain.MessageOrigin
-	Text            string
-	Streaming       int64
-	ProviderItemID  string
-	ClientMessageID string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID                  string
+	ConversationID      string
+	TurnID              sql.NullString
+	Sequence            int64
+	Revision            int64
+	Role                domain.MessageRole
+	Origin              domain.MessageOrigin
+	Text                string
+	Streaming           int64
+	ProviderItemID      string
+	ClientMessageID     string
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	DeliveryContentJson string
 }
 
 type ConversationProviderEvent struct {

@@ -86,7 +86,7 @@ function signInCommand(harness: string): string | undefined {
 			return "codex login";
 		case "claude-code":
 		case "claude":
-			return "claude login";
+			return "claude auth login";
 		default:
 			return undefined;
 	}

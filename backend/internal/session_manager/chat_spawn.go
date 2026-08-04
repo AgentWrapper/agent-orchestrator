@@ -3,6 +3,7 @@ package sessionmanager
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -51,10 +52,11 @@ type ChatStart struct {
 	// Env carries the HookPATH-pinned PATH, which is how the agent's own shell
 	// commands find `ao`. An orchestrator delegates by running `ao spawn`, so
 	// without this a chat orchestrator could talk but not work.
-	Env          map[string]string
-	Model        string
-	Permissions  ports.PermissionMode
-	SystemPrompt string
+	Env                   map[string]string
+	Model                 string
+	Permissions           ports.PermissionMode
+	SystemPrompt          string
+	AdditionalDirectories []string
 	// ProviderConversationID resumes a stored conversation instead of opening a
 	// new one. Empty means start fresh.
 	ProviderConversationID string
@@ -95,14 +97,15 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	env := m.runtimeEnv(id, in.cfg.ProjectID, in.cfg.IssueID, in.project.Config.Env)
 
 	started, err := m.chat.StartChat(ctx, ChatStart{
-		SessionID:     id,
-		ProjectID:     in.cfg.ProjectID,
-		Harness:       in.cfg.Harness,
-		WorkspacePath: in.workspace.Path,
-		Env:           env,
-		Model:         agentConfig.Model,
-		Permissions:   agentConfig.Permissions,
-		SystemPrompt:  in.systemPrompt,
+		SessionID:             id,
+		ProjectID:             in.cfg.ProjectID,
+		Harness:               in.cfg.Harness,
+		WorkspacePath:         in.workspace.Path,
+		Env:                   env,
+		Model:                 agentConfig.Model,
+		Permissions:           agentConfig.Permissions,
+		SystemPrompt:          in.systemPrompt,
+		AdditionalDirectories: workspaceProjectDirectories(in.workspace.Path, in.workspaceProject),
 	})
 	if err != nil {
 		// No controller exists, so nothing provider-side needs closing. The
@@ -243,15 +246,20 @@ func (m *Manager) resumeChatController(
 	}
 
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
+	additionalDirectories, err := m.restoredWorkspaceProjectDirectories(ctx, rec, project, ws.Path)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)
+	}
 	started, err := m.chat.StartChat(ctx, ChatStart{
-		SessionID:     rec.ID,
-		ProjectID:     rec.ProjectID,
-		Harness:       rec.Harness,
-		WorkspacePath: ws.Path,
-		Env:           m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
-		Model:         agentConfig.Model,
-		Permissions:   agentConfig.Permissions,
-		SystemPrompt:  systemPrompt,
+		SessionID:             rec.ID,
+		ProjectID:             rec.ProjectID,
+		Harness:               rec.Harness,
+		WorkspacePath:         ws.Path,
+		Env:                   m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env),
+		Model:                 agentConfig.Model,
+		Permissions:           agentConfig.Permissions,
+		SystemPrompt:          systemPrompt,
+		AdditionalDirectories: additionalDirectories,
 		// The handle that makes this a resume rather than a new conversation.
 		ProviderConversationID: rec.Metadata.ProviderConversationID,
 	})
@@ -282,4 +290,43 @@ func (m *Manager) resumeChatController(
 	// Native continuity: the provider still holds the conversation, so the agent
 	// resumes with its own history rather than a replayed prompt.
 	return RestoreResult{Session: restored, Mode: RestoreModeNative}, nil
+}
+
+func workspaceProjectDirectories(root string, project *ports.WorkspaceProjectInfo) []string {
+	if project == nil {
+		return nil
+	}
+	root = filepath.Clean(root)
+	directories := make([]string, 0, len(project.Worktrees))
+	for _, worktree := range project.Worktrees {
+		if worktree.Path == "" || filepath.Clean(worktree.Path) == root {
+			continue
+		}
+		directories = append(directories, worktree.Path)
+	}
+	return directories
+}
+
+func (m *Manager) restoredWorkspaceProjectDirectories(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	project domain.ProjectRecord,
+	root string,
+) ([]string, error) {
+	if project.Kind.WithDefault() != domain.ProjectKindWorkspace {
+		return nil, nil
+	}
+	rows, err := m.store.ListSessionWorktrees(ctx, rec.ID)
+	if err != nil {
+		return nil, err
+	}
+	root = filepath.Clean(root)
+	directories := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if row.WorktreePath == "" || filepath.Clean(row.WorktreePath) == root {
+			continue
+		}
+		directories = append(directories, row.WorktreePath)
+	}
+	return directories, nil
 }

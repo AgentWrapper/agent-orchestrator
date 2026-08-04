@@ -43,8 +43,8 @@ func (c *conversation) SetConfigOption(
 	var option *ports.ChatConfigOption
 	for i := range c.configOptions {
 		if c.configOptions[i].ID == id {
-			copy := c.configOptions[i]
-			option = &copy
+			snapshot := c.configOptions[i]
+			option = &snapshot
 			break
 		}
 	}

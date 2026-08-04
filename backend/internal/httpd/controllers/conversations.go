@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -20,13 +21,14 @@ import (
 
 // maxConversationBody bounds a chat message. Large context belongs in files the
 // agent reads from the worktree, not in a request body.
-const maxConversationBody = 1 << 20
+const maxConversationBody = maxSpawnBodyBytes
 
 // ConversationService is the controller-facing Chat contract.
 type ConversationService interface {
 	Snapshot(ctx context.Context, session domain.SessionID) (chatsvc.Snapshot, error)
 	Send(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (domain.ConversationTurn, error)
 	Resolve(ctx context.Context, session domain.SessionID, requestID string, decision ports.ChatDecision) error
+	ResolveInput(ctx context.Context, session domain.SessionID, requestID string, response ports.ChatInputResponse) error
 	Interrupt(ctx context.Context, session domain.SessionID) error
 	Steer(ctx context.Context, session domain.SessionID, msg ports.ChatUserMessage) (chatsvc.SteerResult, error)
 	Models(ctx context.Context, session domain.SessionID) ([]ports.ChatModel, domain.ConversationSettings, error)
@@ -54,6 +56,7 @@ func (c *ConversationsController) Register(r chi.Router) {
 	r.Get("/sessions/{sessionId}/conversation", c.snapshot)
 	r.Post("/sessions/{sessionId}/conversation/messages", c.send)
 	r.Post("/sessions/{sessionId}/conversation/approvals/{requestId}/resolve", c.resolve)
+	r.Post("/sessions/{sessionId}/conversation/inputs/{requestId}/resolve", c.resolveInput)
 	r.Post("/sessions/{sessionId}/conversation/interrupt", c.interrupt)
 	r.Post("/sessions/{sessionId}/conversation/steer", c.steer)
 	r.Post("/sessions/{sessionId}/conversation/compact", c.compact)
@@ -352,7 +355,7 @@ func (c *ConversationsController) send(w http.ResponseWriter, r *http.Request) {
 	if !decodeConversationBody(w, r, &req) {
 		return
 	}
-	if req.Text == "" {
+	if req.Text == "" && len(req.Attachments) == 0 && len(req.Resources) == 0 {
 		// There is no keystroke concept in Chat mode: an empty body is a client
 		// bug, not a way to nudge the agent.
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
@@ -360,8 +363,19 @@ func (c *ConversationsController) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	content, attachmentErr := conversationContent(req)
+	if attachmentErr != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			attachmentErr.code, attachmentErr.message, nil)
+		return
+	}
+	text := req.Text
+	if text == "" {
+		text = fmt.Sprintf("Attached %d item(s) for context", len(content))
+	}
 	turn, err := c.Svc.Send(r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")), ports.ChatUserMessage{
-		Text:            req.Text,
+		Text:            text,
+		Content:         content,
 		ClientMessageID: req.ClientMessageID,
 		Origin:          domain.MessageOriginHuman,
 	})
@@ -379,6 +393,41 @@ func (c *ConversationsController) send(w http.ResponseWriter, r *http.Request) {
 		State:          turn.State,
 		Duplicate:      turn.ID == "",
 	})
+}
+
+func conversationContent(req SendConversationMessageRequest) ([]ports.ChatContent, *spawnAttachmentError) {
+	spawnInputs := make([]SpawnAttachmentInput, 0, len(req.Attachments))
+	for _, attachment := range req.Attachments {
+		spawnInputs = append(spawnInputs, SpawnAttachmentInput{
+			MimeType: attachment.MIMEType,
+			Data:     attachment.Data,
+		})
+	}
+	if _, err := decodeSpawnAttachments(spawnInputs); err != nil {
+		return nil, err
+	}
+	content := make([]ports.ChatContent, 0, len(req.Attachments)+len(req.Resources))
+	for _, attachment := range req.Attachments {
+		content = append(content, ports.ChatContent{
+			Type: "image", Data: attachment.Data,
+			MIMEType: strings.ToLower(strings.TrimSpace(attachment.MIMEType)),
+		})
+	}
+	for _, resource := range req.Resources {
+		if strings.TrimSpace(resource.URI) == "" || strings.TrimSpace(resource.Name) == "" {
+			return nil, &spawnAttachmentError{"INVALID_RESOURCE", "resource uri and name are required"}
+		}
+		kind, text := "resource_link", ""
+		if resource.Text != nil {
+			kind = "resource"
+			text = *resource.Text
+		}
+		content = append(content, ports.ChatContent{
+			Type: kind, URI: resource.URI, Name: resource.Name,
+			MIMEType: resource.MIMEType, Text: text,
+		})
+	}
+	return content, nil
 }
 
 func (c *ConversationsController) resolve(w http.ResponseWriter, r *http.Request) {
@@ -400,6 +449,37 @@ func (c *ConversationsController) resolve(w http.ResponseWriter, r *http.Request
 	err := c.Svc.Resolve(r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")),
 		chi.URLParam(r, "requestId"), ports.ChatDecision{ID: req.DecisionID})
 	if err != nil {
+		writeConversationError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (c *ConversationsController) resolveInput(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST",
+			"/api/v1/sessions/{sessionId}/conversation/inputs/{requestId}/resolve")
+		return
+	}
+	var req ResolveConversationInputRequest
+	if !decodeConversationBody(w, r, &req) {
+		return
+	}
+	if req.Action != "accept" && req.Action != "decline" && req.Action != "cancel" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_INPUT_ACTION_INVALID", "action must be accept, decline, or cancel", nil)
+		return
+	}
+	if req.Action != "accept" && len(req.Content) > 0 {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
+			"CHAT_INPUT_CONTENT_INVALID", "content is only allowed with accept", nil)
+		return
+	}
+	if err := c.Svc.ResolveInput(
+		r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")),
+		chi.URLParam(r, "requestId"),
+		ports.ChatInputResponse{Action: req.Action, Content: req.Content},
+	); err != nil {
 		writeConversationError(w, r, err)
 		return
 	}
@@ -612,17 +692,18 @@ func conversationSnapshotResponse(s chatsvc.Snapshot) ConversationSnapshotRespon
 
 	for _, activity := range s.Activities {
 		out.Activities = append(out.Activities, ConversationActivityResponse{
-			Kind:         "activity",
-			ID:           activity.ID,
-			TurnID:       activity.TurnID,
-			Sequence:     activity.Sequence,
-			Revision:     activity.Revision,
-			ActivityKind: string(activity.Kind),
-			Status:       string(activity.Status),
-			Summary:      activity.Summary,
-			Detail:       activityDetailPayload(activity),
-			RequestID:    activity.RequestID,
-			CreatedAt:    activity.CreatedAt.UTC().Format(time.RFC3339),
+			Kind:           "activity",
+			ID:             activity.ID,
+			TurnID:         activity.TurnID,
+			Sequence:       activity.Sequence,
+			Revision:       activity.Revision,
+			ActivityKind:   string(activity.Kind),
+			Status:         string(activity.Status),
+			Summary:        activity.Summary,
+			Detail:         activityDetailPayload(activity),
+			RequestID:      activity.RequestID,
+			ProviderItemID: activity.ProviderItemID,
+			CreatedAt:      activity.CreatedAt.UTC().Format(time.RFC3339),
 		})
 	}
 	return out
@@ -643,6 +724,8 @@ func usagePayload(usage *domain.ConversationUsage) *ConversationUsagePayload {
 		OutputTokens:  usage.OutputTokens,
 		CachedTokens:  usage.CachedTokens,
 		TotalTokens:   usage.TotalTokens,
+		Cost:          usage.Cost,
+		Currency:      usage.Currency,
 	}
 }
 

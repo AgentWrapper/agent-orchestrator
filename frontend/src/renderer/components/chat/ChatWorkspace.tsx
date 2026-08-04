@@ -42,6 +42,7 @@ import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
 import { TurnSettingsBar } from "./TurnSettingsBar";
 import { ContextMeter } from "./ContextMeter";
+import { ElicitationCard } from "./ElicitationCard";
 import {
 	McpServerBanner,
 	ReauthBanner,
@@ -54,6 +55,7 @@ import {
 	isCompaction,
 	isSteer,
 	pendingApproval,
+	pendingUserInput,
 	queuedTurnIds,
 	type ConversationPlan,
 	type ConversationSnapshot,
@@ -70,8 +72,13 @@ import {
 
 export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
-	onSend?: (text: string) => void;
+	onSend?: (text: string, attachments?: { mimeType: string; data: string }[]) => void;
 	onDecide?: (requestId: string, decisionId: string) => void;
+	onResolveInput?: (
+		requestId: string,
+		action: "accept" | "decline" | "cancel",
+		content?: Record<string, unknown>,
+	) => Promise<unknown> | void;
 	onInterrupt?: () => void;
 	/** A send or decision is in flight. */
 	busy?: boolean;
@@ -111,6 +118,8 @@ export interface ChatWorkspaceProps {
 	 * no worktree to write into.
 	 */
 	onStageAttachments?: (attachments: { mimeType: string; data: string }[]) => Promise<string[]>;
+	/** The provider negotiated native image prompt blocks. */
+	nativeImages?: boolean;
 	/**
 	 * Deliver guidance into the turn already running, instead of queueing a message
 	 * behind it. Absent means this harness cannot steer and no control is drawn —
@@ -131,6 +140,7 @@ export function ChatWorkspace({
 	snapshot,
 	onSend,
 	onDecide,
+	onResolveInput,
 	onInterrupt,
 	busy,
 	models,
@@ -149,6 +159,7 @@ export function ChatWorkspace({
 	filePaths,
 	filePathsTruncated,
 	onStageAttachments,
+	nativeImages,
 	onSteer,
 	steerPending,
 	steerRefusal,
@@ -158,6 +169,7 @@ export function ChatWorkspace({
 }: ChatWorkspaceProps) {
 	const turn = activeTurn(snapshot);
 	const approval = pendingApproval(snapshot);
+	const userInput = pendingUserInput(snapshot);
 	const queuedCount = queuedTurnIds(snapshot).size;
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
@@ -204,6 +216,7 @@ export function ChatWorkspace({
 			<Timeline
 				snapshot={snapshot}
 				onDecide={onDecide}
+				onResolveInput={onResolveInput}
 				busy={busy}
 				onRollback={rollbackTarget}
 			/>
@@ -214,13 +227,13 @@ export function ChatWorkspace({
 					{turn ? (
 						<LiveTurnBar
 							startedAt={turn.startedAt ?? turn.requestedAt}
-							blocked={Boolean(approval)}
+							blocked={Boolean(approval || userInput)}
 							queuedCount={queuedCount}
 							onInterrupt={onInterrupt}
 						/>
 					) : null}
 					<ChatComposer
-						onSend={(text) => onSend?.(text)}
+						onSend={(text, attachments) => onSend?.(text, attachments)}
 						settings={
 							onChooseSettings || onChooseConfigOption ? (
 								<TurnSettingsBar
@@ -245,6 +258,7 @@ export function ChatWorkspace({
 						filePaths={filePaths}
 						filePathsTruncated={filePathsTruncated}
 						onStageAttachments={onStageAttachments}
+						nativeImages={nativeImages}
 						// Steering is only meaningful into a turn that is running. A queued turn
 						// has not reached the provider, so there is nothing to steer.
 						onSteer={onSteer}
@@ -331,6 +345,7 @@ function runsOf(items: ConversationItem[]): TimelineRun[] {
 		const runnable =
 			item.kind === "activity" &&
 			item.activityKind !== "approval" &&
+			item.activityKind !== "user_input" &&
 			item.activityKind !== "error" &&
 			// An edit is a result, not a mechanic. Burying it in a summary would hide
 			// the one kind of activity that changed the user's worktree.
@@ -570,11 +585,13 @@ function ControllerBanner({
 function Timeline({
 	snapshot,
 	onDecide,
+	onResolveInput,
 	busy,
 	onRollback,
 }: {
 	snapshot: ConversationSnapshot;
 	onDecide?: (requestId: string, decisionId: string) => void;
+	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
 	onRollback?: (turnId: string) => void;
 }) {
@@ -582,6 +599,7 @@ function Timeline({
 	const [pinned, setPinned] = useState(true);
 	const queued = useMemo(() => queuedTurnIds(snapshot), [snapshot]);
 	const decide = useStableCallback(onDecide);
+	const resolveInput = useStableCallback(onResolveInput);
 	const rollback = useStableCallback(onRollback);
 
 	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
@@ -622,6 +640,7 @@ function Timeline({
 							key={group.key}
 							group={group}
 							onDecide={decide}
+							onResolveInput={resolveInput}
 							onRollback={rollback}
 							// Only a turn the provider actually accepted can be undone: a turn it
 							// never saw holds no history to discard, and the daemon refuses it
@@ -658,6 +677,7 @@ function Timeline({
 const TurnGroup = memo(function TurnGroup({
 	group,
 	onDecide,
+	onResolveInput,
 	onRollback,
 	canRollback,
 	busy,
@@ -665,6 +685,7 @@ const TurnGroup = memo(function TurnGroup({
 }: {
 	group: TimelineGroup;
 	onDecide: (requestId: string, decisionId: string) => void;
+	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
 	/** The daemon would accept a rollback of this turn, so offer the affordance. */
 	canRollback: boolean;
@@ -693,6 +714,7 @@ const TurnGroup = memo(function TurnGroup({
 						key={run.key}
 						item={run.items[0]!}
 						onDecide={onDecide}
+						onResolveInput={onResolveInput}
 						busy={busy}
 						queued={queued}
 						showCopy={run.items[0]?.id === copyableMessageId}
@@ -722,12 +744,14 @@ const TurnGroup = memo(function TurnGroup({
 function TimelineItem({
 	item,
 	onDecide,
+	onResolveInput,
 	busy,
 	queued,
 	showCopy,
 }: {
 	item: ConversationItem;
 	onDecide?: (requestId: string, decisionId: string) => void;
+	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
 	/**
 	 * The enclosing turn was recorded but not yet sent, so a waiting message can say
@@ -746,6 +770,9 @@ function TimelineItem({
 	}
 	if (item.activityKind === "approval") {
 		return <ApprovalCard activity={item} onDecide={onDecide} busy={busy} />;
+	}
+	if (item.activityKind === "user_input") {
+		return <ElicitationCard activity={item} onResolve={onResolveInput} />;
 	}
 	if (isCompaction(item)) {
 		return <CompactionMarker activity={item} />;

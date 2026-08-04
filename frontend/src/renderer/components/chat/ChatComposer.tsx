@@ -82,12 +82,13 @@ export function ChatComposer({
 	filePaths = [],
 	filePathsTruncated,
 	onStageAttachments,
+	nativeImages,
 	onSteer,
 	canSteer,
 	steerPending,
 	steerRefusal,
 }: {
-	onSend: (text: string) => void;
+	onSend: (text: string, attachments?: ImageAttachmentPayload[]) => void;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
 	settings?: ReactNode;
 	/** A send is in flight. */
@@ -107,6 +108,8 @@ export function ChatComposer({
 	 * offered at all.
 	 */
 	onStageAttachments?: (attachments: ImageAttachmentPayload[]) => Promise<string[]>;
+	/** Send the same staged bytes as native ACP image blocks when negotiated. */
+	nativeImages?: boolean;
 	/**
 	 * Deliver this text into the turn already running. Absent means the harness
 	 * cannot steer and the choice is never offered.
@@ -239,7 +242,9 @@ export function ChatComposer({
 				setSendError("The images could not be attached. Nothing was sent.");
 				return;
 			}
-			onSend(withAttachmentReferences(body, paths));
+			const message = withAttachmentReferences(body, paths);
+			if (nativeImages) onSend(message, images.toPayload());
+			else onSend(message);
 			images.clear();
 		} else {
 			onSend(body);
