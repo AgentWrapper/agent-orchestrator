@@ -130,6 +130,13 @@ func migrate(db *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
+	// Recover install/upgrade databases that claim Chat migration 0041+ in
+	// goose_db_version but are missing the base conversation objects. Without
+	// this, 0043 fails with "no such table: conversations" and the packaged
+	// desktop daemon never binds its loopback port.
+	if err := healIncompleteChatBaseSchema(db); err != nil {
+		return fmt.Errorf("heal incomplete chat schema: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
