@@ -94,9 +94,14 @@ func Build() ([]byte, error) {
 		}
 		if op.reqBody != nil {
 			// AddReqStructure leaves requestBody.required absent, which
-			// OpenAPI reads as optional. These bodies are mandatory, so force
-			// it — otherwise validators/generators treat the body as skippable.
-			oc.AddReqStructure(op.reqBody, openapi.WithCustomize(markRequestBodyRequired))
+			// OpenAPI reads as optional. Most of these bodies are mandatory, so
+			// force it — otherwise validators/generators treat the body as
+			// skippable. Ops that genuinely accept an empty body opt out.
+			if op.optionalReqBody {
+				oc.AddReqStructure(op.reqBody)
+			} else {
+				oc.AddReqStructure(op.reqBody, openapi.WithCustomize(markRequestBodyRequired))
+			}
 		}
 		for _, resp := range op.resps {
 			opts := []openapi.ContentOption{openapi.WithHTTPStatus(resp.status)}
@@ -134,15 +139,16 @@ var schemaNames = map[string]string{
 	// httpd/envelope
 	"EnvelopeAPIError": "APIError",
 	// domain
-	"DomainProjectID":           "ProjectID",
-	"DomainSessionID":           "SessionID",
-	"DomainIssueID":             "IssueID",
-	"DomainSession":             "Session",
-	"DomainProjectConfig":       "ProjectConfig",
-	"DomainTrackerIntakeConfig": "TrackerIntakeConfig",
-	"DomainContainerReapConfig": "ContainerReapConfig",
-	"DomainAgentConfig":         "AgentConfig",
-	"DomainRoleOverride":        "RoleOverride",
+	"DomainProjectID":                 "ProjectID",
+	"DomainSessionID":                 "SessionID",
+	"DomainIssueID":                   "IssueID",
+	"DomainSession":                   "Session",
+	"DomainProjectConfig":             "ProjectConfig",
+	"DomainTrackerIntakeConfig":       "TrackerIntakeConfig",
+	"ControllersTriggerReviewRequest": "TriggerReviewRequest",
+	"DomainContainerReapConfig":       "ContainerReapConfig",
+	"DomainAgentConfig":               "AgentConfig",
+	"DomainRoleOverride":              "RoleOverride",
 	// httpd/controllers (wire envelopes)
 	"ControllersListProjectsResponse":             "ListProjectsResponse",
 	"ControllersProjectResponse":                  "ProjectResponse",
@@ -166,6 +172,7 @@ var schemaNames = map[string]string{
 	"ControllersSetSessionMergePolicyRequest":     "SetSessionMergePolicyRequest",
 	"ControllersSetSessionMergePolicyResponse":    "SetSessionMergePolicyResponse",
 	"ControllersRenameSessionRequest":             "RenameSessionRequest",
+	"ControllersSetSessionReviewerRequest":        "SetSessionReviewerRequest",
 	"ControllersRenameSessionResponse":            "RenameSessionResponse",
 	"ControllersRestoreSessionResponse":           "RestoreSessionResponse",
 	"ControllersResumeAgentResponse":              "ResumeAgentResponse",
@@ -329,8 +336,11 @@ type operation struct {
 	tag                       string
 	pathParams                []any // path/query param containers (e.g. ProjectIDParam)
 	reqBody                   any   // JSON request body struct, nil when the op takes none
-	resps                     []respUnit
-	contentTypes              map[int]string // optional non-JSON response content types by status
+	// optionalReqBody declares the body without marking it required, for the
+	// handlers that accept an empty body as a meaningful default.
+	optionalReqBody bool
+	resps           []respUnit
+	contentTypes    map[int]string // optional non-JSON response content types by status
 }
 
 func operations() []operation {
@@ -657,6 +667,9 @@ func reviewOperations() []operation {
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/trigger", id: "triggerReview", tag: "reviews",
 			summary:    "Trigger a code review of a worker's PR",
 			pathParams: []any{controllers.SessionIDParam{}},
+			// Optional: an empty body runs under the project's configured reviewer.
+			reqBody:         controllers.TriggerReviewRequest{},
+			optionalReqBody: true,
 			resps: []respUnit{
 				{http.StatusOK, controllers.TriggerReviewResponse{}},
 				{http.StatusCreated, controllers.TriggerReviewResponse{}},
@@ -1002,6 +1015,20 @@ func sessionOperations() []operation {
 				{http.StatusOK, controllers.SetSessionMergePolicyResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPut, path: "/api/v1/sessions/{sessionId}/reviewer", id: "setSessionReviewer", tag: "sessions",
+			summary:    "Set the reviewer harness for a session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionReviewerRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

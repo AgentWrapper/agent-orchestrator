@@ -245,6 +245,12 @@ type RenameSessionRequest struct {
 	DisplayName string `json:"displayName" minLength:"1"`
 }
 
+// SetSessionReviewerRequest sets the durable reviewer preference for a session.
+// Empty clears the preference and falls back to project configuration.
+type SetSessionReviewerRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
+}
+
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
 // An empty url asks the daemon to autodetect a static entry point in the
 // session workspace; a non-empty url is used verbatim as the preview target.
@@ -851,4 +857,12 @@ type PushDeviceEnvelope struct {
 type UnregisterPushDeviceResponse struct {
 	Token   string `json:"token"`
 	Deleted bool   `json:"deleted"`
+}
+
+// TriggerReviewRequest is the optional body of the review trigger route. An
+// empty harness keeps the project's configured reviewer; setting one overrides
+// it for this pass only, without editing project config, so one session's choice
+// cannot change what another session in the project runs.
+type TriggerReviewRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
 }
