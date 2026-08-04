@@ -194,13 +194,14 @@ func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 		errCh <- err
 	}()
 	var command wireMessage
-	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(browserRuntimeTestTimeout()))
 	if err := dec.Decode(&command); err != nil {
 		t.Fatal(err)
 	}
+	waitPendingRequest(t, broker, command.RequestID)
 	cancel()
 	var cancelMessage wireMessage
-	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(browserRuntimeTestTimeout()))
 	if err := dec.Decode(&cancelMessage); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +214,7 @@ func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Execute error = %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(browserRuntimeTestTimeout()):
 		t.Fatal("Execute did not return after request cancellation")
 	}
 }
@@ -239,11 +240,35 @@ func TestBrokerWriteObservesContext(t *testing.T) {
 
 func waitConnected(t *testing.T, broker *Broker) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(browserRuntimeTestTimeout())
 	for !broker.Status().Connected {
 		if time.Now().After(deadline) {
 			t.Fatal("browser runtime did not connect")
 		}
 		time.Sleep(time.Millisecond)
 	}
+}
+
+func waitPendingRequest(t *testing.T, broker *Broker, requestID string) {
+	t.Helper()
+	deadline := time.Now().Add(browserRuntimeTestTimeout())
+	for {
+		broker.mu.Lock()
+		_, ok := broker.pending[requestID]
+		broker.mu.Unlock()
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("browser request %q was not registered as pending", requestID)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func browserRuntimeTestTimeout() time.Duration {
+	if testing.Short() {
+		return time.Second
+	}
+	return 5 * time.Second
 }
