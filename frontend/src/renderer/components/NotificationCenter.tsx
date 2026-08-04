@@ -102,6 +102,8 @@ function useSessionTerminationLookup(): {
 export function NotificationRuntime() {
 	const queryClient = useQueryClient();
 	const { openPrimary } = useNotificationTargetNavigation();
+	const unreadQuery = useNotificationsQuery("unread");
+	const unreadCount = getCachedUnreadCount(unreadQuery.data);
 	const params = useParams({ strict: false }) as { sessionId?: string };
 	const routeSessionIdRef = useRef(params.sessionId);
 	routeSessionIdRef.current = params.sessionId;
@@ -121,6 +123,13 @@ export function NotificationRuntime() {
 		() => createNotificationsTransport(queryClient, getVisibleAgentSessionId).connect(),
 		[getVisibleAgentSessionId, queryClient],
 	);
+
+	// Keep the OS launcher badge in sync here rather than in NotificationCenter:
+	// NotificationRuntime is always mounted in the shell, whereas the notification
+	// bell is absent from the Linux topbar and only mounts on the sessions board.
+	useEffect(() => {
+		void aoBridge.notifications.setBadge(unreadCount);
+	}, [unreadCount]);
 
 	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {
