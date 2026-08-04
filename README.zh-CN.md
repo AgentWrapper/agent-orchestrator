@@ -16,7 +16,7 @@
 <img src="docs/assets/readme/dashboard.png" alt="Agent Orchestrator 仪表盘，展示并行编程智能体会话" width="100%" />
 </div>
 
-**Languages:** [English](README.md) · **简体中文** · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md)
+**语言：** [English](README.md) · **简体中文** · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md)
 
 ---
 
@@ -140,12 +140,12 @@ AO 内置 23 种 worker 智能体 harness 适配器：
 
 | 平台                  | 下载                                                                                                                          |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| macOS（Apple 芯片）   | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip)   |
-| macOS（Intel）        | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip)     |
-| Windows               | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)      |
-| Linux（AppImage）     | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
-| Linux（Debian/Ubuntu）| [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.deb)      |
-| Linux（Fedora/RHEL）  | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.rpm)      |
+| macOS（Apple 芯片）   | [下载](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip)   |
+| macOS（Intel）        | [下载](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip)     |
+| Windows               | [下载](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)      |
+| Linux（AppImage）     | [下载](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
+| Linux（Debian/Ubuntu）| [下载](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.deb)      |
+| Linux（Fedora/RHEL）  | [下载](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.rpm)      |
 
 安装后，打开 Agent Orchestrator 并指向希望 AO 管理的仓库。桌面应用会为你运行 daemon，因此无需 CLI。已安装的桌面构建会在启动时以及运行期间定期检查更新。有关智能体 CLI 设置与故障排除，请参阅[安装指南](https://aoagents.dev/docs/installation)。
 

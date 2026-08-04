@@ -1,14 +1,14 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { aoBridge } from "../lib/bridge";
-import { appI18n } from "../i18n";
+import { changeAppLocale } from "../i18n";
 import { DaemonFailureBanner } from "./DaemonFailureBanner";
 
 describe("DaemonFailureBanner", () => {
 	afterEach(async () => {
 		vi.useRealTimers();
 		vi.restoreAllMocks();
-		await appI18n.changeLanguage("en");
+		await changeAppLocale("en");
 	});
 
 	it("shows the daemon failure message, code, and actionable hint", () => {
@@ -70,7 +70,7 @@ describe("DaemonFailureBanner", () => {
 		render(<DaemonFailureBanner status={{ state: "error", code: "not_ready" }} />);
 		expect(screen.getByRole("button", { name: "Restart daemon" })).toBeInTheDocument();
 
-		await act(() => appI18n.changeLanguage("zh-CN"));
+		await act(() => changeAppLocale("zh-CN"));
 
 		expect(screen.getByRole("button", { name: "重启守护进程" })).toBeInTheDocument();
 		expect(screen.getByRole("alert")).toHaveTextContent("AO 守护进程尚未就绪");

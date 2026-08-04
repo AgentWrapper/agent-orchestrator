@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { appI18n } from "../i18n";
+import { changeAppLocale } from "../i18n";
 
 const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -77,7 +77,7 @@ beforeEach(() => {
 
 describe("SessionsBoard", () => {
 	it("localizes dynamic card actions and pull request lifecycle labels", async () => {
-		await appI18n.changeLanguage("zh-CN");
+		await changeAppLocale("zh-CN");
 		workspaceQueryMock.mockReturnValue({
 			data: [
 				workspaceWithSessions([
@@ -109,7 +109,7 @@ describe("SessionsBoard", () => {
 			expect(screen.getByRole("button", { name: "终止 localized worker" })).toBeInTheDocument();
 			expect(screen.getByLabelText("#42 已打开")).toHaveTextContent("已打开");
 		} finally {
-			await appI18n.changeLanguage("en");
+			await changeAppLocale("en");
 		}
 	});
 

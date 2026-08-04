@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import "../i18n";
+import type { UiSettings } from "../../shared/ui-locale";
 
 // Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.
@@ -185,10 +186,8 @@ if (typeof window !== "undefined") {
 			set: async () => undefined,
 		},
 		uiSettings: {
-			get: async () => ({ locale: "en" as const }),
-			set: async (settings: { locale: string }) => ({
-				locale: settings.locale as "en",
-			}),
+			get: async (): Promise<UiSettings> => ({ locale: "en" }),
+			set: async (settings: UiSettings): Promise<UiSettings> => settings,
 		},
 		keybindings: {
 			get: async () => ({}),

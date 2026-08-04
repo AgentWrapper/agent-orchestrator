@@ -1,7 +1,7 @@
 import { Languages, Monitor, Moon, Palette, Smartphone, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference } from "../../lib/theme";
-import type { AppLocale } from "../../i18n";
+import { APP_LOCALES, APP_LOCALE_LABEL_KEYS, type AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
@@ -27,16 +27,10 @@ export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: (
 		},
 	] satisfies SettingsOption<ThemePreference>[];
 
-	const languageOptions = [
-		{ value: "en", label: t("settings.language.en") },
-		{ value: "zh-CN", label: t("settings.language.zhCN") },
-		{ value: "ja", label: t("settings.language.ja") },
-		{ value: "ko", label: t("settings.language.ko") },
-		{ value: "es", label: t("settings.language.es") },
-		{ value: "fr", label: t("settings.language.fr") },
-		{ value: "de", label: t("settings.language.de") },
-		{ value: "pt-BR", label: t("settings.language.ptBR") },
-	] satisfies SettingsOption<AppLocale>[];
+	const languageOptions = APP_LOCALES.map((value) => ({
+		value,
+		label: t(APP_LOCALE_LABEL_KEYS[value]),
+	})) satisfies SettingsOption<AppLocale>[];
 
 	return (
 		<SettingsSection title={t("settings.general")}>

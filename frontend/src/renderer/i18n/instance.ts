@@ -1,38 +1,20 @@
 import { createInstance, type i18n } from "i18next";
 import { initReactI18next } from "react-i18next";
 import { APP_LOCALES, DEFAULT_LOCALE, type AppLocale } from "./locales";
-import {
-	deMessages,
-	enMessages,
-	esMessages,
-	frMessages,
-	jaMessages,
-	koMessages,
-	ptBRMessages,
-	zhCNMessages,
-} from "./messages";
+import { enMessages, loadCatalog, type LoadedMessageCatalog } from "./messages";
 
-export type TranslationCatalogs = Record<AppLocale, Readonly<Record<string, string>>>;
+export type TranslationCatalogs = Partial<Record<AppLocale, LoadedMessageCatalog>>;
 
-export const appCatalogs: TranslationCatalogs = {
-	en: enMessages,
-	"zh-CN": zhCNMessages,
-	ja: jaMessages,
-	ko: koMessages,
-	es: esMessages,
-	fr: frMessages,
-	de: deMessages,
-	"pt-BR": ptBRMessages,
-};
+const initialCatalogs: TranslationCatalogs = { en: enMessages };
 
 /** Create an isolated, synchronously initialized instance for app startup and unit tests. */
-export function createAppI18n(locale: AppLocale = DEFAULT_LOCALE, catalogs: TranslationCatalogs = appCatalogs): i18n {
+export function createAppI18n(locale: AppLocale = DEFAULT_LOCALE, catalogs: TranslationCatalogs = initialCatalogs): i18n {
 	return initializeI18n(createInstance(), locale, catalogs);
 }
 
 function initializeI18n(instance: i18n, locale: AppLocale, catalogs: TranslationCatalogs): i18n {
 	const resources = Object.fromEntries(
-		APP_LOCALES.map((lng) => [lng, { translation: catalogs[lng] ?? {} }]),
+		Object.entries(catalogs).map(([lng, catalog]) => [lng, { translation: catalog }]),
 	);
 	void instance.init({
 		lng: locale,
@@ -50,4 +32,17 @@ function initializeI18n(instance: i18n, locale: AppLocale, catalogs: Translation
 	return instance;
 }
 
-export const appI18n = initializeI18n(createInstance().use(initReactI18next), DEFAULT_LOCALE, appCatalogs);
+export const appI18n = initializeI18n(createInstance().use(initReactI18next), DEFAULT_LOCALE, initialCatalogs);
+
+/** Ensure the selected locale is registered before asking i18next to activate it. */
+export async function prepareAppLocale(locale: AppLocale): Promise<void> {
+	if (appI18n.hasResourceBundle(locale, "translation")) return;
+	const catalog = await loadCatalog(locale);
+	appI18n.addResourceBundle(locale, "translation", catalog, true, true);
+}
+
+/** Activate a locale through the catalog-loading boundary. */
+export async function changeAppLocale(locale: AppLocale): Promise<void> {
+	await prepareAppLocale(locale);
+	await appI18n.changeLanguage(locale);
+}

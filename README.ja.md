@@ -16,7 +16,7 @@
 <img src="docs/assets/readme/dashboard.png" alt="並列コーディングエージェントセッションを示す Agent Orchestrator ダッシュボード" width="100%" />
 </div>
 
-**Languages:** [English](README.md) · [简体中文](README.zh-CN.md) · **日本語** · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md)
+**言語:** [English](README.md) · [简体中文](README.zh-CN.md) · **日本語** · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md)
 
 ---
 
@@ -140,12 +140,12 @@ AO は 23 のワーカーエージェントハーネス用アダプターを同�
 
 | プラットフォーム        | ダウンロード                                                                                                                   |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| macOS（Apple silicon）  | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip)   |
-| macOS（Intel）          | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip)     |
-| Windows                 | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)      |
-| Linux（AppImage）       | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
-| Linux（Debian/Ubuntu）  | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.deb)      |
-| Linux（Fedora/RHEL）    | [Download](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.rpm)      |
+| macOS（Apple silicon）  | [ダウンロード](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip)   |
+| macOS（Intel）          | [ダウンロード](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip)     |
+| Windows                 | [ダウンロード](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe)      |
+| Linux（AppImage）       | [ダウンロード](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage) |
+| Linux（Debian/Ubuntu）  | [ダウンロード](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.deb)      |
+| Linux（Fedora/RHEL）    | [ダウンロード](https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.rpm)      |
 
 インストール後、Agent Orchestrator を開き、AO に管理させたいリポジトリを指定します。デスクトップアプリがデーモンを起動するため、CLI は不要です。インストール済みのデスクトップビルドは起動時および実行中に定期的に更新を確認します。エージェント CLI のセットアップとトラブルシューティングは[インストールガイド](https://aoagents.dev/docs/installation)を参照してください。
 

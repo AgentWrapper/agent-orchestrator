@@ -1,16 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { APP_LOCALES, coerceLocale, DEFAULT_LOCALE } from "./locales";
-import { createAppI18n, type TranslationCatalogs } from "./instance";
-import {
-	deMessages,
-	enMessages,
-	esMessages,
-	frMessages,
-	jaMessages,
-	koMessages,
-	ptBRMessages,
-	zhCNMessages,
-} from "./messages";
+import { appI18n, createAppI18n, prepareAppLocale, type TranslationCatalogs } from "./instance";
+import { enMessages, loadCatalog } from "./messages";
+import deMessages from "./de.json";
+import esMessages from "./es.json";
+import frMessages from "./fr.json";
+import jaMessages from "./ja.json";
+import koMessages from "./ko.json";
+import ptBRMessages from "./pt-BR.json";
+import zhCNMessages from "./zh-CN.json";
 
 const allCatalogs = {
 	en: enMessages,
@@ -22,6 +20,13 @@ const allCatalogs = {
 	de: deMessages,
 	"pt-BR": ptBRMessages,
 } as const;
+
+const pluralSuffix = /_(zero|one|two|few|many|other)$/;
+const pluralBases = new Set(
+	Object.keys(enMessages)
+		.filter((key) => pluralSuffix.test(key))
+		.map((key) => key.replace(pluralSuffix, "")),
+);
 
 function emptyCatalogs(): TranslationCatalogs {
 	return Object.fromEntries(APP_LOCALES.map((locale) => [locale, {}])) as TranslationCatalogs;
@@ -48,10 +53,18 @@ describe("coerceLocale", () => {
 });
 
 describe("app i18next instance", () => {
+	it("loads non-English catalogs only when requested", async () => {
+		expect(appI18n.hasResourceBundle("pt-BR", "translation")).toBe(false);
+		const catalog = await loadCatalog("pt-BR");
+		expect(catalog["settings.general"]).toBe("Geral");
+		await prepareAppLocale("pt-BR");
+		expect(appI18n.hasResourceBundle("pt-BR", "translation")).toBe(true);
+	});
+
 	it("uses English by default and Chinese when selected", () => {
 		expect(createAppI18n().t("settings.general")).toBe("General");
-		expect(createAppI18n("zh-CN").t("settings.general")).toBe("通用");
-		expect(createAppI18n("zh-CN").t("settings.language.zhCN")).toBe("简体中文");
+		expect(createAppI18n("zh-CN", allCatalogs).t("settings.general")).toBe("通用");
+		expect(createAppI18n("zh-CN", allCatalogs).t("settings.language.zhCN")).toBe("简体中文");
 	});
 
 	it("resolves native language labels for every supported locale", () => {
@@ -76,7 +89,7 @@ describe("app i18next instance", () => {
 			"pt-BR": "Português (Brasil)",
 		} as const;
 		for (const locale of APP_LOCALES) {
-			expect(createAppI18n(locale).t(labels[locale])).toBe(expected[locale]);
+			expect(createAppI18n(locale, allCatalogs).t(labels[locale])).toBe(expected[locale]);
 		}
 	});
 
@@ -111,7 +124,7 @@ describe("app i18next instance", () => {
 	});
 
 	it("provides Chinese copy for the remaining audited shell surfaces", () => {
-		const chinese = createAppI18n("zh-CN");
+		const chinese = createAppI18n("zh-CN", allCatalogs);
 		expect(chinese.t("terminal.loadingOutput")).toBe("正在加载最新输出…");
 		expect(chinese.t("terminal.startingSession")).toBe("正在启动会话");
 		expect(chinese.t("inspector.open")).toBe("打开");
@@ -128,7 +141,7 @@ describe("app i18next instance", () => {
 	});
 
 	it("provides complete Chinese copy for residual actions and pluralized review comments", () => {
-		const chinese = createAppI18n("zh-CN");
+		const chinese = createAppI18n("zh-CN", allCatalogs);
 		expect(chinese.t("shortcut.customize")).toBe("自定义");
 		expect(chinese.t("notify.earlierLoadFailed")).toBe("无法加载更早的通知。");
 		expect(chinese.t("notify.loadingEarlier")).toBe("正在加载更早的通知…");
@@ -146,15 +159,19 @@ describe("app i18next instance", () => {
 		expect(createAppI18n("en", catalogs).t("proof.x", { defaultValue: "proof.x" })).toBe("keep {{missing}}");
 	});
 
-	it("keeps locale catalogs covering every English key with non-empty values", () => {
-		const enKeys = Object.keys(enMessages).sort();
+	it("keeps locale catalogs aligned with English plus required CLDR plural forms", () => {
 		for (const locale of APP_LOCALES) {
 			const catalog = allCatalogs[locale];
-			for (const key of enKeys) {
-				expect(key in catalog, `${locale} is missing ${key}`).toBe(true);
-				expect(String(catalog[key as keyof typeof catalog] ?? "").length, `${locale}.${key} empty`).toBeGreaterThan(
-					0,
-				);
+			const expectedKeys = new Set(Object.keys(enMessages));
+			const requiredCategories = new Intl.PluralRules(locale).resolvedOptions().pluralCategories;
+			for (const base of pluralBases) {
+				for (const category of requiredCategories) expectedKeys.add(`${base}_${category}`);
+			}
+			expect(Object.keys(catalog).sort(), `${locale} catalog keys drifted from English`).toEqual(
+				[...expectedKeys].sort(),
+			);
+			for (const [key, value] of Object.entries(catalog)) {
+				expect(String(value).length, `${locale}.${key} empty`).toBeGreaterThan(0);
 			}
 		}
 	});
@@ -174,12 +191,6 @@ describe("app i18next instance", () => {
 	});
 
 	it("provides every CLDR plural form required by each supported locale", () => {
-		const pluralSuffix = /_(zero|one|two|few|many|other)$/;
-		const pluralBases = new Set(
-			Object.keys(enMessages)
-				.filter((key) => pluralSuffix.test(key))
-				.map((key) => key.replace(pluralSuffix, "")),
-		);
 		for (const locale of APP_LOCALES) {
 			const requiredCategories = new Intl.PluralRules(locale).resolvedOptions().pluralCategories;
 			for (const base of pluralBases) {
