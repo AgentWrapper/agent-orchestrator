@@ -184,6 +184,7 @@
 	"inspector.loadingReviews": "正在加载评审…",
 	"inspector.loadingSession": "正在加载会话…",
 	"inspector.noOpenPRsToReview": "没有可评审的打开拉取请求。",
+	"inspector.noPastReviewSummaries": "暂无历史评审摘要。",
 	"inspector.noPROpened": "尚未打开拉取请求。",
 	"inspector.noReviewsStarted": "未启动所需的评审。",
 	"inspector.notRunMeta": "#{{number}} · 未运行",

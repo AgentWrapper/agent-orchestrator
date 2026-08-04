@@ -1360,8 +1360,9 @@ function ReviewerRuns({
 	reviewState: PRReviewState;
 	runs: ReviewRunFacts[];
 }) {
+	const { t } = useTranslation();
 	if (runs.length === 0) {
-		return <p className={cn(inspectorEmptyClass, "m-0")}>No past review summaries yet.</p>;
+		return <p className={cn(inspectorEmptyClass, "m-0")}>{t("inspector.noPastReviewSummaries")}</p>;
 	}
 	return (
 		<ReviewRunList

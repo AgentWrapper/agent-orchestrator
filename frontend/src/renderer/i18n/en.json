@@ -184,6 +184,7 @@
 	"inspector.loadingReviews": "Loading reviews...",
 	"inspector.loadingSession": "Loading session…",
 	"inspector.noOpenPRsToReview": "No open pull requests to review.",
+	"inspector.noPastReviewSummaries": "No past review summaries yet.",
 	"inspector.noPROpened": "No pull request opened yet.",
 	"inspector.noReviewsStarted": "No needed reviews were started.",
 	"inspector.notRunMeta": "#{{number}} · Not run",
