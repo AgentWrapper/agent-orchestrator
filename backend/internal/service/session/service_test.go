@@ -143,6 +143,18 @@ func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displa
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionPinned(_ context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.Metadata.IsPinned = isPinned
+	r.Metadata.PinnedAt = pinnedAt
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
