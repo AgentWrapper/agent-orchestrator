@@ -291,20 +291,21 @@ function SummaryView({
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
-	const showCompletion =
-		session.kind !== "orchestrator" && (hasPRs || session.status === "merged");
+	const showCompletion = session.kind !== "orchestrator";
 
 	return (
 		<div role="tabpanel">
-			{hasPRs ? (
-				<Section title={prSectionTitle}>
-					<div className="flex flex-col gap-1.5">
-						{prSummaries.map((pr) => (
+			<Section title={prSectionTitle}>
+				<div className="flex flex-col gap-1.5">
+					{hasPRs ? (
+						prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
-						))}
-					</div>
-				</Section>
-			) : null}
+						))
+					) : (
+						<p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>
+					)}
+				</div>
+			</Section>
 
 			{hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 
@@ -1279,11 +1280,12 @@ function GithubReviewPanel({
 	unresolvedTotal: number;
 	isLoading: boolean;
 }) {
+	const { t } = useTranslation();
 	if (isLoading) {
-		return <p className={inspectorEmptyClass}>Loading reviews...</p>;
+		return <p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>;
 	}
 	if (prs.length === 0) {
-		return <p className={inspectorEmptyClass}>No one has reviewed this pull request yet.</p>;
+		return <p className={inspectorEmptyClass}>{t("inspector.noOneReviewedYet")}</p>;
 	}
 
 	return (
@@ -1307,7 +1309,7 @@ function GithubReviewPanel({
 					);
 				})}
 			</div>
-			{unresolvedTotal === 0 ? <p className={inspectorEmptyClass}>No unresolved threads.</p> : null}
+			{unresolvedTotal === 0 ? <p className={inspectorEmptyClass}>{t("inspector.noUnresolvedThreads")}</p> : null}
 		</div>
 	);
 }
@@ -1322,7 +1324,7 @@ function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 		<div className="flex min-w-0 flex-col gap-2">
 			<div className="flex min-w-0 items-center gap-2">
 				<span className="min-w-0 truncate text-2xs font-medium text-foreground">{entry.reviewerId}</span>
-				{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">bot</span> : null}
+				{entry.isBot ? <span className="shrink-0 font-mono text-micro text-passive">{t("inspector.bot")}</span> : null}
 			</div>
 			<VerdictBadge label={verdict.label} tone={verdict.tone} />
 			{body ? <p className="whitespace-pre-wrap break-words text-2xs leading-relaxed text-passive">{body}</p> : null}
@@ -1333,7 +1335,7 @@ function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 					target="_blank"
 					rel="noopener noreferrer"
 				>
-					View review
+					{t("inspector.viewReview")}
 					<ArrowUpRight aria-hidden="true" className="size-3 shrink-0" />
 				</a>
 			) : null}
