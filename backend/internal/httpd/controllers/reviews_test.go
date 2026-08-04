@@ -184,6 +184,7 @@ func TestReviewsKillClearsReviewerHandle(t *testing.T) {
 		ReviewerHandleID: "review-mer-1",
 		ReviewerHarness:  domain.ReviewerCodex,
 		Reviews:          []reviewcore.PRReviewState{{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateNeedsReview}},
+		Runs:             []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Harness: domain.ReviewerCodex}},
 	}}
 	srv := newReviewTestServer(t, svc)
 
@@ -195,8 +196,10 @@ func TestReviewsKillClearsReviewerHandle(t *testing.T) {
 	if !svc.killed {
 		t.Fatal("TerminateReviewer was not called")
 	}
-	if !strings.Contains(string(body), `"reviewerHandleId":""`) || !strings.Contains(string(body), `"reviews"`) {
-		t.Fatalf("body missing cleared handle/reviews: %s", body)
+	for _, want := range []string{`"reviewerHandleId":""`, `"reviews"`, `"runs"`, `"run-1"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
 	}
 }
 
@@ -204,6 +207,7 @@ func TestReviewsRestoreReturnsReviewerHandle(t *testing.T) {
 	svc := &fakeReviewService{list: reviewcore.SessionReviews{
 		ReviewerHarness: domain.ReviewerCodex,
 		Reviews:         []reviewcore.PRReviewState{{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateNeedsReview}},
+		Runs:            []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Harness: domain.ReviewerCodex}},
 	}}
 	srv := newReviewTestServer(t, svc)
 
@@ -215,8 +219,10 @@ func TestReviewsRestoreReturnsReviewerHandle(t *testing.T) {
 	if !svc.restored {
 		t.Fatal("RestoreReviewer was not called")
 	}
-	if !strings.Contains(string(body), `"reviewerHandleId":"review-mer-1"`) || !strings.Contains(string(body), `"reviews"`) {
-		t.Fatalf("body missing restored handle/reviews: %s", body)
+	for _, want := range []string{`"reviewerHandleId":"review-mer-1"`, `"reviews"`, `"runs"`, `"run-1"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
 	}
 }
 

@@ -1790,6 +1790,7 @@ export interface components {
             reviewerHandleId: string;
             reviewerHarness?: string;
             reviews: components["schemas"]["PRReviewState"][];
+            runs: components["schemas"]["ReviewRun"][];
         };
         KillSessionResponse: {
             freed?: boolean;
@@ -2051,6 +2052,7 @@ export interface components {
             reviewerHandleId: string;
             reviewerHarness?: string;
             reviews: components["schemas"]["PRReviewState"][];
+            runs: components["schemas"]["ReviewRun"][];
         };
         RestoreSessionResponse: {
             ok: boolean;

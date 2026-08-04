@@ -612,8 +612,12 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 		return SessionReviews{}, err
 	}
 	var handle string
+	reviewerHarness := selectedHarness
 	if review, ok, err := e.store.GetReviewBySession(ctx, workerID); err != nil {
 		return SessionReviews{}, err
+	} else if ok && review.ReviewerHandleID != "" {
+		handle = review.ReviewerHandleID
+		reviewerHarness = review.Harness
 	} else if ok && review.Harness == selectedHarness {
 		handle = review.ReviewerHandleID
 	}
@@ -621,7 +625,7 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 	if err != nil {
 		return SessionReviews{}, err
 	}
-	return SessionReviews{ReviewerHandleID: handle, ReviewerHarness: selectedHarness, Runs: runs, Reviews: Plan(prs, runs)}, nil
+	return SessionReviews{ReviewerHandleID: handle, ReviewerHarness: reviewerHarness, Runs: runs, Reviews: Plan(prs, runs)}, nil
 }
 
 // Cancel interrupts the live reviewer pane for a worker and marks running

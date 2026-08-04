@@ -1273,6 +1273,31 @@ func TestListReturnsHandleAndRuns(t *testing.T) {
 	}
 }
 
+func TestListReturnsActiveOneShotOverrideHandle(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerOpenCode, ReviewerHandleID: "opencode-pane"},
+		runs: []domain.ReviewRun{{
+			ID:        "run-1",
+			SessionID: "mer-1",
+			Harness:   domain.ReviewerOpenCode,
+			PRURL:     "https://github.com/o/r/pull/1",
+			TargetSHA: "sha1",
+			Status:    domain.ReviewRunRunning,
+		}},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerCodex
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{})
+
+	got, err := eng.List(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if got.ReviewerHandleID != "opencode-pane" || got.ReviewerHarness != domain.ReviewerOpenCode {
+		t.Fatalf("list = %+v, want active opencode override handle", got)
+	}
+}
+
 func TestTriggerPreflightFailureRecordsFailedRun(t *testing.T) {
 	store := &fakeStore{}
 	launcher := &fakeLauncher{preflightErr: fmt.Errorf("codex: %w", ports.ErrAgentBinaryNotFound)}

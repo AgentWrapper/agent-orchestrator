@@ -58,6 +58,7 @@ type RestoreReviewResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
 	ReviewerHarness  domain.ReviewerHarness     `json:"reviewerHarness,omitempty"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	Runs             []domain.ReviewRun         `json:"runs"`
 }
 
 // KillReviewResponse is the body of reviewer session kill (200).
@@ -65,6 +66,7 @@ type KillReviewResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
 	ReviewerHarness  domain.ReviewerHarness     `json:"reviewerHarness,omitempty"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	Runs             []domain.ReviewRun         `json:"runs"`
 }
 
 // SubmitReviewItem is one review result in a batched submit request.
@@ -197,7 +199,11 @@ func (c *ReviewsController) kill(w http.ResponseWriter, r *http.Request) {
 	if reviews == nil {
 		reviews = []reviewcore.PRReviewState{}
 	}
-	envelope.WriteJSON(w, http.StatusOK, KillReviewResponse{ReviewerHandleID: res.ReviewerHandleID, ReviewerHarness: res.ReviewerHarness, Reviews: reviews})
+	runs := res.Runs
+	if runs == nil {
+		runs = []domain.ReviewRun{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, KillReviewResponse{ReviewerHandleID: res.ReviewerHandleID, ReviewerHarness: res.ReviewerHarness, Reviews: reviews, Runs: runs})
 }
 
 func (c *ReviewsController) restore(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +225,11 @@ func (c *ReviewsController) restore(w http.ResponseWriter, r *http.Request) {
 	if reviews == nil {
 		reviews = []reviewcore.PRReviewState{}
 	}
-	envelope.WriteJSON(w, http.StatusOK, RestoreReviewResponse{ReviewerHandleID: res.ReviewerHandleID, ReviewerHarness: res.ReviewerHarness, Reviews: reviews})
+	runs := res.Runs
+	if runs == nil {
+		runs = []domain.ReviewRun{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, RestoreReviewResponse{ReviewerHandleID: res.ReviewerHandleID, ReviewerHarness: res.ReviewerHarness, Reviews: reviews, Runs: runs})
 }
 
 func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {

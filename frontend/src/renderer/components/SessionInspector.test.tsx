@@ -1246,6 +1246,7 @@ describe("SessionInspector summary reviews", () => {
 		await waitFor(() =>
 			expect(view.client.getQueryData(["session-reviews", "sess-1"])).toMatchObject({
 				reviewerHandleId: "",
+				runs: [approvedReview],
 			}),
 		);
 		expect(screen.queryByRole("button", { name: "Restore review session" })).not.toBeInTheDocument();
@@ -1661,7 +1662,7 @@ describe("SessionInspector summary reviews", () => {
 			return { data: undefined };
 		});
 
-		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		const view = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
 		await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
@@ -1670,6 +1671,12 @@ describe("SessionInspector summary reviews", () => {
 		await waitFor(() =>
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/restore", {
 				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
+		await waitFor(() =>
+			expect(view.client.getQueryData(["session-reviews", "sess-1"])).toMatchObject({
+				reviewerHandleId: "opencode-pane",
+				runs: [approvedReview, opencodeReview],
 			}),
 		);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
