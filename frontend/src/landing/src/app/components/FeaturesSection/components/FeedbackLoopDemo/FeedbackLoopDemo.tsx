@@ -1,239 +1,351 @@
 "use client";
 
-import { AnimatePresence, motion } from "motion/react";
-import {
-	Check,
-	CircleAlert,
-	GitPullRequest,
-	MessageSquare,
-	RotateCw,
-	Terminal,
-} from "lucide-react";
-import { useEffect, useState } from "react";
-import {
-	FeaturePreviewShell,
-	StatusDot,
-	previewStatus,
-} from "../FeaturePreviewShell";
+import { motion } from "motion/react";
+import { GeistMono } from "geist/font/mono";
+import { ArrowUpRight, Files, Globe, GitPullRequest } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { featurePreviewTokens, StatusDot } from "../FeaturePreviewShell";
 
-const states = [
-	{
-		label: "CI failed",
-		color: previewStatus.error,
-		event: "test / web",
-		detail: "AuthCallback › rejects expired state",
-		terminal: [
-			"observer  check failure received from PR #2481",
-			"route     sending failure to owning Claude session",
-			"agent     opening test/auth-callback.test.ts",
-		],
-	},
-	{
-		label: "Agent fixing",
-		color: previewStatus.working,
-		event: "Failure routed",
-		detail: "Claude resumed with CI logs attached",
-		terminal: [
-			"read      callback handler and failing assertion",
-			"edit      preserve state expiry before token exchange",
-			"test      auth callback suite · 12 passed",
-		],
-	},
-	{
-		label: "Checks passed",
-		color: previewStatus.success,
-		event: "10 / 10 checks",
-		detail: "New commit pushed to feat/github-auth",
-		terminal: [
-			"commit    fix(auth): reject expired callback state",
-			"push      feat/github-auth",
-			"observer  all required checks passed",
-		],
-	},
-	{
-		label: "Approved",
-		color: previewStatus.accent,
-		event: "Review resolved",
-		detail: "Ready to merge",
-		terminal: [
-			"review    comment thread resolved",
-			"review    approval received from codex",
-			"queue     PR #2481 is ready to merge",
-		],
-	},
+const tone = {
+  working: "#60a5fa",
+  success: "#4ade80",
+  danger: "oklch(0.704 0.191 22.216)",
+  foreground: "var(--preview-foreground)",
+  muted: "var(--preview-muted-foreground)",
+} as const;
+
+const phases = [
+  {
+    label: "CI failed",
+    status: "Needs attention",
+    color: tone.danger,
+    check: "test / web",
+    checkDetail: "AuthCallback rejects expired state",
+    lines: [
+      { kind: "system", text: "GitHub feedback routed from PR #2481" },
+      { kind: "error", text: "test / web failed: expected 401, received 500" },
+      { kind: "muted", text: "Failure logs attached. Resuming session…" },
+    ],
+  },
+  {
+    label: "Working",
+    status: "Agent fixing",
+    color: tone.working,
+    check: "test / web",
+    checkDetail: "Re-running after the next push",
+    lines: [
+      { kind: "prompt", text: "The expiry check runs after token exchange." },
+      { kind: "action", text: "reading  src/auth/callback.ts" },
+      { kind: "action", text: "editing  validate state before exchange" },
+    ],
+  },
+  {
+    label: "Working",
+    status: "Verifying fix",
+    color: tone.working,
+    check: "Checks running",
+    checkDetail: "Commit 91f8c2a pushed to feat/github-auth",
+    lines: [
+      { kind: "command", text: "npm test -- auth/callback" },
+      { kind: "success", text: "12 tests passed" },
+      { kind: "command", text: "git push origin feat/github-auth" },
+    ],
+  },
+  {
+    label: "In review",
+    status: "Checks passed",
+    color: tone.success,
+    check: "10 / 10 checks",
+    checkDetail: "Required checks passed",
+    lines: [
+      { kind: "success", text: "test / web" },
+      { kind: "success", text: "typecheck" },
+      { kind: "system", text: "PR #2481 returned to review" },
+    ],
+  },
 ] as const;
 
+type Phase = (typeof phases)[number];
+type TerminalLine = Phase["lines"][number];
+
 export function FeedbackLoopDemo() {
-	const [active, setActive] = useState(0);
+  const [active, setActive] = useState(0);
 
-	useEffect(() => {
-		const interval = window.setInterval(
-			() => setActive((current) => (current + 1) % states.length),
-			2300,
-		);
-		return () => window.clearInterval(interval);
-	}, []);
+  useEffect(() => {
+    const interval = window.setInterval(
+      () => setActive((value) => (value + 1) % phases.length),
+      2500,
+    );
+    return () => window.clearInterval(interval);
+  }, []);
 
-	const state = states[active];
+  const phase = phases[active];
 
-	return (
-		<FeaturePreviewShell
-			title="Session · Ship GitHub sign-in"
-			trailing={
-				<div className="flex items-center gap-1.5 text-[9px]" style={{ color: state.color }}>
-					<StatusDot color={state.color} pulse={active === 1} />
-					{state.label}
-				</div>
-			}
-		>
-			<div className="grid h-[318px] grid-cols-1 sm:grid-cols-[190px_minmax(0,1fr)]">
-				<aside className="hidden border-r border-[var(--preview-border)] bg-[var(--preview-card)]/35 p-3 sm:block">
-					<div className="flex items-center gap-2">
-						<img
-							src="/app-icons/coverage-claude-code.svg"
-							alt=""
-							className="size-4"
-							draggable="false"
-						/>
-						<div className="min-w-0">
-							<div className="truncate text-[10px] font-semibold">
-								Claude worker
-							</div>
-							<div className="truncate font-mono text-[9px] text-[var(--preview-muted-foreground)]">
-								feat/github-auth
-							</div>
-						</div>
-					</div>
+  return (
+    <div
+      className="mx-auto w-full min-w-0 max-w-[620px] overflow-hidden rounded-xl border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_28px_74px_-22px_rgba(0,0,0,0.86)]"
+      style={featurePreviewTokens}
+    >
+      <div className="grid h-[330px] min-w-0 grid-cols-1 grid-rows-[minmax(0,1fr)_42px] sm:h-[370px] sm:grid-cols-[minmax(0,1fr)_208px] sm:grid-rows-1">
+        <AgentPane active={active} phase={phase} />
+        <Inspector active={active} phase={phase} onSelect={setActive} />
+        <MobileActivity active={active} onSelect={setActive} />
+      </div>
+    </div>
+  );
+}
 
-					<div className="mt-4 text-[9px] font-semibold uppercase tracking-[0.08em] text-[var(--preview-muted-foreground)]">
-						PR #2481
-					</div>
-					<div className="mt-2 space-y-1.5">
-						{states.map((item, index) => {
-							const complete = index < active;
-							const isActive = index === active;
-							return (
-								<button
-									type="button"
-									key={item.label}
-									onClick={() => setActive(index)}
-									className={`relative flex w-full items-start gap-2 rounded-md border px-2 py-2 text-left outline-none transition-colors ${
-										isActive
-											? "border-[var(--preview-ring)] bg-[var(--preview-muted)]"
-											: "border-transparent hover:bg-[var(--preview-muted)]/60"
-									} focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]`}
-								>
-									<div className="mt-0.5">
-										{complete ? (
-											<Check className="size-3 text-[#74b98a]" />
-										) : index === 0 ? (
-											<CircleAlert
-												className="size-3"
-												style={{ color: isActive ? item.color : "#737373" }}
-											/>
-										) : index === 3 ? (
-											<MessageSquare
-												className="size-3"
-												style={{ color: isActive ? item.color : "#737373" }}
-											/>
-										) : (
-											<StatusDot
-												color={isActive ? item.color : "#737373"}
-												pulse={isActive}
-											/>
-										)}
-									</div>
-									<div className="min-w-0">
-										<div className="truncate text-[9px] font-medium">
-											{item.event}
-										</div>
-										<div className="mt-0.5 truncate text-[9px] text-[var(--preview-muted-foreground)]">
-											{item.label}
-										</div>
-									</div>
-								</button>
-							);
-						})}
-					</div>
-				</aside>
+function AgentPane({ active, phase }: { active: number; phase: Phase }) {
+  return (
+    <main className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col bg-[#101317]">
+        <motion.div
+          key={active}
+          initial={{ opacity: 0, y: 5 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`${GeistMono.className} space-y-2.5 p-4 text-[12px] leading-5 text-[#d7d7d2]`}
+        >
+          {phase.lines.map((line, index) => (
+            <motion.div
+              key={line.text}
+              initial={{ opacity: 0, x: -3 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ delay: index * 0.12 }}
+              className="flex items-start gap-2.5"
+            >
+              <span
+                className="w-3 shrink-0 text-center font-semibold"
+                style={{ color: lineColor(line) }}
+              >
+                {linePrefix(line)}
+              </span>
+              <span
+                className="min-w-0 break-words"
+                style={{ color: lineColor(line) }}
+              >
+                {line.text}
+              </span>
+            </motion.div>
+          ))}
+          {active === 1 ? (
+            <div className="flex items-center gap-2 text-[#7c7c7c]">
+              <span className="size-2 animate-spin rounded-full border border-current border-t-transparent" />
+              working…
+            </div>
+          ) : null}
+        </motion.div>
+      </div>
+    </main>
+  );
+}
 
-				<section className="flex min-w-0 flex-col p-3 sm:p-3.5">
-					<div className="flex items-start justify-between gap-3 rounded-lg border border-[var(--preview-border)] bg-[var(--preview-card)] p-3">
-						<div className="min-w-0">
-							<div className="flex items-center gap-2 text-[10px] font-semibold">
-								<GitPullRequest className="size-3.5" />
-								<span className="truncate">{state.event}</span>
-							</div>
-							<p className="mt-1.5 truncate text-[9px] text-[var(--preview-muted-foreground)]">
-								{state.detail}
-							</p>
-						</div>
-						<motion.div
-							key={state.label}
-							initial={{ opacity: 0, scale: 0.9 }}
-							animate={{ opacity: 1, scale: 1 }}
-							className="shrink-0 rounded px-1.5 py-1 font-mono text-[9px]"
-							style={{
-								backgroundColor: `color-mix(in srgb, ${state.color} 16%, transparent)`,
-								color: state.color,
-							}}
-						>
-							{state.label}
-						</motion.div>
-					</div>
+function Inspector({
+  active,
+  phase,
+  onSelect,
+}: {
+  active: number;
+  phase: Phase;
+  onSelect: (value: number) => void;
+}) {
+  return (
+    <aside className="hidden min-w-0 overflow-hidden border-l border-[var(--preview-border)] bg-[var(--preview-card)]/25 sm:block">
+      <div className="flex h-11 items-center gap-1 border-b border-[var(--preview-border)] px-2.5">
+        <InspectorTab active label="Summary">
+          <SummaryIcon />
+        </InspectorTab>
+        <InspectorTab label="Browser">
+          <Globe className="size-3.5" />
+        </InspectorTab>
+        <InspectorTab label="Files">
+          <Files className="size-3.5" />
+        </InspectorTab>
+      </div>
+      <div className="space-y-2.5 p-2.5">
+        <section>
+          <div className="rounded-lg bg-[var(--preview-card)] px-3.5 py-3">
+            <div className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.08em] text-[var(--preview-muted-foreground)]">
+              Pull request
+            </div>
+            <div className="rounded-lg border border-[var(--preview-border)] bg-[var(--preview-background)]/45 px-2.5 py-2">
+              <div className="flex items-center gap-2 text-[11.5px] font-semibold">
+                <GitPullRequest className="size-3.5" />
+                PR #2481
+                <span className="ml-auto inline-flex items-center gap-0.5 text-[10.5px] text-blue-400">
+                  Open <ArrowUpRight className="size-3" />
+                </span>
+              </div>
+              <div className="mt-2.5 border-t border-[var(--preview-border)] pt-2.5">
+                <div
+                  className="flex items-center gap-1.5 text-[10.5px] font-medium"
+                  style={{ color: phase.color }}
+                >
+                  <StatusDot color={phase.color} pulse={active === 2} />
+                  {phase.check}
+                </div>
+                <div className="mt-1.5 text-[10px] leading-[1.45] text-[var(--preview-muted-foreground)]">
+                  {phase.checkDetail}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
 
-					<div className="mt-3 min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--preview-border)] bg-black/20">
-						<div className="flex h-8 items-center gap-2 border-b border-[var(--preview-border)] px-3 text-[9px] text-[var(--preview-muted-foreground)]">
-							<Terminal className="size-3" />
-							Agent output
-							<RotateCw
-								className={`ml-auto size-3 ${active === 1 ? "animate-spin" : ""}`}
-							/>
-						</div>
-						<AnimatePresence mode="wait" initial={false}>
-							<motion.div
-								key={active}
-								initial={{ opacity: 0, y: 6 }}
-								animate={{ opacity: 1, y: 0 }}
-								exit={{ opacity: 0, y: -4 }}
-								transition={{ duration: 0.22 }}
-								className="space-y-3 p-3 font-mono text-[9px] leading-4"
-							>
-								{state.terminal.map((line, index) => {
-									const [command, ...rest] = line.split(/\s+/);
-									return (
-										<motion.div
-											key={line}
-											initial={{ opacity: 0, x: -4 }}
-											animate={{ opacity: 1, x: 0 }}
-											transition={{ delay: index * 0.11 }}
-											className="flex gap-3"
-										>
-											<span className="w-12 shrink-0 text-[#7eaaff]">
-												{command}
-											</span>
-											<span className="text-[var(--preview-muted-foreground)]">
-												{rest.join(" ")}
-											</span>
-										</motion.div>
-									);
-								})}
-								{active < 3 ? (
-									<div className="flex items-center gap-2 text-[var(--preview-muted-foreground)]/65">
-										<span className="size-2 animate-spin rounded-full border border-current border-t-transparent" />
-										watching GitHub…
-									</div>
-								) : (
-									<div className="flex items-center gap-2 text-[#74b98a]">
-										<Check className="size-3" />
-										feedback loop complete
-									</div>
-								)}
-							</motion.div>
-						</AnimatePresence>
-					</div>
-				</section>
-			</div>
-		</FeaturePreviewShell>
-	);
+        <section>
+          <div className="rounded-lg bg-[var(--preview-card)] px-3.5 py-3">
+            <div className="mb-2 text-[10.5px] font-bold uppercase tracking-[0.08em] text-[var(--preview-muted-foreground)]">
+              Activity
+            </div>
+            <div className="space-y-0">
+              {phases.map((item, index) => (
+                <button
+                  type="button"
+                  key={item.status}
+                  onClick={() => onSelect(index)}
+                  className="relative flex w-full items-start gap-2.5 pb-2.5 text-left last:pb-0"
+                >
+                  {index < phases.length - 1 ? (
+                    <span className="absolute left-[3px] top-2 h-[calc(100%-4px)] w-px bg-[var(--preview-border)]" />
+                  ) : null}
+                  <span
+                    className="relative mt-1 size-2 shrink-0 rounded-full"
+                    style={{
+                      background:
+                        index <= active
+                          ? item.color
+                          : "var(--preview-muted-foreground)",
+                    }}
+                  />
+                  <span className="min-w-0">
+                    <span
+                      className="block text-[10.5px] font-medium"
+                      style={{
+                        color: index === active ? item.color : tone.muted,
+                      }}
+                    >
+                      {item.status}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </section>
+      </div>
+    </aside>
+  );
+}
+
+function InspectorTab({
+  active = false,
+  children,
+  label,
+}: {
+  active?: boolean;
+  children: ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      className={`grid size-7 place-items-center rounded-md ${
+        active
+          ? "bg-[var(--preview-muted)] text-[var(--preview-foreground)]"
+          : "text-[var(--preview-muted-foreground)]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SummaryIcon() {
+  return (
+    <svg
+      className="size-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      aria-hidden="true"
+    >
+      <line x1="8" y1="7" x2="20" y2="7" />
+      <line x1="8" y1="12" x2="20" y2="12" />
+      <line x1="8" y1="17" x2="16" y2="17" />
+      <circle cx="4" cy="7" r="1" />
+      <circle cx="4" cy="12" r="1" />
+      <circle cx="4" cy="17" r="1" />
+    </svg>
+  );
+}
+
+function MobileActivity({
+  active,
+  onSelect,
+}: {
+  active: number;
+  onSelect: (value: number) => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 border-t border-[var(--preview-border)] bg-[var(--preview-card)]/35 px-3 sm:hidden">
+      <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-[var(--preview-muted-foreground)]">
+        Activity
+      </span>
+      <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
+        {phases.map((item, index) => (
+          <button
+            type="button"
+            key={item.status}
+            onClick={() => onSelect(index)}
+            aria-label={item.status}
+            className="grid size-6 shrink-0 place-items-center rounded-md"
+          >
+            <span
+              className="size-2 rounded-full"
+              style={{ background: index <= active ? item.color : tone.muted }}
+            />
+          </button>
+        ))}
+      </div>
+      <span
+        className="min-w-0 max-w-[94px] truncate text-[10.5px] font-medium"
+        style={{ color: phases[active].color }}
+      >
+        {phases[active].status}
+      </span>
+    </div>
+  );
+}
+
+function lineColor(line: TerminalLine): string {
+  switch (line.kind) {
+    case "error":
+      return tone.danger;
+    case "success":
+      return tone.success;
+    case "action":
+      return tone.working;
+    case "muted":
+      return tone.muted;
+    default:
+      return tone.foreground;
+  }
+}
+
+function linePrefix(line: TerminalLine): string {
+  switch (line.kind) {
+    case "error":
+      return "×";
+    case "success":
+      return "✓";
+    case "action":
+      return "●";
+    case "prompt":
+      return "❯";
+    case "command":
+      return "$";
+    default:
+      return "";
+  }
 }
