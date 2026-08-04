@@ -778,6 +778,8 @@ function SessionCard({
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status, t);
+	const activity = getAgentActivityView(session.activity, t);
+	const showLiveActivity = session.status === "working" || session.status === "idle";
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -875,9 +877,18 @@ function SessionCard({
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
 				<div className="flex items-center justify-between gap-2">
-					<span className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}>
-						<span className="size-dot-sm shrink-0 rounded-full bg-current" />
-						{badge.label}
+					<span
+						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}
+						style={showLiveActivity ? { color: activity.tone } : undefined}
+					>
+						<span
+							aria-hidden="true"
+							className={cn(
+								"size-dot-sm shrink-0 rounded-full",
+								showLiveActivity ? activity.indicatorClassName : "bg-current",
+							)}
+						/>
+						{showLiveActivity ? activity.label : badge.label}
 					</span>
 					<span
 						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"

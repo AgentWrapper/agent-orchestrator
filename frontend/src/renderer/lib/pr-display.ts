@@ -18,7 +18,7 @@ const mergeabilityStates = new Set<SessionPRSummary["mergeability"]["state"]>([
 	"unstable",
 ]);
 
-export type PRDisplayTone = "neutral" | "passive" | "success" | "warning" | "error";
+export type PRDisplayTone = "neutral" | "passive" | "success" | "review" | "warning" | "error";
 
 export type PRStatusRow = {
 	key: "ci" | "review" | "merge";
@@ -56,6 +56,19 @@ export type PRSummaryPart = {
 	overflowLabel?: string;
 	overflowNoun?: PRNoun;
 	tone: PRDisplayTone;
+};
+
+export type PRCardStatus = {
+	key: "ci" | "merge" | "review" | "lifecycle";
+	label: string;
+	detail?: string;
+	links: PRSummaryLink[];
+	tone: PRDisplayTone;
+};
+
+export type PRCardPresentation = {
+	primary: PRCardStatus;
+	supporting: PRCardStatus[];
 };
 
 export function comparePRDisplaySummaries(a: SessionPRSummary, b: SessionPRSummary): number {
@@ -257,6 +270,72 @@ export function prStatusRows(pr: SessionPRSummary): PRStatusRow[] {
 		detail: part.key === "merge" ? formatDiffSummary(pr) : undefined,
 		tone: part.tone,
 	}));
+}
+
+/**
+ * Reduces provider facts to one next-action headline for compact PR cards.
+ * The detailed three-row presentation remains available for dense reports,
+ * but cards should not repeat the same blocker under Merge and Review.
+ */
+export function prCardPresentation(pr: SessionPRSummary): PRCardPresentation {
+	let primary: PRCardStatus;
+	if (pr.state === "merged") {
+		primary = cardStatus("lifecycle", "pr.card.merged", "success");
+	} else if (pr.state === "closed") {
+		primary = cardStatus("lifecycle", "pr.card.closed", "passive");
+	} else if (pr.ci.state === "failing") {
+		primary = cardStatus("ci", "pr.card.checksFailing", "error", ciSummary(pr), ciLinks(pr));
+	} else if (pr.mergeability.state === "conflicting") {
+		primary = cardStatus("merge", "pr.card.mergeConflict", "error", mergeSummary(pr), mergeLinks(pr));
+	} else if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
+		primary = cardStatus("review", "pr.card.changesRequested", "warning", reviewSummary(pr), reviewLinks(pr));
+	} else if (pr.review.decision === "review_required") {
+		primary = cardStatus("review", "pr.card.reviewRequired", "review", appI18n.t("pr.card.reviewRequiredDetail"));
+	} else if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
+		primary = cardStatus("merge", "pr.card.mergeBlocked", "warning", mergeSummary(pr), mergeLinks(pr));
+	} else if (pr.ci.state === "pending") {
+		primary = cardStatus("ci", "pr.card.checksPending", "neutral");
+	} else if (pr.ci.state === "unknown") {
+		primary = cardStatus("ci", "pr.card.checksLoading", "passive");
+	} else if (pr.state === "draft") {
+		primary = cardStatus("lifecycle", "pr.card.draft", "neutral");
+	} else if (pr.mergeability.state === "mergeable") {
+		primary = cardStatus("merge", "pr.card.readyToMerge", "success");
+	} else if (pr.review.decision === "approved") {
+		primary = cardStatus("review", "pr.card.reviewApproved", "success");
+	} else {
+		primary = cardStatus("lifecycle", "pr.card.open", "neutral");
+	}
+
+	const supporting: PRCardStatus[] = [];
+	if (pr.state === "open" && pr.ci.state === "passing" && primary.key !== "ci") {
+		supporting.push(cardStatus("ci", "pr.card.checksPassing", "success"));
+	}
+	return { primary, supporting };
+}
+
+function cardStatus(
+	key: PRCardStatus["key"],
+	labelKey:
+		| "pr.card.merged"
+		| "pr.card.closed"
+		| "pr.card.checksFailing"
+		| "pr.card.mergeConflict"
+		| "pr.card.changesRequested"
+		| "pr.card.reviewRequired"
+		| "pr.card.mergeBlocked"
+		| "pr.card.checksPending"
+		| "pr.card.checksLoading"
+		| "pr.card.draft"
+		| "pr.card.readyToMerge"
+		| "pr.card.reviewApproved"
+		| "pr.card.open"
+		| "pr.card.checksPassing",
+	tone: PRDisplayTone,
+	detail?: string,
+	links: PRSummaryLink[] = [],
+): PRCardStatus {
+	return { key, label: appI18n.t(labelKey), detail, links, tone };
 }
 
 export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
@@ -499,7 +578,7 @@ function reviewTone(
 		case "changes_requested":
 			return "warning";
 		case "review_required":
-			return "neutral";
+			return "review";
 		case "none":
 			return hasUnresolvedHumanComments ? "warning" : "passive";
 	}

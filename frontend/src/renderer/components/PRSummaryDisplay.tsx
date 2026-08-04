@@ -1,15 +1,23 @@
-import { ArrowUpDown, ArrowUpRight } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
-import { prNounKeys, prSummaryParts, type PRDisplayTone, type PRNoun, type PRSummaryLink } from "../lib/pr-display";
+import {
+	prCardPresentation,
+	prNounKeys,
+	prSummaryParts,
+	type PRDisplayTone,
+	type PRNoun,
+	type PRSummaryLink,
+} from "../lib/pr-display";
 import { cn } from "../lib/utils";
 
 const toneClass: Record<PRDisplayTone, string> = {
 	neutral: "text-muted-foreground",
 	passive: "text-passive",
 	success: "text-success",
+	review: "text-status-in-review",
 	warning: "text-warning",
 	error: "text-error",
 };
@@ -25,13 +33,13 @@ export function PRSummaryMeta({
 }) {
 	const branchRange = prBranchRange(pr);
 	const hasDiff = hasDiffMetadata(pr);
-	const primary = [leading, branchRange, pr.author].filter(Boolean);
+	const primary = [leading, branchRange, pr.author ? `@${pr.author.replace(/^@/, "")}` : undefined].filter(Boolean);
 	if (primary.length === 0 && !hasDiff) {
 		return null;
 	}
 	return (
 		<div className={cn("min-w-0 font-mono text-2xs leading-4", className)}>
-			{primary.length > 0 ? <div className="truncate text-passive">{primary.join(" · ")}</div> : null}
+			{primary.length > 0 ? <div className="truncate text-muted-foreground">{primary.join(" · ")}</div> : null}
 			{hasDiff ? <PRDiffMeta pr={pr} /> : null}
 		</div>
 	);
@@ -42,8 +50,7 @@ function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
 	const parts: ReactNode[] = [];
 	if (pr.changedFiles > 0) {
 		parts.push(
-			<span className="inline-flex items-center gap-0.5 text-warning" key="files">
-				<ArrowUpDown aria-hidden="true" className="h-2.5 w-2.5 shrink-0" strokeWidth={2.2} />
+			<span className="text-muted-foreground" key="files">
 				{pr.changedFiles} {t("pr.noun.file", { count: pr.changedFiles })}
 			</span>,
 		);
@@ -70,6 +77,45 @@ function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
 					{part}
 				</Fragment>
 			))}
+		</div>
+	);
+}
+
+export function PRCardStatusSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+	const presentation = prCardPresentation(pr);
+	return (
+		<div className={cn("border-t border-border pt-2", className)}>
+			<div className="flex min-w-0 items-start gap-2">
+				<span
+					aria-hidden="true"
+					className={cn("mt-1.5 size-dot-sm shrink-0 rounded-full bg-current", toneClass[presentation.primary.tone])}
+				/>
+				<div className="min-w-0 flex-1">
+					<div className={cn("text-xs font-semibold leading-4", toneClass[presentation.primary.tone])}>
+						{presentation.primary.label}
+					</div>
+					{presentation.primary.detail ? (
+						<div className="mt-0.5 text-2xs leading-4 text-muted-foreground">{presentation.primary.detail}</div>
+					) : null}
+					{presentation.primary.links.length > 0 ? (
+						<div className="mt-1 flex min-w-0 flex-wrap gap-x-1.5 gap-y-1 font-mono text-2xs">
+							{presentation.primary.links.slice(0, 3).map((link, index) => (
+								<SummaryLink interactive key={`${presentation.primary.key}-${index}-${link.label}`} link={link} />
+							))}
+						</div>
+					) : null}
+				</div>
+			</div>
+			{presentation.supporting.length > 0 ? (
+				<div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 pl-4 font-mono text-2xs">
+					{presentation.supporting.map((status) => (
+						<span className={cn("inline-flex items-center gap-1", toneClass[status.tone])} key={status.key}>
+							<span aria-hidden="true" className="size-1 rounded-full bg-current" />
+							{status.label}
+						</span>
+					))}
+				</div>
+			) : null}
 		</div>
 	);
 }
@@ -160,13 +206,13 @@ function SummaryLink({ interactive, link }: { interactive: boolean; link: PRSumm
 
 function prBranchRange(pr: SessionPRSummary): string | undefined {
 	if (pr.sourceBranch && pr.targetBranch) {
-		return `${pr.sourceBranch} -> ${pr.targetBranch}`;
+		return `${pr.sourceBranch} → ${pr.targetBranch}`;
 	}
 	if (pr.sourceBranch) {
 		return pr.sourceBranch;
 	}
 	if (pr.targetBranch) {
-		return `-> ${pr.targetBranch}`;
+		return `→ ${pr.targetBranch}`;
 	}
 	return undefined;
 }

@@ -254,6 +254,28 @@ describe("SessionsBoard", () => {
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
 	});
 
+	it("pulses the shared activity indicator on an actively working session card", () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({
+						id: "s-active",
+						title: "active-card-task",
+						status: "working",
+						activity: { state: "active", lastActivityAt: "2026-01-01T00:00:00Z" },
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+
+		renderBoard("p1");
+		const card = screen.getByText("active-card-task").closest('[data-testid="board-session-card"]') as HTMLElement;
+		const working = within(card).getByText("Working").closest("span") as HTMLElement;
+		expect(working.querySelector("span")).toHaveClass("bg-status-working", "animate-status-pulse");
+	});
+
 	it("uses distinct card badge tones for idle, no signal, and draft PR sessions", () => {
 		workspaceQueryMock.mockReturnValue({
 			data: [

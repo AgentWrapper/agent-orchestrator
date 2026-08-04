@@ -34,7 +34,7 @@ import { useUiStore } from "../stores/ui-store";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
-import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
+import { PRCardStatusSummary, PRSummaryMeta } from "./PRSummaryDisplay";
 import { StatusPill } from "./StatusPill";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
@@ -87,8 +87,8 @@ const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector
 const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 
 const prStateTone: Record<SessionPRSummary["state"], string> = {
-	open: "border-success/40 bg-success/10 text-success",
-	draft: "border-border bg-raised text-muted-foreground",
+	open: "border-border-strong bg-overlay text-muted-foreground",
+	draft: "border-status-in-review/35 bg-status-in-review/10 text-status-in-review",
 	merged: "border-accent/40 bg-accent-weak text-accent",
 	closed: "border-error/40 bg-error/10 text-error",
 };
@@ -255,29 +255,36 @@ function Section({
 	action,
 	children,
 	className,
+	surface = true,
 	title,
 }: {
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
-	/** Accepted for call-site compatibility; all sections use the settings-row box. */
 	surface?: boolean;
 	/** Omit where the surrounding tab already names the section. */
 	title?: string;
 }) {
-	// Boxed sections match the settings page row surface (bg + radius) with the
-	// uppercase muted kicker kept inside the card, as in the inspector refs.
+	const heading =
+		title || action ? (
+			<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+				{title ? <span>{title}</span> : <span />}
+				{action ?? null}
+			</div>
+		) : null;
 	return (
 		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
-			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
-				{title || action ? (
-					<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
-						{title ? <span>{title}</span> : <span />}
-						{action ?? null}
-					</div>
-				) : null}
-				{children}
-			</div>
+			{surface ? (
+				<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
+					{heading}
+					{children}
+				</div>
+			) : (
+				<>
+					{heading}
+					{children}
+				</>
+			)}
 		</section>
 	);
 }
@@ -294,21 +301,19 @@ function SummaryView({
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
-	const showCompletion = session.kind !== "orchestrator";
+	const showCompletion = session.kind !== "orchestrator" && (hasPRs || session.status === "merged");
 
 	return (
 		<div role="tabpanel">
-			<Section title={prSectionTitle}>
-				<div className="flex flex-col gap-1.5">
-					{hasPRs ? (
-						prSummaries.map((pr) => (
+			{hasPRs ? (
+				<Section surface={false} title={prSectionTitle}>
+					<div className="flex flex-col gap-1.5">
+						{prSummaries.map((pr) => (
 							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
-						))
-					) : (
-						<p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>
-					)}
-				</div>
-			</Section>
+						))}
+					</div>
+				</Section>
+			) : null}
 
 			{hasPRs ? <ReviewsSection onOpenReviewerTerminal={onOpenReviewerTerminal} session={session} /> : null}
 
@@ -488,30 +493,32 @@ function updateSessionMergePolicy(
 function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 	const { t } = useTranslation();
 	return (
-		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
-			<div className="flex items-center gap-2">
-				<GitPullRequest className="size-icon-md shrink-0 text-settings-muted" aria-hidden="true" />
-				<span className="text-md-sm font-medium text-settings-label">PR #{pr.number}</span>
+		<article className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
+			{pr.title ? (
+				<div className="text-sm font-semibold leading-snug tracking-tight text-settings-label">{pr.title}</div>
+			) : null}
+			<div className={cn("flex min-w-0 items-center gap-2", pr.title && "mt-1.5")}>
+				<a
+					aria-label={t("inspector.openPR", { number: pr.number })}
+					className="inline-flex min-w-0 items-center gap-1 font-mono text-xs font-medium text-settings-label decoration-muted-foreground underline-offset-2 hover:text-settings-label hover:underline focus-visible:rounded-sm focus-visible:text-settings-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					href={prBrowserUrl(pr)}
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					<GitPullRequest className="size-icon-sm shrink-0" aria-hidden="true" />
+					<span>PR #{pr.number}</span>
+					<ArrowUpRight aria-hidden="true" className="size-icon-2xs shrink-0" strokeWidth={2} />
+				</a>
 				<Badge
 					variant="outline"
 					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
 				>
 					{t(prStateLabelKeys[pr.state])}
 				</Badge>
-				<a
-					href={prBrowserUrl(pr)}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-accent hover:underline"
-				>
-					<span>{t("inspector.open")}</span>
-					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
-				</a>
 			</div>
-			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-settings-label">{pr.title}</div> : null}
-			<PRSummaryMeta className="mt-1" pr={pr} />
-			<PRSummaryParts className="mt-1.5" pr={pr} variant="stacked" />
-		</div>
+			<PRSummaryMeta className="mt-1.5" pr={pr} />
+			<PRCardStatusSummary className="mt-2" pr={pr} />
+		</article>
 	);
 }
 

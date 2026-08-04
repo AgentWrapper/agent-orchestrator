@@ -28,6 +28,9 @@ vi.mock("../lib/api-client", () => ({
 		POST: postMock,
 		PUT: putMock,
 	},
+	getApiBaseUrl: () => "http://127.0.0.1:3001",
+	hasTrustedApiBaseUrl: () => false,
+	subscribeApiBaseUrl: () => () => {},
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error) {
@@ -168,7 +171,12 @@ beforeEach(() => {
 	patchMock.mockReset();
 	postMock.mockReset();
 	putMock.mockReset();
-	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
+	getMock.mockImplementation(async (path: string) => {
+		if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+			return { data: { sessionId: "sess-1", files: [], truncated: false }, error: undefined };
+		}
+		return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+	});
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 	putMock.mockResolvedValue({ data: { session: {} }, error: undefined, response: { status: 200 } });
@@ -213,12 +221,16 @@ describe("SessionInspector tabs", () => {
 		expect(screen.getByText("workspace file review")).toBeInTheDocument();
 	});
 
-	it("keeps the plain Files label until the workspace files cache has something to show", () => {
+	it("warms the workspace files cache before the Files tab opens", async () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		const filesTab = screen.getByRole("tab", { name: "Files" });
 		expect(within(filesTab).getByText("Files")).toBeInTheDocument();
-		expect(getMock).not.toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/files", expect.anything());
+		await waitFor(() =>
+			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/files", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
 	});
 
 	it("shows a live changed-file count on the Files tab once the shared cache is populated", () => {
@@ -275,8 +287,9 @@ describe("SessionInspector PR section", () => {
 		expect(screen.getByText("Pull request")).toBeInTheDocument();
 		expect(screen.queryByText(/Pull requests \(/)).not.toBeInTheDocument();
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
-		// CI/Merge/Review facts surface per card.
-		expect(prSection("Pull request").getAllByText("Passing").length).toBeGreaterThan(0);
+		expect(prSection("Pull request").getByText("Ready to merge")).toBeInTheDocument();
+		expect(prSection("Pull request").getByText("Checks passing")).toBeInTheDocument();
+		expect(prSection("Pull request").getByText("do the thing")).toHaveClass("text-sm");
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
 	});
 
@@ -287,7 +300,11 @@ describe("SessionInspector PR section", () => {
 
 	it("links each PR to its url", () => {
 		renderWithQuery(<SessionInspector session={session([pr(41, "open"), pr(42, "draft")])} />);
-		const links = prSection("Pull requests (2)").getAllByRole("link", { name: "Open" });
+		const links = [
+			prSection("Pull requests (2)").getByRole("link", { name: "Open PR #41" }),
+			prSection("Pull requests (2)").getByRole("link", { name: "Open PR #42" }),
+		];
+		expect(links[0]).toHaveClass("text-settings-label", "hover:text-settings-label");
 		expect(links.map((a) => a.getAttribute("href"))).toEqual([
 			"https://example.com/pr/41",
 			"https://example.com/pr/42",

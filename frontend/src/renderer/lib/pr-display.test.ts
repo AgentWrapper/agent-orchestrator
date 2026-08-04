@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { WorkspaceSession } from "../types/workspace";
-import { prBrowserUrl, prDiffSummary, prStatusRows, prSummaryParts, sessionPRDisplaySummaries } from "./pr-display";
+import {
+	prBrowserUrl,
+	prCardPresentation,
+	prDiffSummary,
+	prStatusRows,
+	prSummaryParts,
+	sessionPRDisplaySummaries,
+} from "./pr-display";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -66,6 +73,50 @@ describe("prDiffSummary", () => {
 
 	it("omits the diff label when no diff metadata is available", () => {
 		expect(prDiffSummary(summary({ changedFiles: 0, additions: 0, deletions: 0 }))).toBeUndefined();
+	});
+});
+
+describe("prCardPresentation", () => {
+	it("shows a required review once instead of repeating it as a merge blocker", () => {
+		const presentation = prCardPresentation(
+			summary({
+				review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+				mergeability: {
+					state: "blocked",
+					reasons: ["review_required"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary).toMatchObject({
+			key: "review",
+			label: "Review required",
+			detail: "Merge blocked until a required review is submitted.",
+			tone: "review",
+		});
+		expect(presentation.supporting.map((status) => status.label)).toEqual(["Checks passing"]);
+	});
+
+	it("prioritizes failing checks over lower-priority review and merge facts", () => {
+		const presentation = prCardPresentation(
+			summary({
+				ci: {
+					state: "failing",
+					failingChecks: [{ name: "unit", status: "failed", conclusion: "failure", url: "https://ci/unit" }],
+				},
+				review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+				mergeability: {
+					state: "blocked",
+					reasons: ["review_required"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary.label).toBe("Checks failing");
+		expect(presentation.primary.links[0]).toMatchObject({ label: "unit", href: "https://ci/unit" });
+		expect(presentation.supporting).toEqual([]);
 	});
 });
 
