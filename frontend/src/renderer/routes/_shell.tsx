@@ -10,9 +10,9 @@ import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
+import { SessionTopbarHost, SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
-import { SessionTopbarHost, SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
@@ -544,14 +544,14 @@ function ShellLayout() {
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
 
-	// New standalone terminal (Ctrl+Shift+`), also detected in the main process so it
+	// New standalone terminal (⌘T / Ctrl+T), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
 	// tab-strip + button so the two cannot drift apart.
 	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
 
 	// The shell layout is the single consumer of that signal, because it is the
 	// only component mounted on EVERY route. Owning it here is what lets the
-	// button and Ctrl+Shift+` work from the board, a project page, or a session alike
+	// button and the keyboard shortcut work from the board, a project page, or a session alike
 	// — when the session view owned it, both silently did nothing outside a
 	// session, since nothing was listening.
 	//
@@ -622,7 +622,14 @@ function ShellLayout() {
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
-			<div className={cn("flex h-screen min-h-0 flex-col bg-sidebar text-foreground", isWindows && "platform-windows", isLinux && "platform-linux", isFullScreen && "native-fullscreen")}>
+			<div
+				className={cn(
+					"flex h-screen min-h-0 flex-col bg-sidebar text-foreground",
+					isWindows && "platform-windows",
+					isLinux && "platform-linux",
+					isFullScreen && "native-fullscreen",
+				)}
+			>
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
@@ -632,8 +639,8 @@ function ShellLayout() {
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
-			<SidebarProvider
-				className="min-h-0 flex-1 flex-col overflow-x-hidden"
+				<SidebarProvider
+					className="min-h-0 flex-1 flex-col overflow-x-hidden"
 					keyboardShortcut={false}
 					onOpenChange={(open) => {
 						cancelSidebarPeekClose();
@@ -648,56 +655,56 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
+					{routeParams.sessionId ? (
+						<SessionTopbarHost
+							className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden bg-sidebar"
+							data-testid="session-topbar-host"
+						/>
+					) : null}
+					<div className="flex min-h-0 w-full flex-1 overflow-x-hidden" data-testid="shell-content-row">
 					{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
               cluster above a full-height sidebar; Windows hangs the sidebar
               below its custom titlebar. */}
-				{routeParams.sessionId ? (
-					<SessionTopbarHost
-						className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden bg-sidebar"
-						data-testid="session-topbar-host"
+					<Sidebar
+						hideEdgeBorder={isWelcomeBoard}
+						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
+						onPreviewLeave={scheduleSidebarPeekClose}
+						underTopbar={isMac || isWindows || isLinux}
+						topbarOffset={routeParams.sessionId ? "session" : isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
+						onCreateProject={createProject}
+						onInitializeProject={initializeProjectRepository}
+						onRemoveProject={removeProject}
+						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
+						workspaces={workspaces}
 					/>
-				) : null}
-				<div className="flex min-h-0 w-full flex-1 overflow-x-hidden" data-testid="shell-content-row">
-				<Sidebar
-					hideEdgeBorder={isWelcomeBoard}
-					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
-					onPreviewLeave={scheduleSidebarPeekClose}
-					underTopbar={isMac || isWindows || isLinux}
-					topbarOffset={routeParams.sessionId ? "session" : isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
-					onCreateProject={createProject}
-					onInitializeProject={initializeProjectRepository}
-					onRemoveProject={removeProject}
-					workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
-					workspaces={workspaces}
-				/>
-				<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
-					<div className="min-h-0 flex-1 overflow-x-hidden">
+					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
+						<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
-						{hideShellTopbar ? (
-							selfFramedCenterPanel ? (
-								<Outlet />
+							{hideShellTopbar ? (
+								selfFramedCenterPanel ? (
+									<Outlet />
+								) : (
+									// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
+									<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+										<Outlet />
+									</CenterPanelShell>
+								)
+							) : framedAppTopbar ? (
+								<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+									{!routeParams.sessionId ? <ShellTopbar /> : null}
+									<div className="flex min-h-0 flex-1 flex-col">
+										<Outlet />
+									</div>
+								</CenterPanelShell>
 							) : (
-								// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
 								<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
 									<Outlet />
 								</CenterPanelShell>
-							)
-						) : framedAppTopbar ? (
-							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-								{!routeParams.sessionId ? <ShellTopbar /> : null}
-								<div className="flex min-h-0 flex-1 flex-col">
-									<Outlet />
-								</div>
-							</CenterPanelShell>
-						) : (
-							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-								<Outlet />
-							</CenterPanelShell>
-						)}
+							)}
 						</div>
-				</main>
-				</div>
-				<DaemonFailureBanner status={daemonStatus} />
+					</main>
+					</div>
+					<DaemonFailureBanner status={daemonStatus} />
 					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
               the traffic-light band only. The fixed TitlebarNav renders after
               this strip so its no-drag buttons remain clickable. */}
