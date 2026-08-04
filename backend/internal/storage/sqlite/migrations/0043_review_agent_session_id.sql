@@ -1,7 +1,7 @@
 -- Reviewer lifecycle/restore support:
 -- - persist the reviewer's native agent session id so restored reviewer
 --   terminals can resume the original conversation
--- - prevent duplicate review runs for the same PR target SHA once a
+-- - prevent duplicate review runs for the same PR target SHA/harness once a
 --   non-failed/non-cancelled review run exists
 
 -- +goose Up
@@ -10,7 +10,7 @@ ALTER TABLE review ADD COLUMN agent_session_id TEXT NOT NULL DEFAULT '';
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-DROP INDEX idx_review_run_session_pr_sha;
+DROP INDEX idx_review_run_session_pr_sha_harness;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -21,7 +21,7 @@ WHERE target_sha != ''
     SELECT rowid FROM (
       SELECT rowid,
              ROW_NUMBER() OVER (
-               PARTITION BY session_id, pr_url, target_sha
+               PARTITION BY session_id, pr_url, target_sha, harness
                ORDER BY CASE status WHEN 'complete' THEN 0 WHEN 'delivered' THEN 0 WHEN 'running' THEN 1 ELSE 2 END,
                         created_at DESC,
                         rowid DESC
@@ -35,20 +35,20 @@ WHERE target_sha != ''
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE UNIQUE INDEX idx_review_run_session_pr_sha
-    ON review_run (session_id, pr_url, target_sha)
+CREATE UNIQUE INDEX idx_review_run_session_pr_sha_harness
+    ON review_run (session_id, pr_url, target_sha, harness)
     WHERE target_sha != ''
         AND status NOT IN ('failed', 'cancelled');
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP INDEX idx_review_run_session_pr_sha;
+DROP INDEX idx_review_run_session_pr_sha_harness;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE UNIQUE INDEX idx_review_run_session_pr_sha
-    ON review_run (session_id, pr_url, target_sha)
+CREATE UNIQUE INDEX idx_review_run_session_pr_sha_harness
+    ON review_run (session_id, pr_url, target_sha, harness)
     WHERE target_sha != ''
         AND status NOT IN ('failed', 'cancelled')
         AND (status = 'running' OR verdict NOT IN ('', 'changes_requested'));

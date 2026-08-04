@@ -1442,8 +1442,8 @@ describe("SessionInspector summary reviews", () => {
 	});
 
 	it.each([
-		["needs_review", "changes_requested", "Changes requested", "Run review", true],
-		["running", "approved", "Reviewing...", "Stop review", false],
+		["needs_review", "changes_requested", "Not run", "Run review", true],
+		["running", "approved", "Reviewing...", "Stop review", true],
 	] as const)(
 		"keeps the current AO review state clear while the current head is %s",
 		async (status, previousVerdict, runLabel, actionLabel, showPreviousReview) => {
@@ -1740,25 +1740,24 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 	});
 
-	it("re-runs an up-to-date review and opens the reviewer terminal", async () => {
+	it("reuses an up-to-date review without opening the reviewer terminal directly", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "up_to_date")]);
-		const runningReview = { ...approvedReview, id: "run-rerun", status: "running", verdict: "", body: "" };
 		postMock.mockResolvedValue({
-			response: { status: 201 },
+			response: { status: 200 },
 			data: {
 				reviewerHandleId: "reviewer-pane",
-				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
+				reviews: [reviewState(3, "up_to_date")],
 			},
 		});
-			renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-			await openReviewsSection();
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
 
-			await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
+		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
 
-			expect(
-				await screen.findByText("This commit has already been reviewed. Push a new commit to run another review."),
-			).toBeInTheDocument();
-			expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
+		expect(
+			await screen.findByText("This commit has already been reviewed. Push a new commit to run another review."),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 
 	it("cancels the running review instead of allowing rerun", async () => {

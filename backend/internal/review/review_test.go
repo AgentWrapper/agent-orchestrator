@@ -760,7 +760,7 @@ func TestTriggerRetriesTerminalRowWithNoVerdict(t *testing.T) {
 	}
 }
 
-func TestTriggerReplacesReviewerOnNewCommit(t *testing.T) {
+func TestTriggerReusesReviewerOnNewCommit(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
 		runs:   []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
@@ -772,11 +772,11 @@ func TestTriggerReplacesReviewerOnNewCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !launcher.spawned || launcher.notified {
-		t.Fatalf("expected fresh reviewer process: %+v", launcher)
+	if launcher.spawned || !launcher.notified {
+		t.Fatalf("expected live reviewer process to be notified: %+v", launcher)
 	}
-	if !launcher.preflighted {
-		t.Fatal("expected fresh reviewer process to be preflighted")
+	if launcher.preflighted {
+		t.Fatal("expected live reviewer process not to be preflighted")
 	}
 	if !res.Created || res.Run.TargetSHA != "sha1" || len(store.runs) != 2 {
 		t.Fatalf("expected a new run for sha1: res=%+v runs=%+v", res, store.runs)
@@ -801,8 +801,8 @@ func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
 		t.Fatalf("expected older running run to be failed, got %+v", old)
 	}
-	if !launcher.spawned || launcher.notified {
-		t.Fatalf("expected reviewer process replaced for new commit: %+v", launcher)
+	if launcher.spawned || !launcher.notified {
+		t.Fatalf("expected reviewer process to be notified for new commit: %+v", launcher)
 	}
 }
 
