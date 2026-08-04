@@ -212,7 +212,7 @@ function ArchiveHeader({ count, open, onToggle }: { count: number; open: boolean
 		<Pressable
 			accessibilityRole="button"
 			accessibilityState={{ expanded: open }}
-			accessibilityLabel={tr(count === 1 ? "common.archiveCount" : "common.archiveCount_other", { count })}
+			accessibilityLabel={tr("common.archiveCount", { count })}
 			onPress={() => {
 				haptics.tap();
 				onToggle();

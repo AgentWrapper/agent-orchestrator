@@ -135,7 +135,7 @@ export default function PairScreen() {
 	return (
 		<View style={[styles.screen, { paddingTop: insets.top }]}>
 			<View style={styles.topBar}>
-				<Pressable onPress={back} hitSlop={14} accessibilityRole="button" accessibilityLabel="Back">
+				<Pressable onPress={back} hitSlop={14} accessibilityRole="button" accessibilityLabel={tr("common.back")}>
 					<Feather name="chevron-left" size={26} color={t.textPrimary} />
 				</Pressable>
 			</View>

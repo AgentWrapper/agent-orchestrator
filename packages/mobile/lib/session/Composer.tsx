@@ -90,7 +90,7 @@ export function Composer({
 
 			<Pressable
 				accessibilityRole="button"
-				accessibilityLabel="Send"
+				accessibilityLabel={tr("session.composer.send")}
 				disabled={!canSend}
 				onPress={onSend}
 				style={({ pressed }) => [styles.send, !canSend && { opacity: 0.35 }, pressed && { opacity: 0.8 }]}

@@ -80,9 +80,7 @@ export function PRCard({
 			{hasDiff && summary ? (
 				<View style={styles.diff}>
 					<Text style={styles.diffFiles}>
-						{tr(summary.changedFiles === 1 ? "common.files_one" : "common.files_other", {
-							count: summary.changedFiles,
-						})}
+						{tr("common.files", { count: summary.changedFiles })}
 					</Text>
 					<Text style={[styles.diffNum, { color: t.green }]}>+{summary.additions}</Text>
 					<Text style={[styles.diffNum, { color: t.red }]}>−{summary.deletions}</Text>

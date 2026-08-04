@@ -157,7 +157,7 @@ function ConnectionSection({
 			haptics.success();
 			setResult({
 				ok: true,
-				msg: tr(count === 1 ? "common.connectedSessions" : "common.connectedSessions_other", { count }),
+				msg: tr("common.connectedSessions", { count }),
 			});
 		} catch (e) {
 			haptics.error();

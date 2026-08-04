@@ -14,7 +14,7 @@ import { notificationTarget, notificationVisual, relativeTime } from "../lib/not
 import { useApp } from "../lib/store";
 import { Dot, EmptyState } from "../lib/ui";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
-import { useT } from "../lib/i18n";
+import { useLocale, useT } from "../lib/i18n";
 
 const PAGE_SIZE = 50;
 
@@ -161,6 +161,7 @@ export default function NotificationsScreen() {
 function NotificationRow({ item, onPress }: { item: NotificationRecord; onPress: () => void }) {
 	const t = useTheme();
 	const tr = useT();
+	const { locale } = useLocale();
 	const styles = useThemedStyles(makeStyles);
 	const v = notificationVisual(t, item.type, tr);
 	const unread = item.status === "unread";
@@ -175,7 +176,7 @@ function NotificationRow({ item, onPress }: { item: NotificationRecord; onPress:
 						{item.title || v.label}
 					</Text>
 					{unread ? <Dot color={t.blue} size={7} /> : null}
-					<Text style={styles.time}>{relativeTime(item.createdAt, Date.now(), tr)}</Text>
+					<Text style={styles.time}>{relativeTime(item.createdAt, Date.now(), tr, locale)}</Text>
 				</View>
 				{item.body ? (
 					<Text style={styles.body} numberOfLines={2}>

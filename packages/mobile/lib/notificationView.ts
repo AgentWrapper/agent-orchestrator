@@ -1,7 +1,7 @@
 // Presentation rules for the notification history list. Pure — no React Native
 // or Expo imports — so the wording and the routing decision are unit-testable,
 // the same split as pushStatus.ts / push.ts.
-import { enT, type TFunction } from "./i18n";
+import { DEFAULT_LOCALE, enT, type AppLocale, type TFunction } from "./i18n";
 import type { Theme } from "./theme";
 
 export type NotificationVisual = {
@@ -36,17 +36,36 @@ export function notificationTarget(n: { type: string; sessionId?: string }): str
 	return n.type === "needs_input" && n.sessionId ? `/session/${n.sessionId}` : "/prs";
 }
 
-/** Compact "3m" / "4h" / "2d" stamp. Returns "" for an unparseable timestamp. */
-export function relativeTime(iso: string, now: number = Date.now(), tr: TFunction = enT): string {
+const relativeFormatters = new Map<string, Intl.RelativeTimeFormat>();
+
+function relativeFormatter(locale: AppLocale): Intl.RelativeTimeFormat {
+	let fmt = relativeFormatters.get(locale);
+	if (!fmt) {
+		fmt = new Intl.RelativeTimeFormat(locale, { numeric: "always", style: "narrow" });
+		relativeFormatters.set(locale, fmt);
+	}
+	return fmt;
+}
+
+/**
+ * Localized relative stamp ("3m ago" / "3分钟前" / …).
+ * Returns "" for an unparseable timestamp. Sub-minute ages use `time.now`.
+ */
+export function relativeTime(
+	iso: string,
+	now: number = Date.now(),
+	tr: TFunction = enT,
+	locale: AppLocale = DEFAULT_LOCALE,
+): string {
 	const then = Date.parse(iso);
 	if (Number.isNaN(then)) return "";
 	const secs = Math.max(0, Math.round((now - then) / 1000));
 	if (secs < 60) return tr("time.now");
 	const mins = Math.floor(secs / 60);
-	if (mins < 60) return `${mins}m`;
+	if (mins < 60) return relativeFormatter(locale).format(-mins, "minute");
 	const hours = Math.floor(mins / 60);
-	if (hours < 24) return `${hours}h`;
+	if (hours < 24) return relativeFormatter(locale).format(-hours, "hour");
 	const days = Math.floor(hours / 24);
-	if (days < 7) return `${days}d`;
-	return `${Math.floor(days / 7)}w`;
+	if (days < 7) return relativeFormatter(locale).format(-days, "day");
+	return relativeFormatter(locale).format(-Math.floor(days / 7), "week");
 }

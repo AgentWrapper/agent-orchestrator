@@ -840,12 +840,14 @@ export default function TerminalScreen() {
 				setBanner(reroutedNotice(tr));
 			} else {
 				haptics.error();
-				setBanner(`Send failed: ${e instanceof Error ? e.message : String(e)}`);
+				setBanner(
+					tr("session.sendFailed", { error: e instanceof Error ? e.message : String(e) }),
+				);
 			}
 		} finally {
 			setSending(false);
 		}
-	}, [msg, sendTarget, cfg, id, projectId, status]);
+	}, [msg, sendTarget, cfg, id, projectId, status, tr]);
 
 	// Push-to-talk dictation, captured on the PHONE rather than by the harness.
 	//
@@ -888,11 +890,11 @@ export default function TerminalScreen() {
 			return;
 		}
 		if (!hasPreview) {
-			setBanner("No preview yet - waiting for the agent to generate a page or document...");
+			setBanner(tr("session.noPreview"));
 			return;
 		}
 		setBrowserOpen(true);
-	}, [browserOpen, hasPreview]);
+	}, [browserOpen, hasPreview, tr]);
 
 	// The browser toggle lives in the nav bar, beside the session name, to keep the
 	// status row uncluttered. Separate from the headerLeft effect above because
@@ -903,7 +905,7 @@ export default function TerminalScreen() {
 			headerRight: () => (
 				<Pressable
 					hitSlop={12}
-					accessibilityLabel={browserOpen ? "Close preview" : "Open preview"}
+					accessibilityLabel={browserOpen ? tr("session.a11y.closePreview") : tr("session.a11y.openPreview")}
 					onPress={toggleBrowser}
 					style={({ pressed }) => [styles.headerBrowserBtn, pressed && { opacity: 0.6 }]}
 				>
@@ -916,7 +918,7 @@ export default function TerminalScreen() {
 				</Pressable>
 			),
 		});
-	}, [navigation, browserOpen, hasPreview, toggleBrowser, styles, t]);
+	}, [navigation, browserOpen, hasPreview, toggleBrowser, styles, t, tr]);
 
 	const confirmKill = useCallback(() => {
 		const doKill = async () => {
@@ -927,7 +929,9 @@ export default function TerminalScreen() {
 				leave();
 			} catch (e) {
 				haptics.error();
-				setBanner(`Kill failed: ${e instanceof Error ? e.message : String(e)}`);
+				setBanner(
+					tr("session.killFailed", { error: e instanceof Error ? e.message : String(e) }),
+				);
 			}
 		};
 		if (Platform.OS === "web") {
@@ -936,11 +940,11 @@ export default function TerminalScreen() {
 		}
 		// Cautionary buzz as the destructive confirmation dialog is raised.
 		haptics.warning();
-		Alert.alert("Kill session?", `This stops ${id}.`, [
-			{ text: "Cancel", style: "cancel" },
-			{ text: "Kill", style: "destructive", onPress: doKill },
+		Alert.alert(tr("session.killTitle"), tr("session.killMessage", { id }), [
+			{ text: tr("common.cancel"), style: "cancel" },
+			{ text: tr("session.killConfirm"), style: "destructive", onPress: doKill },
 		]);
-	}, [cfg, id, leave]);
+	}, [cfg, id, leave, tr]);
 
 	// Restore a terminated session: the daemon re-attaches its worktree agent and
 	// its PTY comes back, so we re-open the terminal once restore succeeds.
@@ -960,11 +964,13 @@ export default function TerminalScreen() {
 				if (d) muxRef.current?.resize(id, d.cols, d.rows, projectId);
 			}, 1200);
 		} catch (e) {
-			setBanner(`Restore failed: ${e instanceof Error ? e.message : String(e)}`);
+			setBanner(
+				tr("session.restoreFailed", { error: e instanceof Error ? e.message : String(e) }),
+			);
 		} finally {
 			setRestoring(false);
 		}
-	}, [restore, id, projectId]);
+	}, [restore, id, projectId, tr]);
 
 	const xtermOptions = useMemo(
 		() => ({
@@ -1011,15 +1017,15 @@ export default function TerminalScreen() {
 			nestedScrollEnabled: true,
 			// Surface an Android WebView render-process crash instead of a silent black
 			// screen, so the user can tell the terminal died vs. never loaded.
-			onRenderProcessGone: () => setBanner("Terminal renderer crashed - reopen the session (Back, then tap it again)."),
+			onRenderProcessGone: () => setBanner(tr("session.terminalCrashed")),
 		}),
-		[],
+		[tr],
 	);
 
 	if (cfg && !isConfigured(cfg)) {
 		return (
 			<View style={styles.center}>
-				<Text style={styles.bannerText}>No server configured.</Text>
+				<Text style={styles.bannerText}>{tr("session.noServer")}</Text>
 			</View>
 		);
 	}
@@ -1044,7 +1050,7 @@ export default function TerminalScreen() {
 					<View style={styles.zoomGroup}>
 						<Pressable
 							hitSlop={6}
-							accessibilityLabel="Smaller text"
+							accessibilityLabel={tr("session.a11y.smallerText")}
 							onPress={() => zoom(-1)}
 							style={({ pressed }) => [styles.zoomBtn, pressed && { opacity: 0.6 }]}
 						>
@@ -1053,7 +1059,7 @@ export default function TerminalScreen() {
 						<View style={styles.zoomDivider} />
 						<Pressable
 							hitSlop={6}
-							accessibilityLabel="Larger text"
+							accessibilityLabel={tr("session.a11y.largerText")}
 							onPress={() => zoom(1)}
 							style={({ pressed }) => [styles.zoomBtn, pressed && { opacity: 0.6 }]}
 						>
@@ -1069,14 +1075,16 @@ export default function TerminalScreen() {
 						style={({ pressed }) => [styles.restoreBtn, (pressed || restoring) && { opacity: 0.7 }]}
 					>
 						<Feather name="rotate-ccw" size={12} color={t.blue} />
-						<Text style={styles.restoreText}>{restoring ? "Restoring..." : "Restore"}</Text>
+						<Text style={styles.restoreText}>
+							{restoring ? tr("session.restoring") : tr("session.restore")}
+						</Text>
 					</Pressable>
 				) : (
 					// Icon-only: the trash glyph reads as "destroy this session" on its
 					// own, so the label would only cost width. Hence accessibilityLabel.
 					<Pressable
 						hitSlop={8}
-						accessibilityLabel="Kill session"
+						accessibilityLabel={tr("session.a11y.kill")}
 						onPress={confirmKill}
 						style={({ pressed }) => [styles.killBtn, pressed && { opacity: 0.7 }]}
 					>
@@ -1087,7 +1095,7 @@ export default function TerminalScreen() {
 
 			{banner && (
 				<Pressable onPress={() => setBanner(null)} style={styles.banner}>
-					<Text style={styles.bannerText}>{banner} (tap to dismiss)</Text>
+					<Text style={styles.bannerText}>{tr("session.bannerDismiss", { message: banner })}</Text>
 				</Pressable>
 			)}
 
@@ -1111,15 +1119,17 @@ export default function TerminalScreen() {
 						<View style={styles.deadIcon}>
 							<Feather name="power" size={24} color={t.textTertiary} />
 						</View>
-						<Text style={styles.deadTitle}>Session terminated</Text>
-						<Text style={styles.deadMsg}>This session has no live terminal. Restore it to bring the agent back.</Text>
+						<Text style={styles.deadTitle}>{tr("session.terminatedTitle")}</Text>
+						<Text style={styles.deadMsg}>{tr("session.terminatedMessage")}</Text>
 						<Pressable
 							onPress={onRestore}
 							disabled={restoring}
 							style={({ pressed }) => [styles.restoreCta, (pressed || restoring) && { opacity: 0.8 }]}
 						>
 							<Feather name="rotate-ccw" size={16} color={t.onAccent} />
-							<Text style={styles.restoreCtaText}>{restoring ? "Restoring..." : "Restore session"}</Text>
+							<Text style={styles.restoreCtaText}>
+								{restoring ? tr("session.restoring") : tr("session.restoreSession")}
+							</Text>
 						</Pressable>
 					</View>
 				)}
@@ -1149,7 +1159,7 @@ export default function TerminalScreen() {
 							source={{ uri: preview.url, headers: cfg ? authHeaders(cfg) : undefined }}
 							originWhitelist={["*"]}
 							style={styles.browserWeb}
-							onError={() => setBanner("Preview failed to load.")}
+							onError={() => setBanner(tr("session.previewFailed"))}
 						/>
 					</View>
 				)}

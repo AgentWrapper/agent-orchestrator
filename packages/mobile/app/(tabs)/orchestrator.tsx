@@ -220,7 +220,7 @@ function OrchestratorCard({
 
 			<View style={styles.footer}>
 				<Text style={styles.workers}>
-					{tr(workers.length === 1 ? "common.workers_one" : "common.workers_other", { count: workers.length })}
+					{tr("common.workers", { count: workers.length })}
 				</Text>
 				{running ? (
 					<View style={styles.actions}>

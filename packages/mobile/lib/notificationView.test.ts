@@ -55,11 +55,31 @@ describe("relativeTime", () => {
 		expect(relativeTime(ago(5 * SEC), now)).toBe("now");
 	});
 
-	it("steps through minutes, hours, days and weeks", () => {
-		expect(relativeTime(ago(3 * MIN), now)).toBe("3m");
-		expect(relativeTime(ago(4 * HOUR), now)).toBe("4h");
-		expect(relativeTime(ago(2 * DAY), now)).toBe("2d");
-		expect(relativeTime(ago(20 * DAY), now)).toBe("2w");
+	it("steps through minutes, hours, days and weeks via RelativeTimeFormat", () => {
+		// English narrow RTF yields "3m ago" / "4h ago" / … (not bare "3m").
+		expect(relativeTime(ago(3 * MIN), now)).toBe(
+			new Intl.RelativeTimeFormat("en", { numeric: "always", style: "narrow" }).format(-3, "minute"),
+		);
+		expect(relativeTime(ago(4 * HOUR), now)).toBe(
+			new Intl.RelativeTimeFormat("en", { numeric: "always", style: "narrow" }).format(-4, "hour"),
+		);
+		expect(relativeTime(ago(2 * DAY), now)).toBe(
+			new Intl.RelativeTimeFormat("en", { numeric: "always", style: "narrow" }).format(-2, "day"),
+		);
+		expect(relativeTime(ago(20 * DAY), now)).toBe(
+			new Intl.RelativeTimeFormat("en", { numeric: "always", style: "narrow" }).format(-2, "week"),
+		);
+	});
+
+	it("localizes relative stamps for non-English locales", () => {
+		const zh = relativeTime(ago(3 * MIN), now, undefined, "zh-CN");
+		expect(zh).toBe(
+			new Intl.RelativeTimeFormat("zh-CN", { numeric: "always", style: "narrow" }).format(
+				-3,
+				"minute",
+			),
+		);
+		expect(zh).not.toMatch(/^\d+m$/);
 	});
 
 	// Clock skew between phone and daemon can put a timestamp slightly ahead.

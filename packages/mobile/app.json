@@ -22,7 +22,8 @@
 			},
 			"infoPlist": {
 				"NSLocalNetworkUsageDescription": "AO connects to Agent Orchestrator running on your computer over your local network.",
-				"LSApplicationQueriesSchemes": ["github"]
+				"LSApplicationQueriesSchemes": ["github"],
+				"CFBundleLocalizations": ["en", "zh-Hans", "ja", "ko", "es", "fr", "de", "pt-BR"]
 			}
 		},
 		"android": {
@@ -71,7 +72,16 @@
 					"color": "#4d8dff"
 				}
 			],
-			"expo-secure-store"
+			"expo-secure-store",
+			[
+				"expo-localization",
+				{
+					"supportedLocales": {
+						"ios": ["en", "zh-Hans", "ja", "ko", "es", "fr", "de", "pt-BR"],
+						"android": ["en", "zh-CN", "ja", "ko", "es", "fr", "de", "pt-BR"]
+					}
+				}
+			]
 		],
 		"extra": {
 			"router": {},
