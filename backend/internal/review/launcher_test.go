@@ -547,7 +547,7 @@ func TestLauncherPreflightGreptileMissingIsActionable(t *testing.T) {
 	if err == nil || !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("err = %v, want missing-binary sentinel", err)
 	}
-	for _, want := range []string{"Greptile CLI is not installed", "greptile login", "retry"} {
+	for _, want := range []string{"greptile CLI is not installed", "greptile login", "retry"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("err = %q, want %q", err, want)
 		}
