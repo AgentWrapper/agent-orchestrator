@@ -30,6 +30,12 @@ export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: (
 	const languageOptions = [
 		{ value: "en", label: t("settings.language.en") },
 		{ value: "zh-CN", label: t("settings.language.zhCN") },
+		{ value: "ja", label: t("settings.language.ja") },
+		{ value: "ko", label: t("settings.language.ko") },
+		{ value: "es", label: t("settings.language.es") },
+		{ value: "fr", label: t("settings.language.fr") },
+		{ value: "de", label: t("settings.language.de") },
+		{ value: "pt-BR", label: t("settings.language.ptBR") },
 	] satisfies SettingsOption<AppLocale>[];
 
 	return (
