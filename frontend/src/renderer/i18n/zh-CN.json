@@ -450,6 +450,8 @@
 	"settings.project.trackerIntake": "议题接入",
 	"settings.project.workspaceRepos": "工作区仓库",
 	"settings.project.worktrees": "工作树",
+	"settings.project.workflow": "工作流",
+	"settings.project.intake": "任务接收",
 	"settings.reportProblem": "报告问题",
 	"settings.theme": "主题",
 	"settings.theme.dark": "深色",
