@@ -186,6 +186,7 @@
 	--spacing-control-board: var(--size-control-board);
 	--spacing-table-head: var(--size-table-head);
 	--spacing-inspector-tabs: var(--size-inspector-tabs);
+	--spacing-session-topbar: var(--size-session-topbar);
 	--spacing-browser-url: var(--size-browser-url);
 	--spacing-browser-min: var(--size-browser-min);
 	--spacing-dot-sm: var(--size-dot-sm);
@@ -495,10 +496,10 @@
 	--sidebar-chrome-offset: var(--size-traffic-light-clearance);
 }
 [data-topbar-offset="session"] {
-	--sidebar-chrome-offset: var(--size-inspector-tabs);
+	--sidebar-chrome-offset: var(--size-session-topbar);
 }
 .platform-windows [data-topbar-offset="session"] {
-	--sidebar-chrome-offset: calc(var(--size-window-titlebar) + var(--size-inspector-tabs));
+	--sidebar-chrome-offset: calc(var(--size-window-titlebar) + var(--size-session-topbar));
 }
 
 /* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.

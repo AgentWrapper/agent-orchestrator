@@ -655,7 +655,7 @@ function ShellLayout() {
 				>
 					{routeParams.sessionId ? (
 						<SessionTopbarHost
-							className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden bg-sidebar"
+							className="relative z-chrome flex h-session-topbar w-full shrink-0 overflow-hidden bg-sidebar"
 							data-testid="session-topbar-host"
 						/>
 					) : null}

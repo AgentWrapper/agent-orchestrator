@@ -187,13 +187,13 @@ export function CenterPane({
 
 	const terminalTopbar = (
 		<div
-			className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar"
+			className="flex h-session-topbar w-full shrink-0 items-stretch bg-sidebar"
 			style={{
 				paddingLeft: isFullscreen ? 0 : terminalBounds.leftInset,
 				paddingRight: isFullscreen ? 0 : terminalBounds.rightInset,
 			}}
 		>
-			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
+			<div className="session-topbar-surface flex min-w-0 flex-1 py-1" data-testid="session-workspace-topbar">
 				<div
 					className={cn(
 						"flex min-w-0 shrink items-center pr-1.5",
