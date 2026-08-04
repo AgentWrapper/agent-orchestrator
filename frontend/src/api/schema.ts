@@ -2433,6 +2433,7 @@ export interface components {
             created: boolean;
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+            runs: components["schemas"]["ReviewRun"][];
         };
         UnregisterPushDeviceResponse: {
             deleted: boolean;

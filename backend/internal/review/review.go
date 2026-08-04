@@ -144,6 +144,7 @@ type TriggerResult struct {
 	ReviewerHandleID string
 	Created          bool
 	Reviews          []PRReviewState
+	Runs             []domain.ReviewRun
 	CreatedRuns      []domain.ReviewRun
 }
 
@@ -330,7 +331,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 		reviews = replaceReviewLatestRun(reviews, reviewState.PRURL, reviewState.TargetSHA, run)
 	}
 	if len(created) == 0 {
-		return TriggerResult{Run: firstReusableRun(reviews), ReviewerHandleID: reviewRow.ReviewerHandleID, Created: false, Reviews: reviews}, nil
+		return TriggerResult{Run: firstReusableRun(reviews), ReviewerHandleID: reviewRow.ReviewerHandleID, Created: false, Reviews: reviews, Runs: runs}, nil
 	}
 
 	failRuns := func(start int, err error) error {
@@ -379,7 +380,9 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 	for i := range created {
 		created[i].ReviewID = reviewRow.ID
 	}
-	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, CreatedRuns: created}, nil
+	triggerRuns := append([]domain.ReviewRun{}, created...)
+	triggerRuns = append(triggerRuns, runs...)
+	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created}, nil
 }
 
 func reviewerPaneReusable(reviewRow domain.Review, hadRunningReviewer bool) bool {

@@ -1190,6 +1190,7 @@ describe("SessionInspector summary reviews", () => {
 				reviewerHandleId: "reviewer-pane",
 				reviewerHarness: "codex",
 				reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }],
+				runs: [runningReview, approvedReview],
 			},
 		});
 		const view = renderWithQuery(
@@ -1207,6 +1208,7 @@ describe("SessionInspector summary reviews", () => {
 		await waitFor(() =>
 			expect(view.client.getQueryData(["session-reviews", "sess-1"])).toMatchObject({
 				reviewerHandleId: "reviewer-pane",
+				runs: [runningReview, approvedReview],
 			}),
 		);
 		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
@@ -1801,9 +1803,10 @@ describe("SessionInspector summary reviews", () => {
 			data: {
 				reviewerHandleId: "reviewer-pane",
 				reviews: [reviewState(3, "up_to_date")],
+				runs: [approvedReview],
 			},
 		});
-		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		const view = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
 		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
@@ -1811,6 +1814,10 @@ describe("SessionInspector summary reviews", () => {
 		expect(
 			await screen.findByText("This commit has already been reviewed. Push a new commit to run another review."),
 		).toBeInTheDocument();
+		expect(view.client.getQueryData(["session-reviews", "sess-1"])).toMatchObject({
+			reviewerHandleId: "reviewer-pane",
+			runs: [approvedReview],
+		});
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});
 

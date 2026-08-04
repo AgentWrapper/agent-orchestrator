@@ -136,6 +136,7 @@ func TestReviewsTriggerIncludesBatchFields(t *testing.T) {
 		ReviewerHandleID: "review-mer-1",
 		Created:          true,
 		CreatedRuns:      []domain.ReviewRun{run1, run2},
+		Runs:             []domain.ReviewRun{run1, run2},
 		Reviews: []reviewcore.PRReviewState{
 			{PRURL: run1.PRURL, PRNumber: 1, TargetSHA: run1.TargetSHA, Status: reviewcore.ReviewStateRunning, LatestRun: &run1},
 			{PRURL: run2.PRURL, PRNumber: 2, TargetSHA: run2.TargetSHA, Status: reviewcore.ReviewStateRunning, LatestRun: &run2},
@@ -147,7 +148,7 @@ func TestReviewsTriggerIncludesBatchFields(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", status, body)
 	}
-	for _, want := range []string{`"reviews"`, `"running"`, `"run-1"`, `"run-2"`, `"reviewerHandleId":"review-mer-1"`} {
+	for _, want := range []string{`"reviews"`, `"runs"`, `"running"`, `"run-1"`, `"run-2"`, `"reviewerHandleId":"review-mer-1"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}

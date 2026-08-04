@@ -41,6 +41,7 @@ type ReviewRunResponse struct {
 type TriggerReviewResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	Runs             []domain.ReviewRun         `json:"runs"`
 	// Created is true when a new review pass was started (HTTP 201) and false
 	// when an existing run for the same commit was reused (HTTP 200).
 	Created bool `json:"created" description:"True when a new review pass was started; false when an existing run for the same commit was reused."`
@@ -153,9 +154,14 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 	if reviews == nil {
 		reviews = []reviewcore.PRReviewState{}
 	}
+	runs := res.Runs
+	if runs == nil {
+		runs = []domain.ReviewRun{}
+	}
 	envelope.WriteJSON(w, status, TriggerReviewResponse{
 		ReviewerHandleID: res.ReviewerHandleID,
 		Reviews:          reviews,
+		Runs:             runs,
 		Created:          res.Created,
 	})
 }
