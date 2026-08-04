@@ -889,9 +889,7 @@
 	"zone.done": "종료됨",
 	"zone.merge": "병합 준비 완료",
 	"zone.pending": "리뷰 중",
-	"zone.working": "작업 중"
-
-,
+	"zone.working": "작업 중",
 	"settings.developer": "Developer",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",
@@ -914,5 +912,7 @@
 	"settings.dev.activitySpreadLabel": "Activity spread (min)",
 	"settings.dev.activitySpreadAria": "Activity spread in minutes",
 	"settings.dev.resetDefaultsLabel": "Reset defaults",
-	"settings.dev.resetReload": "Reset & Reload"
+	"settings.dev.resetReload": "Reset & Reload",
+	"shell.pinSession": "Pin session",
+	"shell.unpinSession": "Unpin session"
 }

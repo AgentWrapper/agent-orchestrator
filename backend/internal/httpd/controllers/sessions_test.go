@@ -611,12 +611,12 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("session unpin not updated: %+v", svc.sessions["ao-2"])
 	}
 
-	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ghost-1/pin", "")
+	_, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ghost-1/pin", "")
 	if status != http.StatusNotFound {
 		t.Fatalf("pin unknown = %d, want 404", status)
 	}
 
-	body, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ghost-1/pin", "")
+	_, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ghost-1/pin", "")
 	if status != http.StatusNotFound {
 		t.Fatalf("unpin unknown = %d, want 404", status)
 	}
