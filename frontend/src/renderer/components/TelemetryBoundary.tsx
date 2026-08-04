@@ -1,15 +1,21 @@
 import React from "react";
+import { useTranslation } from "react-i18next";
 import { captureRendererException } from "../lib/telemetry";
 
 type Props = {
 	children: React.ReactNode;
 };
 
+type BoundaryProps = Props & {
+	fallbackBody: string;
+	fallbackTitle: string;
+};
+
 type State = {
 	hasError: boolean;
 };
 
-export class TelemetryBoundary extends React.Component<Props, State> {
+class TelemetryErrorBoundary extends React.Component<BoundaryProps, State> {
 	state: State = { hasError: false };
 
 	static getDerivedStateFromError() {
@@ -29,14 +35,21 @@ export class TelemetryBoundary extends React.Component<Props, State> {
 			return (
 				<div className="flex h-screen items-center justify-center bg-background px-6 text-center text-foreground">
 					<div>
-						<h1 className="text-heading-sm font-semibold">The app hit an unexpected error.</h1>
-						<p className="mt-2 text-sm text-muted-foreground">
-							Restart the app or check the daemon logs if this keeps happening.
-						</p>
+						<h1 className="text-heading-sm font-semibold">{this.props.fallbackTitle}</h1>
+						<p className="mt-2 text-sm text-muted-foreground">{this.props.fallbackBody}</p>
 					</div>
 				</div>
 			);
 		}
 		return this.props.children;
 	}
+}
+
+export function TelemetryBoundary({ children }: Props) {
+	const { t } = useTranslation();
+	return (
+		<TelemetryErrorBoundary fallbackBody={t("appError.body")} fallbackTitle={t("appError.title")}>
+			{children}
+		</TelemetryErrorBoundary>
+	);
 }

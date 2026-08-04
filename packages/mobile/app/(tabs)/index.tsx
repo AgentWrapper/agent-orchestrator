@@ -1,53 +1,68 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { attentionOf, type DashboardSession } from "../../lib/api";
+import { classifyConnectionFailure, describeConnectionFailure } from "../../lib/connectionError";
 import { haptics } from "../../lib/haptics";
+import { groupSessions, type BoardSection, type BoardZone } from "../../lib/agentsView";
 import { ProjectSwitcher } from "../../lib/ProjectSwitcher";
 import { SessionCard } from "../../lib/SessionCard";
 import { useApp, useVisibleSessions } from "../../lib/store";
-import { attentionMeta, theme } from "../../lib/theme";
+import type { Theme } from "../../lib/theme";
+import { useTheme, useThemedStyles } from "../../lib/ThemeProvider";
 import { useTabScrollToTop } from "../../lib/useTabScrollToTop";
-import { Button, ConnectionPill, EmptyState, ScreenHeader, SectionHeader } from "../../lib/ui";
+import { Button, EmptyState, HeaderIconButton, ScreenHeader, SectionHeader } from "../../lib/ui";
 
-type Section = { key: string; label: string; color: string; order: number; data: DashboardSession[] };
-
-function groupByAttention(sessions: DashboardSession[]): Section[] {
-	const buckets = new Map<string, DashboardSession[]>();
-	for (const s of sessions) {
-		const key = attentionOf(s);
-		if (!buckets.has(key)) buckets.set(key, []);
-		buckets.get(key)!.push(s);
-	}
-	return [...buckets.entries()]
-		.map(([key, data]) => {
-			const meta = attentionMeta[key] ?? {
-				label: key,
-				color: theme.textTertiary,
-				order: 99,
-			};
-			return { key, label: meta.label, color: meta.color, order: meta.order, data };
-		})
-		.sort((a, b) => a.order - b.order);
-}
+// The archive rides along as one more section so it scrolls with the board
+// rather than being pinned like desktop's strip — a phone has no room for a
+// permanent footer above the tab bar.
+type ListSection = BoardSection | { zone: "archive"; label: string; color: string; data: DashboardSession[] };
 
 export default function FleetScreen() {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const insets = useSafeAreaInsets();
-	const { configured, loading, error, connection, config, refresh } = useApp();
+	const { configured, loading, error, errorStatus, connection, config, refresh, activeProjectId, notificationsUnread } =
+		useApp();
 	const sessions = useVisibleSessions();
 	const [refreshing, setRefreshing] = useState(false);
+	// Collapsed by default, like desktop's archive strip: it is history, and on a
+	// long-running project it is most of the sessions.
+	const [archiveOpen, setArchiveOpen] = useState(false);
 
-	const listRef = useTabScrollToTop<SectionList<DashboardSession>>();
+	const listRef = useTabScrollToTop<SectionList<DashboardSession, ListSection>>();
 
-	const sections = useMemo(() => groupByAttention(sessions), [sessions]);
+	const { sections, archived } = useMemo(() => groupSessions(t, sessions), [t, sessions]);
+
+	// The archive is the last section, rendered only when expanded so a collapsed
+	// strip costs nothing to scroll past.
+	const listSections = useMemo<ListSection[]>(() => {
+		if (archived.length === 0) return sections;
+		return [
+			...sections,
+			{ zone: "archive" as const, label: "Archive", color: t.textFaint, data: archiveOpen ? archived : [] },
+		];
+	}, [sections, archived, archiveOpen, t]);
+
+	// Turn the poll's raw failure ("401 - missing or invalid connection password")
+	// into the same human copy the pairing screens use, keyed on the cause.
+	const failure = useMemo(
+		() =>
+			describeConnectionFailure(classifyConnectionFailure(errorStatus ?? undefined), {
+				host: config?.host ?? "",
+				port: config?.httpPort ?? "",
+				platform: Platform.OS,
+			}),
+		[errorStatus, config?.host, config?.httpPort],
+	);
 
 	const counts = useMemo(() => {
-		let working = 0,
-			needsYou = 0,
-			mergeable = 0;
+		let working = 0;
+		let needsYou = 0;
+		let mergeable = 0;
 		for (const s of sessions) {
 			const a = attentionOf(s);
 			if (a === "working") working++;
@@ -56,6 +71,19 @@ export default function FleetScreen() {
 		}
 		return { working, needsYou, mergeable };
 	}, [sessions]);
+
+	// A stat scrolls to its section. Guarded: scrollToLocation on a section that
+	// isn't rendered warns and does nothing, so a zero-count stat is inert rather
+	// than appearing broken.
+	const jumpTo = useCallback(
+		(zone: BoardZone) => {
+			const index = listSections.findIndex((s) => s.zone === zone);
+			if (index < 0) return;
+			haptics.select();
+			listRef.current?.scrollToLocation({ sectionIndex: index, itemIndex: 0, viewOffset: 8 });
+		},
+		[listSections, listRef],
+	);
 
 	const onRefresh = useCallback(async () => {
 		haptics.tap();
@@ -70,9 +98,14 @@ export default function FleetScreen() {
 				<View style={{ height: insets.top }} />
 				<EmptyState
 					icon="server"
-					title="Connect to AO"
-					message="Point the app at your Agent Orchestrator server to start controlling your fleet."
-					action={<Button title="Configure server" icon="settings" onPress={() => router.push("/settings")} />}
+					// Where a user who skipped onboarding lands. Deliberately not a
+					// restatement of the welcome screen — they've already read that and
+					// chosen to move past it. This says what is missing and offers the
+					// one action that fixes it, going straight to the scanner rather
+					// than sending them to Settings to hunt for a field.
+					title="No desktop paired"
+					message="Scan the pairing code from AO → Settings → Connect Mobile to drive your agents from here."
+					action={<Button title="Scan pairing code" icon="maximize" onPress={() => router.push("/pair")} />}
 				/>
 			</View>
 		);
@@ -81,43 +114,63 @@ export default function FleetScreen() {
 	return (
 		<View style={styles.screen}>
 			<View style={{ height: insets.top }} />
-			<ScreenHeader title="Kanban" subtitle={config?.host} right={<ConnectionPill status={connection} />} />
+			<ScreenHeader
+				title="Agents"
+				subtitle={config?.host}
+				status={connection}
+				right={
+					<HeaderIconButton
+						icon="bell"
+						label="Notifications"
+						badge={notificationsUnread}
+						onPress={() => router.navigate("/notifications")}
+					/>
+				}
+			/>
 
 			<View style={styles.stats}>
-				<Stat n={counts.working} label="working" color={theme.orange} />
-				<Stat n={counts.needsYou} label="need you" color={theme.amber} />
-				<Stat n={counts.mergeable} label="mergeable" color={theme.green} />
+				<Stat n={counts.working} label="working" color={t.orange} onPress={() => jumpTo("working")} />
+				<Stat n={counts.needsYou} label="need you" color={t.amber} onPress={() => jumpTo("action")} />
+				<Stat n={counts.mergeable} label="mergeable" color={t.green} onPress={() => jumpTo("merge")} />
 			</View>
 
 			<ProjectSwitcher />
 
 			{loading && sessions.length === 0 ? (
 				<View style={styles.center}>
-					<ActivityIndicator color={theme.blue} />
+					<ActivityIndicator color={t.blue} />
 				</View>
 			) : (
 				<SectionList
 					ref={listRef}
-					sections={sections}
+					sections={listSections}
 					keyExtractor={(item) => `${item.projectId}:${item.id}`}
 					contentContainerStyle={{ paddingBottom: 120 }}
 					stickySectionHeadersEnabled={false}
-					refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.blue} />}
-					renderSectionHeader={({ section }) => (
-						<SectionHeader
-							label={(section as Section).label}
-							color={(section as Section).color}
-							count={(section as Section).data.length}
-						/>
-					)}
-					renderItem={({ item }) => <SessionCard session={item} showProject />}
+					refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.blue} />}
+					renderSectionHeader={({ section }) =>
+						section.zone === "archive" ? (
+							<ArchiveHeader count={archived.length} open={archiveOpen} onToggle={() => setArchiveOpen((v) => !v)} />
+						) : (
+							<SectionHeader label={section.label} color={section.color} count={section.data.length} />
+						)
+					}
+					renderItem={({ item }) => <SessionCard session={item} showProject={activeProjectId === "all"} />}
 					ListEmptyComponent={
 						error ? (
 							<EmptyState
 								icon="wifi-off"
-								title="Couldn't reach server"
-								message={error}
-								action={<Button title="Retry" icon="refresh-cw" variant="ghost" onPress={onRefresh} />}
+								title={failure.title}
+								message={failure.message}
+								action={
+									<View style={styles.errorActions}>
+										<Button title="Retry" icon="refresh-cw" variant="ghost" onPress={onRefresh} />
+										{/* Re-scanning is the only fix for a rotated password, and the
+										    fastest one for a moved/renamed host — so it belongs beside
+										    Retry rather than three taps away in Settings. */}
+										<Button title="Scan" icon="maximize" onPress={() => router.push("/pair")} />
+									</View>
+								}
 							/>
 						) : (
 							<EmptyState
@@ -139,56 +192,110 @@ export default function FleetScreen() {
 				}}
 				style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]}
 			>
-				<Feather name="plus" size={24} color="#06101f" />
+				<Feather name="plus" size={24} color={t.onAccent} />
 			</Pressable>
 		</View>
 	);
 }
 
-function Stat({ n, label, color }: { n: number; label: string; color: string }) {
+function ArchiveHeader({ count, open, onToggle }: { count: number; open: boolean; onToggle: () => void }) {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
 	return (
-		<View style={styles.stat}>
-			<Text style={[styles.statN, { color: n > 0 ? color : theme.textFaint }]}>{n}</Text>
-			<Text style={styles.statLabel}>{label}</Text>
-		</View>
+		<Pressable
+			accessibilityRole="button"
+			accessibilityState={{ expanded: open }}
+			accessibilityLabel={`Archive, ${count} session${count === 1 ? "" : "s"}`}
+			onPress={() => {
+				haptics.tap();
+				onToggle();
+			}}
+			style={({ pressed }) => [styles.archiveHeader, pressed && { opacity: 0.6 }]}
+		>
+			<Feather name={open ? "chevron-down" : "chevron-right"} size={14} color={t.textTertiary} />
+			<Text style={styles.archiveLabel}>ARCHIVE</Text>
+			<Text style={styles.archiveCount}>{count}</Text>
+		</Pressable>
 	);
 }
 
-const styles = StyleSheet.create({
-	screen: { flex: 1, backgroundColor: theme.bgBase },
-	center: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 60 },
-	stats: {
-		flexDirection: "row",
-		gap: 10,
-		paddingHorizontal: 16,
-		paddingTop: 4,
-		paddingBottom: 14,
-	},
-	stat: {
-		flex: 1,
-		backgroundColor: theme.bgElevated,
-		borderRadius: 12,
-		borderWidth: 1,
-		borderColor: theme.borderSubtle,
-		paddingVertical: 12,
-		paddingHorizontal: 14,
-	},
-	statN: { fontSize: 24, fontWeight: "800", fontFamily: theme.fontMono },
-	statLabel: { color: theme.textTertiary, fontSize: 11, fontWeight: "600", marginTop: 2 },
-	fab: {
-		position: "absolute",
-		right: 18,
-		bottom: 24,
-		width: 56,
-		height: 56,
-		borderRadius: 28,
-		backgroundColor: theme.blue,
-		alignItems: "center",
-		justifyContent: "center",
-		shadowColor: "#000",
-		shadowOpacity: 0.4,
-		shadowRadius: 12,
-		shadowOffset: { width: 0, height: 4 },
-		elevation: 8,
-	},
-});
+function Stat({
+	n,
+	label,
+	color,
+	onPress,
+}: {
+	n: number;
+	label: string;
+	color: string;
+	onPress: () => void;
+}) {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
+	// Zero means the section isn't on the board, so there is nowhere to jump.
+	const active = n > 0;
+	return (
+		<Pressable
+			accessibilityRole="button"
+			accessibilityLabel={`${n} ${label}${active ? ". Scroll to section." : ""}`}
+			disabled={!active}
+			onPress={onPress}
+			style={({ pressed }) => [styles.stat, pressed && active && styles.statPressed]}
+		>
+			<Text style={[styles.statN, { color: active ? color : t.textFaint }]}>{n}</Text>
+			<Text style={styles.statLabel}>{label}</Text>
+		</Pressable>
+	);
+}
+
+const makeStyles = (t: Theme) =>
+	StyleSheet.create({
+		screen: { flex: 1, backgroundColor: t.bgBase },
+		center: { flex: 1, alignItems: "center", justifyContent: "center", paddingVertical: 60 },
+		errorActions: { flexDirection: "row", gap: 10, alignItems: "center" },
+		stats: {
+			flexDirection: "row",
+			gap: 10,
+			paddingHorizontal: 16,
+			paddingTop: 4,
+			paddingBottom: 10,
+		},
+		stat: {
+			flex: 1,
+			backgroundColor: t.bgElevated,
+			borderRadius: 12,
+			borderWidth: 1,
+			borderColor: t.borderSubtle,
+			paddingVertical: 12,
+			paddingHorizontal: 14,
+		},
+		statPressed: { backgroundColor: t.bgElevatedHover, borderColor: t.borderDefault },
+		statN: { fontSize: 24, fontWeight: "800", fontFamily: t.fontMono },
+		statLabel: { color: t.textTertiary, fontSize: 11, fontWeight: "600", marginTop: 2 },
+		archiveHeader: {
+			flexDirection: "row",
+			alignItems: "center",
+			gap: 8,
+			paddingHorizontal: 16,
+			paddingTop: 22,
+			paddingBottom: 10,
+		},
+		archiveLabel: { color: t.textTertiary, fontSize: 11, letterSpacing: 1.2, fontWeight: "700", flex: 1 },
+		archiveCount: { color: t.textFaint, fontSize: 12, fontWeight: "700", fontFamily: t.fontMono },
+		fab: {
+			position: "absolute",
+			right: 18,
+			bottom: 24,
+			width: 56,
+			height: 56,
+			borderRadius: 28,
+			backgroundColor: t.blue,
+			alignItems: "center",
+			justifyContent: "center",
+			shadowColor: "#000",
+			shadowOpacity: 0.4,
+			shadowRadius: 12,
+			shadowOffset: { width: 0, height: 4 },
+			elevation: 8,
+		},
+	});

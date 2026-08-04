@@ -20,6 +20,7 @@
 //    fits don't spam the PTY.
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Terminal } from "@xterm/xterm";
 import { CanvasAddon } from "@xterm/addon-canvas";
 import { FitAddon } from "@xterm/addon-fit";
@@ -235,6 +236,7 @@ function forceSelectionMode(term: Terminal): void {
 }
 
 export function XtermTerminal(props: XtermTerminalProps) {
+	const { t } = useTranslation();
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
@@ -815,18 +817,18 @@ export function XtermTerminal(props: XtermTerminalProps) {
 									if (link) void aoBridge.app.openExternal(link);
 								}}
 							>
-								Open in system browser
+								{t("terminal.openSystemBrowser")}
 							</DropdownMenuItem>
 							<DropdownMenuSeparator />
 						</>
 					) : null}
 					<DropdownMenuItem disabled={!contextMenu.canCopy} onSelect={() => runContextMenuAction("copy")}>
-						Copy
+						{t("titlebar.copy")}
 					</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => runContextMenuAction("paste")}>Paste</DropdownMenuItem>
-					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>Select All</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => runContextMenuAction("paste")}>{t("titlebar.paste")}</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => runContextMenuAction("selectAll")}>{t("titlebar.selectAll")}</DropdownMenuItem>
 					<DropdownMenuSeparator />
-					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>Clear</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => runContextMenuAction("clear")}>{t("terminal.clear")}</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</>

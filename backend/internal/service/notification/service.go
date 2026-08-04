@@ -42,7 +42,11 @@ func (m *Manager) List(ctx context.Context, filter ListFilter) (ListPage, error)
 		filter.Status = ListUnread
 	}
 	if !filter.Status.Valid() {
-		return ListPage{}, apierr.Invalid("INVALID_NOTIFICATION_STATUS", "Notification status must be unread or all", nil)
+		return ListPage{}, apierr.Invalid(
+			"INVALID_NOTIFICATION_STATUS",
+			"Notification status must be unread, unresolved, or all",
+			nil,
+		)
 	}
 	limit := normalizeLimit(filter.Limit)
 	beforeCreatedAt, beforeID, err := decodeCursor(filter.Cursor)
@@ -57,6 +61,10 @@ func (m *Manager) List(ctx context.Context, filter ListFilter) (ListPage, error)
 	if err != nil {
 		return ListPage{}, err
 	}
+	unresolvedCount, err := m.store.CountUnresolvedNotifications(ctx)
+	if err != nil {
+		return ListPage{}, err
+	}
 	hasMore := len(rows) > limit
 	if hasMore {
 		rows = rows[:limit]
@@ -65,7 +73,7 @@ func (m *Manager) List(ctx context.Context, filter ListFilter) (ListPage, error)
 	for _, row := range rows {
 		out = append(out, notificationFromRecord(row))
 	}
-	page := ListPage{Notifications: out, UnreadCount: int(unreadCount)}
+	page := ListPage{Notifications: out, UnreadCount: int(unreadCount), UnresolvedCount: int(unresolvedCount)}
 	if hasMore {
 		page.NextCursor = encodeCursor(rows[len(rows)-1])
 	}
@@ -90,12 +98,19 @@ func (m *Manager) MarkRead(ctx context.Context, id string) (Notification, bool, 
 	return notificationFromRecord(row), true, nil
 }
 
-// MarkAllRead marks all unread notifications read and returns the affected row count.
-func (m *Manager) MarkAllRead(ctx context.Context) (int64, error) {
+// MarkAllRead acknowledges notifications as seen. With ids it acknowledges
+// exactly those rows — the ones a client actually rendered — which keeps
+// anything past the client's last loaded page unread and therefore still
+// reachable. With no ids it falls back to acknowledging every unread row, for
+// clients that do not paginate.
+func (m *Manager) MarkAllRead(ctx context.Context, ids []string) (int64, error) {
 	if m == nil || m.store == nil {
 		return 0, errors.New("notification: store is required")
 	}
-	return m.store.MarkAllNotificationsRead(ctx)
+	if len(ids) == 0 {
+		return m.store.MarkAllNotificationsRead(ctx)
+	}
+	return m.store.MarkNotificationsRead(ctx, ids)
 }
 
 func normalizeLimit(limit int) int {

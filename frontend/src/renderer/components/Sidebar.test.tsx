@@ -3,12 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-	Sidebar,
-	SIDEBAR_COLLAPSE_THRESHOLD,
-	SIDEBAR_DEFAULT_WIDTH,
-	SIDEBAR_MIN_WIDTH,
-} from "./Sidebar";
+import { Sidebar, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MIN_WIDTH } from "./Sidebar";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { agentsQueryKey } from "../hooks/useAgentsQuery";
 import { useUiStore } from "../stores/ui-store";
@@ -17,7 +12,7 @@ const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateS
 	() => ({
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
-		mockParams: { projectId: undefined as string | undefined },
+		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
 		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
@@ -37,7 +32,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 	return {
 		...actual,
 		useNavigate: () => navigateMock,
-		useParams: () => ({}),
+		useParams: () => mockParams,
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
@@ -228,6 +223,7 @@ beforeEach(() => {
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
+	mockParams.sessionId = undefined;
 });
 
 afterEach(() => {
@@ -252,8 +248,8 @@ describe("Sidebar", () => {
 	it("keeps only the collapsed Settings control keyboard-accessible while collapsed", async () => {
 		renderSidebar();
 
-		fireEvent.pointerDown(screen.getByTestId("resize-handle"), { clientX: SIDEBAR_DEFAULT_WIDTH });
-		fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
+		// Collapse via the explicit shortcut — dragging can no longer collapse.
+		fireEvent.keyDown(window, { key: "b", metaKey: true });
 
 		await waitFor(() => {
 			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
@@ -403,6 +399,30 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
+	});
+
+	it("emphasizes the dashboard icon on the project board", () => {
+		mockParams.projectId = workspace.id;
+		renderSidebar();
+
+		const dashboard = screen.getByLabelText("Open Project One dashboard");
+		expect(dashboard).toHaveAttribute("aria-current", "page");
+		expect(dashboard).toHaveClass("text-foreground");
+		expect(screen.getByLabelText("Spawn Project One orchestrator")).not.toHaveAttribute("aria-current");
+	});
+
+	it("keeps the project pill active while its orchestrator session is open", () => {
+		const orchestrator = { ...session, id: "orch-1", kind: "orchestrator" as const, title: "orchestrator" };
+		mockParams.projectId = workspace.id;
+		mockParams.sessionId = orchestrator.id;
+
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [orchestrator] }] });
+
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("data-active", "true");
+		const orchestratorButton = screen.getByLabelText("Open Project One orchestrator");
+		expect(orchestratorButton).toHaveAttribute("aria-current", "page");
+		expect(orchestratorButton).toHaveClass("text-foreground");
+		expect(screen.getByLabelText("Open Project One dashboard")).not.toHaveAttribute("aria-current");
 	});
 
 	it("toggles project sessions from the folder icon without selecting the project first", async () => {
@@ -980,7 +1000,7 @@ describe("Sidebar", () => {
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
 	});
 
-	it("snaps to the real collapsed rail when dragged past the resize collapse threshold", async () => {
+	it("clamps a drag at the minimum width instead of collapsing", async () => {
 		renderSidebar();
 
 		const resizeHandle = screen.getByTestId("resize-handle");
@@ -988,16 +1008,25 @@ describe("Sidebar", () => {
 
 		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
 
+		// Drag far past the minimum: the width stops at the floor and the sidebar
+		// stays expanded — only the explicit toggle collapses it.
 		fireEvent.pointerDown(resizeHandle, { clientX: SIDEBAR_DEFAULT_WIDTH });
-		fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
+		fireEvent.pointerMove(window, { clientX: 0 });
+		fireEvent.pointerUp(window);
 
+		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
+		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_MIN_WIDTH));
+		expect(document.body).not.toHaveClass("is-resizing-x");
+	});
+
+	it("expands from the collapsed rail by dragging and persists the width", async () => {
+		renderSidebar();
+
+		fireEvent.keyDown(window, { key: "b", metaKey: true });
 		await waitFor(() => {
 			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
 		});
-		expect(document.cookie).toContain("sidebar_state=false");
-		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_DEFAULT_WIDTH));
-		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
-		expect(document.body).not.toHaveClass("is-resizing-x");
 
 		const expandRail = document.querySelector('[data-sidebar="rail"]');
 		if (!(expandRail instanceof HTMLElement)) throw new Error("Sidebar rail not found");
@@ -1012,38 +1041,6 @@ describe("Sidebar", () => {
 		});
 		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${expandedWidth}px`);
 		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(expandedWidth));
-	});
-
-	it("discards a queued narrow resize frame when collapsing", async () => {
-		let queuedFrame: FrameRequestCallback | undefined;
-		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-			queuedFrame = callback;
-			return 1;
-		});
-		const cancelAnimationFrameSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
-
-		try {
-			renderSidebar();
-
-			const resizeHandle = screen.getByTestId("resize-handle");
-
-			fireEvent.pointerDown(resizeHandle, { clientX: SIDEBAR_DEFAULT_WIDTH });
-			fireEvent.pointerMove(window, { clientX: SIDEBAR_MIN_WIDTH + 5 });
-			fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
-
-			await waitFor(() => {
-				expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
-			});
-			expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(1);
-			expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_DEFAULT_WIDTH));
-			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
-
-			queuedFrame?.(performance.now());
-			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
-		} finally {
-			requestAnimationFrameSpy.mockRestore();
-			cancelAnimationFrameSpy.mockRestore();
-		}
 	});
 
 	it("animates active sidebar dots using their PR context color", () => {

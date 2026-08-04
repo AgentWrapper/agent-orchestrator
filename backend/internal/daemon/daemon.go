@@ -53,6 +53,7 @@ func Run() error {
 	if err := stabilizeWorkingDirectory(cfg.DataDir); err != nil {
 		return err
 	}
+	ignoreBrokenPipeSignal()
 
 	log := newLogger()
 	browserRuntimeToken := strings.TrimSpace(os.Getenv(browserruntime.RuntimeTokenEnv))
@@ -141,6 +142,13 @@ func Run() error {
 	notificationHub := notify.NewHub()
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
+	// Resolution transitions that happened while the daemon was down never
+	// reached lifecycle, so re-check open notifications against the durable
+	// session/PR facts before serving. Best-effort: a failure here only leaves
+	// stale rows in the unresolved list, never blocks startup.
+	if err := notificationWriter.Reconcile(ctx); err != nil {
+		log.Warn("notification resolution reconcile failed", "err", err)
+	}
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->

@@ -156,26 +156,10 @@ function ensureOverlay(): ShadowRoot {
 				animation: prompt-in 140ms ease-out;
 			}
 			.prompt__header {
-				display: flex;
-				align-items: center;
-				justify-content: space-between;
-				gap: 10px;
 				margin-bottom: 9px;
 				color: rgba(244, 245, 247, 0.82);
 				font-size: 12px;
 				font-weight: 650;
-			}
-			.prompt__target {
-				min-width: 0;
-				max-width: 170px;
-				overflow: hidden;
-				border-radius: 999px;
-				background: rgba(77, 141, 255, 0.14);
-				color: #9fc0ff;
-				padding: 3px 7px;
-				font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-				text-overflow: ellipsis;
-				white-space: nowrap;
 			}
 			.prompt textarea {
 				width: 100%;
@@ -292,10 +276,7 @@ function renderPrompt(element: Element, context: BrowserAnnotationContext): void
 	const { left, top } = promptPosition(rect);
 	mount.innerHTML = `
 		<form class="prompt" style="left: ${left}px; top: ${top}px;">
-			<div class="prompt__header">
-				<span>Annotate selection</span>
-				<span class="prompt__target">${escapeHTML(promptTargetLabel(context))}</span>
-			</div>
+			<div class="prompt__header">Annotate selection</div>
 			<textarea aria-label="Annotation request" placeholder="Describe what to change"></textarea>
 			<div class="actions">
 				<button type="button" data-action="cancel">Cancel</button>
@@ -345,21 +326,4 @@ function sendCancel(reason: BrowserAnnotationCancelReason): void {
 
 function isOverlayEvent(event: Event): boolean {
 	return Boolean(host && event.composedPath().includes(host));
-}
-
-function promptTargetLabel(context: BrowserAnnotationContext): string {
-	if (context.ariaLabel) return context.ariaLabel;
-	if (context.visibleText) return context.visibleText;
-	if (context.id) return `${context.tag}#${context.id}`;
-	if (context.classes.length > 0) return `${context.tag}.${context.classes[0]}`;
-	return context.tag;
-}
-
-function escapeHTML(value: string): string {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&#39;");
 }
