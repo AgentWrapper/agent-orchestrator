@@ -16,9 +16,9 @@ export type TrayLifecycle = {
 	openSession(target: TrayOpenSessionTarget): void;
 	handleSetAttentionState(event: IpcMainEvent, state: TrayAttentionState): void;
 	handleRendererReady(event: IpcMainEvent): void;
+	clearPendingTarget(): void;
 	clear(): void;
 	dispose(): void;
-	getPendingTarget(): TrayOpenSessionTarget | null;
 };
 
 export function createTrayLifecycle(deps: TrayLifecycleDeps): TrayLifecycle {
@@ -27,6 +27,10 @@ export function createTrayLifecycle(deps: TrayLifecycleDeps): TrayLifecycle {
 	function isFromMainWindow(event: IpcMainEvent): boolean {
 		const window = deps.getWindow();
 		return window !== null && event.sender === window.webContents;
+	}
+
+	function clearPendingTarget(): void {
+		pendingTarget = null;
 	}
 
 	return {
@@ -51,14 +55,12 @@ export function createTrayLifecycle(deps: TrayLifecycleDeps): TrayLifecycle {
 			if (target) deps.getWindow()?.webContents.send(TRAY_OPEN_SESSION_CHANNEL, target);
 		},
 		clear() {
-			pendingTarget = null;
+			clearPendingTarget();
 			deps.getTrayController()?.clear();
 		},
+		clearPendingTarget,
 		dispose() {
 			deps.getTrayController()?.dispose();
-		},
-		getPendingTarget() {
-			return pendingTarget;
 		},
 	};
 }

@@ -59,7 +59,6 @@ describe("createTrayLifecycle openSession", () => {
 		lifecycle.openSession({ projectId: "p1", sessionId: "s1" });
 		expect(focusWindow).toHaveBeenCalledTimes(1);
 		expect(window.webContents.send).toHaveBeenCalledWith(TRAY_OPEN_SESSION_CHANNEL, { projectId: "p1", sessionId: "s1" });
-		expect(lifecycle.getPendingTarget()).toBeNull();
 	});
 
 	it("queues the target instead of sending while the window is still loading", () => {
@@ -67,13 +66,18 @@ describe("createTrayLifecycle openSession", () => {
 		const { lifecycle } = setup({ getWindow: () => window as never });
 		lifecycle.openSession({ projectId: "p1", sessionId: "s1" });
 		expect(window.webContents.send).not.toHaveBeenCalled();
-		expect(lifecycle.getPendingTarget()).toEqual({ projectId: "p1", sessionId: "s1" });
+		lifecycle.handleRendererReady(eventFrom(window.webContents));
+		expect(window.webContents.send).toHaveBeenCalledWith(TRAY_OPEN_SESSION_CHANNEL, { projectId: "p1", sessionId: "s1" });
 	});
 
 	it("queues the target when there is no window at all", () => {
-		const { lifecycle } = setup({ getWindow: () => null });
+		const window = fakeWindow(true);
+		let currentWindow: ReturnType<typeof fakeWindow> | null = null;
+		const { lifecycle } = setup({ getWindow: () => currentWindow as never });
 		lifecycle.openSession({ projectId: "p1", sessionId: "s1" });
-		expect(lifecycle.getPendingTarget()).toEqual({ projectId: "p1", sessionId: "s1" });
+		currentWindow = window;
+		lifecycle.handleRendererReady(eventFrom(window.webContents));
+		expect(window.webContents.send).toHaveBeenCalledWith(TRAY_OPEN_SESSION_CHANNEL, { projectId: "p1", sessionId: "s1" });
 	});
 });
 
@@ -102,7 +106,8 @@ describe("createTrayLifecycle sender validation", () => {
 		lifecycle.openSession({ projectId: "p1", sessionId: "s1" });
 		lifecycle.handleRendererReady(eventFrom({ other: true }));
 		expect(loadingWindow.webContents.send).not.toHaveBeenCalled();
-		expect(lifecycle.getPendingTarget()).toEqual({ projectId: "p1", sessionId: "s1" });
+		lifecycle.handleRendererReady(eventFrom(loadingWindow.webContents));
+		expect(loadingWindow.webContents.send).toHaveBeenCalledWith(TRAY_OPEN_SESSION_CHANNEL, { projectId: "p1", sessionId: "s1" });
 	});
 });
 
@@ -111,14 +116,12 @@ describe("createTrayLifecycle pending-target flush", () => {
 		const loadingWindow = fakeWindow(true);
 		const { lifecycle } = setup({ getWindow: () => loadingWindow as never });
 		lifecycle.openSession({ projectId: "p1", sessionId: "s1" });
-		expect(lifecycle.getPendingTarget()).not.toBeNull();
 
 		lifecycle.handleRendererReady(eventFrom(loadingWindow.webContents));
 		expect(loadingWindow.webContents.send).toHaveBeenCalledWith(TRAY_OPEN_SESSION_CHANNEL, {
 			projectId: "p1",
 			sessionId: "s1",
 		});
-		expect(lifecycle.getPendingTarget()).toBeNull();
 	});
 
 	it("does nothing on renderer-ready when there is no queued target", () => {
@@ -134,11 +137,23 @@ describe("createTrayLifecycle clear and dispose", () => {
 		const tray = fakeTrayController();
 		const { lifecycle } = setup({ getWindow: () => loadingWindow as never, getTrayController: () => tray });
 		lifecycle.openSession({ projectId: "p1", sessionId: "s1" });
-		expect(lifecycle.getPendingTarget()).not.toBeNull();
 
 		lifecycle.clear();
-		expect(lifecycle.getPendingTarget()).toBeNull();
+		lifecycle.handleRendererReady(eventFrom(loadingWindow.webContents));
+		expect(loadingWindow.webContents.send).not.toHaveBeenCalled();
 		expect(tray.clear).toHaveBeenCalledTimes(1);
+	});
+
+	it("clears a pending target without clearing the tray state", () => {
+		const loadingWindow = fakeWindow(true);
+		const tray = fakeTrayController();
+		const { lifecycle } = setup({ getWindow: () => loadingWindow as never, getTrayController: () => tray });
+		lifecycle.openSession({ projectId: "p1", sessionId: "s1" });
+
+		lifecycle.clearPendingTarget();
+		lifecycle.handleRendererReady(eventFrom(loadingWindow.webContents));
+		expect(loadingWindow.webContents.send).not.toHaveBeenCalled();
+		expect(tray.clear).not.toHaveBeenCalled();
 	});
 
 	it("clear is a no-op on the controller when none exists", () => {

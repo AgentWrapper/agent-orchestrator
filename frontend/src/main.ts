@@ -393,7 +393,7 @@ function createWindow(): void {
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
-		trayLifecycle.clear();
+		trayLifecycle.clearPendingTarget();
 	});
 }
 

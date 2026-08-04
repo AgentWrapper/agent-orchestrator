@@ -3,9 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ createTask: vi.fn() }));
-
-vi.mock("../hooks/useCreateTask", () => ({ useCreateTask: () => h.createTask }));
+const h = vi.hoisted(() => ({ post: vi.fn(), capture: vi.fn() }));
 
 vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
@@ -18,9 +16,14 @@ vi.mock("./CreateProjectAgentSheet", () => ({
 }));
 
 vi.mock("../lib/api-client", () => ({
-	apiClient: { GET: vi.fn(async () => ({ data: { status: "ok", project: { config: {} } } })) },
+	apiClient: {
+		GET: vi.fn(async () => ({ data: { status: "ok", project: { config: {} } } })),
+		POST: h.post,
+	},
 	apiErrorMessage: (_e: unknown, fallback = "err") => fallback,
 }));
+
+vi.mock("../lib/telemetry", () => ({ captureRendererEvent: h.capture }));
 
 import { TaskComposer } from "./TaskComposer";
 
@@ -33,15 +36,16 @@ const title = () => screen.getByPlaceholderText(/Fix WebGL/i);
 const brief = () => screen.getByPlaceholderText(/Describe the change/i);
 
 afterEach(() => {
-	h.createTask.mockReset();
+	h.post.mockReset();
+	h.capture.mockReset();
 });
 
 describe("TaskComposer", () => {
 	it("emits busy state around an in-flight create and reports the new session", async () => {
 		const onSubmittingChange = vi.fn();
 		const onCreated = vi.fn();
-		let resolveCreate!: (id: string) => void;
-		h.createTask.mockReturnValueOnce(new Promise<string>((resolve) => (resolveCreate = resolve)));
+		let resolveCreate!: (value: { data: { session: { id: string } } }) => void;
+		h.post.mockReturnValueOnce(new Promise((resolve) => (resolveCreate = resolve)));
 
 		render(
 			<Wrap>
@@ -54,18 +58,21 @@ describe("TaskComposer", () => {
 		fireEvent.click(screen.getByText("Start task"));
 
 		await waitFor(() => expect(onSubmittingChange).toHaveBeenLastCalledWith(true));
-		expect(h.createTask).toHaveBeenCalledWith(
-			expect.objectContaining({ projectId: "proj-1", title: "Ship it", prompt: "Do the thing" }),
+		expect(h.post).toHaveBeenCalledWith(
+			"/api/v1/sessions",
+			expect.objectContaining({
+				body: expect.objectContaining({ projectId: "proj-1", issueId: "Ship it", prompt: "Do the thing" }),
+			}),
 		);
 
-		await act(async () => resolveCreate("sess-1"));
+		await act(async () => resolveCreate({ data: { session: { id: "sess-1" } } }));
 		await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sess-1"));
 		await waitFor(() => expect(onSubmittingChange).toHaveBeenLastCalledWith(false));
 	});
 
 	it("clears busy state when a create rejects", async () => {
 		const onSubmittingChange = vi.fn();
-		h.createTask.mockRejectedValueOnce(new Error("nope"));
+		h.post.mockRejectedValueOnce(new Error("nope"));
 
 		render(
 			<Wrap>

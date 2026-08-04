@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImagePlus, Loader2, X } from "lucide-react";
-import { type ClipboardEvent, type DragEvent, type FormEvent, useEffect, useId, useRef, useState } from "react";
+import {
+	type ClipboardEvent,
+	type DragEvent,
+	type FormEvent,
+	useCallback,
+	useEffect,
+	useId,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -8,12 +17,22 @@ import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
-import { useCreateTask, type CreateTaskInput } from "../hooks/useCreateTask";
-import { useImageAttachments } from "../hooks/useImageAttachments";
+import { useImageAttachments, type ImageAttachmentPayload } from "../hooks/useImageAttachments";
 import { cn } from "../lib/utils";
 
 type Project = components["schemas"]["Project"];
+type SpawnHarness = components["schemas"]["SpawnSessionRequest"]["harness"];
+
+type CreateTaskInput = {
+	projectId: string;
+	title: string;
+	prompt: string;
+	branch?: string;
+	harness?: SpawnHarness;
+	attachments?: ImageAttachmentPayload[];
+};
 
 export type TaskComposerProps = {
 	projectId?: string;
@@ -34,7 +53,6 @@ export function TaskComposer({
 }: TaskComposerProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const createTask = useCreateTask();
 	const titleId = useId();
 	const promptId = useId();
 	const branchId = useId();
@@ -49,6 +67,33 @@ export function TaskComposer({
 	const [isDragging, setIsDragging] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const { attachments, error: attachmentError, addFiles, remove: removeAttachment, toPayload } = useImageAttachments();
+	const createTask = useCallback(
+		async (input: CreateTaskInput): Promise<string> => {
+			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
+			try {
+				const { data, error } = await apiClient.POST("/api/v1/sessions", {
+					body: {
+						projectId: input.projectId,
+						kind: "worker",
+						harness: input.harness,
+						issueId: input.title,
+						prompt: input.prompt,
+						...(input.branch ? { branch: input.branch } : {}),
+						attachments: input.attachments && input.attachments.length > 0 ? input.attachments : undefined,
+					},
+				});
+				if (error) throw new Error(apiErrorMessage(error, t("newTask.unableToStart")));
+				if (!data?.session?.id) throw new Error(t("newTask.noSession"));
+				void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: input.projectId });
+				return data.session.id;
+			} catch (err) {
+				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: input.projectId });
+				void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
+				throw err instanceof Error ? err : new Error(t("newTask.unableToStart"));
+			}
+		},
+		[queryClient, t],
+	);
 
 	const projectQuery = useQuery({
 		queryKey: ["project", projectId],

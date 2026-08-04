@@ -5,6 +5,7 @@ import {
 	filterCommands,
 	groupCommands,
 	displayGroups,
+	findSession,
 	visibleForQuery,
 	MAX_ATTENTION_SEARCH_RESULTS,
 	MAX_ITEMS_PER_GROUP,
@@ -60,6 +61,16 @@ function workspaces(): WorkspaceSummary[] {
 }
 
 const byId = (items: CommandItem[]) => new Map(items.map((item) => [item.id, item]));
+
+describe("findSession", () => {
+	it("returns the workspace and session together", () => {
+		const result = findSession(workspaces(), "w-pr");
+
+		expect(result?.workspace.id).toBe("proj-1");
+		expect(result?.session.id).toBe("w-pr");
+		expect(findSession(workspaces(), "missing")).toBeUndefined();
+	});
+});
 
 describe("buildCommands grouping", () => {
 	it("uses the translator supplied by the reactive caller", () => {

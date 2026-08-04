@@ -12,6 +12,7 @@ import {
 	buildSessionActions,
 	displayGroups,
 	filterCommands,
+	findSession,
 	type CommandItem as CommandItemModel,
 	type NavigateTarget,
 } from "../lib/command-palette";
@@ -21,7 +22,6 @@ import { isMacPlatform } from "../lib/platform";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { useShell } from "../lib/shell-context";
 import { findProjectOrchestrator, hasConfiguredOrchestratorAgent } from "../types/workspace";
-import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { Button } from "./ui/button";
@@ -39,17 +39,6 @@ function terminalHasFocus(): boolean {
 	if (typeof document === "undefined") return false;
 	const active = document.activeElement;
 	return active instanceof Element && active.closest(".xterm") !== null;
-}
-
-function findSession(
-	workspaces: WorkspaceSummary[],
-	sessionId: string,
-): { workspace: WorkspaceSummary; session: WorkspaceSession } | null {
-	for (const workspace of workspaces) {
-		const session = workspace.sessions.find((s) => s.id === sessionId);
-		if (session) return { workspace, session };
-	}
-	return null;
 }
 
 export function CommandPalette() {
@@ -81,9 +70,7 @@ export function CommandPalette() {
 	const viewRef = useRef(view);
 	viewRef.current = view;
 
-	const currentSession = params.sessionId
-		? workspaces.flatMap((w) => w.sessions).find((s) => s.id === params.sessionId)
-		: undefined;
+	const currentSession = params.sessionId ? findSession(workspaces, params.sessionId)?.session : undefined;
 	const currentProjectId = currentSession?.workspaceId ?? params.projectId;
 
 	const rootItems = useMemo(
@@ -97,7 +84,7 @@ export function CommandPalette() {
 		[workspaces, currentProjectId, params.sessionId, restartingProjectIds, t, i18n.resolvedLanguage],
 	);
 	const scoped = useMemo(
-		() => (view.mode === "session-actions" ? findSession(workspaces, view.sessionId) : null),
+		() => (view.mode === "session-actions" ? findSession(workspaces, view.sessionId) : undefined),
 		[view, workspaces],
 	);
 	const sessionActionItems = useMemo(

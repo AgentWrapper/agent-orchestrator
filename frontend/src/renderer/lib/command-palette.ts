@@ -92,6 +92,11 @@ type SessionCommandGroup = Extract<CommandGroupId, "attention" | "sessions">;
 
 const SESSION_ID_PREFIX: Record<SessionCommandGroup, string> = { attention: "attention", sessions: "session" };
 
+export type WorkspaceSessionContext = {
+	workspace: WorkspaceSummary;
+	session: WorkspaceSession;
+};
+
 function jumpTarget(workspace: WorkspaceSummary, session: WorkspaceSession): NavigateTarget {
 	return {
 		to: "/projects/$projectId/sessions/$sessionId",
@@ -155,10 +160,10 @@ export function buildSessionActions(
 	return items;
 }
 
-function findSession(workspaces: WorkspaceSummary[], sessionId: string): WorkspaceSession | undefined {
+export function findSession(workspaces: WorkspaceSummary[], sessionId: string): WorkspaceSessionContext | undefined {
 	for (const workspace of workspaces) {
 		const match = workspace.sessions.find((session) => session.id === sessionId);
-		if (match) return match;
+		if (match) return { workspace, session: match };
 	}
 	return undefined;
 }
@@ -170,7 +175,7 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 	const currentProject = currentProjectId
 		? workspaces.find((workspace) => workspace.id === currentProjectId)
 		: undefined;
-	const currentSession = currentSessionId ? findSession(workspaces, currentSessionId) : undefined;
+	const currentSession = currentSessionId ? findSession(workspaces, currentSessionId)?.session : undefined;
 	const isProjectRestarting = Boolean(currentProject && restartingProjectIds?.has(currentProject.id));
 
 	items.push({
