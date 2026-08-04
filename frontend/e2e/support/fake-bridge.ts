@@ -67,6 +67,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
@@ -139,6 +141,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					setBadge: async (_count: number) => undefined,
 					devBounce: async () => undefined,
 					onClick: unsubscribe,
+				},
+				tray: {
+					setAttentionState: () => undefined,
+					onOpenSession: unsubscribe,
 				},
 				appState: {
 					getMigration: async () => ({ status: "completed" }),
@@ -457,6 +463,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
@@ -526,6 +534,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					devBounce: async () => undefined,
 					onClick: unsubscribe,
 				},
+				tray: { setAttentionState: () => undefined, onOpenSession: unsubscribe },
 				appState: { getMigration: async () => ({ status: "completed" }), setMigration: async () => undefined },
 				updateSettings: {
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),

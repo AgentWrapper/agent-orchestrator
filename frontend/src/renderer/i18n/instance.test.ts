@@ -1,18 +1,48 @@
 import { describe, expect, it } from "vitest";
 import { APP_LOCALES, coerceLocale, DEFAULT_LOCALE } from "./locales";
 import { createAppI18n, type TranslationCatalogs } from "./instance";
-import { enMessages, zhCNMessages } from "./messages";
+import {
+	deMessages,
+	enMessages,
+	esMessages,
+	frMessages,
+	jaMessages,
+	koMessages,
+	ptBRMessages,
+	zhCNMessages,
+} from "./messages";
+
+const allCatalogs = {
+	en: enMessages,
+	"zh-CN": zhCNMessages,
+	ja: jaMessages,
+	ko: koMessages,
+	es: esMessages,
+	fr: frMessages,
+	de: deMessages,
+	"pt-BR": ptBRMessages,
+} as const;
+
+function emptyCatalogs(): TranslationCatalogs {
+	return Object.fromEntries(APP_LOCALES.map((locale) => [locale, {}])) as TranslationCatalogs;
+}
 
 describe("coerceLocale", () => {
-	it("accepts en and zh-CN", () => {
+	it("accepts all supported locales", () => {
 		expect(coerceLocale("en")).toBe("en");
 		expect(coerceLocale("zh-CN")).toBe("zh-CN");
+		expect(coerceLocale("ja")).toBe("ja");
+		expect(coerceLocale("ko")).toBe("ko");
+		expect(coerceLocale("es")).toBe("es");
+		expect(coerceLocale("fr")).toBe("fr");
+		expect(coerceLocale("de")).toBe("de");
+		expect(coerceLocale("pt-BR")).toBe("pt-BR");
 	});
 
 	it("defaults unknown values to en", () => {
 		expect(coerceLocale(undefined)).toBe(DEFAULT_LOCALE);
 		expect(coerceLocale(null)).toBe("en");
-		expect(coerceLocale("fr")).toBe("en");
+		expect(coerceLocale("pt")).toBe("en");
 		expect(coerceLocale({ locale: "zh-CN" })).toBe("en");
 	});
 });
@@ -24,11 +54,36 @@ describe("app i18next instance", () => {
 		expect(createAppI18n("zh-CN").t("settings.language.zhCN")).toBe("简体中文");
 	});
 
+	it("resolves native language labels for every supported locale", () => {
+		const labels = {
+			en: "settings.language.en",
+			"zh-CN": "settings.language.zhCN",
+			ja: "settings.language.ja",
+			ko: "settings.language.ko",
+			es: "settings.language.es",
+			fr: "settings.language.fr",
+			de: "settings.language.de",
+			"pt-BR": "settings.language.ptBR",
+		} as const;
+		const expected = {
+			en: "English",
+			"zh-CN": "简体中文",
+			ja: "日本語",
+			ko: "한국어",
+			es: "Español",
+			fr: "Français",
+			de: "Deutsch",
+			"pt-BR": "Português (Brasil)",
+		} as const;
+		for (const locale of APP_LOCALES) {
+			expect(createAppI18n(locale).t(labels[locale])).toBe(expected[locale]);
+		}
+	});
+
 	it("falls back from Chinese to English and then to the key", () => {
-		const catalogs: TranslationCatalogs = {
-			en: { "proof.onlyEn": "English only", "settings.general": "General" },
-			"zh-CN": { "settings.general": "通用" },
-		};
+		const catalogs = emptyCatalogs();
+		catalogs.en = { "proof.onlyEn": "English only", "settings.general": "General" };
+		catalogs["zh-CN"] = { "settings.general": "通用" };
 		const instance = createAppI18n("zh-CN", catalogs);
 		expect(instance.t("proof.onlyEn", { defaultValue: "proof.onlyEn" })).toBe("English only");
 		expect(instance.t("settings.general")).toBe("通用");
@@ -36,16 +91,15 @@ describe("app i18next instance", () => {
 	});
 
 	it("uses standard interpolation and locale-aware plural forms", () => {
-		const catalogs: TranslationCatalogs = {
-			en: {
-				"proof.hello": "Hello, {{name}}!",
-				"proof.item_one": "{{count}} item",
-				"proof.item_other": "{{count}} items",
-			},
-			"zh-CN": {
-				"proof.hello": "你好，{{name}}！",
-				"proof.item_other": "{{count}} 项",
-			},
+		const catalogs = emptyCatalogs();
+		catalogs.en = {
+			"proof.hello": "Hello, {{name}}!",
+			"proof.item_one": "{{count}} item",
+			"proof.item_other": "{{count}} items",
+		};
+		catalogs["zh-CN"] = {
+			"proof.hello": "你好，{{name}}！",
+			"proof.item_other": "{{count}} 项",
 		};
 		const english = createAppI18n("en", catalogs);
 		const chinese = createAppI18n("zh-CN", catalogs);
@@ -87,29 +141,39 @@ describe("app i18next instance", () => {
 	});
 
 	it("keeps unresolved placeholders visible", () => {
-		const catalogs: TranslationCatalogs = {
-			en: { "proof.x": "keep {{missing}}" },
-			"zh-CN": {},
-		};
+		const catalogs = emptyCatalogs();
+		catalogs.en = { "proof.x": "keep {{missing}}" };
 		expect(createAppI18n("en", catalogs).t("proof.x", { defaultValue: "proof.x" })).toBe("keep {{missing}}");
 	});
 
-	it("keeps locale catalogs aligned and non-empty", () => {
-		expect(Object.keys(zhCNMessages).sort()).toEqual(Object.keys(enMessages).sort());
-		for (const value of Object.values(enMessages)) expect(value.length).toBeGreaterThan(0);
-		for (const value of Object.values(zhCNMessages)) expect(value.length).toBeGreaterThan(0);
+	it("keeps locale catalogs covering every English key with non-empty values", () => {
+		const enKeys = Object.keys(enMessages).sort();
+		for (const locale of APP_LOCALES) {
+			const catalog = allCatalogs[locale];
+			for (const key of enKeys) {
+				expect(key in catalog, `${locale} is missing ${key}`).toBe(true);
+				expect(String(catalog[key as keyof typeof catalog] ?? "").length, `${locale}.${key} empty`).toBeGreaterThan(
+					0,
+				);
+			}
+		}
 	});
 
 	it("keeps interpolation variables aligned between locales", () => {
 		const variables = (message: string) =>
 			[...message.matchAll(/{{\s*([\w.-]+)\s*}}/g)].map((match) => match[1]).sort();
-		for (const key of Object.keys(enMessages) as (keyof typeof enMessages)[]) {
-			expect(variables(zhCNMessages[key]), `placeholder mismatch for ${key}`).toEqual(variables(enMessages[key]));
+		for (const locale of APP_LOCALES) {
+			if (locale === "en") continue;
+			const catalog = allCatalogs[locale] as Record<keyof typeof enMessages, string>;
+			for (const key of Object.keys(enMessages) as (keyof typeof enMessages)[]) {
+				expect(variables(catalog[key]), `${locale} placeholder mismatch for ${key}`).toEqual(
+					variables(enMessages[key]),
+				);
+			}
 		}
 	});
 
 	it("provides every CLDR plural form required by each supported locale", () => {
-		const catalogs = { en: enMessages, "zh-CN": zhCNMessages } as const;
 		const pluralSuffix = /_(zero|one|two|few|many|other)$/;
 		const pluralBases = new Set(
 			Object.keys(enMessages)
@@ -121,7 +185,7 @@ describe("app i18next instance", () => {
 			for (const base of pluralBases) {
 				for (const category of requiredCategories) {
 					expect(
-						`${base}_${category}` in catalogs[locale],
+						`${base}_${category}` in allCatalogs[locale],
 						`${locale} is missing ${base}_${category}`,
 					).toBe(true);
 				}

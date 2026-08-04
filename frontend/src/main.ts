@@ -29,7 +29,7 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
-import { readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -43,8 +43,15 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
+import { createTrayController, type TrayController } from "./main/tray";
+import { createTrayLifecycle, isTrayEnabled } from "./main/tray-lifecycle";
+import {
+	TRAY_RENDERER_READY_CHANNEL,
+	TRAY_SET_ATTENTION_STATE_CHANNEL,
+} from "./shared/tray";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -109,6 +116,12 @@ app.setPath(
 );
 
 let mainWindow: BrowserWindow | null = null;
+let trayController: TrayController | null = null;
+const trayLifecycle = createTrayLifecycle({
+	getWindow: () => mainWindow,
+	getTrayController: () => trayController,
+	focusWindow: () => focusMainWindow(),
+});
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
 let daemonRestartAfterExitProcess: ChildProcess | null = null;
@@ -120,6 +133,7 @@ let browserViewHost: BrowserViewHost | null = null;
 let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
+let closeShellTerminalShortcutEnabled = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
 // Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
@@ -224,6 +238,16 @@ function applyRuntimeAppIcon(): void {
 	if (!icon.isEmpty()) {
 		app.dock.setIcon(icon);
 	}
+}
+
+function focusMainWindow(): void {
+	if (!mainWindow) {
+		createWindow();
+		return;
+	}
+	if (mainWindow.isMinimized()) mainWindow.restore();
+	mainWindow.show();
+	mainWindow.focus();
 }
 
 function setDaemonStatus(nextStatus: DaemonStatus): void {
@@ -334,6 +358,7 @@ function createWindow(): void {
 		isMac,
 		getKeybindingOverrides: () => keybindingOverrides,
 		isKeybindingRecording: () => keybindingRecordingActive,
+		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -360,6 +385,8 @@ function createWindow(): void {
 	mainWindow.webContents.on("render-process-gone", () => {
 		keybindingRecordingActive = false;
 	});
+	mainWindow.webContents.on("did-start-loading", () => trayLifecycle.clear());
+	mainWindow.webContents.on("render-process-gone", () => trayLifecycle.clear());
 
 	mainWindow.on("closed", () => {
 		browserRuntimeLink?.dispose();
@@ -368,6 +395,7 @@ function createWindow(): void {
 		browserViewHost?.dispose();
 		browserViewHost = null;
 		mainWindow = null;
+		trayLifecycle.clearPendingTarget();
 	});
 }
 
@@ -1254,6 +1282,10 @@ ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") =>
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
 ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 
+ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
+	closeShellTerminalShortcutEnabled = enabled === true;
+});
+
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
 // action the native default menu would have performed.
 ipcMain.handle("menu:action", (_event, action: string) => {
@@ -1389,11 +1421,12 @@ ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	if (!runFile) return { locale: "en" };
 	return readUiSettings(path.dirname(runFile));
 });
-ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
-	const runFile = runFilePath();
-	if (!runFile) return { locale: settings?.locale === "zh-CN" ? "zh-CN" : "en" };
-	return writeUiSettings(path.dirname(runFile), settings);
-});
+	ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
+		const runFile = runFilePath();
+	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
+	trayController?.setLocale(result.locale);
+	return result;
+	});
 
 ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
 ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides): Promise<KeybindingOverrides> => {
@@ -1523,6 +1556,10 @@ ipcMain.handle("notifications:setBadge", (_event, count: number) => {
 	return { ok: true };
 });
 
+ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.handleSetAttentionState(event, state));
+
+ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
+
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
 // A live updater additionally requires a signed + notarized build — see
@@ -1622,6 +1659,14 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
+	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
+		const initialUiSettings = keybindingRunFile ? await readUiSettings(path.dirname(keybindingRunFile)) : { locale: "en" as const };
+		trayController = createTrayController({
+			focusWindow: focusMainWindow,
+			openSession: trayLifecycle.openSession,
+			locale: initialUiSettings.locale,
+		});
+	}
 	createWindow();
 	void startDaemon();
 	initAutoUpdates();
@@ -1642,6 +1687,8 @@ app.on("before-quit", () => {
 	browserRuntimeLink = null;
 	browserViewHost?.dispose();
 	browserViewHost = null;
+	trayLifecycle.dispose();
+	trayController = null;
 });
 
 // Last resort: if the OS-native supervisor link is not actually connected

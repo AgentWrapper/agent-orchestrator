@@ -32,13 +32,13 @@ const notifications: NotificationDTO[] = [
 ];
 
 const unreadCache: NotificationsCache = {
-	pages: [{ notifications, nextCursor: undefined, unreadCount: notifications.length }],
+	pages: [{ notifications, nextCursor: undefined, unreadCount: notifications.length, unresolvedCount: notifications.length }],
 	pageParams: [""],
 };
 
 const { setBadge } = vi.hoisted(() => ({ setBadge: vi.fn() }));
 
-vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn(), useParams: () => ({}) }));
 
 vi.mock("../hooks/useNotificationsQuery", () => ({
 	useNotificationsQuery: () => ({ data: unreadCache, isError: false }),

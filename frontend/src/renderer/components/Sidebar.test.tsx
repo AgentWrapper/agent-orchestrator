@@ -12,7 +12,7 @@ const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateS
 	() => ({
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
-		mockParams: { projectId: undefined as string | undefined },
+		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
 		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 	return {
 		...actual,
 		useNavigate: () => navigateMock,
-		useParams: () => ({}),
+		useParams: () => mockParams,
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
@@ -223,6 +223,7 @@ beforeEach(() => {
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
+	mockParams.sessionId = undefined;
 });
 
 afterEach(() => {
@@ -230,6 +231,14 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("removes the primitive footer padding so Settings aligns with the board archive row", () => {
+		renderSidebar();
+
+		const footer = document.querySelector('[data-sidebar="footer"]');
+		expect(footer).toHaveClass("!py-0");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-row-md");
+	});
+
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
 		renderSidebar();
 
@@ -398,6 +407,30 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
+	});
+
+	it("emphasizes the dashboard icon on the project board", () => {
+		mockParams.projectId = workspace.id;
+		renderSidebar();
+
+		const dashboard = screen.getByLabelText("Open Project One dashboard");
+		expect(dashboard).toHaveAttribute("aria-current", "page");
+		expect(dashboard).toHaveClass("text-foreground");
+		expect(screen.getByLabelText("Spawn Project One orchestrator")).not.toHaveAttribute("aria-current");
+	});
+
+	it("keeps the project pill active while its orchestrator session is open", () => {
+		const orchestrator = { ...session, id: "orch-1", kind: "orchestrator" as const, title: "orchestrator" };
+		mockParams.projectId = workspace.id;
+		mockParams.sessionId = orchestrator.id;
+
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [orchestrator] }] });
+
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("data-active", "true");
+		const orchestratorButton = screen.getByLabelText("Open Project One orchestrator");
+		expect(orchestratorButton).toHaveAttribute("aria-current", "page");
+		expect(orchestratorButton).toHaveClass("text-foreground");
+		expect(screen.getByLabelText("Open Project One dashboard")).not.toHaveAttribute("aria-current");
 	});
 
 	it("toggles project sessions from the folder icon without selecting the project first", async () => {
@@ -942,6 +975,39 @@ describe("Sidebar", () => {
 		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("proj-1-1", "polish login"));
 	});
 
+	it("aligns the prominent session status dot with the project label column", () => {
+		const workspaceWithSession = { ...workspace, sessions: [session] };
+		renderSidebar({ workspaces: [workspaceWithSession] });
+
+		const sessionItem = screen.getByLabelText("Open fix login").closest("li");
+		expect(sessionItem).toHaveClass("pl-4.5");
+		expect(sessionItem).not.toHaveClass("pl-7");
+		expect(screen.getByLabelText("Open fix login").querySelector("[data-session-status]")).toHaveClass("size-2");
+		expect(screen.getByLabelText("Open fix login").querySelector("[data-session-agent]")).not.toBeInTheDocument();
+	});
+
+	it("gives session names the pencil width until the rename action is revealed", async () => {
+		const workspaceWithSession = { ...workspace, sessions: [session] };
+		renderSidebar({ workspaces: [workspaceWithSession] });
+
+		const openButton = screen.getByLabelText("Open fix login");
+		const renameButton = screen.getByLabelText("Rename fix login");
+		const row = openButton.closest("[data-session-row]");
+
+		expect(openButton).toHaveClass("min-w-0", "flex-1");
+		expect(openButton).not.toHaveClass("pr-7");
+		expect(row).toHaveClass("group/session-row", "rounded-lg");
+		expect(renameButton).toHaveClass(
+			"w-0",
+			"opacity-0",
+			"group-hover/session-row:w-5",
+			"group-hover/session-row:opacity-100",
+			"group-focus-within/session-row:w-5",
+		);
+		expect(renameButton).toHaveClass("[&_svg]:size-3!");
+		await waitFor(() => expect(updateStatusMock).toHaveBeenCalled());
+	});
+
 	it("caps the inline rename input at 20 characters", async () => {
 		const user = userEvent.setup();
 		const workspaceWithSession = { ...workspace, sessions: [session] };
@@ -969,10 +1035,23 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		const projectRow = screen.getByText("Project One").closest("button");
+		const actionCluster = screen.getByLabelText("Project actions for Project One").parentElement;
 
 		if (!projectRow) throw new Error("Project row button not found");
 		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
+		expect(actionCluster).toHaveAttribute("data-project-actions");
+		expect(actionCluster).toHaveClass("right-0.5", "gap-px");
+		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(3);
+		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
+	});
+
+	it("optically aligns the project folder and label with its action icons", () => {
+		renderSidebar();
+
+		const projectRow = screen.getByText("Project One").closest("button");
+		expect(projectRow?.querySelector("[data-project-folder]")).toHaveClass("translate-y-px");
+		expect(projectRow?.querySelector("[data-project-label]")).toHaveClass("translate-y-px");
 	});
 
 	it("clamps a drag at the minimum width instead of collapsing", async () => {
@@ -1018,7 +1097,7 @@ describe("Sidebar", () => {
 		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(expandedWidth));
 	});
 
-	it("animates active sidebar dots using their PR context color", () => {
+	it("renders active activity as pulsing blue regardless of PR context", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1080,7 +1159,7 @@ describe("Sidebar", () => {
 		});
 
 		const sessionDot = (title: string) =>
-			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("span.rounded-full");
+			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("[data-session-status]");
 
 		expect(sessionDot("idle task")).toHaveClass("bg-status-idle");
 		expect(sessionDot("idle task")).not.toHaveClass("animate-status-pulse");
@@ -1090,12 +1169,12 @@ describe("Sidebar", () => {
 		expect(workingDot).toHaveClass("animate-status-pulse");
 
 		const ciFailedDot = sessionDot("ci failed task");
-		expect(ciFailedDot).toHaveClass("bg-status-needs-you");
+		expect(ciFailedDot).toHaveClass("bg-status-working");
 		expect(ciFailedDot).toHaveClass("animate-status-pulse");
 
-		expect(sessionDot("review task")).toHaveClass("bg-status-in-review", "animate-status-pulse");
-		expect(sessionDot("ready task")).toHaveClass("bg-status-ready", "animate-status-pulse");
-		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
+		expect(sessionDot("review task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("ready task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("merged task")).toHaveClass("bg-status-working", "animate-status-pulse");
 	});
 
 	it("renders a static gray dot for idle activity across session statuses", () => {
@@ -1125,8 +1204,8 @@ describe("Sidebar", () => {
 
 		const idleActivityDot = screen
 			.getByLabelText("Open idle activity task")
-			.querySelector<HTMLElement>("span.rounded-full");
-		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector<HTMLElement>("span.rounded-full");
+			.querySelector<HTMLElement>("[data-session-status]");
+		const idleDraftDot = screen.getByLabelText("Open idle draft task").querySelector<HTMLElement>("[data-session-status]");
 
 		expect(idleActivityDot).toHaveClass("bg-status-idle");
 		expect(idleDraftDot).toHaveClass("bg-status-idle");

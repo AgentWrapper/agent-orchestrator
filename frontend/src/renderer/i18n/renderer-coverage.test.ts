@@ -22,7 +22,11 @@ const approvedLiterals: Record<string, readonly string[]> = {
 	"components/CenterPane.tsx": ["px"],
 	"components/CreateProjectFlow.tsx": ["my-workspace/", "web-app", "main"],
 	"components/DaemonStartupLoader.tsx": ["Agent Orchestrator"],
-	"components/ProjectSettingsForm.tsx": ["main", "ao"],
+	"components/ProjectSettingsForm.tsx": [
+		"main", "ao",
+		"No workflow settings for scratch projects.",
+		"Tracker intake is not available for scratch projects.",
+	],
 	"components/SessionFilesView.tsx": ["-&gt;"],
 	"components/SessionInspector.tsx": ["PR #"],
 	"components/Sidebar.tsx": ["Agent Orchestrator", "daemon"],
@@ -78,7 +82,7 @@ function potentialDisplayText(value: string): boolean {
 }
 
 function approved(file: string, value: string): boolean {
-	const relative = path.relative(rendererDirectory, file);
+	const relative = path.relative(rendererDirectory, file).replace(/\\/g, "/");
 	return approvedLiterals[relative]?.includes(value) ?? false;
 }
 

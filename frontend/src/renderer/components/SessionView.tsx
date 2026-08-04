@@ -132,15 +132,31 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const closeShellTerminalByHandle = useCallback(
 		(handleId: string) => {
-			// Fall back to the session pane first: leaving the target pointed at a
-			// handle that is being destroyed would attach to a dead PTY.
-			setTerminalTarget((current) =>
-				current.kind === "shell" && current.handleId === handleId ? { kind: "worker" } : current,
-			);
-			if (activeShellTerminalHandleId === handleId) setActiveShellTerminal(null);
+			if (terminalTarget.kind === "shell" && terminalTarget.handleId === handleId) {
+				const closingIndex = shellTerminals.findIndex((shell) => shell.handleId === handleId);
+				// Match browser-tab ergonomics: closing the selected auxiliary terminal
+				// reveals its nearest predecessor, then the next tab when the first one
+				// closes. The permanent agent terminal is only the final fallback.
+				const nextShell = shellTerminals[closingIndex - 1] ?? shellTerminals[closingIndex + 1];
+				if (nextShell) {
+					setActiveShellTerminal(nextShell.handleId);
+					setTerminalTarget({ kind: "shell", handleId: nextShell.handleId, title: nextShell.title });
+				} else {
+					setActiveShellTerminal(null);
+					setTerminalTarget({ kind: "worker" });
+				}
+			} else if (activeShellTerminalHandleId === handleId) {
+				setActiveShellTerminal(null);
+			}
 			closeShellTerminal.mutate(handleId);
 		},
-		[closeShellTerminal, activeShellTerminalHandleId, setActiveShellTerminal],
+		[
+			activeShellTerminalHandleId,
+			closeShellTerminal,
+			setActiveShellTerminal,
+			shellTerminals,
+			terminalTarget,
+		],
 	);
 
 	// Selecting the session's own pane also drops the active shell, so the effect
@@ -151,7 +167,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
-	// and Ctrl+Shift+` work everywhere); this view only follows the result. When a new
+	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
 	// shell becomes active while a session is on screen, switch the pane to it —
 	// that is what makes the shortcut feel like it opened a terminal *here*.
 	useEffect(() => {
@@ -388,7 +404,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
-			{shellTopbarHiddenByPlatform ? <ShellTopbar /> : null}
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
@@ -405,6 +420,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						shellTerminals={shellTerminals}
 						terminalTarget={terminalTarget}
 						theme={theme}
+						topbarActions={<ShellTopbar embedded />}
 					/>
 				</ResizablePanel>
 				{hasInspector ? (
@@ -452,19 +468,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</>
 				) : null}
 			</ResizablePanelGroup>
-			{filesPoppedOut && session ? (
-				<div className="absolute inset-0 z-30 bg-background">
-					<SessionFilesView
-						isMaximized
-						onClose={() => {
-							setFilesPoppedOut(false);
-							setInspectorViewForSession(sessionId, "summary");
-						}}
-						onToggleMaximized={handleToggleFilesPopOut}
-						sessionId={session.id}
-					/>
-				</div>
-			) : null}
+			{filesPoppedOut && session
+				? createPortal(
+						<div
+							className={cn(
+								"files-popout-overlay",
+								shellTopbarHiddenByPlatform && !isNativeFullScreen && "files-popout-overlay--mac-windowed",
+							)}
+						>
+							<SessionFilesView
+								isMaximized
+								onToggleMaximized={handleToggleFilesPopOut}
+								sessionId={session.id}
+							/>
+						</div>,
+						document.body,
+					)
+				: null}
 			{/* Maximized browser: a fixed overlay across the app workspace,
           portaled to <body> so it escapes the shell layout (covering the
           sidebar + topbar, not just the session area) and sits outside any

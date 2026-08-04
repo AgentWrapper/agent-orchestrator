@@ -210,10 +210,13 @@
 
 	/* ═══════════════════════════════════════════════════════════════
 	   Z-INDEX — stacking layers
+	   chrome < sidebar-preview < titlebar < overlay
+	   Preview peeks paint behind the titlebar cluster so the expand
+	   toggle stays clickable while the overlay is open.
 	   ═══════════════════════════════════════════════════════════════ */
 
 	--z-chrome: 10;
-	--z-sidebar-preview: 55;
+	--z-sidebar-preview: 15;
 	--z-titlebar: 20;
 	--z-overlay: 50;
 
@@ -285,7 +288,7 @@
 	--size-sidebar-icon: 48px;
 	--size-sidebar-default: 240px;
 	--size-sidebar-mobile: 288px;
-	--size-titlebar-cluster-left: 79px;
+	--size-titlebar-cluster-left: 72px;
 	/* Linux has no traffic lights: the cluster sits at the sidebar's own left
 	 * inset (TitlebarNav `left-1.5`). */
 	--size-titlebar-cluster-left-linux: 6px;
@@ -311,9 +314,10 @@
 	--size-notification-width: 460px;
 	--size-notification-max-height: 420px;
 	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
-	--size-settings-menu-width: 18rem; /* settings option menus — max width cap */
-	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — wider rows */
+	--size-settings-menu-width: 20rem; /* settings option menus — matches agent picker box width */
+	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — fixed width for status columns */
 	--size-notification-icon: 26px;
+	--size-session-topbar: calc(var(--size-inspector-tabs) + (2 * var(--space-1)));
 	/* DaemonFailureBanner floating toast (was w-[min(22rem,…)] / max-h-40). */
 	--size-daemon-failure-toast: 22rem;
 	--size-daemon-failure-details-max: 10rem;
@@ -332,6 +336,9 @@
 	--size-shell-tab-min: 64px;
 	/* Keeps added session tabs aligned with the owning tab in the secondary strip. */
 	--size-session-pane-tab-max: 112px;
+	/* Compact connected shell tab in a session's terminal strip. This includes
+	   the terminal glyph and close action, not only the truncated label. */
+	--size-shell-tab-connected: 148px;
 	/* Caps a standalone shell terminal's tab label so several open shells stay
 	   readable side by side instead of one long path crowding out the rest. */
 	--size-shell-tab-max: 140px;
@@ -364,7 +371,8 @@
 	--size-branch-chip: 13rem;
 	--size-inspector-min: 280px;
 	--size-textarea-min: 112px;
-	--size-sidebar-project-actions: 84px;
+	/* Three 20px actions + two 1px gaps + the 2px right inset. */
+	--size-sidebar-project-actions: 64px;
 
 	/* Shared inset-panel geometry (welcome board + settings page) */
 	--size-center-panel-inset: 24px;
@@ -423,7 +431,7 @@
 	--size-settings-section-inner-gap: 12px;
 	--size-settings-row-padding: 16px;
 	--size-settings-row-icon-gap: 12px;
-	--size-settings-menu-min-width: 11rem;
+	--size-settings-menu-min-width: 9rem;
 	--size-settings-inline-input-min: 3.5rem;
 	--size-settings-inline-input-max: 12rem;
 	--size-settings-inline-input-max-percent: 42%;

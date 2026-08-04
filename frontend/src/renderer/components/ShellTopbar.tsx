@@ -42,10 +42,9 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // crumb + mode badge, or worker branch + status pill) and the actions to
 // board/orchestrator + inspector controls (orchestrators open the Kanban board;
 // workers open their orchestrator); otherwise it's the dashboard crumb plus the
-// Orchestrator launcher when a project is in scope. Merges the old
-// DashboardTopbar/Topbar pair — agent-orchestrator keeps those as two components
-// aligned only by CSS.
-export function ShellTopbar() {
+// Orchestrator launcher when a project is in scope. Embedded mode contributes
+// only session actions to the terminal bar; other routes retain this full bar.
+export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -140,40 +139,42 @@ export function ShellTopbar() {
 	};
 
 	return (
-		<header className={topbarHeaderClass} style={dragStyle}>
-			<div className="flex min-w-0 items-center gap-3">
-				{isSessionRoute && isOrchestrator ? (
-					<div className="inline-flex min-w-0 items-center gap-2">
+		<header className={embedded ? "contents" : topbarHeaderClass} style={embedded ? undefined : dragStyle}>
+			{!embedded ? (
+				<div className="flex min-w-0 items-center gap-3">
+					{isSessionRoute && isOrchestrator ? (
+						<div className="inline-flex min-w-0 items-center gap-2">
+							<div className="inline-flex min-w-0 items-center gap-1.5">
+								<span className={topbarProjectLabelClass}>{projectLabel}</span>
+								<span aria-hidden="true" className="text-xs leading-none text-passive">
+									·
+								</span>
+								<span className="inline-flex h-control-sm items-center gap-1 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none tracking-wide-sm text-muted-foreground">
+									<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
+									{t("shell.orchestrator")}
+								</span>
+							</div>
+						</div>
+					) : isSessionRoute ? (
+						<div className="flex min-w-0 items-center gap-3">
+							{session?.branch ? (
+								<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
+									<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
+									<span className="truncate">{session.branch}</span>
+								</div>
+							) : null}
+							{session ? <SessionStatusPill session={session} /> : null}
+						</div>
+					) : (isProjectBoardRoute && boardActionsInPanel) ||
+					  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
 						<div className="inline-flex min-w-0 items-center gap-1.5">
 							<span className={topbarProjectLabelClass}>{projectLabel}</span>
-							<span aria-hidden="true" className="text-xs leading-none text-passive">
-								·
-							</span>
-							<span className="inline-flex h-control-sm items-center gap-1 rounded-md border border-border bg-surface px-2 text-micro font-semibold leading-none tracking-wide-sm text-muted-foreground">
-								<OrchestratorIcon className="size-3 shrink-0" aria-hidden="true" />
-								{t("shell.orchestrator")}
-							</span>
 						</div>
-					</div>
-				) : isSessionRoute ? (
-					<div className="flex min-w-0 items-center gap-3">
-						{session?.branch ? (
-							<div className="inline-flex min-w-0 items-center gap-1 font-mono text-2xs leading-none text-passive">
-								<GitBranch className="size-icon-2xs shrink-0" aria-hidden="true" />
-								<span className="truncate">{session.branch}</span>
-							</div>
-						) : null}
-						{session ? <SessionStatusPill session={session} /> : null}
-					</div>
-				) : (isProjectBoardRoute && boardActionsInPanel) ||
-				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
-					<div className="inline-flex min-w-0 items-center gap-1.5">
-						<span className={topbarProjectLabelClass}>{projectLabel}</span>
-					</div>
-				)}
-			</div>
+					)}
+				</div>
+			) : null}
 
-			<div className="min-w-0 flex-1" />
+			{!embedded ? <div className="min-w-0 flex-1" /> : null}
 
 			<div className="flex shrink-0 items-center gap-1.5">
 				{!boardActionsInPanel && isProjectBoardRoute ? (
