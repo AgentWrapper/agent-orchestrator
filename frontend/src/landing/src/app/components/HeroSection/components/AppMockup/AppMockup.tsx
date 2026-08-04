@@ -4,6 +4,8 @@ import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 
+import { track } from "@/lib/analytics";
+
 export type { ActiveDemo } from "./types";
 
 type BoardColumnId = "working" | "action" | "pending" | "merge";
@@ -1893,6 +1895,16 @@ export function AppMockup() {
 	const [selectedTrackId, setSelectedTrackId] = useState<TrackId>("landing");
 	const [selectedCard, setSelectedCard] = useState<PreviewCard | null>(null);
 	const [viewMode, setViewMode] = useState<ViewMode>("board");
+	// The hero mockup is an interactive demo, so a visitor may click the same
+	// control many times. Report the first use of each action only: engagement is
+	// the question ("did they play with it, and with what"), and an unguarded
+	// handler here would be a per-click stream on the busiest page of the site.
+	const reportedDemoActions = useRef<Set<string>>(new Set());
+	const reportDemoAction = useCallback((action: string) => {
+		if (reportedDemoActions.current.has(action)) return;
+		reportedDemoActions.current.add(action);
+		track("hero_demo_interacted", { action });
+	}, []);
 	const incomingIndexes = useRef<Record<TrackId, number>>({
 		landing: 0,
 		deploy: 0,
@@ -2097,9 +2109,15 @@ export function AppMockup() {
 			<div className="flex h-full flex-col">
 				<WindowTitlebar
 					mergedCount={mergedCount}
-					onNewTask={spawnRandomTask}
+					onNewTask={() => {
+						reportDemoAction("new_task");
+						spawnRandomTask();
+					}}
 					onTitlebarPointerDown={startDrag}
-					onViewChange={setViewMode}
+					onViewChange={(next) => {
+						reportDemoAction("view_change");
+						setViewMode(next);
+					}}
 					runningCount={runningCount}
 					viewMode={viewMode}
 					waitingCount={waitingCount}
@@ -2108,7 +2126,10 @@ export function AppMockup() {
 					<Sidebar
 						isRepoAvatarReady={isRepoAvatarReady}
 						onResizeStart={startSidebarResize}
-						onSelectTrack={selectTrack}
+						onSelectTrack={(trackId) => {
+							reportDemoAction("select_track");
+							selectTrack(trackId);
+						}}
 						selectedTrackId={selectedTrack.id}
 						sidebarRef={sidebarRef}
 					/>
@@ -2121,7 +2142,10 @@ export function AppMockup() {
 						{viewMode === "orchestrator" ? (
 							<OrchestratorView
 								cards={cards}
-								onNewTask={spawnRandomTask}
+								onNewTask={() => {
+									reportDemoAction("new_task");
+									spawnRandomTask();
+								}}
 								selectedTrack={selectedTrack}
 							/>
 						) : (
@@ -2133,7 +2157,10 @@ export function AppMockup() {
 											{...column}
 											color={COLUMN_COLORS[column.id]}
 											onMerge={mergeCard}
-											onOpen={setSelectedCard}
+											onOpen={(card) => {
+											reportDemoAction("open_card");
+											setSelectedCard(card);
+										}}
 										/>
 									))}
 								</div>
