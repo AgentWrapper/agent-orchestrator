@@ -67,7 +67,7 @@ export function SettingsOptionMenu<T extends string>({
 			<DropdownMenuContent
 				align={menuAlign}
 				className={cn(
-					"settings-menu-surface overflow-y-auto! overflow-x-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
+					"settings-menu-surface min-w-[length:var(--size-settings-menu-min-width)] overflow-y-auto! overflow-x-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
 					menuClassName,
 				)}
 			>
