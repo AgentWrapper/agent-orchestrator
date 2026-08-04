@@ -29,7 +29,7 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
-import { readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -1396,7 +1396,7 @@ ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 });
 ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
 	const runFile = runFilePath();
-	if (!runFile) return { locale: settings?.locale === "zh-CN" ? "zh-CN" : "en" };
+	if (!runFile) return coerceUiSettings(settings);
 	return writeUiSettings(path.dirname(runFile), settings);
 });
 

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Check, GitPullRequest, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { aoBridge } from "../../lib/bridge";
 import { formatTimeCompact } from "../../lib/format-time";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
@@ -13,28 +13,10 @@ import { Button } from "../ui/button";
 import { SettingsOptionMenu } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
-import type { MessageKey } from "../../i18n";
 
 export const updateSettingsQueryKey = ["update-settings"] as const;
 
 type PrimaryValue = UpdateChannel | "feature";
-
-type Translate = (key: MessageKey, vars?: Record<string, string | number>) => string;
-
-function enabledOptions(t: Translate) {
-	return [
-		{ value: "on" as const, label: t("settings.updates.enabled") },
-		{ value: "off" as const, label: t("settings.updates.disabled") },
-	];
-}
-
-function channelOptions(t: Translate): { value: PrimaryValue; label: string }[] {
-	return [
-		{ value: "latest", label: t("settings.updates.channel.stable") },
-		{ value: "nightly", label: t("settings.updates.channel.nightly") },
-		{ value: "feature", label: t("settings.updates.channel.feature") },
-	];
-}
 
 const DEFAULT_SETTINGS: UpdateSettings = { enabled: false, channel: "latest", nightlyAck: false, feature: null };
 
@@ -46,16 +28,13 @@ function nextUpdateRequestId(): string {
 	return `feature-update-${updateRequestSequence}`;
 }
 
-export function UpdatesSection() {
+export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const query = useQuery({
 		queryKey: updateSettingsQueryKey,
 		queryFn: () => aoBridge.updateSettings.get(),
 	});
-	const ENABLED_OPTIONS = enabledOptions(t);
-	const CHANNEL_OPTIONS = channelOptions(t);
-	const NON_FEATURE_CHANNEL_OPTIONS = CHANNEL_OPTIONS.filter((option) => option.value !== "feature");
 
 	const [form, setForm] = useState<UpdateSettings>(DEFAULT_SETTINGS);
 	const formRef = useRef(form);
@@ -107,6 +86,20 @@ export function UpdatesSection() {
 			if (previous) setForm(previous);
 		},
 	});
+
+	const enabledOptions = [
+		{ value: "on" as const, label: t("settings.updates.enabled") },
+		{ value: "off" as const, label: t("settings.updates.disabled") },
+	];
+
+	const channelOptions: { value: PrimaryValue; label: string }[] = [
+		{ value: "latest", label: t("settings.updates.channel.stable") },
+		{ value: "nightly", label: t("settings.updates.channel.nightly") },
+		{ value: "feature", label: t("settings.updates.channel.feature") },
+	];
+
+	// Feature Releases is developer-only; hide it entirely unless Developer Mode is on.
+	const nonFeatureChannelOptions = channelOptions.filter((option) => option.value !== "feature");
 
 	// With Developer Mode off the "feature" value has no matching option, so fall
 	// back to the home channel to keep the dropdown showing a valid selection.
@@ -191,7 +184,7 @@ export function UpdatesSection() {
 
 	return (
 		<>
-			<SettingsSection title={t("settings.updates")} sectionId="updates">
+			<SettingsSection title={t("settings.updates")} sectionId="updates" titleHidden={titleHidden}>
 				{featurePr != null && (
 					<div className="flex flex-col gap-2">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
@@ -202,9 +195,7 @@ export function UpdatesSection() {
 									: t("settings.updates.featurePinned", { pr: featurePr })}
 							</span>
 							<Button type="button" variant="outline" size="sm" onClick={() => void handleReturnToHome()}>
-								{form.channel === "nightly"
-									? t("settings.updates.returnToNightly")
-									: t("settings.updates.returnToStable")}
+								{form.channel === "nightly" ? t("settings.updates.returnToNightly") : t("settings.updates.returnToStable")}
 							</Button>
 						</div>
 						<p className="px-1 text-xs text-settings-muted">
@@ -217,7 +208,7 @@ export function UpdatesSection() {
 					<SettingsOptionMenu
 						aria-label={t("settings.updates.automatic")}
 						value={form.enabled ? "on" : "off"}
-						options={ENABLED_OPTIONS}
+						options={enabledOptions}
 						onChange={(next) => setEnabled(next === "on")}
 						disabled={save.isPending}
 					/>
@@ -227,7 +218,7 @@ export function UpdatesSection() {
 					<SettingsOptionMenu
 						aria-label={t("settings.updates.channel")}
 						value={primaryValue}
-						options={developerMode ? CHANNEL_OPTIONS : NON_FEATURE_CHANNEL_OPTIONS}
+						options={developerMode ? channelOptions : nonFeatureChannelOptions}
 						onChange={handlePrimaryChannel}
 						disabled={!form.enabled || save.isPending}
 					/>
@@ -245,9 +236,7 @@ export function UpdatesSection() {
 				)}
 
 				{save.isError && (
-					<p className="px-1 text-xs text-error">
-						{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}
-					</p>
+					<p className="px-1 text-xs text-error">{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}</p>
 				)}
 
 				<UpdateActions status={status} />
@@ -329,7 +318,7 @@ function FeatureBuildsSelect({
 								PR #{build.pr}: {build.title}
 							</span>
 							<div className="flex min-w-0 items-center gap-1.5">
-								<span className="min-w-0 truncate font-mono text-caption text-passive">{build.buildId}</span>
+								<span className="min-w-0 truncate text-caption text-passive">{build.buildId}</span>
 								<Badge variant={isStale ? "warning" : "neutral"} className="h-3.5 px-1 text-[9px] leading-none">
 									{ageLabel}
 								</Badge>
@@ -385,9 +374,7 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 				<div className="settings-row-bar h-auto min-h-0 flex-wrap justify-start gap-3 py-3">
 					{status.state === "available" && (
 						<Button type="button" variant="primary" onClick={() => void aoBridge.updates.download()}>
-							{status.version
-								? t("settings.updates.updateTo", { version: `v${status.version}` })
-								: t("settings.updates.updateToLatest")}
+							{status.version ? t("settings.updates.updateTo", { version: `v${status.version}` }) : t("settings.updates.updateToLatest")}
 						</Button>
 					)}
 					{status.state === "downloaded" && (
@@ -414,25 +401,15 @@ function UpdateStatusLine({ status }: { status: UpdateStatus }) {
 				</span>
 			);
 		case "downloading":
-			return (
-				<span className="text-xs text-settings-muted">
-					{t("settings.updates.downloading", { percent: status.percent ?? 0 })}
-				</span>
-			);
+			return <span className="text-xs text-settings-muted">{t("settings.updates.downloading", { percent: status.percent ?? 0 })}</span>;
 		case "downloaded":
 			return <span className="text-xs text-success">{t("settings.updates.downloaded")}</span>;
 		case "not-available":
 			return <span className="text-xs text-settings-muted">{t("settings.updates.latest")}</span>;
 		case "unsupported":
-			return (
-				<span className="text-xs text-settings-muted">
-					{status.message ?? t("settings.updates.needInstalledApp")}
-				</span>
-			);
+			return <span className="text-xs text-settings-muted">{status.message ?? t("settings.updates.needInstalledApp")}</span>;
 		case "error":
-			return (
-				<span className="text-xs text-error">{status.message ?? t("settings.updates.updateFailed")}</span>
-			);
+			return <span className="text-xs text-error">{status.message ?? t("settings.updates.updateFailed")}</span>;
 		default:
 			return null;
 	}

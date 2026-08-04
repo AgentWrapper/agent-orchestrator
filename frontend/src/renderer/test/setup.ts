@@ -186,8 +186,8 @@ if (typeof window !== "undefined") {
 		},
 		uiSettings: {
 			get: async () => ({ locale: "en" as const }),
-			set: async (settings: { locale: "en" | "zh-CN" }) => ({
-				locale: settings.locale === "zh-CN" ? ("zh-CN" as const) : ("en" as const),
+			set: async (settings: { locale: string }) => ({
+				locale: settings.locale as "en",
 			}),
 		},
 		keybindings: {

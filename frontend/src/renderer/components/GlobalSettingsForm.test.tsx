@@ -121,8 +121,8 @@ beforeEach(async () => {
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
 	getUiSettings.mockResolvedValue({ locale: "en" });
-	setUiSettings.mockImplementation(async (settings: { locale: "en" | "zh-CN" }) => ({
-		locale: settings.locale === "zh-CN" ? "zh-CN" : "en",
+	setUiSettings.mockImplementation(async (settings: { locale: string }) => ({
+		locale: settings.locale,
 	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
@@ -151,7 +151,7 @@ describe("GlobalSettingsForm", () => {
 	it("renders the Figma settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+		// "Settings" heading is now in the modal dialog header, not in the form body
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
@@ -198,7 +198,8 @@ describe("GlobalSettingsForm", () => {
 
 		await user.keyboard("{Escape}");
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+		// Escape is handled by the wrapping Radix Dialog, not the form itself
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("lets an open settings dialog consume Escape first", async () => {

@@ -53,6 +53,7 @@ func Run() error {
 	if err := stabilizeWorkingDirectory(cfg.DataDir); err != nil {
 		return err
 	}
+	ignoreBrokenPipeSignal()
 
 	log := newLogger()
 	browserRuntimeToken := strings.TrimSpace(os.Getenv(browserruntime.RuntimeTokenEnv))

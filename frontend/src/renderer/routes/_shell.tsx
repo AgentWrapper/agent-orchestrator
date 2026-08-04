@@ -6,6 +6,7 @@ import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
@@ -609,24 +610,28 @@ function ShellLayout() {
 	return (
 		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
 			<SessionTopbarProvider>
-				<TerminalCacheProvider
-					daemonReady={daemonStatus.state === "ready"}
-					theme={resolvedTheme}
-				>
-				<NotificationRuntime />
-				<GlobalNewTaskDialog />
-				<KeyboardShortcutsDialog
-					open={isKeyboardShortcutsOpen}
-					onOpenChange={setIsKeyboardShortcutsOpen}
-					onCustomize={() => {
-						setIsKeyboardShortcutsOpen(false);
-						setIsKeyboardShortcutsSettingsOpen(true);
-					}}
-				/>
-				<KeyboardShortcutsSettingsDialog
-					open={isKeyboardShortcutsSettingsOpen}
-					onOpenChange={setIsKeyboardShortcutsSettingsOpen}
-				/>
+   <SessionTopbarProvider>
+	<TerminalCacheProvider
+		daemonReady={daemonStatus.state === "ready"}
+		theme={resolvedTheme}
+	>
+		<NotificationRuntime />
+		<GlobalNewTaskDialog />
+		<SettingsDialog />
+		<KeyboardShortcutsDialog
+			open={isKeyboardShortcutsOpen}
+			onOpenChange={setIsKeyboardShortcutsOpen}
+			onCustomize={() => {
+				setIsKeyboardShortcutsOpen(false);
+				setIsKeyboardShortcutsSettingsOpen(true);
+			}}
+		/>
+		<KeyboardShortcutsSettingsDialog
+			open={isKeyboardShortcutsSettingsOpen}
+			onOpenChange={setIsKeyboardShortcutsSettingsOpen}
+		/>
+
+
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
@@ -665,7 +670,7 @@ function ShellLayout() {
 				>
 					{routeParams.sessionId ? (
 						<SessionTopbarHost
-							className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden bg-sidebar"
+							className="relative z-chrome flex h-session-topbar w-full shrink-0 overflow-hidden bg-sidebar"
 							data-testid="session-topbar-host"
 						/>
 					) : null}
