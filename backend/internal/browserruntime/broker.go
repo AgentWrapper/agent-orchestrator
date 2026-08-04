@@ -270,8 +270,10 @@ func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) erro
 	if err := conn.SetWriteDeadline(deadline); err != nil {
 		return err
 	}
+	deadlineInterruptDone := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() {
 		_ = conn.SetWriteDeadline(time.Now())
+		close(deadlineInterruptDone)
 	})
 	frame, err := json.Marshal(msg)
 	if err == nil && len(frame)+1 > maxRuntimeFrameBytes {
@@ -289,15 +291,18 @@ func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) erro
 			frame = frame[written:]
 		}
 	}
-	stop()
+	if !stop() {
+		<-deadlineInterruptDone
+	}
 	_ = conn.SetWriteDeadline(time.Time{})
+	if err == nil {
+		return nil
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if err != nil {
-		if requested, ok := ctx.Deadline(); ok && !time.Now().Before(requested) {
-			return context.DeadlineExceeded
-		}
+	if requested, ok := ctx.Deadline(); ok && !time.Now().Before(requested) {
+		return context.DeadlineExceeded
 	}
 	return err
 }

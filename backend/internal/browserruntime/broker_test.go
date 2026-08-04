@@ -184,7 +184,9 @@ func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 	}
 	defer func() { _ = conn.Close() }()
 	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
-	_ = enc.Encode(wireMessage{Type: "hello", Version: ProtocolVersion})
+	if err := enc.Encode(wireMessage{Type: "hello", Version: ProtocolVersion}); err != nil {
+		t.Fatal(err)
+	}
 	waitConnected(t, broker)
 
 	requestCtx, cancel := context.WithCancel(context.Background())
@@ -198,6 +200,9 @@ func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancel()
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	var cancelMessage wireMessage
 	if err := dec.Decode(&cancelMessage); err != nil {
 		t.Fatal(err)
@@ -205,8 +210,13 @@ func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 	if cancelMessage.Type != "cancel" || cancelMessage.RequestID != command.RequestID {
 		t.Fatalf("cancel message = %#v, command = %#v", cancelMessage, command)
 	}
-	if err := <-errCh; !errors.Is(err, context.Canceled) {
-		t.Fatalf("Execute error = %v", err)
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Execute error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Execute did not return after cancellation")
 	}
 }
 
