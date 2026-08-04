@@ -2006,6 +2006,63 @@ paths:
       summary: Resume an exited agent in its existing session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/reviewer:
+    put:
+      operationId: setSessionReviewer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionReviewerRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set the reviewer harness for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/reviews:
     get:
       operationId: listReviews
@@ -2810,6 +2867,12 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        reviewerHarness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
+          type: string
         scmStatus:
           enum:
           - pr_open
@@ -4119,6 +4182,15 @@ components:
         url:
           description: Preview target URL. When empty, the daemon autodetects a static
             entry point in the session workspace.
+          type: string
+      type: object
+    SetSessionReviewerRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
           type: string
       type: object
     ShellTerminalEnvelope:

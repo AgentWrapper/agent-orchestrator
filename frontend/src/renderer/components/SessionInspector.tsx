@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
 	ArrowUpRight,
 	ChevronDown,
@@ -740,9 +740,27 @@ function ReviewsSection({
 			return projectConfig(data?.project);
 		},
 	});
-	// Empty means "whatever the project configured"; picking one overrides this
-	// pass only, so the choice never silently edits project config.
-	const [reviewerOverride, setReviewerOverride] = useState<ReviewerHarness | "">("");
+	// The reviewer preference belongs to the worker session, not this component
+	// or the whole project. Keep local state responsive while the daemon persists
+	// it, and resync when the inspector moves to another session.
+	const [reviewerOverride, setReviewerOverride] = useState<ReviewerHarness | "">(
+		session.reviewerHarness ?? "",
+	);
+	useEffect(() => {
+		setReviewerOverride(session.reviewerHarness ?? "");
+	}, [session.id, session.reviewerHarness]);
+	const saveReviewer = useMutation({
+		mutationFn: async (harness: ReviewerHarness | "") => {
+			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/reviewer", {
+				params: { path: { sessionId: session.id } },
+				body: { harness: harness || undefined },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Unable to save reviewer"));
+		},
+		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
 	const triggerReview = useMutation({
 		mutationFn: async () => {
 			// No override sends no body at all, leaving the default path on the wire
@@ -803,9 +821,9 @@ function ReviewsSection({
 			{/* One panel, two sources, in the order they happen: AO's own reviewer runs
 			    first, then whatever humans and bots leave on the PR. Tabs hid one
 			    behind the other when the point is to read them together. */}
-			<ReviewPanel
-				config={projectConfigQuery.data}
-				error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error}
+				<ReviewPanel
+					config={projectConfigQuery.data}
+					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? saveReviewer.error}
 				isLoading={reviewsQuery.isLoading}
 				isCancelling={cancelReview.isPending}
 				isTriggering={triggerReview.isPending}
@@ -815,12 +833,15 @@ function ReviewsSection({
 				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 				reviewStates={reviewStates}
 				runs={reviewsQuery.data?.runs ?? []}
-				notice={reviewNotice}
-				agentCatalog={agentsQuery.data}
-				reviewerOverride={reviewerOverride}
-				onReviewerOverrideChange={setReviewerOverride}
-				session={session}
-			/>
+					notice={reviewNotice}
+					agentCatalog={agentsQuery.data}
+					reviewerOverride={reviewerOverride}
+					onReviewerOverrideChange={(next) => {
+						setReviewerOverride(next);
+						saveReviewer.mutate(next);
+					}}
+					session={session}
+				/>
 			<Section
 				surface
 				title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
@@ -857,8 +878,8 @@ function ReviewDisclosure({
 		return (
 			<div className="py-2 first:pt-0.5 last:pb-0.5">
 				<div className="flex min-w-0 flex-col gap-1 px-1.5 py-1">
-				<span className="flex min-w-0 items-center justify-between gap-2">
-					<span className="line-clamp-2 text-sm-md font-semibold leading-snug text-foreground" title={title}>
+				<span className="flex min-w-0 items-start justify-between gap-2">
+					<span className="min-w-0 whitespace-normal break-words text-sm-md font-semibold leading-snug text-foreground" title={title}>
 						{title}
 					</span>
 					{verdict ? <VerdictBadge label={verdict.label} tone={verdict.tone} /> : null}
@@ -876,7 +897,7 @@ function ReviewDisclosure({
 			<button
 				aria-expanded={open}
 				data-testid="review-pr-row"
-				className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
+			className="-mx-1.5 flex w-[calc(100%+0.75rem)] min-w-0 items-start gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-interactive-hover/30"
 				onClick={() => setOpen((current) => !current)}
 				type="button"
 			>
@@ -886,7 +907,7 @@ function ReviewDisclosure({
 					<ChevronRight className="size-icon-sm shrink-0 text-passive" aria-hidden="true" />
 				)}
 				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
-					<span className="truncate text-sm-md font-semibold leading-snug text-foreground" title={title}>
+					<span className="whitespace-normal break-words text-sm-md font-semibold leading-snug text-foreground" title={title}>
 						{title}
 					</span>
 					<span className="truncate font-mono text-micro text-passive" title={meta}>
@@ -1141,11 +1162,11 @@ function ReviewPanel({
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 
 	return (
-		<div className="mb-2.5 flex flex-col">
-			<Section surface title={t("inspector.review.run")}>
-				{error ? (
-					<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
-						{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
+			<div className="mb-2.5 flex flex-col">
+				<Section surface title={t("inspector.review.run")}>
+					{error ? (
+						<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
+							{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
 					</p>
 				) : null}
 				{/* Neutral, not success: a notice is the trigger declining to run and
@@ -1204,7 +1225,7 @@ function ReviewPanel({
 				</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
-						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
+							<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
 						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
 							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
 						</span>

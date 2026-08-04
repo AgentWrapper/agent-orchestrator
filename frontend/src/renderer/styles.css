@@ -568,6 +568,25 @@ button.settings-row-bar {
 	transition-duration: var(--duration-fast);
 }
 
+.review-run-controls-container {
+	container-type: inline-size;
+}
+
+.review-run-controls {
+	flex-wrap: nowrap;
+}
+
+@container (max-width: 28rem) {
+	.review-run-controls {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+
+	.review-run-agent-select {
+		width: 100%;
+	}
+}
+
 @utility settings-menu-surface {
 	display: flex;
 	width: min(var(--size-settings-menu-width), calc(100vw - 2rem));

@@ -549,7 +549,7 @@ func TestTriggerRetriesTerminalRowWithNoVerdict(t *testing.T) {
 	}
 }
 
-func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
+func TestTriggerReplacesReviewerOnNewCommit(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
 		runs:   []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
@@ -561,14 +561,11 @@ func TestTriggerNotifiesLiveReviewerOnNewCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !launcher.notified || launcher.spawned {
-		t.Fatalf("expected notify on live reviewer: %+v", launcher)
+	if !launcher.spawned || launcher.notified {
+		t.Fatalf("expected fresh reviewer process: %+v", launcher)
 	}
-	if launcher.preflighted {
-		t.Fatal("expected preflight not to run when reusing a live pane")
-	}
-	if launcher.gotHandle != "review-mer-1" {
-		t.Fatalf("notify handle = %q", launcher.gotHandle)
+	if !launcher.preflighted {
+		t.Fatal("expected fresh reviewer process to be preflighted")
 	}
 	if !res.Created || res.Run.TargetSHA != "sha1" || len(store.runs) != 2 {
 		t.Fatalf("expected a new run for sha1: res=%+v runs=%+v", res, store.runs)
@@ -593,8 +590,8 @@ func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
 		t.Fatalf("expected older running run to be failed, got %+v", old)
 	}
-	if !launcher.notified || launcher.spawned {
-		t.Fatalf("expected live reviewer pane reused for new commit: %+v", launcher)
+	if !launcher.spawned || launcher.notified {
+		t.Fatalf("expected reviewer process replaced for new commit: %+v", launcher)
 	}
 }
 
@@ -877,7 +874,7 @@ func TestTriggerCreatesRunForChangesRequestedCurrentHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !res.Created || len(res.CreatedRuns) != 1 || !launcher.notified || launcher.spawned {
+	if !res.Created || len(res.CreatedRuns) != 1 || !launcher.spawned || launcher.notified {
 		t.Fatalf("expected rerun on changes_requested current head: res=%+v launcher=%+v", res, launcher)
 	}
 }
@@ -894,6 +891,23 @@ func TestTriggerUsesConfiguredReviewerHarness(t *testing.T) {
 	}
 	if res.Run.Harness != domain.ReviewerHarness("greptile") || launcher.gotSpec.Harness != domain.ReviewerHarness("greptile") {
 		t.Fatalf("harness not used: run=%+v spec=%+v", res.Run, launcher.gotSpec)
+	}
+}
+
+func TestTriggerUsesSessionReviewerHarnessBeforeProjectDefault(t *testing.T) {
+	store := &fakeStore{}
+	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{Harness: domain.ReviewerCodex}}}}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerOpenCode
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), projects, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", "")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Run.Harness != domain.ReviewerOpenCode || launcher.gotSpec.Harness != domain.ReviewerOpenCode {
+		t.Fatalf("session harness not used: run=%+v spec=%+v", res.Run, launcher.gotSpec)
 	}
 }
 

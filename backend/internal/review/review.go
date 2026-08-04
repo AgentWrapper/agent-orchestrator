@@ -218,23 +218,14 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 		harness = override
 	}
 
-	// Harness the live reviewer pane was launched under, captured before the
-	// upsert below overwrites it. The reviewer handle is stable per worker, so a
-	// harness switch keeps the previous harness's process alive; reusing it (via
-	// Notify, which only sends prompt text) would silently run the review under
-	// the old harness's sandbox/permissions/env, since those apply only at Spawn.
-	// A changed (or unrecorded) harness therefore respawns instead of reusing.
+	// Preserve the last harness until a newly-created pass actually launches.
 	prevHarness := reviewRow.Harness
 
 	now := e.clock()
 	// This eager upsert only needs the review row to exist so the runs below can
 	// reference it; it must NOT advance the recorded harness past what the live
-	// pane actually runs. On a harness switch that creates no run, the
-	// len(created)==0 early return below reuses the old pane without respawning,
-	// so recording the new harness here would make the next trigger read it back
-	// as prevHarness, see prevHarness == harness, and Notify the stale old-harness
-	// pane. Preserve an existing row's harness; only the post-spawn upsert (after
-	// an actual Spawn/Notify) records the harness we launched under.
+	// pane actually ran. Preserve an existing row's harness; only the post-spawn
+	// upsert records the harness launched for a real pass.
 	eagerHarness := harness
 	if hasReview {
 		eagerHarness = prevHarness
@@ -301,34 +292,19 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 		return err
 	}
 
-	handleID := ""
 	queue := reviewQueue(created)
-	if hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness {
-		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
-		if err != nil {
-			return TriggerResult{}, failRuns(0, err)
-		}
-		if alive {
-			handleID = reviewRow.ReviewerHandleID
-		}
+	// Each pass gets a fresh reviewer process on the same stable terminal
+	// handle. Runtime panes intentionally preserve a shell after their command
+	// exits, so pane liveness cannot prove the reviewer agent is still present;
+	// sending a task to such a pane executes it as shell input. Spawn replaces
+	// the old pane atomically and also applies the selected harness's current
+	// permissions and environment.
+	if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
+		return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
 	}
-	if handleID == "" {
-		// Preflight before launching a new reviewer pane. Runs only when a
-		// fresh launch is actually required (not when an existing pane is
-		// reused via Notify). On failure failRuns marks the created runs as
-		// failed, matching the Spawn error semantics.
-		if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
-			return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
-		}
-		h, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
-		if err != nil {
-			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
-		}
-		handleID = h
-	} else {
-		if err := e.launcher.Notify(ctx, handleID, reviewLaunchSpec(worker, harness, created[0], queue, 0)); err != nil {
-			return TriggerResult{}, failRuns(0, fmt.Errorf("notify reviewer: %w", err))
-		}
+	handleID, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
+	if err != nil {
+		return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 	}
 	reviewRow, err = e.upsertReview(ctx, worker, harness, handleID, now)
 	if err != nil {
@@ -475,10 +451,13 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	return CancelResult{ReviewerHandleID: review.ReviewerHandleID, Reviews: Plan(prs, runs), CancelledRuns: cancelled}, nil
 }
 
-// reviewerHarness resolves which harness reviews the worker's PR: a configured
-// reviewer wins, otherwise worker's own harness is reused when it is a
-// supported reviewer, otherwise fallback to claude-code.
+// reviewerHarness resolves which harness reviews the worker's PR: a persisted
+// session preference wins, then project configuration, then the worker's own
+// harness when supported, otherwise claude-code.
 func (e *Engine) reviewerHarness(ctx stdctx.Context, worker domain.SessionRecord) (domain.ReviewerHarness, error) {
+	if worker.ReviewerHarness != "" {
+		return worker.ReviewerHarness, nil
+	}
 	var cfg domain.ProjectConfig
 	if e.projects != nil {
 		if proj, ok, err := e.projects.GetProject(ctx, string(worker.ProjectID)); err != nil {

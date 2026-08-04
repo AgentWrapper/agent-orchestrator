@@ -245,6 +245,12 @@ type RenameSessionRequest struct {
 	DisplayName string `json:"displayName" minLength:"1"`
 }
 
+// SetSessionReviewerRequest sets the durable reviewer preference for a session.
+// Empty clears the preference and falls back to project configuration.
+type SetSessionReviewerRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
+}
+
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
 // An empty url asks the daemon to autodetect a static entry point in the
 // session workspace; a non-empty url is used verbatim as the preview target.

@@ -171,6 +171,7 @@ beforeEach(() => {
 	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
+	putMock.mockResolvedValue({ data: { session: {} }, error: undefined, response: { status: 200 } });
 });
 
 afterEach(() => {
@@ -993,7 +994,7 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.queryByText("No one has reviewed this pull request yet.")).not.toBeInTheDocument();
 	});
 
-	it("sends the chosen reviewer as a one-off override", async () => {
+	it("persists the chosen reviewer for the session and uses it for the run", async () => {
 		mockCommonGets([], "reviewer-pane", [reviewState(3, "needs_review", "sha-1")]);
 		postMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, response: { status: 201 } });
 
@@ -1002,6 +1003,12 @@ describe("SessionInspector reviews tab", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/ }));
+		await waitFor(() =>
+			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviewer", {
+				params: { path: { sessionId: "sess-1" } },
+				body: { harness: "opencode" },
+			}),
+		);
 		await userEvent.click(screen.getByRole("button", { name: "Run review" }));
 
 		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", {
