@@ -3,6 +3,8 @@ import type { AttentionLevel } from "./theme";
 
 // ---- Types (subset of AO's DashboardSession we use on the phone) ------------
 
+export type SessionMode = "chat" | "tui";
+
 export type DashboardPR = {
 	number: number;
 	url: string;
@@ -37,6 +39,8 @@ export type DashboardSession = {
 	// Which agent CLI drives this session (claude-code, codex, …). Parsed off the
 	// wire but discarded until the orchestrator tab needed it for brand marks.
 	harness?: string | null;
+	/** Immutable controller selected when the AO session was created. */
+	mode: SessionMode;
 	branch: string | null;
 	issueId: string | null;
 	issueUrl?: string | null;
@@ -67,6 +71,7 @@ export type OrchestratorLink = {
 	activity?: string | null;
 	/** Agent CLI driving this orchestrator — drives its brand mark. */
 	harness?: string | null;
+	mode: SessionMode;
 	updatedAt?: string | null;
 	runtimeState?: string | null;
 	hasRuntime?: boolean;
@@ -122,6 +127,7 @@ type WireSession = {
 	issueId?: string;
 	kind?: string; // worker | orchestrator
 	harness?: string;
+	mode?: SessionMode;
 	displayName?: string;
 	activity?: unknown;
 	isTerminated?: boolean;
@@ -190,6 +196,7 @@ function mapSession(s: WireSession): DashboardSession {
 		status: s.status ?? null,
 		activity: activityString(s.activity),
 		harness: s.harness ?? null,
+		mode: s.mode === "chat" ? "chat" : "tui",
 		branch: s.branch ?? null,
 		issueId: s.issueId ?? null,
 		issueTitle: null,
@@ -213,6 +220,7 @@ function mapOrchestrator(s: WireSession, projectName: string): OrchestratorLink 
 		status: s.status ?? null,
 		activity: activityString(s.activity),
 		harness: s.harness ?? null,
+		mode: s.mode === "chat" ? "chat" : "tui",
 		updatedAt: s.updatedAt ?? null,
 		hasRuntime: !s.isTerminated,
 		isTerminal: !!s.isTerminated,
@@ -243,12 +251,12 @@ export class ApiError extends Error {
 	}
 }
 
-async function req(cfg: ServerConfig, path: string, init?: RequestInit): Promise<Response> {
+async function req(cfg: ServerConfig, path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
 	const url = `${httpBase(cfg)}${path}`;
 	// Without a timeout a sleeping/unreachable host (common over Tailscale) hangs
 	// the call for the OS TCP timeout (~75-120s), freezing Kill/send and the poll.
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	let res: Response;
 	try {
 		res = await fetch(url, {
@@ -278,6 +286,11 @@ async function req(cfg: ServerConfig, path: string, init?: RequestInit): Promise
 		throw new ApiError(res.status, `${res.status} ${res.statusText}${detail ? ` - ${detail}` : ""}`, code);
 	}
 	return res;
+}
+
+/** Shared authenticated JSON request boundary for focused mobile feature modules. */
+export function apiRequest(cfg: ServerConfig, path: string, init?: RequestInit, timeoutMs?: number): Promise<Response> {
+	return req(cfg, path, init, timeoutMs);
 }
 
 // ---- Reads ------------------------------------------------------------------
@@ -370,6 +383,20 @@ export type AgentCatalog = {
 	installed: AgentInfo[];
 	authorized: AgentInfo[];
 };
+
+export type AOSettings = {
+	defaultSessionMode: SessionMode;
+	chatHarnesses: string[];
+};
+
+export async function getSettings(cfg: ServerConfig): Promise<AOSettings> {
+	const res = await req(cfg, `${API}/settings`);
+	const data = await res.json();
+	return {
+		defaultSessionMode: data?.defaultSessionMode === "tui" ? "tui" : "chat",
+		chatHarnesses: Array.isArray(data?.chatHarnesses) ? data.chatHarnesses.filter((value: unknown): value is string => typeof value === "string") : [],
+	};
+}
 
 export async function getAgents(cfg: ServerConfig): Promise<AgentCatalog> {
 	const res = await req(cfg, `${API}/agents`);
@@ -534,7 +561,7 @@ export async function sendMessage(cfg: ServerConfig, id: string, message: string
 
 export async function spawnSession(
 	cfg: ServerConfig,
-	opts: { projectId: string; prompt?: string; issueId?: string; harness?: string },
+	opts: { projectId: string; prompt?: string; issueId?: string; harness?: string; mode?: SessionMode },
 ): Promise<DashboardSession> {
 	const res = await req(cfg, `${API}/sessions`, {
 		method: "POST",
@@ -545,6 +572,10 @@ export async function spawnSession(
 			// The daemon needs an agent harness unless the project configures a
 			// default worker.agent; the spawn screen lets the user pick one.
 			harness: opts.harness || undefined,
+			// Mobile is Chat-first. Callers may deliberately request TUI for a harness
+			// that cannot expose a structured controller, but omission must never make
+			// the phone depend on a desktop preference it cannot see.
+			mode: opts.mode ?? "chat",
 			kind: "worker",
 		}),
 	});
@@ -556,10 +587,11 @@ export async function launchOrchestrator(
 	cfg: ServerConfig,
 	projectId: string,
 	clean = false,
+	mode: SessionMode = "chat",
 ): Promise<OrchestratorLink> {
 	const res = await req(cfg, `${API}/orchestrators`, {
 		method: "POST",
-		body: JSON.stringify({ projectId, clean }),
+		body: JSON.stringify({ projectId, clean, mode }),
 	});
 	const data = await res.json();
 	const o = data?.orchestrator ?? {};
@@ -567,8 +599,11 @@ export async function launchOrchestrator(
 		id: o.id,
 		projectId: o.projectId ?? projectId,
 		projectName: o.projectName ?? projectId,
+		// Legacy mobile presentation field: here this means "the orchestrator is
+		// active", not that a Chat session owns a tmux runtime handle.
 		hasRuntime: true,
 		isTerminal: false,
+		mode: o.mode === "tui" ? "tui" : o.mode === "chat" ? "chat" : mode,
 	};
 }
 

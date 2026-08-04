@@ -58,10 +58,15 @@ export function projectSheetRoute(opts: {
 	};
 }
 
-export function agentSheetRoute(opts: { selected: string; onSelect: (id: string) => void }) {
+export function agentSheetRoute(opts: { selected: string; onSelect: (id: string) => void; allowed?: string[]; mode?: "chat" | "tui" }) {
 	return {
 		pathname: "/sheets/agent" as const,
-		params: { resultKey: parkSheetResult(opts.onSelect), selected: opts.selected },
+		params: {
+			resultKey: parkSheetResult(opts.onSelect),
+			selected: opts.selected,
+			...(opts.allowed ? { allowed: opts.allowed.join("|") } : {}),
+			...(opts.mode ? { mode: opts.mode } : {}),
+		},
 	};
 }
 

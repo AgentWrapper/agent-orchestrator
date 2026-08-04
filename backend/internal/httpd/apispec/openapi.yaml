@@ -5821,6 +5821,11 @@ components:
       properties:
         clean:
           type: boolean
+        mode:
+          enum:
+          - chat
+          - tui
+          type: string
         projectId:
           type: string
       required:

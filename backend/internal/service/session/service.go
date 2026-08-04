@@ -321,7 +321,12 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 // one is the only live coordinator. When clean is false it is idempotent: if an
 // active orchestrator already exists it is returned as-is. A business rule that
 // belongs here, not in the HTTP controller.
-func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+func (s *Service) SpawnOrchestrator(
+	ctx context.Context,
+	projectID domain.ProjectID,
+	clean bool,
+	requestedMode domain.SessionMode,
+) (domain.Session, error) {
 	unlock := s.lockOrchestratorProject(projectID)
 	defer unlock()
 
@@ -329,7 +334,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	if err != nil {
 		return domain.Session{}, err
 	}
-	var replacementMode domain.SessionMode
+	mode := requestedMode
 	if clean {
 		existing, err := s.activeOrchestrators(ctx, projectID)
 		if err != nil {
@@ -340,7 +345,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			// orchestrator being replaced. The global default only applies when a
 			// project has no prior active orchestrator; changing that preference
 			// must never silently flip an existing project's coordinator.
-			replacementMode = newestSession(existing).Mode
+			mode = newestSession(existing).Mode
 		}
 		for _, orch := range existing {
 			_ = s.sendRetireNotice(ctx, orch.ID)
@@ -360,7 +365,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	sess, _, _, err := s.spawn(ctx, ports.SpawnConfig{
 		ProjectID:     projectID,
 		Kind:          domain.KindOrchestrator,
-		RequestedMode: replacementMode,
+		RequestedMode: mode,
 	})
 	if err != nil {
 		return domain.Session{}, err

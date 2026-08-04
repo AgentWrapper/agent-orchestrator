@@ -2077,6 +2077,8 @@ export interface components {
         };
         SpawnOrchestratorRequest: {
             clean?: boolean;
+            /** @enum {string} */
+            mode?: "chat" | "tui";
             projectId: string;
         };
         SpawnOrchestratorResponse: {

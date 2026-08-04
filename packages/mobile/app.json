@@ -59,6 +59,13 @@
 				}
 			],
 			[
+				"expo-image-picker",
+				{
+					"photosPermission": "Allow AO to attach images to agent conversations."
+				}
+			],
+			"expo-document-picker",
+			[
 				"expo-speech-recognition",
 				{
 					"microphonePermission": "Allow AO to use the microphone so you can dictate prompts to an agent.",

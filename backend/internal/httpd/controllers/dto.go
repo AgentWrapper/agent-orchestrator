@@ -655,6 +655,10 @@ type OrchestratorIDParam struct {
 type SpawnOrchestratorRequest struct {
 	ProjectID domain.ProjectID `json:"projectId"`
 	Clean     bool             `json:"clean,omitempty"`
+	// Mode applies only when this request creates a project orchestrator. An
+	// idempotent ensure returns the existing orchestrator unchanged, and a clean
+	// replacement inherits the existing orchestrator's immutable mode.
+	Mode domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 }
 
 // SpawnOrchestratorResponse is the body of POST /api/v1/orchestrators.

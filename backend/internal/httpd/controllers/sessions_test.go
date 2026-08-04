@@ -28,21 +28,22 @@ import (
 )
 
 type fakeSessionService struct {
-	sessions        map[domain.SessionID]domain.Session
-	sent            string
-	cleanupProjects []domain.ProjectID
-	cleanupResult   []domain.SessionID
-	cleanupSkipped  []sessionsvc.CleanupSkipped
-	workspaceFiles  sessionsvc.WorkspaceFiles
-	workspaceFile   sessionsvc.WorkspaceFileDetail
-	workspacePaths  []string
-	spawnErr        error
-	claimErr        error
-	listPRErr       error
-	workspaceErr    error
-	staged          []ports.SpawnAttachment
-	stagedPaths     []string
-	stageErr        error
+	sessions         map[domain.SessionID]domain.Session
+	sent             string
+	cleanupProjects  []domain.ProjectID
+	cleanupResult    []domain.SessionID
+	cleanupSkipped   []sessionsvc.CleanupSkipped
+	workspaceFiles   sessionsvc.WorkspaceFiles
+	workspaceFile    sessionsvc.WorkspaceFileDetail
+	workspacePaths   []string
+	spawnErr         error
+	orchestratorMode domain.SessionMode
+	claimErr         error
+	listPRErr        error
+	workspaceErr     error
+	staged           []ports.SpawnAttachment
+	stagedPaths      []string
+	stageErr         error
 }
 
 type fakeManagedPreviewServer struct {
@@ -135,7 +136,8 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	return s, len(cfg.Prompt), 0, nil
 }
 
-func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, requestedMode domain.SessionMode) (domain.Session, error) {
+	f.orchestratorMode = requestedMode
 	if clean {
 		active := true
 		existing, err := f.List(ctx, sessionsvc.ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
@@ -148,7 +150,7 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 			}
 		}
 	}
-	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator, RequestedMode: requestedMode})
 	return s, err
 }
 
@@ -606,6 +608,29 @@ func TestSessionsAPI_SpawnRejectsUnknownExplicitMode(t *testing.T) {
 	if len(svc.sessions) != 1 {
 		t.Fatalf("invalid mode created a session: %#v", svc.sessions)
 	}
+}
+
+func TestSessionsAPI_OrchestratorAcceptsExplicitChatMode(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators",
+		`{"projectId":"ao","mode":"chat"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", status, body)
+	}
+	if svc.orchestratorMode != domain.SessionModeChat {
+		t.Fatalf("requested mode = %q, want chat", svc.orchestratorMode)
+	}
+}
+
+func TestSessionsAPI_OrchestratorRejectsUnknownExplicitMode(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators",
+		`{"projectId":"ao","mode":"chatt"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "SESSION_MODE_INVALID")
 }
 
 func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
