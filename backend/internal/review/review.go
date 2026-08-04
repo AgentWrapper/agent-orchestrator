@@ -641,6 +641,9 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	if err != nil {
 		return CancelResult{}, err
 	}
+	if review.Harness == domain.ReviewerOpenCode && strings.TrimSpace(review.AgentSessionID) != "" {
+		return e.cancelOpenCodeByRestore(ctx, workerID, review, running)
+	}
 	if err := e.launcher.Cancel(ctx, review.ReviewerHandleID, review.Harness); err != nil {
 		alive, aliveErr := e.launcher.Alive(ctx, review.ReviewerHandleID)
 		if aliveErr != nil {
@@ -670,6 +673,64 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 		return CancelResult{}, err
 	}
 	return CancelResult{ReviewerHandleID: review.ReviewerHandleID, Reviews: Plan(prs, runs), CancelledRuns: cancelled}, nil
+}
+
+func (e *Engine) cancelOpenCodeByRestore(ctx stdctx.Context, workerID domain.SessionID, review domain.Review, running []domain.ReviewRun) (CancelResult, error) {
+	worker, ok, err := e.sessions.GetSession(ctx, workerID)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	if !ok || worker.IsTerminated || worker.Metadata.WorkspacePath == "" {
+		return CancelResult{}, fmt.Errorf("%w: worker session %q is not restorable", ErrNotFound, workerID)
+	}
+	if err := e.launcher.Destroy(ctx, review.ReviewerHandleID); err != nil {
+		return CancelResult{}, err
+	}
+	if _, err := e.store.CancelRunningReviewRunsBySession(ctx, workerID, "cancelled by user"); err != nil {
+		return CancelResult{}, err
+	}
+	cancelled := make([]domain.ReviewRun, 0, len(running))
+	for _, run := range running {
+		run.Status = domain.ReviewRunCancelled
+		run.Verdict = domain.VerdictNone
+		run.Body = "cancelled by user"
+		run.GithubReviewID = ""
+		cancelled = append(cancelled, run)
+	}
+	runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	launch, err := e.launcher.RestoreTerminal(ctx, LaunchSpec{
+		WorkerID:       worker.ID,
+		ProjectID:      worker.ProjectID,
+		Harness:        review.Harness,
+		WorkspacePath:  worker.Metadata.WorkspacePath,
+		AgentSessionID: strings.TrimSpace(review.AgentSessionID),
+		PreviousRuns:   reviewRunsForHarness(runs, review.Harness),
+	})
+	if err != nil {
+		_ = e.store.ClearReviewerHandle(ctx, workerID)
+		_ = e.store.ClearReviewSessionHandle(ctx, workerID, review.Harness)
+		return CancelResult{}, fmt.Errorf("restore reviewer after cancel: %w", err)
+	}
+	agentSessionID := strings.TrimSpace(review.AgentSessionID)
+	if launch.AgentSessionID != "" {
+		agentSessionID = launch.AgentSessionID
+	}
+	if _, err := e.upsertReview(ctx, worker, review.Harness, launch.HandleID, agentSessionID, e.clock()); err != nil {
+		_ = e.launcher.Destroy(ctx, launch.HandleID)
+		return CancelResult{}, err
+	}
+	prs, err := e.prs.ListPRsBySession(ctx, workerID)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	runs, err = e.store.ListReviewRunsBySession(ctx, workerID)
+	if err != nil {
+		return CancelResult{}, err
+	}
+	return CancelResult{ReviewerHandleID: launch.HandleID, Reviews: Plan(prs, runs), CancelledRuns: cancelled}, nil
 }
 
 // TerminateReviewer destroys the live reviewer pane for a worker and cancels
