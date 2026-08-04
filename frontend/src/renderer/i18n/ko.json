@@ -507,6 +507,7 @@
 	"settings.project.workspaceRepos": "워크스페이스 저장소",
 	"settings.project.worktrees": "워크트리",
 	"settings.reportProblem": "문제 보고",
+	"settings.colorTheme": "색상 테마",
 	"settings.theme": "테마",
 	"settings.theme.dark": "다크",
 	"settings.theme.light": "라이트",

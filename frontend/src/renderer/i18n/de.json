@@ -507,6 +507,7 @@
 	"settings.project.workspaceRepos": "Workspace-Repos",
 	"settings.project.worktrees": "Worktrees",
 	"settings.reportProblem": "Problem melden",
+	"settings.colorTheme": "Farbthema",
 	"settings.theme": "Design",
 	"settings.theme.dark": "Dunkel",
 	"settings.theme.light": "Hell",
