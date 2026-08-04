@@ -151,7 +151,7 @@ describe("GlobalSettingsForm", () => {
 	it("renders the Figma settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+		// "Settings" heading is now in the modal dialog header, not in the form body
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
