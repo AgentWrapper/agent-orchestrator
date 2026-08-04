@@ -935,7 +935,7 @@ function mockProjectConfig(): ProjectConfig {
 	};
 }
 
-// Preview-only pins so the Reviews tab can be seen mid-run and with a verdict
+// Preview-only pins so the reviews section can be seen mid-run and with a verdict
 // left behind by an earlier commit — neither follows from a PR's review decision.
 const MOCK_RUNNING_PR = 322;
 const MOCK_STALE_PR = 324;
@@ -1344,13 +1344,13 @@ function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 function githubVerdict(verdict: string, t: TFunction): { label: string; tone: "neutral" | "running" | "success" | "danger" } {
 	switch (verdict) {
 		case "approved":
-			return { label: t("inspector.githubReview.approved"), tone: "success" };
+			return { label: t("inspector.review.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: t("inspector.githubReview.changesRequested"), tone: "danger" };
+			return { label: t("inspector.review.changesRequested"), tone: "danger" };
 		case "review_required":
-			return { label: t("inspector.githubReview.reviewRequired"), tone: "neutral" };
+			return { label: t("inspector.review.notRun"), tone: "neutral" };
 		default:
-			return { label: t("inspector.githubReview.commented"), tone: "neutral" };
+			return { label: t("inspector.review.commented"), tone: "neutral" };
 	}
 }
 

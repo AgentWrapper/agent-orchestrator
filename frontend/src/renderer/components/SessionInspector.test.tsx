@@ -697,10 +697,11 @@ describe("SessionInspector Activity section", () => {
 });
 
 describe("SessionInspector tabs", () => {
-	it("exposes Summary, Reviews, Browser, and Files as inspector tabs", () => {
+	it("exposes Summary, Browser, and Files as inspector tabs", () => {
 		renderWithQuery(<SessionInspector session={session([pr(1, "open")])} />);
 		const tabs = screen.getAllByRole("tab").map((el) => el.textContent?.trim());
-		expect(tabs).toEqual(["Summary", "Reviews", "Browser", "Files"]);
+		expect(tabs).toEqual(["Summary", "Browser", "Files"]);
+		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
 	});
 
 	it("does not render the overview card in the summary", () => {
@@ -713,11 +714,10 @@ describe("SessionInspector tabs", () => {
 	});
 });
 
-describe("SessionInspector reviews tab", () => {
-	// PR rows start collapsed, so opening the tab alone shows only their titles.
+describe("SessionInspector summary reviews", () => {
+	// PR rows start collapsed, so opening the Summary tab alone shows only their titles.
 	// Reveal every row, since these tests are about what a review says.
-	const openReviewsTab = async () => {
-		await userEvent.click(screen.getByRole("tab", { name: /Reviews/ }));
+	const openReviewsSection = async () => {
 		// Rows arrive with the reviews query, so wait for them before expanding.
 		const rows = await screen.findAllByTestId("review-pr-row").catch(() => []);
 		for (const row of rows) {
@@ -740,7 +740,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(
 			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
 		);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
 
@@ -777,7 +777,7 @@ describe("SessionInspector reviews tab", () => {
 		});
 
 		renderWithQuery(<SessionInspector session={sessionWithProvider([pr(3, "open")], "codex")} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("claude-code");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
@@ -787,7 +787,7 @@ describe("SessionInspector reviews tab", () => {
 		mockCommonGets([], "", [reviewState(3, "needs_review", "abc123")]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
 		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
@@ -802,7 +802,7 @@ describe("SessionInspector reviews tab", () => {
 		]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open"), pr(5, "draft")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
@@ -831,7 +831,7 @@ describe("SessionInspector reviews tab", () => {
 		]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		const summary = await screen.findByTestId("review-run-summary");
 		expect(summary).toHaveClass("line-clamp-4");
@@ -850,7 +850,7 @@ describe("SessionInspector reviews tab", () => {
 		]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(await screen.findByTestId("review-run-summary")).not.toHaveClass("line-clamp-4");
 		expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
@@ -866,7 +866,7 @@ describe("SessionInspector reviews tab", () => {
 			},
 		]);
 		const { unmount } = renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 		expect(await screen.findByRole("link", { name: /View review/ })).toHaveAttribute(
 			"href",
 			"https://example.com/pr/3#pullrequestreview-98765",
@@ -877,7 +877,7 @@ describe("SessionInspector reviews tab", () => {
 			{ ...reviewState(3, "up_to_date", "abc123"), latestRun: { ...approvedReview, githubReviewId: "" } },
 		]);
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 		expect(await screen.findByRole("link", { name: /View on PR/ })).toBeInTheDocument();
 	});
 
@@ -911,7 +911,7 @@ describe("SessionInspector reviews tab", () => {
 			mockCommonGets([], "reviewer-pane", [current]);
 
 			renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-			await openReviewsTab();
+			await openReviewsSection();
 
 			expect(await screen.findAllByText(runLabel)).not.toHaveLength(0);
 			expect(screen.getByText("Previous review summary with actionable detail.")).toBeInTheDocument();
@@ -976,7 +976,7 @@ describe("SessionInspector reviews tab", () => {
 			return previous(path, opts);
 		});
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		// Both sources sit in one panel now, so the PR reviews need no navigation.
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
@@ -989,7 +989,7 @@ describe("SessionInspector reviews tab", () => {
 		postMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, response: { status: 201 } });
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/ }));
@@ -1027,7 +1027,7 @@ describe("SessionInspector reviews tab", () => {
 		mockCommonGets([], "reviewer-pane", [done, running]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open"), pr(4, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(await screen.findByText("Review in progress · codex")).toBeInTheDocument();
 		expect(screen.queryByText("Review in progress · claude-code")).not.toBeInTheDocument();
@@ -1071,7 +1071,7 @@ describe("SessionInspector reviews tab", () => {
 		});
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(await screen.findByText("codex asked for tests.")).toBeInTheDocument();
 		expect(screen.getByText("claude-code found nothing blocking.")).toBeInTheDocument();
@@ -1090,7 +1090,7 @@ describe("SessionInspector reviews tab", () => {
 		mockCommonGets([], "reviewer-pane", [running]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		// AO runs one reviewer per worker, so a second harness cannot start
 		// alongside it. Say so rather than silently ignoring the choice.
@@ -1112,7 +1112,7 @@ describe("SessionInspector reviews tab", () => {
 		mockCommonGets([], "reviewer-pane", [current]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(await screen.findAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.queryByText(/Previous:/)).not.toBeInTheDocument();
@@ -1133,7 +1133,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(
 			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
 		);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
 
@@ -1153,7 +1153,7 @@ describe("SessionInspector reviews tab", () => {
 		renderWithQuery(
 			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
 		);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		await waitFor(() => expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled());
 		expect(screen.queryByRole("button", { name: /re-run review/i })).not.toBeInTheDocument();
@@ -1173,7 +1173,7 @@ describe("SessionInspector reviews tab", () => {
 		]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(await screen.findAllByText("Cancelled")).toHaveLength(1);
 		expect(screen.queryByText("Failed")).not.toBeInTheDocument();
@@ -1185,7 +1185,7 @@ describe("SessionInspector reviews tab", () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "changes_requested", "abc123")]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
@@ -1194,44 +1194,23 @@ describe("SessionInspector reviews tab", () => {
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
-	it("omits pull request review summaries from the Reviews tab", async () => {
-		mockCommonGets([], "", [reviewState(3, "needs_review", "abc123")]);
-
-		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
-
-		expect(await screen.findByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
-		expect(screen.queryByText("Pull request reviews")).not.toBeInTheDocument();
-	});
-
 	it("shows failed latest runs as failed and still allows rerun", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },
 		]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
-		await openReviewsTab();
+		await openReviewsSection();
 
 		expect(await screen.findAllByText("Failed")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeEnabled();
 	});
 
-	it("hides the Reviews tab entirely when the session has no PRs", async () => {
+	it("does not expose the Reviews tab when the session has no PRs", async () => {
 		mockCommonGets();
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		await screen.findByRole("tab", { name: /Summary/ });
 		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
-	});
-
-	it("falls back to Summary when a controlled Reviews view has no PR to show", async () => {
-		mockCommonGets();
-		renderWithQuery(<SessionInspector session={session([])} view="reviews" />);
-
-		expect(await screen.findByRole("tab", { name: /Summary/ })).toHaveAttribute("aria-selected", "true");
-		expect(screen.queryByRole("tab", { name: /Reviews/ })).not.toBeInTheDocument();
-		// Summary has its own "No pull request opened yet." line, so assert on the
-		// reviews panel's own content instead of that shared string.
-		expect(screen.queryByRole("button", { name: /run review/i })).not.toBeInTheDocument();
 	});
 });
