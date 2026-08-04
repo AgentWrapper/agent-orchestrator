@@ -226,10 +226,12 @@ func TestNonClaudeTerminalReadyImmediately(t *testing.T) {
 	}
 }
 
-func TestClaudeTerminalReadyToleratesStyledComposerFooter(t *testing.T) {
-	output := "\x1b[2m bypass\x1b[0m \x1b[1mpermissions\x1b[0m on"
-	if !claudeTerminalReady(output) {
-		t.Fatal("styled Claude composer footer was not detected")
+func TestTerminalInputAllowedAfterAgentReady(t *testing.T) {
+	if terminalInputAllowed(false) {
+		t.Fatal("terminal input allowed before agent readiness")
+	}
+	if !terminalInputAllowed(true) {
+		t.Fatal("terminal input blocked after agent readiness")
 	}
 }
 

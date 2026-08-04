@@ -32,23 +32,6 @@ func TestProjectShareRoles(t *testing.T) {
 	}
 }
 
-func TestAgentTerminalInteractionWaitsForInitialPromptAcceptance(t *testing.T) {
-	session := clouddomain.Session{
-		ActiveTurn: &clouddomain.Turn{AttemptCount: 0},
-	}
-	if agentTerminalInteractionReady(session) {
-		t.Fatal("agent terminal became interactive before prompt acceptance")
-	}
-	session.ActiveTurn.AttemptCount = 1
-	if !agentTerminalInteractionReady(session) {
-		t.Fatal("agent terminal remained locked after prompt acceptance")
-	}
-	session.ActiveTurn = nil
-	if !agentTerminalInteractionReady(session) {
-		t.Fatal("idle agent terminal should be interactive")
-	}
-}
-
 func TestSharedProjectRequestScope(t *testing.T) {
 	orgID := clouddomain.OrgID("org-one")
 	for _, test := range []struct {
