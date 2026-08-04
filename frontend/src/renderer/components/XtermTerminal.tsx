@@ -552,12 +552,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		const fitTerminal = () => {
 			// Parked terminals keep their last measured box and continue parsing
 			// output, but must not refit or emit PTY resizes while hidden.
-			if (callbacksRef.current.isVisible === false) return;
+			if (callbacksRef.current.isVisible === false) return false;
 			try {
 				fit.fit();
+				return true;
 			} catch {
 				// Container momentarily has no size (hidden/unmounting) — a later
 				// trigger retries.
+				return false;
 			}
 		};
 		// ResizeObserver fires for every intermediate box during native fullscreen,
@@ -582,13 +584,20 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				clearTimeout(fitCapTimer);
 				fitCapTimer = null;
 			}
+			let fitSucceeded = false;
 			if (fitAllowsHidden || callbacksRef.current.isVisible !== false) {
 				try {
 					fit.fit();
+					fitSucceeded = true;
 				} catch {
-					// The next observer/window event retries if the host is transiently
-					// unmeasurable (for example while entering fullscreen).
+					// Keep activation listeners pending and retry if the host is
+					// transiently unmeasurable (for example while entering fullscreen).
 				}
+			}
+			if (!fitSucceeded) {
+				fitQuietTimer = setTimeout(flushScheduledFit, FIT_QUIET_MS);
+				if (fitCapTimer === null) fitCapTimer = setTimeout(flushScheduledFit, FIT_CAP_MS);
+				return;
 			}
 			fitAllowsHidden = false;
 			for (const listener of [...fitSettledListeners]) listener();
@@ -803,6 +812,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		let cancelActivationPreparation: (() => void) | null = null;
 		const prepareForActivation = (): Promise<void> => {
 			cancelActivationPreparation?.();
+			host.dataset.activationFitSettled = "false";
 			return new Promise((resolve) => {
 				let firstFrame: number | null = null;
 				let paintFrame: number | null = null;
@@ -813,6 +823,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 					if (firstFrame !== null) cancelAnimationFrame(firstFrame);
 					if (paintFrame !== null) cancelAnimationFrame(paintFrame);
 					if (cancelActivationPreparation === finish) cancelActivationPreparation = null;
+					host.dataset.activationFitSettled = "true";
 					resolve();
 				};
 				cancelActivationPreparation = finish;
@@ -831,9 +842,20 @@ export function XtermTerminal(props: XtermTerminalProps) {
 						});
 					});
 				};
-				// The container is in its real slot but remains hidden. Wait for its
-				// dimensions to settle (including fullscreen/sidebar transitions), fit
-				// once, and avoid the old unconditional full-grid refresh.
+				// A retained terminal normally returns to the same grid. Avoid paying
+				// the resize quiet window on that warmed-switch path; two paint frames
+				// are enough to reconcile and composite its bottom viewport. Real
+				// geometry changes still use the stabilizer for fullscreen/sidebar
+				// transitions.
+				try {
+					const proposed = fit.proposeDimensions();
+					if (proposed && proposed.cols === term.cols && proposed.rows === term.rows) {
+						finishAcrossPaintFrames();
+						return;
+					}
+				} catch {
+					// An unmeasurable host follows the retrying stabilized path below.
+				}
 				scheduleStableFit(true, finishAcrossPaintFrames);
 			});
 		};

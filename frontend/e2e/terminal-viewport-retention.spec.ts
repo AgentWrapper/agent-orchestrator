@@ -171,6 +171,10 @@ async function settledRevealSamples(page: Page): Promise<RevealSample[]> {
 async function openSession(page: Page, title: string): Promise<void> {
 	await page.getByRole("button", { name: `Open ${title}`, exact: true }).click();
 	await expect(activeTerminal(page)).toBeVisible();
+	await expect(activeTerminal(page).locator("[aria-label='Session terminal']")).toHaveAttribute(
+		"data-activation-fit-settled",
+		"true",
+	);
 	await expect(
 		page
 			.getByTestId("session-terminal-slot")

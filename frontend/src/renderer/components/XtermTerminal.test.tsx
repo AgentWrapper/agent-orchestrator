@@ -5,6 +5,9 @@ import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
+	fit: vi.fn(),
+	fitThrows: false,
+	proposedDimensions: { cols: 80, rows: 24 } as null | { cols: number; rows: number },
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
@@ -106,7 +109,13 @@ vi.mock("@xterm/xterm", () => ({
 
 vi.mock("@xterm/addon-fit", () => ({
 	FitAddon: class FakeFitAddon {
-		fit() {}
+		fit() {
+			state.fit();
+			if (state.fitThrows) throw new Error("fit failed");
+		}
+		proposeDimensions() {
+			return state.proposedDimensions ?? undefined;
+		}
 	},
 }));
 
@@ -152,12 +161,15 @@ describe("XtermTerminal", () => {
 	beforeEach(() => {
 		state.lastTerminal = null;
 		state.linkHandler = null;
+		state.fit.mockClear();
+		state.fitThrows = false;
+		state.proposedDimensions = { cols: 80, rows: 24 };
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
 	});
 
-	it("finishes retained activation when xterm emits no render event", async () => {
+	it("finishes same-size retained activation across paint frames without waiting for stable fit", async () => {
 		vi.useFakeTimers();
 		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
 			window.setTimeout(() => callback(performance.now()), 0),
@@ -165,15 +177,77 @@ describe("XtermTerminal", () => {
 		vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
 		try {
 			let terminal: AttachableTerminal | undefined;
-			render(<XtermTerminal theme="dark" onReady={(ready) => { terminal = ready; }} />);
+			render(
+				<XtermTerminal
+					ariaLabel="Session terminal"
+					theme="dark"
+					onReady={(ready) => {
+						terminal = ready;
+					}}
+				/>,
+			);
+			vi.clearAllTimers();
+			state.fit.mockClear();
+			const preparation = terminal!.prepareForActivation();
+			expect(screen.getByLabelText("Session terminal")).toHaveAttribute("data-activation-fit-settled", "false");
+			await act(async () => {
+				vi.runOnlyPendingTimers();
+			});
+			await act(async () => {
+				vi.runOnlyPendingTimers();
+			});
+			await preparation;
+			expect(screen.getByLabelText("Session terminal")).toHaveAttribute("data-activation-fit-settled", "true");
+			expect(state.lastTerminal!.scrollToBottom).toHaveBeenCalled();
+			expect(state.fit).not.toHaveBeenCalled();
+			expect(state.lastTerminal!.refresh).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("keeps activation pending and retries when stabilized fit throws", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+			window.setTimeout(() => callback(performance.now()), 0),
+		);
+		vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+		try {
+			let terminal: AttachableTerminal | undefined;
+			render(
+				<XtermTerminal
+					ariaLabel="Session terminal"
+					theme="dark"
+					onReady={(ready) => {
+						terminal = ready;
+					}}
+				/>,
+			);
+			vi.clearAllTimers();
+			state.fit.mockClear();
+			state.proposedDimensions = { cols: 100, rows: 30 };
+			state.fitThrows = true;
 			const preparation = terminal!.prepareForActivation();
 			await act(async () => {
-				vi.advanceTimersByTime(250);
-				vi.runAllTimers();
-				await preparation;
+				vi.advanceTimersByTime(120);
 			});
-			expect(state.lastTerminal!.scrollToBottom).toHaveBeenCalled();
-			expect(state.lastTerminal!.refresh).not.toHaveBeenCalled();
+			expect(state.fit).toHaveBeenCalledTimes(1);
+			expect(screen.getByLabelText("Session terminal")).toHaveAttribute("data-activation-fit-settled", "false");
+
+			state.fitThrows = false;
+			await act(async () => {
+				vi.advanceTimersByTime(120);
+			});
+			await act(async () => {
+				vi.runOnlyPendingTimers();
+			});
+			await act(async () => {
+				vi.runOnlyPendingTimers();
+			});
+			await preparation;
+			expect(state.fit).toHaveBeenCalledTimes(2);
+			expect(screen.getByLabelText("Session terminal")).toHaveAttribute("data-activation-fit-settled", "true");
 		} finally {
 			vi.useRealTimers();
 			vi.unstubAllGlobals();
