@@ -7,6 +7,8 @@
 -- because those race under the same harness.
 
 -- +goose Up
+ALTER TABLE sessions ADD COLUMN reviewer_harness TEXT NOT NULL DEFAULT '';
+
 -- +goose StatementBegin
 DROP INDEX idx_review_run_session_pr_sha;
 -- +goose StatementEnd
@@ -53,3 +55,5 @@ CREATE UNIQUE INDEX idx_review_run_session_pr_sha
         AND status NOT IN ('failed', 'cancelled')
         AND (status = 'running' OR verdict NOT IN ('', 'changes_requested'));
 -- +goose StatementEnd
+
+ALTER TABLE sessions DROP COLUMN reviewer_harness;
