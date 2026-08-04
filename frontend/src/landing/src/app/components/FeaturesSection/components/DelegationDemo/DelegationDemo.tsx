@@ -433,18 +433,18 @@ function AppTopBar({
 					<StatusChip isOrc worker={worker} />
 				</div>
 			) : (
-				<div className="flex min-w-0 items-center gap-2" style={{ color: APP.mut }}>
+				<div className="hidden min-w-0 items-center gap-2 sm:flex" style={{ color: APP.mut }}>
 					<StatusChip isOrc={false} worker={worker} />
 				</div>
 			)}
 			<div className="ml-auto flex shrink-0 items-center gap-[5px]">
 				{!isOrc ? (
 					<>
-						<button type="button" onClick={onKill} style={killBtnStyle}>
-							<Trash2 size={12} /> Kill
+						<button type="button" aria-label="Kill session" onClick={onKill} style={killBtnStyle}>
+							<Trash2 size={12} /> <span className="hidden sm:inline">Kill</span>
 						</button>
-						<button type="button" onClick={onOrchestrator} style={kanbanBtnStyle}>
-							<Network size={12} /> Orchestrator
+						<button type="button" aria-label="Open orchestrator" onClick={onOrchestrator} style={kanbanBtnStyle}>
+							<Network size={12} /> <span className="hidden sm:inline">Orchestrator</span>
 						</button>
 					</>
 				) : (
@@ -935,11 +935,10 @@ export function DelegationDemo() {
 					/>
 				) : null}
 				<div
-					className={`grid ${sidebarOpen ? "grid-cols-[132px_minmax(0,1fr)] sm:grid-cols-[180px_minmax(0,1fr)]" : "grid-cols-1"}`}
-					style={{ height: 386 }}
+					className={`grid h-[300px] sm:h-[386px] ${sidebarOpen ? "grid-cols-1 sm:grid-cols-[180px_minmax(0,1fr)]" : "grid-cols-1"}`}
 				>
 					{sidebarOpen ? (
-						<div className="flex min-h-0 pt-9">
+						<div className="hidden min-h-0 pt-9 sm:flex">
 							<AppSidebar
 								active={active}
 								query={query}
@@ -952,7 +951,7 @@ export function DelegationDemo() {
 						</div>
 					) : null}
 					<div
-						className={`m-1 flex min-w-0 flex-col overflow-hidden rounded-lg border ${sidebarOpen ? "ml-0" : "ml-24"}`}
+						className={`m-1 flex min-w-0 flex-col overflow-hidden rounded-lg border ${sidebarOpen ? "sm:ml-0" : "sm:ml-24"}`}
 						style={{ background: APP.bg, borderColor: APP.line }}
 					>
 						<AppTopBar
