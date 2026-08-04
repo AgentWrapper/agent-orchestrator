@@ -6,13 +6,13 @@ import {
 	BellRing,
 	CheckCheck,
 	CircleAlert,
-	ExternalLink,
 	GitMerge,
-	GitPullRequest,
+	GitPullRequestArrow,
+	GitPullRequestClosed,
 	Inbox,
 	LoaderCircle,
+	MessageSquareDot,
 	RotateCcw,
-	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMarkAllNotificationsReadMutation, useNotificationsQuery } from "../hooks/useNotificationsQuery";
@@ -163,9 +163,21 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const markAllRead = useMarkAllNotificationsReadMutation();
 	const restoreSession = useRestoreSession();
 	const { retryWorkspace, sessionsReady, terminatedIds, workspaceError } = useSessionTerminationLookup();
+	const { data: workspaces } = useWorkspaceQuery();
+	// Resolve the human project + session names for each notification so the row
+	// can show where it came from (the DTO only carries opaque ids).
+	const sessionMeta = useMemo(() => {
+		const map = new Map<string, { projectName: string; sessionName: string }>();
+		for (const workspace of workspaces ?? []) {
+			for (const session of workspace.sessions) {
+				map.set(session.id, { projectName: workspace.name, sessionName: session.title });
+			}
+		}
+		return map;
+	}, [workspaces]);
 	const notifications = useMemo(() => getCachedNotifications(allQuery.data), [allQuery.data]);
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
-	const { openPrimary, openSession } = useNotificationTargetNavigation();
+	const { openSession } = useNotificationTargetNavigation();
 	const markAllMutate = markAllRead.mutateAsync;
 
 	// Concrete ids only — never `[]` — so unread pages past the first stay
@@ -236,11 +248,6 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 
 	const openSessionAndDismiss = (notification: NotificationDTO) => {
 		openSession(notification);
-		setPanelOpen(false);
-	};
-
-	const openPrimaryAndDismiss = (notification: NotificationDTO) => {
-		openPrimary(notification);
 		setPanelOpen(false);
 	};
 
@@ -355,8 +362,8 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								<NotificationItem
 									highlighted={highlightedIds.has(notification.id) || notification.status === "unread"}
 									key={notification.id}
+									meta={sessionId ? sessionMeta.get(sessionId) : undefined}
 									notification={notification}
-									onOpenPrimary={openPrimaryAndDismiss}
 									onOpenSession={openSessionAndDismiss}
 									onRestore={() => void restoreAndOpen(notification)}
 									restoring={restoringSessionId === sessionId}
@@ -416,8 +423,8 @@ function NotificationEmpty({ icon: Icon, message }: { icon: typeof Bell; message
  */
 function NotificationItem({
 	highlighted,
+	meta,
 	notification,
-	onOpenPrimary,
 	onOpenSession,
 	onRestore,
 	restoring,
@@ -426,8 +433,8 @@ function NotificationItem({
 	terminated,
 }: {
 	highlighted: boolean;
+	meta?: { projectName: string; sessionName: string };
 	notification: NotificationDTO;
-	onOpenPrimary: (notification: NotificationDTO) => void;
 	onOpenSession: (notification: NotificationDTO) => void;
 	onRestore: () => void;
 	restoring: boolean;
@@ -437,7 +444,6 @@ function NotificationItem({
 }) {
 	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
-	const isPR = notification.target.kind === "pr" && Boolean(notification.target.prUrl);
 	const sessionId = notification.target.sessionId || notification.sessionId;
 	const canOpenSession = Boolean(sessionId) && sessionsReady && !terminated;
 	const openRow = () => {
@@ -447,8 +453,11 @@ function NotificationItem({
 		<div role="listitem">
 			<div
 				className={cn(
-					"group grid grid-cols-notification items-start gap-3 px-4 py-3 text-left transition-[background-color,opacity] duration-fast",
-					canOpenSession ? "cursor-pointer hover:bg-interactive-hover" : "cursor-default",
+					"group grid grid-cols-notification items-start gap-3 px-4 py-3 text-left transition-[background-color,opacity,transform] duration-fast will-change-transform",
+					highlighted && "notification-row-enter",
+					canOpenSession
+						? "cursor-pointer hover:bg-interactive-hover active:scale-[0.99] active:bg-interactive-active"
+						: "cursor-default",
 					!highlighted && "opacity-55 hover:opacity-80",
 				)}
 				onClick={openRow}
@@ -464,48 +473,34 @@ function NotificationItem({
 			>
 				<div
 					className={cn(
-						"grid size-notification-icon shrink-0 place-items-center rounded-md bg-surface",
+						"grid size-notification-icon shrink-0 place-items-center transition-transform duration-fast group-hover:brightness-110 group-active:scale-90",
 						notificationIconClass(notification.type),
 					)}
 				>
-					<Icon className="size-icon-base" aria-hidden="true" />
+					<Icon className="size-5" strokeWidth={2} aria-hidden="true" />
 				</div>
 				<div className="min-w-0">
 					{/* Match the 26px icon band so the title centers with the left glyph. */}
 					<div className="flex min-h-notification-icon items-center">
-						{isPR ? (
-							<a
-								className={cn(
-									"inline-flex min-w-0 items-center gap-1 text-left text-control leading-snug text-foreground underline decoration-border-strong underline-offset-3 transition-colors hover:text-accent hover:decoration-accent/60",
-									highlighted && "font-medium",
-								)}
-								href={notification.target.prUrl}
-								onClick={(event) => {
-									event.preventDefault();
-									event.stopPropagation();
-									onOpenPrimary(notification);
-								}}
-								rel="noreferrer"
-								target="_blank"
-								title={t("notify.openPR")}
-							>
-								<span className="break-words">{notification.title}</span>
-								<ExternalLink className="size-3 shrink-0" aria-hidden="true" />
-							</a>
-						) : (
-							<span
-								className={cn(
-									"min-w-0 break-words text-control leading-snug text-foreground",
-									highlighted && "font-medium",
-								)}
-							>
-								{notification.title}
-							</span>
-						)}
+						<span
+							className={cn(
+								"min-w-0 break-words text-control leading-snug text-foreground",
+								highlighted && "font-medium",
+							)}
+						>
+							{notification.title}
+						</span>
 					</div>
 					{notification.body ? (
 						<p className="mt-0.5 whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
 							{notification.body}
+						</p>
+					) : null}
+					{meta ? (
+						<p className="mt-1 flex min-w-0 items-center gap-1.5 text-caption leading-none text-passive">
+							<span className="truncate font-medium text-muted-foreground">{meta.projectName}</span>
+							<span aria-hidden="true">·</span>
+							<span className="truncate">{meta.sessionName}</span>
 						</p>
 					) : null}
 				</div>
@@ -544,18 +539,21 @@ function NotificationItem({
 function notificationIcon(type: string) {
 	switch (type) {
 		case "needs_input":
-			return CircleAlert;
+			return MessageSquareDot;
 		case "ready_to_merge":
-			return GitPullRequest;
+			return GitPullRequestArrow;
 		case "pr_merged":
 			return GitMerge;
 		case "pr_closed_unmerged":
-			return XCircle;
+			return GitPullRequestClosed;
 		default:
 			return Bell;
 	}
 }
 
+// Bare colored glyph per type (no tile). Merged uses GitHub's PR-merged purple;
+// the accent token is a near-black surface color in this theme and reads as
+// invisible, so it must not be used for a glyph.
 function notificationIconClass(type: string): string {
 	switch (type) {
 		case "needs_input":
@@ -563,7 +561,7 @@ function notificationIconClass(type: string): string {
 		case "ready_to_merge":
 			return "text-success";
 		case "pr_merged":
-			return "text-accent";
+			return "text-[#a371f7]";
 		case "pr_closed_unmerged":
 			return "text-error";
 		default:
