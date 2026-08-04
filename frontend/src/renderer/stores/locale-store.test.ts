@@ -20,7 +20,7 @@ describe("locale-store", () => {
 		getUiSettings.mockReset();
 		setUiSettings.mockReset();
 		getUiSettings.mockResolvedValue({ locale: "en" });
-		setUiSettings.mockImplementation(async (settings: { locale: "en" | "zh-CN" }) => settings);
+		setUiSettings.mockImplementation(async (settings: { locale: string }) => settings);
 		await appI18n.changeLanguage("en");
 		useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 		document.documentElement.lang = "en";
