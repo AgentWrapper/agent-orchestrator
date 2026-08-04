@@ -1550,8 +1550,12 @@ ipcMain.handle("notifications:setBadge", (_event, count: number) => {
 			mainWindow.setOverlayIcon(null, "");
 		}
 	} else if (process.platform === "linux") {
-		// Unity/KDE launchers display a numeric badge via setBadgeCount.
-		app.setBadgeCount(n);
+		// setBadgeCount drives a numeric launcher badge on Unity only, and only
+		// when the app ships a matching .desktop entry. Other Linux launchers
+		// (KDE, GNOME) expose no equivalent API, so the call is a no-op there.
+		// Surface the boolean result so the renderer can tell the badge was not
+		// applied instead of assuming unconditional success.
+		return { ok: app.setBadgeCount(n) };
 	}
 	return { ok: true };
 });

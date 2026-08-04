@@ -7,7 +7,7 @@ import { I18nextProvider } from "react-i18next";
 import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 import { queryClient } from "./lib/query-client";
-import { mergeUnreadNotification } from "./lib/notifications";
+import { mergeUnreadNotification, unreadNotificationsQueryKey } from "./lib/notifications";
 import { createAppRouter } from "./router";
 import { TelemetryBoundary } from "./components/TelemetryBoundary";
 import { initTelemetry } from "./lib/telemetry";
@@ -33,7 +33,7 @@ if (import.meta.env.DEV) {
 	w.__testNotif = async (
 		type: "needs_input" | "ready_to_merge" | "pr_merged" | "pr_closed_unmerged" = "needs_input",
 	) => {
-		const key = ["notifications", "unread"] as const;
+		const key = unreadNotificationsQueryKey;
 		const id = `test-${Date.now()}`;
 		// Freeze the query so window-focus refetch doesn't wipe test data
 		queryClient.setQueryDefaults(key, { staleTime: 60_000 });
