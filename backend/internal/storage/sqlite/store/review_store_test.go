@@ -245,6 +245,16 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if bySHA.Status != domain.ReviewRunComplete || bySHA.Verdict != domain.VerdictChangesRequested || bySHA.Body != "please fix" || bySHA.GithubReviewID != "rev-987" {
 		t.Fatalf("run result not persisted: %+v", bySHA)
 	}
+	byHarness, ok, err := s.GetReviewRunBySessionPRSHAAndHarness(ctx, rec.ID, got.PRURL, "sha1", domain.ReviewerHarness("greptile"))
+	if err != nil || !ok {
+		t.Fatalf("by harness: ok=%v err=%v", ok, err)
+	}
+	if byHarness.ID != "run-1" {
+		t.Fatalf("by harness = %+v, want run-1", byHarness)
+	}
+	if _, ok, _ := s.GetReviewRunBySessionPRSHAAndHarness(ctx, rec.ID, got.PRURL, "sha1", domain.ReviewerCodex); ok {
+		t.Fatal("unexpected run for a different harness")
+	}
 	if _, ok, _ := s.GetReviewRunBySessionPRAndSHA(ctx, rec.ID, got.PRURL, "other"); ok {
 		t.Fatal("unexpected run for a different sha")
 	}

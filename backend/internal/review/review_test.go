@@ -23,7 +23,8 @@ type fakeStore struct {
 	// writer that already recorded a run for this commit: it records that
 	// winner (so a follow-up GetReviewRunBySessionAndSHA finds it) and returns
 	// insertErr instead of recording the caller's run.
-	insertErr error
+	insertErr              error
+	insertErrWinnerAtFront bool
 }
 
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
@@ -41,7 +42,11 @@ func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error
 	if f.insertErr != nil {
 		winner := r
 		winner.ID = "winner-" + r.ID
-		f.runs = append(f.runs, winner)
+		if f.insertErrWinnerAtFront {
+			f.runs = append([]domain.ReviewRun{winner}, f.runs...)
+		} else {
+			f.runs = append(f.runs, winner)
+		}
 		return f.insertErr
 	}
 	// Mirrors idx_review_run_session_pr_sha_harness. Harness is part of the key so
@@ -110,6 +115,14 @@ func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun
 func (f *fakeStore) GetReviewRunBySessionPRAndSHA(_ context.Context, sessionID domain.SessionID, prURL, sha string) (domain.ReviewRun, bool, error) {
 	for i := len(f.runs) - 1; i >= 0; i-- {
 		if f.runs[i].SessionID == sessionID && f.runs[i].PRURL == prURL && f.runs[i].TargetSHA == sha {
+			return f.runs[i], true, nil
+		}
+	}
+	return domain.ReviewRun{}, false, nil
+}
+func (f *fakeStore) GetReviewRunBySessionPRSHAAndHarness(_ context.Context, sessionID domain.SessionID, prURL, sha string, harness domain.ReviewerHarness) (domain.ReviewRun, bool, error) {
+	for i := len(f.runs) - 1; i >= 0; i-- {
+		if f.runs[i].SessionID == sessionID && f.runs[i].PRURL == prURL && f.runs[i].TargetSHA == sha && f.runs[i].Harness == harness {
 			return f.runs[i], true, nil
 		}
 	}
@@ -394,6 +407,34 @@ func TestTriggerFallsBackToExistingRunOnUniqueConflict(t *testing.T) {
 	}
 	if res.Run.TargetSHA != "sha1" || !strings.HasPrefix(res.Run.ID, "winner-") {
 		t.Fatalf("expected the recorded winner run, got %+v", res.Run)
+	}
+	if launcher.spawnCount != 0 {
+		t.Fatalf("reviewer should not launch after unique conflict: %+v", launcher)
+	}
+}
+
+func TestTriggerDuplicateFallbackUsesRequestedHarness(t *testing.T) {
+	store := &fakeStore{
+		insertErr:              domain.ErrDuplicateReviewRun,
+		insertErrWinnerAtFront: true,
+		runs: []domain.ReviewRun{{
+			ID: "other-harness-run", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+			Harness: domain.ReviewerClaudeCode,
+			Status:  domain.ReviewRunComplete, Verdict: domain.VerdictApproved,
+		}},
+	}
+	launcher := &fakeLauncher{handle: "review-mer-1"}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerCodex)
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if res.Created {
+		t.Fatalf("expected Created=false on unique conflict: %+v", res)
+	}
+	if res.Run.Harness != domain.ReviewerCodex || !strings.HasPrefix(res.Run.ID, "winner-") {
+		t.Fatalf("expected duplicate fallback to return the codex winner, got %+v", res.Run)
 	}
 	if launcher.spawnCount != 0 {
 		t.Fatalf("reviewer should not launch after unique conflict: %+v", launcher)

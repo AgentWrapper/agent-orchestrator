@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
+import type { TFunction } from "i18next";
 import {
 	ArrowUpRight,
 	ChevronDown,
@@ -1314,7 +1315,8 @@ function GithubReviewPanel({
 type GithubReviewEntry = NonNullable<NonNullable<SessionPRSummary["review"]>["reviews"]>[number];
 
 function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
-	const verdict = githubVerdict(entry.verdict);
+	const { t } = useTranslation();
+	const verdict = githubVerdict(entry.verdict, t);
 	const body = entry.body?.trim();
 	return (
 		<div className="flex min-w-0 flex-col gap-2">
@@ -1339,16 +1341,16 @@ function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 	);
 }
 
-function githubVerdict(verdict: string): { label: string; tone: "neutral" | "running" | "success" | "danger" } {
+function githubVerdict(verdict: string, t: TFunction): { label: string; tone: "neutral" | "running" | "success" | "danger" } {
 	switch (verdict) {
 		case "approved":
-			return { label: "Approved", tone: "success" };
+			return { label: t("inspector.githubReview.approved"), tone: "success" };
 		case "changes_requested":
-			return { label: "Changes requested", tone: "danger" };
+			return { label: t("inspector.githubReview.changesRequested"), tone: "danger" };
 		case "review_required":
-			return { label: "Review required", tone: "neutral" };
+			return { label: t("inspector.githubReview.reviewRequired"), tone: "neutral" };
 		default:
-			return { label: "Commented", tone: "neutral" };
+			return { label: t("inspector.githubReview.commented"), tone: "neutral" };
 	}
 }
 
