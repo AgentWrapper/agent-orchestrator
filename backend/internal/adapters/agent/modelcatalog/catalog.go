@@ -112,20 +112,24 @@ func Manual(agentID string) ports.AgentModelCatalog {
 	}
 }
 
-// Discover executes a documented non-interactive model-list command when the
-// agent exposes one. Static catalogs are returned without executing the binary.
 // Discoverer implements the model-discovery port for production daemon wiring.
 type Discoverer struct{}
 
+// Discover executes a documented non-interactive model-list command when the
+// agent exposes one. Static catalogs are returned without executing the binary.
 func (Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscoveryRequest) (ports.AgentModelCatalog, error) {
 	return Discover(ctx, request.AgentID, request.Binary, request.WorkingDir, request.Env)
 }
 
+// BinaryVersion returns a stable fingerprint for the installed agent binary.
 func (Discoverer) BinaryVersion(ctx context.Context, binary string) string {
 	return BinaryVersion(ctx, binary)
 }
+
+// Manual returns the manual-entry fallback catalog for an agent.
 func (Discoverer) Manual(agentID string) ports.AgentModelCatalog { return Manual(agentID) }
 
+// Discover executes model catalog discovery for an agent binary.
 func Discover(ctx context.Context, agentID, binary, workingDir string, env map[string]string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
 	spec, ok := commandSpecs[agentID]

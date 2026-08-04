@@ -347,7 +347,7 @@ describe("ProjectSettingsForm", () => {
 			};
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "agents");
 
 		const workerModel = await screen.findByRole("button", { name: "Worker model" });
 		await userEvent.click(workerModel);
@@ -412,7 +412,7 @@ describe("ProjectSettingsForm", () => {
 		});
 		postMock.mockResolvedValue({ data: undefined, error: { message: "model refresh unavailable" } });
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "agents");
 
 		await userEvent.click(await screen.findByRole("button", { name: "Refresh worker model list" }));
 		expect(await screen.findByText("model refresh unavailable")).toBeInTheDocument();
@@ -458,7 +458,7 @@ describe("ProjectSettingsForm", () => {
 			error: undefined,
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "agents");
 
 		expect(await screen.findByRole("button", { name: "Worker model" })).toHaveTextContent("Agent default");
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));

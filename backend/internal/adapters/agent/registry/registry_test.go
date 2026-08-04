@@ -81,7 +81,7 @@ func TestHarnessedExcludesFakeHarness(t *testing.T) {
 		if ha.Harness == domain.HarnessFake {
 			t.Fatal("fake harness must not be returned as a shipped selectable agent")
 		}
- 	}
+	}
 }
 
 func TestEveryProductionHarnessReportsModelOrModeConfig(t *testing.T) {
