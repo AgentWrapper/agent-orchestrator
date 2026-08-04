@@ -133,6 +133,7 @@ export const aoBridge: AoBridge =
 		notifications: {
 			show: async () => undefined,
 			onClick: () => () => undefined,
+			setBadge: async () => undefined,
 		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),

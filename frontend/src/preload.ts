@@ -236,6 +236,7 @@ const api = {
 				ipcRenderer.off("notifications:click", wrapped);
 			};
 		},
+		setBadge: (count: number) => ipcRenderer.invoke("notifications:setBadge", count) as Promise<void>,
 	},
 	appState: {
 		getMigration: () => ipcRenderer.invoke("appState:getMigration") as Promise<MigrationState>,
