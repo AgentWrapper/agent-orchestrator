@@ -32,6 +32,7 @@ import (
 type Store interface {
 	CreateConversation(ctx context.Context, id string, scope domain.ConversationScope, project domain.ProjectID, session domain.SessionID, now time.Time) (domain.ConversationRecord, error)
 	ConversationForSession(ctx context.Context, session domain.SessionID) (domain.ConversationRecord, error)
+	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string, now time.Time) error
 
 	AdoptProviderTurn(ctx context.Context, conversationID string, session domain.SessionID, generation, turnID, providerTurnID string, now time.Time) error
 
@@ -85,7 +86,7 @@ type Store interface {
 	FailPendingApprovals(ctx context.Context, conversationID string, now time.Time) error
 	FailPendingInputs(ctx context.Context, conversationID string, now time.Time) error
 
-	ProjectProviderEvent(ctx context.Context, conversationID string, session domain.SessionID, providerEventID, method, payloadJSON string, now time.Time, project func(context.Context) error) error
+	ProjectProviderEvent(ctx context.Context, conversationID string, session domain.SessionID, generation, providerEventID, method, payloadJSON string, now time.Time, project func(context.Context) error) (bool, error)
 }
 
 // ActivityRecorder feeds derived session status.
@@ -787,7 +788,8 @@ func (c *Controller) project() {
 	ctx := context.WithoutCancel(context.Background())
 
 	for event := range c.conv.Events() {
-		if err := c.projectEvent(ctx, event); err != nil {
+		projected, err := c.projectEvent(ctx, event)
+		if err != nil {
 			// A projection failure must not kill the provider stream. The store
 			// rolls the archive back with its projection, so durable state remains
 			// internally consistent and a later provider replay may retry it.
@@ -795,7 +797,9 @@ func (c *Controller) project() {
 				"session", c.sessionID, "kind", event.Kind, "error", err)
 			continue
 		}
-		c.afterProject(ctx, event)
+		if projected {
+			c.afterProject(ctx, event)
+		}
 	}
 
 	c.mu.Lock()
@@ -825,7 +829,7 @@ func (c *Controller) project() {
 
 // projectEvent archives one normalized provider event and applies its durable
 // projection in the same SQLite transaction.
-func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) error {
+func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (bool, error) {
 	record := map[string]any{
 		"kind":            event.Kind,
 		"providerEventId": event.ProviderEventID,
@@ -859,10 +863,10 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) er
 	}
 	payload, err := json.Marshal(record)
 	if err != nil {
-		return fmt.Errorf("encode provider event archive: %w", err)
+		return false, fmt.Errorf("encode provider event archive: %w", err)
 	}
 	return c.store.ProjectProviderEvent(ctx, c.conversation.ID, c.sessionID,
-		event.ProviderEventID, string(event.Kind), string(payload), c.now(),
+		c.generation, event.ProviderEventID, string(event.Kind), string(payload), c.now(),
 		func(txCtx context.Context) error { return c.apply(txCtx, event) })
 }
 

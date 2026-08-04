@@ -548,11 +548,39 @@ type ChatDecision struct {
 	Raw []byte
 }
 
-// ChatInputResponse answers a structured user-input request. Action is one of
-// accept, decline, or cancel. Content is only meaningful for accept and must
-// match the provider-supplied restricted schema.
+// ChatInputAction is the provider-neutral disposition of a structured input
+// request. Keeping it typed makes the HTTP boundary and every driver share one
+// vocabulary instead of validating repeated string literals independently.
+type ChatInputAction string
+
+const (
+	ChatInputActionAccept  ChatInputAction = "accept"
+	ChatInputActionDecline ChatInputAction = "decline"
+	ChatInputActionCancel  ChatInputAction = "cancel"
+)
+
+// Valid reports whether the action can cross the Chat port boundary.
+func (a ChatInputAction) Valid() bool {
+	return a == ChatInputActionAccept || a == ChatInputActionDecline || a == ChatInputActionCancel
+}
+
+// ChatInputMode distinguishes the two ACP elicitation shapes AO supports.
+type ChatInputMode string
+
+const (
+	ChatInputModeForm ChatInputMode = "form"
+	ChatInputModeURL  ChatInputMode = "url"
+)
+
+// Valid reports whether the mode has a defined provider-neutral representation.
+func (m ChatInputMode) Valid() bool {
+	return m == ChatInputModeForm || m == ChatInputModeURL
+}
+
+// ChatInputResponse answers a structured user-input request. Content is only
+// meaningful for accept and must match the provider-supplied restricted schema.
 type ChatInputResponse struct {
-	Action  string
+	Action  ChatInputAction
 	Content map[string]any
 }
 
@@ -560,7 +588,7 @@ type ChatInputResponse struct {
 // restricted JSON Schema object for form mode. URL is only present for url mode
 // and must never be opened without the user's explicit consent.
 type ChatInputRequest struct {
-	Mode          string
+	Mode          ChatInputMode
 	Message       string
 	Schema        map[string]any
 	URL           string

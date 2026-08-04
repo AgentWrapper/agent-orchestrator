@@ -39,6 +39,9 @@ func conversationFixture(t *testing.T) (*sqlite.Store, domain.SessionID, string)
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
 	}
+	if err := s.ClaimChatControllerGeneration(ctx, session.ID, "gen-1", histClock); err != nil {
+		t.Fatalf("claim controller generation: %v", err)
+	}
 	return s, session.ID, conversation.ID
 }
 
@@ -89,7 +92,7 @@ func TestProviderArchiveAndProjectionCommitAtomically(t *testing.T) {
 	ctx := context.Background()
 	projectionErr := errors.New("projection failed")
 
-	err := s.ProjectProviderEvent(ctx, conversation, session, "event-1", "activity.started", `{}`,
+	_, err := s.ProjectProviderEvent(ctx, conversation, session, "gen-1", "event-1", "activity.started", `{}`,
 		histClock, func(txCtx context.Context) error {
 			if err := s.UpsertActivity(txCtx, conversation, "", domain.ConversationActivity{
 				ID: "activity-1", Kind: domain.ActivityKindCommand,
@@ -112,6 +115,28 @@ func TestProviderArchiveAndProjectionCommitAtomically(t *testing.T) {
 	}
 }
 
+func TestStaleControllerGenerationDropsArchiveAndProjection(t *testing.T) {
+	s, session, conversation := conversationFixture(t)
+	ctx := context.Background()
+	projected := 0
+
+	applied, err := s.ProjectProviderEvent(ctx, conversation, session, "stale-generation", "event-1",
+		"message.delta", `{}`, histClock, func(context.Context) error {
+			projected++
+			return nil
+		})
+	if err != nil {
+		t.Fatalf("ProjectProviderEvent: %v", err)
+	}
+	if applied || projected != 0 {
+		t.Fatalf("stale event applied=%v projection count=%d, want false/0", applied, projected)
+	}
+	events, err := s.ProviderEventsSince(ctx, conversation, 0, 10)
+	if err != nil || len(events) != 0 {
+		t.Fatalf("stale archive = %+v, %v; want none", events, err)
+	}
+}
+
 func TestProviderEventIdentityDeduplicatesTheWholeProjection(t *testing.T) {
 	s, session, conversation := conversationFixture(t)
 	ctx := context.Background()
@@ -121,7 +146,7 @@ func TestProviderEventIdentityDeduplicatesTheWholeProjection(t *testing.T) {
 		return nil
 	}
 	for range 2 {
-		if err := s.ProjectProviderEvent(ctx, conversation, session, "provider-event-1", "turn.started", `{}`,
+		if _, err := s.ProjectProviderEvent(ctx, conversation, session, "gen-1", "provider-event-1", "turn.started", `{}`,
 			histClock, project); err != nil {
 			t.Fatalf("ProjectProviderEvent: %v", err)
 		}

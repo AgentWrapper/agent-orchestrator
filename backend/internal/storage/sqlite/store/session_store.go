@@ -40,6 +40,31 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
+// ClaimChatControllerGeneration makes generation the only Chat controller that
+// may project provider events for this session. The narrow update avoids writing
+// a stale full SessionRecord over lifecycle facts changed by another goroutine.
+func (s *Store) ClaimChatControllerGeneration(
+	ctx context.Context,
+	id domain.SessionID,
+	generation string,
+	updatedAt time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ClaimChatControllerGeneration(ctx, gen.ClaimChatControllerGenerationParams{
+		ControllerGeneration: generation,
+		UpdatedAt:            updatedAt,
+		ID:                   id,
+	})
+	if err != nil {
+		return fmt.Errorf("claim chat controller generation for %s: %w", id, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("claim chat controller generation for %s: chat session not found", id)
+	}
+	return nil
+}
+
 // RenameSession updates only the user-facing display name for an existing
 // session. It returns ok=false when the session id does not exist. The
 // sessions_cdc_update trigger fans out a session_updated CDC event when the

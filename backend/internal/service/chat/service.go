@@ -188,6 +188,27 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, err
 	}
 
+	// Re-check under the registry lock after the provider launch. Two concurrent
+	// starts may both pass the fast-path lookup above; only the first may claim the
+	// generation and start an event projector. The redundant provider is closed
+	// before any AO controller consumes its stream.
+	s.mu.Lock()
+	if existing, ok := s.controllers[cfg.SessionID]; ok {
+		s.mu.Unlock()
+		_ = conv.Close()
+		return existing, nil
+	}
+
+	// Claim the durable fence before the controller starts consuming events. An
+	// older controller's projection transaction compares its generation with this
+	// session row and becomes a no-op after this point.
+	generation := s.newID()
+	if err := s.store.ClaimChatControllerGeneration(ctx, cfg.SessionID, generation, s.now()); err != nil {
+		s.mu.Unlock()
+		_ = conv.Close()
+		return nil, fmt.Errorf("claim chat controller: %w", err)
+	}
+
 	// Whatever the previous controller left in flight is not this controller's, and
 	// it is not evidence that any work finished.
 	//
@@ -202,9 +223,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
 	controller := newController(
-		cfg.SessionID, conversation, s.newID(), conv, s.store, s.activity, s.log, s.newID, s.now)
-
-	s.mu.Lock()
+		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
 	s.controllers[cfg.SessionID] = controller
 	s.mu.Unlock()
 

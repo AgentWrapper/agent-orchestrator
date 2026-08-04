@@ -321,6 +321,34 @@ func (h *harness) awaitSnapshot(t *testing.T, pred func(store.ConversationSnapsh
 	return last
 }
 
+func TestStaleControllerEventsDoNotReachTheTimeline(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	if err := h.st.ClaimChatControllerGeneration(ctx, testSession, "replacement-generation", h.now()); err != nil {
+		t.Fatalf("replace controller generation: %v", err)
+	}
+
+	h.conv.emit(ports.ChatEvent{
+		Kind:           ports.ChatEventMessageDelta,
+		ProviderTurnID: "stale-turn",
+		ProviderItemID: "stale-message",
+		Delta:          "must not survive",
+	})
+	if err := h.svc.Stop(ctx, testSession); err != nil {
+		t.Fatalf("stop stale controller: %v", err)
+	}
+
+	snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("load conversation: %v", err)
+	}
+	for _, message := range snapshot.Messages {
+		if message.Text == "must not survive" {
+			t.Fatalf("stale controller message was projected: %+v", message)
+		}
+	}
+}
+
 /* ---- tests ------------------------------------------------------------- */
 
 // The whole point: a message goes out, provider events come back, and the durable

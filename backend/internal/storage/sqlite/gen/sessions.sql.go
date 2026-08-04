@@ -13,6 +13,29 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+const claimChatControllerGeneration = `-- name: ClaimChatControllerGeneration :execrows
+UPDATE sessions
+SET controller_generation = ?, updated_at = ?
+WHERE id = ? AND session_mode = 'chat'
+`
+
+type ClaimChatControllerGenerationParams struct {
+	ControllerGeneration string
+	UpdatedAt            time.Time
+	ID                   domain.SessionID
+}
+
+// A Chat controller claims ownership before its event goroutine starts. Provider
+// projections compare against this value in the same transaction as their write,
+// so an older controller cannot mutate a session after a replacement takes over.
+func (q *Queries) ClaimChatControllerGeneration(ctx context.Context, arg ClaimChatControllerGenerationParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimChatControllerGeneration, arg.ControllerGeneration, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,

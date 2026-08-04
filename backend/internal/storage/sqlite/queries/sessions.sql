@@ -23,6 +23,14 @@ UPDATE sessions SET
     provider_conversation_id = ?, controller_generation = ?, updated_at = ?
 WHERE id = ?;
 
+-- name: ClaimChatControllerGeneration :execrows
+-- A Chat controller claims ownership before its event goroutine starts. Provider
+-- projections compare against this value in the same transaction as their write,
+-- so an older controller cannot mutate a session after a replacement takes over.
+UPDATE sessions
+SET controller_generation = ?, updated_at = ?
+WHERE id = ? AND session_mode = 'chat';
+
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,

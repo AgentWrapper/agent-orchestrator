@@ -35,6 +35,17 @@ surface (`npm run sqlc`, `npm run api`).
 - Full session lifecycle over HTTP: list, get, spawn, kill, restore, rename,
   rollback, cleanup, send, activity, PR claim/list. Orchestrator routes
   (list/spawn/get) are wired too.
+- Immutable per-session interface mode. TUI sessions retain the established
+  tmux/conpty agent runtime; Chat sessions use runtime-less native controllers,
+  persist provider conversation identity, and dispatch lifecycle reactions
+  through the same mode-aware session manager.
+- Durable Chat conversations with project-scoped orchestrator continuity,
+  session-scoped worker history, bounded history pages, transactional raw-event
+  archive/projection, controller-generation fencing, turns, messages,
+  activities, approvals, structured input, usage, compaction, and rollback.
+- Chat drivers for the user's installed Codex (native app-server), Claude Code
+  (claude-agent-acp), OpenCode, and Droid. AO reuses each harness's existing
+  binary/auth resolution and does not bundle provider CLIs.
 - Project CRUD plus per-project config (`PUT /projects/{id}/config`).
 - PR action engine wired into the API: `POST /prs/{id}/merge` and
   `/prs/{id}/resolve-comments`.
@@ -86,6 +97,9 @@ surface (`npm run sqlc`, `npm run api`).
 - Shell: sidebar (projects + sessions, add/remove project), sessions board,
   session view + inspector, project settings, pull-requests page,
   spawn-orchestrator flow.
+- SessionView renders from the session's persisted mode: the existing terminal
+  surface for TUI, or the durable Chat timeline/composer for Chat. Chat retains
+  access to session-scoped worktree shells without creating an agent tmux pane.
 - Desktop status and SCM summary V1: session status comes from
   `GET /api/v1/sessions`; visible/active PR context comes from
   `GET /api/v1/sessions/{sessionId}/pr`; `GET /api/v1/events` is kept open as
@@ -96,6 +110,8 @@ surface (`npm run sqlc`, `npm run api`).
   intentionally not part of the desktop V1 API/UI.
 - Terminal pane (xterm) over the mux WebSocket, with a live SSE events
   connection and port-rebind on daemon restart.
+- Chat history uses bounded pages and targeted CDC/SSE invalidation rather than
+  polling and transferring the full lifetime of a conversation.
 - In-app notification center with click access, Unread/All filters, paginated
   REST catch-up, live notification stream updates, separate PR/session target
   actions, persistent read history, mark-read controls, and Electron app toasts

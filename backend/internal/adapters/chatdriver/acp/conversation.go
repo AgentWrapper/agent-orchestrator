@@ -502,7 +502,7 @@ func (c *conversation) failPendingInputs() {
 	c.mu.Unlock()
 	for _, request := range pending {
 		select {
-		case request.result <- ports.ChatInputResponse{Action: "cancel"}:
+		case request.result <- ports.ChatInputResponse{Action: ports.ChatInputActionCancel}:
 		default:
 		}
 	}

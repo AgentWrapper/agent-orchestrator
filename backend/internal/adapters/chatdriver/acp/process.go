@@ -4,12 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"sort"
-	"strings"
 	"sync"
 	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/processenv"
 )
 
 type process struct {
@@ -23,7 +22,7 @@ type spawnFunc func(Launch, string) (*process, error)
 func spawnAgent(launch Launch, workdir string) (*process, error) {
 	cmd := exec.Command(launch.Command, launch.Args...)
 	cmd.Dir = workdir
-	cmd.Env = mergedEnv(launch.Env)
+	cmd.Env = processenv.Merge(launch.Env)
 	configureProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()
@@ -73,31 +72,6 @@ func spawnAgent(launch Launch, workdir string) (*process, error) {
 			return stopErr
 		},
 	}, nil
-}
-
-// mergedEnv treats the session environment as an overlay. The ACP adapter and
-// every command its provider runs still need HOME, SSH_AUTH_SOCK, locale, and
-// the rest of the daemon environment.
-func mergedEnv(overlay map[string]string) []string {
-	merged := make(map[string]string, len(os.Environ())+len(overlay))
-	for _, entry := range os.Environ() {
-		if key, value, ok := strings.Cut(entry, "="); ok {
-			merged[key] = value
-		}
-	}
-	for key, value := range overlay {
-		merged[key] = value
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, key+"="+merged[key])
-	}
-	return out
 }
 
 func processExitError(err error) error {

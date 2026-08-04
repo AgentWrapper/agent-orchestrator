@@ -10,10 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/processenv"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -362,26 +361,5 @@ func spawnAppServer(ctx context.Context, bin, workdir string, env []string) (*pr
 // and every toolchain cache is missing. Found while writing the Claude driver,
 // where the same shape failed outright with "Not logged in".
 func envSlice(env map[string]string) []string {
-	merged := make(map[string]string, len(os.Environ())+len(env))
-	for _, entry := range os.Environ() {
-		if key, value, ok := strings.Cut(entry, "="); ok {
-			merged[key] = value
-		}
-	}
-	// AO's values win: a session must not inherit a stale AO_SESSION from whatever
-	// shell started the daemon.
-	for key, value := range env {
-		merged[key] = value
-	}
-
-	keys := make([]string, 0, len(merged))
-	for k := range merged {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, k+"="+merged[k])
-	}
-	return out
+	return processenv.Merge(env)
 }

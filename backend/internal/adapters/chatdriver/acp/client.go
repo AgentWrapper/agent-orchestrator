@@ -121,7 +121,7 @@ func (c *conversation) UnstableCreateElicitation(
 	request := ports.ChatInputRequest{}
 	switch {
 	case params.Form != nil:
-		request.Mode = "form"
+		request.Mode = ports.ChatInputModeForm
 		request.Message = params.Form.Message
 		schema, err := schemaMap(params.Form.RequestedSchema)
 		if err != nil {
@@ -129,7 +129,7 @@ func (c *conversation) UnstableCreateElicitation(
 		}
 		request.Schema = schema
 	case params.Url != nil:
-		request.Mode = "url"
+		request.Mode = ports.ChatInputModeURL
 		request.Message = params.Url.Message
 		request.URL = params.Url.Url
 		request.ElicitationID = string(params.Url.ElicitationId)
@@ -235,11 +235,11 @@ func schemaMap(schema acpsdk.UnstableElicitationSchema) (map[string]any, error) 
 
 func acpInputResponse(response ports.ChatInputResponse) acpsdk.UnstableCreateElicitationResponse {
 	switch response.Action {
-	case "accept":
+	case ports.ChatInputActionAccept:
 		result := acpsdk.NewUnstableCreateElicitationResponseAccept()
 		result.Accept.Content = response.Content
 		return result
-	case "decline":
+	case ports.ChatInputActionDecline:
 		return acpsdk.NewUnstableCreateElicitationResponseDecline()
 	default:
 		return acpsdk.NewUnstableCreateElicitationResponseCancel()
@@ -248,16 +248,16 @@ func acpInputResponse(response ports.ChatInputResponse) acpsdk.UnstableCreateEli
 
 func validateInputResponse(request ports.ChatInputRequest, response ports.ChatInputResponse) error {
 	switch response.Action {
-	case "decline", "cancel":
+	case ports.ChatInputActionDecline, ports.ChatInputActionCancel:
 		return nil
-	case "accept":
-		if request.Mode == "url" {
+	case ports.ChatInputActionAccept:
+		if request.Mode == ports.ChatInputModeURL {
 			return nil
 		}
 	default:
 		return fmt.Errorf("%w: unsupported input action %q", ports.ErrChatDecisionNotOffered, response.Action)
 	}
-	if request.Mode != "form" {
+	if request.Mode != ports.ChatInputModeForm {
 		return fmt.Errorf("%w: unsupported input mode %q", ports.ErrChatDecisionNotOffered, request.Mode)
 	}
 	if err := validateFormContent(request.Schema, response.Content); err != nil {

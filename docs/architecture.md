@@ -1,6 +1,6 @@
 # Agent Orchestrator Architecture
 
-Agent Orchestrator is a long-running Go daemon that supervises multiple parallel AI coding agent sessions. Each session runs in an isolated git worktree with its own runtime, while the daemon coordinates lifecycle, observes external state, and routes feedback.
+Agent Orchestrator is a long-running Go daemon that supervises multiple parallel AI coding agent sessions. Every session owns an isolated git worktree and an immutable interface mode. A TUI session runs its agent inside a tmux/conpty runtime; a Chat session runs a native protocol controller without an agent terminal runtime. The daemon coordinates both through the same session, lifecycle, workspace, storage, and observation boundaries.
 
 ## Table of Contents
 
@@ -67,6 +67,7 @@ graph TB
         PRSvc[PR Service]
         ReviewSvc[Review Service]
         SessionMgr[Session Manager]
+        ChatSvc[Chat Service]
         LCM[Lifecycle Manager]
     end
 
@@ -84,6 +85,7 @@ graph TB
     subgraph Adapters["Adapters"]
         AgentAdapter[Agent Adapters]
         RuntimeAdapter[Runtime tmux/conpty]
+        ChatDriver[Native Chat / ACP Drivers]
         WorkspaceAdapter[Workspace git worktree]
         SCMAdapter[SCM GitHub]
     end
@@ -95,10 +97,12 @@ graph TB
     Controllers --> PRSvc
 
     SessionSvc --> SessionMgr
+    SessionMgr --> ChatSvc
     SessionMgr --> LCM
     SessionMgr --> AgentAdapter
     SessionMgr --> RuntimeAdapter
     SessionMgr --> WorkspaceAdapter
+    ChatSvc --> ChatDriver
 
     LCM --> SQLite
     LCM --> AgentAdapter
@@ -187,6 +191,7 @@ backend/internal/
 ├── service/             # Controller-facing services
 │   ├── project/         # Project CRUD
 │   ├── session/         # Session read-model assembly
+│   ├── chat/            # Runtime-less Chat controllers + durable projection
 │   ├── pr/              # PR observation service
 │   └── review/          # Code review service
 ├── session_manager/     # Internal session command engine
@@ -201,6 +206,7 @@ backend/internal/
 ├── terminal/            # Terminal session protocol
 ├── adapters/            # Concrete adapter implementations
 │   ├── agent/           # 23+ agent harnesses
+│   ├── chatdriver/      # Native provider protocols and reusable ACP transport
 │   ├── runtime/         # tmux/conpty runtimes
 │   ├── workspace/       # git worktree
 │   ├── scm/             # GitHub
@@ -220,6 +226,8 @@ sequenceDiagram
     participant LCM as Lifecycle Manager
     participant Agent as Agent Adapter
     participant Runtime as Runtime Adapter
+    participant ChatSvc as Chat Service
+    participant ChatDriver as Chat Driver
     participant WS as Workspace Adapter
     participant DB as SQLite
     participant CDC as CDC Broadcaster
@@ -237,14 +245,19 @@ sequenceDiagram
     Mgr->>WS: Create(project, branch)
     WS->>WS: git worktree add
 
-    Note over Mgr: 3. Launch runtime
-    Mgr->>Runtime: Create(session)
-    Runtime->>Runtime: Start tmux/conpty
-
-    Note over Mgr: 4. Start agent
-    Mgr->>Agent: GetLaunchCommand()
-    Agent-->>Mgr: launch command
-    Mgr->>Runtime: Execute(agent command)
+    alt persisted mode = tui
+        Note over Mgr: 3a. Launch terminal controller
+        Mgr->>Runtime: Create(session)
+        Runtime->>Runtime: Start tmux/conpty
+        Mgr->>Agent: GetLaunchCommand()
+        Agent-->>Mgr: launch command
+        Mgr->>Runtime: Execute(agent command)
+    else persisted mode = chat
+        Note over Mgr: 3b. Launch native Chat controller
+        Mgr->>ChatSvc: StartChat(session, worktree, harness)
+        ChatSvc->>ChatDriver: Start or resume provider conversation
+        Note over Runtime: No agent runtime handle is created
+    end
 
     Note over Mgr: 5. Mark spawned
     Mgr->>LCM: MarkSpawned(handle)
@@ -265,13 +278,18 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Start([User spawns session]) --> Validate[Validate project config]
+    Start([User spawns session]) --> Validate[Validate project config and explicit mode]
     Validate --> CreateRow[Create session row in SQLite]
     CreateRow --> CreateWS[Create git worktree]
-    CreateWS --> CreateRT[Launch runtime tmux/conpty]
+    CreateWS --> Mode{Persisted mode}
+    Mode -->|tui| CreateRT[Launch runtime tmux/conpty]
     CreateRT --> GetCmd[Get agent launch command]
     GetCmd --> ExecAgent[Execute agent in runtime]
+    Mode -->|chat| Preflight[Probe native Chat driver]
+    Preflight --> ChatController[Start or resume provider controller]
+    ChatController --> Fence[Claim controller generation]
     ExecAgent --> MarkSpawned[MarkSpawned in LCM]
+    Fence --> MarkSpawned
     MarkSpawned --> Trigger1[CDC: session.created]
     Trigger1 --> Trigger2[CDC: session.updated]
     Trigger2 --> Done([Session running])
@@ -315,25 +333,30 @@ flowchart TD
 sequenceDiagram
     participant SCM as SCM Observer
     participant LCM as Lifecycle Manager
-    participant Agent as Agent Adapter
-    participant Runtime as Runtime Adapter
+    participant Dispatch as Mode-aware Messenger
+    participant TUI as Runtime Messenger
+    participant Chat as Chat Controller
 
     SCM->>SCM: Observe PR comment
     SCM->>LCM: ApplySCMObservation()
     LCM->>LCM: Detect actionable feedback
-    LCM->>Agent: SendNudge(feedback)
+    LCM->>Dispatch: Send(feedback)
 
     SCM->>SCM: Observe CI failure
     SCM->>LCM: ApplySCMObservation()
     LCM->>LCM: Detect actionable feedback
-    LCM->>Agent: SendNudge(CI failure)
+    LCM->>Dispatch: Send(CI failure)
 
     SCM->>SCM: Observe merge conflict
     SCM->>LCM: ApplySCMObservation()
     LCM->>LCM: Detect actionable feedback
-    LCM->>Agent: SendNudge(merge conflict)
+    LCM->>Dispatch: Send(merge conflict)
 
-    Note over Agent,Runtime: Agent receives nudges via<br/>runtime messages or hooks
+    alt session mode = tui
+        Dispatch->>TUI: Send through runtime handle
+    else session mode = chat
+        Dispatch->>Chat: Enqueue native provider turn
+    end
 ```
 
 ---
@@ -345,6 +368,11 @@ sequenceDiagram
 ```mermaid
 erDiagram
     projects ||--o{ sessions : owns
+    projects ||--o| conversations : owns_orchestrator_narrative
+    sessions ||--o| conversations : owns_worker_narrative
+    conversations ||--o{ conversation_turns : contains
+    conversations ||--o{ conversation_messages : contains
+    conversations ||--o{ conversation_activities : contains
     sessions ||--o{ pull_requests : owns
     pull_requests ||--o{ pr_checks : has
     pull_requests ||--o{ pr_review_threads : has
@@ -365,9 +393,22 @@ erDiagram
         string id PK
         string project_id FK
         string harness
+        string session_mode
+        string runtime_handle_id
+        string provider_conversation_id
+        string controller_generation
         string activity_state
         boolean is_terminated
         jsonb metadata
+    }
+
+    conversations {
+        string id PK
+        string scope
+        string project_id FK
+        string session_id FK
+        string current_session_id FK
+        integer latest_sequence
     }
 
     pull_requests {
@@ -487,8 +528,9 @@ The `lifecycle.Manager` is the **canonical write path** for all session lifecycl
 ```mermaid
 flowchart TD
     subgraph Inputs["Observation Inputs"]
-        RuntimeObs[Runtime Observations]
+        RuntimeObs[TUI Runtime Observations]
         ActivitySignals[Agent Activity Signals]
+        ChatSignals[Chat Controller Signals]
         SCMObs[SCM Observations]
     end
 
@@ -507,6 +549,7 @@ flowchart TD
 
     RuntimeObs --> Reducer
     ActivitySignals --> Reducer
+    ChatSignals --> Reducer
     SCMObs --> Reducer
 
     Reducer --> StateMachine
@@ -540,7 +583,7 @@ stateDiagram-v2
 
     note right of Active
         Agent is working
-        Runtime alive
+        TUI runtime or Chat controller alive
     end note
 
     note right of Waiting
@@ -550,7 +593,7 @@ stateDiagram-v2
 
     note right of Terminated
         Session over
-        Runtime cleaned up
+        Mode-owned controller cleaned up
     end note
 ```
 
@@ -620,7 +663,7 @@ flowchart TD
     List --> ForEach[For each session]
 
     ForEach --> GetHandle{Has runtime<br/>handle?}
-    GetHandle -->|No| Skip[Skip session]
+    GetHandle -->|No, including Chat| Skip[Skip runtime probe]
     GetHandle -->|Yes| Probe[Probe runtime]
 
     Probe --> Result{Probe result}
@@ -766,6 +809,12 @@ sequenceDiagram
 
 ## Terminal Multiplexing
 
+The mux is the primary agent controller only for TUI-mode sessions. Chat-mode
+sessions have no agent runtime handle and never attach their provider through
+tmux. They may still open session-scoped shell terminals as a worktree escape
+hatch; those shells are separate resources and do not become the agent
+controller.
+
 ### Terminal Architecture
 
 ```mermaid
@@ -881,7 +930,7 @@ Agent Orchestrator's architecture is designed around:
 - **Port-based design** — Core code depends on interfaces, not implementations
 - **Durable minimalism** — Store only facts, compute everything else
 - **Event-driven updates** — CDC broadcasts changes to all subscribers
-- **Isolation** — Each session in its own worktree with its own runtime
+- **Isolation** — Each session owns a worktree and exactly one mode-specific controller
 - **Safety** — Conservative termination, path validation, gitignored hooks
 
 This architecture enables parallel AI agents to work safely while maintaining complete visibility and control.

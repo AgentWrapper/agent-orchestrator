@@ -1018,19 +1018,26 @@ func (s *Store) ProjectProviderEvent(
 	ctx context.Context,
 	conversationID string,
 	session domain.SessionID,
-	providerEventID, method, payloadJSON string,
+	generation, providerEventID, method, payloadJSON string,
 	now time.Time,
 	project func(context.Context) error,
-) error {
+) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
 	tx, err := s.writeDB.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin provider event projection: %w", err)
+		return false, fmt.Errorf("begin provider event projection: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	q := s.qw.WithTx(tx)
+	owner, err := q.GetSession(ctx, session)
+	if err != nil {
+		return false, fmt.Errorf("read controller generation for %s: %w", session, err)
+	}
+	if owner.ControllerGeneration != generation {
+		return false, nil
+	}
 	inserted, err := q.InsertConversationProviderEvent(ctx, gen.InsertConversationProviderEventParams{
 		ConversationID:  conversationID,
 		SessionID:       session,
@@ -1040,19 +1047,22 @@ func (s *Store) ProjectProviderEvent(
 		ReceivedAt:      now,
 	})
 	if err != nil {
-		return fmt.Errorf("archive provider event %s: %w", method, err)
+		return false, fmt.Errorf("archive provider event %s: %w", method, err)
 	}
 	if inserted == 0 {
-		return tx.Commit()
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("commit duplicate provider event %s: %w", method, err)
+		}
+		return false, nil
 	}
 	txCtx := context.WithValue(ctx, conversationProjectionTxKey{}, q)
 	if err := project(txCtx); err != nil {
-		return fmt.Errorf("project provider event %s: %w", method, err)
+		return false, fmt.Errorf("project provider event %s: %w", method, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit provider event %s: %w", method, err)
+		return false, fmt.Errorf("commit provider event %s: %w", method, err)
 	}
-	return nil
+	return true, nil
 }
 
 // ErrConversationTurnNotFound reports a turn id that is not in the conversation it

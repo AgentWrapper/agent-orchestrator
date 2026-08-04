@@ -499,12 +499,13 @@ func (c *ConversationsController) resolveInput(w http.ResponseWriter, r *http.Re
 	if !decodeConversationBody(w, r, &req) {
 		return
 	}
-	if req.Action != "accept" && req.Action != "decline" && req.Action != "cancel" {
+	action := ports.ChatInputAction(req.Action)
+	if !action.Valid() {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
 			"CHAT_INPUT_ACTION_INVALID", "action must be accept, decline, or cancel", nil)
 		return
 	}
-	if req.Action != "accept" && len(req.Content) > 0 {
+	if action != ports.ChatInputActionAccept && len(req.Content) > 0 {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
 			"CHAT_INPUT_CONTENT_INVALID", "content is only allowed with accept", nil)
 		return
@@ -512,7 +513,7 @@ func (c *ConversationsController) resolveInput(w http.ResponseWriter, r *http.Re
 	if err := c.Svc.ResolveInput(
 		r.Context(), domain.SessionID(chi.URLParam(r, "sessionId")),
 		chi.URLParam(r, "requestId"),
-		ports.ChatInputResponse{Action: req.Action, Content: req.Content},
+		ports.ChatInputResponse{Action: action, Content: req.Content},
 	); err != nil {
 		writeConversationError(w, r, err)
 		return
