@@ -67,6 +67,9 @@
 	--color-bg-tertiary: var(--muted);
 	--color-bg-elevated: var(--popover);
 	--color-bg-sidebar: var(--sidebar);
+	/* Opaque plate under the translucent fill — stops the p-2 gutter blending
+	   against app chrome into a different picked color (e.g. #111316). */
+	--color-bg-terminal-opaque: #101317;
 	--color-bg-terminal: #101317e7;
 
 	/* Text */
@@ -648,6 +651,7 @@
 	--color-bg-tertiary: var(--muted);
 	--color-bg-elevated: var(--popover);
 	--color-bg-sidebar: var(--sidebar);
+	--color-bg-terminal-opaque: #f5f5f4;
 	--color-bg-terminal: #f5f5f4;
 
 	--color-text-primary: var(--foreground);

@@ -107,6 +107,7 @@
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-terminal: var(--color-bg-terminal);
+	--color-terminal-opaque: var(--color-bg-terminal-opaque);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
 
@@ -1080,6 +1081,13 @@ textarea,
 
 .terminal-pane-frame:fullscreen {
 	background: var(--color-bg-primary);
+}
+
+/* Opaque plate + translucent token. Without the plate, #101317e7 composites
+   against panel chrome and the p-2 gutter reads as a different color. */
+.terminal-surface {
+	background-color: var(--color-bg-terminal-opaque);
+	background-image: linear-gradient(var(--color-bg-terminal), var(--color-bg-terminal));
 }
 
 @keyframes status-pulse {
