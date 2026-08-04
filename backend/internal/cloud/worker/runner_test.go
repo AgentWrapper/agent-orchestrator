@@ -204,6 +204,28 @@ func TestRegressionSpawnedClaudePromptIsSubmittedAfterComposerUpdate(t *testing.
 	}
 }
 
+func TestClaudeTerminalReadyWaitsForComposerFooter(t *testing.T) {
+	ready := newAgentTerminalReady("claude-code")
+	ready.observe([]byte("Welcome back!"))
+	select {
+	case <-ready.ready:
+		t.Fatal("Claude terminal marked ready before composer footer")
+	default:
+	}
+
+	ready.observe([]byte("bypass permissions on (shift+tab to cycle)"))
+	if err := ready.wait(context.Background()); err != nil {
+		t.Fatalf("wait() error = %v", err)
+	}
+}
+
+func TestNonClaudeTerminalReadyImmediately(t *testing.T) {
+	ready := newAgentTerminalReady("codex")
+	if err := ready.wait(context.Background()); err != nil {
+		t.Fatalf("wait() error = %v", err)
+	}
+}
+
 func TestStreamOutputRetriesWithoutStoppingPTYDrain(t *testing.T) {
 	calls := 0
 	runner := &Runner{

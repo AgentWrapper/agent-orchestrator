@@ -34,9 +34,6 @@ const (
 	// Match the local tmux runtime's paste-to-Enter delay. Claude's Ink TUI can
 	// render a pasted prompt before its internal composer state has caught up.
 	interactivePromptEnterDelay = 300 * time.Millisecond
-	// The SessionStart hook proves the agent process initialized, but the TUI may
-	// still be settling its first render. Give it a read cycle before pasting.
-	agentReadyPromptSettleDelay = 300 * time.Millisecond
 )
 
 // GitProxyUsername is the fixed username paired with a worker token for Git.
@@ -53,6 +50,65 @@ type Runner struct {
 	credentialCommand func(context.Context, string, []string, io.Reader) error
 	outputEvent       func(context.Context, string, any) error
 	outputRetryDelay  time.Duration
+}
+
+type agentTerminalReady struct {
+	harness string
+	ready   chan struct{}
+	once    sync.Once
+	mu      sync.Mutex
+	buffer  string
+}
+
+func newAgentTerminalReady(harness string) *agentTerminalReady {
+	ready := &agentTerminalReady{
+		harness: harness,
+		ready:   make(chan struct{}),
+	}
+	if harness != "claude-code" {
+		ready.markReady()
+	}
+	return ready
+}
+
+func (r *agentTerminalReady) observe(chunk []byte) {
+	if r == nil || r.harness != "claude-code" || len(chunk) == 0 {
+		return
+	}
+	r.mu.Lock()
+	r.buffer += string(chunk)
+	if len(r.buffer) > 8192 {
+		r.buffer = r.buffer[len(r.buffer)-8192:]
+	}
+	ready := claudeTerminalReady(r.buffer)
+	r.mu.Unlock()
+	if ready {
+		r.markReady()
+	}
+}
+
+func (r *agentTerminalReady) wait(ctx context.Context) error {
+	if r == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-r.ready:
+		return nil
+	}
+}
+
+func (r *agentTerminalReady) markReady() {
+	r.once.Do(func() {
+		close(r.ready)
+	})
+}
+
+func claudeTerminalReady(output string) bool {
+	output = strings.ToLower(output)
+	return strings.Contains(output, "bypass permissions") ||
+		strings.Contains(output, "shift+tab to cycle")
 }
 
 // NewRunner creates a worker runner from bootstrap launch data.
@@ -290,6 +346,7 @@ func (r *Runner) runInteractiveAgent(
 	}()
 	var terminalWriteMu sync.Mutex
 	var workspaceWriteMu sync.Mutex
+	agentTerminalReady := newAgentTerminalReady(r.bootstrap.Launch.Session.Harness)
 	go func() {
 		err := r.streamOutput(ctx, workspaceTerminal, "workspace_terminal.output")
 		if err != nil &&
@@ -321,13 +378,14 @@ func (r *Runner) runInteractiveAgent(
 		r.commandLoop(
 			commandCtx,
 			terminal,
+			agentTerminalReady,
 			workspaceTerminal,
 			&terminalWriteMu,
 			&workspaceWriteMu,
 		)
 	}()
 
-	readErr := r.streamOutput(ctx, terminal, "terminal.output")
+	readErr := r.streamOutput(ctx, terminal, "terminal.output", agentTerminalReady.observe)
 	if readErr != nil &&
 		!errors.Is(readErr, io.EOF) &&
 		ctx.Err() == nil &&
@@ -358,6 +416,7 @@ func (r *Runner) runInteractiveAgent(
 func (r *Runner) commandLoop(
 	ctx context.Context,
 	terminal *os.File,
+	agentTerminalReady *agentTerminalReady,
 	workspaceTerminal *os.File,
 	writeMu *sync.Mutex,
 	workspaceWriteMu *sync.Mutex,
@@ -374,6 +433,9 @@ func (r *Runner) commandLoop(
 		decoded, err := base64.StdEncoding.DecodeString(command.Data)
 		if err != nil {
 			return fmt.Errorf("decode prompt: %w", err)
+		}
+		if err := agentTerminalReady.wait(ctx); err != nil {
+			return err
 		}
 		if err := submitInteractivePrompt(ctx, terminal, writeMu, decoded, interactivePromptEnterDelay); err != nil {
 			return err
@@ -426,9 +488,6 @@ func (r *Runner) commandLoop(
 				return err
 			case "agent_ready":
 				agentReady = true
-				if !waitForRetry(ctx, agentReadyPromptSettleDelay) {
-					return ctx.Err()
-				}
 				for _, prompt := range pendingPrompts {
 					if err := deliverPrompt(prompt); err != nil {
 						return err
@@ -764,7 +823,12 @@ fi
 	return nil
 }
 
-func (r *Runner) streamOutput(ctx context.Context, terminal io.Reader, eventType string) error {
+func (r *Runner) streamOutput(
+	ctx context.Context,
+	terminal io.Reader,
+	eventType string,
+	observers ...func([]byte),
+) error {
 	deliveryContext, cancelDelivery := context.WithCancel(ctx)
 	defer cancelDelivery()
 	output := make(chan []byte, terminalOutputQueueDepth)
@@ -776,6 +840,11 @@ func (r *Runner) streamOutput(ctx context.Context, terminal io.Reader, eventType
 			count, err := terminal.Read(buffer)
 			if count > 0 {
 				chunk := append([]byte(nil), buffer[:count]...)
+				for _, observe := range observers {
+					if observe != nil {
+						observe(chunk)
+					}
+				}
 				select {
 				case output <- chunk:
 				case <-ctx.Done():
