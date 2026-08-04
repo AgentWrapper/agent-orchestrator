@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -57,14 +56,7 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetConfigSpec reports Aider's optional model override.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{Fields: []ports.ConfigField{{
-		Key:         "model",
-		Type:        ports.ConfigFieldString,
-		Description: "Model override passed to `aider --model`.",
-	}}}, nil
+	return agentbase.ModelConfigSpec(ctx, "Model override passed to `aider --model`.")
 }
 
 // GetLaunchCommand builds the argv to start an interactive Aider session:
@@ -88,7 +80,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendModelFlag(&cmd, cfg.Config)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	cmd = append(cmd, "--no-check-update", "--no-stream", "--no-pretty")
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--read", cfg.SystemPromptFile)
@@ -96,12 +88,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	// aider has no inline system-prompt mechanism. A cfg.SystemPrompt with no
 	// file is intentionally dropped here rather than written to disk.
 	return cmd, nil
-}
-
-func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
-	if model := strings.TrimSpace(cfg.Model); model != "" {
-		*cmd = append(*cmd, "--model", model)
-	}
 }
 
 // GetPromptDeliveryStrategy reports that AO should inject prompted Aider tasks

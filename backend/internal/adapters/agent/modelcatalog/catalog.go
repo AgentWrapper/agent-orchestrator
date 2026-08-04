@@ -1,5 +1,5 @@
 // Package modelcatalog normalizes the heterogeneous model-list surfaces
-// exposed by supported agent CLIs and declarative configuration files.
+// exposed by supported agent CLIs.
 package modelcatalog
 
 import (
@@ -41,6 +41,8 @@ type commandSpec struct {
 var ansiPattern = regexp.MustCompile(`\x1b\[[0-9;]*[[:alpha:]]`)
 
 var commandSpecs = map[string]commandSpec{
+	"aider":    {args: []string{"--no-check-update", "--no-git", "--no-gitignore", "--no-analytics", "--list-models", "."}, parser: parseIDLines},
+	"autohand": {args: []string{"models", "list"}, parser: parseIDLines},
 	"opencode": {args: []string{"--pure", "models"}, parser: parseIDLines},
 	"grok":     {args: []string{"models"}, parser: parseGrokModels},
 	"cursor":   {args: []string{"models"}, parser: parseCursorModels},
@@ -112,68 +114,51 @@ func Manual(agentID string) ports.AgentModelCatalog {
 
 // Discover executes a documented non-interactive model-list command when the
 // agent exposes one. Static catalogs are returned without executing the binary.
+// Discoverer implements the model-discovery port for production daemon wiring.
+type Discoverer struct{}
+
+func (Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscoveryRequest) (ports.AgentModelCatalog, error) {
+	return Discover(ctx, request.AgentID, request.Binary, request.WorkingDir, request.Env)
+}
+
+func (Discoverer) BinaryVersion(ctx context.Context, binary string) string {
+	return BinaryVersion(ctx, binary)
+}
+func (Discoverer) Manual(agentID string) ports.AgentModelCatalog { return Manual(agentID) }
+
 func Discover(ctx context.Context, agentID, binary, workingDir string, env map[string]string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
-	configured, configErr := ConfigModels(ctx, agentID, workingDir, env)
 	spec, ok := commandSpecs[agentID]
 	if !ok {
-		if len(configured) > 0 {
-			base.Models = normalize(configured)
-			base.Source = "config"
-			base.FetchedAt = time.Now().UTC()
-			return base, configErr
-		}
-		if _, configBacked := configSpecs[agentID]; configBacked {
-			if configErr != nil {
-				return base, configErr
-			}
-			return base, fmt.Errorf("%s configuration contains no models", agentID)
-		}
 		return base, nil
 	}
 	if strings.TrimSpace(binary) == "" {
-		if len(configured) > 0 {
-			base.Models = normalize(configured)
-			base.Source = "config"
-			base.FetchedAt = time.Now().UTC()
-			return base, errors.Join(errors.New("agent binary is not installed"), configErr)
-		}
-		return base, errors.Join(errors.New("agent binary is not installed"), configErr)
+		return base, errors.New("agent binary is not installed")
 	}
 	runCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
 	cmd := modelCommand(runCtx, binary, spec.args, workingDir, env)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		if len(configured) > 0 {
-			base.Models = normalize(configured)
-			base.Source = "config"
-			base.FetchedAt = time.Now().UTC()
-		}
-		return base, errors.Join(modelDiscoveryError(runCtx, agentID, err), configErr)
+		return base, modelDiscoveryError(runCtx, agentID, err)
 	}
 	models, err := spec.parser(output)
 	if err != nil {
 		return base, fmt.Errorf("%s model discovery: %w", agentID, err)
 	}
-	models = normalize(append(models, configured...))
+	models = normalize(models)
 	if len(models) == 0 {
-		return base, errors.Join(fmt.Errorf("%s model discovery returned no models", agentID), configErr)
+		return base, fmt.Errorf("%s model discovery returned no models", agentID)
 	}
 	base.Models = models
-	if len(configured) > 0 {
-		base.Source = "cli+config"
-	} else {
-		base.Source = "cli"
-	}
+	base.Source = "cli"
 	base.FetchedAt = time.Now().UTC()
-	return base, configErr
+	return base, nil
 }
 
 func hasDiscoverySource(agentID string) bool {
 	_, hasCommand := commandSpecs[agentID]
-	_, hasConfig := configSpecs[agentID]
-	return hasCommand || hasConfig
+	return hasCommand
 }
 
 func modelCommand(ctx context.Context, binary string, args []string, workingDir string, env map[string]string) *exec.Cmd {

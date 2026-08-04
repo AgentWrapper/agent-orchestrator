@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -18,12 +17,10 @@ import (
 )
 
 var (
-	agentInstallProbeTimeout  = 2 * time.Second
-	agentAuthProbeTimeout     = 10 * time.Second
-	agentRefreshMinInterval   = 10 * time.Second
-	modelCatalogValidationTTL = 10 * time.Minute
-	modelCatalogDiscoveryTTL  = 6 * time.Hour
-	modelCatalogLoadTimeout   = 30 * time.Second
+	agentInstallProbeTimeout = 2 * time.Second
+	agentAuthProbeTimeout    = 10 * time.Second
+	agentRefreshMinInterval  = 10 * time.Second
+	modelCatalogLoadTimeout  = 30 * time.Second
 )
 
 type modelLoadMode uint8
@@ -75,6 +72,7 @@ type Inventory struct {
 type Service struct {
 	agents      []agentregistry.HarnessAgent
 	cache       ports.AgentModelCatalogCache
+	discoverer  ports.AgentModelDiscoverer
 	projects    ProjectLookup
 	resolverMu  map[string]*sync.Mutex
 	modelCallMu sync.Mutex
@@ -88,8 +86,9 @@ type Service struct {
 
 // Deps contains optional durable dependencies for the agent catalog service.
 type Deps struct {
-	Cache    ports.AgentModelCatalogCache
-	Projects ProjectLookup
+	Cache      ports.AgentModelCatalogCache
+	Discoverer ports.AgentModelDiscoverer
+	Projects   ProjectLookup
 }
 
 // ProjectLookup resolves the registered working directory used for model
@@ -106,21 +105,21 @@ func New() *Service {
 
 // NewWithDeps returns the production service with durable model-catalog cache.
 func NewWithDeps(deps Deps) *Service {
-	return newService(agentregistry.Harnessed(), deps.Cache, deps.Projects)
+	return newService(agentregistry.Harnessed(), deps.Cache, deps.Projects, deps.Discoverer)
 }
 
 // NewWithAgents returns an inventory service over a caller-provided adapter
 // slice. It is used by focused tests.
 func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
-	return newService(agents, nil, nil)
+	return newService(agents, nil, nil, nil)
 }
 
-func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatalogCache, projects ProjectLookup) *Service {
+func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatalogCache, projects ProjectLookup, discoverer ports.AgentModelDiscoverer) *Service {
 	resolverMu := make(map[string]*sync.Mutex, len(agents))
 	for _, item := range agents {
 		resolverMu[string(item.Harness)] = &sync.Mutex{}
 	}
-	return &Service{agents: agents, cache: cache, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}, inventory: Inventory{
+	return &Service{agents: agents, cache: cache, discoverer: discoverer, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}, inventory: Inventory{
 		Supported:  supportedInfos(agents),
 		Installed:  []Info{},
 		Authorized: []Info{},
@@ -236,9 +235,8 @@ func (s *Service) Models(ctx context.Context, agentID, projectID string, refresh
 	return s.coalesceModelLoad(ctx, agentID, projectID, mode)
 }
 
-// RevalidateModels checks whether a cached catalog's executable or config-file
-// metadata changed. An unchanged catalog is touched without executing the
-// agent's model-list command; a changed catalog is rediscovered and cached.
+// RevalidateModels applies the same installed-version check as the normal read
+// path. It remains as a compatibility route for older clients.
 func (s *Service) RevalidateModels(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, error) {
 	return s.coalesceModelLoad(ctx, agentID, projectID, modelLoadRevalidate)
 }
@@ -289,6 +287,9 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	if !ok {
 		return ports.AgentModelCatalog{}, apierr.NotFound("AGENT_NOT_FOUND", "Unknown agent adapter")
 	}
+	if s.discoverer == nil {
+		return ports.AgentModelCatalog{}, apierr.Internal("MODEL_DISCOVERY_UNAVAILABLE", "Model discovery is unavailable")
+	}
 	discovery, err := s.projectDiscoveryContext(ctx, projectID)
 	if err != nil {
 		return ports.AgentModelCatalog{}, err
@@ -297,12 +298,6 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 	if err != nil {
 		return ports.AgentModelCatalog{}, err
 	}
-	if hasCached && mode == modelLoadCached {
-		cached.Catalog.RefreshRecommended = cached.Catalog.ValidatedAt.IsZero() ||
-			time.Since(cached.Catalog.ValidatedAt) >= modelCatalogValidationTTL
-		return cached.Catalog, nil
-	}
-
 	var binary string
 	if resolver, ok := item.Agent.(ports.AgentBinaryResolver); ok {
 		lock := s.resolverMu[agentID]
@@ -313,22 +308,15 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 			binary = resolved
 		}
 	}
-	version := modelcatalog.BinaryVersion(ctx, binary)
-	if configVersion := modelcatalog.ConfigVersion(ctx, agentID, discovery.workingDir, discovery.env); configVersion != "" {
-		version += ";config=" + configVersion
-	}
-	discoveryFresh := !cached.Catalog.FetchedAt.IsZero() &&
-		time.Since(cached.Catalog.FetchedAt) < modelCatalogDiscoveryTTL
-	if hasCached && mode == modelLoadRevalidate && cached.BinaryVersion == version && discoveryFresh {
-		cached.Catalog.ValidatedAt = time.Now().UTC()
+	version := s.discoverer.BinaryVersion(ctx, binary)
+	if hasCached && mode != modelLoadRefresh && cached.BinaryVersion == version {
 		cached.Catalog.RefreshRecommended = false
-		if err := s.saveCatalog(ctx, projectID, cached.Catalog); err != nil {
-			cached.Catalog.Warning = appendCacheWarning(cached.Catalog.Warning)
-		}
 		return cached.Catalog, nil
 	}
 
-	discovered, discoverErr := modelcatalog.Discover(ctx, agentID, binary, discovery.workingDir, discovery.env)
+	discovered, discoverErr := s.discoverer.Discover(ctx, ports.AgentModelDiscoveryRequest{
+		AgentID: agentID, Binary: binary, WorkingDir: discovery.workingDir, Env: discovery.env,
+	})
 	discovered.BinaryVersion = version
 	discovered.ValidatedAt = time.Now().UTC()
 	discovered.RefreshRecommended = false
@@ -361,7 +349,7 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 			}
 			return cached.Catalog, nil
 		}
-		fallback := modelcatalog.Manual(agentID)
+		fallback := s.discoverer.Manual(agentID)
 		fallback.BinaryVersion = version
 		fallback.ValidatedAt = time.Now().UTC()
 		fallback.Stale = true

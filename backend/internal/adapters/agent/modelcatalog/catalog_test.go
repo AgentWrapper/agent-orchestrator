@@ -54,6 +54,24 @@ func TestOpenCodeDiscoveryUsesPureMode(t *testing.T) {
 	}
 }
 
+func TestAiderAndAutohandUseDocumentedDiscoveryCommands(t *testing.T) {
+	tests := []struct {
+		agent string
+		want  []string
+	}{
+		{agent: "aider", want: []string{"--no-check-update", "--no-git", "--no-gitignore", "--no-analytics", "--list-models", "."}},
+		{agent: "autohand", want: []string{"models", "list"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.agent, func(t *testing.T) {
+			spec := commandSpecs[tc.agent]
+			if strings.Join(spec.args, "\x00") != strings.Join(tc.want, "\x00") {
+				t.Fatalf("%s discovery args = %q, want %q", tc.agent, spec.args, tc.want)
+			}
+		})
+	}
+}
+
 func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 	tests := []struct {
 		agent string
@@ -63,11 +81,11 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "claude-code", mode: ports.ModelSelectionCatalog, count: 3},
 		{agent: "codex", mode: ports.ModelSelectionCatalog, count: 7},
 		{agent: "amp", mode: ports.ModelSelectionModeList, count: 4},
-		{agent: "aider", mode: ports.ModelSelectionText},
-		{agent: "autohand", mode: ports.ModelSelectionText},
-		{agent: "qwen", mode: ports.ModelSelectionCatalog},
-		{agent: "continue", mode: ports.ModelSelectionCatalog},
-		{agent: "crush", mode: ports.ModelSelectionCatalog},
+		{agent: "aider", mode: ports.ModelSelectionCatalog},
+		{agent: "autohand", mode: ports.ModelSelectionCatalog},
+		{agent: "qwen", mode: ports.ModelSelectionText},
+		{agent: "continue", mode: ports.ModelSelectionText},
+		{agent: "crush", mode: ports.ModelSelectionText},
 	}
 	for _, tc := range tests {
 		t.Run(tc.agent, func(t *testing.T) {

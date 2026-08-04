@@ -91,14 +91,7 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetConfigSpec reports opencode's optional provider/model override.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{Fields: []ports.ConfigField{{
-		Key:         "model",
-		Type:        ports.ConfigFieldString,
-		Description: "Model override passed to `opencode --model`.",
-	}}}, nil
+	return agentbase.ModelConfigSpec(ctx, "Model override passed to `opencode --model`.")
 }
 
 // GetLaunchCommand builds the argv to start a new interactive opencode session.
@@ -124,7 +117,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = envPrefix
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
-	appendModelFlag(&cmd, cfg.Config)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	if agentName != "" {
 		cmd = append(cmd, "--agent", agentName)
 	}
@@ -161,18 +154,12 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = envPrefix
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
-	appendModelFlag(&cmd, cfg.Config)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	if agentName != "" {
 		cmd = append(cmd, "--agent", agentName)
 	}
 	cmd = append(cmd, "--session", agentSessionID)
 	return cmd, true, nil
-}
-
-func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
-	if model := strings.TrimSpace(cfg.Model); model != "" {
-		*cmd = append(*cmd, "--model", model)
-	}
 }
 
 // SessionInfo surfaces opencode plugin-derived metadata. Metadata is

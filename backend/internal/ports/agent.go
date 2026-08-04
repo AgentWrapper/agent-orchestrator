@@ -128,6 +128,23 @@ type AgentModelCatalogCache interface {
 	UpsertAgentModelCatalog(ctx context.Context, record CachedAgentModelCatalog) error
 }
 
+// AgentModelDiscoveryRequest describes one bounded, adapter-defined model
+// discovery attempt. Args remain owned by the concrete discovery adapter.
+type AgentModelDiscoveryRequest struct {
+	AgentID    string
+	Binary     string
+	WorkingDir string
+	Env        map[string]string
+}
+
+// AgentModelDiscoverer isolates CLI execution and executable fingerprinting
+// from the core agent service.
+type AgentModelDiscoverer interface {
+	Discover(ctx context.Context, request AgentModelDiscoveryRequest) (AgentModelCatalog, error)
+	BinaryVersion(ctx context.Context, binary string) string
+	Manual(agentID string) AgentModelCatalog
+}
+
 // AgentExitDetectionMode describes how AO learns that an agent CLI process
 // ended while its terminal runtime remains alive.
 type AgentExitDetectionMode string

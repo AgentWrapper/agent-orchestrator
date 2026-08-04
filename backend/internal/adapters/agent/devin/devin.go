@@ -77,14 +77,7 @@ func (p *Plugin) Manifest() adapters.Manifest {
 
 // GetConfigSpec reports Devin's optional model override.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
-	if err := ctx.Err(); err != nil {
-		return ports.ConfigSpec{}, err
-	}
-	return ports.ConfigSpec{Fields: []ports.ConfigField{{
-		Key:         "model",
-		Type:        ports.ConfigFieldString,
-		Description: "Model override passed to `devin --model`.",
-	}}}, nil
+	return agentbase.ModelConfigSpec(ctx, "Model override passed to `devin --model`.")
 }
 
 // GetLaunchCommand builds `devin [--permission-mode <mode>] [-- <prompt>]`.
@@ -99,7 +92,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendModelFlag(&cmd, cfg.Config)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	if prompt := strings.TrimSpace(cfg.Prompt); prompt != "" {
 		cmd = append(cmd, "--", prompt)
 	}
@@ -166,15 +159,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendModelFlag(&cmd, cfg.Config)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	cmd = append(cmd, "-r", agentSessionID)
 	return cmd, true, nil
-}
-
-func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
-	if model := strings.TrimSpace(cfg.Model); model != "" {
-		*cmd = append(*cmd, "--model", model)
-	}
 }
 
 // SessionInfo reads metadata under AO's normalized keys
