@@ -83,6 +83,7 @@ skills-lock.json
 
 # Cloud planning and operator notes remain local-only. The architecture design
 # is the single tracked Cloud design document.
+/cloud_setup_demo.md
 /ao-cloud/README.md
 /ao-cloud/cloud-todo.md
 /ao-cloud/architecture/CLOUD_AUTH.md
