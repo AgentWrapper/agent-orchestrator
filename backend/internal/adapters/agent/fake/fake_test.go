@@ -22,8 +22,8 @@ func TestManifestReportsFakeHarness(t *testing.T) {
 	if domain.AgentHarness(m.ID) != domain.HarnessFake {
 		t.Fatalf("manifest id %q does not match domain.HarnessFake %q", m.ID, domain.HarnessFake)
 	}
-	if !domain.HarnessFake.IsKnown() {
-		t.Fatal("domain.HarnessFake is not registered as a known harness")
+	if domain.HarnessFake.IsKnown() {
+		t.Fatal("domain.HarnessFake must not be registered as a user-selectable harness")
 	}
 	found := false
 	for _, c := range m.Capabilities {

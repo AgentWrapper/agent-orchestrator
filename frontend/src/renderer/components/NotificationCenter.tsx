@@ -4,7 +4,6 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import {
 	Bell,
 	BellRing,
-	Check,
 	CheckCheck,
 	CircleAlert,
 	ExternalLink,
@@ -12,15 +11,13 @@ import {
 	GitPullRequest,
 	Inbox,
 	LoaderCircle,
-	SquareTerminal,
+	RotateCcw,
 	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-	useMarkAllNotificationsReadMutation,
-	useMarkNotificationReadMutation,
-	useNotificationsQuery,
-} from "../hooks/useNotificationsQuery";
+import { useMarkAllNotificationsReadMutation, useNotificationsQuery } from "../hooks/useNotificationsQuery";
+import { useRestoreSession } from "../hooks/useRestoreSession";
+import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
 import { formatTimeCompact } from "../lib/format-time";
 import {
@@ -38,12 +35,11 @@ import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 type NotificationCenterProps = {
 	style?: React.CSSProperties;
 };
-
-type NotificationView = "unread" | "all";
 
 function useNotificationTargetNavigation() {
 	const navigate = useNavigate();
@@ -77,6 +73,36 @@ function useNotificationTargetNavigation() {
 	);
 
 	return { openPrimary, openSession };
+}
+
+function useSessionTerminationLookup(): {
+	retryWorkspace: () => void;
+	sessionsReady: boolean;
+	terminatedIds: Set<string>;
+	workspaceError: boolean;
+} {
+	const { data: workspaces, isError, isSuccess, refetch } = useWorkspaceQuery();
+	const terminatedIds = useMemo(() => {
+		const ids = new Set<string>();
+		for (const workspace of workspaces ?? []) {
+			for (const session of workspace.sessions) {
+				if (session.isTerminated === true || session.status === "terminated") {
+					ids.add(session.id);
+				}
+			}
+		}
+		return ids;
+	}, [workspaces]);
+	// Only successful workspace data is trustworthy. Pending and error both leave
+	// sessions non-navigable — a failed query must not treat terminated rows as live.
+	return {
+		retryWorkspace: () => {
+			void refetch();
+		},
+		sessionsReady: isSuccess,
+		terminatedIds,
+		workspaceError: isError,
+	};
 }
 
 export function NotificationRuntime() {
@@ -120,42 +146,77 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [actionError, setActionError] = useState<string | null>(null);
-	const [view, setView] = useState<NotificationView>("unread");
+	const [markReadError, setMarkReadError] = useState<string | null>(null);
+	// Bumped by the mark-read Retry control so a failed ack can run again even
+	// when visibleUnreadKey is unchanged (removing ids from the ref alone does not).
+	const [ackRetryNonce, setAckRetryNonce] = useState(0);
 	const [open, setOpen] = useState(false);
+	// Opening marks unread as read, which would drop the highlight under the
+	// cursor. Keep the open-time unread ids highlighted until the panel closes.
+	const [highlightedIds, setHighlightedIds] = useState<Set<string>>(() => new Set());
+	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
 	const unreadQuery = useNotificationsQuery("unread");
-	const allQuery = useNotificationsQuery("all", open && view === "all");
-	const notificationsQuery = view === "unread" ? unreadQuery : allQuery;
-	const markRead = useMarkNotificationReadMutation();
+	const allQuery = useNotificationsQuery("all", open);
 	const markAllRead = useMarkAllNotificationsReadMutation();
-	const unread = useMemo(() => getCachedNotifications(unreadQuery.data), [unreadQuery.data]);
-	const all = useMemo(() => getCachedNotifications(allQuery.data), [allQuery.data]);
+	const restoreSession = useRestoreSession();
+	const { retryWorkspace, sessionsReady, terminatedIds, workspaceError } = useSessionTerminationLookup();
+	const notifications = useMemo(() => getCachedNotifications(allQuery.data), [allQuery.data]);
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
-	const visibleNotifications = view === "unread" ? unread : all;
 	const { openPrimary, openSession } = useNotificationTargetNavigation();
+	const markAllMutate = markAllRead.mutateAsync;
 
-	const markOneRead = async (id: string) => {
-		setActionError(null);
-		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "single" });
-		try {
-			await markRead.mutateAsync(id);
-			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "single" });
-		} catch (error) {
-			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "single" });
-			setActionError(error instanceof Error ? error.message : t("notify.couldNotMarkRead"));
+	// Concrete ids only — never `[]` — so unread pages past the first stay
+	// reachable and arrive as unread (still highlighted) when the all-list loads them.
+	const acknowledgedIdsRef = useRef<Set<string>>(new Set());
+	const visibleUnreadIds = useMemo(() => {
+		const ids = new Set<string>();
+		for (const item of getCachedNotifications(unreadQuery.data)) {
+			if (item.status === "unread") ids.add(item.id);
 		}
-	};
+		for (const item of notifications) {
+			if (item.status === "unread") ids.add(item.id);
+		}
+		return [...ids];
+	}, [notifications, unreadQuery.data]);
+	const visibleUnreadKey = visibleUnreadIds.join("|");
 
-	const markAll = async () => {
-		setActionError(null);
+	// Opening the panel acknowledges what has actually been loaded. Later unread
+	// rows are acknowledged as they appear, keeping the unread pagination cursor.
+	useEffect(() => {
+		if (!open) {
+			setHighlightedIds(new Set());
+			setMarkReadError(null);
+			acknowledgedIdsRef.current = new Set();
+			return;
+		}
+		if (unreadQuery.isLoading) return;
+
+		const visibleIds = visibleUnreadKey === "" ? [] : visibleUnreadKey.split("|");
+		const newly = visibleIds.filter((id) => !acknowledgedIdsRef.current.has(id));
+		if (newly.length === 0) return;
+
+		for (const id of newly) acknowledgedIdsRef.current.add(id);
+		setHighlightedIds((current) => {
+			const next = new Set(current);
+			let changed = false;
+			for (const id of newly) {
+				if (next.has(id)) continue;
+				next.add(id);
+				changed = true;
+			}
+			return changed ? next : current;
+		});
+
+		setMarkReadError(null);
 		void captureRendererEvent("ao.renderer.notification_mark_read_requested", { scope: "all" });
-		try {
-			await markAllRead.mutateAsync();
-			void captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" });
-		} catch (error) {
-			void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
-			setActionError(error instanceof Error ? error.message : t("notify.couldNotMarkAllRead"));
-		}
-	};
+		void markAllMutate(newly)
+			.then(() => captureRendererEvent("ao.renderer.notification_mark_read_succeeded", { scope: "all" }))
+			.catch((error: unknown) => {
+				void captureRendererEvent("ao.renderer.notification_mark_read_failed", { scope: "all" });
+				for (const id of newly) acknowledgedIdsRef.current.delete(id);
+				setMarkReadError(error instanceof Error ? error.message : t("notify.couldNotMarkAllRead"));
+			});
+	}, [ackRetryNonce, markAllMutate, open, t, unreadQuery.isLoading, visibleUnreadKey]);
 
 	const setPanelOpen = (nextOpen: boolean) => {
 		setOpen(nextOpen);
@@ -165,9 +226,9 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		}
 	};
 
-	const openAndDismiss = (notification: NotificationDTO) => {
-		openPrimary(notification);
-		setPanelOpen(false);
+	const retryMarkRead = () => {
+		setMarkReadError(null);
+		setAckRetryNonce((nonce) => nonce + 1);
 	};
 
 	const openSessionAndDismiss = (notification: NotificationDTO) => {
@@ -175,12 +236,37 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 		setPanelOpen(false);
 	};
 
+	const openPrimaryAndDismiss = (notification: NotificationDTO) => {
+		openPrimary(notification);
+		setPanelOpen(false);
+	};
+
+	const restoreAndOpen = async (notification: NotificationDTO) => {
+		const sessionId = notification.target.sessionId || notification.sessionId;
+		if (!sessionId || restoringSessionId) return;
+		setRestoringSessionId(sessionId);
+		setActionError(null);
+		try {
+			const result = await restoreSession(sessionId);
+			if (result.status === "success") {
+				openSession(notification);
+				setPanelOpen(false);
+				return;
+			}
+			setActionError(result.status === "not_resumable" ? t("notify.restoreUnavailable") : result.message);
+		} finally {
+			setRestoringSessionId(undefined);
+		}
+	};
+
 	const loadEarlierOnScroll = (event: React.UIEvent<HTMLDivElement>) => {
 		const list = event.currentTarget;
 		const remaining = list.scrollHeight - list.scrollTop - list.clientHeight;
-		if (remaining > 80 || !notificationsQuery.hasNextPage || notificationsQuery.isFetchingNextPage) return;
-		void notificationsQuery.fetchNextPage();
+		if (remaining > 80 || !allQuery.hasNextPage || allQuery.isFetchingNextPage) return;
+		void allQuery.fetchNextPage();
 	};
+
+	const isEmpty = notifications.length === 0;
 
 	return (
 		<Popover onOpenChange={setPanelOpen} open={open}>
@@ -209,67 +295,75 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 				className="w-notification-width max-w-[calc(100vw-1rem)] overflow-hidden rounded-panel border-border-strong p-0 shadow-xl"
 				sideOffset={8}
 			>
-				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 pt-3.5">
+				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 py-3.5">
 					<p className="text-subtitle font-semibold tracking-tight text-foreground">{t("notify.title")}</p>
-					<div className="mt-2 flex items-end justify-between gap-4">
-						<div aria-label={t("notify.filters")} className="flex items-end gap-5" role="tablist">
-							<NotificationTab
-								active={view === "unread"}
-								count={unreadCount}
-								label={t("notify.unread")}
-								onClick={() => setView("unread")}
-							/>
-							<NotificationTab active={view === "all"} label={t("notify.all")} onClick={() => setView("all")} />
-						</div>
-						<button
-							aria-label={t("notify.markAllRead")}
-							className="mb-1 inline-flex h-control-sm items-center gap-1.5 rounded-md px-1.5 text-caption font-medium text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-							disabled={unreadCount === 0 || markAllRead.isPending}
-							onClick={() => void markAll()}
-							type="button"
-						>
-							<CheckCheck className="size-icon-md" aria-hidden="true" />
-							{t("notify.markAllReadShort")}
-						</button>
-					</div>
 				</div>
 
+				{markReadError ? (
+					<div
+						aria-live="polite"
+						className="flex items-center justify-between gap-2 border-b border-border bg-error/5 px-4 py-2 text-caption text-error"
+					>
+						<span>{markReadError}</span>
+						<button
+							className="shrink-0 font-medium underline underline-offset-2 hover:text-foreground"
+							onClick={retryMarkRead}
+							type="button"
+						>
+							{t("notify.retry")}
+						</button>
+					</div>
+				) : null}
 				{actionError ? (
 					<div className="border-b border-border bg-error/5 px-4 py-2 text-caption text-error">{actionError}</div>
 				) : null}
-				{notificationsQuery.isError && visibleNotifications.length === 0 ? (
+				{workspaceError ? (
+					<div
+						aria-live="polite"
+						className="flex items-center justify-between gap-2 border-b border-border bg-error/5 px-4 py-2 text-caption text-error"
+					>
+						<span>{t("notify.workspaceLoadFailed")}</span>
+						<button
+							className="shrink-0 font-medium underline underline-offset-2 hover:text-foreground"
+							onClick={retryWorkspace}
+							type="button"
+						>
+							{t("notify.retry")}
+						</button>
+					</div>
+				) : null}
+				{allQuery.isError && isEmpty ? (
 					<NotificationEmpty icon={CircleAlert} message={t("notify.loadFailed")} />
-				) : notificationsQuery.isLoading && visibleNotifications.length === 0 ? (
+				) : allQuery.isLoading && isEmpty ? (
 					<NotificationEmpty icon={Inbox} message={t("notify.loading")} />
-				) : visibleNotifications.length === 0 ? (
-					<NotificationEmpty
-						icon={view === "unread" && unreadCount > 0 ? LoaderCircle : view === "unread" ? CheckCheck : Inbox}
-						message={
-							view === "unread" && unreadCount > 0
-								? t("notify.loadingUnread")
-								: view === "unread"
-									? t("notify.emptyUnread")
-									: t("notify.emptyAll")
-						}
-					/>
+				) : isEmpty ? (
+					<NotificationEmpty icon={CheckCheck} message={t("notify.emptyAll")} />
 				) : (
 					<div
-						aria-busy={notificationsQuery.isFetchingNextPage}
+						aria-busy={allQuery.isFetchingNextPage}
 						className="max-h-notification-max-height overflow-y-auto overscroll-contain py-1.5"
 						onScroll={loadEarlierOnScroll}
 						role="list"
 					>
-						{visibleNotifications.map((notification) => (
-							<NotificationItem
-								disabled={markRead.isPending}
-								key={notification.id}
-								notification={notification}
-								onMarkRead={markOneRead}
-								onOpenPrimary={openAndDismiss}
-								onOpenSession={openSessionAndDismiss}
-							/>
-						))}
-						{notificationsQuery.isFetchNextPageError ? (
+						{notifications.map((notification) => {
+							const sessionId = notification.target.sessionId || notification.sessionId;
+							const terminated = Boolean(sessionId) && terminatedIds.has(sessionId);
+							return (
+								<NotificationItem
+									highlighted={highlightedIds.has(notification.id) || notification.status === "unread"}
+									key={notification.id}
+									notification={notification}
+									onOpenPrimary={openPrimaryAndDismiss}
+									onOpenSession={openSessionAndDismiss}
+									onRestore={() => void restoreAndOpen(notification)}
+									restoring={restoringSessionId === sessionId}
+									restoreDisabled={restoringSessionId !== undefined}
+									sessionsReady={sessionsReady}
+									terminated={terminated}
+								/>
+							);
+						})}
+						{allQuery.isFetchNextPageError ? (
 							<div
 								aria-live="polite"
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-error"
@@ -277,13 +371,13 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								{t("notify.earlierLoadFailed")}
 								<button
 									className="font-medium underline underline-offset-2 hover:text-foreground"
-									onClick={() => void notificationsQuery.fetchNextPage()}
+									onClick={() => void allQuery.fetchNextPage()}
 									type="button"
 								>
 									{t("notify.retry")}
 								</button>
 							</div>
-						) : notificationsQuery.isFetchingNextPage ? (
+						) : allQuery.isFetchingNextPage ? (
 							<div
 								aria-live="polite"
 								className="flex items-center justify-center gap-2 px-4 py-3 text-caption text-passive"
@@ -296,43 +390,6 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 				)}
 			</PopoverContent>
 		</Popover>
-	);
-}
-
-function NotificationTab({
-	active,
-	count,
-	label,
-	onClick,
-}: {
-	active: boolean;
-	count?: number;
-	label: string;
-	onClick: () => void;
-}) {
-	return (
-		<button
-			aria-selected={active}
-			className={cn(
-				"relative inline-flex h-control-lg items-center gap-0.5 border-b-2 px-0.5 text-control font-medium transition-colors",
-				active ? "border-foreground text-foreground" : "border-transparent text-passive hover:text-muted-foreground",
-			)}
-			onClick={onClick}
-			role="tab"
-			type="button"
-		>
-			{label}
-			{typeof count === "number" && count > 0 ? (
-				<span
-					className={cn(
-						"relative -top-1 grid min-w-4 place-items-center rounded-full px-1 font-mono text-[9px] leading-4",
-						active ? "bg-foreground text-background" : "bg-surface text-muted-foreground",
-					)}
-				>
-					{count > 99 ? "99+" : count}
-				</span>
-			) : null}
-		</button>
 	);
 }
 
@@ -349,104 +406,133 @@ function NotificationEmpty({ icon: Icon, message }: { icon: typeof Bell; message
 	);
 }
 
+/**
+ * The whole row is the click target for live sessions. Terminated sessions are
+ * not navigable — restore is the only session action. PR titles stay a real
+ * link so a PR row can open the PR without a separate icon button.
+ */
 function NotificationItem({
-	disabled,
+	highlighted,
 	notification,
-	onMarkRead,
 	onOpenPrimary,
 	onOpenSession,
+	onRestore,
+	restoring,
+	restoreDisabled,
+	sessionsReady,
+	terminated,
 }: {
-	disabled: boolean;
+	highlighted: boolean;
 	notification: NotificationDTO;
-	onMarkRead: (id: string) => Promise<void>;
 	onOpenPrimary: (notification: NotificationDTO) => void;
 	onOpenSession: (notification: NotificationDTO) => void;
+	onRestore: () => void;
+	restoring: boolean;
+	restoreDisabled: boolean;
+	sessionsReady: boolean;
+	terminated: boolean;
 }) {
 	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
-	const isUnread = notification.status === "unread";
 	const isPR = notification.target.kind === "pr" && Boolean(notification.target.prUrl);
+	const sessionId = notification.target.sessionId || notification.sessionId;
+	const canOpenSession = Boolean(sessionId) && sessionsReady && !terminated;
+	const openRow = () => {
+		if (canOpenSession) onOpenSession(notification);
+	};
 	return (
-		<div
-			className={cn(
-				"group grid grid-cols-notification gap-3 px-4 py-3 transition-[background-color,opacity] duration-fast hover:bg-interactive-hover",
-				!isUnread && "opacity-55 hover:opacity-80",
-			)}
-			role="listitem"
-		>
+		<div role="listitem">
 			<div
 				className={cn(
-					"mt-0.5 grid size-notification-icon place-items-center rounded-md bg-surface",
-					notificationIconClass(notification.type),
+					"group grid grid-cols-notification items-start gap-3 px-4 py-3 text-left transition-[background-color,opacity] duration-fast",
+					canOpenSession ? "cursor-pointer hover:bg-interactive-hover" : "cursor-default",
+					!highlighted && "opacity-55 hover:opacity-80",
 				)}
+				onClick={openRow}
+				onKeyDown={(event) => {
+					if (!canOpenSession) return;
+					if (event.key !== "Enter" && event.key !== " ") return;
+					event.preventDefault();
+					openRow();
+				}}
+				role={canOpenSession ? "button" : undefined}
+				tabIndex={canOpenSession ? 0 : undefined}
+				title={canOpenSession ? t("notify.openSessionTitle") : undefined}
 			>
-				<Icon className="size-icon-base" aria-hidden="true" />
-			</div>
-			<div className="min-w-0">
-				<div className="flex min-w-0 items-start gap-2">
-					{isPR ? (
-						<a
-							className="inline-flex min-w-0 items-start gap-1 text-left text-control font-medium leading-snug text-foreground underline decoration-border-strong underline-offset-3 transition-colors hover:text-accent hover:decoration-accent/60"
-							href={notification.target.prUrl}
-							onClick={(event) => {
-								event.preventDefault();
-								onOpenPrimary(notification);
-							}}
-							rel="noreferrer"
-							target="_blank"
-							title={t("notify.openPR")}
-						>
-							<span className="break-words">{notification.title}</span>
-							<ExternalLink className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-						</a>
-					) : (
-						<button
-							className="min-w-0 break-words text-left text-control font-medium leading-snug text-foreground transition-colors hover:text-accent hover:underline"
-							onClick={() => onOpenPrimary(notification)}
-							title={t("notify.openSessionTitle")}
-							type="button"
-						>
-							{notification.title}
-						</button>
+				<div
+					className={cn(
+						"grid size-notification-icon shrink-0 place-items-center rounded-md bg-surface",
+						notificationIconClass(notification.type),
 					)}
-					<time className="shrink-0 font-mono text-[9px] text-passive" dateTime={notification.createdAt}>
+				>
+					<Icon className="size-icon-base" aria-hidden="true" />
+				</div>
+				<div className="min-w-0">
+					{/* Match the 26px icon band so the title centers with the left glyph. */}
+					<div className="flex min-h-notification-icon items-center">
+						{isPR ? (
+							<a
+								className={cn(
+									"inline-flex min-w-0 items-center gap-1 text-left text-control leading-snug text-foreground underline decoration-border-strong underline-offset-3 transition-colors hover:text-accent hover:decoration-accent/60",
+									highlighted && "font-medium",
+								)}
+								href={notification.target.prUrl}
+								onClick={(event) => {
+									event.preventDefault();
+									event.stopPropagation();
+									onOpenPrimary(notification);
+								}}
+								rel="noreferrer"
+								target="_blank"
+								title={t("notify.openPR")}
+							>
+								<span className="break-words">{notification.title}</span>
+								<ExternalLink className="size-3 shrink-0" aria-hidden="true" />
+							</a>
+						) : (
+							<span
+								className={cn(
+									"min-w-0 break-words text-control leading-snug text-foreground",
+									highlighted && "font-medium",
+								)}
+							>
+								{notification.title}
+							</span>
+						)}
+					</div>
+					{notification.body ? (
+						<p className="mt-0.5 whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
+							{notification.body}
+						</p>
+					) : null}
+				</div>
+				{/* Time + restore share the same icon-height band so they stay level. */}
+				<div className="flex h-notification-icon shrink-0 items-center gap-1">
+					<time className="shrink-0 font-mono text-[9px] leading-none text-passive" dateTime={notification.createdAt}>
 						{formatTimeCompact(notification.createdAt)}
 					</time>
+					{terminated && sessionId ? (
+						<Tooltip delayDuration={0}>
+							<TooltipTrigger asChild>
+								<button
+									aria-label={t("shell.restoreSession")}
+									className="grid size-notification-icon place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+									disabled={restoreDisabled}
+									onClick={(event) => {
+										event.stopPropagation();
+										onRestore();
+									}}
+									type="button"
+								>
+									<RotateCcw className={cn("size-icon-md", restoring && "animate-spin")} aria-hidden="true" />
+								</button>
+							</TooltipTrigger>
+							<TooltipContent side="top">
+								{restoring ? t("shell.restoringSession") : t("shell.restoreSession")}
+							</TooltipContent>
+						</Tooltip>
+					) : null}
 				</div>
-				{notification.body ? (
-					<p className="mt-0.5 whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
-						{notification.body}
-					</p>
-				) : null}
-			</div>
-			<div className="flex items-start gap-0.5">
-				{isPR && notification.sessionId ? (
-					<button
-						aria-label={t("notify.openSession")}
-						className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-foreground"
-						onClick={() => onOpenSession(notification)}
-						title={t("notify.openSession")}
-						type="button"
-					>
-						<SquareTerminal className="size-icon-md" aria-hidden="true" />
-					</button>
-				) : null}
-				{isUnread ? (
-					<button
-						aria-label={t("notify.markReadAria")}
-						className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-active hover:text-success disabled:pointer-events-none disabled:opacity-40"
-						disabled={disabled}
-						onClick={() => void onMarkRead(notification.id)}
-						title={t("notify.markRead")}
-						type="button"
-					>
-						<Check className="size-icon-md" aria-hidden="true" />
-					</button>
-				) : (
-					<span aria-label={t("notify.read")} className="grid size-control-md place-items-center text-passive" title={t("notify.read")}>
-						<Check className="size-icon-md" aria-hidden="true" />
-					</span>
-				)}
 			</div>
 		</div>
 	);

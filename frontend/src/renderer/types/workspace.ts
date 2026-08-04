@@ -126,6 +126,8 @@ export type WorkspaceSession = {
 	/** Raw issue/task identifier from the daemon. Intake ids are provider-prefixed. */
 	issueId?: string;
 	provider: AgentProvider;
+	/** Reviewer selected for this session; absent means use the project default. */
+	reviewerHarness?: "claude-code" | "codex" | "opencode";
 	kind?: SessionKind;
 	branch?: string;
 	status: SessionStatus;

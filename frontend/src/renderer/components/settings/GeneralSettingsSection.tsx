@@ -8,7 +8,13 @@ import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 
-export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: () => void }) {
+export function GeneralSettingsSection({
+	onConnectMobile,
+	titleHidden,
+}: {
+	onConnectMobile: () => void;
+	titleHidden?: boolean;
+}) {
 	const { t } = useTranslation();
 	const themePreference = useUiStore((state) => state.themePreference);
 	const setThemePreference = useUiStore((state) => state.setThemePreference);
@@ -30,10 +36,16 @@ export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: (
 	const languageOptions = [
 		{ value: "en", label: t("settings.language.en") },
 		{ value: "zh-CN", label: t("settings.language.zhCN") },
+		{ value: "ja", label: t("settings.language.ja") },
+		{ value: "ko", label: t("settings.language.ko") },
+		{ value: "es", label: t("settings.language.es") },
+		{ value: "fr", label: t("settings.language.fr") },
+		{ value: "de", label: t("settings.language.de") },
+		{ value: "pt-BR", label: t("settings.language.ptBR") },
 	] satisfies SettingsOption<AppLocale>[];
 
 	return (
-		<SettingsSection title={t("settings.general")}>
+		<SettingsSection title={t("settings.general")} titleHidden={titleHidden}>
 			<SettingsRow icon={Palette} label={t("settings.theme")}>
 				<SettingsOptionMenu
 					aria-label={t("settings.theme")}

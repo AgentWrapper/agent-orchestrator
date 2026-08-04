@@ -25,7 +25,7 @@ import {
 	type WorkspaceSummary,
 	workerSessions,
 } from "../types/workspace";
-import { getSessionDotView } from "../lib/session-presentation";
+import { getAgentActivityView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
@@ -65,13 +65,12 @@ import { useUiStore } from "../stores/ui-store"
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
+import { isMacPlatform } from "../lib/platform";
 
-// macOS + Linux paint framed chrome: the fixed TitlebarNav cluster carries the
+// macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
 // under its custom titlebar.
 const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 // Shared styling for the per-project hover action buttons (dashboard,
@@ -94,7 +93,6 @@ const MAX_DISPLAY_NAME_LEN = 20;
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
-export const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
@@ -103,7 +101,7 @@ type SidebarProps = {
 	isOverlay?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
-	topbarOffset?: "toolbar" | "titlebar" | "trafficLights";
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
@@ -131,11 +129,17 @@ function useSelection() {
 	};
 }
 
-// Activity controls motion; live PR context controls an active session's
-// color. Idle activity remains visible as a static gray dot.
-function SessionDot({ session }: { session: WorkspaceSession }) {
-	const dot = getSessionDotView(session);
-	return <span aria-hidden="true" className={cn("mt-px h-1.5 w-1.5 shrink-0 rounded-full", dot.className)} />;
+// The shared activity resolver controls both color and motion. PR/CI state is
+// presented on cards and board lanes instead of repainting this activity dot.
+function SessionStatusDot({ session }: { session: WorkspaceSession }) {
+	const activity = getAgentActivityView(session.activity);
+	return (
+		<span
+			aria-hidden="true"
+			className={cn("size-2 shrink-0 rounded-full", activity.indicatorClassName)}
+			data-session-status=""
+		/>
+	);
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
@@ -208,7 +212,9 @@ export function Sidebar({
 
 	// agent-orchestrator's sidebar resize: drag the right edge (200-420px,
 	// persisted), double-click to reset to 240px. Drives --ao-sidebar-w on :root,
-	// which the provider forwards into shadcn's --sidebar-width.
+	// which the provider forwards into shadcn's --sidebar-width. Dragging clamps
+	// at SIDEBAR_MIN_WIDTH — collapsing stays on the explicit toggle (⌘B /
+	// titlebar button), never on a drag.
 	const {
 		onPointerDown: onResizePointerDown,
 		onCollapsedPointerDown: onCollapsedResizePointerDown,
@@ -220,8 +226,6 @@ export function Sidebar({
 		min: SIDEBAR_MIN_WIDTH,
 		max: SIDEBAR_MAX_WIDTH,
 		edge: "right",
-		collapseBelow: SIDEBAR_COLLAPSE_THRESHOLD,
-		onCollapse: () => setOpen(false),
 		onExpand: () => setOpen(true),
 	});
 
@@ -254,7 +258,7 @@ export function Sidebar({
 		>
 			<SidebarHeader
 				className={cn(
-					"gap-0 p-0 px-2 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
+					"gap-0 p-0 px-1 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
 					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
 				)}
 			>
@@ -262,7 +266,7 @@ export function Sidebar({
             36px board button wrapping the 22px accent mark. */}
 				<div
 					className={cn(
-						"flex shrink-0 items-center gap-1.5 px-1.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
+						"flex shrink-0 items-center gap-1.5 px-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
 						commandPaletteEnabled ? "pb-2" : "pb-3",
 					)}
 				>
@@ -393,15 +397,13 @@ export function Sidebar({
 
 			{/* Footer — Settings opens the global settings page directly.
 			    Top hairline matches the board Archive `border-t border-border-strong`.
-			    Row height matches Archive (`h-row-md`). Bottom margin is the shell
-			    inset minus 1px so the hairline meets Archive (the +1 surface-border
-			    compensation overshoots on mac/linux). */}
+			    Row height matches Archive (`h-row-md`). On macOS the sidebar is
+			    already height-clamped beside the inset center surface, so only its
+			    1px border needs compensating here. */}
 			<SidebarFooter
 				className={cn(
-					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 pb-0 pt-0 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
-					isMac || isLinux
-						? "mb-[calc(var(--size-center-panel-inset-mac)-1px)]"
-						: "mb-[calc(var(--size-center-panel-bottom-inset)-1px)]",
+					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-0 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
+					isMac ? "mb-px" : "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
 				)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
@@ -485,7 +487,14 @@ function ProjectItem({
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
 	const { t } = useTranslation();
-	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
+	const activeProjectMatches = selection.activeProjectId === workspace.id;
+	const dashboardActive = activeProjectMatches && !selection.activeSessionId;
+	const orchestratorActive =
+		activeProjectMatches &&
+		workspace.sessions.some(
+			(session) => session.id === selection.activeSessionId && session.kind === "orchestrator",
+		);
+	const projectActive = dashboardActive || orchestratorActive;
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
@@ -571,7 +580,7 @@ function ProjectItem({
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			{/* project-sidebar__proj-row */}
 			<SidebarMenuButton
-				aria-current={projectActive ? "page" : undefined}
+				aria-current={dashboardActive ? "page" : undefined}
 				aria-expanded={expanded}
 				isActive={projectActive}
 				onClick={onProjectClick}
@@ -587,7 +596,7 @@ function ProjectItem({
 			>
 				<span
 					aria-hidden="true"
-					className="shrink-0 group-data-[collapsible=icon]:hidden"
+					className="shrink-0 translate-y-px group-data-[collapsible=icon]:hidden"
 					data-project-folder=""
 					onClick={onFolderClick}
 				>
@@ -598,7 +607,10 @@ function ProjectItem({
 					)}
 				</span>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
-				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+				<span
+					className="sidebar-expanded-chrome min-w-0 flex-1 translate-y-px truncate group-data-[collapsible=icon]:hidden"
+					data-project-label=""
+				>
 					{workspace.name}
 				</span>
 			</SidebarMenuButton>
@@ -607,19 +619,21 @@ function ProjectItem({
 			propagation issues in Electron's Chromium. Hidden in the icon rail. */}
 			<div
 				className={cn(
-					"sidebar-expanded-chrome absolute top-0 right-1.5 z-chrome flex h-9 items-center gap-px",
+					"sidebar-expanded-chrome absolute top-0 right-0.5 z-chrome flex h-9 items-center gap-px",
 					"group-data-[collapsible=icon]:hidden",
 				)}
+				data-project-actions=""
 			>
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
+							aria-current={dashboardActive ? "page" : undefined}
 							aria-label={t("shell.openProjectDashboard", { name: workspace.name })}
-							className={HOVER_ACTION_CLASS}
+							className={cn(HOVER_ACTION_CLASS, dashboardActive && "text-foreground")}
 							onClick={() => selection.goProject(workspace.id)}
 							type="button"
 						>
-							<LayoutDashboard aria-hidden="true" />
+							<LayoutDashboard aria-hidden="true" strokeWidth={dashboardActive ? 2.5 : 2} />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>{t("shell.dashboard")}</TooltipContent>
@@ -627,17 +641,18 @@ function ProjectItem({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
+							aria-current={orchestratorActive ? "page" : undefined}
 							aria-label={
 								orchestrator
 									? t("shell.openProjectOrchestrator", { name: workspace.name })
 									: t("shell.spawnProjectOrchestrator", { name: workspace.name })
 							}
-							className={HOVER_ACTION_CLASS}
+							className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
 							type="button"
 						>
-							<OrchestratorIcon aria-hidden="true" />
+							<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
 						</button>
 					</TooltipTrigger>
 					<TooltipContent>
@@ -760,9 +775,9 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem className="pl-7">
-				<div className="relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0">
-					<SessionDot session={session} />
+			<SidebarMenuSubItem className="pl-4.5">
+				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0">
+					<SessionStatusDot session={session} />
 					<input
 							aria-label={t("shell.renameSession", { title: session.title })}
 						autoFocus
@@ -789,54 +804,70 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	}
 
 	return (
-		<SidebarMenuSubItem className="pl-7">
-			<button
-				aria-current={active ? "page" : undefined}
-					aria-label={t("shell.openSession", { title: session.title })}
-				className={cn(
-					"relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0 pr-14 text-left text-sm outline-hidden transition-[background-color,color]",
-					"hover:bg-interactive-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-					active && "bg-interactive-active text-foreground",
-				)}
-				onClick={onOpen}
-				type="button"
-			>
-				<SessionDot session={session} />
-				<span className="min-w-0 flex-1">
-					<span className={cn("block truncate", active ? "text-foreground" : "text-muted-foreground")}>
-						{session.title}
-					</span>
-				</span>
-			</button>
-			{/* Pin & Pencil reveal on row hover/focus (named group on SidebarMenuSubItem) */}
+		<SidebarMenuSubItem className="pl-4.5">
 			<div
 				className={cn(
-					"absolute top-1/2 right-1 flex -translate-y-1/2 items-center gap-px opacity-0",
-					"group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100",
+					"group/session-row flex h-8 w-full items-center rounded-lg transition-[background-color,color]",
+					"hover:bg-interactive-hover hover:text-foreground focus-within:bg-interactive-hover",
+					active && "bg-interactive-active text-foreground",
 				)}
+				data-session-row=""
 			>
 				<button
-					aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
-					className={cn(HOVER_ACTION_CLASS, session.isPinned && "text-foreground")}
-					onClick={(e) => {
-						e.stopPropagation();
-						session.isPinned ? unpinSession(session) : pinSession(session);
-					}}
+					aria-current={active ? "page" : undefined}
+					aria-label={t("shell.openSession", { title: session.title })}
+					className="flex h-full min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+					onClick={onOpen}
 					type="button"
 				>
-					{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+					<SessionStatusDot session={session} />
+					<span className="min-w-0 flex-1">
+						<span
+							className={cn(
+								"block truncate transition-colors",
+								active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
+							)}
+						>
+							{session.title}
+						</span>
+					</span>
 				</button>
-				<button
-					aria-label={t("shell.renameSession", { title: session.title })}
-					className={HOVER_ACTION_CLASS}
-					onClick={(e) => {
-						e.stopPropagation();
-						startEditing();
-					}}
-					type="button"
-				>
-					<Pencil aria-hidden="true" />
-				</button>
+			{/* Match terminal-tab close behavior: consume no width at rest, then
+			    expand beside the label on hover/focus so the text yields only when
+			    the action is useful. Keep it a sibling for valid interactive HTML. */}
+			<button
+				aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+				className={cn(
+					"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
+					"transition-[width,margin,background-color,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
+					"group-hover/session-row:w-5 group-hover/session-row:opacity-100",
+					"group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
+					session.isPinned && "text-foreground",
+				)}
+				onClick={(e) => {
+					e.stopPropagation();
+					session.isPinned ? unpinSession(session) : pinSession(session);
+				}}
+				type="button"
+			>
+				{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+			</button>
+			<button
+				aria-label={t("shell.renameSession", { title: session.title })}
+				className={cn(
+					"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
+					"transition-[width,margin,background-color,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
+					"group-hover/session-row:mr-1 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
+					"group-focus-within/session-row:mr-1 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
+				)}
+				onClick={(e) => {
+					e.stopPropagation();
+					startEditing();
+				}}
+				type="button"
+			>
+				<Pencil aria-hidden="true" />
+			</button>
 			</div>
 		</SidebarMenuSubItem>
 	);

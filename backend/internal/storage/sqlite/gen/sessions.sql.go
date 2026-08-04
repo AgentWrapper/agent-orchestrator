@@ -20,7 +20,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    is_pinned, pinned_at
+    is_pinned, pinned_at, reviewer_harness
 FROM sessions WHERE id = ?
 `
 
@@ -56,19 +56,20 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.DiffBaseRef,
 		&i.IsPinned,
 		&i.PinnedAt,
+		&i.ReviewerHarness,
 	)
 	return i, err
 }
 
 const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
-    id, project_id, num, issue_id, kind, harness, display_name,
+    id, project_id, num, issue_id, kind, harness, reviewer_harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
     created_at, updated_at, is_pinned, pinned_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -78,6 +79,7 @@ type InsertSessionParams struct {
 	IssueID            domain.IssueID
 	Kind               domain.SessionKind
 	Harness            domain.AgentHarness
+	ReviewerHarness    domain.ReviewerHarness
 	DisplayName        string
 	ActivityState      domain.ActivityState
 	ActivityLastAt     time.Time
@@ -110,6 +112,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.IssueID,
 		arg.Kind,
 		arg.Harness,
+		arg.ReviewerHarness,
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
@@ -143,7 +146,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    is_pinned, pinned_at
+    is_pinned, pinned_at, reviewer_harness
 FROM sessions ORDER BY project_id, num
 `
 
@@ -185,6 +188,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.DiffBaseRef,
 			&i.IsPinned,
 			&i.PinnedAt,
+			&i.ReviewerHarness,
 		); err != nil {
 			return nil, err
 		}
@@ -206,7 +210,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    is_pinned, pinned_at
+    is_pinned, pinned_at, reviewer_harness
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -248,6 +252,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.DiffBaseRef,
 			&i.IsPinned,
 			&i.PinnedAt,
+			&i.ReviewerHarness,
 		); err != nil {
 			return nil, err
 		}
@@ -360,6 +365,24 @@ func (q *Queries) SetSessionPreviewURL(ctx context.Context, arg SetSessionPrevie
 	return result.RowsAffected()
 }
 
+const setSessionReviewerHarness = `-- name: SetSessionReviewerHarness :execrows
+UPDATE sessions SET reviewer_harness = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionReviewerHarnessParams struct {
+	ReviewerHarness domain.ReviewerHarness
+	UpdatedAt       time.Time
+	ID              domain.SessionID
+}
+
+func (q *Queries) SetSessionReviewerHarness(ctx context.Context, arg SetSessionReviewerHarnessParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionReviewerHarness, arg.ReviewerHarness, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setSessionTerminateOnPRMerge = `-- name: SetSessionTerminateOnPRMerge :execrows
 UPDATE sessions SET terminate_on_pr_merge = ?, updated_at = ? WHERE id = ?
 `
@@ -380,7 +403,7 @@ func (q *Queries) SetSessionTerminateOnPRMerge(ctx context.Context, arg SetSessi
 
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
-    issue_id = ?, kind = ?, harness = ?, display_name = ?,
+    issue_id = ?, kind = ?, harness = ?, reviewer_harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
@@ -393,6 +416,7 @@ type UpdateSessionParams struct {
 	IssueID            domain.IssueID
 	Kind               domain.SessionKind
 	Harness            domain.AgentHarness
+	ReviewerHarness    domain.ReviewerHarness
 	DisplayName        string
 	ActivityState      domain.ActivityState
 	ActivityLastAt     time.Time
@@ -422,6 +446,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.IssueID,
 		arg.Kind,
 		arg.Harness,
+		arg.ReviewerHarness,
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
