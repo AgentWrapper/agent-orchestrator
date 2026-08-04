@@ -568,6 +568,25 @@ button.settings-row-bar {
 	transition-duration: var(--duration-fast);
 }
 
+.review-run-controls-container {
+	container-type: inline-size;
+}
+
+.review-run-controls {
+	flex-wrap: nowrap;
+}
+
+@container (max-width: 28rem) {
+	.review-run-controls {
+		align-items: flex-start;
+		flex-direction: column;
+	}
+
+	.review-run-agent-select {
+		width: 100%;
+	}
+}
+
 @utility settings-menu-surface {
 	display: flex;
 	width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
@@ -2612,4 +2631,17 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	.browser-panel__toolbar button:not(:disabled):active {
 		transform: none;
 	}
+}
+
+/* Reviewer picker menu: the agent list needs more room than the default option
+   menu so harness names are not truncated mid-word. */
+@utility reviews-agent-menu-surface {
+	min-width: 13rem;
+	padding: var(--space-1_5);
+	gap: var(--space-1);
+}
+
+@utility reviews-agent-menu-item {
+	padding-inline: var(--space-2_5);
+	padding-block: var(--space-2);
 }
