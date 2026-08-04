@@ -16,6 +16,8 @@ An Agentic IDE that supervises parallel AI coding agents in isolated workspaces,
 <img src="docs/assets/readme/dashboard.png" alt="Agent Orchestrator dashboard showing parallel coding agent sessions" width="100%" />
 </div>
 
+**Languages:** **English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md)
+
 ---
 
 ## What is Agent Orchestrator?

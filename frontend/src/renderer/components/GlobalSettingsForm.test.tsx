@@ -121,8 +121,8 @@ beforeEach(async () => {
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
 	getUiSettings.mockResolvedValue({ locale: "en" });
-	setUiSettings.mockImplementation(async (settings: { locale: "en" | "zh-CN" }) => ({
-		locale: settings.locale === "zh-CN" ? "zh-CN" : "en",
+	setUiSettings.mockImplementation(async (settings: { locale: string }) => ({
+		locale: settings.locale,
 	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);

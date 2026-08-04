@@ -25,15 +25,13 @@ import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import { buildRankedAgentOptions } from "../lib/agent-select-options";
 import { captureRendererEvent } from "../lib/telemetry";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { cn } from "../lib/utils";
 import { newestActiveOrchestrator } from "../types/workspace";
-import { AgentAvatar } from "./AgentAvatar";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
-import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
+import { ReviewerSelect } from "./ReviewerSelect";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsPageShell } from "./settings/SettingsPageShell";
 import { SettingsPanel } from "./settings/SettingsPanel";
@@ -46,7 +44,6 @@ type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 
-const KNOWN_REVIEWER_HARNESS_IDS = new Set(["claude-code", "codex", "opencode"]);
 
 const projectQueryKey = (id: string) => ["project", id] as const;
 
@@ -352,13 +349,16 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				)}
 			</SettingsSection>
 
-			{!isScratchProject && (
-				<SettingsSection title={t("settings.project.reviewers")}>
-					<SettingsRow icon={ScanEye} label={t("settings.project.defaultReviewer")}>
+				{!isScratchProject && (
+					<SettingsSection title={t("settings.project.reviewers")}>
+						<SettingsRow icon={ScanEye} label={t("settings.project.defaultReviewer")}>
 						<ReviewerSelect
 							value={form.reviewerHarness}
 							onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+							ariaLabel={t("settings.project.defaultReviewer")}
 							authorized={agentCatalog?.authorized}
+							defaultOptionLabel={t("settings.project.default")}
+							defaultTriggerLabel={t("settings.project.default")}
 							installed={agentCatalog?.installed}
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
@@ -502,85 +502,6 @@ function PermissionModeSelect({ value, onChange }: { value: string; onChange: (v
 			value={value || "__default__"}
 			options={options}
 			onChange={(v) => onChange(v === "__default__" ? "" : v)}
-		/>
-	);
-}
-
-const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
-const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
-	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),
-);
-
-function ReviewerSelect({
-	value,
-	onChange,
-	disabled = false,
-	authorized,
-	installed,
-	supported,
-}: {
-	value: string;
-	onChange: (value: string) => void;
-	disabled?: boolean;
-	authorized?: components["schemas"]["AgentInfo"][];
-	installed?: components["schemas"]["AgentInfo"][];
-	supported?: components["schemas"]["AgentInfo"][];
-}) {
-	const { t } = useTranslation();
-	const fallbackAgents: components["schemas"]["AgentInfo"][] = [...KNOWN_REVIEWER_HARNESS_IDS].map((id) => ({
-		id,
-		label: id,
-	}));
-	const filteredSupported = (supported ?? fallbackAgents).filter((a) => KNOWN_REVIEWER_HARNESS_IDS.has(a.id));
-	const supportedAgents = filteredSupported.length > 0 ? filteredSupported : fallbackAgents;
-	const options = buildRankedAgentOptions({
-		supported: supportedAgents,
-		installed,
-		authorized,
-		priorityRank: REVIEWER_AGENT_PRIORITY_RANK,
-		fallbackAgents,
-	});
-
-	const menuOptions = [
-		{ value: "__default__", label: t("settings.project.default") },
-		...options.map((agent) => ({ value: agent.id, label: agent.label, disabled: agent.disabled })),
-	];
-	const selectedValue = value || "__default__";
-
-	return (
-		<SettingsOptionMenu
-			aria-label={t("settings.project.defaultReviewer")}
-			value={selectedValue}
-			options={menuOptions}
-			disabled={disabled}
-			menuClassName="settings-agent-menu-surface"
-			menuItemClassName="settings-agent-menu-item"
-			onChange={(v) => onChange(v === "__default__" ? "" : v)}
-			renderTrigger={(selected) => (
-				<>
-					{selected && selected.value !== "__default__" ? (
-						<AgentAvatar provider={selected.value} className="size-icon-lg" />
-					) : null}
-					<span className="min-w-0 truncate">{selected?.label ?? t("settings.project.default")}</span>
-				</>
-			)}
-			renderMenuItem={(option, selected) => {
-				if (option.value === "__default__") {
-					return <AgentSelectMenuItem label={option.label} selected={selected} />;
-				}
-				const agent = options.find((entry) => entry.id === option.value);
-				if (!agent) return option.label;
-				return (
-					<AgentSelectMenuItem
-						agentId={agent.id}
-						label={agent.label}
-						selected={selected}
-						status={agent.status}
-						statusTone={agent.statusTone}
-						disabled={agent.disabled}
-					/>
-				);
-			}}
 		/>
 	);
 }

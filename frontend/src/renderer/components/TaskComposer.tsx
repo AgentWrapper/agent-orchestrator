@@ -8,9 +8,8 @@ import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
-import type { AgentProvider } from "../types/workspace";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
-import { useCreateTask } from "../hooks/useCreateTask";
+import { useCreateTask, type CreateTaskInput } from "../hooks/useCreateTask";
 import { useImageAttachments } from "../hooks/useImageAttachments";
 import { cn } from "../lib/utils";
 
@@ -107,7 +106,7 @@ export function TaskComposer({
 				title: cleanTitle,
 				prompt: cleanPrompt,
 				branch: !isScratchProject && cleanBranch ? cleanBranch : undefined,
-				harness: agentTouched && agent ? (agent as AgentProvider) : undefined,
+				harness: agentTouched && agent ? (agent as CreateTaskInput["harness"]) : undefined,
 				attachments: attachments.length > 0 ? toPayload() : undefined,
 			});
 			onCreated(sessionId);

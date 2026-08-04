@@ -65,6 +65,8 @@ if (typeof window !== "undefined") {
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
+			onCloseShellTerminalShortcut: () => () => undefined,
+			setCloseShellTerminalShortcutEnabled: () => undefined,
 			onOpenSettingsShortcut: () => () => undefined,
 			onPreviousSessionShortcut: () => () => undefined,
 			onNextSessionShortcut: () => () => undefined,
@@ -188,8 +190,8 @@ if (typeof window !== "undefined") {
 		},
 		uiSettings: {
 			get: async () => ({ locale: "en" as const }),
-			set: async (settings: { locale: "en" | "zh-CN" }) => ({
-				locale: settings.locale === "zh-CN" ? ("zh-CN" as const) : ("en" as const),
+			set: async (settings: { locale: string }) => ({
+				locale: settings.locale as "en",
 			}),
 		},
 		keybindings: {

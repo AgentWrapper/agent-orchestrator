@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useBrowserView, type BrowserNavState } from "./useBrowserView";
+import { resetConsumedPreviewTriggersForTest, useBrowserView, type BrowserNavState } from "./useBrowserView";
 
 type Listener = (state: BrowserNavState) => void;
 type TabsListener = (state: import("../../main/browser-view-host").BrowserTabsState) => void;
@@ -116,6 +116,7 @@ describe("useBrowserView", () => {
 		vi.restoreAllMocks();
 		setFullscreenElement(null);
 		document.body.replaceChildren();
+		resetConsumedPreviewTriggersForTest();
 	});
 
 	it("ensures a scoped browser view and reports the measured slot bounds", async () => {
@@ -781,6 +782,144 @@ describe("useBrowserView", () => {
 			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "file:///tmp/preview/index.html" }),
 		);
 		expect(bridge.navigate).toHaveBeenCalledTimes(3);
+	});
+
+	it("keeps the user's manual navigation on session switch-back and only re-navigates on a new preview", async () => {
+		// Regression for #3536: the native view survives a session switch in the
+		// main process with the user's last URL (e.g. google.com), but the preview
+		// effect used to re-fire on remount and navigate it back to previewUrl.
+		const bridge = setupBridge();
+		const { result, rerender } = renderHook(
+			({ sessionId, previewUrl, previewRevision }) =>
+				useBrowserView({ sessionId, active: true, poppedOut: false, previewUrl, previewRevision }),
+			{
+				initialProps: {
+					sessionId: "sess-1",
+					previewUrl: "http://localhost:5217/" as string | undefined,
+					previewRevision: 1 as number | undefined,
+				},
+			},
+		);
+		await waitFor(() =>
+			expect(bridge.navigate).toHaveBeenCalledWith({ viewId: "42:sess-1", url: "http://localhost:5217/" }),
+		);
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+
+		// The user browses elsewhere; the main-process view now holds google.com.
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "https://www.google.com/",
+				title: "Google",
+				canGoBack: true,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+
+		// Switch to another session, then back.
+		rerender({ sessionId: "sess-2", previewUrl: undefined, previewRevision: undefined });
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-2"));
+		rerender({ sessionId: "sess-1", previewUrl: "http://localhost:5217/", previewRevision: 1 });
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+
+		// The already-consumed preview must not be re-asserted: the view keeps
+		// whatever the user navigated to.
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+		expect(bridge.clear).not.toHaveBeenCalled();
+
+		// A genuine new `ao preview` (revision bump) still takes over.
+		rerender({ sessionId: "sess-1", previewUrl: "http://localhost:5217/", previewRevision: 2 });
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(2));
+		expect(bridge.navigate).toHaveBeenLastCalledWith({ viewId: "42:sess-1", url: "http://localhost:5217/" });
+	});
+
+	it("does not re-navigate to the preview when the hook fully remounts for the same session", async () => {
+		// SessionView may unmount entirely on a session switch; the consumed
+		// trigger must outlive the hook instance, not just a prop change.
+		const bridge = setupBridge();
+		const first = renderHook(() =>
+			useBrowserView({
+				sessionId: "sess-1",
+				active: true,
+				poppedOut: false,
+				previewUrl: "http://localhost:5217/",
+				previewRevision: 1,
+			}),
+		);
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(1));
+		first.unmount();
+
+		const second = renderHook(() =>
+			useBrowserView({
+				sessionId: "sess-1",
+				active: true,
+				poppedOut: false,
+				previewUrl: "http://localhost:5217/",
+				previewRevision: 1,
+			}),
+		);
+		await waitFor(() => expect(second.result.current.viewId).toBe("42:sess-1"));
+		expect(bridge.navigate).toHaveBeenCalledTimes(1);
+		second.unmount();
+	});
+
+	it("re-applies the preview after termination frees the consumed trigger for a reused session ID", async () => {
+		const bridge = setupBridge();
+		const first = renderHook(
+			({ terminated }) =>
+				useBrowserView({
+					sessionId: "sess-1",
+					active: true,
+					poppedOut: false,
+					terminated,
+					previewUrl: "http://localhost:5217/",
+					previewRevision: 1,
+				}),
+			{ initialProps: { terminated: false } },
+		);
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(1));
+		first.rerender({ terminated: true });
+		await waitFor(() => expect(bridge.destroy).toHaveBeenCalledWith("42:sess-1"));
+		first.unmount();
+
+		// A fresh worker reusing the session ID gets its own preview navigation.
+		const second = renderHook(() =>
+			useBrowserView({
+				sessionId: "sess-1",
+				active: true,
+				poppedOut: false,
+				previewUrl: "http://localhost:5217/",
+				previewRevision: 1,
+			}),
+		);
+		await waitFor(() => expect(bridge.navigate).toHaveBeenCalledTimes(2));
+		second.unmount();
+	});
+
+	it("re-applies the preview on remount without a native browser, whose view state does not survive", async () => {
+		// In web/mock mode navState is component-local, so remounting with an
+		// already-consumed trigger must still restore the static preview.
+		const original = window.ao;
+		window.ao = undefined;
+		try {
+			const props = {
+				sessionId: "sess-1",
+				active: true,
+				poppedOut: false,
+				previewUrl: "http://localhost:5217/",
+				previewRevision: 1,
+			};
+			const first = renderHook(() => useBrowserView(props));
+			await waitFor(() => expect(first.result.current.navState.url).toBe("http://localhost:5217/"));
+			first.unmount();
+
+			const second = renderHook(() => useBrowserView(props));
+			await waitFor(() => expect(second.result.current.navState.url).toBe("http://localhost:5217/"));
+			second.unmount();
+		} finally {
+			window.ao = original;
+		}
 	});
 
 	it("navigates each worker to its own target when sessions share a revision number", async () => {

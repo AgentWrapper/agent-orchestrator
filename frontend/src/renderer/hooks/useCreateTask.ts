@@ -3,16 +3,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
-import type { AgentProvider } from "../types/workspace";
+import type { components } from "../../api/schema";
 import type { ImageAttachmentPayload } from "./useImageAttachments";
 import { agentsQueryKey } from "./useAgentsQuery";
+
+type SpawnHarness = components["schemas"]["SpawnSessionRequest"]["harness"];
 
 export type CreateTaskInput = {
 	projectId: string;
 	title: string;
 	prompt: string;
 	branch?: string;
-	harness?: AgentProvider;
+	harness?: SpawnHarness;
 	attachments?: ImageAttachmentPayload[];
 };
 
