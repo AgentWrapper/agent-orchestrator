@@ -814,7 +814,7 @@ func TestTriggerReusesRunningReviewerBeforeAgentSessionIDRecorded(t *testing.T) 
 	launcher := &fakeLauncher{alive: true, handle: "review-mer-1"}
 	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
 
-	if _, err := eng.Trigger(context.Background(), "mer-1"); err != nil {
+	if _, err := eng.Trigger(context.Background(), "mer-1", ""); err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
 	if !launcher.notified || launcher.spawned {
@@ -1091,21 +1091,21 @@ func TestTriggerRerunsApprovedAndReusesRunningCurrentHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !res.Created || len(res.CreatedRuns) != 1 || res.CreatedRuns[0].PRURL != "https://github.com/o/r/pull/1" {
-		t.Fatalf("expected one rerun for the approved PR: res=%+v", res)
+	if res.Created || len(res.CreatedRuns) != 0 {
+		t.Fatalf("expected no rerun for the approved PR: res=%+v", res)
 	}
-	if !launcher.notified || launcher.spawned {
-		t.Fatalf("expected live reviewer to receive the approved PR rerun: %+v", launcher)
+	if launcher.notified || launcher.spawned {
+		t.Fatalf("reviewer should not receive the approved PR rerun: %+v", launcher)
 	}
 	if launcher.preflighted {
 		t.Fatal("expected preflight not to run")
 	}
-	if len(res.Reviews) != 2 || res.Reviews[0].Status != ReviewStateRunning || res.Reviews[1].Status != ReviewStateRunning {
+	if len(res.Reviews) != 2 || res.Reviews[0].Status != ReviewStateUpToDate || res.Reviews[1].Status != ReviewStateRunning {
 		t.Fatalf("review states = %+v", res.Reviews)
 	}
 }
 
-func TestTriggerCreatesRunForChangesRequestedCurrentHead(t *testing.T) {
+func TestTriggerReusesChangesRequestedCurrentHead(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1", AgentSessionID: "native-reviewer-1"},
 		runs: []domain.ReviewRun{{
@@ -1120,8 +1120,8 @@ func TestTriggerCreatesRunForChangesRequestedCurrentHead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !res.Created || len(res.CreatedRuns) != 1 || !launcher.spawned || launcher.notified {
-		t.Fatalf("expected rerun on changes_requested current head: res=%+v launcher=%+v", res, launcher)
+	if res.Created || len(res.CreatedRuns) != 0 || launcher.notified || launcher.spawned {
+		t.Fatalf("expected changes_requested current head to be reused: res=%+v launcher=%+v", res, launcher)
 	}
 }
 

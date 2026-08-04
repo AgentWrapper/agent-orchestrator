@@ -1,8 +1,8 @@
 -- Reviewer lifecycle/restore support:
 -- - persist the reviewer's native agent session id so restored reviewer
 --   terminals can resume the original conversation
--- - allow explicit review triggers to re-run a PR head that already has a
---   completed AO review, while keeping the uniqueness guard for running work
+-- - prevent duplicate review runs for the same PR target SHA once a
+--   non-failed/non-cancelled review run exists
 
 -- +goose Up
 -- +goose StatementBegin
@@ -17,7 +17,6 @@ DROP INDEX idx_review_run_session_pr_sha;
 DELETE FROM review_run
 WHERE target_sha != ''
   AND status NOT IN ('failed', 'cancelled')
-  AND (status = 'running' OR verdict NOT IN ('', 'changes_requested'))
   AND rowid NOT IN (
     SELECT rowid FROM (
       SELECT rowid,
@@ -30,7 +29,6 @@ WHERE target_sha != ''
       FROM review_run
       WHERE target_sha != ''
         AND status NOT IN ('failed', 'cancelled')
-        AND (status = 'running' OR verdict NOT IN ('', 'changes_requested'))
     )
     WHERE rn = 1
   );
@@ -40,8 +38,7 @@ WHERE target_sha != ''
 CREATE UNIQUE INDEX idx_review_run_session_pr_sha
     ON review_run (session_id, pr_url, target_sha)
     WHERE target_sha != ''
-        AND status = 'running'
-        AND verdict = '';
+        AND status NOT IN ('failed', 'cancelled');
 -- +goose StatementEnd
 
 -- +goose Down
