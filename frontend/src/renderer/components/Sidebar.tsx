@@ -62,7 +62,6 @@ import { cn } from "../lib/utils";
 import { useUiStore } from "../stores/ui-store"
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
-import { AgentAvatar } from "./AgentAvatar";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform } from "../lib/platform";
 
@@ -128,25 +127,11 @@ function useSelection() {
 	};
 }
 
-// Keep live state and agent identity adjacent but visually independent. Status
-// leads with a full 8px dot for quick scanning; the provider mark follows at
-// 14px so neither signal has to compete inside an overlaid badge.
-function SessionAgentMark({ session }: { session: WorkspaceSession }) {
+// Activity controls motion; live PR context controls color. Keep the indicator
+// at a full 8px so state stays legible in the dense session list.
+function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 	const dot = getSessionDotView(session);
-	return (
-		<span
-			aria-hidden="true"
-			className="inline-flex shrink-0 items-center gap-1.5"
-			data-session-agent={session.provider}
-			title={session.provider}
-		>
-			<span
-				className={cn("size-2 shrink-0 rounded-full", dot.className)}
-				data-session-status=""
-			/>
-			<AgentAvatar className="size-3.5!" decorative provider={session.provider} />
-		</span>
-	);
+	return <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", dot.className)} data-session-status="" />;
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
@@ -583,7 +568,7 @@ function ProjectItem({
 			>
 				<span
 					aria-hidden="true"
-					className="shrink-0 group-data-[collapsible=icon]:hidden"
+					className="shrink-0 translate-y-px group-data-[collapsible=icon]:hidden"
 					data-project-folder=""
 					onClick={onFolderClick}
 				>
@@ -594,7 +579,10 @@ function ProjectItem({
 					)}
 				</span>
 				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
-				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+				<span
+					className="sidebar-expanded-chrome min-w-0 flex-1 translate-y-px truncate group-data-[collapsible=icon]:hidden"
+					data-project-label=""
+				>
 					{workspace.name}
 				</span>
 			</SidebarMenuButton>
@@ -603,9 +591,10 @@ function ProjectItem({
 			propagation issues in Electron's Chromium. Hidden in the icon rail. */}
 			<div
 				className={cn(
-					"sidebar-expanded-chrome absolute top-0 right-1.5 z-chrome flex h-9 items-center gap-px",
+					"sidebar-expanded-chrome absolute top-0 right-0.5 z-chrome flex h-9 items-center gap-px",
 					"group-data-[collapsible=icon]:hidden",
 				)}
+				data-project-actions=""
 			>
 				<Tooltip>
 					<TooltipTrigger asChild>
@@ -757,7 +746,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 		return (
 			<SidebarMenuSubItem className="pl-4.5">
 				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0">
-					<SessionAgentMark session={session} />
+					<SessionStatusDot session={session} />
 					<input
 							aria-label={t("shell.renameSession", { title: session.title })}
 						autoFocus
@@ -800,7 +789,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 					onClick={onOpen}
 					type="button"
 				>
-					<SessionAgentMark session={session} />
+					<SessionStatusDot session={session} />
 					<span className="min-w-0 flex-1">
 						<span
 							className={cn(

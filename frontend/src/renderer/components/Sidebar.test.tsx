@@ -975,18 +975,15 @@ describe("Sidebar", () => {
 		await waitFor(() => expect(renameSessionMock).toHaveBeenCalledWith("proj-1-1", "polish login"));
 	});
 
-	it("aligns the compact agent mark with the project label column", () => {
+	it("aligns the prominent session status dot with the project label column", () => {
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });
 
 		const sessionItem = screen.getByLabelText("Open fix login").closest("li");
 		expect(sessionItem).toHaveClass("pl-4.5");
 		expect(sessionItem).not.toHaveClass("pl-7");
-		const agentMark = screen.getByLabelText("Open fix login").querySelector('[data-session-agent="claude-code"]');
-		expect(agentMark).toHaveClass("inline-flex", "gap-1.5");
-		expect(agentMark?.querySelector("img")).toHaveClass("size-3.5!");
-		expect(agentMark?.querySelector("img")).toHaveAttribute("aria-hidden", "true");
-		expect(agentMark?.querySelector("[data-session-status]")).toHaveClass("size-2");
+		expect(screen.getByLabelText("Open fix login").querySelector("[data-session-status]")).toHaveClass("size-2");
+		expect(screen.getByLabelText("Open fix login").querySelector("[data-session-agent]")).not.toBeInTheDocument();
 	});
 
 	it("gives session names the pencil width until the rename action is revealed", async () => {
@@ -1038,10 +1035,22 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		const projectRow = screen.getByText("Project One").closest("button");
+		const actionCluster = screen.getByLabelText("Project actions for Project One").parentElement;
 
 		if (!projectRow) throw new Error("Project row button not found");
 		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
+		expect(actionCluster).toHaveAttribute("data-project-actions");
+		expect(actionCluster).toHaveClass("right-0.5");
+		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
+	});
+
+	it("optically aligns the project folder and label with its action icons", () => {
+		renderSidebar();
+
+		const projectRow = screen.getByText("Project One").closest("button");
+		expect(projectRow?.querySelector("[data-project-folder]")).toHaveClass("translate-y-px");
+		expect(projectRow?.querySelector("[data-project-label]")).toHaveClass("translate-y-px");
 	});
 
 	it("clamps a drag at the minimum width instead of collapsing", async () => {
