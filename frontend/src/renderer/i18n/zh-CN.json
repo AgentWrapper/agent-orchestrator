@@ -580,6 +580,8 @@
 	"shell.orchestratorBoard": "编排器看板",
 	"shell.orchestratorWithActivity": "编排器，{{activity}}",
 	"shell.pinned": "已固定",
+	"shell.pinSession": "固定会话",
+	"shell.unpinSession": "取消固定会话",
 	"shell.projects": "项目",
 	"shell.projectActions": "{{name}} 的项目操作",
 	"shell.projectSettings": "项目设置",

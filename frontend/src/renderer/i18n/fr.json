@@ -921,9 +921,7 @@
 	"zone.done": "Terminé",
 	"zone.merge": "Prêt à fusionner",
 	"zone.pending": "En revue",
-	"zone.working": "En cours"
-
-,
+	"zone.working": "En cours",
 	"settings.developer": "Developer",
 	"settings.help": "Help",
 	"settings.navSectionsAria": "Settings sections",
@@ -947,5 +945,7 @@
 	"settings.dev.activitySpreadLabel": "Activity spread (min)",
 	"settings.dev.activitySpreadAria": "Activity spread in minutes",
 	"settings.dev.resetDefaultsLabel": "Reset defaults",
-	"settings.dev.resetReload": "Reset & Reload"
+	"settings.dev.resetReload": "Reset & Reload",
+	"shell.pinSession": "Pin session",
+	"shell.unpinSession": "Unpin session"
 }
