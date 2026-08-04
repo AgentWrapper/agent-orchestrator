@@ -128,26 +128,23 @@ function useSelection() {
 	};
 }
 
-// Keep agent identity and live state in one compact slot. The 12px provider
-// mark replaces the old standalone dot; its 6px status badge preserves the
-// same activity/SCM color and motion without moving the approved text column.
+// Keep live state and agent identity adjacent but visually independent. Status
+// leads with a full 8px dot for quick scanning; the provider mark follows at
+// 14px so neither signal has to compete inside an overlaid badge.
 function SessionAgentMark({ session }: { session: WorkspaceSession }) {
 	const dot = getSessionDotView(session);
 	return (
 		<span
 			aria-hidden="true"
-			className="relative size-3 shrink-0"
+			className="inline-flex shrink-0 items-center gap-1"
 			data-session-agent={session.provider}
 			title={session.provider}
 		>
-			<AgentAvatar className="size-3!" decorative provider={session.provider} />
 			<span
-				className={cn(
-					"absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-1 ring-sidebar",
-					dot.className,
-				)}
+				className={cn("size-2 shrink-0 rounded-full", dot.className)}
 				data-session-status=""
 			/>
+			<AgentAvatar className="size-3.5!" decorative provider={session.provider} />
 		</span>
 	);
 }
@@ -759,7 +756,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	if (isEditing) {
 		return (
 			<SidebarMenuSubItem className="pl-4.5">
-				<div className="relative flex h-8 w-full items-center gap-0.5 rounded-lg px-2.5 py-0">
+				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0">
 					<SessionAgentMark session={session} />
 					<input
 							aria-label={t("shell.renameSession", { title: session.title })}
@@ -792,7 +789,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 				aria-current={active ? "page" : undefined}
 					aria-label={t("shell.openSession", { title: session.title })}
 				className={cn(
-					"relative flex h-8 w-full items-center gap-0.5 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
+					"relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
 					"hover:bg-interactive-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
 					active && "bg-interactive-active text-foreground",
 				)}

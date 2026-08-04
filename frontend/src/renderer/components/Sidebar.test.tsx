@@ -983,10 +983,10 @@ describe("Sidebar", () => {
 		expect(sessionItem).toHaveClass("pl-4.5");
 		expect(sessionItem).not.toHaveClass("pl-7");
 		const agentMark = screen.getByLabelText("Open fix login").querySelector('[data-session-agent="claude-code"]');
-		expect(agentMark).toHaveClass("size-3");
-		expect(agentMark?.querySelector("img")).toHaveClass("size-3!");
+		expect(agentMark).toHaveClass("inline-flex", "gap-1");
+		expect(agentMark?.querySelector("img")).toHaveClass("size-3.5!");
 		expect(agentMark?.querySelector("img")).toHaveAttribute("aria-hidden", "true");
-		expect(agentMark?.querySelector("[data-session-status]")).toBeInTheDocument();
+		expect(agentMark?.querySelector("[data-session-status]")).toHaveClass("size-2");
 	});
 
 	it("caps the inline rename input at 20 characters", async () => {
