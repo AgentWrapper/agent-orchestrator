@@ -196,6 +196,7 @@
 	--spacing-content-max: var(--size-content-max);
 	--spacing-flex-min: var(--size-flex-min);
 	--spacing-shell-tab-min: var(--size-shell-tab-min);
+	--spacing-shell-tab-connected: var(--size-shell-tab-connected);
 	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
@@ -1653,6 +1654,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .session-inspector__body--browser .browser-panel {
 	border: 0;
 	border-radius: 0;
+}
+
+.session-inspector__body--browser .browser-panel__viewport {
+	margin: 0;
+	border-radius: 0;
+	box-shadow: none;
 }
 
 /* Inspector resize handle (shadcn resizable separator, AO visual): a 7px

@@ -177,6 +177,15 @@ describe("SessionFilesView", () => {
 		window.getSelection()?.removeAllRanges();
 	});
 
+	it("shows a loading search state instead of a false zero while the first file request is pending", () => {
+		getMock.mockImplementation(() => new Promise(() => {}));
+		const { unmount } = renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+
+		expect(screen.getByPlaceholderText("Loading files...")).toBeInTheDocument();
+		expect(screen.queryByPlaceholderText("Search 0 files")).not.toBeInTheDocument();
+		unmount();
+	});
+
 	it("loads the workspace files and requests detail for the selected file", async () => {
 		renderWithQuery(<SessionFilesView sessionId="sess-1" />);
 
