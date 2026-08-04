@@ -989,6 +989,43 @@ func TestRenameSessionFiresCDCEvent(t *testing.T) {
 	}
 }
 
+func TestSessionPinFiresCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	pinnedAt := r.UpdatedAt.Add(time.Minute)
+	if ok, err := s.SetSessionPinned(ctx, r.ID, true, &pinnedAt, pinnedAt); err != nil || !ok {
+		t.Fatalf("pin: ok=%v err=%v", ok, err)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payloads []json.RawMessage
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			payloads = append(payloads, e.Payload)
+		}
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("session_updated events = %d, want 1 after pin", len(payloads))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloads[0], &payload); err != nil {
+		t.Fatalf("session_updated payload JSON: %v", err)
+	}
+	if payload["id"] != string(r.ID) {
+		t.Fatalf("payload id = %v, want %q", payload["id"], r.ID)
+	}
+	if isPinned, ok := payload["isPinned"].(bool); !ok || !isPinned {
+		t.Fatalf("payload isPinned = %v, want true", payload["isPinned"])
+	}
+}
+
 func TestConcurrentSessionCreateAssignsUniqueNums(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

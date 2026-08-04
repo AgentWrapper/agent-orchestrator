@@ -1167,8 +1167,6 @@ func sessionView(s domain.Session) SessionView {
 		Branch:          s.Metadata.Branch,
 		PreviewURL:      s.Metadata.PreviewURL,
 		PreviewRevision: s.Metadata.PreviewRevision,
-		IsPinned:        s.IsPinned,
-		PinnedAt:        s.PinnedAt,
 		PRs:             sessionPRFacts(s.PRs),
 	}
 }

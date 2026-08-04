@@ -22,6 +22,9 @@ export function usePinSession() {
 		onSuccess: async () => {
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
+		onError: (error) => {
+			console.error("Failed to pin session:", error);
+		},
 	});
 }
 
@@ -40,6 +43,9 @@ export function useUnpinSession() {
 		},
 		onSuccess: async () => {
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+		onError: (error) => {
+			console.error("Failed to unpin session:", error);
 		},
 	});
 }

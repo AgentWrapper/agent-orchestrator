@@ -264,6 +264,45 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 }
 
+func TestSessionPinAndUnpin(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+
+	sess, err := (&Service{store: st, clock: time.Now}).Pin(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.IsPinned || sess.PinnedAt == nil {
+		t.Fatalf("pin was not persisted: session=%+v", sess)
+	}
+	if !st.sessions["mer-1"].IsPinned || st.sessions["mer-1"].PinnedAt == nil {
+		t.Fatalf("pin was not stored: session=%+v", st.sessions["mer-1"])
+	}
+
+	sess, err = (&Service{store: st, clock: time.Now}).Unpin(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.IsPinned || sess.PinnedAt != nil {
+		t.Fatalf("unpin was not persisted: session=%+v", sess)
+	}
+	if st.sessions["mer-1"].IsPinned || st.sessions["mer-1"].PinnedAt != nil {
+		t.Fatalf("unpin was not stored: session=%+v", st.sessions["mer-1"])
+	}
+}
+
+func TestSessionPinUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).Pin(context.Background(), "ghost-1"); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
+func TestSessionUnpinUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).Unpin(context.Background(), "ghost-1"); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
 func TestSessionSetPreviewPersistsURL(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}

@@ -227,7 +227,7 @@ export function Sidebar({
 
 	const pinnedSessions = workspaces
 		.flatMap((w) => workerSessions(w.sessions))
-		.filter((s) => s.isPinned)
+		.filter((s) => s.isPinned && s.isTerminated !== true)
 		.sort((a, b) => {
 			const aTime = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
 			const bTime = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
@@ -310,7 +310,7 @@ export function Sidebar({
 					</SidebarGroup>
 				) : null}
 
-				{/* Pinned — collapsible; body empty until pin functionality lands. */}
+				{/* Pinned — collapsible; hidden when empty. */}
 				{pinnedSessions.length > 0 && (
 					<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
 						<SectionDisclosure

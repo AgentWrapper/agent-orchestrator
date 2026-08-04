@@ -142,8 +142,6 @@ type SessionView struct {
 	// repeated preview of the same target. Pulled from the json:"-" domain
 	// Metadata.
 	PreviewRevision int64            `json:"previewRevision,omitempty"`
-	IsPinned        bool             `json:"isPinned"`
-	PinnedAt        *time.Time       `json:"pinnedAt,omitempty"`
 	PRs             []SessionPRFacts `json:"prs"`
 }
 

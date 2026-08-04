@@ -551,6 +551,50 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("session merge policy not updated: %+v", svc.sessions["ao-2"])
 	}
 
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("pin = %d, want 200; body=%s", status, body)
+	}
+	var pinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &pinned)
+	if !pinned.Session.IsPinned {
+		t.Fatalf("pin response = %#v", pinned)
+	}
+	if !svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session pin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("unpin = %d, want 200; body=%s", status, body)
+	}
+	var unpinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &unpinned)
+	if unpinned.Session.IsPinned {
+		t.Fatalf("unpin response = %#v", unpinned)
+	}
+	if svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session unpin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("pin unknown = %d, want 404", status)
+	}
+
+	body, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("unpin unknown = %d, want 404", status)
+	}
+
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
