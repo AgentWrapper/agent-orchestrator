@@ -1,7 +1,12 @@
 # Plan: Migrate ABF ACP **streaming output** into Agent Orchestrator
 
-**Status:** planning (docs only) — scope corrected 2026-08-04  
-**Primary goal:** Bring AllBeingsFuture’s **normalized ACP stream pipeline** (events + sequence + consumer reduce) into this repo — **not** a full Chat product, provider matrix, or packaging port.  
+> **Superseded as the active product goal (2026-08-04).**  
+> Human hard pivot: **fully remove tmux** and run agents as ACP/HTTP child processes.  
+> Active cutover plan: [`abf-no-tmux-acp-cutover.md`](./abf-no-tmux-acp-cutover.md).  
+> This document remains useful as **Phase 1 subsystem detail** (AgentStreamEvent, normalizer, reducer).
+
+**Status:** planning (docs only) — streaming subsystem; overall goal moved to no-tmux cutover  
+**Primary goal (historical):** Bring AllBeingsFuture’s **normalized ACP stream pipeline** (events + sequence + consumer reduce) into this repo — **not** a full Chat product, provider matrix, or packaging port.  
 **Source of truth (streaming):** Desktop `AllBeingsFuture`  
 **Design fit (boundaries only):** Desktop `fenzhi` — Chat/protocol events stay in the daemon; renderer never imports ACP SDKs.  
 **Target base:** current AO `main` (no Chat API / no stream surface today).
