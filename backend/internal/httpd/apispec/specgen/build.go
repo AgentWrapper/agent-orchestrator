@@ -177,6 +177,13 @@ var schemaNames = map[string]string{
 	"ControllersRestoreSessionResponse":           "RestoreSessionResponse",
 	"ControllersResumeAgentResponse":              "ResumeAgentResponse",
 	"ControllersCleanupSessionsResponse":          "CleanupSessionsResponse",
+	"ControllersAgentStreamAfterQuery":            "AgentStreamAfterQuery",
+	"ControllersAgentStreamEventResponse":         "AgentStreamEventResponse",
+	"ControllersAgentStreamSourceResponse":        "AgentStreamSourceResponse",
+	"ControllersAgentStreamToolOutputResponse":    "AgentStreamToolOutputResponse",
+	"ControllersAgentStreamPlanEntryResponse":     "AgentStreamPlanEntryResponse",
+	"ControllersAgentStreamPermissionOptionResponse": "AgentStreamPermissionOptionResponse",
+	"ControllersAgentStreamPermissionRequestResponse": "AgentStreamPermissionRequestResponse",
 	"ControllersCleanupSkippedSession":            "CleanupSkippedSession",
 	"ControllersWorkspaceFileQuery":               "WorkspaceFileQuery",
 	"ControllersListWorkspaceFilesResponse":       "ListWorkspaceFilesResponse",
@@ -950,6 +957,19 @@ func sessionOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, ""},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+			contentTypes: map[int]string{http.StatusOK: "text/event-stream"},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/agent-stream", id: "streamSessionAgentEvents", tag: "sessions",
+			summary:    "Stream sequenced provider-neutral agent events for a session (ACP output wire)",
+			pathParams: []any{controllers.SessionIDParam{}, controllers.AgentStreamAfterQuery{}},
+			resps: []respUnit{
+				// SSE data frames are AgentStreamEventResponse JSON (event: agent_stream).
+				{http.StatusOK, controllers.AgentStreamEventResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

@@ -1364,6 +1364,56 @@ paths:
       summary: Report an agent activity-state signal for a session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/agent-stream:
+    get:
+      operationId: streamSessionAgentEvents
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Last applied agent-stream sequence. Events with sequence greater
+          than this are sent. Omit or -1 for the full buffer.
+        in: query
+        name: after
+        schema:
+          description: Last applied agent-stream sequence. Events with sequence greater
+            than this are sent. Omit or -1 for the full buffer.
+          type:
+          - "null"
+          - integer
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/AgentStreamEventResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Stream sequenced provider-neutral agent events for a session (ACP output
+        wire)
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -2711,6 +2761,170 @@ components:
       required:
       - id
       - label
+      type: object
+    AgentStreamEventResponse:
+      properties:
+        delta:
+          type: string
+        entries:
+          items:
+            $ref: '#/components/schemas/AgentStreamPlanEntryResponse'
+          type: array
+        error:
+          type: string
+        input:
+          additionalProperties: {}
+          type: object
+        itemId:
+          type: string
+        message:
+          type: string
+        mode:
+          enum:
+          - delta
+          - replace
+          type: string
+        name:
+          type: string
+        output:
+          $ref: '#/components/schemas/AgentStreamToolOutputResponse'
+        planTitle:
+          type: string
+        reason:
+          type: string
+        request:
+          $ref: '#/components/schemas/AgentStreamPermissionRequestResponse'
+        resultDelta:
+          type: string
+        sequence:
+          format: int64
+          type: integer
+        sessionId:
+          type: string
+        source:
+          $ref: '#/components/schemas/AgentStreamSourceResponse'
+        status:
+          enum:
+          - pending
+          - in_progress
+          - completed
+          - failed
+          type: string
+        stopReason:
+          type: string
+        streamStatus:
+          enum:
+          - starting
+          - running
+          - waiting
+          - idle
+          type: string
+        text:
+          type: string
+        timestamp:
+          format: date-time
+          type: string
+        title:
+          type: string
+        toolCallId:
+          type: string
+        type:
+          enum:
+          - text_delta
+          - thinking_update
+          - tool_call
+          - tool_update
+          - plan
+          - status
+          - permission_request
+          - done
+          - error
+          - cancelled
+          type: string
+      required:
+      - type
+      - sessionId
+      - sequence
+      type: object
+    AgentStreamPermissionOptionResponse:
+      properties:
+        kind:
+          enum:
+          - allow_once
+          - allow_always
+          - reject_once
+          - reject_always
+          type: string
+        label:
+          type: string
+        optionId:
+          type: string
+      required:
+      - optionId
+      - label
+      - kind
+      type: object
+    AgentStreamPermissionRequestResponse:
+      properties:
+        description:
+          type: string
+        options:
+          items:
+            $ref: '#/components/schemas/AgentStreamPermissionOptionResponse'
+          type: array
+        requestId:
+          type: string
+        title:
+          type: string
+        toolCallId:
+          type: string
+      required:
+      - requestId
+      - title
+      - options
+      type: object
+    AgentStreamPlanEntryResponse:
+      properties:
+        id:
+          type: string
+        status:
+          enum:
+          - pending
+          - in_progress
+          - completed
+          - blocked
+          type: string
+        title:
+          type: string
+      required:
+      - id
+      - title
+      - status
+      type: object
+    AgentStreamSourceResponse:
+      properties:
+        kind:
+          enum:
+          - native-acp-v1
+          - legacy-adapter
+          type: string
+        provider:
+          type: string
+      required:
+      - kind
+      type: object
+    AgentStreamToolOutputResponse:
+      properties:
+        stream:
+          enum:
+          - stdout
+          - stderr
+          type: string
+        text:
+          type: string
+      required:
+      - stream
+      - text
       type: object
     BrowserCommandRequest:
       properties:

@@ -38,6 +38,9 @@ type APIDeps struct {
 	Browser             controllers.BrowserService
 	PreviewServer       controllers.ManagedPreviewServer
 	SessionCapabilities controllers.SessionCapabilityValidator
+	// AgentStream is nil until the daemon wires the hub; the SSE route then
+	// answers 501 rather than panicking.
+	AgentStream controllers.AgentStream
 }
 
 // API owns one controller per resource and is the single Register call the
@@ -55,6 +58,7 @@ type API struct {
 	shellTerms    *controllers.ShellTerminalsController
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
+	agentStream   *controllers.AgentStreamController
 	events        *EventsController
 }
 
@@ -84,6 +88,7 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
+		agentStream:   &controllers.AgentStreamController{Stream: deps.AgentStream},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
 	}
 }
@@ -118,6 +123,7 @@ func (a *API) Register(root chi.Router) {
 		// Long-lived streams intentionally bypass the REST timeout middleware.
 		a.notifications.RegisterStream(r)
 		a.sessions.RegisterStreams(r)
+		a.agentStream.RegisterStreams(r)
 		a.events.Register(r)
 	})
 }

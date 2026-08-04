@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentstream"
 	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
@@ -865,4 +866,137 @@ type UnregisterPushDeviceResponse struct {
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
+}
+
+// AgentStreamAfterQuery is the optional resume cursor for the agent stream SSE.
+type AgentStreamAfterQuery struct {
+	// After is the last applied sequence; only events with sequence > after are
+	// replayed. Omit (or pass -1) to replay the whole in-memory buffer.
+	After *int64 `query:"after,omitempty" description:"Last applied agent-stream sequence. Events with sequence greater than this are sent. Omit or -1 for the full buffer."`
+}
+
+// AgentStreamEventResponse is the provider-neutral agent stream event payload
+// on GET /sessions/{sessionId}/agent-stream (SSE event name: agent_stream).
+// Semantics match ABF AgentStreamEvent; the renderer never speaks ACP.
+type AgentStreamEventResponse struct {
+	Type      string `json:"type" enum:"text_delta,thinking_update,tool_call,tool_update,plan,status,permission_request,done,error,cancelled"`
+	SessionID string `json:"sessionId"`
+	// Sequence is monotonic per session (0-based). Duplicate sequences are ignored.
+	Sequence  int64                      `json:"sequence"`
+	Timestamp time.Time                  `json:"timestamp,omitempty"`
+	Source    *AgentStreamSourceResponse `json:"source,omitempty"`
+
+	ItemID string `json:"itemId,omitempty"`
+	Delta  string `json:"delta,omitempty"`
+	Text   string `json:"text,omitempty"`
+	Mode   string `json:"mode,omitempty" enum:"delta,replace"`
+
+	ToolCallID  string                         `json:"toolCallId,omitempty"`
+	Name        string                         `json:"name,omitempty"`
+	Title       string                         `json:"title,omitempty"`
+	Input       map[string]any                 `json:"input,omitempty"`
+	Status      string                         `json:"status,omitempty" enum:"pending,in_progress,completed,failed"`
+	ResultDelta string                         `json:"resultDelta,omitempty"`
+	Output      *AgentStreamToolOutputResponse `json:"output,omitempty"`
+	Error       string                         `json:"error,omitempty"`
+
+	PlanTitle string                         `json:"planTitle,omitempty"`
+	Entries   []AgentStreamPlanEntryResponse `json:"entries,omitempty"`
+
+	StreamStatus string `json:"streamStatus,omitempty" enum:"starting,running,waiting,idle"`
+	Message      string `json:"message,omitempty"`
+
+	Request *AgentStreamPermissionRequestResponse `json:"request,omitempty"`
+
+	StopReason string `json:"stopReason,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+}
+
+// AgentStreamSourceResponse identifies which adapter produced an event.
+type AgentStreamSourceResponse struct {
+	Kind     string `json:"kind" enum:"native-acp-v1,legacy-adapter"`
+	Provider string `json:"provider,omitempty"`
+}
+
+// AgentStreamToolOutputResponse is optional structured tool result text.
+type AgentStreamToolOutputResponse struct {
+	Stream string `json:"stream" enum:"stdout,stderr"`
+	Text   string `json:"text"`
+}
+
+// AgentStreamPlanEntryResponse is one plan step.
+type AgentStreamPlanEntryResponse struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status" enum:"pending,in_progress,completed,blocked"`
+}
+
+// AgentStreamPermissionOptionResponse is one permission choice.
+type AgentStreamPermissionOptionResponse struct {
+	OptionID string `json:"optionId"`
+	Label    string `json:"label"`
+	Kind     string `json:"kind" enum:"allow_once,allow_always,reject_once,reject_always"`
+}
+
+// AgentStreamPermissionRequestResponse is a structured permission prompt.
+type AgentStreamPermissionRequestResponse struct {
+	RequestID   string                                `json:"requestId"`
+	ToolCallID  string                                `json:"toolCallId,omitempty"`
+	Title       string                                `json:"title"`
+	Description string                                `json:"description,omitempty"`
+	Options     []AgentStreamPermissionOptionResponse `json:"options"`
+}
+
+// AgentStreamEventFromDomain maps an internal stream event to the wire DTO.
+func AgentStreamEventFromDomain(ev agentstream.Event) AgentStreamEventResponse {
+	out := AgentStreamEventResponse{
+		Type:         string(ev.Type),
+		SessionID:    ev.SessionID,
+		Sequence:     ev.Sequence,
+		Timestamp:    ev.Timestamp,
+		ItemID:       ev.ItemID,
+		Delta:        ev.Delta,
+		Text:         ev.Text,
+		Mode:         ev.Mode,
+		ToolCallID:   ev.ToolCallID,
+		Name:         ev.Name,
+		Title:        ev.Title,
+		Input:        ev.Input,
+		Status:       string(ev.Status),
+		ResultDelta:  ev.ResultDelta,
+		Error:        ev.Error,
+		PlanTitle:    ev.PlanTitle,
+		StreamStatus: string(ev.StreamStatus),
+		Message:      ev.Message,
+		StopReason:   ev.StopReason,
+		Reason:       ev.Reason,
+	}
+	if ev.Source != nil {
+		out.Source = &AgentStreamSourceResponse{Kind: ev.Source.Kind, Provider: ev.Source.Provider}
+	}
+	if ev.Output != nil {
+		out.Output = &AgentStreamToolOutputResponse{Stream: ev.Output.Stream, Text: ev.Output.Text}
+	}
+	if len(ev.Entries) > 0 {
+		out.Entries = make([]AgentStreamPlanEntryResponse, len(ev.Entries))
+		for i, e := range ev.Entries {
+			out.Entries[i] = AgentStreamPlanEntryResponse{ID: e.ID, Title: e.Title, Status: string(e.Status)}
+		}
+	}
+	if ev.Request != nil {
+		opts := make([]AgentStreamPermissionOptionResponse, len(ev.Request.Options))
+		for i, o := range ev.Request.Options {
+			opts[i] = AgentStreamPermissionOptionResponse{
+				OptionID: o.OptionID, Label: o.Label, Kind: string(o.Kind),
+			}
+		}
+		out.Request = &AgentStreamPermissionRequestResponse{
+			RequestID:   ev.Request.RequestID,
+			ToolCallID:  ev.Request.ToolCallID,
+			Title:       ev.Request.Title,
+			Description: ev.Request.Description,
+			Options:     opts,
+		}
+	}
+	return out
 }

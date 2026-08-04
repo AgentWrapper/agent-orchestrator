@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/agentstream"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
@@ -251,6 +252,10 @@ func Run() error {
 		go dispatcher.Run(ctx)
 	}
 
+	// Provider-neutral agent stream hub (ABF AgentStreamEvent semantics over SSE).
+	// ACP/chat drivers publish here; the renderer only consumes the SSE wire.
+	agentStreamHub := agentstream.NewHub()
+
 	srv, err := httpd.NewWithDeps(cfg, log, termMgr, httpd.APIDeps{
 		Projects:           projectSvc,
 		Agents:             agentSvc,
@@ -276,6 +281,7 @@ func Run() error {
 		Browser:             browserService,
 		PreviewServer:       managedPreview,
 		SessionCapabilities: browserAuthority,
+		AgentStream:         agentStreamHub,
 	})
 	if err != nil {
 		stop()

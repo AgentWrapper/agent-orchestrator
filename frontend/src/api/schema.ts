@@ -504,6 +504,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/agent-stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stream sequenced provider-neutral agent events for a session (ACP output wire) */
+        get: operations["streamSessionAgentEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -916,6 +933,69 @@ export interface components {
             authStatus?: "authorized" | "unauthorized" | "unknown";
             id: string;
             label: string;
+        };
+        AgentStreamEventResponse: {
+            delta?: string;
+            entries?: components["schemas"]["AgentStreamPlanEntryResponse"][];
+            error?: string;
+            input?: {
+                [key: string]: unknown;
+            };
+            itemId?: string;
+            message?: string;
+            /** @enum {string} */
+            mode?: "delta" | "replace";
+            name?: string;
+            output?: components["schemas"]["AgentStreamToolOutputResponse"];
+            planTitle?: string;
+            reason?: string;
+            request?: components["schemas"]["AgentStreamPermissionRequestResponse"];
+            resultDelta?: string;
+            /** Format: int64 */
+            sequence: number;
+            sessionId: string;
+            source?: components["schemas"]["AgentStreamSourceResponse"];
+            /** @enum {string} */
+            status?: "pending" | "in_progress" | "completed" | "failed";
+            stopReason?: string;
+            /** @enum {string} */
+            streamStatus?: "starting" | "running" | "waiting" | "idle";
+            text?: string;
+            /** Format: date-time */
+            timestamp?: string;
+            title?: string;
+            toolCallId?: string;
+            /** @enum {string} */
+            type: "text_delta" | "thinking_update" | "tool_call" | "tool_update" | "plan" | "status" | "permission_request" | "done" | "error" | "cancelled";
+        };
+        AgentStreamPermissionOptionResponse: {
+            /** @enum {string} */
+            kind: "allow_once" | "allow_always" | "reject_once" | "reject_always";
+            label: string;
+            optionId: string;
+        };
+        AgentStreamPermissionRequestResponse: {
+            description?: string;
+            options: components["schemas"]["AgentStreamPermissionOptionResponse"][];
+            requestId: string;
+            title: string;
+            toolCallId?: string;
+        };
+        AgentStreamPlanEntryResponse: {
+            id: string;
+            /** @enum {string} */
+            status: "pending" | "in_progress" | "completed" | "blocked";
+            title: string;
+        };
+        AgentStreamSourceResponse: {
+            /** @enum {string} */
+            kind: "native-acp-v1" | "legacy-adapter";
+            provider?: string;
+        };
+        AgentStreamToolOutputResponse: {
+            /** @enum {string} */
+            stream: "stdout" | "stderr";
+            text: string;
         };
         BrowserCommandRequest: {
             action: string;
@@ -3362,6 +3442,59 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    streamSessionAgentEvents: {
+        parameters: {
+            query?: {
+                /** @description Last applied agent-stream sequence. Events with sequence greater than this are sent. Omit or -1 for the full buffer. */
+                after?: null | number;
+            };
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": components["schemas"]["AgentStreamEventResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
