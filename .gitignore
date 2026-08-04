@@ -101,3 +101,6 @@ e2e-artifacts/
 # Local pnpm artifacts
 pnpm-lock.yaml
 .vercel
+
+# Local Cloud setup demo notes
+/cloud_setup_demo.md

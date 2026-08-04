@@ -67,12 +67,18 @@ func integrationAPIWithServer(
 		"http://127.0.0.1:5174",
 		nil,
 	)
-	credentialServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	credentialServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	t.Cleanup(credentialServer.Close)
 	api.agentCredentials = newAgentCredentialValidator(credentialServer.Client())
 	api.agentCredentials.anthropicBaseURL = credentialServer.URL
+	api.agentCredentials.openAIBaseURL = credentialServer.URL
+	api.agentCredentials.cursorBaseURL = credentialServer.URL
 	server := httptest.NewServer(api.Handler())
 	t.Cleanup(server.Close)
 	return server, store, api
