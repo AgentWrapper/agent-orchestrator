@@ -31,6 +31,12 @@ const (
 	terminalOutputMaxAttempts = 5
 	terminalOutputQueueWait   = time.Second
 	terminalOutputAttemptTTL  = 5 * time.Second
+	// Match the local tmux runtime's paste-to-Enter delay. Claude's Ink TUI can
+	// render a pasted prompt before its internal composer state has caught up.
+	interactivePromptEnterDelay = 300 * time.Millisecond
+	// The SessionStart hook proves the agent process initialized, but the TUI may
+	// still be settling its first render. Give it a read cycle before pasting.
+	agentReadyPromptSettleDelay = 300 * time.Millisecond
 )
 
 // GitProxyUsername is the fixed username paired with a worker token for Git.
@@ -369,7 +375,7 @@ func (r *Runner) commandLoop(
 		if err != nil {
 			return fmt.Errorf("decode prompt: %w", err)
 		}
-		if err := submitInteractivePrompt(ctx, terminal, writeMu, decoded, 100*time.Millisecond); err != nil {
+		if err := submitInteractivePrompt(ctx, terminal, writeMu, decoded, interactivePromptEnterDelay); err != nil {
 			return err
 		}
 		if command.Sequence > 0 {
@@ -420,6 +426,9 @@ func (r *Runner) commandLoop(
 				return err
 			case "agent_ready":
 				agentReady = true
+				if !waitForRetry(ctx, agentReadyPromptSettleDelay) {
+					return ctx.Err()
+				}
 				for _, prompt := range pendingPrompts {
 					if err := deliverPrompt(prompt); err != nil {
 						return err
