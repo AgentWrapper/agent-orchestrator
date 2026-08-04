@@ -349,13 +349,16 @@ function SettingsBody({ project, projectId, onSaved }: { project: Project; proje
 				)}
 			</SettingsSection>
 
-			{!isScratchProject && (
-				<SettingsSection title={t("settings.project.reviewers")}>
-					<SettingsRow icon={ScanEye} label={t("settings.project.defaultReviewer")}>
+				{!isScratchProject && (
+					<SettingsSection title={t("settings.project.reviewers")}>
+						<SettingsRow icon={ScanEye} label={t("settings.project.defaultReviewer")}>
 						<ReviewerSelect
 							value={form.reviewerHarness}
 							onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
+							ariaLabel={t("settings.project.defaultReviewer")}
 							authorized={agentCatalog?.authorized}
+							defaultOptionLabel={t("settings.project.default")}
+							defaultTriggerLabel={t("settings.project.default")}
 							installed={agentCatalog?.installed}
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}

@@ -353,6 +353,29 @@ describe("ProjectSettingsForm", () => {
 		expect(putMock).not.toHaveBeenCalled();
 	});
 
+	it("uses the localized default label for the project reviewer picker", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings();
+
+		const reviewerAgent = await screen.findByRole("button", { name: "Default reviewer agent" });
+		expect(reviewerAgent).toHaveTextContent("Project default");
+
+		await userEvent.click(reviewerAgent);
+		expect(await screen.findByRole("menuitem", { name: "Project default" })).toBeInTheDocument();
+	});
+
 	it("disables agent selectors while the initial agent catalog is loading", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/agents") {

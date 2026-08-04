@@ -1137,6 +1137,7 @@ function ReviewPanel({
 		.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
 	const latest = runningRun ?? newestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
+	const projectDefaultLabel = t("newTask.projectDefault");
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
@@ -1192,6 +1193,8 @@ function ReviewPanel({
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
 							defaultHarness={harness}
+							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
+							defaultTriggerLabel={harness || projectDefaultLabel}
 							disabled={reviewRunning}
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
