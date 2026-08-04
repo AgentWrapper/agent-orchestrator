@@ -48,10 +48,13 @@ export type XtermTerminalProps = {
 	fontSize?: number;
 	theme: Theme;
 	/**
-	 * The pane app scrolls its transcript by keyboard rather than acting on SGR
-	 * wheel reports — e.g. opencode, which enables mouse tracking but never
-	 * scrolls on wheel reports. Routes the wheel to proportional arrow keys
-	 * (see the wheel handler), fixing it under a mux too.
+	 * The pane app scrolls its transcript by keyboard (PageUp/PageDown) rather
+	 * than acting on SGR wheel reports — e.g. opencode, which enables mouse
+	 * tracking but never scrolls on wheel reports. Routes the wheel to page keys
+	 * on every platform (see the wheel handler), fixing it under a mux too.
+	 *
+	 * Do not use bare ArrowUp/ArrowDown for this path: chat TUIs (Grok and
+	 * similar) bind those keys to input-history recall, not viewport scroll.
 	 */
 	paneScrollsByKeyboard?: boolean;
 	/** Terminal construction failed; the owner decides how to surface it. */
@@ -215,18 +218,20 @@ function sgrWheelReport(button: number, count: number): string {
 	return `\x1b[<${button};1;1M`.repeat(count);
 }
 
-// ArrowUp (CSI A) / ArrowDown (CSI B) for pane apps that scroll their transcript
-// by keyboard rather than mouse reports. One arrow key per scrolled line so the
-// wheel feels free/proportional: small rolls move a little, large flicks move
-// farther, and the user can stop mid-history. (A single PageUp/PageDown per
-// event ignored |lines| and felt like fixed full-screen jumps.)
-const ARROW_UP = "\x1b[A";
-const ARROW_DOWN = "\x1b[B";
+// PageUp (CSI 5~) / PageDown (CSI 6~) for pane apps that scroll their transcript
+// by keyboard rather than mouse reports. One page key per wheel event: a page
+// already scrolls a full screen, so scaling by line count would over-scroll.
+//
+// Bare ArrowUp/ArrowDown must not be used here. Grok (and many chat CLI TUIs)
+// bind those keys to prompt input-history recall — wheel → ArrowUp re-injects
+// previously sent messages into the input box. PageUp/PageDown scroll the
+// conversation transcript without touching history.
+const PAGE_UP = "\x1b[5~";
+const PAGE_DOWN = "\x1b[6~";
 
 function keyboardScrollReport(lines: number): string {
-	const count = Math.abs(lines);
-	if (count === 0) return "";
-	return (lines < 0 ? ARROW_UP : ARROW_DOWN).repeat(count);
+	if (lines === 0) return "";
+	return lines < 0 ? PAGE_UP : PAGE_DOWN;
 }
 
 function forceSelectionMode(term: Terminal): void {
@@ -650,8 +655,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (lines === 0) return false;
 			// A full-screen TUI that keeps its own transcript and scrolls it only by
 			// keyboard (opencode/grok) ignores wheel/mouse reports on every platform;
-			// route its wheel to proportional arrow keys. Kept first so those agents
-			// are unaffected by the buffer-aware paths below.
+			// route its wheel to PageUp/PageDown (not arrows — those recall prompt
+			// history in chat TUIs). Kept first so those agents are unaffected by
+			// the buffer-aware paths below.
 			if (callbacksRef.current.paneScrollsByKeyboard) {
 				emitUserInput(keyboardScrollReport(lines), "wheel");
 				return false;
@@ -668,8 +674,8 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// reports drive copy-mode or the app. On Windows ConPTY there is no
 			// mux copy-mode safety net — synthetic SGR often no-ops for full-screen
 			// agent TUIs (orchestrator/claude/grok conversation history), while
-			// arrow keys scroll their transcripts line-by-line. Prefer proportional
-			// keyboard scroll for alt-buffer panes on Windows; keep SGR elsewhere.
+			// PageUp/PageDown reliably scroll their transcripts. Prefer page keys
+			// for alt-buffer panes on Windows; keep SGR elsewhere.
 			if (term.modes.mouseTrackingMode !== "none") {
 				if (isWindowsPlatform() && term.buffer.active.type === "alternate") {
 					emitUserInput(keyboardScrollReport(lines), "wheel");
@@ -680,7 +686,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				return false;
 			}
 			// Alt-buffer pane with mouse tracking off and no keyboard-scroll hint:
-			// no scrollback to move locally, so fall back to proportional arrow keys.
+			// no scrollback to move locally, so fall back to page keys (not arrows).
 			emitUserInput(keyboardScrollReport(lines), "wheel");
 			return false;
 		});

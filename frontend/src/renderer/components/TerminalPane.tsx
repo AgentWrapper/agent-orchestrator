@@ -206,11 +206,12 @@ function reviewerPreviewLines(session: WorkspaceSession | undefined): string[] {
 
 // Agents whose full-screen TUI keeps its own transcript and scrolls it only by
 // keyboard, ignoring SGR wheel reports. The terminal routes the wheel to
-// proportional arrow keys for these (see XtermTerminal's paneScrollsByKeyboard).
-// kilocode is a fork of opencode and shares its TUI surface, so it scrolls the
-// same way. Grok is the same class of alt-buffer agent TUI: wheel/SGR does not
-// move its conversation history, but ↑/↓ and PageUp/PageDown do (and on Windows
-// the ConPTY path has no mux copy-mode fallback either).
+// PageUp/PageDown for these (see XtermTerminal's paneScrollsByKeyboard) — not
+// bare ArrowUp/ArrowDown, which Grok and similar chat TUIs bind to input-history
+// recall. kilocode is a fork of opencode and shares its TUI surface. Grok is the
+// same class of alt-buffer agent TUI: wheel/SGR does not move its conversation
+// transcript, but PageUp/PageDown do (and on Windows the ConPTY path has no mux
+// copy-mode fallback either).
 const KEYBOARD_SCROLL_PROVIDERS = new Set(["opencode", "kilocode", "grok"]);
 
 // Whether the given provider's TUI is one of the keyboard-scroll agents above.

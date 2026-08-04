@@ -700,40 +700,44 @@ describe("XtermTerminal", () => {
 		expect(onInput).not.toHaveBeenCalled();
 	});
 
-	it("falls back to proportional arrow keys for alt-buffer panes with mouse tracking off", () => {
+	it("falls back to PageUp/PageDown for alt-buffer panes with mouse tracking off", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
 		state.lastTerminal!.modes.mouseTrackingMode = "none";
 		// Alt buffer: no local scrollback to move, and no keyboard-scroll hint, so
-		// one arrow key per scrolled line is the free-scroll fallback.
+		// page keys scroll the app transcript (not arrows — those recall history).
 		state.lastTerminal!.buffer.active.type = "alternate";
 
-		// rowHeight = 16.2px; -50px => 3 lines up; +20px => 1 line down.
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
-		expect(onInput).toHaveBeenLastCalledWith("\x1b[A".repeat(3), "wheel");
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 		expect(state.lastTerminal!.scrollLines).not.toHaveBeenCalled();
+		// Must not look like input-history navigation (ArrowUp/ArrowDown).
+		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
 
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
-		expect(onInput).toHaveBeenLastCalledWith("\x1b[B", "wheel");
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
+		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
 	});
 
-	it("sends proportional arrow keys on Windows for alt-buffer mouse-tracking panes (no tmux under conpty)", () => {
+	it("sends PageUp/PageDown on Windows for alt-buffer mouse-tracking panes (no tmux under conpty)", () => {
 		setNavigatorPlatform("Win32");
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);
 		// Full-screen agent TUIs (Grok/orchestrator session transcript) enable mouse
 		// tracking on the alternate screen. Unix can fall back to tmux copy-mode;
-		// Windows ConPTY cannot, so wheel becomes line-scroll arrow keys (not a
-		// single PageUp per notch — that felt like fixed full-screen jumps).
+		// Windows ConPTY cannot, so wheel must become page keys — not ArrowUp/
+		// ArrowDown, which Grok binds to prompt input-history recall.
 		state.lastTerminal!.modes.mouseTrackingMode = "any";
 		state.lastTerminal!.buffer.active.type = "alternate";
 
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
-		expect(onInput).toHaveBeenLastCalledWith("\x1b[A".repeat(3), "wheel");
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 		expect(state.lastTerminal!.scrollLines).not.toHaveBeenCalled();
+		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
 
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
-		expect(onInput).toHaveBeenLastCalledWith("\x1b[B", "wheel");
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
+		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
 	});
 
 	it("still sends SGR on Windows for normal-buffer mouse-tracking panes", () => {
@@ -760,23 +764,28 @@ describe("XtermTerminal", () => {
 		expect(onInput).toHaveBeenLastCalledWith("\x1b[<64;1;1M".repeat(3), "wheel");
 	});
 
-	it("sends proportional arrow keys for keyboard-scroll panes even under a mux (opencode/grok on macOS/Linux)", () => {
+	it("sends PageUp/PageDown for keyboard-scroll panes even under a mux (opencode/grok on macOS/Linux)", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" paneScrollsByKeyboard onReady={(terminal) => terminal.onUserInput(onInput)} />);
 		// Linux (beforeEach) + mouse tracking on: without the paneScrollsByKeyboard
-		// hint this would send SGR reports; the hint forces line-scroll arrows for
-		// agents whose TUI ignores wheel (opencode, kilocode, grok).
+		// hint this would send SGR reports; the hint forces page keys for agents
+		// whose TUI ignores wheel (opencode, kilocode, grok). Must not emit bare
+		// ArrowUp/ArrowDown — Grok treats those as input-history recall.
 		state.lastTerminal!.modes.mouseTrackingMode = "any";
 
-		// -50px => 3 ArrowUp; magnitude tracks wheel delta (free scroll).
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
-		expect(onInput).toHaveBeenLastCalledWith("\x1b[A".repeat(3), "wheel");
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
+		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
 
-		// Small roll moves one line; large line-mode flick moves many.
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: 20 } as WheelEvent)).toBe(false);
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
+		expect(onInput.mock.calls.at(-1)?.[0]).not.toMatch(/\x1b\[A|\x1b\[B/);
+
+		// Line-mode notches still map to a single page key (direction only).
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: 1, deltaMode: 1 } as WheelEvent)).toBe(false);
-		expect(onInput).toHaveBeenLastCalledWith("\x1b[B", "wheel");
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[6~", "wheel");
 		expect(state.lastTerminal!.wheelHandler!({ deltaY: -5, deltaMode: 1 } as WheelEvent)).toBe(false);
-		expect(onInput).toHaveBeenLastCalledWith("\x1b[A".repeat(5), "wheel");
+		expect(onInput).toHaveBeenLastCalledWith("\x1b[5~", "wheel");
 	});
 
 	it("routes web links to the AO browser and does not open the system browser", () => {
