@@ -16,7 +16,7 @@ export type CloudTerminalEvent =
 type Listener = (event: CloudTerminalEvent) => void;
 
 interface TerminalServerMessage {
-  type: "output" | "error" | "reset";
+  type: "output" | "error" | "reset" | "replay_complete";
   data?: string;
   message?: string;
   sequence?: number;
@@ -151,6 +151,15 @@ class CloudTerminalConnection {
           });
           return;
         }
+        if (message.type === "replay_complete") {
+          if (!this.canOperate) {
+            this.history = [];
+            this.historyBytes = 0;
+            this.emit({ type: "reset" });
+            this.forceRedraw();
+          }
+          return;
+        }
         if (message.type !== "output" || !message.data) return;
         const data = base64ToBytes(message.data);
         this.history.push(data);
@@ -205,6 +214,19 @@ class CloudTerminalConnection {
   private sendResize() {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
     this.socket.send(JSON.stringify({ type: "resize", ...this.size }));
+  }
+
+  private forceRedraw() {
+    if (this.socket?.readyState !== WebSocket.OPEN) return;
+    const temporaryCols = this.size.cols > 1 ? this.size.cols - 1 : 2;
+    this.socket.send(
+      JSON.stringify({
+        type: "resize",
+        rows: this.size.rows,
+        cols: temporaryCols,
+      }),
+    );
+    this.sendResize();
   }
 }
 

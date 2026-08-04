@@ -49,6 +49,16 @@ it("sends resize but not input for a read-only shared terminal", async () => {
         listener(new Event("open"));
       }
     }
+
+    message(message: object) {
+      for (const listener of this.listeners.get("message") ?? []) {
+        listener(
+          new MessageEvent("message", {
+            data: JSON.stringify(message),
+          }),
+        );
+      }
+    }
   }
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const api = {
@@ -64,14 +74,35 @@ it("sends resize but not input for a read-only shared terminal", async () => {
     "org-one",
     "session-one",
   );
+  const events: string[] = [];
+  connection.subscribe((event) => events.push(event.type));
   connection.resize(40, 120);
   await vi.waitFor(() => expect(FakeWebSocket.instance).toBeDefined());
 
   FakeWebSocket.instance.open();
+  FakeWebSocket.instance.message({
+    type: "output",
+    data: window.btoa("stale terminal history"),
+    sequence: 1,
+  });
+  FakeWebSocket.instance.message({
+    type: "replay_complete",
+    sequence: 1,
+  });
   connection.sendInput("x");
 
-  expect(FakeWebSocket.instance.send).toHaveBeenCalledTimes(1);
-  expect(FakeWebSocket.instance.send).toHaveBeenCalledWith(
+  expect(events).toContain("reset");
+  expect(FakeWebSocket.instance.send).toHaveBeenCalledTimes(3);
+  expect(FakeWebSocket.instance.send).toHaveBeenNthCalledWith(
+    1,
+    JSON.stringify({ type: "resize", rows: 40, cols: 120 }),
+  );
+  expect(FakeWebSocket.instance.send).toHaveBeenNthCalledWith(
+    2,
+    JSON.stringify({ type: "resize", rows: 40, cols: 119 }),
+  );
+  expect(FakeWebSocket.instance.send).toHaveBeenNthCalledWith(
+    3,
     JSON.stringify({ type: "resize", rows: 40, cols: 120 }),
   );
 });

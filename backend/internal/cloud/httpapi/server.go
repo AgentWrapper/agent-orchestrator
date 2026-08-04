@@ -3846,6 +3846,12 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	if err := writeTerminalMessage(ctx, socket, terminalServerMessage{
+		Type:     "replay_complete",
+		Sequence: sent,
+	}); err != nil {
+		return
+	}
 
 	clientCommands := make(chan terminalClientCommand, 64)
 	readErrors := make(chan error, 1)

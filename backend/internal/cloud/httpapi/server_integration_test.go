@@ -628,6 +628,18 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 	if resetMessage.Type != "reset" || resetMessage.Sequence <= 0 {
 		t.Fatalf("terminal reset = %#v", resetMessage)
 	}
+	_, replayCompleteData, err := terminalSocket.Read(ctx)
+	if err != nil {
+		t.Fatalf("read terminal replay completion: %v", err)
+	}
+	var replayComplete terminalServerMessage
+	if err := json.Unmarshal(replayCompleteData, &replayComplete); err != nil {
+		t.Fatalf("decode terminal replay completion: %v", err)
+	}
+	if replayComplete.Type != "replay_complete" ||
+		replayComplete.Sequence != resetMessage.Sequence {
+		t.Fatalf("terminal replay completion = %#v", replayComplete)
+	}
 
 	output := base64.StdEncoding.EncodeToString([]byte("worker output"))
 	eventResponse := requestJSON(
