@@ -134,6 +134,10 @@ export const aoBridge: AoBridge =
 			show: async () => undefined,
 			onClick: () => () => undefined,
 		},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
+		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),
 			setMigration: async () => undefined,
