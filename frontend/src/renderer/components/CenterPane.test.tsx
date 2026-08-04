@@ -78,7 +78,12 @@ describe("CenterPane toolbar session label", () => {
 
 		const sessionTab = screen.getByRole("tab", { name: /^do the thing/ });
 		expect(sessionTab).toHaveAttribute("aria-selected", "true");
-		expect(sessionTab.parentElement).toHaveClass("self-stretch", "bg-overlay");
+		expect(sessionTab.parentElement).toHaveClass(
+			"self-stretch",
+			"bg-overlay",
+			"after:h-0.5",
+			"after:bg-foreground/80",
+		);
 		expect(sessionTab.parentElement).not.toHaveClass("session-primary-tab");
 		expect(sessionTab.parentElement).not.toHaveClass("rounded-md");
 		expect(sessionTab).toHaveAccessibleName("do the thing · Working");
@@ -264,7 +269,7 @@ describe("CenterPane toolbar session label", () => {
 		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
 			expect(tab.parentElement).toHaveClass(
 				"min-w-shell-tab-min",
-				"w-[calc(var(--spacing-shell-tab-max)+var(--spacing-control-sm)+2rem)]",
+				"w-shell-tab-connected",
 			);
 			expect(tab.parentElement).not.toHaveClass("min-w-16", "shrink-0");
 			expect(tab).toHaveClass("min-w-0", "w-full");
