@@ -386,12 +386,12 @@ describe("TerminalCacheProvider", () => {
 		}
 	});
 
-	it("evicts the oldest parked terminal after the retained cache reaches its limit", async () => {
+	it("retains every visited terminal until an authoritative lifecycle cleanup", async () => {
 		const sessions = Array.from({ length: 7 }, (_, index) => ({
 			...worker,
-			id: `sess-lru-${index}`,
+			id: `sess-retained-${index}`,
 			title: `session ${index}`,
-			terminalHandleId: `handle-lru-${index}`,
+			terminalHandleId: `handle-retained-${index}`,
 		}));
 		const view = renderCachedPane({ session: sessions[0], sessions });
 		try {
@@ -404,9 +404,13 @@ describe("TerminalCacheProvider", () => {
 					).not.toBeNull(),
 				);
 			}
-			expect(document.querySelectorAll("[data-terminal-cache-key]")).toHaveLength(6);
-			expect(oldest.isConnected).toBe(false);
-			await waitFor(() => expect(xtermUnmounts.value).toBe(1));
+			expect(document.querySelectorAll("[data-terminal-cache-key]")).toHaveLength(7);
+			expect(oldest.isConnected).toBe(true);
+			expect(xtermUnmounts.value).toBe(0);
+
+			view.show(sessions[0]);
+			await waitFor(() => expect(activeXterm()).toBe(oldest));
+			expect(xtermMounts.value).toBe(7);
 		} finally {
 			view.restore();
 		}
