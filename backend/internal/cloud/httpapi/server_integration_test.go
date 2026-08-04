@@ -324,7 +324,7 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	sessionInput := map[string]any{
 		"projectId":   projectBody.Project.ID,
 		"kind":        "worker",
-		"harness":     "fake",
+		"harness":     "cursor",
 		"displayName": "verify-cloud",
 		"prompt":      "Verify the cloud flow",
 	}
@@ -402,7 +402,7 @@ func TestAuthenticatedProjectAndIdempotentSessionFlow(t *testing.T) {
 	orchestratorInput := map[string]any{
 		"projectId":   projectBody.Project.ID,
 		"kind":        "orchestrator",
-		"harness":     "fake",
+		"harness":     "cursor",
 		"displayName": "Orchestrator",
 		"prompt":      "",
 	}
