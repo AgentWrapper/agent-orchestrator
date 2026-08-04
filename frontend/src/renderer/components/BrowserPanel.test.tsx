@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
+import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession } from "../types/workspace";
 import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
 
@@ -176,6 +177,7 @@ describe("BrowserPanel", () => {
 			canGoForward: false,
 			isLoading: false,
 		};
+		useUiStore.setState({ detectedUrlsBySession: {} });
 	});
 
 	it("navigates to the entered URL on submit", async () => {
@@ -384,6 +386,30 @@ describe("BrowserPanel", () => {
 		expect(await screen.findByRole("menu")).not.toHaveAttribute("data-ao-browser-native-overlay");
 		expect(screen.getByText("First app").closest('[role="menuitem"]')).toHaveClass("cursor-pointer");
 		expect(screen.getByRole("menuitem", { name: "Close tab First app" })).toHaveClass("cursor-pointer");
+	});
+
+	it("hides the detected-URLs menu when nothing has been detected", () => {
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.queryByRole("button", { name: /detected urls/i })).not.toBeInTheDocument();
+	});
+
+	it("lists detected URLs and navigates to the one the user picks", async () => {
+		useUiStore.getState().addDetectedUrl("sess-1", "http://localhost:3000/");
+		useUiStore.getState().addDetectedUrl("sess-1", "http://localhost:4173/");
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Detected URLs (2)" }));
+		await userEvent.click(screen.getByRole("menuitem", { name: "http://localhost:4173/" }));
+
+		expect(hookState.navigate).toHaveBeenCalledWith("http://localhost:4173/");
+	});
+
+	it("scopes the detected-URLs menu to the current session", () => {
+		useUiStore.getState().addDetectedUrl("other-session", "http://localhost:9999/");
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		expect(screen.queryByRole("button", { name: /detected urls/i })).not.toBeInTheDocument();
 	});
 
 	it("disables annotation mode when no page is loaded", () => {
