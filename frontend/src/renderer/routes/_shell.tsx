@@ -12,6 +12,7 @@ import { KeyboardShortcutsSettingsDialog } from "../components/settings/Keyboard
 import { ShellTopbar } from "../components/ShellTopbar";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
+import { SessionTopbarHost, SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
 import { WindowTitlebar } from "../components/WindowTitlebar";
@@ -596,6 +597,7 @@ function ShellLayout() {
 
 	return (
 		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
+			<SessionTopbarProvider>
 			<NotificationRuntime />
 			<GlobalNewTaskDialog />
 			<SettingsDialog />
@@ -620,12 +622,12 @@ function ShellLayout() {
             macOS/Linux. */}
 				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
-				{!framedAppTopbar && !hideShellTopbar ? <ShellTopbar /> : null}
+				{!framedAppTopbar && !hideShellTopbar && !routeParams.sessionId ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
-				<SidebarProvider
-					className="min-h-0 flex-1 overflow-x-hidden"
+			<SidebarProvider
+				className="min-h-0 flex-1 flex-col overflow-x-hidden"
 					keyboardShortcut={false}
 					onOpenChange={(open) => {
 						cancelSidebarPeekClose();
@@ -643,45 +645,53 @@ function ShellLayout() {
 					{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
               cluster above a full-height sidebar; Windows hangs the sidebar
               below its custom titlebar. */}
-					<Sidebar
-						hideEdgeBorder={isWelcomeBoard}
-						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
-						onPreviewLeave={scheduleSidebarPeekClose}
-						underTopbar={isMac || isWindows || isLinux}
-						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
-						onCreateProject={createProject}
-						onInitializeProject={initializeProjectRepository}
-						onRemoveProject={removeProject}
-						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
-						workspaces={workspaces}
+				{routeParams.sessionId ? (
+					<SessionTopbarHost
+						className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden bg-sidebar"
+						data-testid="session-topbar-host"
 					/>
-					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
-						<div className="min-h-0 flex-1 overflow-x-hidden">
+				) : null}
+				<div className="flex min-h-0 w-full flex-1 overflow-x-hidden" data-testid="shell-content-row">
+				<Sidebar
+					hideEdgeBorder={isWelcomeBoard}
+					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
+					onPreviewLeave={scheduleSidebarPeekClose}
+					underTopbar={isMac || isWindows || isLinux}
+					topbarOffset={routeParams.sessionId ? "session" : isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
+					onCreateProject={createProject}
+					onInitializeProject={initializeProjectRepository}
+					onRemoveProject={removeProject}
+					workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
+					workspaces={workspaces}
+				/>
+				<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
+					<div className="min-h-0 flex-1 overflow-x-hidden">
 							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
-							{hideShellTopbar ? (
-								selfFramedCenterPanel ? (
-									<Outlet />
-								) : (
-									// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
-									<CenterPanelShell>
-										<Outlet />
-									</CenterPanelShell>
-								)
-							) : framedAppTopbar ? (
-								<CenterPanelShell>
-									<ShellTopbar />
-									<div className="flex min-h-0 flex-1 flex-col">
-										<Outlet />
-									</div>
-								</CenterPanelShell>
+						{hideShellTopbar ? (
+							selfFramedCenterPanel ? (
+								<Outlet />
 							) : (
-								<CenterPanelShell>
+								// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
+								<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
 									<Outlet />
 								</CenterPanelShell>
-							)}
+							)
+						) : framedAppTopbar ? (
+							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+								{!routeParams.sessionId ? <ShellTopbar /> : null}
+								<div className="flex min-h-0 flex-1 flex-col">
+									<Outlet />
+								</div>
+							</CenterPanelShell>
+						) : (
+							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+								<Outlet />
+							</CenterPanelShell>
+						)}
 						</div>
-					</main>
-					<DaemonFailureBanner status={daemonStatus} />
+				</main>
+				</div>
+				<DaemonFailureBanner status={daemonStatus} />
 					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
               the traffic-light band only. The fixed TitlebarNav renders after
               this strip so its no-drag buttons remain clickable. */}
@@ -722,6 +732,7 @@ function ShellLayout() {
 				/>
 				<CommandPalette />
 			</div>
+			</SessionTopbarProvider>
 		</ShellProvider>
 	);
 }
