@@ -600,7 +600,8 @@ button.settings-row-bar {
 
 @utility settings-menu-surface {
 	display: flex;
-	width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
+	width: max-content;
+	max-width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
 	min-width: var(--size-settings-menu-min-width);
 	max-height: var(--size-select-menu-max);
 	flex-direction: column;
@@ -616,6 +617,7 @@ button.settings-row-bar {
 }
 
 @utility settings-agent-menu-surface {
+	width: var(--size-settings-agent-menu-min-width);
 	min-width: var(--size-settings-agent-menu-min-width);
 	padding: var(--space-3);
 	gap: var(--space-2);

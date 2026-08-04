@@ -314,8 +314,8 @@
 	--size-notification-width: 460px;
 	--size-notification-max-height: 420px;
 	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
-	--size-settings-menu-width: 18rem; /* settings option menus — max width cap */
-	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — wider rows */
+	--size-settings-menu-width: 20rem; /* settings option menus — matches agent picker box width */
+	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — fixed width for status columns */
 	--size-notification-icon: 26px;
 	--size-session-topbar: calc(var(--size-inspector-tabs) + (2 * var(--space-1)));
 	/* DaemonFailureBanner floating toast (was w-[min(22rem,…)] / max-h-40). */
@@ -431,7 +431,7 @@
 	--size-settings-section-inner-gap: 12px;
 	--size-settings-row-padding: 16px;
 	--size-settings-row-icon-gap: 12px;
-	--size-settings-menu-min-width: 11rem;
+	--size-settings-menu-min-width: 9rem;
 	--size-settings-inline-input-min: 3.5rem;
 	--size-settings-inline-input-max: 12rem;
 	--size-settings-inline-input-max-percent: 42%;
