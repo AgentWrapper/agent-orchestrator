@@ -46,3 +46,9 @@ type RemoveResult struct {
 	ProjectID         domain.ProjectID `json:"projectId"`
 	RemovedStorageDir bool             `json:"removedStorageDir"`
 }
+
+// RestoreResult reports what POST /api/v1/projects/{id}/restore did.
+type RestoreResult struct {
+	ProjectID domain.ProjectID `json:"projectId"`
+	Project   Project          `json:"project"`
+}

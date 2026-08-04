@@ -29,6 +29,11 @@ FROM projects WHERE id = ?;
 SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
 FROM projects WHERE archived_at IS NULL ORDER BY id;
 
+-- name: ListProjectsIncludingArchived :many
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
+FROM projects
+ORDER BY CASE WHEN archived_at IS NULL THEN 0 ELSE 1 END, id;
+
 -- name: CountProjectsIncludingArchived :one
 SELECT COUNT(*) FROM projects;
 
@@ -43,3 +48,6 @@ WHERE id = ? AND archived_at IS NULL;
 
 -- name: ArchiveProject :execrows
 UPDATE projects SET archived_at = ? WHERE id = ? AND archived_at IS NULL;
+
+-- name: UnarchiveProject :execrows
+UPDATE projects SET archived_at = NULL WHERE id = ? AND archived_at IS NOT NULL;

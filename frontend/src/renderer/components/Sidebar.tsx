@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
+	Archive,
 	ChevronRight,
 	Folder,
 	FolderOpen,
@@ -11,6 +12,7 @@ import {
 	Pin,
 	Plus,
 	RefreshCw,
+	RotateCcw,
 	Search,
 	Settings,
 	Trash2,
@@ -106,6 +108,7 @@ type SidebarProps = {
 	onCreateProject: (input: CreateProjectInput) => Promise<void>;
 	onInitializeProject: (path: string) => Promise<void>;
 	onRemoveProject: (projectId: string) => Promise<void>;
+	onRestoreProject: (projectId: string) => Promise<void>;
 };
 
 // Selection state comes from the URL: which project/session is active is the
@@ -149,12 +152,15 @@ export function Sidebar({
 	onCreateProject,
 	onInitializeProject,
 	onRemoveProject,
+	onRestoreProject,
 }: SidebarProps) {
 	const { t } = useTranslation();
 	const selection = useSelection();
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
+	const activeWorkspaces = workspaces.filter((workspace) => !workspace.archived);
+	const archivedWorkspaces = workspaces.filter((workspace) => workspace.archived === true);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
@@ -189,9 +195,10 @@ export function Sidebar({
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
-	// Section disclosure: Pinned / Projects headers collapse their bodies.
+	// Section disclosure: Pinned / Projects / Archive headers collapse their bodies.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
 	const [projectsOpen, setProjectsOpen] = useState(true);
+	const [archiveOpen, setArchiveOpen] = useState(false);
 	// Fetch the running app version to derive the build channel. Channel is
 	// identity: derived from the version string, not the update-channel setting
 	// (the setting can be changed mid-session; the binary cannot).
@@ -324,7 +331,7 @@ export function Sidebar({
 						onToggle={() => setProjectsOpen((v) => !v)}
 						trailing={
 							<CreateProjectButton
-								hideTrigger={workspaces.length === 0}
+								hideTrigger={activeWorkspaces.length === 0 && archivedWorkspaces.length === 0}
 								onCreateProject={onCreateProject}
 								onInitializeProject={onInitializeProject}
 							/>
@@ -345,9 +352,9 @@ export function Sidebar({
 									<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
 									<p className="mt-1 text-caption text-passive">{workspaceError}</p>
 								</div>
-							) : workspaces.length === 0 ? null : (
+							) : activeWorkspaces.length === 0 ? null : (
 								<SidebarMenu className="gap-0.5 group-data-[collapsible=icon]:gap-1">
-									{workspaces.map((workspace) => (
+									{activeWorkspaces.map((workspace) => (
 										<ProjectItem
 											key={workspace.id}
 											workspace={workspace}
@@ -362,6 +369,47 @@ export function Sidebar({
 							)}
 						</SidebarGroupContent>
 					</SidebarGroup>
+				)}
+
+				{/* Soft-archived projects stay reachable for one-click restore. */}
+				{archivedWorkspaces.length > 0 && !isCollapsed && (
+					<div className="sidebar-expanded-chrome mt-2 flex flex-col">
+						<button
+							aria-expanded={archiveOpen}
+							aria-label={t("shell.archiveProjectsAria", { count: archivedWorkspaces.length })}
+							className={cn(SECTION_ROW_CLASS, "mb-1")}
+							onClick={() => setArchiveOpen((v) => !v)}
+							type="button"
+						>
+							<svg
+								aria-hidden="true"
+								className={cn(
+									"size-icon-2xs shrink-0 transition-transform duration-normal",
+									archiveOpen && "rotate-90",
+								)}
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								viewBox="0 0 24 24"
+							>
+								<path d="m9 18 6-6-6-6" />
+							</svg>
+							<Archive strokeWidth={1.75} aria-hidden="true" />
+							<span className="min-w-0 flex-1 truncate text-left">{t("shell.archive")}</span>
+							<span className="font-mono text-micro text-passive">{archivedWorkspaces.length}</span>
+						</button>
+						{archiveOpen ? (
+							<div aria-label={t("shell.archivedProjects")} className="pb-1" role="list">
+								{archivedWorkspaces.map((workspace) => (
+									<ArchivedProjectItem
+										key={workspace.id}
+										workspace={workspace}
+										onRestoreProject={onRestoreProject}
+									/>
+								))}
+							</div>
+						) : null}
+					</div>
 				)}
 			</SidebarContent>
 
@@ -444,6 +492,72 @@ export function Sidebar({
 }
 
 type Selection = ReturnType<typeof useSelection>;
+
+function ArchivedProjectItem({
+	workspace,
+	onRestoreProject,
+}: {
+	workspace: WorkspaceSummary;
+	onRestoreProject: (projectId: string) => Promise<void>;
+}) {
+	const { t } = useTranslation();
+	const [isRestoring, setIsRestoring] = useState(false);
+	const [restoreError, setRestoreError] = useState<string | null>(null);
+
+	const handleRestore = async (event: MouseEvent<HTMLButtonElement>) => {
+		event.stopPropagation();
+		if (isRestoring) return;
+		setIsRestoring(true);
+		setRestoreError(null);
+		try {
+			await onRestoreProject(workspace.id);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : t("shell.couldNotRestoreProject");
+			setRestoreError(message);
+		} finally {
+			setIsRestoring(false);
+		}
+	};
+
+	return (
+		<div className="group/archived-project relative" role="listitem">
+			<div
+				className={cn(
+					NAV_ROW_CLASS,
+					"flex h-9 w-full items-center gap-2.5 pr-9 text-left text-muted-foreground",
+				)}
+			>
+				<span aria-hidden="true" className="shrink-0 text-passive">
+					<Archive strokeWidth={1.75} className="size-icon-md" />
+				</span>
+				<span className="min-w-0 flex-1 truncate">{workspace.name}</span>
+			</div>
+			<div className="absolute top-0 right-1.5 z-chrome flex h-9 items-center">
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							aria-label={t("shell.restoreProjectNamed", { name: workspace.name })}
+							className={HOVER_ACTION_CLASS}
+							disabled={isRestoring}
+							onClick={(event) => void handleRestore(event)}
+							type="button"
+						>
+							<RotateCcw className={cn("size-icon-md", isRestoring && "animate-spin")} aria-hidden="true" />
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="right">
+						{isRestoring ? t("shell.restoringProject") : t("shell.restoreProject")}
+					</TooltipContent>
+				</Tooltip>
+			</div>
+			{restoreError ? (
+				<p className="px-2.5 pb-1 text-2xs text-destructive" role="alert">
+					{restoreError}
+				</p>
+			) : null}
+		</div>
+	);
+}
 
 function ProjectItem({
 	workspace,

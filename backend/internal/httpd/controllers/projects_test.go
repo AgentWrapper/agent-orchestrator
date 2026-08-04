@@ -357,10 +357,22 @@ func TestProjectsAPI_Delete(t *testing.T) {
 
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects/proj", "")
 
-	if status != http.StatusNotFound {
+	if status != http.StatusOK {
 
-		t.Fatalf("GET archived project = %d, want 404; body=%s", status, body)
+		t.Fatalf("GET archived project = %d, want 200; body=%s", status, body)
 
+	}
+
+	var archivedGet struct {
+		Status  string `json:"status"`
+		Project struct {
+			ID       string `json:"id"`
+			Archived bool   `json:"archived"`
+		} `json:"project"`
+	}
+	mustJSON(t, body, &archivedGet)
+	if archivedGet.Status != "ok" || archivedGet.Project.ID != "proj" || !archivedGet.Project.Archived {
+		t.Fatalf("GET archived project body = %#v", archivedGet)
 	}
 
 	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects", "")
@@ -377,10 +389,33 @@ func TestProjectsAPI_Delete(t *testing.T) {
 
 	mustJSON(t, body, &list)
 
-	if len(list.Projects) != 0 {
+	if len(list.Projects) != 1 || list.Projects[0].ID != "proj" || !list.Projects[0].Archived {
+		t.Fatalf("projects after archive = %#v, want one archived proj", list.Projects)
+	}
 
-		t.Fatalf("active projects after archive = %d, want 0", len(list.Projects))
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/projects/proj/restore", "")
+	if status != http.StatusOK {
+		t.Fatalf("POST restore = %d, want 200; body=%s", status, body)
+	}
+	var restored struct {
+		ProjectID string `json:"projectId"`
+		Project   struct {
+			ID       string `json:"id"`
+			Archived bool   `json:"archived"`
+		} `json:"project"`
+	}
+	mustJSON(t, body, &restored)
+	if restored.ProjectID != "proj" || restored.Project.Archived {
+		t.Fatalf("restore response = %#v", restored)
+	}
 
+	body, status, _ = doRequest(t, srv, "GET", "/api/v1/projects", "")
+	if status != http.StatusOK {
+		t.Fatalf("GET projects after restore = %d, want 200; body=%s", status, body)
+	}
+	mustJSON(t, body, &list)
+	if len(list.Projects) != 1 || list.Projects[0].Archived {
+		t.Fatalf("projects after restore = %#v, want one active proj", list.Projects)
 	}
 
 }
@@ -493,6 +528,8 @@ type projectSummary struct {
 	Path string `json:"path"`
 
 	SessionPrefix string `json:"sessionPrefix"`
+
+	Archived bool `json:"archived"`
 }
 
 type projectBody struct {

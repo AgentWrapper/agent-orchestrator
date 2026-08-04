@@ -104,17 +104,20 @@ type CreateProjectInput = {
 type CreateProjectHandler = (input: CreateProjectInput) => Promise<void>;
 type InitializeProjectHandler = (path: string) => Promise<void>;
 type RemoveProjectHandler = (projectId: string) => Promise<void>;
+type RestoreProjectHandler = (projectId: string) => Promise<void>;
 
 function renderSidebar({
 	onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler,
 	onInitializeProject = vi.fn().mockResolvedValue(undefined) as InitializeProjectHandler,
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
+	onRestoreProject = vi.fn().mockResolvedValue(undefined) as RestoreProjectHandler,
 	seedAgents = true,
 	workspaces = [workspace],
 }: {
 	onCreateProject?: CreateProjectHandler;
 	onInitializeProject?: InitializeProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
+	onRestoreProject?: RestoreProjectHandler;
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
 } = {}) {
@@ -144,12 +147,13 @@ function renderSidebar({
 					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
 					onRemoveProject={onRemoveProject}
+					onRestoreProject={onRestoreProject}
 					workspaces={workspaces}
 				/>
 			</SidebarProvider>
 		</QueryClientProvider>,
 	);
-	return onRemoveProject;
+	return { onRemoveProject, onRestoreProject };
 }
 
 async function chooseOption(trigger: HTMLElement, optionName: string) {
@@ -290,7 +294,7 @@ describe("Sidebar", () => {
 
 	it("shows a ConfirmDialog and calls onRemoveProject when confirmed", async () => {
 		const user = userEvent.setup();
-		const onRemoveProject = renderSidebar();
+		const { onRemoveProject } = renderSidebar();
 
 		await user.click(screen.getByLabelText("Project actions for Project One"));
 		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
@@ -330,7 +334,7 @@ describe("Sidebar", () => {
 
 	it("does not remove the project when cancellation is clicked in the ConfirmDialog", async () => {
 		const user = userEvent.setup();
-		const onRemoveProject = renderSidebar();
+		const { onRemoveProject } = renderSidebar();
 
 		await user.click(screen.getByLabelText("Project actions for Project One"));
 		await user.click(await screen.findByRole("menuitem", { name: "Remove project" }));
@@ -358,6 +362,31 @@ describe("Sidebar", () => {
 		expect(await screen.findByText("Failed to remove project")).toBeInTheDocument();
 		expect(screen.queryByRole("dialog", { name: "Remove project" })).not.toBeInTheDocument();
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+	});
+
+	it("shows archived projects under Archive and restores them", async () => {
+		const user = userEvent.setup();
+		const archived: WorkspaceSummary = {
+			...workspace,
+			id: "archived-proj",
+			name: "Archived Project",
+			archived: true,
+			sessions: [],
+		};
+		const { onRestoreProject } = renderSidebar({
+			workspaces: [workspace, archived],
+		});
+
+		// Collapsed by default: archived name not in the active tree.
+		expect(screen.queryByText("Archived Project")).not.toBeInTheDocument();
+		expect(screen.getByText("Project One")).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: /Archive, 1 project/i }));
+		expect(await screen.findByText("Archived Project")).toBeInTheDocument();
+		expect(screen.getByRole("list", { name: "Archived projects" })).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Restore Archived Project" }));
+		await waitFor(() => expect(onRestoreProject).toHaveBeenCalledWith("archived-proj"));
 	});
 
 	it("requests a new task for the project from the kebab menu", async () => {

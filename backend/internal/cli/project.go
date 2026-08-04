@@ -51,6 +51,7 @@ type projectSummary struct {
 	Name          string `json:"name"`
 	Kind          string `json:"kind"`
 	SessionPrefix string `json:"sessionPrefix"`
+	Archived      bool   `json:"archived"`
 	ResolveError  string `json:"resolveError,omitempty"`
 }
 
@@ -62,9 +63,15 @@ type projectDetails struct {
 	Repo           string                 `json:"repo"`
 	DefaultBranch  string                 `json:"defaultBranch"`
 	Agent          string                 `json:"agent,omitempty"`
+	Archived       bool                   `json:"archived"`
 	Config         *projectConfig         `json:"config,omitempty"`
 	WorkspaceRepos []workspaceRepoDetails `json:"workspaceRepos,omitempty"`
 	ResolveError   string                 `json:"resolveError,omitempty"`
+}
+
+type projectRestoreResult struct {
+	ProjectID string         `json:"projectId"`
+	Project   projectDetails `json:"project"`
 }
 
 type workspaceRepoDetails struct {
@@ -167,6 +174,7 @@ func newProjectCommand(ctx *commandContext) *cobra.Command {
 	cmd.AddCommand(newProjectGetCommand(ctx))
 	cmd.AddCommand(newProjectAddCommand(ctx))
 	cmd.AddCommand(newProjectSetConfigCommand(ctx))
+	cmd.AddCommand(newProjectRestoreCommand(ctx))
 	cmd.AddCommand(newProjectRemoveCommand(ctx))
 	return cmd
 }
@@ -399,6 +407,41 @@ func parseEnvPairs(pairs []string) (map[string]string, error) {
 	return env, nil
 }
 
+func newProjectRestoreCommand(ctx *commandContext) *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "restore <id>",
+		Short: "Restore a soft-archived project",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
+				return usageError{err}
+			}
+			if strings.TrimSpace(args[0]) == "" {
+				return usageError{errors.New("usage: project id is required")}
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id := strings.TrimSpace(args[0])
+			var res projectRestoreResult
+			if err := ctx.postJSON(cmd.Context(), "projects/"+url.PathEscape(id)+"/restore", nil, &res); err != nil {
+				return err
+			}
+			if asJSON {
+				return writeJSON(cmd.OutOrStdout(), res)
+			}
+			restoredID := res.ProjectID
+			if restoredID == "" {
+				restoredID = id
+			}
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "restored project %s\n", restoredID)
+			return err
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Output restore result as JSON")
+	return cmd
+}
+
 func newProjectRemoveCommand(ctx *commandContext) *cobra.Command {
 	var opts projectRemoveOptions
 	cmd := &cobra.Command{
@@ -465,8 +508,15 @@ func writeProjectList(cmd *cobra.Command, projects []projectSummary) error {
 	}
 	for _, p := range projects {
 		status := "ok"
+		if p.Archived {
+			status = "archived"
+		}
 		if p.ResolveError != "" {
-			status = "degraded: " + p.ResolveError
+			if p.Archived {
+				status = "archived, degraded: " + p.ResolveError
+			} else {
+				status = "degraded: " + p.ResolveError
+			}
 		}
 		kind := p.Kind
 		if kind == "" {

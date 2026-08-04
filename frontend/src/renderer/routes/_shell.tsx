@@ -146,12 +146,13 @@ function ShellLayout() {
 		: routeParams.sessionId
 			? workspaces.find((workspace) => workspace.sessions.some((session) => session.id === routeParams.sessionId))?.id
 			: undefined;
-	// First-launch root board only (no projects in scope).
+	// First-launch root board only (no active projects in scope). Archived
+	// projects stay listable for restore and must not suppress the welcome UI.
 	const isWelcomeBoard =
 		Boolean(matchRoute({ to: "/" })) &&
 		workspaceStartupState === "ready" &&
 		workspaceQuery.isSuccess &&
-		workspaces.length === 0;
+		workspaces.every((workspace) => workspace.archived === true);
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
@@ -352,9 +353,32 @@ function ShellLayout() {
 				throw failure;
 			}
 			void captureRendererEvent("ao.renderer.project_removed", { project_id: projectId });
-			updateWorkspaces((current) => current.filter((item) => item.id !== projectId));
+			// Soft-archive: keep the project visible in the archived section so the
+			// user can restore it. Do not drop the row from the local cache.
+			updateWorkspaces((current) =>
+				current.map((item) => (item.id === projectId ? { ...item, archived: true } : item)),
+			);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
-		[updateWorkspaces],
+		[queryClient, updateWorkspaces],
+	);
+
+	const restoreProject = useCallback(
+		async (projectId: string) => {
+			const { error } = await apiClient.POST("/api/v1/projects/{id}/restore", {
+				params: { path: { id: projectId } },
+			});
+			if (error) {
+				const failure = new Error(apiErrorMessage(error)) as Error & { code?: string };
+				failure.code = apiErrorCode(error);
+				throw failure;
+			}
+			updateWorkspaces((current) =>
+				current.map((item) => (item.id === projectId ? { ...item, archived: false } : item)),
+			);
+			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+		[queryClient, updateWorkspaces],
 	);
 
 	const restartOrchestrator = useCallback(
@@ -672,6 +696,7 @@ function ShellLayout() {
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
+						onRestoreProject={restoreProject}
 						workspaceError={workspaceQuery.isError ? errorMessage(workspaceQuery.error) : undefined}
 						workspaces={workspaces}
 					/>

@@ -319,7 +319,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List all registered projects (active + degraded) */
+        /** List all registered projects (active, archived, and degraded) */
         get: operations["listProjects"];
         put?: never;
         /** Register a new project from a git repository path */
@@ -342,7 +342,7 @@ export interface paths {
         /** Atomically replace a project's display name and config */
         put: operations["updateProjectSettings"];
         post?: never;
-        /** Remove a project; stops sessions, cleans workspaces, unregisters */
+        /** Soft-archive a project; stops sessions, cleans workspaces, keeps registry row */
         delete: operations["removeProject"];
         options?: never;
         head?: never;
@@ -360,6 +360,23 @@ export interface paths {
         /** Replace a project's per-project config */
         put: operations["setProjectConfig"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore a soft-archived project so it is active again */
+        post: operations["restoreProject"];
         delete?: never;
         options?: never;
         head?: never;
@@ -977,6 +994,7 @@ export interface components {
             mimeType?: string;
         };
         DegradedProject: {
+            archived: boolean;
             id: string;
             /** @enum {string} */
             kind: "single_repo" | "workspace" | "scratch";
@@ -1182,6 +1200,7 @@ export interface components {
         };
         Project: {
             agent?: string;
+            archived: boolean;
             config?: components["schemas"]["ProjectConfig"];
             defaultBranch: string;
             id: string;
@@ -1220,6 +1239,7 @@ export interface components {
             project: components["schemas"]["Project"];
         };
         ProjectSummary: {
+            archived: boolean;
             id: string;
             /** @enum {string} */
             kind: "single_repo" | "workspace" | "scratch";
@@ -1267,6 +1287,10 @@ export interface components {
         ResolveCommentsResponse: {
             ok: boolean;
             resolved: number;
+        };
+        RestoreProjectResult: {
+            project: components["schemas"]["Project"];
+            projectId: string;
         };
         RestoreSessionResponse: {
             ok: boolean;
@@ -2813,6 +2837,56 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    restoreProject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Project identifier (registry key). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreProjectResult"];
                 };
             };
             /** @description Bad Request */

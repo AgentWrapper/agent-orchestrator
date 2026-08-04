@@ -170,12 +170,33 @@ func TestManager_AddListGetRemove(t *testing.T) {
 	if rm.ProjectID != "ao" || rm.RemovedStorageDir {
 		t.Fatalf("Remove = %#v", rm)
 	}
-	if list, _ := m.List(ctx); len(list) != 0 {
-		t.Fatalf("active list after remove = %d, want 0", len(list))
+	list, err = m.List(ctx)
+	if err != nil || len(list) != 1 || !list[0].Archived || list[0].ID != "ao" {
+		t.Fatalf("list after remove = %#v, %v; want one archived ao", list, err)
 	}
-	_, err = m.Get(ctx, "ao")
-	wantCode(t, err, "PROJECT_NOT_FOUND")
+	res, err = m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get archived: %v", err)
+	}
+	if res.Project == nil || !res.Project.Archived {
+		t.Fatalf("Get archived = %#v, want archived project", res)
+	}
 
+	restored, err := m.Restore(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if restored.ProjectID != "ao" || restored.Project.Archived || restored.Project.ID != "ao" {
+		t.Fatalf("Restore = %#v", restored)
+	}
+	list, err = m.List(ctx)
+	if err != nil || len(list) != 1 || list[0].Archived || list[0].ID != "ao" {
+		t.Fatalf("list after restore = %#v, %v; want one active ao", list, err)
+	}
+
+	if _, err := m.Remove(ctx, "ao"); err != nil {
+		t.Fatalf("Remove again: %v", err)
+	}
 	_, err = m.Remove(ctx, "ao")
 	wantCode(t, err, "PROJECT_NOT_FOUND")
 }
@@ -390,8 +411,13 @@ func TestManager_RemoveTeardownsBeforeArchive(t *testing.T) {
 	if len(teardown.projects) != 1 || teardown.projects[0] != "ao" {
 		t.Fatalf("teardown projects = %#v, want [ao]", teardown.projects)
 	}
-	_, err = m.Get(ctx, "ao")
-	wantCode(t, err, "PROJECT_NOT_FOUND")
+	got, err := m.Get(ctx, "ao")
+	if err != nil {
+		t.Fatalf("Get after archive: %v", err)
+	}
+	if got.Project == nil || !got.Project.Archived {
+		t.Fatalf("Get after archive = %#v, want archived project", got)
+	}
 }
 
 func TestManager_RemoveDoesNotArchiveWhenTeardownFails(t *testing.T) {

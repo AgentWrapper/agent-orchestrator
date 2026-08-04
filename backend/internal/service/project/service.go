@@ -22,11 +22,12 @@ import (
 
 // Manager is the controller-facing contract for the /api/v1/projects surface.
 type Manager interface {
-	// List returns every registered project, including degraded entries
-	// (those whose config failed to load but whose registry entry survives).
+	// List returns every registered project, including degraded and archived
+	// entries. Soft-archived projects remain visible so clients can restore them.
 	List(ctx context.Context) ([]Summary, error)
 
-	// Get returns one project, discriminating ok vs degraded via GetResult.
+	// Get returns one project (active or archived), discriminating ok vs
+	// degraded via GetResult.
 	Get(ctx context.Context, id domain.ProjectID) (GetResult, error)
 
 	// Add registers a new project from a git repository path.
@@ -43,9 +44,12 @@ type Manager interface {
 	// read-model.
 	SetConfig(ctx context.Context, id domain.ProjectID, in SetConfigInput) (Project, error)
 
-	// Remove unregisters a project, stopping its sessions and reclaiming
-	// managed workspaces.
+	// Remove soft-archives a project, stopping its sessions and reclaiming
+	// managed workspaces while preserving the registry row for restore.
 	Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error)
+
+	// Restore clears soft-archive state so the project returns to the active list.
+	Restore(ctx context.Context, id domain.ProjectID) (RestoreResult, error)
 }
 
 // SessionTeardowner is the narrow session-service surface project removal
@@ -107,9 +111,10 @@ func NewWithDeps(d Deps) *Service {
 	return s
 }
 
-// List returns every active registered project.
+// List returns every registered project, including soft-archived ones.
+// Active projects come first (store order); each Summary.Archived flag marks state.
 func (m *Service) List(ctx context.Context) ([]Summary, error) {
-	projects, err := m.store.ListProjects(ctx)
+	projects, err := m.store.ListProjectsIncludingArchived(ctx)
 	if err != nil {
 		return nil, apierr.Internal("PROJECTS_LIST_FAILED", "Failed to load projects")
 	}
@@ -122,12 +127,13 @@ func (m *Service) List(ctx context.Context) ([]Summary, error) {
 			Kind:              row.Kind.WithDefault(),
 			SessionPrefix:     resolveSessionPrefix(row),
 			OrchestratorAgent: row.Config.Orchestrator.Harness,
+			Archived:          !row.ArchivedAt.IsZero(),
 		})
 	}
 	return out, nil
 }
 
-// Get returns one active project by id.
+// Get returns one project by id (active or archived).
 func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, error) {
 	if err := validateProjectID(id); err != nil {
 		return GetResult{}, err
@@ -136,7 +142,7 @@ func (m *Service) Get(ctx context.Context, id domain.ProjectID) (GetResult, erro
 	if err != nil {
 		return GetResult{}, apierr.Internal("PROJECT_LOAD_FAILED", "Failed to load project")
 	}
-	if !ok || !row.ArchivedAt.IsZero() {
+	if !ok {
 		return GetResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
 	}
 	p := m.projectFromRow(row)
@@ -676,7 +682,8 @@ func resolveDefaultBranch(path string) string {
 
 // Remove stops live project sessions, reclaims safe managed workspaces, then
 // archives the project registration. The original repository path and durable
-// session/history rows are preserved.
+// session/history rows are preserved. The project remains listable as archived
+// and can be restored via Restore.
 func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult, error) {
 	if err := validateProjectID(id); err != nil {
 		return RemoveResult{}, err
@@ -703,6 +710,50 @@ func (m *Service) Remove(ctx context.Context, id domain.ProjectID) (RemoveResult
 	return RemoveResult{ProjectID: id, RemovedStorageDir: false}, nil
 }
 
+// Restore clears soft-archive state for a project so it reappears as active.
+// Repository path and durable session/history rows were preserved by Remove.
+func (m *Service) Restore(ctx context.Context, id domain.ProjectID) (RestoreResult, error) {
+	if err := validateProjectID(id); err != nil {
+		return RestoreResult{}, err
+	}
+	row, ok, err := m.store.GetProject(ctx, string(id))
+	if err != nil {
+		return RestoreResult{}, apierr.Internal("PROJECT_RESTORE_FAILED", "Failed to restore project")
+	}
+	if !ok {
+		return RestoreResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	if row.ArchivedAt.IsZero() {
+		// Idempotent: already active is success.
+		p := m.projectFromRow(row)
+		if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
+			repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
+			if err != nil {
+				return RestoreResult{}, apierr.Internal("PROJECT_RESTORE_FAILED", "Failed to restore project")
+			}
+			p.WorkspaceRepos = workspaceReposFromRecords(repos)
+		}
+		return RestoreResult{ProjectID: id, Project: p}, nil
+	}
+	ok, err = m.store.UnarchiveProject(ctx, string(id))
+	if err != nil {
+		return RestoreResult{}, apierr.Internal("PROJECT_RESTORE_FAILED", "Failed to restore project")
+	}
+	if !ok {
+		return RestoreResult{}, apierr.NotFound("PROJECT_NOT_FOUND", "Unknown project")
+	}
+	row.ArchivedAt = time.Time{}
+	p := m.projectFromRow(row)
+	if row.Kind.WithDefault() == domain.ProjectKindWorkspace {
+		repos, err := m.store.ListWorkspaceRepos(ctx, row.ID)
+		if err != nil {
+			return RestoreResult{}, apierr.Internal("PROJECT_RESTORE_FAILED", "Failed to restore project")
+		}
+		p.WorkspaceRepos = workspaceReposFromRecords(repos)
+	}
+	return RestoreResult{ProjectID: id, Project: p}, nil
+}
+
 func (m *Service) suggestID(ctx context.Context, base domain.ProjectID) domain.ProjectID {
 	for i := 1; ; i++ {
 		candidate := domain.ProjectID(string(base) + strconv.Itoa(i))
@@ -726,6 +777,7 @@ func (m *Service) projectFromRow(row domain.ProjectRecord) Project {
 		Repo:          row.RepoOriginURL,
 		DefaultBranch: defaultBranch,
 		Agent:         string(m.defaultHarness),
+		Archived:      !row.ArchivedAt.IsZero(),
 	}
 	p.Config = projectConfigPtr(row.Config)
 	return p

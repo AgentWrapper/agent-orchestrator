@@ -120,6 +120,56 @@ func (q *Queries) ListProjects(ctx context.Context) ([]Project, error) {
 	return items, nil
 }
 
+const listProjectsIncludingArchived = `-- name: ListProjectsIncludingArchived :many
+SELECT id, path, repo_origin_url, display_name, registered_at, archived_at, config, kind
+FROM projects
+ORDER BY CASE WHEN archived_at IS NULL THEN 0 ELSE 1 END, id
+`
+
+func (q *Queries) ListProjectsIncludingArchived(ctx context.Context) ([]Project, error) {
+	rows, err := q.db.QueryContext(ctx, listProjectsIncludingArchived)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Project{}
+	for rows.Next() {
+		var i Project
+		if err := rows.Scan(
+			&i.ID,
+			&i.Path,
+			&i.RepoOriginURL,
+			&i.DisplayName,
+			&i.RegisteredAt,
+			&i.ArchivedAt,
+			&i.Config,
+			&i.Kind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unarchiveProject = `-- name: UnarchiveProject :execrows
+UPDATE projects SET archived_at = NULL WHERE id = ? AND archived_at IS NOT NULL
+`
+
+func (q *Queries) UnarchiveProject(ctx context.Context, id domain.ProjectID) (int64, error) {
+	result, err := q.db.ExecContext(ctx, unarchiveProject, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const updateProjectSettings = `-- name: UpdateProjectSettings :execrows
 UPDATE projects
 SET display_name = ?, config = ?

@@ -195,6 +195,20 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.ProjectRecord, error
 	return out, nil
 }
 
+// ListProjectsIncludingArchived returns every registry row, active first then
+// archived, ordered by id within each group.
+func (s *Store) ListProjectsIncludingArchived(ctx context.Context) ([]domain.ProjectRecord, error) {
+	rows, err := s.qr.ListProjectsIncludingArchived(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list projects including archived: %w", err)
+	}
+	out := make([]domain.ProjectRecord, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, projectRowFromGen(p))
+	}
+	return out, nil
+}
+
 // UpdateProjectSettings atomically updates the user-facing display name and
 // config for an active project. It returns ok=false when the project is missing
 // or archived.
@@ -235,6 +249,17 @@ func (s *Store) ArchiveProject(ctx context.Context, id string, at time.Time) (bo
 		ArchivedAt: nullTime(at),
 		ID:         domain.ProjectID(id),
 	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// UnarchiveProject clears soft-delete state and reports whether a row was affected.
+func (s *Store) UnarchiveProject(ctx context.Context, id string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.UnarchiveProject(ctx, domain.ProjectID(id))
 	if err != nil {
 		return false, err
 	}

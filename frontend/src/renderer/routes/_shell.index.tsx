@@ -14,7 +14,7 @@ function ShellIndex() {
 
 	useEffect(() => {
 		if (!workspaceQuery.isSuccess) return;
-		const workspaces = workspaceQuery.data ?? [];
+		const workspaces = (workspaceQuery.data ?? []).filter((workspace) => !workspace.archived);
 		if (workspaces.length !== 1) return;
 		const [workspace] = workspaces;
 		if (workspace.id !== "scratch" || workspace.kind !== "scratch") return;

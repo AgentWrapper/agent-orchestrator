@@ -257,6 +257,7 @@ var schemaNames = map[string]string{
 	"ProjectInitializeRepositoryInput":  "InitializeRepositoryInput",
 	"ProjectInitializeRepositoryResult": "InitializeRepositoryResult",
 	"ProjectRemoveResult":               "RemoveProjectResult",
+	"ProjectRestoreResult":              "RestoreProjectResult",
 	"ProjectSetConfigInput":             "SetProjectConfigInput",
 	"ProjectUpdateSettingsInput":        "UpdateProjectSettingsInput",
 	"ProjectWorkspaceRepo":              "WorkspaceRepo",
@@ -720,7 +721,7 @@ func projectOperations() []operation {
 	return []operation{
 		{
 			method: http.MethodGet, path: "/api/v1/projects", id: "listProjects", tag: "projects",
-			summary: "List all registered projects (active + degraded)",
+			summary: "List all registered projects (active, archived, and degraded)",
 			resps: []respUnit{
 				{http.StatusOK, controllers.ListProjectsResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
@@ -782,8 +783,19 @@ func projectOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/projects/{id}/restore", id: "restoreProject", tag: "projects",
+			summary:    "Restore a soft-archived project so it is active again",
+			pathParams: []any{controllers.ProjectIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, projectsvc.RestoreResult{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodDelete, path: "/api/v1/projects/{id}", id: "removeProject", tag: "projects",
-			summary:    "Remove a project; stops sessions, cleans workspaces, unregisters",
+			summary:    "Soft-archive a project; stops sessions, cleans workspaces, keeps registry row",
 			pathParams: []any{controllers.ProjectIDParam{}},
 			resps: []respUnit{
 				{http.StatusOK, projectsvc.RemoveResult{}},

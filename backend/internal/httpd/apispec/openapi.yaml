@@ -746,7 +746,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
-      summary: List all registered projects (active + degraded)
+      summary: List all registered projects (active, archived, and degraded)
       tags:
       - projects
     post:
@@ -821,7 +821,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
-      summary: Remove a project; stops sessions, cleans workspaces, unregisters
+      summary: Soft-archive a project; stops sessions, cleans workspaces, keeps registry
+        row
       tags:
       - projects
     get:
@@ -943,6 +944,45 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
       summary: Replace a project's per-project config
+      tags:
+      - projects
+  /api/v1/projects/{id}/restore:
+    post:
+      operationId: restoreProject
+      parameters:
+      - description: Project identifier (registry key).
+        in: path
+        name: id
+        required: true
+        schema:
+          description: Project identifier (registry key).
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreProjectResult'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Restore a soft-archived project so it is active again
       tags:
       - projects
   /api/v1/projects/initialize:
@@ -2863,6 +2903,8 @@ components:
       type: object
     DegradedProject:
       properties:
+        archived:
+          type: boolean
         id:
           type: string
         kind:
@@ -2882,6 +2924,7 @@ components:
       - name
       - kind
       - path
+      - archived
       - resolveError
       type: object
     DevImportProjectsConflict:
@@ -3386,6 +3429,8 @@ components:
       properties:
         agent:
           type: string
+        archived:
+          type: boolean
         config:
           $ref: '#/components/schemas/ProjectConfig'
         defaultBranch:
@@ -3415,6 +3460,7 @@ components:
       - path
       - repo
       - defaultBranch
+      - archived
       type: object
     ProjectConfig:
       properties:
@@ -3482,6 +3528,8 @@ components:
       type: object
     ProjectSummary:
       properties:
+        archived:
+          type: boolean
         id:
           type: string
         kind:
@@ -3506,6 +3554,7 @@ components:
       - path
       - kind
       - sessionPrefix
+      - archived
       type: object
     PushDeviceEnvelope:
       properties:
@@ -3590,6 +3639,16 @@ components:
       required:
       - ok
       - resolved
+      type: object
+    RestoreProjectResult:
+      properties:
+        project:
+          $ref: '#/components/schemas/Project'
+        projectId:
+          type: string
+      required:
+      - projectId
+      - project
       type: object
     RestoreSessionResponse:
       properties:

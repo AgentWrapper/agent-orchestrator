@@ -280,6 +280,8 @@ export type WorkspaceSummary = {
 	name: string;
 	kind?: ProjectKind;
 	path: string;
+	/** Soft-archived projects remain visible for restore. */
+	archived?: boolean;
 	workspaceRepos?: WorkspaceRepoSummary[];
 	type?: "main" | "worktree";
 	orchestratorAgent?: AgentProvider;

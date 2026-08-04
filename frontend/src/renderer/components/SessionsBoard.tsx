@@ -92,7 +92,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	/** Bell lives in the board action row when the shell topbar does not host it. */
 	const boardOwnsNotificationCenter = isLinuxPlatform() || boardActionsInPanel;
 	const all = workspaceQuery.data ?? [];
-	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
+	// Soft-archived projects stay listable for restore in the sidebar, but their
+	// sessions are not mixed into the live board until the project is restored.
+	const activeAll = all.filter((w) => !w.archived);
+	const workspaces = projectId ? all.filter((w) => w.id === projectId) : activeAll;
 	const workspace = projectId ? workspaces[0] : undefined;
 	// Same crumb as ShellTopbar: project name in scope, else root-board "Board".
 	const boardLabel = workspace?.name ?? (projectId ? "" : t("shell.board"));
@@ -149,8 +152,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		shell !== null &&
 		!daemonHasFailed &&
 		(!isDaemonReady || workspaceStartupState === "loading" || (!workspaceQuery.isSuccess && !workspaceQuery.isError));
-	const showWelcome = !projectId && isLoaded && all.length === 0;
-	const showProjectEmpty = projectId !== undefined && isLoaded && workspaces.length > 0 && sessions.length === 0;
+	const showWelcome = !projectId && isLoaded && activeAll.length === 0;
+	const showProjectEmpty =
+		projectId !== undefined &&
+		isLoaded &&
+		workspaces.length > 0 &&
+		!workspace?.archived &&
+		sessions.length === 0;
 	// Archived sessions cost one quiet line under the board until expanded.
 	const [archiveExpanded, setArchiveExpanded] = useState(false);
 	const [restoringSessionId, setRestoringSessionId] = useState<string | undefined>();
