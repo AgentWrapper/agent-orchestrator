@@ -873,4 +873,11 @@
 	"zone.merge": "Listo para fusionar",
 	"zone.pending": "En revisión",
 	"zone.working": "Trabajando"
+
+,
+	"settings.developer": "Developer",
+	"settings.help": "Help",
+	"settings.navSectionsAria": "Settings sections",
+	"settings.project.workflow": "Workflow",
+	"settings.project.intake": "Intake"
 }

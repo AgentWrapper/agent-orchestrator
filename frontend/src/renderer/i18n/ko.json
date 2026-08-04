@@ -860,4 +860,11 @@
 	"zone.merge": "병합 준비 완료",
 	"zone.pending": "리뷰 중",
 	"zone.working": "작업 중"
+
+,
+	"settings.developer": "Developer",
+	"settings.help": "Help",
+	"settings.navSectionsAria": "Settings sections",
+	"settings.project.workflow": "Workflow",
+	"settings.project.intake": "Intake"
 }

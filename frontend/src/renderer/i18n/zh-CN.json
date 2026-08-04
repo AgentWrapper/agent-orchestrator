@@ -855,4 +855,9 @@
 	"zone.merge": "可合并",
 	"zone.pending": "评审中",
 	"zone.working": "工作中"
+
+,
+	"settings.developer": "开发者",
+	"settings.help": "帮助",
+	"settings.navSectionsAria": "设置分区"
 }

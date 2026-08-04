@@ -860,4 +860,11 @@
 	"zone.merge": "マージ準備完了",
 	"zone.pending": "レビュー中",
 	"zone.working": "作業中"
+
+,
+	"settings.developer": "Developer",
+	"settings.help": "Help",
+	"settings.navSectionsAria": "Settings sections",
+	"settings.project.workflow": "Workflow",
+	"settings.project.intake": "Intake"
 }
