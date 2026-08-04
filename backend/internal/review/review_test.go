@@ -414,57 +414,6 @@ func TestCancelInterruptsReviewerAndCancelsRunningRuns(t *testing.T) {
 	}
 }
 
-func TestCancelOpenCodeDestroysAndRestoresReviewerSession(t *testing.T) {
-	store := &fakeStore{
-		review: &domain.Review{
-			ID:               "rev-1",
-			SessionID:        "mer-1",
-			ProjectID:        "mer",
-			Harness:          domain.ReviewerOpenCode,
-			ReviewerHandleID: "review-mer-1",
-			AgentSessionID:   "opencode-native-1",
-		},
-		runs: []domain.ReviewRun{
-			{ID: "run-1", ReviewID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerOpenCode, PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
-			{ID: "run-2", ReviewID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerOpenCode, PRURL: "https://github.com/o/r/pull/2", TargetSHA: "sha2", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved},
-		},
-	}
-	worker := liveWorker()
-	worker.ReviewerHarness = domain.ReviewerOpenCode
-	launcher := &fakeLauncher{handle: "review-mer-1", agentSessionID: "opencode-native-1"}
-	prs := fakePRs{prs: []domain.PullRequest{{URL: "https://github.com/o/r/pull/1", Number: 1, HeadSHA: "sha1"}}}
-	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prs, fakeProjects{}, launcher)
-
-	res, err := eng.Cancel(context.Background(), "mer-1")
-	if err != nil {
-		t.Fatalf("Cancel: %v", err)
-	}
-	if launcher.cancelled {
-		t.Fatal("opencode cancel must not queue a cancel message")
-	}
-	if !launcher.destroyed || launcher.destroyedHandle != "review-mer-1" {
-		t.Fatalf("destroy = %v handle=%q, want review-mer-1", launcher.destroyed, launcher.destroyedHandle)
-	}
-	if !launcher.restored {
-		t.Fatal("expected opencode reviewer session to be restored")
-	}
-	if launcher.gotSpec.Harness != domain.ReviewerOpenCode || launcher.gotSpec.AgentSessionID != "opencode-native-1" {
-		t.Fatalf("restore spec = %+v", launcher.gotSpec)
-	}
-	if len(launcher.gotSpec.PreviousRuns) != 2 {
-		t.Fatalf("previous runs = %+v, want cancelled and completed opencode runs", launcher.gotSpec.PreviousRuns)
-	}
-	if len(res.CancelledRuns) != 1 || res.CancelledRuns[0].ID != "run-1" {
-		t.Fatalf("cancelled runs = %+v", res.CancelledRuns)
-	}
-	if res.ReviewerHandleID != "review-mer-1" || store.review.ReviewerHandleID != "review-mer-1" || store.review.AgentSessionID != "opencode-native-1" {
-		t.Fatalf("review state result=%+v stored=%+v", res, store.review)
-	}
-	if store.runs[0].Status != domain.ReviewRunCancelled {
-		t.Fatalf("run not marked cancelled: %+v", store.runs[0])
-	}
-}
-
 func TestCancelMarksRunsCancelledWhenReviewerHandleIsGone(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},

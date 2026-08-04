@@ -28,12 +28,19 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 			t.Errorf("reviewer harness %q cancel spec: %v", h, err)
 		} else {
 			switch h {
-			case domain.ReviewerCodex, domain.ReviewerOpenCode:
+			case domain.ReviewerCodex:
 				if spec.Mode != ports.ReviewCancelMessage {
 					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelMessage)
 				}
 				if spec.Message == "" {
 					t.Errorf("reviewer harness %q cancel message is empty", h)
+				}
+			case domain.ReviewerOpenCode:
+				if spec.Mode != ports.ReviewCancelInput {
+					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInput)
+				}
+				if spec.Input != "\x1b" {
+					t.Errorf("reviewer harness %q cancel input = %q, want escape", h, spec.Input)
 				}
 			default:
 				if spec.Mode != ports.ReviewCancelInterrupt {

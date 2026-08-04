@@ -76,6 +76,7 @@ type reviewerRuntime interface {
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	Interrupt(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
+	SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }
 
@@ -397,6 +398,11 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 			return fmt.Errorf("reviewer adapter %q returned empty cancel message", harness)
 		}
 		return l.runtime.SendMessage(ctx, ports.RuntimeHandle{ID: handleID}, message)
+	case ports.ReviewCancelInput:
+		if spec.Input == "" {
+			return fmt.Errorf("reviewer adapter %q returned empty cancel input", harness)
+		}
+		return l.runtime.SendInput(ctx, ports.RuntimeHandle{ID: handleID}, spec.Input)
 	case ports.ReviewCancelInterrupt:
 		interrupts := spec.Interrupts
 		if interrupts <= 0 {

@@ -131,6 +131,7 @@ type fakeCancellableReviewer struct {
 	mode       ports.ReviewCancelMode
 	interrupts int
 	message    string
+	input      string
 }
 
 type fakeRestoringReviewer struct {
@@ -158,7 +159,7 @@ func (f *fakeCancellableReviewer) ReviewCancel(context.Context) (ports.ReviewCan
 	if mode == "" {
 		mode = ports.ReviewCancelInterrupt
 	}
-	return ports.ReviewCancelSpec{Mode: mode, Interrupts: f.interrupts, Message: f.message}, nil
+	return ports.ReviewCancelSpec{Mode: mode, Interrupts: f.interrupts, Message: f.message, Input: f.input}, nil
 }
 
 type fakeReviewerForPreflight struct {
@@ -190,6 +191,8 @@ type fakeRuntime struct {
 	createCfg     ports.RuntimeConfig
 	sentMsg       string
 	sentMsgs      []string
+	sentInput     string
+	sentInputs    []string
 	sentTo        string
 	alive         bool
 	interrupt     string
@@ -217,6 +220,12 @@ func (f *fakeRuntime) IsAlive(_ context.Context, _ ports.RuntimeHandle) (bool, e
 func (f *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
 	f.interrupt = handle.ID
 	f.interrupts++
+	return nil
+}
+func (f *fakeRuntime) SendInput(_ context.Context, handle ports.RuntimeHandle, input string) error {
+	f.sentTo = handle.ID
+	f.sentInput = input
+	f.sentInputs = append(f.sentInputs, input)
 	return nil
 }
 func (f *fakeRuntime) SendMessage(_ context.Context, handle ports.RuntimeHandle, msg string) error {
@@ -498,6 +507,28 @@ func TestLauncherCancelCanSendReviewerMessage(t *testing.T) {
 	}
 	if len(rt.sentMsgs) != 1 || rt.sentMsgs[0] != "stop reviewing" {
 		t.Fatalf("sent messages = %#v, want cancel message", rt.sentMsgs)
+	}
+}
+
+func TestLauncherCancelCanSendReviewerInput(t *testing.T) {
+	reviewer := &fakeCancellableReviewer{mode: ports.ReviewCancelInput, input: "\x1b"}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+
+	if err := l.Cancel(context.Background(), "review-mer-1", domain.ReviewerOpenCode); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if !reviewer.cancelled {
+		t.Fatal("expected reviewer cancel hook to run")
+	}
+	if rt.interrupts != 0 {
+		t.Fatalf("interrupt count = %d, want 0", rt.interrupts)
+	}
+	if len(rt.sentMsgs) != 0 {
+		t.Fatalf("sent messages = %#v, want none", rt.sentMsgs)
+	}
+	if rt.sentTo != "review-mer-1" || len(rt.sentInputs) != 1 || rt.sentInputs[0] != "\x1b" {
+		t.Fatalf("sent input to %q inputs=%#v, want escape", rt.sentTo, rt.sentInputs)
 	}
 }
 

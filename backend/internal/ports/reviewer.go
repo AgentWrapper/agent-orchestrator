@@ -32,6 +32,9 @@ const (
 	// this for harnesses where Ctrl-C exits the TUI instead of cancelling only
 	// the active turn.
 	ReviewCancelMessage ReviewCancelMode = "message"
+	// ReviewCancelInput sends raw terminal input to the reviewer process without
+	// appending Enter. Use this for TUI keybindings such as Escape.
+	ReviewCancelInput ReviewCancelMode = "input"
 )
 
 // ReviewCancelSpec is the adapter-selected cancellation behavior for a running
@@ -40,6 +43,7 @@ type ReviewCancelSpec struct {
 	Mode       ReviewCancelMode
 	Interrupts int
 	Message    string
+	Input      string
 }
 
 // ReviewerCanceller is implemented by reviewer adapters that explicitly define

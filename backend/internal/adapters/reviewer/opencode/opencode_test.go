@@ -268,21 +268,16 @@ func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
 	}
 }
 
-func TestReviewCancelUsesMessageMode(t *testing.T) {
+func TestReviewCancelSendsEscapeInput(t *testing.T) {
 	spec, err := (&Reviewer{}).ReviewCancel(context.Background())
 	if err != nil {
 		t.Fatalf("ReviewCancel: %v", err)
 	}
-	if spec.Mode != ports.ReviewCancelMessage {
-		t.Fatalf("cancel mode = %q, want %q", spec.Mode, ports.ReviewCancelMessage)
+	if spec.Mode != ports.ReviewCancelInput {
+		t.Fatalf("cancel mode = %q, want %q", spec.Mode, ports.ReviewCancelInput)
 	}
-	if spec.Interrupts != 0 {
-		t.Fatalf("interrupts = %d, want 0", spec.Interrupts)
-	}
-	for _, want := range []string{"Stop the current review task", "Do not submit", "Wait for AO"} {
-		if !strings.Contains(spec.Message, want) {
-			t.Fatalf("cancel message %q missing %q", spec.Message, want)
-		}
+	if spec.Input != "\x1b" {
+		t.Fatalf("input = %q, want escape", spec.Input)
 	}
 }
 
