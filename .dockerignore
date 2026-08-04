@@ -15,4 +15,7 @@
 frontend
 docs
 test
+!test/
+!test/cli/
+!test/cli/install-check.sh
 output
