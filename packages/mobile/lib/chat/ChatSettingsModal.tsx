@@ -20,6 +20,7 @@ export function ChatSettingsModal({
 	models,
 	options,
 	disabled,
+	error,
 	onSettings,
 	onOption,
 }: {
@@ -29,6 +30,7 @@ export function ChatSettingsModal({
 	models: ChatModel[];
 	options: ChatConfigOption[];
 	disabled?: boolean;
+	error?: string;
 	onSettings(settings: TurnSettings): void;
 	onOption(id: string, value: { value: string } | { enabled: boolean }): void;
 }) {
@@ -47,6 +49,7 @@ export function ChatSettingsModal({
 					<Pressable accessibilityRole="button" accessibilityLabel="Close" hitSlop={10} onPress={onClose}><Feather name="x" size={20} color={t.textSecondary} /></Pressable>
 				</View>
 				<ScrollView contentContainerStyle={styles.content}>
+					{error ? <View accessibilityRole="alert" style={styles.error}><Feather name="alert-circle" size={14} color={t.red} /><Text style={styles.errorText}>{error}</Text></View> : null}
 					{snapshot.modelReroute ? <View style={styles.reroute}><Feather name="shuffle" size={14} color={t.amber} /><View style={{ flex: 1 }}><Text style={styles.rerouteTitle}>Currently answered by {snapshot.modelReroute.toModel}</Text><Text style={styles.rerouteCopy}>{snapshot.modelReroute.fromModel ? `${snapshot.modelReroute.fromModel} was requested. ` : ""}{snapshot.modelReroute.reason || "The provider selected a fallback model for this conversation."}</Text></View></View> : null}
 					{!usesProviderOptions && models.length ? <SettingsSection icon="cpu" title="Model">
 						{models.map((model) => <Choice key={model.id} label={model.displayName} hint={model.description || (model.default ? "Provider default" : undefined)} selected={model.id === selected?.id} disabled={disabled} onPress={() => onSettings({ ...snapshot.settings, model: model.id, reasoningEffort: undefined })} />)}
@@ -100,6 +103,8 @@ const makeStyles = (t: Theme) => StyleSheet.create({
 	title: { color: t.textPrimary, fontSize: 17, fontWeight: "700" },
 	subtitle: { color: t.textTertiary, fontSize: 11, marginTop: 2 },
 	content: { padding: 16, paddingBottom: 42, gap: 22 },
+	error: { flexDirection: "row", alignItems: "flex-start", gap: 8, borderRadius: 10, backgroundColor: t.tintRed, padding: 10 },
+	errorText: { flex: 1, color: t.red, fontSize: 11, lineHeight: 16 },
 	reroute: { flexDirection: "row", alignItems: "flex-start", gap: 9, borderRadius: 11, borderWidth: 1, borderColor: t.borderDefault, backgroundColor: t.tintAmber, padding: 11 },
 	rerouteTitle: { color: t.textPrimary, fontSize: 12, fontWeight: "700" },
 	rerouteCopy: { color: t.textSecondary, fontSize: 10, lineHeight: 14, marginTop: 2 },

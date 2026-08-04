@@ -359,15 +359,33 @@ export async function getSessions(cfg: ServerConfig, _projectId?: string): Promi
 // "no preview". We build the URL from our own base (httpBase honors the TLS
 // toggle) rather than the daemon's `previewUrl`, which hardcodes http:// + its
 // request host and would break over a TLS tunnel (e.g. tailscale serve).
-export async function getPreview(cfg: ServerConfig, id: string): Promise<{ entry: string; url: string } | null> {
+export async function getPreview(cfg: ServerConfig, id: string, preferredURL?: string): Promise<{ entry: string; url: string; authenticated: boolean } | null> {
 	const res = await req(cfg, `${API}/sessions/${encodeURIComponent(id)}/preview`);
 	const data = await res.json();
 	const entry = typeof data?.entry === "string" ? data.entry.trim() : "";
-	if (!entry) return null;
-	// Mirror the daemon's files route: /preview/files/<entry>, each segment escaped.
-	const escaped = entry.split("/").map(encodeURIComponent).join("/");
-	const url = `${httpBase(cfg)}${API}/sessions/${encodeURIComponent(id)}/preview/files/${escaped}`;
-	return { entry, url };
+	if (entry) {
+		// Mirror the daemon's files route: /preview/files/<entry>, each segment escaped.
+		const escaped = entry.split("/").map(encodeURIComponent).join("/");
+		const url = `${httpBase(cfg)}${API}/sessions/${encodeURIComponent(id)}/preview/files/${escaped}`;
+		return { entry, url, authenticated: true };
+	}
+	const external = mobileReachablePreviewURL(preferredURL, cfg.host);
+	return external ? { entry: external.hostname, url: external.href, authenticated: false } : null;
+}
+
+/** Rewrite host-loopback previews for the phone without ever forwarding AO auth. */
+export function mobileReachablePreviewURL(raw: string | undefined, aoHost: string): URL | undefined {
+	if (!raw) return undefined;
+	try {
+		const url = new URL(raw);
+		if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+		if (["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname)) {
+			url.hostname = aoHost.includes(":") && !aoHost.startsWith("[") ? `[${aoHost}]` : aoHost;
+		}
+		return url;
+	} catch {
+		return undefined;
+	}
 }
 
 // ---- Agent catalog ----------------------------------------------------------
@@ -550,6 +568,11 @@ export async function killSession(cfg: ServerConfig, id: string): Promise<void> 
 
 export async function restoreSession(cfg: ServerConfig, id: string): Promise<void> {
 	await req(cfg, `${API}/sessions/${encodeURIComponent(id)}/restore`, { method: "POST" });
+}
+
+/** Restart a stopped agent/controller without restoring a terminated AO session. */
+export async function resumeSessionAgent(cfg: ServerConfig, id: string): Promise<void> {
+	await req(cfg, `${API}/sessions/${encodeURIComponent(id)}/resume-agent`, { method: "POST" });
 }
 
 export async function sendMessage(cfg: ServerConfig, id: string, message: string): Promise<void> {

@@ -10,7 +10,13 @@ import { useTheme, useThemedStyles } from "../ThemeProvider";
 import { MicKey } from "../voice/MicKey";
 import { useVoiceInput } from "../voice/useVoiceInput";
 import type { ChatConfigOption, ChatImage, ChatResource, ChatSkill, ConversationSnapshot } from "./types";
-import { findComposerSuggestion, replaceComposerSuggestion, type ComposerSuggestion } from "./composerSuggestions";
+import {
+	findComposerSuggestion,
+	rankComposerFiles,
+	rankComposerSkills,
+	replaceComposerSuggestion,
+	type ComposerSuggestion,
+} from "./composerSuggestions";
 
 type Attachment =
 	| { id: string; kind: "image"; name: string; bytes: number; image: ChatImage }
@@ -52,6 +58,7 @@ export function ChatComposer({
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const [text, setText] = useState("");
+	const [cursor, setCursor] = useState(0);
 	const [attachments, setAttachments] = useState<Attachment[]>([]);
 	const [picker, setPicker] = useState<"skills" | "files" | undefined>();
 	const [query, setQuery] = useState("");
@@ -144,15 +151,22 @@ export function ChatComposer({
 	const providerModel = configOptions?.find((option) => option.category === "model" || option.id === "model" || option.id === "agent");
 	const providerModelLabel = providerModel?.type === "select" ? providerModel.choices.find((choice) => choice.value === providerModel.currentValue)?.name ?? providerModel.currentValue : undefined;
 	const selectedModel = snapshot.modelReroute?.toModel || providerModelLabel || snapshot.settings.model;
-	const changeText = (next: string) => {
-		setText(next);
-		const suggestion = findComposerSuggestion(next);
+	useEffect(() => {
+		const suggestion = findComposerSuggestion(text, cursor);
 		if (suggestion && (suggestion.kind === "skills" ? skills.length > 0 : filePaths.length > 0)) {
 			setTrigger(suggestion);
 			setPicker(suggestion.kind);
 			setQuery(suggestion.query);
+			return;
 		}
-	};
+		// Only auto-close a picker that came from a text trigger. A picker opened
+		// from the toolbar has no trigger and stays browsable.
+		if (trigger) {
+			setTrigger(undefined);
+			setPicker(undefined);
+			setQuery("");
+		}
+	}, [cursor, filePaths.length, skills.length, text, trigger]);
 	return (
 		<View style={styles.dock}>
 			{voice.state === "starting" || voice.state === "recording" ? <View style={styles.voice}><Feather name="mic" size={12} color={t.red} /><Text style={styles.voiceText}>{voice.partial || (voice.state === "starting" ? "Keep holding…" : "Listening…")}</Text></View> : null}
@@ -163,7 +177,8 @@ export function ChatComposer({
 					accessibilityLabel="Message the agent"
 					editable={!stopped}
 					value={text}
-					onChangeText={changeText}
+					onChangeText={setText}
+					onSelectionChange={(event) => setCursor(event.nativeEvent.selection.start)}
 					placeholder={stopped ? "Agent is stopped" : active ? (steerEligible ? "Agent is working — this goes into its running turn" : "Agent is working — this sends when it finishes") : skills.length ? "Ask the agent…  / for skills, @ for files" : "Ask the agent…  @ for files"}
 					placeholderTextColor={t.textFaint}
 					style={styles.input}
@@ -182,7 +197,17 @@ export function ChatComposer({
 					{active && !text.trim() ? <Pressable accessibilityRole="button" accessibilityLabel="Stop turn" onPress={onInterrupt} style={styles.stop}><Feather name="square" size={14} color={t.textPrimary} /></Pressable> : <Pressable accessibilityRole="button" accessibilityLabel={steerEligible ? "Steer turn" : active ? "Queue message" : "Send message"} accessibilityState={{ disabled: stopped || pending || submitting }} disabled={stopped || pending || submitting || (!text.trim() && attachments.length === 0)} onPress={() => void submit()} style={({ pressed }) => [styles.send, pressed && { opacity: 0.8 }, (stopped || pending || submitting || (!text.trim() && attachments.length === 0)) && { opacity: 0.35 }]}>{pending || submitting ? <ActivityIndicator size="small" color={t.onAccent} /> : <Feather name={steerEligible ? "corner-up-right" : "arrow-up"} size={17} color={t.onAccent} />}</Pressable>}
 				</View>
 			</View>
-			<SuggestionModal kind={picker} query={query} setQuery={setQuery} skills={skills} filePaths={filePaths} filePathsTruncated={filePathsTruncated} onClose={() => { setPicker(undefined); setTrigger(undefined); }} onPick={(value) => { setText((old) => trigger && trigger.kind === picker ? replaceComposerSuggestion(old, trigger, value) : `${old}${old && !/\s$/.test(old) ? " " : ""}${picker === "skills" ? `/${value}` : `@${value}`} `); setPicker(undefined); setTrigger(undefined); }} />
+			<SuggestionModal kind={picker} query={query} setQuery={setQuery} skills={skills} filePaths={filePaths} filePathsTruncated={filePathsTruncated} onClose={() => { setPicker(undefined); setTrigger(undefined); }} onPick={(value) => {
+				setText((old) => {
+					const next = trigger && trigger.kind === picker
+						? replaceComposerSuggestion(old, trigger, value)
+						: `${old}${old && !/\s$/.test(old) ? " " : ""}${picker === "skills" ? `/${value}` : (/\s/.test(value) ? `"${value}"` : value)} `;
+					setCursor(next.length);
+					return next;
+				});
+				setPicker(undefined);
+				setTrigger(undefined);
+			}} />
 		</View>
 	);
 }
@@ -206,9 +231,8 @@ function SuggestionModal({ kind, query, setQuery, skills, filePaths, filePathsTr
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const choices = useMemo(() => {
-		const needle = query.trim().toLowerCase();
-		if (kind === "skills") return skills.filter((skill) => `${skill.name} ${skill.displayName} ${skill.description ?? ""}`.toLowerCase().includes(needle)).slice(0, 60).map((skill) => ({ value: skill.name, label: skill.displayName || skill.name, detail: skill.description || skill.inputHint, badge: skill.source }));
-		return filePaths.filter((path) => path.toLowerCase().includes(needle)).slice(0, 80).map((path) => ({ value: path, label: path.split("/").pop() || path, detail: path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : undefined, badge: undefined }));
+		if (kind === "skills") return rankComposerSkills(skills, query);
+		return rankComposerFiles(filePaths, query);
 	}, [kind, query, skills, filePaths]);
 	return <Modal visible={Boolean(kind)} transparent animationType="slide" onRequestClose={onClose}><Pressable style={styles.scrim} onPress={onClose} /><View style={styles.suggestionSheet}><View style={styles.suggestionHeader}><Text style={styles.suggestionTitle}>{kind === "skills" ? "Skills" : "Worktree files"}</Text><Pressable onPress={onClose} hitSlop={10}><Feather name="x" size={19} color={t.textSecondary} /></Pressable></View><TextInput autoFocus value={query} onChangeText={setQuery} placeholder={kind === "skills" ? "Find a skill" : "Find a file"} placeholderTextColor={t.textFaint} style={styles.search} />{kind === "files" && filePathsTruncated ? <Text style={styles.truncated}>Showing the daemon's capped path list. Narrow your search or type a path directly.</Text> : null}<ScrollView keyboardShouldPersistTaps="handled">{choices.map((choice) => <Pressable key={choice.value} onPress={() => onPick(choice.value)} style={styles.suggestionRow}><View style={{ flex: 1 }}><Text style={styles.suggestionLabel}>{choice.label}</Text>{choice.detail ? <Text numberOfLines={2} style={styles.suggestionDetail}>{choice.detail}</Text> : null}</View>{choice.badge ? <Text style={styles.badge}>{choice.badge}</Text> : null}</Pressable>)}{!choices.length ? <Text style={styles.none}>No matches</Text> : null}</ScrollView></View></Modal>;
 }

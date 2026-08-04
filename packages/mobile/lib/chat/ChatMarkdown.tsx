@@ -6,6 +6,7 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { haptics } from "../haptics";
 import type { Theme } from "../theme";
 import { useTheme, useThemedStyles } from "../ThemeProvider";
+import { HighlightedCodeText } from "./HighlightedCodeText";
 import { parseBlocks } from "./markdownBlocks";
 
 /**
@@ -16,12 +17,12 @@ import { parseBlocks } from "./markdownBlocks";
  * inside every message. Unknown Markdown remains readable text; the renderer
  * never hides content because a provider used syntax it does not know.
  */
-export const ChatMarkdown = memo(function ChatMarkdown({ text }: { text: string }) {
+export const ChatMarkdown = memo(function ChatMarkdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
 	const styles = useThemedStyles(makeStyles);
 	return (
 		<View style={styles.root}>
 			{parseBlocks(text).map((block, index) => {
-				if (block.kind === "code") return <CodeBlock key={index} {...block} />;
+				if (block.kind === "code") return <CodeBlock key={index} {...block} streaming={streaming} />;
 				if (block.kind === "image") return <MarkdownImage key={index} alt={block.alt} url={block.url} />;
 				if (block.kind === "table") return <MarkdownTable key={index} headers={block.headers} rows={block.rows} />;
 				if (block.kind === "rule") return <View key={index} style={styles.rule} />;
@@ -75,7 +76,7 @@ function MarkdownTable({ headers, rows }: { headers: string[]; rows: string[][] 
 	return <ScrollView horizontal showsHorizontalScrollIndicator><View style={styles.table}><View style={[styles.tableRow, styles.tableHeader]}>{headers.map((cell, index) => <Text key={index} style={[styles.tableCell, styles.tableHeaderText]}>{cell}</Text>)}</View>{rows.map((row, rowIndex) => <View key={rowIndex} style={styles.tableRow}>{headers.map((_, cellIndex) => <Text key={cellIndex} style={styles.tableCell}>{row[cellIndex] ?? ""}</Text>)}</View>)}</View></ScrollView>;
 }
 
-function CodeBlock({ text, language }: { text: string; language?: string }) {
+function CodeBlock({ text, language, streaming }: { text: string; language?: string; streaming?: boolean }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const [copied, setCopied] = useState(false);
@@ -101,7 +102,7 @@ function CodeBlock({ text, language }: { text: string; language?: string }) {
 				</Pressable>
 			</View>
 			<ScrollView horizontal={!wrap} showsHorizontalScrollIndicator={!wrap} contentContainerStyle={wrap ? styles.codeWrap : undefined}>
-				<Text selectable style={[styles.codeText, wrap && styles.codeTextWrap]}>{text}</Text>
+				<HighlightedCodeText code={text} language={language} streaming={streaming} style={[styles.codeText, wrap && styles.codeTextWrap]} />
 			</ScrollView>
 		</View>
 	);

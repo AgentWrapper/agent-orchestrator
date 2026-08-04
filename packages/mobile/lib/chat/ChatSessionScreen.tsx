@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "reac
 import {
 	ActivityIndicator,
 	Alert,
+	FlatList,
 	KeyboardAvoidingView,
 	Modal,
 	Platform,
@@ -14,7 +15,7 @@ import {
 	TextInput,
 	View,
 } from "react-native";
-import type { DashboardSession, OrchestratorLink } from "../api";
+import { restoreSession, resumeSessionAgent, type DashboardSession, type OrchestratorLink } from "../api";
 import { haptics } from "../haptics";
 import { useApp } from "../store";
 import type { Theme } from "../theme";
@@ -23,6 +24,8 @@ import { getWorkspacePaths, openSessionShell } from "./api";
 import { ChatComposer } from "./ChatComposer";
 import { ChatSettingsModal } from "./ChatSettingsModal";
 import { ChatTimeline } from "./ChatTimeline";
+import { contextReadout, elapsedLabel, quotaWarning, resetLabel } from "./conversationChrome";
+import { conversationMarkers, type ConversationMarker } from "./timelineModel";
 import { brokenMcpServers, can } from "./types";
 import { useMobileConversation } from "./useConversation";
 
@@ -33,14 +36,17 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const styles = useThemedStyles(makeStyles);
 	const navigation = useNavigation();
 	const router = useRouter();
-	const { config, restore, setActiveProject } = useApp();
+	const { config, refresh: refreshBoard, setActiveProject } = useApp();
 	const conversation = useMobileConversation(config, session.id);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [menuOpen, setMenuOpen] = useState(false);
+	const [mapOpen, setMapOpen] = useState(false);
+	const [jumpToSequence, setJumpToSequence] = useState<number>();
 	const [filePaths, setFilePaths] = useState<string[]>([]);
 	const [filePathsTruncated, setFilePathsTruncated] = useState(false);
 	const [openingShell, setOpeningShell] = useState(false);
 	const [resuming, setResuming] = useState(false);
+	const terminated = "projectName" in session ? Boolean(session.isTerminal) : Boolean(session.isTerminated);
 
 	const title = conversation.snapshot?.title || sessionTitle(session);
 	useLayoutEffect(() => {
@@ -79,12 +85,15 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 		if (resuming) return;
 		setResuming(true);
 		try {
-			await restore(session.id);
+			if (!config) throw new Error("No AO server configured");
+			if (terminated) await restoreSession(config, session.id);
+			else await resumeSessionAgent(config, session.id);
+			await refreshBoard();
 			await conversation.refresh();
 		} catch (cause) {
 			Alert.alert("Could not resume agent", cause instanceof Error ? cause.message : String(cause));
 		} finally { setResuming(false); }
-	}, [conversation.refresh, restore, resuming, session.id]);
+	}, [config, conversation.refresh, refreshBoard, resuming, session.id, terminated]);
 
 	if (conversation.loading && !conversation.snapshot) return <Centered icon="message-square" title="Loading conversation…" spinning />;
 	if (conversation.unavailable) return <Unavailable message={conversation.unavailable.message} onShell={() => void openShell()} openingShell={openingShell} />;
@@ -92,22 +101,36 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 
 	const snapshot = conversation.snapshot;
 	const active = snapshot.turns.some((turn) => turn.state === "running" || turn.state === "queued");
+	const activeTurn = snapshot.turns.find((turn) => turn.state === "running") ?? snapshot.turns.find((turn) => turn.state === "queued");
 	const brokenServers = brokenMcpServers(snapshot);
 	const rolledBack = snapshot.turns.filter((turn) => turn.rolledBack).length;
+	const quota = quotaWarning(snapshot.rateLimits);
+	const markers = conversationMarkers(snapshot);
 
 	return (
 		<KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={Platform.OS === "ios" ? 86 : 0}>
-			<ChatMetaBar snapshot={snapshot} refreshing={conversation.refreshing} onRefresh={() => void conversation.refresh()} />
+			<ChatMetaBar
+				snapshot={snapshot}
+				refreshing={conversation.refreshing}
+				compacting={conversation.pendingActions.includes("compact")}
+				onRefresh={() => void conversation.refresh()}
+				onCompact={can(snapshot, "compaction") ? () => void conversation.compact().catch(() => {}) : undefined}
+				compactDisabled={active || snapshot.controller.state === "stopped" || conversation.actionPending}
+			/>
 			<ConversationBanners
 				snapshot={snapshot}
 				brokenServers={brokenServers}
 				resuming={resuming}
+				terminated={terminated}
+				mcpReloading={conversation.pendingActions.includes("mcp")}
+				mcpError={conversation.actionErrors.mcp}
 				turnInFlight={active}
 				onResume={() => void resume()}
 				onReload={() => void conversation.reloadMcp().catch(() => {})}
 				onOpenShell={() => void openShell()}
 			/>
 			{conversation.error ? <InlineBanner tone="danger" icon="wifi-off" text={conversation.error} action="Retry" onPress={() => void conversation.refresh()} /> : null}
+			{quota ? <InlineBanner tone={quota.severity === "critical" ? "danger" : "warning"} icon="alert-triangle" text={`${quota.percent}% of the${quota.planLabel ? ` ${quota.planLabel}` : ""} account quota is used${resetLabel(quota.resetsInSeconds) ? `; resets in ${resetLabel(quota.resetsInSeconds)}` : ""}. ${quota.severity === "critical" ? "Turns may start failing for reasons unrelated to your request." : "Turns will stop when the limit is reached."}`} action="Details" onPress={() => setMenuOpen(true)} /> : null}
 			{conversation.actionError ? <InlineBanner tone="danger" icon="alert-circle" text={conversation.actionError} /> : null}
 			{rolledBack ? <InlineBanner tone="muted" icon="rotate-ccw" text={`${rolledBack} ${rolledBack === 1 ? "turn was" : "turns were"} rolled back. The agent no longer remembers ${rolledBack === 1 ? "it" : "them"}.`} /> : null}
 			{conversation.pendingSends.map((pendingSend) => pendingSend.state === "failed" ? <InlineBanner key={pendingSend.id} tone="danger" icon="send" text={`Message not sent: ${pendingSend.error || "Delivery failed"}`} action="Retry" secondary="Discard" onPress={() => void conversation.retrySend(pendingSend.id).catch(() => {})} onSecondary={() => conversation.discardSend(pendingSend.id)} /> : null)}
@@ -118,9 +141,11 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				actionPending={conversation.actionPending}
 				onDecide={(requestId, decisionId) => void conversation.resolveApproval(requestId, decisionId).catch(() => {})}
 				onResolveInput={(requestId, action, content) => void conversation.resolveInput(requestId, action, content).catch(() => {})}
-				onRollback={(turnId) => void conversation.rollback(turnId).catch(() => {})}
+				onRollback={conversation.rollback}
+				jumpToSequence={jumpToSequence}
+				onJumpHandled={() => setJumpToSequence(undefined)}
 			/>
-			{active ? <LiveTurnBar snapshot={snapshot} stopping={conversation.actionPending} onInterrupt={() => void conversation.interrupt().catch(() => {})} /> : null}
+			{activeTurn ? <LiveTurnBar snapshot={snapshot} startedAt={activeTurn.startedAt ?? activeTurn.requestedAt} stopping={conversation.pendingActions.includes("interrupt")} onInterrupt={() => void conversation.interrupt().catch(() => {})} /> : null}
 			<ChatComposer
 				sessionId={session.id}
 				snapshot={snapshot}
@@ -142,6 +167,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				models={conversation.models}
 				options={conversation.configOptions}
 				disabled={snapshot.controller.state === "stopped" || conversation.actionPending}
+				error={conversation.actionErrors.settings ?? conversation.actionErrors.config}
 				onSettings={(settings) => void conversation.chooseSettings(settings).catch(() => {})}
 				onOption={(id, value) => void conversation.setConfigOption(id, value).catch(() => {})}
 			/>
@@ -150,47 +176,60 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				onClose={() => setMenuOpen(false)}
 				snapshot={snapshot}
 				openingShell={openingShell}
+				compacting={conversation.pendingActions.includes("compact")}
+				mcpReloading={conversation.pendingActions.includes("mcp")}
+				onMap={() => { setMenuOpen(false); setMapOpen(true); }}
 				onOpenShell={() => void openShell()}
-				onPreview={() => { setMenuOpen(false); router.push({ pathname: "/preview/[id]", params: { id: session.id, title } }); }}
+				onPreview={() => { setMenuOpen(false); router.push({ pathname: "/preview/[id]", params: { id: session.id, title, previewUrl: "previewUrl" in session ? session.previewUrl ?? undefined : undefined } }); }}
 				onPullRequests={() => { setMenuOpen(false); setActiveProject(session.projectId); router.push("/(tabs)/prs"); }}
 				onSettings={() => { setMenuOpen(false); setSettingsOpen(true); }}
 				onCompact={() => { setMenuOpen(false); void conversation.compact().catch(() => {}); }}
 				onReload={() => { setMenuOpen(false); void conversation.reloadMcp().catch(() => {}); }}
 				onRename={(next) => { setMenuOpen(false); void conversation.rename(next).catch(() => {}); }}
 			/>
+			<ConversationMap
+				visible={mapOpen}
+				markers={markers}
+				onClose={() => setMapOpen(false)}
+				onSelect={(sequence) => { setMapOpen(false); setJumpToSequence(sequence); }}
+			/>
 		</KeyboardAvoidingView>
 	);
 }
 
-function ChatMetaBar({ snapshot, refreshing, onRefresh }: { snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; refreshing: boolean; onRefresh(): void }) {
+function ChatMetaBar({ snapshot, refreshing, compacting, onRefresh, onCompact, compactDisabled }: { snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; refreshing: boolean; compacting: boolean; onRefresh(): void; onCompact?: () => void; compactDisabled?: boolean }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const state = snapshot.controller.state;
-	const used = snapshot.usage?.contextUsed ?? 0;
-	const window = snapshot.usage?.contextWindow ?? 0;
-	const percent = window > 0 ? Math.min(100, Math.round((used / window) * 100)) : undefined;
+	const context = contextReadout(snapshot.usage);
 	const stateColor = state === "busy" ? t.orange : state === "ready" ? t.green : state === "stopped" ? t.red : t.amber;
-	return <View style={styles.meta}><View style={[styles.dot, { backgroundColor: stateColor }]} /><Text style={styles.harness}>{snapshot.harness || "agent"}</Text><Text style={styles.mode}>CHAT</Text><View style={{ flex: 1 }} />{percent !== undefined ? <View accessibilityLabel={`${percent}% of context used`} style={styles.usage}><View style={[styles.usageFill, { width: `${percent}%` }]} /></View> : null}{percent !== undefined ? <Text style={styles.percent}>{percent}%</Text> : snapshot.usage ? <Text style={styles.percent}>{formatTokens(snapshot.usage.totalTokens)} tokens</Text> : null}<Pressable accessibilityRole="button" accessibilityLabel="Refresh conversation" hitSlop={9} onPress={onRefresh}><Feather name="refresh-cw" size={13} color={t.textTertiary} style={refreshing ? { opacity: 0.4 } : undefined} /></Pressable></View>;
+	const contextColor = context?.severity === "critical" ? t.red : context?.severity === "warn" ? t.amber : t.blue;
+	const contextFillWidth = context?.percent !== undefined ? `${context.fillPercent ?? context.percent}%` as const : "0%";
+	return <View style={styles.meta}><View style={[styles.dot, { backgroundColor: stateColor }]} /><Text style={styles.harness}>{snapshot.harness || "agent"}</Text><Text style={styles.mode}>CHAT</Text><View style={{ flex: 1 }} />{context?.percent !== undefined ? <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: context.percent }} accessibilityLabel="Context window used" style={styles.usage}><View style={[styles.usageFill, { width: contextFillWidth, backgroundColor: contextColor }]} /></View> : null}{context?.percent !== undefined ? <Text style={[styles.percent, { color: contextColor }]}>{context.percent}%</Text> : context ? <Text style={styles.percent}>{formatTokens(context.tokens)} tokens</Text> : null}{onCompact ? <Pressable accessibilityRole="button" accessibilityLabel={compacting ? "Compacting conversation history" : compactDisabled ? "Compact after the current turn finishes" : "Compact conversation history"} accessibilityState={{ disabled: compactDisabled, busy: compacting }} disabled={compactDisabled} hitSlop={9} onPress={onCompact}>{compacting ? <ActivityIndicator size="small" color={t.textTertiary} /> : <Feather name="archive" size={13} color={compactDisabled ? t.textFaint : t.textTertiary} />}</Pressable> : null}<Pressable accessibilityRole="button" accessibilityLabel="Refresh conversation" hitSlop={9} onPress={onRefresh}><Feather name="refresh-cw" size={13} color={t.textTertiary} style={refreshing ? { opacity: 0.4 } : undefined} /></Pressable></View>;
 }
 
-function ConversationBanners({ snapshot, brokenServers, resuming, turnInFlight, onResume, onReload, onOpenShell }: { snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; brokenServers: ReturnType<typeof brokenMcpServers>; resuming: boolean; turnInFlight: boolean; onResume(): void; onReload(): void; onOpenShell(): void }) {
+function ConversationBanners({ snapshot, brokenServers, resuming, terminated, mcpReloading, mcpError, turnInFlight, onResume, onReload, onOpenShell }: { snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; brokenServers: ReturnType<typeof brokenMcpServers>; resuming: boolean; terminated: boolean; mcpReloading: boolean; mcpError?: string; turnInFlight: boolean; onResume(): void; onReload(): void; onOpenShell(): void }) {
 	const thread = snapshot.threadState;
 	const signIn = signInCommand(snapshot.harness);
 	return <>
 		{snapshot.account?.reauthRequiredAt ? <InlineBanner tone="danger" icon="key" text={`${snapshot.account.reauthReason || "The provider rejected this session's credentials."} ${signIn ? `Run “${signIn}” on the AO host, then try again.` : "Sign in with the agent's CLI on the AO host, then try again."} AO holds no credentials of its own.`} action="Open shell" onPress={onOpenShell} /> : null}
-		{snapshot.controller.state === "stopped" ? <InlineBanner tone="danger" icon="power" text={snapshot.controller.error || "The agent controller is stopped."} action={can(snapshot, "resume") ? (resuming ? "Resuming…" : "Resume") : "Open shell"} secondary={can(snapshot, "resume") ? "Shell" : undefined} onPress={can(snapshot, "resume") ? (resuming ? undefined : onResume) : onOpenShell} onSecondary={can(snapshot, "resume") ? onOpenShell : undefined} /> : null}
+		{snapshot.controller.state === "stopped" ? <InlineBanner tone="danger" icon="power" text={terminated ? "This AO session is terminated. Its conversation and worktree are preserved." : snapshot.controller.error || "The agent controller is stopped."} action={terminated ? (resuming ? "Restoring…" : "Restore session") : can(snapshot, "resume") ? (resuming ? "Resuming…" : "Resume agent") : "Open shell"} secondary={terminated || can(snapshot, "resume") ? "Shell" : undefined} onPress={terminated || can(snapshot, "resume") ? (resuming ? undefined : onResume) : onOpenShell} onSecondary={terminated || can(snapshot, "resume") ? onOpenShell : undefined} /> : null}
 		{snapshot.controller.state === "recovering" || snapshot.controller.state === "connecting" ? <InlineBanner tone="warning" icon="loader" text={snapshot.controller.state === "recovering" ? "Reconnecting to the agent…" : "Starting the agent controller…"} /> : null}
 		{thread?.status === "system_error" ? <InlineBanner tone="danger" icon="alert-triangle" text={`The provider reports an internal fault in this thread; AO's connection may still be healthy. The conversation and worktree are kept.${thread.waitingOn?.length ? ` Waiting on: ${thread.waitingOn.join(", ")}.` : ""}`} /> : thread?.status === "closed" ? <InlineBanner tone="warning" icon="alert-triangle" text={`The provider closed this thread. AO kept its history, but the agent no longer holds it.${thread.waitingOn?.length ? ` Waiting on: ${thread.waitingOn.join(", ")}.` : ""}`} /> : null}
-		{brokenServers.length ? <InlineBanner tone="warning" icon="tool" text={`${brokenServers.map((server) => `${server.name}${server.failureReason || server.error ? ` (${server.failureReason || server.error})` : ""}`).join(", ")} ${brokenServers.length === 1 ? "is" : "are"} unavailable.`} action={can(snapshot, "mcp_reload") && !turnInFlight ? "Reload" : undefined} onPress={onReload} /> : null}
+		{brokenServers.length ? <InlineBanner tone="warning" icon="tool" text={`${brokenServers.map((server) => `${server.name}${server.failureReason || server.error ? ` (${server.failureReason || server.error})` : ""}`).join(", ")} did not start. The agent has none of their tools and will not say so—it works around them silently.${mcpError ? ` Reload failed: ${mcpError}` : ""}`} action={can(snapshot, "mcp_reload") && !turnInFlight ? (mcpReloading ? "Reloading…" : "Reload") : undefined} onPress={mcpReloading ? undefined : onReload} /> : null}
 	</>;
 }
 
-function LiveTurnBar({ snapshot, stopping, onInterrupt }: { snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; stopping: boolean; onInterrupt(): void }) {
+function LiveTurnBar({ snapshot, startedAt, stopping, onInterrupt }: { snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; startedAt?: string; stopping: boolean; onInterrupt(): void }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
+	const [now, setNow] = useState(() => Date.now());
+	useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1_000); return () => clearInterval(timer); }, []);
 	const queued = snapshot.turns.filter((turn) => turn.state === "queued").length;
 	const blocked = snapshot.items.some((item) => item.kind === "activity" && (item.activityKind === "approval" || item.activityKind === "user_input") && item.status === "pending");
-	return <View style={styles.live}><ActivityIndicator size="small" color={blocked ? t.amber : t.orange} /><Text style={styles.liveText}>{blocked ? "Waiting for your input" : "Agent is working"}{queued ? ` · ${queued} queued` : ""}</Text><Pressable accessibilityRole="button" accessibilityLabel="Stop turn" disabled={stopping} onPress={onInterrupt} style={styles.stopTurn}><Feather name="square" size={11} color={t.textPrimary} /><Text style={styles.stopTurnText}>{stopping ? "Stopping…" : "Stop turn"}</Text></Pressable></View>;
+	const elapsed = elapsedLabel(startedAt, now);
+	const stopLabel = queued ? "Stop and clear queue" : "Stop turn";
+	return <View style={styles.live}><ActivityIndicator size="small" color={blocked ? t.amber : t.orange} /><Text style={styles.liveText}>{blocked ? "Waiting for your input" : "Agent is working"}{elapsed ? ` · ${elapsed}` : ""}{queued ? ` · ${queued} queued` : ""}</Text><Pressable accessibilityRole="button" accessibilityLabel={stopLabel} accessibilityState={{ busy: stopping }} disabled={stopping} onPress={onInterrupt} style={styles.stopTurn}><Feather name="square" size={11} color={t.textPrimary} /><Text style={styles.stopTurnText}>{stopping ? "Stopping…" : stopLabel}</Text></Pressable></View>;
 }
 
 function InlineBanner({ tone, icon, text, action, secondary, onPress, onSecondary }: { tone: "warning" | "danger" | "muted"; icon: keyof typeof Feather.glyphMap; text: string; action?: string; secondary?: string; onPress?(): void; onSecondary?(): void }) {
@@ -201,7 +240,7 @@ function InlineBanner({ tone, icon, text, action, secondary, onPress, onSecondar
 	return <View style={[styles.banner, { backgroundColor: fill }]}><Feather name={icon} size={13} color={color} /><Text style={styles.bannerText}>{text}</Text>{secondary ? <Pressable hitSlop={7} onPress={onSecondary}><Text style={styles.bannerSecondary}>{secondary}</Text></Pressable> : null}{action ? <Pressable hitSlop={7} onPress={onPress}><Text style={[styles.bannerAction, { color }]}>{action}</Text></Pressable> : null}</View>;
 }
 
-function ConversationMenu({ visible, onClose, snapshot, openingShell, onOpenShell, onPreview, onPullRequests, onSettings, onCompact, onReload, onRename }: { visible: boolean; onClose(): void; snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; openingShell: boolean; onOpenShell(): void; onPreview(): void; onPullRequests(): void; onSettings(): void; onCompact(): void; onReload(): void; onRename(title: string): void }) {
+function ConversationMenu({ visible, onClose, snapshot, openingShell, compacting, mcpReloading, onMap, onOpenShell, onPreview, onPullRequests, onSettings, onCompact, onReload, onRename }: { visible: boolean; onClose(): void; snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; openingShell: boolean; compacting: boolean; mcpReloading: boolean; onMap(): void; onOpenShell(): void; onPreview(): void; onPullRequests(): void; onSettings(): void; onCompact(): void; onReload(): void; onRename(title: string): void }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const [renaming, setRenaming] = useState(false);
@@ -211,17 +250,37 @@ function ConversationMenu({ visible, onClose, snapshot, openingShell, onOpenShel
 	return <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}><Pressable style={styles.menuScrim} onPress={onClose} /><View style={styles.menu}>
 		{renaming ? <View style={styles.rename}><Text style={styles.menuHeading}>Rename conversation</Text><TextInput autoFocus value={title} onChangeText={setTitle} placeholder="Conversation title" placeholderTextColor={t.textFaint} style={styles.renameInput} /><View style={styles.menuButtons}><Pressable onPress={() => setRenaming(false)}><Text style={styles.menuCancel}>Cancel</Text></Pressable><Pressable disabled={!title.trim()} onPress={() => onRename(title.trim())}><Text style={styles.menuSave}>Save</Text></Pressable></View></View> : <ScrollView>
 			<Text style={styles.menuHeading}>Conversation</Text>
+			<MenuRow icon="list" label="Conversation map" hint="Jump to any request and response" onPress={onMap} />
 			<MenuRow icon="terminal" label={openingShell ? "Opening shell…" : "Open worktree shell"} hint="A plain terminal in this session's worktree" disabled={openingShell} onPress={onOpenShell} />
 			<MenuRow icon="globe" label="Open preview" hint="View a page or document generated in this worktree" onPress={onPreview} />
 			<MenuRow icon="git-pull-request" label="Pull requests" hint="Review CI, feedback and merge state" onPress={onPullRequests} />
 			<MenuRow icon="sliders" label="Turn settings" hint="Model, effort, approvals and provider options" onPress={onSettings} />
 			{can(snapshot, "rename") ? <MenuRow icon="edit-2" label="Rename" onPress={() => setRenaming(true)} /> : null}
-			{can(snapshot, "compaction") ? <MenuRow icon="archive" label="Compact history" hint={turnInFlight ? "Available after the current turn finishes" : snapshot.compactedAt ? `Last compacted ${new Date(snapshot.compactedAt).toLocaleString()}` : "Summarize older context without changing files"} disabled={turnInFlight} onPress={onCompact} /> : null}
-			{can(snapshot, "mcp_reload") ? <MenuRow icon="refresh-cw" label="Reload MCP servers" hint={turnInFlight ? "Available after the current turn finishes" : undefined} disabled={turnInFlight} onPress={onReload} /> : null}
+			{can(snapshot, "compaction") ? <MenuRow icon="archive" label={compacting ? "Compacting history…" : "Compact history"} hint={turnInFlight ? "Available after the current turn finishes" : snapshot.compactedAt ? `Last compacted ${new Date(snapshot.compactedAt).toLocaleString()}` : "Summarize older context without changing files"} disabled={turnInFlight || compacting} onPress={onCompact} /> : null}
+			{can(snapshot, "mcp_reload") ? <MenuRow icon="refresh-cw" label={mcpReloading ? "Reloading MCP servers…" : "Reload MCP servers"} hint={turnInFlight ? "Available after the current turn finishes" : undefined} disabled={turnInFlight || mcpReloading} onPress={onReload} /> : null}
 			{snapshot.usage ? <View style={styles.rateBox}><Text style={styles.rateTitle}>Context and usage</Text><Text style={styles.rateText}>{formatTokens(snapshot.usage.contextUsed)} / {formatTokens(snapshot.usage.contextWindow)} context · {formatTokens(snapshot.usage.inputTokens)} in · {formatTokens(snapshot.usage.outputTokens)} out{snapshot.usage.cachedTokens ? ` · ${formatTokens(snapshot.usage.cachedTokens)} cached` : ""}{snapshot.usage.cost != null ? ` · ${snapshot.usage.currency || "$"}${snapshot.usage.cost.toFixed(4)}` : ""}</Text></View> : null}
 			{snapshot.rateLimits ? <View style={styles.rateBox}><Text style={styles.rateTitle}>{snapshot.rateLimits.planLabel || "Rate limits"}</Text><Text style={styles.rateText}>Primary: {Math.round(snapshot.rateLimits.primaryUsedPercent)}% used{formatReset(snapshot.rateLimits.primaryResetsInSeconds)}{snapshot.rateLimits.secondaryUsedPercent >= 0 ? ` · Secondary: ${Math.round(snapshot.rateLimits.secondaryUsedPercent)}%${formatReset(snapshot.rateLimits.secondaryResetsInSeconds)}` : ""}</Text></View> : null}
 		</ScrollView>}
 	</View></Modal>;
+}
+
+function ConversationMap({ visible, markers, onClose, onSelect }: { visible: boolean; markers: ConversationMarker[]; onClose(): void; onSelect(sequence: number): void }) {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
+	return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+		<Pressable accessibilityLabel="Close conversation map" style={styles.menuScrim} onPress={onClose} />
+		<View style={styles.mapSheet}>
+			<View style={styles.mapHeader}><View style={{ flex: 1 }}><Text style={styles.mapTitle}>Conversation map</Text><Text style={styles.mapSubtitle}>{markers.length} {markers.length === 1 ? "exchange" : "exchanges"}</Text></View><Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={onClose} hitSlop={10}><Feather name="x" size={19} color={t.textSecondary} /></Pressable></View>
+			<FlatList
+				data={markers}
+				keyExtractor={(marker) => marker.key}
+				initialNumToRender={20}
+				windowSize={7}
+				ListEmptyComponent={<Text style={styles.mapEmpty}>No conversation entries yet.</Text>}
+				renderItem={({ item: marker, index }) => <Pressable accessibilityRole="button" accessibilityLabel={`Jump to ${marker.title}`} onPress={() => onSelect(marker.sequence)} style={({ pressed }) => [styles.mapRow, pressed && { backgroundColor: t.bgSubtle }]}><View style={styles.mapRail}><View style={[styles.mapDot, marker.state === "failed" && { backgroundColor: t.red }, marker.state === "running" && { backgroundColor: t.orange }]} />{index < markers.length - 1 ? <View style={styles.mapLine} /> : null}</View><View style={{ flex: 1, paddingBottom: 13 }}><View style={styles.mapTitleRow}><Text numberOfLines={2} style={styles.mapRowTitle}>{marker.title}</Text>{marker.state ? <Text style={styles.mapState}>{marker.state}</Text> : null}</View>{marker.detail ? <Text numberOfLines={3} style={styles.mapDetail}>{marker.detail}</Text> : null}</View></Pressable>}
+			/>
+		</View>
+	</Modal>;
 }
 
 function MenuRow({ icon, label, hint, disabled, onPress }: { icon: keyof typeof Feather.glyphMap; label: string; hint?: string; disabled?: boolean; onPress(): void }) { const t = useTheme(); const styles = useThemedStyles(makeStyles); return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={() => { haptics.tap(); onPress(); }} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: t.bgSubtle }, disabled && { opacity: 0.45 }]}><Feather name={icon} size={16} color={t.textTertiary} /><View style={{ flex: 1 }}><Text style={styles.menuLabel}>{label}</Text>{hint ? <Text style={styles.menuHint}>{hint}</Text> : null}</View><Feather name="chevron-right" size={15} color={t.textFaint} /></Pressable>; }
@@ -271,4 +330,17 @@ const makeStyles = (t: Theme) => StyleSheet.create({
 	menuButtons: { flexDirection: "row", justifyContent: "flex-end", gap: 18, paddingTop: 3 },
 	menuCancel: { color: t.textTertiary, fontSize: 12, fontWeight: "600" },
 	menuSave: { color: t.blue, fontSize: 12, fontWeight: "700" },
+	mapSheet: { position: "absolute", left: 0, right: 0, bottom: 0, height: "78%", borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: t.bgSurface, borderWidth: 1, borderColor: t.borderSubtle, overflow: "hidden" },
+	mapHeader: { minHeight: 68, flexDirection: "row", alignItems: "center", paddingHorizontal: 18, borderBottomWidth: 1, borderBottomColor: t.borderSubtle },
+	mapTitle: { color: t.textPrimary, fontSize: 17, fontWeight: "700" },
+	mapSubtitle: { color: t.textTertiary, fontSize: 10, marginTop: 2 },
+	mapEmpty: { color: t.textTertiary, fontSize: 13, textAlign: "center", paddingVertical: 44 },
+	mapRow: { minHeight: 66, flexDirection: "row", paddingHorizontal: 15, paddingTop: 12 },
+	mapRail: { width: 20, alignItems: "center" },
+	mapDot: { width: 7, height: 7, borderRadius: 4, marginTop: 5, backgroundColor: t.blue },
+	mapLine: { width: 1, flex: 1, backgroundColor: t.borderSubtle, marginTop: 4 },
+	mapTitleRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+	mapRowTitle: { flex: 1, color: t.textPrimary, fontSize: 13, lineHeight: 18, fontWeight: "600" },
+	mapState: { color: t.textFaint, fontSize: 8, textTransform: "uppercase", letterSpacing: 0.6, paddingTop: 2 },
+	mapDetail: { color: t.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 4 },
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeConversationPages, type ConversationPage } from "./snapshot";
+import { discardHistoricalPages, mergeConversationPages, type ConversationPage } from "./snapshot";
 
 function page(overrides: Partial<ConversationPage> = {}): ConversationPage {
 	return {
@@ -34,5 +34,11 @@ describe("mobile conversation pagination", () => {
 		const live = { ...historical, revision: 2, text: "hello", streaming: false };
 		const merged = mergeConversationPages([page({ items: [live] }), page({ items: [historical] })]);
 		expect(merged?.items).toEqual([live]);
+	});
+
+	it("drops stale historical rows before a rollback projection is reloaded", () => {
+		const live = page({ oldestSequence: 3, hasMoreBefore: true });
+		const historical = page({ oldestSequence: 1, hasMoreBefore: false });
+		expect(discardHistoricalPages([live, historical])).toEqual([live]);
 	});
 });

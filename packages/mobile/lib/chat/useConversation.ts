@@ -24,6 +24,8 @@ import {
 	type ConversationPage,
 } from "./api";
 import type { ChatConfigOption, ChatImage, ChatModel, ChatResource, ChatSkill, ConversationSnapshot, TurnSettings } from "./types";
+import { discardHistoricalPages } from "./snapshot";
+import { conversationActionError } from "./conversationErrors";
 
 const REFRESH_DEBOUNCE_MS = 120;
 const RECONNECT_MIN_MS = 1_000;
@@ -38,6 +40,18 @@ export type PendingSend = {
 	resources?: ChatResource[];
 };
 
+export type ConversationAction =
+	| "steer"
+	| "interrupt"
+	| "approval"
+	| "input"
+	| "compact"
+	| "rollback"
+	| "settings"
+	| "config"
+	| "mcp"
+	| "rename";
+
 export type MobileConversation = {
 	snapshot?: ConversationSnapshot;
 	loading: boolean;
@@ -50,7 +64,9 @@ export type MobileConversation = {
 	skills: ChatSkill[];
 	pendingSends: PendingSend[];
 	actionPending: boolean;
+	pendingActions: readonly ConversationAction[];
 	actionError?: string;
+	actionErrors: Partial<Record<ConversationAction, string>>;
 	refresh(): Promise<void>;
 	loadOlder(): Promise<void>;
 	send(text: string, attachments?: ChatImage[], resources?: ChatResource[]): Promise<void>;
@@ -82,8 +98,9 @@ export function useMobileConversation(
 	const [configOptions, setConfigOptions] = useState<ChatConfigOption[]>([]);
 	const [skills, setSkills] = useState<ChatSkill[]>([]);
 	const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
-	const [actionPending, setActionPending] = useState(false);
+	const [pendingActions, setPendingActions] = useState<ConversationAction[]>([]);
 	const [actionError, setActionError] = useState<string>();
+	const [actionErrors, setActionErrors] = useState<Partial<Record<ConversationAction, string>>>({});
 	const mounted = useRef(true);
 	const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -128,7 +145,7 @@ export function useMobileConversation(
 			const older = await getConversationPage(cfg, sessionId, snapshot.oldestSequence);
 			if (mounted.current) setPages((old) => [...old, older]);
 		} catch (cause) {
-			if (mounted.current) setActionError(errorMessage(cause));
+			if (mounted.current) setActionError(conversationActionError(cause));
 		} finally {
 			if (mounted.current) setLoadingOlder(false);
 		}
@@ -217,19 +234,22 @@ export function useMobileConversation(
 	}, [refresh]);
 
 	const runAction = useCallback(
-		async <T,>(action: () => Promise<T>): Promise<T> => {
-			setActionPending(true);
+		async <T,>(kind: ConversationAction, action: () => Promise<T>, resetHistoricalPages = false): Promise<T> => {
+			setPendingActions((old) => old.includes(kind) ? old : [...old, kind]);
 			setActionError(undefined);
+			setActionErrors((old) => ({ ...old, [kind]: undefined }));
 			try {
 				const result = await action();
+				if (resetHistoricalPages) setPages(discardHistoricalPages);
 				await refresh();
 				return result;
 			} catch (cause) {
-				const message = errorMessage(cause);
+				const message = conversationActionError(cause);
 				setActionError(message);
-				throw cause;
+				setActionErrors((old) => ({ ...old, [kind]: message }));
+				throw new Error(message);
 			} finally {
-				setActionPending(false);
+				setPendingActions((old) => old.filter((candidate) => candidate !== kind));
 			}
 		},
 		[refresh],
@@ -249,8 +269,9 @@ export function useMobileConversation(
 				setPendingSends((old) => old.filter((item) => item.id !== pending.id));
 				await refresh();
 			} catch (cause) {
-				setPendingSends((old) => upsertPending(old, { ...pending, state: "failed", error: errorMessage(cause) }));
-				throw cause;
+				const message = conversationActionError(cause);
+				setPendingSends((old) => upsertPending(old, { ...pending, state: "failed", error: message }));
+				throw new Error(message);
 			}
 		},
 		[cfg, sessionId, refresh],
@@ -290,29 +311,31 @@ export function useMobileConversation(
 		configOptions,
 		skills,
 		pendingSends,
-		actionPending,
+		actionPending: pendingActions.length > 0,
+		pendingActions,
 		actionError,
+		actionErrors,
 		refresh,
 		loadOlder,
 		send,
 		retrySend,
 		discardSend: (id) => setPendingSends((old) => old.filter((item) => item.id !== id)),
-		steer: (text) => runAction(() => requireConfig(cfg, (c) => steerConversation(c, sessionId, text, clientMessageId()))),
-		interrupt: () => runAction(() => requireConfig(cfg, (c) => interruptConversation(c, sessionId))),
+		steer: (text) => runAction("steer", () => requireConfig(cfg, (c) => steerConversation(c, sessionId, text, clientMessageId()))),
+		interrupt: () => runAction("interrupt", () => requireConfig(cfg, (c) => interruptConversation(c, sessionId))),
 		resolveApproval: (requestId, decisionId) =>
-			runAction(() => requireConfig(cfg, (c) => resolveApproval(c, sessionId, requestId, decisionId))),
+			runAction("approval", () => requireConfig(cfg, (c) => resolveApproval(c, sessionId, requestId, decisionId))),
 		resolveInput: (requestId, action, content) =>
-			runAction(() => requireConfig(cfg, (c) => resolveInput(c, sessionId, requestId, action, content))),
-		compact: () => runAction(() => requireConfig(cfg, (c) => compactConversation(c, sessionId))),
-		rollback: (turnId) => runAction(() => requireConfig(cfg, (c) => rollbackConversation(c, sessionId, turnId))),
-		chooseSettings: (settings) => runAction(() => requireConfig(cfg, (c) => setConversationSettings(c, sessionId, settings))),
+			runAction("input", () => requireConfig(cfg, (c) => resolveInput(c, sessionId, requestId, action, content))),
+		compact: () => runAction("compact", () => requireConfig(cfg, (c) => compactConversation(c, sessionId))),
+		rollback: (turnId) => runAction("rollback", () => requireConfig(cfg, (c) => rollbackConversation(c, sessionId, turnId)), true),
+		chooseSettings: (settings) => runAction("settings", () => requireConfig(cfg, (c) => setConversationSettings(c, sessionId, settings))),
 		setConfigOption: (optionId, value) =>
-			runAction(async () => {
+			runAction("config", async () => {
 				const options = await requireConfig(cfg, (c) => setConversationConfigOption(c, sessionId, optionId, value));
 				setConfigOptions(options);
 			}),
-		reloadMcp: () => runAction(() => requireConfig(cfg, (c) => reloadMcpServers(c, sessionId))),
-		rename: (title) => runAction(() => requireConfig(cfg, (c) => setConversationTitle(c, sessionId, title))),
+		reloadMcp: () => runAction("mcp", () => requireConfig(cfg, (c) => reloadMcpServers(c, sessionId))),
+		rename: (title) => runAction("rename", () => requireConfig(cfg, (c) => setConversationTitle(c, sessionId, title))),
 	};
 }
 
@@ -331,20 +354,6 @@ function upsertPending(items: PendingSend[], next: PendingSend): PendingSend[] {
 	return items.map((item, at) => (at === index ? next : item));
 }
 
-function errorMessage(error: unknown): string {
-	const code = typeof error === "object" && error !== null && "code" in error ? String(error.code ?? "") : "";
-	switch (code) {
-		case "CHAT_NO_ACTIVE_TURN": return "The turn finished before this guidance landed. Queue it as a new message instead.";
-		case "CHAT_TURN_NOT_STEERABLE": return `${error instanceof Error ? error.message : "This turn cannot be steered right now."} Try again when it finishes, or queue a new message.`;
-		case "CHAT_STEER_UNSUPPORTED": return "This agent cannot steer a running turn. Queue the message for next instead.";
-		case "CHAT_STEER_TEXT_REQUIRED": return "Type something to steer with.";
-		case "CHAT_COMPACTION_BUSY": return "Stop the current turn before compacting history.";
-		case "CHAT_COMPACTION_UNSUPPORTED": return "This agent cannot compact its history.";
-		case "CHAT_MCP_RELOAD_UNSUPPORTED": return "This agent cannot reload its MCP servers.";
-		default: return error instanceof Error ? error.message : String(error);
-	}
-}
-
 function classifyConversationError(error: unknown): { permanent: boolean; code?: string; message: string } {
 	const code = typeof error === "object" && error !== null && "code" in error ? String(error.code ?? "") : undefined;
 	const permanentCodes = new Set([
@@ -360,7 +369,7 @@ function classifyConversationError(error: unknown): { permanent: boolean; code?:
 	return {
 		permanent: Boolean(code && permanentCodes.has(code)),
 		code,
-		message: errorMessage(error),
+		message: conversationActionError(error),
 	};
 }
 

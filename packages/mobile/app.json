@@ -22,6 +22,9 @@
 			},
 			"infoPlist": {
 				"NSLocalNetworkUsageDescription": "AO connects to Agent Orchestrator running on your computer over your local network.",
+				"NSAppTransportSecurity": {
+					"NSAllowsLocalNetworking": true
+				},
 				"LSApplicationQueriesSchemes": ["github"]
 			}
 		},

@@ -4,7 +4,7 @@ vi.mock("@react-native-async-storage/async-storage", () => ({ default: { getItem
 vi.mock("expo-secure-store", () => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn(), deleteItemAsync: vi.fn() }));
 vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
 
-import { getSettings, launchOrchestrator, spawnSession } from "./api";
+import { getPreview, getSettings, launchOrchestrator, mobileReachablePreviewURL, restoreSession, resumeSessionAgent, spawnSession } from "./api";
 import { getConversationPage, getWorkspacePaths } from "./chat/api";
 import type { ServerConfig } from "./config";
 
@@ -31,12 +31,45 @@ describe("mobile Chat API boundaries", () => {
 		expect(orchestrator.mode).toBe("tui");
 	});
 
+	it("resumes a stopped Chat controller without restoring the AO session", async () => {
+		vi.mocked(fetch).mockResolvedValue(response({ ok: true }));
+		await resumeSessionAgent(cfg, "chat-1");
+		const [url, init] = vi.mocked(fetch).mock.calls[0];
+		expect(url).toBe("http://ao.test:3011/api/v1/sessions/chat-1/resume-agent");
+		expect(init?.method).toBe("POST");
+	});
+
+	it("keeps terminated-session restoration as a distinct lifecycle operation", async () => {
+		vi.mocked(fetch).mockResolvedValue(response({ ok: true }));
+		await restoreSession(cfg, "chat-terminated");
+		const [url, init] = vi.mocked(fetch).mock.calls[0];
+		expect(url).toBe("http://ao.test:3011/api/v1/sessions/chat-terminated/restore");
+		expect(init?.method).toBe("POST");
+	});
+
 	it("uses daemon-advertised Chat harnesses and preserves workspace truncation", async () => {
 		vi.mocked(fetch)
 			.mockResolvedValueOnce(response({ defaultSessionMode: "tui", chatHarnesses: ["codex", "claude-code", 42] }))
 			.mockResolvedValueOnce(response({ files: [{ path: "src/app.ts", status: "modified" }, { path: "old.ts", status: "deleted" }], truncated: true }));
 		expect(await getSettings(cfg)).toEqual({ defaultSessionMode: "tui", chatHarnesses: ["codex", "claude-code"] });
 		expect(await getWorkspacePaths(cfg, "w-1")).toEqual({ paths: ["src/app.ts"], truncated: true });
+	});
+
+	it("keeps explicit README previews and never authenticates external preview origins", async () => {
+		vi.mocked(fetch).mockResolvedValueOnce(response({ entry: "README.md" }));
+		expect(await getPreview(cfg, "w-1")).toEqual({
+			entry: "README.md",
+			url: "http://ao.test:3011/api/v1/sessions/w-1/preview/files/README.md",
+			authenticated: true,
+		});
+		vi.mocked(fetch).mockResolvedValueOnce(response({}));
+		expect(await getPreview(cfg, "w-1", "https://example.com/demo")).toMatchObject({
+			url: "https://example.com/demo",
+			authenticated: false,
+		});
+		expect(mobileReachablePreviewURL("http://127.0.0.1:5173", "ao.test")?.href).toBe("http://ao.test:5173/");
+		expect(mobileReachablePreviewURL("http://localhost:5173", "2001:db8::5")?.href).toBe("http://[2001:db8::5]:5173/");
+		expect(mobileReachablePreviewURL("file:///tmp/demo.html", "ao.test")).toBeUndefined();
 	});
 
 	it("maps the provider-neutral conversation wire model without inventing protocol state", async () => {

@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import * as Linking from "expo-linking";
-import { memo, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
 	ActivityIndicator,
 	FlatList,
@@ -16,6 +16,7 @@ import { haptics } from "../haptics";
 import type { Theme } from "../theme";
 import { useTheme, useThemedStyles } from "../ThemeProvider";
 import { ChatMarkdown } from "./ChatMarkdown";
+import { HighlightedCodeText } from "./HighlightedCodeText";
 import { caretNotation, commandOutputText } from "./ansi";
 import type {
 	ConversationActivity,
@@ -25,6 +26,13 @@ import type {
 	FileChange,
 	InputProperty,
 } from "./types";
+import {
+	activityStartsExpanded,
+	canRollbackTurn,
+	groupConversationByTurn,
+	readableConversationItems,
+	type ConversationGroup,
+} from "./timelineModel";
 
 type TimelineRow =
 	| { kind: "single"; key: string; items: [ConversationItem] }
@@ -38,6 +46,8 @@ export function ChatTimeline({
 	onDecide,
 	onResolveInput,
 	onRollback,
+	jumpToSequence,
+	onJumpHandled,
 }: {
 	snapshot: ConversationSnapshot;
 	loadingOlder: boolean;
@@ -45,88 +55,98 @@ export function ChatTimeline({
 	actionPending: boolean;
 	onDecide(requestId: string, decisionId: string): void;
 	onResolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): void;
-	onRollback(turnId: string): void;
+	onRollback(turnId: string): Promise<number>;
+	jumpToSequence?: number;
+	onJumpHandled?(): void;
 }) {
 	const styles = useThemedStyles(makeStyles);
-	const listRef = useRef<FlatList<TimelineRow>>(null);
+	const listRef = useRef<FlatList<ConversationGroup>>(null);
 	const followsTail = useRef(true);
 	const [showJump, setShowJump] = useState(false);
 	// Usage is snapshot state, not conversation. Reasoning stays available in the
 	// durable record but hidden on mobile: prose and work are the primary surface.
-	const items = useMemo(() => {
-		const plannedTurns = new Set(snapshot.turns.filter((turn) => turn.plan?.steps.length).map((turn) => turn.id));
-		return snapshot.items.filter((item) => item.kind === "message" || (
-			item.activityKind !== "usage" &&
-			item.activityKind !== "reasoning" &&
-			!(item.activityKind === "plan" && item.turnId && plannedTurns.has(item.turnId))
-		));
-	},
-		[snapshot.items, snapshot.turns],
-	);
-	const rows = useMemo(() => activityRuns(items), [items]);
-	const rollbackEnabled = !snapshot.turns.some((turn) => turn.state === "running" || turn.state === "queued");
-	const lastItemForTurn = useMemo(() => {
-		const last = new Map<string, string>();
-		for (const item of items) if (item.turnId) last.set(item.turnId, `${item.kind}:${item.id}`);
-		return last;
-	}, [items]);
+	const items = useMemo(() => readableConversationItems(snapshot), [snapshot]);
+	const groups = useMemo(() => groupConversationByTurn(snapshot, items), [items, snapshot.turns]);
+
+	useEffect(() => {
+		if (jumpToSequence === undefined) return;
+		const index = groups.findIndex((group) => group.anchor === jumpToSequence);
+		if (index >= 0) {
+			followsTail.current = index === groups.length - 1;
+			setShowJump(!followsTail.current);
+			requestAnimationFrame(() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.18 }));
+		}
+		onJumpHandled?.();
+	}, [groups, jumpToSequence, onJumpHandled]);
 
 	return (
 		<View style={styles.timelineWrap}>
-		<FlatList<TimelineRow>
-			ref={listRef}
-			data={rows}
-			keyExtractor={(row) => row.key}
-			style={styles.list}
-			contentContainerStyle={styles.content}
-			keyboardShouldPersistTaps="handled"
-			initialNumToRender={28}
-			maxToRenderPerBatch={24}
-			windowSize={9}
-			maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-			onScroll={(event) => {
-				const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-				followsTail.current = contentSize.height - layoutMeasurement.height - contentOffset.y < 120;
-				setShowJump(!followsTail.current);
-			}}
-			scrollEventThrottle={100}
-			onContentSizeChange={() => {
-				if (followsTail.current) requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
-			}}
-			ListHeaderComponent={
-				snapshot.hasMoreBefore ? (
-					<Pressable
-						accessibilityRole="button"
-						disabled={loadingOlder}
-						onPress={onLoadOlder}
-						style={styles.older}
-					>
-						{loadingOlder ? <ActivityIndicator size="small" /> : <Feather name="clock" size={13} />}
-						<Text style={styles.olderText}>{loadingOlder ? "Loading history…" : "Load earlier messages"}</Text>
-					</Pressable>
-				) : items.length ? <Text style={styles.beginning}>Beginning of conversation</Text> : null
-			}
-			ListEmptyComponent={<EmptyConversation harness={snapshot.harness} controller={snapshot.controller.state} />}
-			renderItem={({ item: row }) => {
-				const lastItem = row.items[row.items.length - 1];
-				const turn = lastItem?.turnId ? snapshot.turns.find((candidate) => candidate.id === lastItem.turnId) : undefined;
-				const isLast = Boolean(turn && lastItem && lastItemForTurn.get(turn.id) === `${lastItem.kind}:${lastItem.id}`);
-				return (
-					<View>
-						{row.kind === "activities" ? <ActivityRun activities={row.items} /> : <TimelineItem
-							item={row.items[0]}
-							actionPending={actionPending}
-							onDecide={onDecide}
-							onResolveInput={onResolveInput}
-						/>}
-						{isLast && turn ? <TurnSummary turn={turn} onRollback={rollbackEnabled ? onRollback : undefined} /> : null}
-					</View>
-				);
-			}}
-		/>
-		{showJump ? <Pressable accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => { followsTail.current = true; setShowJump(false); listRef.current?.scrollToEnd({ animated: true }); }} style={styles.jump}><Feather name="arrow-down" size={14} /><Text style={styles.jumpText}>Latest</Text></Pressable> : null}
+			<FlatList<ConversationGroup>
+				ref={listRef}
+				data={groups}
+				keyExtractor={(group) => group.key}
+				style={styles.list}
+				contentContainerStyle={styles.content}
+				keyboardShouldPersistTaps="handled"
+				initialNumToRender={28}
+				maxToRenderPerBatch={24}
+				windowSize={9}
+				maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+				onScroll={(event) => {
+					const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+					followsTail.current = contentSize.height - layoutMeasurement.height - contentOffset.y < 120;
+					setShowJump(!followsTail.current);
+				}}
+				scrollEventThrottle={100}
+				onContentSizeChange={() => {
+					if (followsTail.current) requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated: false }));
+				}}
+				onScrollToIndexFailed={({ index, averageItemLength }) => {
+					listRef.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: true });
+					setTimeout(() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.18 }), 120);
+				}}
+				ListHeaderComponent={
+					snapshot.hasMoreBefore ? (
+						<Pressable
+							accessibilityRole="button"
+							disabled={loadingOlder}
+							onPress={onLoadOlder}
+							style={styles.older}
+						>
+							{loadingOlder ? <ActivityIndicator size="small" /> : <Feather name="clock" size={13} />}
+							<Text style={styles.olderText}>{loadingOlder ? "Loading history…" : "Load earlier messages"}</Text>
+						</Pressable>
+					) : items.length ? <Text style={styles.beginning}>Beginning of conversation</Text> : null
+				}
+				ListEmptyComponent={<EmptyConversation harness={snapshot.harness} controller={snapshot.controller.state} />}
+				renderItem={({ item: group }) => <ConversationTurnGroup
+					group={group}
+					snapshot={snapshot}
+					actionPending={actionPending}
+					onDecide={onDecide}
+					onResolveInput={onResolveInput}
+					onRollback={onRollback}
+				/>}
+			/>
+			{showJump ? <Pressable accessibilityRole="button" accessibilityLabel="Jump to latest message" onPress={() => { followsTail.current = true; setShowJump(false); listRef.current?.scrollToEnd({ animated: true }); }} style={styles.jump}><Feather name="arrow-down" size={14} /><Text style={styles.jumpText}>Latest</Text></Pressable> : null}
 		</View>
 	);
+}
+
+function ConversationTurnGroup({ group, snapshot, actionPending, onDecide, onResolveInput, onRollback }: {
+	group: ConversationGroup;
+	snapshot: ConversationSnapshot;
+	actionPending: boolean;
+	onDecide(requestId: string, decisionId: string): void;
+	onResolveInput(requestId: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>): void;
+	onRollback(turnId: string): Promise<number>;
+}) {
+	const rows = activityRuns(group.items);
+	return <View>{rows.map((row) => row.kind === "activities"
+		? <ActivityRun key={row.key} activities={row.items} />
+		: <TimelineItem key={row.key} item={row.items[0]} actionPending={actionPending} onDecide={onDecide} onResolveInput={onResolveInput} />)}
+		{group.turn ? <TurnSummary turn={group.turn} onRollback={canRollbackTurn(snapshot, group.turn) ? onRollback : undefined} /> : null}
+	</View>;
 }
 
 const TimelineItem = memo(function TimelineItem({
@@ -142,9 +162,9 @@ const TimelineItem = memo(function TimelineItem({
 }) {
 	const styles = useThemedStyles(makeStyles);
 	if (item.kind === "message") {
-			if (item.role === "user" && item.origin === "human") {
-				const delivery = deliveryCopy(item.delivery);
-				return (
+		if (item.role === "user" && item.origin === "human") {
+			const delivery = deliveryCopy(item.delivery);
+			return (
 				<View style={styles.userRow}>
 					<View style={styles.userBubble}>
 						<Text selectable style={styles.userText}>{item.text}</Text>
@@ -156,13 +176,13 @@ const TimelineItem = memo(function TimelineItem({
 		if (item.role === "user") {
 			return <OriginMessage message={item} />;
 		}
-			return (
-				<View style={styles.assistantRow}>
-					{item.senderLabel ? <Text style={styles.sender}>{item.senderLabel}</Text> : null}
-					<ChatMarkdown text={item.text || (item.streaming ? "…" : "")} />
-					{item.streaming ? <View style={styles.streamingDot} /> : null}
-					{!item.streaming && item.text ? <Pressable accessibilityRole="button" accessibilityLabel="Copy response" hitSlop={9} onPress={() => { void Clipboard.setStringAsync(item.text); haptics.success(); }} style={styles.copy}><Feather name="copy" size={12} /><Text style={styles.copyText}>Copy</Text></Pressable> : null}
-				</View>
+		return (
+			<View style={styles.assistantRow}>
+				{item.senderLabel ? <Text style={styles.sender}>{item.senderLabel}</Text> : null}
+				<ChatMarkdown text={item.text || (item.streaming ? "…" : "")} streaming={item.streaming} />
+				{item.streaming ? <View style={styles.streamingDot} /> : null}
+				{!item.streaming && item.text ? <Pressable accessibilityRole="button" accessibilityLabel="Copy response" hitSlop={9} onPress={() => { void Clipboard.setStringAsync(item.text); haptics.success(); }} style={styles.copy}><Feather name="copy" size={12} /><Text style={styles.copyText}>Copy</Text></Pressable> : null}
+			</View>
 		);
 	}
 	if (item.activityKind === "approval") {
@@ -245,9 +265,10 @@ function ActivityRow({ activity }: { activity: ConversationActivity }) {
 function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
-	const [open, setOpen] = useState(activity.status === "failed");
 	const detail = activity.detail ?? {};
 	const output = commandOutputText(detail.output ?? detail.result ?? detail.error ?? detail.patchOutput);
+	const [openOverride, setOpenOverride] = useState<boolean | null>(null);
+	const open = openOverride ?? activityStartsExpanded(activity);
 	const expandable = Boolean(output || detail.cwd || detail.arguments || detail.files || detail.reason || detail.text || detail.terminalInput);
 	const meta = activityMeta(activity);
 	return (
@@ -256,7 +277,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				accessibilityRole={expandable ? "button" : undefined}
 				accessibilityState={expandable ? { expanded: open } : undefined}
 				disabled={!expandable}
-				onPress={() => setOpen((value) => !value)}
+				onPress={() => setOpenOverride(!open)}
 				style={styles.activityRow}
 			>
 				<Feather name={meta.icon} size={13} color={meta.color(t)} />
@@ -325,21 +346,22 @@ function AutoReviewRow({ activity }: { activity: ConversationActivity }) {
 
 function FileChangeActivity({ activity }: { activity: ConversationActivity }) {
 	const files = fileChanges(activity.detail?.files);
-	return <View style={useThemedStyles(makeStyles).activityWrap}><ExpandableFileList title={activity.summary || `${files.length} changed files`} files={files} fallbackPatch={activity.detail?.patchOutput} fallbackPatchTruncated={activity.detail?.patchOutputTruncated} /></View>;
+	return <View style={useThemedStyles(makeStyles).activityWrap}><ExpandableFileList title={activity.summary || `${files.length} changed files`} files={files} fallbackPatch={activity.detail?.patchOutput} fallbackPatchTruncated={activity.detail?.patchOutputTruncated} live={activity.status === "running"} /></View>;
 }
 
-function ExpandableFileList({ title, files, fallbackPatch, fallbackPatchTruncated }: { title: string; files: ReturnType<typeof fileChanges>; fallbackPatch?: string; fallbackPatchTruncated?: boolean }) {
+function ExpandableFileList({ title, files, fallbackPatch, fallbackPatchTruncated, live }: { title: string; files: ReturnType<typeof fileChanges>; fallbackPatch?: string; fallbackPatchTruncated?: boolean; live?: boolean }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
-	const [open, setOpen] = useState(false);
+	const [openOverride, setOpenOverride] = useState<boolean | null>(null);
+	const open = openOverride ?? Boolean(live && (fallbackPatch || files.some((file) => file.patch)));
 	const expandable = files.length > 0 || Boolean(fallbackPatch);
-	return <View><Pressable disabled={!expandable} accessibilityRole={expandable ? "button" : undefined} accessibilityState={expandable ? { expanded: open } : undefined} onPress={() => setOpen((value) => !value)} style={styles.activityRow}><Feather name="edit-3" size={13} color={t.blue} /><Text numberOfLines={2} style={styles.activitySummary}>{title}</Text>{expandable ? <Feather name={open ? "chevron-up" : "chevron-right"} size={13} color={t.textFaint} /> : null}</Pressable>{open ? <View style={styles.activityDetail}>{files.map((file) => <FileChangeRow key={`${file.oldPath ?? ""}:${file.path}`} file={file} />)}{fallbackPatch ? <PatchBlock patch={fallbackPatch} truncated={fallbackPatchTruncated} /> : null}</View> : null}</View>;
+	return <View><Pressable disabled={!expandable} accessibilityRole={expandable ? "button" : undefined} accessibilityState={expandable ? { expanded: open } : undefined} onPress={() => setOpenOverride(!open)} style={styles.activityRow}><Feather name="edit-3" size={13} color={t.blue} /><Text numberOfLines={2} style={styles.activitySummary}>{title}</Text>{expandable ? <Feather name={open ? "chevron-up" : "chevron-right"} size={13} color={t.textFaint} /> : null}</Pressable>{open ? <View style={styles.activityDetail}>{files.map((file) => <FileChangeRow key={`${file.oldPath ?? ""}:${file.path}`} file={file} live={live} />)}{fallbackPatch ? <PatchBlock patch={fallbackPatch} truncated={fallbackPatchTruncated} /> : null}</View> : null}</View>;
 }
 
-function FileChangeRow({ file }: { file: ReturnType<typeof fileChanges>[number] }) {
+function FileChangeRow({ file, live }: { file: ReturnType<typeof fileChanges>[number]; live?: boolean }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
-	const [open, setOpen] = useState(false);
+	const [open, setOpen] = useState(Boolean(live && file.patch));
 	const hasPatch = Boolean(file.patch);
 	const mark = file.status === "added" ? "A" : file.status === "deleted" ? "D" : file.status === "renamed" ? "R" : "M";
 	return <View><Pressable disabled={!hasPatch} onPress={() => setOpen((value) => !value)} style={styles.fileRow}><Text style={[styles.fileMark, { color: file.status === "deleted" ? t.red : file.status === "added" ? t.green : t.blue }]}>{mark}</Text><Text selectable numberOfLines={2} style={styles.filePath}>{file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}</Text><Text style={styles.fileStat}>+{file.additions} −{file.deletions}</Text>{hasPatch ? <Feather name={open ? "chevron-up" : "chevron-right"} size={11} color={t.textFaint} /> : null}</Pressable>{open && file.patch ? <PatchBlock patch={file.patch} truncated={file.patchTruncated} /> : null}</View>;
@@ -348,7 +370,7 @@ function FileChangeRow({ file }: { file: ReturnType<typeof fileChanges>[number] 
 function PatchBlock({ patch, truncated }: { patch: string; truncated?: boolean }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
-	return <View><CodeOutput value={patch} />{truncated ? <Text style={[styles.partial, { color: t.amber }]}>This patch is longer than AO stores. The complete change remains in the worktree.</Text> : null}</View>;
+	return <View><Pressable onLongPress={() => { void Clipboard.setStringAsync(patch); haptics.success(); }}><HighlightedCodeText code={patch} language="diff" style={styles.output} /></Pressable>{truncated ? <Text style={[styles.partial, { color: t.amber }]}>This patch is longer than AO stores. The complete change remains in the worktree.</Text> : null}</View>;
 }
 
 function PlanActivity({ activity }: { activity: ConversationActivity }) {
@@ -466,15 +488,17 @@ function commandCategory(text: string): "read" | "search" | "vcs" | "run" {
 const READ_COMMANDS = new Set(["cat", "sed", "nl", "head", "tail", "bat", "less", "more", "wc", "jq"]);
 const SEARCH_COMMANDS = new Set(["rg", "grep", "find", "fd", "ls", "tree", "glob", "ag"]);
 
-function TurnSummary({ turn, onRollback }: { turn: ConversationTurn; onRollback?(turnId: string): void }) {
+function TurnSummary({ turn, onRollback }: { turn: ConversationTurn; onRollback?(turnId: string): Promise<number> }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const [confirming, setConfirming] = useState(false);
+	const [rollingBack, setRollingBack] = useState(false);
+	const [rollbackError, setRollbackError] = useState<string>();
 	const duration = elapsed(turn.startedAt ?? turn.requestedAt, turn.completedAt);
 	const settled = turn.state !== "running" && turn.state !== "queued";
 	return (
 		<View style={styles.turnWrap}>
-			{turn.plan ? <TurnPlan turn={turn} /> : null}
+			{turn.plan?.steps.length ? <TurnPlan turn={turn} /> : null}
 			{turn.diff?.files.length ? <ChangedFiles turn={turn} /> : null}
 			<View style={styles.turnLine}>
 				<View style={styles.ruleHalf} />
@@ -492,9 +516,17 @@ function TurnSummary({ turn, onRollback }: { turn: ConversationTurn; onRollback?
 					<Text style={styles.rollbackTitle}>Make the agent forget this turn and everything after it?</Text>
 					<Text style={styles.rollbackCopy}>Files stay changed. Only conversation memory is rolled back, and this cannot be undone.</Text>
 					<View style={styles.actions}>
-						<Action label="Cancel" onPress={() => setConfirming(false)} />
-						<Action label="Roll back" tone="danger" onPress={() => { setConfirming(false); onRollback?.(turn.id); }} />
+						<Action label="Cancel" disabled={rollingBack} onPress={() => { setRollbackError(undefined); setConfirming(false); }} />
+						<Action label={rollingBack ? "Rolling back…" : "Roll back"} disabled={rollingBack} tone="danger" onPress={() => {
+							if (!onRollback || rollingBack) return;
+							setRollingBack(true);
+							setRollbackError(undefined);
+							void onRollback(turn.id).then(() => setConfirming(false)).catch((cause) => {
+								setRollbackError(cause instanceof Error ? cause.message : String(cause));
+							}).finally(() => setRollingBack(false));
+						}} />
 					</View>
+					{rollbackError ? <Text style={styles.validation}>{rollbackError}</Text> : null}
 				</View>
 			) : null}
 		</View>
@@ -511,14 +543,16 @@ function TurnPlan({ turn }: { turn: ConversationTurn }) {
 			<Pressable style={styles.planHeader} onPress={() => setOpen((value) => !value)}>
 				<Feather name="list" size={13} color={t.textTertiary} />
 				<Text style={styles.planTitle}>Plan</Text>
+				{turn.state === "running" ? <Text style={styles.planLive}>STILL CHANGING</Text> : null}
 				<Text style={styles.planCount}>{done}/{turn.plan?.steps.length ?? 0}</Text>
 				<Feather name={open ? "chevron-up" : "chevron-down"} size={13} color={t.textTertiary} />
 			</Pressable>
 			{open ? <View style={styles.planBody}>
 				{turn.plan?.explanation ? <Text style={styles.detailCopy}>{turn.plan.explanation}</Text> : null}
-				{turn.plan?.steps.map((step, index) => <View key={index} style={styles.planStep}>
+				{turn.plan?.steps.map((step, index) => <View key={index} accessibilityLabel={`${step.status.replace("_", " ")}: ${step.text}`} style={styles.planStep}>
 					<Feather name={step.status === "completed" ? "check-circle" : step.status === "in_progress" ? "circle" : "circle"} size={14} color={step.status === "completed" ? t.green : step.status === "in_progress" ? t.orange : t.textFaint} />
 					<Text style={[styles.planStepText, step.status === "completed" && styles.planDone]}>{step.text}</Text>
+					<Text style={styles.planStepState}>{step.status.replace("_", " ")}</Text>
 				</View>)}
 			</View> : null}
 		</View>
@@ -534,7 +568,7 @@ function ChangedFiles({ turn }: { turn: ConversationTurn }) {
 		<Pressable style={styles.planHeader} onPress={() => setOpen((value) => !value)}>
 			<Feather name="file-text" size={13} color={t.textTertiary} />
 			<Text style={styles.planTitle}>{files.length} changed {files.length === 1 ? "file" : "files"}</Text>
-			{turn.state === "running" ? <ActivityIndicator size="small" color={t.textTertiary} /> : null}
+			{turn.state === "running" ? <><Text style={styles.planLive}>GROWING</Text><ActivityIndicator size="small" color={t.textTertiary} /></> : null}
 			<Text style={{ color: t.green, fontSize: 11 }}>+{files.reduce((sum, file) => sum + file.additions, 0)}</Text>
 			<Text style={{ color: t.red, fontSize: 11 }}>−{files.reduce((sum, file) => sum + file.deletions, 0)}</Text>
 			<Feather name={open ? "chevron-up" : "chevron-down"} size={13} color={t.textTertiary} />
@@ -817,10 +851,12 @@ const makeStyles = (t: Theme) => StyleSheet.create({
 	planCard: { backgroundColor: t.bgSubtle, borderRadius: 10, overflow: "hidden" },
 	planHeader: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 10 },
 	planTitle: { flex: 1, color: t.textSecondary, fontSize: 12, fontWeight: "600" },
+	planLive: { color: t.orange, fontSize: 8, letterSpacing: 0.7, fontWeight: "700" },
 	planCount: { color: t.textFaint, fontFamily: t.fontMono, fontSize: 10 },
 	planBody: { paddingHorizontal: 10, paddingBottom: 10, gap: 7 },
 	planStep: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
 	planStepText: { flex: 1, color: t.textSecondary, fontSize: 12, lineHeight: 17 },
+	planStepState: { color: t.textFaint, fontSize: 8, textTransform: "uppercase" },
 	planDone: { color: t.textTertiary, textDecorationLine: "line-through" },
 	fileBody: { paddingHorizontal: 10, paddingBottom: 9, gap: 5 },
 	fileRow: { flexDirection: "row", alignItems: "center", gap: 7 },
