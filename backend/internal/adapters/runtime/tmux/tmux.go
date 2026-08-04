@@ -633,13 +633,7 @@ func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, inp
 	if err != nil {
 		return err
 	}
-	var args []string
-	switch input {
-	case "\x1b":
-		args = sendEscapeArgs(id)
-	default:
-		args = sendKeysLiteralArgs(id, input)
-	}
+	args := sendKeysLiteralArgs(id, input)
 	if _, err := r.run(ctx, args...); err != nil {
 		return fmt.Errorf("tmux runtime: send input %s: %w", id, err)
 	}

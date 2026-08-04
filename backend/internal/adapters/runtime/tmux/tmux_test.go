@@ -204,9 +204,6 @@ func TestCommandBuilders(t *testing.T) {
 	if got, want := sendEnterArgs("sess-1"), []string{"send-keys", "-t", "sess-1", "Enter"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendEnterArgs = %#v, want %#v", got, want)
 	}
-	if got, want := sendEscapeArgs("sess-1"), []string{"send-keys", "-t", "sess-1", "Escape"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("sendEscapeArgs = %#v, want %#v", got, want)
-	}
 	if got, want := sendInterruptArgs("sess-1"), []string{"send-keys", "-t", "sess-1", "C-c"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("sendInterruptArgs = %#v, want %#v", got, want)
 	}
@@ -1090,7 +1087,7 @@ func TestSendInputSendsEscapeWithoutEnter(t *testing.T) {
 	if len(fr.calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(fr.calls))
 	}
-	if got, want := fr.calls[0].args, sendEscapeArgs("sess-1"); !reflect.DeepEqual(got, want) {
+	if got, want := fr.calls[0].args, sendKeysLiteralArgs("sess-1", "\x1b"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("escape args = %#v, want %#v", got, want)
 	}
 }

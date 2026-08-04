@@ -112,12 +112,6 @@ func sendEnterArgs(id string) []string {
 	return []string{"send-keys", "-t", id, "Enter"}
 }
 
-// sendEscapeArgs builds args for `tmux send-keys -t <id> Escape` to deliver
-// the TUI cancel key without appending Enter.
-func sendEscapeArgs(id string) []string {
-	return []string{"send-keys", "-t", id, "Escape"}
-}
-
 // sendInterruptArgs builds args for `tmux send-keys -t <id> C-c` to interrupt
 // the foreground process without killing the terminal session.
 func sendInterruptArgs(id string) []string {
