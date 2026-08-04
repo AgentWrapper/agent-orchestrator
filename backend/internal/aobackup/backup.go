@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -62,11 +63,11 @@ type CreateReport struct {
 
 // RestoreReport is the structured outcome of Restore.
 type RestoreReport struct {
-	Archive      string   `json:"archive"`
-	StateDir     string   `json:"stateDir"`
-	Files        int      `json:"files"`
-	Replaced     []string `json:"replaced,omitempty"`
-	PreRestoreDir string  `json:"preRestoreDir,omitempty"`
+	Archive       string   `json:"archive"`
+	StateDir      string   `json:"stateDir"`
+	Files         int      `json:"files"`
+	Replaced      []string `json:"replaced,omitempty"`
+	PreRestoreDir string   `json:"preRestoreDir,omitempty"`
 }
 
 // ShouldExclude reports whether rel (slash- or OS-separated, relative to the
@@ -243,7 +244,7 @@ func Restore(archivePath, stateDir string, opts RestoreOptions) (RestoreReport, 
 	if err != nil {
 		return RestoreReport{}, fmt.Errorf("open archive: %w", err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	manifest, err := readManifest(&zr.Reader)
 	if err != nil {
@@ -347,7 +348,7 @@ func ReadManifest(archivePath string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, fmt.Errorf("open archive: %w", err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 	m, err := readManifest(&zr.Reader)
 	if err != nil {
 		return Manifest{}, err
@@ -431,7 +432,7 @@ func writeFileEntry(zw *zip.Writer, stateDir, rel string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("open %s: %w", rel, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	info, err := f.Stat()
 	if err != nil {
@@ -473,18 +474,20 @@ func writeManifest(zw *zip.Writer, m Manifest) error {
 
 func readManifest(zr *zip.Reader) (Manifest, error) {
 	for _, f := range zr.File {
-		if f.Name == ManifestName {
-			rc, err := f.Open()
-			if err != nil {
-				return Manifest{}, fmt.Errorf("open manifest: %w", err)
-			}
-			defer rc.Close()
-			var m Manifest
-			if err := json.NewDecoder(rc).Decode(&m); err != nil {
-				return Manifest{}, fmt.Errorf("parse manifest: %w", err)
-			}
-			return m, nil
+		if f.Name != ManifestName {
+			continue
 		}
+		rc, err := f.Open()
+		if err != nil {
+			return Manifest{}, fmt.Errorf("open manifest: %w", err)
+		}
+		var m Manifest
+		err = json.NewDecoder(rc).Decode(&m)
+		_ = rc.Close()
+		if err != nil {
+			return Manifest{}, fmt.Errorf("parse manifest: %w", err)
+		}
+		return m, nil
 	}
 	return Manifest{}, fmt.Errorf("archive missing %s (not an AO state backup?)", ManifestName)
 }
@@ -552,7 +555,7 @@ func extractMember(destRoot string, f *zip.File) error {
 	if err != nil {
 		return fmt.Errorf("open archive entry %s: %w", name, err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	// Write via temp + rename inside staging so a partial file is never left as
 	// the final name if we crash mid-entry.
@@ -568,8 +571,18 @@ func extractMember(destRoot string, f *zip.File) error {
 			_ = os.Remove(tmpName)
 		}
 	}()
-	if _, err := io.Copy(tmp, rc); err != nil {
+	// Bound decompression to the entry's declared size (+1) so a zip bomb cannot
+	// expand without limit (gosec G110). Reject if the stream exceeds the header.
+	if f.UncompressedSize64 > uint64(math.MaxInt64)-1 {
+		return fmt.Errorf("extract %s: declared size too large", name)
+	}
+	declared := int64(f.UncompressedSize64)
+	n, err := io.Copy(tmp, io.LimitReader(rc, declared+1))
+	if err != nil {
 		return fmt.Errorf("extract %s: %w", name, err)
+	}
+	if n > declared {
+		return fmt.Errorf("extract %s: entry larger than declared uncompressed size", name)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp for %s: %w", name, err)

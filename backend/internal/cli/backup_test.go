@@ -18,16 +18,16 @@ func writeMinimalState(t *testing.T, stateDir string) {
 		t.Fatal(err)
 	}
 	files := map[string]string{
-		"app-state.json":                       `{"schemaVersion":2,"appPath":"/Apps/AO"}`,
-		"ui-settings.json":                     `{"locale":"en"}`,
-		"update-settings.json":                 `{"channel":"stable"}`,
-		filepath.Join("data", "ao.db"):         "db",
-		filepath.Join("data", "ao.db-wal"):     "wal",
+		"app-state.json":                        `{"schemaVersion":2,"appPath":"/Apps/AO"}`,
+		"ui-settings.json":                      `{"locale":"en"}`,
+		"update-settings.json":                  `{"channel":"stable"}`,
+		filepath.Join("data", "ao.db"):          "db",
+		filepath.Join("data", "ao.db-wal"):      "wal",
 		filepath.Join("data", "skills", "x.md"): "skill",
 		// pid 0 is never "live" per runfile.CheckStale; this file only exists
 		// so create's exclude list can observe it.
-		"running.json": `{"pid":0,"port":3001}`,
-		"windows-pty-hosts.json":               `[]`,
+		"running.json":                          `{"pid":0,"port":3001}`,
+		"windows-pty-hosts.json":                `[]`,
 		filepath.Join("electron", "Cache", "c"): "cache",
 	}
 	for rel, body := range files {

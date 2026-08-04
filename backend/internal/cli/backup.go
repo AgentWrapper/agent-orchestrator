@@ -96,7 +96,7 @@ func (c *commandContext) runBackupCreate(cmd *cobra.Command, opts backupCreateOp
 	}
 
 	stateDir := filepath.Dir(cfg.RunFilePath)
-	archive := ""
+	var archive string
 	if len(args) == 1 {
 		archive = args[0]
 	} else {
