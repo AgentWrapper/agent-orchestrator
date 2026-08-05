@@ -253,6 +253,13 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 		"native-answer-1", "native-turn-1", "Nothing is dirty.", "existing-answer", now); err != nil {
 		t.Fatalf("SettleAssistantMessage: %v", err)
 	}
+	if err := st.UpsertActivity(context.Background(), existing.ID, "native-turn-1",
+		domain.ConversationActivity{
+			ID: "existing-command", Kind: domain.ActivityKindCommand, Status: domain.ActivityStatusCompleted,
+			Summary: "Ran git status", Detail: json.RawMessage(`{"command":"git status"}`), ProviderItemID: "native-command-1",
+		}, now); err != nil {
+		t.Fatalf("UpsertActivity: %v", err)
+	}
 	if err := st.SettleTurn(context.Background(), existing.ID, "native-turn-1", domain.TurnStateCompleted, "", now); err != nil {
 		t.Fatalf("SettleTurn: %v", err)
 	}
@@ -261,25 +268,31 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 	conv := &nativeHistoryConversation{
 		fakeConversation: base,
 		events: []ports.ChatEvent{
-			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start", ProviderTurnID: "replayed-native-turn-1"},
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start", ProviderTurnID: "native-turn-1"},
 			{
 				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user",
-				ProviderTurnID: "replayed-native-turn-1", ProviderItemID: "native-user-1",
-				ClientMessageID: "native-client-1", Text: "What changed?\n[Image]",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "history-item-1",
+				ClientMessageID: "native-client-1", Text: "What changed?",
 			},
 			{
 				Kind: ports.ChatEventActivityCompleted, ProviderEventID: "history-command",
-				ProviderTurnID: "replayed-native-turn-1", ProviderItemID: "native-command-1",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "history-item-2",
 				ActivityKind: domain.ActivityKindCommand, ActivityStatus: domain.ActivityStatusCompleted,
 				Summary: "Ran git status", Detail: json.RawMessage(`{"command":"git status"}`),
 			},
 			{
+				Kind: ports.ChatEventActivityCompleted, ProviderEventID: "history-new-command",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "history-item-new-command",
+				ActivityKind: domain.ActivityKindCommand, ActivityStatus: domain.ActivityStatusCompleted,
+				Summary: "Ran git diff", Detail: json.RawMessage(`{"command":"git diff"}`),
+			},
+			{
 				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-answer",
-				ProviderTurnID: "replayed-native-turn-1", ProviderItemID: "native-answer-1", Text: "Nothing is dirty.",
+				ProviderTurnID: "native-turn-1", ProviderItemID: "history-item-3", Text: "Nothing is dirty.",
 			},
 			{
 				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-complete",
-				ProviderTurnID: "replayed-native-turn-1", TurnState: domain.TurnStateCompleted,
+				ProviderTurnID: "native-turn-1", TurnState: domain.TurnStateCompleted,
 			},
 		},
 	}
@@ -322,14 +335,16 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConversationSnapshot: %v", err)
 	}
-	// The turn already existed from an earlier Chat interval. Native history uses
-	// a different turn id, client id, and rendered prompt (the provider included an
-	// image marker), but its stable assistant item still reconciles the complete
-	// replay onto the durable turn instead of duplicating either message.
+	// The turn already existed from an earlier Chat interval. Codex can omit its
+	// persisted item ids, so the replay uses synthetic item ids even though the
+	// live assistant message used native-answer-1. Stable turn identity and the
+	// settled content keep the replay from duplicating either message, while the
+	// command AO already knew is deduplicated too, while the new command that AO
+	// had not seen yet is still imported.
 	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Text != "What changed?" || snapshot.Messages[1].Text != "Nothing is dirty." {
 		t.Fatalf("imported messages = %#v", snapshot.Messages)
 	}
-	if len(snapshot.Activities) != 1 || snapshot.Activities[0].Summary != "Ran git status" {
+	if len(snapshot.Activities) != 2 || snapshot.Activities[0].Summary != "Ran git status" || snapshot.Activities[1].Summary != "Ran git diff" {
 		t.Fatalf("imported activities = %#v", snapshot.Activities)
 	}
 	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateCompleted {

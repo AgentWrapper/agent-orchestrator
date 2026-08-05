@@ -273,7 +273,33 @@ type nativeHistoryTurn struct {
 	clientMessage  string
 	providerItem   string
 	text           string
+	messages       map[string]int
+	activities     map[string]int
 	used           bool
+}
+
+func nativeHistoryMessageFingerprint(role domain.MessageRole, text string) string {
+	return string(role) + "\x00" + text
+}
+
+func nativeHistoryEventMessageFingerprint(event ports.ChatEvent) (string, bool) {
+	switch event.Kind {
+	case ports.ChatEventUserMessageCompleted:
+		return nativeHistoryMessageFingerprint(domain.MessageRoleUser, event.Text), true
+	case ports.ChatEventMessageCompleted:
+		return nativeHistoryMessageFingerprint(domain.MessageRoleAssistant, event.Text), true
+	default:
+		return "", false
+	}
+}
+
+func nativeHistoryActivityFingerprint(
+	kind domain.ActivityKind,
+	status domain.ActivityStatus,
+	summary string,
+	detail []byte,
+) string {
+	return string(kind) + "\x00" + string(status) + "\x00" + summary + "\x00" + string(detail)
 }
 
 // reconcileNativeHistory maps a provider replay onto AO's existing durable
@@ -305,6 +331,8 @@ func reconcileNativeHistory(
 		candidate := &nativeHistoryTurn{
 			providerTurnID: turn.ProviderTurnID,
 			state:          turn.State,
+			messages:       make(map[string]int),
+			activities:     make(map[string]int),
 		}
 		byAOTurnID[turn.ID] = candidate
 		byProviderTurnID[turn.ProviderTurnID] = candidate
@@ -334,6 +362,7 @@ func reconcileNativeHistory(
 		if candidate == nil {
 			continue
 		}
+		candidate.messages[nativeHistoryMessageFingerprint(message.Role, message.Text)]++
 		rememberProviderItem(message.ProviderItemID, candidate)
 		if message.Role == domain.MessageRoleUser && candidate.text == "" {
 			candidate.text = message.Text
@@ -342,7 +371,14 @@ func reconcileNativeHistory(
 		}
 	}
 	for _, activity := range existingActivities {
-		rememberProviderItem(activity.ProviderItemID, byAOTurnID[activity.TurnID])
+		candidate := byAOTurnID[activity.TurnID]
+		if candidate == nil {
+			continue
+		}
+		candidate.activities[nativeHistoryActivityFingerprint(
+			activity.Kind, activity.Status, activity.Summary, activity.Detail,
+		)]++
+		rememberProviderItem(activity.ProviderItemID, candidate)
 	}
 
 	mapped := make(map[string]*nativeHistoryTurn)
@@ -405,24 +441,65 @@ func reconcileNativeHistory(
 		bind(event.ProviderTurnID, match)
 	}
 
-	var reconciled []ports.ChatEvent
+	// A native provider may omit persisted item ids even though its live stream
+	// supplied them. Codex does this today: a live assistant message can be
+	// `msg_...`, while thread/read later calls the same item `item-2`. Stable turn
+	// identity still tells us which AO turn owns the replay, so suppress already
+	// projected message/activity facts by semantic fingerprint. Counts preserve
+	// legitimate repeated identical items within one turn.
+	dropEvent := make([]bool, len(events))
+	dropItem := make(map[string]bool)
+	itemKey := func(event ports.ChatEvent) string {
+		if event.ProviderItemID == "" {
+			return ""
+		}
+		return event.ProviderTurnID + "\x00" + event.ProviderItemID
+	}
 	for i, event := range events {
 		candidate := mapped[event.ProviderTurnID]
 		if candidate == nil {
 			continue
 		}
-		if reconciled == nil {
-			reconciled = append([]ports.ChatEvent(nil), events...)
+		matched := false
+		if fingerprint, ok := nativeHistoryEventMessageFingerprint(event); ok && candidate.messages[fingerprint] > 0 {
+			candidate.messages[fingerprint]--
+			matched = true
 		}
-		reconciled[i].ProviderTurnID = candidate.providerTurnID
+		if event.Kind == ports.ChatEventActivityCompleted {
+			fingerprint := nativeHistoryActivityFingerprint(
+				event.ActivityKind, event.ActivityStatus, event.Summary, event.Detail,
+			)
+			if candidate.activities[fingerprint] > 0 {
+				candidate.activities[fingerprint]--
+				matched = true
+			}
+		}
+		if !matched {
+			continue
+		}
+		dropEvent[i] = true
+		if key := itemKey(event); key != "" {
+			dropItem[key] = true
+		}
+	}
+
+	reconciled := make([]ports.ChatEvent, 0, len(events))
+	for i, event := range events {
+		if dropEvent[i] || dropItem[itemKey(event)] {
+			continue
+		}
+		candidate := mapped[event.ProviderTurnID]
+		if candidate == nil {
+			reconciled = append(reconciled, event)
+			continue
+		}
+		event.ProviderTurnID = candidate.providerTurnID
 		// A replay has no portable ACP turn-outcome field. Do not overwrite AO's
 		// known interrupted/failed result with the adapter's synthetic "completed".
 		if event.Kind == ports.ChatEventTurnCompleted && candidate.state.Terminal() {
-			reconciled[i].TurnState = candidate.state
+			event.TurnState = candidate.state
 		}
-	}
-	if reconciled == nil {
-		return events
+		reconciled = append(reconciled, event)
 	}
 	return reconciled
 }
