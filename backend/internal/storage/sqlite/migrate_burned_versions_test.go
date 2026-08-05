@@ -61,6 +61,7 @@ var shippedMigrations = map[int64]string{
 	41: "0041_notification_resolution.sql",
 	42: "0042_review_run_unique_per_harness.sql",
 	43: "0043_add_session_pinned.sql",
+	47: "0047_agent_model_catalog.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
