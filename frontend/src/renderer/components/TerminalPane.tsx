@@ -1076,11 +1076,11 @@ function AttachedTerminal({
 					}
 				/>
 			)}
-			{/* Keep a small gutter where terminal output starts and along the bottom,
-			    but let xterm use the full top/right extent. The host fills the remaining
+			{/* Keep a small gutter where terminal output starts, but let xterm use the
+			    full top/right/bottom extent. The host fills the remaining
 			    content box, so FitAddon still measures it correctly and the absolute
 			    overlays (empty state, banner) keep covering the full padding box. */}
-			<div className="relative min-h-0 flex-1 pb-2 pl-2">
+			<div className="relative min-h-0 flex-1 pl-2">
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}

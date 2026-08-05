@@ -222,11 +222,11 @@ function activeXterm(): HTMLElement {
 }
 
 describe("TerminalPane empty states", () => {
-	it("uses the full top and right extent for the terminal grid", () => {
+	it("uses the full top, right, and bottom extent for the terminal grid", () => {
 		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
 		try {
-			expect(screen.getByTestId("xterm").parentElement).toHaveClass("pb-2", "pl-2");
-			expect(screen.getByTestId("xterm").parentElement).not.toHaveClass("pt-2", "pr-2", "p-2");
+			expect(screen.getByTestId("xterm").parentElement).toHaveClass("pl-2");
+			expect(screen.getByTestId("xterm").parentElement).not.toHaveClass("pt-2", "pr-2", "pb-2", "p-2");
 		} finally {
 			view.restore();
 		}
