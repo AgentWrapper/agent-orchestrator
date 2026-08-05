@@ -222,9 +222,14 @@ export function FeedbackLoopDemo() {
 
 	const phase = phases[active] as Phase;
 
+	// FeatureDemo lays this card out on a photo, and the grid lands it on a
+	// fractional y, so the 1px 7%-white border falls across half a device pixel
+	// and the photo bleeds through it as a green hairline. The tight dark ring
+	// leading the shadow stack sits just outside the border box and gives that
+	// edge something opaque to blend into.
 	return (
 		<div
-			className="mx-auto w-full min-w-0 max-w-[620px] overflow-hidden rounded-xl border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_28px_74px_-22px_rgba(0,0,0,0.86)]"
+			className="mx-auto w-full min-w-0 max-w-[620px] overflow-hidden rounded-xl border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_0_0_1px_rgba(0,0,0,0.55),0_28px_74px_-22px_rgba(0,0,0,0.86)]"
 			style={sessionPreviewTokens}
 		>
 			<div className="flex h-[330px] min-w-0 flex-col sm:h-[408px]">
@@ -307,10 +312,17 @@ function SessionTopbar({ phase }: { phase: Phase }) {
 				{/* Both actions carry TopbarButton's own metrics (h-control-lg, px-3.5,
 				    gap-1.5, text-sm) at 0.82x, so the label sits centred in the box
 				    instead of crowding its border. */}
+				{/* The kill variant rests on a neutral border and only picks up
+				    border-error/50 on hover. Nothing hovers in a still, so at this size
+				    7% white read as a smudge around the red label — it takes the tone
+				    partway to that hover border so the button reads as one object. */}
 				<TopbarAction
 					label="Kill session"
-					className="border border-[var(--preview-border)] bg-transparent"
-					style={{ color: `color-mix(in srgb, ${status.exited} 80%, transparent)` }}
+					className="border bg-transparent"
+					style={{
+						color: `color-mix(in srgb, ${status.exited} 80%, transparent)`,
+						borderColor: `color-mix(in srgb, ${status.exited} 28%, transparent)`,
+					}}
 				>
 					<Trash2 aria-hidden="true" className="size-[12px] shrink-0" />
 					Kill
@@ -543,15 +555,15 @@ function PRSummaryCard({ phase }: { phase: Phase }) {
 			<div className="flex items-center gap-1.5">
 				<GitPullRequest aria-hidden="true" className="size-3 shrink-0 text-[var(--preview-muted-foreground)]" />
 				<span className="text-[10.5px] font-medium text-[var(--preview-foreground)]">PR #2481</span>
-				{/* Badge + prStateTone.open. Lowercase at 7.5px turned to mush, so the
-				    pill keeps the app's own h-5/text-[9px] instead of the 0.82x the rest
-				    of the rail runs at, and leans on tracking to stay legible. */}
+				{/* Badge + prStateTone.open. The app pairs a ring with a fill at 20px;
+				    shrunk into this rail the two together made a saturated little
+				    button that pulled rank on the PR number beside it. Fill alone,
+				    lifted so it still separates from the card. */}
 				<span
-					className="inline-flex h-[17px] shrink-0 items-center rounded-full border px-[7px] text-[9px] font-medium leading-none tracking-[0.01em]"
+					className="inline-flex h-[16px] shrink-0 items-center rounded-full px-[6px] text-[8.5px] font-semibold leading-none tracking-[0.01em]"
 					style={{
 						color: status.ready,
-						borderColor: `color-mix(in srgb, ${status.ready} 40%, transparent)`,
-						background: `color-mix(in srgb, ${status.ready} 12%, transparent)`,
+						background: `color-mix(in srgb, ${status.ready} 18%, transparent)`,
 					}}
 				>
 					open
