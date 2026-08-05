@@ -993,6 +993,12 @@ paths:
         schema:
           description: PR number.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MergePRRequest'
+        required: true
       responses:
         "200":
           content:
@@ -1000,6 +1006,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MergePRResponse'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "404":
           content:
             application/json:
@@ -2449,6 +2461,83 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Configure whether PR completion terminates the session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/pin:
+    delete:
+      operationId: unpinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Unpin a session
+      tags:
+      - sessions
+    post:
+      operationId: pinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Pin a session
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/pr:
@@ -3928,6 +4017,8 @@ components:
           type: string
         id:
           type: string
+        isPinned:
+          type: boolean
         isTerminated:
           type: boolean
         issueId:
@@ -3939,6 +4030,11 @@ components:
           - chat
           - tui
           type: string
+        pinnedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         previewRevision:
           format: int64
           type: integer
@@ -4001,6 +4097,7 @@ components:
       - terminateOnPrMerge
       - createdAt
       - updatedAt
+      - isPinned
       - status
       - prs
       type: object
@@ -4889,6 +4986,18 @@ components:
           type: string
       required:
       - status
+      type: object
+    MergePRRequest:
+      properties:
+        expectedHeadSha:
+          minLength: 40
+          type: string
+        prUrl:
+          minLength: 1
+          type: string
+      required:
+      - prUrl
+      - expectedHeadSha
       type: object
     MergePRResponse:
       properties:

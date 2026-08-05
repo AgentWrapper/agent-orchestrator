@@ -183,17 +183,33 @@ func (m *Manager) CancelInterfaceTransition(ctx context.Context, id domain.Sessi
 	default:
 		return ErrInterfaceTransitionNotCancellable
 	}
+	// Cancellation must win durably before it signals the in-memory worker. If
+	// the worker crossed into source_stopping after our read, this CAS loses and
+	// we refuse the cancellation instead of acknowledging it while proceeding to
+	// tear down the source controller.
+	moved, err := store.AdvanceSessionInterfaceTransition(
+		ctx,
+		transition.ID,
+		transition.Phase,
+		domain.SessionInterfaceTransitionCancelled,
+		transition.NativeConversationID,
+		"TRANSITION_CANCELLED",
+		"The interface switch was cancelled.",
+		m.clock(),
+	)
+	if err != nil {
+		return err
+	}
+	if !moved {
+		return ErrInterfaceTransitionNotCancellable
+	}
 	m.transitionMu.Lock()
 	run := m.transitions[id]
 	m.transitionMu.Unlock()
 	if run != nil {
 		run.cancel()
-		return nil
 	}
-	_, err = store.AdvanceSessionInterfaceTransition(ctx, transition.ID, transition.Phase,
-		domain.SessionInterfaceTransitionCancelled, transition.NativeConversationID,
-		"TRANSITION_CANCELLED", "The interface switch was cancelled.", m.clock())
-	return err
+	return nil
 }
 
 func (m *Manager) runInterfaceTransition(

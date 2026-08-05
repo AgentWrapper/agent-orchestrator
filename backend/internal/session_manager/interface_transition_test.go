@@ -14,10 +14,11 @@ import (
 
 type transitionStore struct {
 	*fakeStore
-	mu          sync.Mutex
-	transitions map[string]domain.SessionInterfaceTransition
-	messages    map[string][]domain.SessionInterfaceTransitionMessage
-	nextMessage int64
+	mu            sync.Mutex
+	transitions   map[string]domain.SessionInterfaceTransition
+	messages      map[string][]domain.SessionInterfaceTransitionMessage
+	nextMessage   int64
+	loseCancelCAS bool
 }
 
 func newTransitionStore() *transitionStore {
@@ -88,6 +89,11 @@ func (s *transitionStore) AdvanceSessionInterfaceTransition(_ context.Context, i
 	defer s.mu.Unlock()
 	rec, ok := s.transitions[id]
 	if !ok || rec.Phase != expected {
+		return false, nil
+	}
+	if next == domain.SessionInterfaceTransitionCancelled && s.loseCancelCAS {
+		rec.Phase = domain.SessionInterfaceTransitionSourceStopping
+		s.transitions[id] = rec
 		return false, nil
 	}
 	rec.Phase = next
@@ -376,7 +382,7 @@ func TestCancelInterfaceTransitionBeforeSourceStop(t *testing.T) {
 		ID: "transition-1", SessionID: "session-1",
 		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
 		Policy: domain.SessionInterfaceTransitionDrain,
-		Phase: domain.SessionInterfaceTransitionDraining, CreatedAt: now, UpdatedAt: now,
+		Phase:  domain.SessionInterfaceTransitionDraining, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := manager.CancelInterfaceTransition(context.Background(), "session-1"); err != nil {
 		t.Fatalf("cancel transition: %v", err)
@@ -397,15 +403,35 @@ func TestCancelInterfaceTransitionAfterSourceStoppingIsRefused(t *testing.T) {
 		ID: "transition-1", SessionID: "session-1",
 		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
 		Policy: domain.SessionInterfaceTransitionDrain,
-		Phase: domain.SessionInterfaceTransitionSourceStopping, CreatedAt: now, UpdatedAt: now,
+		Phase:  domain.SessionInterfaceTransitionSourceStopping, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := manager.CancelInterfaceTransition(context.Background(), "session-1");
-		!errors.Is(err, ErrInterfaceTransitionNotCancellable) {
+	if err := manager.CancelInterfaceTransition(context.Background(), "session-1"); !errors.Is(err, ErrInterfaceTransitionNotCancellable) {
 		t.Fatalf("cancel error = %v, want ErrInterfaceTransitionNotCancellable", err)
 	}
 	transition, _, _ := store.GetSessionInterfaceTransition(context.Background(), "transition-1")
 	if transition.Phase != domain.SessionInterfaceTransitionSourceStopping {
 		t.Fatalf("refused cancel changed phase to %q", transition.Phase)
+	}
+}
+
+func TestCancelInterfaceTransitionDoesNotAcknowledgeALostStopBoundaryRace(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	now := time.Now()
+	store.transitions["transition-1"] = domain.SessionInterfaceTransition{
+		ID: "transition-1", SessionID: "session-1",
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy: domain.SessionInterfaceTransitionDrain,
+		Phase:  domain.SessionInterfaceTransitionDraining, CreatedAt: now, UpdatedAt: now,
+	}
+	store.loseCancelCAS = true
+
+	err := manager.CancelInterfaceTransition(context.Background(), "session-1")
+	if !errors.Is(err, ErrInterfaceTransitionNotCancellable) {
+		t.Fatalf("cancel error = %v, want ErrInterfaceTransitionNotCancellable", err)
+	}
+	transition, _, _ := store.GetSessionInterfaceTransition(context.Background(), "transition-1")
+	if transition.Phase != domain.SessionInterfaceTransitionSourceStopping {
+		t.Fatalf("phase = %q, want source_stopping", transition.Phase)
 	}
 }
 

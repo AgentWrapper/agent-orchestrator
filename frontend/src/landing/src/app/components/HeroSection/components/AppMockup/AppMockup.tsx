@@ -1298,8 +1298,9 @@ function SidebarSessionRow({
 
 function Sidebar({ cards }: { cards: PreviewCard[] }) {
 	const activeCards = cards.filter((card) => !card.merging);
+	// Pin is a shortcut: pinned sessions also stay under their project.
 	const pinnedCards = activeCards.filter(isPinnedSidebarCard);
-	const projectCards = activeCards.filter((card) => !isPinnedSidebarCard(card));
+	const projectCards = activeCards;
 	return (
 		<aside
 			aria-hidden="true"

@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
-import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { sessionScmSummaryQueryKey, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sessionWorkspaceFilesQueryKey } from "../hooks/useSessionWorkspaceFiles";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -21,6 +21,10 @@ vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
 }));
 
+vi.mock("../lib/preview-mode", () => ({
+	usesPreviewWorkspaceData: false,
+}));
+
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
 		GET: getMock,
@@ -28,6 +32,9 @@ vi.mock("../lib/api-client", () => ({
 		POST: postMock,
 		PUT: putMock,
 	},
+	getApiBaseUrl: () => "http://127.0.0.1:3001",
+	hasTrustedApiBaseUrl: () => false,
+	subscribeApiBaseUrl: () => () => {},
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error) {
@@ -108,6 +115,13 @@ function renderWithQuery(children: ReactNode, workspaces?: WorkspaceSummary[], s
 
 function mockCommonGets(_unusedRuns: unknown[] = [], reviewerHandleId = "", reviews: unknown[] = []) {
 	getMock.mockImplementation(async (path: string) => {
+		if (path === "/api/v1/agents") {
+			const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+			return { data: { supported: agents, installed: agents, authorized: agents } };
+		}
+		if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+			return { data: { sessionId: "sess-1", files: [], truncated: false }, error: undefined };
+		}
 		if (path === "/api/v1/sessions/{sessionId}/reviews") {
 			return { data: { reviewerHandleId, reviews } };
 		}
@@ -168,7 +182,7 @@ beforeEach(() => {
 	patchMock.mockReset();
 	postMock.mockReset();
 	putMock.mockReset();
-	getMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [] }, error: undefined });
+	mockCommonGets();
 	patchMock.mockResolvedValue({ data: { ok: true }, error: undefined, response: { status: 200 } });
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 	putMock.mockResolvedValue({ data: { session: {} }, error: undefined, response: { status: 200 } });
@@ -179,6 +193,17 @@ afterEach(() => {
 });
 
 describe("SessionInspector tabs", () => {
+	it("gives the Browser viewport the full inspector body without the default content gutter", async () => {
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const tablist = screen.getByRole("tablist");
+		await userEvent.click(screen.getByRole("tab", { name: "Browser" }));
+
+		const body = tablist.nextElementSibling;
+		expect(body).toHaveClass("session-inspector__body--browser", "p-0", "overflow-hidden");
+		expect(body).not.toHaveClass("p-3", "pb-4", "@max-[300px]/inspector:px-2.5");
+	});
+
 	it("sizes rail tabs to their labels instead of stretching across the inspector", () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
@@ -202,12 +227,16 @@ describe("SessionInspector tabs", () => {
 		expect(screen.getByText("workspace file review")).toBeInTheDocument();
 	});
 
-	it("keeps the plain Files label until the workspace files cache has something to show", () => {
+	it("warms the workspace files cache before the Files tab opens", async () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		const filesTab = screen.getByRole("tab", { name: "Files" });
 		expect(within(filesTab).getByText("Files")).toBeInTheDocument();
-		expect(getMock).not.toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/files", expect.anything());
+		await waitFor(() =>
+			expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/workspace/files", {
+				params: { path: { sessionId: "sess-1" } },
+			}),
+		);
 	});
 
 	it("shows a live changed-file count on the Files tab once the shared cache is populated", () => {
@@ -259,14 +288,74 @@ describe("SessionInspector PR section", () => {
 	});
 
 	it("uses the singular heading and shows enriched facts for a single PR", () => {
-		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />, undefined, (client) => {
+			client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [prSummary(7, "open")]);
+		});
 
 		expect(screen.getByText("Pull request")).toBeInTheDocument();
 		expect(screen.queryByText(/Pull requests \(/)).not.toBeInTheDocument();
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
-		// CI/Merge/Review facts surface per card.
-		expect(prSection("Pull request").getAllByText("Passing").length).toBeGreaterThan(0);
+		expect(prSection("Pull request").getByText("Ready to merge")).toBeInTheDocument();
+		expect(prSection("Pull request").getByText("Checks passing")).toBeInTheDocument();
+		expect(prSection("Pull request").getByRole("link", { name: "PR 7" })).toHaveClass("text-sm");
+		expect(prSection("Pull request").getByRole("link", { name: "PR 7" })).toHaveAttribute(
+			"href",
+			"https://github.com/acme/repo/pull/7",
+		);
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
+		expect(prSection("Pull request").getByRole("button", { name: "Merge PR #7" })).toBeInTheDocument();
+	});
+
+	it("merges a ready pull request directly through the daemon", async () => {
+		const readyPR = prSummary(7, "open", {
+			url: "https://example.com/pr/7",
+			headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		});
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />, undefined, (client) => {
+			client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [readyPR]);
+		});
+
+		const mergeButton = screen.getByRole("button", { name: "Merge PR #7" });
+		expect(mergeButton).toBeEnabled();
+		fireEvent.click(mergeButton);
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", {
+				params: { path: { id: "7" } },
+				body: {
+					prUrl: "https://example.com/pr/7",
+					expectedHeadSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				},
+			}),
+		);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	});
+
+	it("does not offer Merge when the pull request is not ready", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([
+					pr(7, "open", {
+						ci: "failing",
+						mergeability: "blocked",
+					}),
+				])}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Merge PR #7" })).not.toBeInTheDocument();
+	});
+
+	it("uses the state chip as the single merged-state indicator", () => {
+		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+
+		const card = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
+		expect(within(card).getByText("merged", { exact: true })).toHaveClass(
+			"border-border-strong",
+			"bg-overlay",
+			"text-success",
+		);
+		expect(within(card).queryByText("Pull request merged")).not.toBeInTheDocument();
 	});
 
 	it("shows the empty state when there are no PRs", () => {
@@ -276,7 +365,11 @@ describe("SessionInspector PR section", () => {
 
 	it("links each PR to its url", () => {
 		renderWithQuery(<SessionInspector session={session([pr(41, "open"), pr(42, "draft")])} />);
-		const links = prSection("Pull requests (2)").getAllByRole("link", { name: "Open" });
+		const links = [
+			prSection("Pull requests (2)").getByRole("link", { name: "Open PR #41" }),
+			prSection("Pull requests (2)").getByRole("link", { name: "Open PR #42" }),
+		];
+		expect(links[0]).toHaveClass("text-settings-label", "hover:text-settings-label");
 		expect(links.map((a) => a.getAttribute("href"))).toEqual([
 			"https://example.com/pr/41",
 			"https://example.com/pr/42",
@@ -576,6 +669,40 @@ describe("SessionInspector Activity section", () => {
 		const activityMarker = activityRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
 		expect(activityMarker.parentElement).toHaveClass("relative", "flex", "items-center");
 		expect(activityMarker).toHaveClass("top-1/2", "-translate-y-1/2");
+	});
+
+	it("uses the timeline node as the single live activity indicator", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([], {
+					status: "working",
+					activity: { state: "active", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		const activityRow = activitySection()
+			.getByText("Working")
+			.closest("[data-testid='inspector-timeline-event']") as HTMLElement;
+		const marker = activityRow.querySelector("span[aria-hidden='true'].rounded-full") as HTMLElement;
+		expect(marker).toHaveClass("animate-status-pulse");
+		expect(within(activityRow).getByText("Working").querySelector(".rounded-full")).not.toBeInTheDocument();
+	});
+
+	it("aligns summary section headings on one shared inset", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(7, "open")], {
+					status: "working",
+					activity: { state: "active", lastActivityAt: "2026-06-15T10:00:00Z" },
+				})}
+			/>,
+		);
+
+		for (const title of ["Pull request", "Completion", "Activity"]) {
+			const heading = screen.getByText(title).parentElement;
+			expect(heading?.parentElement).toHaveAttribute("data-testid", "inspector-section");
+		}
 	});
 
 	it("keeps workspace, PR, and SCM context rows in the Activity timeline", () => {

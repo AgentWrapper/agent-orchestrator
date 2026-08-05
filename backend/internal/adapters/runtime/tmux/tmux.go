@@ -489,11 +489,14 @@ func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
 }
 
 // IsAlive reports whether the handle's session still exists via `tmux
-// has-session`. Exit 0 means alive. A non-zero exit with output indicating the
-// session or server is missing is a definitive false, nil. Any other non-zero
-// exit is a probe error (not proof of death) so callers (the reaper feeding
-// the LCM) treat it as a failed probe and never kill a session on a transient
-// error.
+// has-session`. Exit 0 means alive. A non-zero exit with output naming this
+// session as missing is a definitive false, nil. A server-level failure ("no
+// server running", "error connecting") wraps ports.ErrRuntimeUnavailable: the
+// probe learned nothing about this session — the agent process may well still
+// be running as an orphan of the dead server — so it must never be read as
+// per-session death (issue #3475). Any other non-zero exit is a plain probe
+// error so callers (the reaper feeding the LCM) treat it as a failed probe
+// and never kill a session on a transient error.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
@@ -502,8 +505,14 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	out, err := r.run(ctx, hasSessionArgs(id)...)
 	if err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
-			return false, nil
+		if errors.As(err, &exitErr) {
+			if sessionMissingOutput(string(out)) {
+				return false, nil
+			}
+			if serverUnreachableOutput(string(out)) {
+				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
+					id, ports.ErrRuntimeUnavailable, strings.TrimSpace(string(out)))
+			}
 		}
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
 	}
@@ -872,21 +881,34 @@ func handleID(handle ports.RuntimeHandle) (string, error) {
 
 // -- output detection helpers --
 
-// sessionMissingOutput reports whether a non-zero `tmux has-session` or
-// `tmux kill-session` exit is definitively "session does not exist" rather
-// than a transient probe failure.
+// sessionMissingOutput reports whether a non-zero `tmux has-session` exit is
+// definitively "this session does not exist" — evidence about the probed
+// session itself. Server-level failures deliberately do not match: "no server
+// running" describes the whole server and "error connecting" is a transient
+// socket failure; neither says anything about one session, so treating them as
+// per-session death let a single server outage archive every session on the
+// board (issue #3475).
 func sessionMissingOutput(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(s, "can't find session") ||
-		strings.Contains(s, "no server running") ||
-		strings.Contains(s, "error connecting") ||
 		strings.Contains(s, "session not found")
 }
 
+// serverUnreachableOutput reports whether a non-zero tmux exit means the
+// server itself could not be reached, which is inconclusive for any single
+// session's liveness.
+func serverUnreachableOutput(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "no server running") ||
+		strings.Contains(s, "error connecting")
+}
+
 // killSessionMissingOutput reports whether a non-zero `tmux kill-session`
-// failed because the session was already gone.
+// failed because the session was already gone. Teardown stays generous: a
+// missing server also means there is nothing left to kill, so it shares the
+// server-level patterns that liveness probing must not use.
 func killSessionMissingOutput(out string) bool {
-	return sessionMissingOutput(out)
+	return sessionMissingOutput(out) || serverUnreachableOutput(out)
 }
 
 // -- text helpers --

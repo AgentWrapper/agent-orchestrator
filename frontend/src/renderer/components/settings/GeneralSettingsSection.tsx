@@ -69,7 +69,13 @@ function SessionInterfaceRow() {
 	);
 }
 
-export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: () => void }) {
+export function GeneralSettingsSection({
+	onConnectMobile,
+	titleHidden,
+}: {
+	onConnectMobile: () => void;
+	titleHidden?: boolean;
+}) {
 	const { t } = useTranslation();
 	const themePreference = useUiStore((state) => state.themePreference);
 	const setThemePreference = useUiStore((state) => state.setThemePreference);
@@ -100,7 +106,7 @@ export function GeneralSettingsSection({ onConnectMobile }: { onConnectMobile: (
 	] satisfies SettingsOption<AppLocale>[];
 
 	return (
-		<SettingsSection title={t("settings.general")}>
+		<SettingsSection title={t("settings.general")} titleHidden={titleHidden}>
 			<SettingsRow icon={Palette} label={t("settings.theme")}>
 				<SettingsOptionMenu
 					aria-label={t("settings.theme")}

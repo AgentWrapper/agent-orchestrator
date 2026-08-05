@@ -88,8 +88,8 @@ END;
 
 -- +goose StatementBegin
 -- session_mode now changes at the explicit controller-epoch boundary, so mode
--- joins the existing session invalidation trigger. All other conditions and the
--- payload remain the current 0035 shape.
+-- joins the existing session invalidation trigger. All conditions and payload
+-- fields added through 0043 (including pinning) remain intact.
 DROP TRIGGER IF EXISTS sessions_cdc_update;
 CREATE TRIGGER sessions_cdc_update
 AFTER UPDATE ON sessions
@@ -100,6 +100,10 @@ WHEN OLD.activity_state <> NEW.activity_state
     OR OLD.preview_revision <> NEW.preview_revision
     OR OLD.display_name <> NEW.display_name
     OR OLD.terminate_on_pr_merge <> NEW.terminate_on_pr_merge
+    OR OLD.is_pinned <> NEW.is_pinned
+    OR OLD.pinned_at <> NEW.pinned_at
+    OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
+    OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
     OR OLD.session_mode <> NEW.session_mode
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
@@ -111,6 +115,7 @@ BEGIN
             'terminateOnPrMerge', json(CASE WHEN NEW.terminate_on_pr_merge THEN 'true' ELSE 'false' END),
             'previewUrl', NEW.preview_url,
             'previewRevision', NEW.preview_revision,
+            'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END),
             'mode', NEW.session_mode
         ),
         NEW.updated_at);
@@ -136,6 +141,10 @@ WHEN OLD.activity_state <> NEW.activity_state
     OR OLD.preview_revision <> NEW.preview_revision
     OR OLD.display_name <> NEW.display_name
     OR OLD.terminate_on_pr_merge <> NEW.terminate_on_pr_merge
+    OR OLD.is_pinned <> NEW.is_pinned
+    OR OLD.pinned_at <> NEW.pinned_at
+    OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
+    OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_updated',
@@ -145,7 +154,8 @@ BEGIN
             'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END),
             'terminateOnPrMerge', json(CASE WHEN NEW.terminate_on_pr_merge THEN 'true' ELSE 'false' END),
             'previewUrl', NEW.preview_url,
-            'previewRevision', NEW.preview_revision
+            'previewRevision', NEW.preview_revision,
+            'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
         ),
         NEW.updated_at);
 END;

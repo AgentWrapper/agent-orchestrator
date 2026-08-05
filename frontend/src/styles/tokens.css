@@ -110,7 +110,7 @@
 	--color-status-needs-you: #fb923c;
 	--color-status-in-review: #facc15;
 	--color-status-ready: #4ade80;
-	--color-status-merged: var(--primary);
+	--color-status-merged: var(--color-status-ready);
 	--color-status-idle: var(--muted-foreground);
 	--color-status-exited: var(--destructive);
 	--color-status-terminated: var(--chart-3);
@@ -309,7 +309,9 @@
 
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 40px;
-	--size-traffic-light-clearance-fullscreen: var(--space-2);
+	/* Fullscreen has no traffic lights, but the left navigation still needs one
+	 * compact row before sidebar content begins. */
+	--size-traffic-light-clearance-fullscreen: calc(var(--size-control-md) + var(--space-1));
 	/* Resize handle straddles the sidebar-panel boundary: offset = half the width
 	 * so the hairline lands exactly at the junction and the drag zone covers 6px
 	 * on each side of it. */
@@ -320,9 +322,10 @@
 	--size-notification-width: 460px;
 	--size-notification-max-height: 420px;
 	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
-	--size-settings-menu-width: 18rem; /* settings option menus — max width cap */
-	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — wider rows */
+	--size-settings-menu-width: 20rem; /* settings option menus — matches agent picker box width */
+	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — fixed width for status columns */
 	--size-notification-icon: 26px;
+	--size-session-topbar: calc(var(--size-inspector-tabs) + (2 * var(--space-1)));
 	/* DaemonFailureBanner floating toast (was w-[min(22rem,…)] / max-h-40). */
 	--size-daemon-failure-toast: 22rem;
 	--size-daemon-failure-details-max: 10rem;
@@ -341,6 +344,9 @@
 	--size-shell-tab-min: 64px;
 	/* Keeps added session tabs aligned with the owning tab in the secondary strip. */
 	--size-session-pane-tab-max: 112px;
+	/* Compact connected shell tab in a session's terminal strip. This includes
+	   the terminal glyph and close action, not only the truncated label. */
+	--size-shell-tab-connected: 148px;
 	/* Caps a standalone shell terminal's tab label so several open shells stay
 	   readable side by side instead of one long path crowding out the rest. */
 	--size-shell-tab-max: 140px;
@@ -373,7 +379,8 @@
 	--size-branch-chip: 13rem;
 	--size-inspector-min: 280px;
 	--size-textarea-min: 112px;
-	--size-sidebar-project-actions: 84px;
+	/* Three 20px actions + two 1px gaps + the 2px right inset. */
+	--size-sidebar-project-actions: 64px;
 
 	/* Shared inset-panel geometry (welcome board + settings page) */
 	--size-center-panel-inset: 24px;
@@ -432,7 +439,7 @@
 	--size-settings-section-inner-gap: 12px;
 	--size-settings-row-padding: 16px;
 	--size-settings-row-icon-gap: 12px;
-	--size-settings-menu-min-width: 11rem;
+	--size-settings-menu-min-width: 9rem;
 	--size-settings-inline-input-min: 3.5rem;
 	--size-settings-inline-input-max: 12rem;
 	--size-settings-inline-input-max-percent: 42%;
@@ -687,7 +694,7 @@
 	--color-status-needs-you: #ea580c;
 	--color-status-in-review: #ca8a04;
 	--color-status-ready: #16a34a;
-	--color-status-merged: var(--primary);
+	--color-status-merged: var(--color-status-ready);
 	--color-status-idle: var(--muted-foreground);
 	--color-status-exited: var(--destructive);
 	--color-status-terminated: var(--chart-3);

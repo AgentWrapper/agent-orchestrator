@@ -185,6 +185,29 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.
 	return s, nil
 }
 
+func (f *fakeSessionService) Pin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = true
+	now := time.Now().UTC()
+	s.PinnedAt = &now
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) Unpin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = false
+	s.PinnedAt = nil
+	f.sessions[id] = s
+	return s, nil
+}
+
 func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
 	s, ok := f.sessions[id]
 	if !ok {
@@ -572,6 +595,50 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if !svc.sessions["ao-2"].TerminateOnPRMerge {
 		t.Fatalf("session merge policy not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("pin = %d, want 200; body=%s", status, body)
+	}
+	var pinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &pinned)
+	if !pinned.Session.IsPinned {
+		t.Fatalf("pin response = %#v", pinned)
+	}
+	if !svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session pin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("unpin = %d, want 200; body=%s", status, body)
+	}
+	var unpinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &unpinned)
+	if unpinned.Session.IsPinned {
+		t.Fatalf("unpin response = %#v", unpinned)
+	}
+	if svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session unpin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	_, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("pin unknown = %d, want 404", status)
+	}
+
+	_, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("unpin unknown = %d, want 404", status)
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)

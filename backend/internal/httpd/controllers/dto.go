@@ -873,6 +873,12 @@ type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`
 }
 
+// MergePRRequest is the body of POST /api/v1/prs/{id}/merge.
+type MergePRRequest struct {
+	PRURL           string `json:"prUrl" minLength:"1"`
+	ExpectedHeadSHA string `json:"expectedHeadSha" minLength:"40"`
+}
+
 // MergePRResponse is the body of POST /api/v1/prs/{id}/merge (200).
 type MergePRResponse struct {
 	OK       bool   `json:"ok"`

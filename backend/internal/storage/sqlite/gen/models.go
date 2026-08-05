@@ -294,6 +294,8 @@ type Session struct {
 	DiffBaseSha            string
 	DiffBaseRef            string
 	ReviewerHarness        domain.ReviewerHarness
+	IsPinned               bool
+	PinnedAt               sql.NullTime
 	SessionMode            domain.SessionMode
 	ProviderConversationID string
 	ControllerGeneration   string

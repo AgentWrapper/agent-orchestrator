@@ -1,10 +1,4 @@
-import type {
-	PullRequestFacts,
-	SessionActivity,
-	SessionActivityState,
-	SessionStatus,
-	WorkspaceSession,
-} from "../types/workspace";
+import type { SessionActivity, SessionActivityState, SessionStatus, WorkspaceSession } from "../types/workspace";
 import { appI18n, type MessageKey } from "../i18n";
 import type { TFunction } from "i18next";
 
@@ -13,10 +7,11 @@ export type AgentActivityView = {
 	label: string;
 	tone: string;
 	dotClassName: string;
+	indicatorClassName: string;
 	breathe: boolean;
 };
 
-type AgentActivityBase = Omit<AgentActivityView, "label"> & { labelKey: MessageKey };
+type AgentActivityBase = Omit<AgentActivityView, "label" | "indicatorClassName"> & { labelKey: MessageKey };
 
 const agentActivityBases: Record<SessionActivityState, AgentActivityBase> = {
 	active: {
@@ -67,7 +62,11 @@ export function getAgentActivityView(activity?: SessionActivity | null, t: TFunc
 	const state = activity?.state ?? "unknown";
 	const base = agentActivityBases[state] ?? agentActivityBases.unknown;
 	const { labelKey, ...rest } = base;
-	return { ...rest, label: t(labelKey) };
+	return {
+		...rest,
+		label: t(labelKey),
+		indicatorClassName: `${rest.dotClassName}${rest.breathe ? " animate-status-pulse" : ""}`,
+	};
 }
 
 export function isAgentActivityWorking(activity?: SessionActivity | null): boolean {
@@ -244,66 +243,6 @@ export function getAttentionZoneViewForZone(zone: AttentionZone, t: TFunction = 
 	const base = attentionZoneBases[zone];
 	const { labelKey, ...rest } = base;
 	return { ...rest, label: t(labelKey) };
-}
-
-const activeSessionDotClassNames: Partial<Record<SessionStatus, string>> = {
-	working: "bg-status-working",
-	ci_failed: "bg-status-needs-you",
-	changes_requested: "bg-status-needs-you",
-	draft: "bg-status-in-review",
-	review_pending: "bg-status-in-review",
-	pr_open: "bg-status-in-review",
-	approved: "bg-status-ready",
-	mergeable: "bg-status-ready",
-	merged: "bg-status-merged",
-};
-
-const scmStatusSeverity: Partial<Record<SessionStatus, number>> = {
-	ci_failed: 0,
-	changes_requested: 1,
-	draft: 2,
-	review_pending: 3,
-	pr_open: 4,
-	approved: 5,
-	mergeable: 6,
-};
-
-function prStatus(pr: PullRequestFacts): SessionStatus {
-	if (pr.ci === "failing") return "ci_failed";
-	if (pr.state === "draft") return "draft";
-	if (pr.review === "changes_requested" || pr.reviewComments) return "changes_requested";
-	if (pr.mergeability === "mergeable") return "mergeable";
-	if (pr.review === "approved") return "approved";
-	if (pr.review === "review_required") return "review_pending";
-	return "pr_open";
-}
-
-// Compatibility for snapshots from an older daemon. New daemons provide the
-// stack-aware scmStatus and always take precedence over this flat PR reduction.
-function fallbackSCMStatus(prs: PullRequestFacts[]): SessionStatus | undefined {
-	const open = prs.filter((pr) => pr.state === "open" || pr.state === "draft");
-	if (open.length > 0) {
-		return open
-			.map(prStatus)
-			.reduce((worst, status) =>
-				(scmStatusSeverity[status] ?? Number.MAX_SAFE_INTEGER) < (scmStatusSeverity[worst] ?? Number.MAX_SAFE_INTEGER)
-					? status
-					: worst,
-			);
-	}
-	return prs.some((pr) => pr.state === "merged") ? "merged" : undefined;
-}
-
-export function getSessionDotView(session: Pick<WorkspaceSession, "activity" | "scmStatus" | "prs">): {
-	className: string;
-} {
-	const activity = getAgentActivityView(session.activity);
-	if (activity.state !== "active") return { className: activity.dotClassName };
-
-	const contextStatus = session.scmStatus ?? fallbackSCMStatus(session.prs) ?? "working";
-	return {
-		className: `${activeSessionDotClassNames[contextStatus] ?? "bg-status-working"} animate-status-pulse`,
-	};
 }
 
 export type SessionTimelinePillStatus = Extract<SessionStatus, "no_signal" | "ci_failed" | "changes_requested">;
