@@ -322,6 +322,10 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	if s.appVersion != "" {
 		props["app_version"] = s.appVersion
 		props["ao_version"] = s.appVersion
+		// Channel of the build actually running, from the version string. A
+		// nightly build carries "-nightly." (CI stamps 0.11.3-nightly.5); plain
+		// semver is stable. The renderer sends the same property.
+		props["version_channel"] = versionChannel(s.appVersion)
 	}
 	// Which agent this install actually defaults to. Without it, "how many people
 	// use Claude versus Codex" is only answerable for sessions that were spawned,
@@ -455,6 +459,15 @@ func sanitizeRemoteValue(key string, v any) (any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// versionChannel derives stable/nightly from the version string, matching the
+// renderer's versionChannelFrom.
+func versionChannel(appVersion string) string {
+	if strings.Contains(strings.ToLower(appVersion), "-nightly.") {
+		return "nightly"
+	}
+	return "stable"
 }
 
 func loadOrCreateInstallID(dataDir string) (string, error) {

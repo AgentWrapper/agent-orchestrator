@@ -97,6 +97,23 @@ export function releaseChannelFrom(settings: { channel?: unknown; feature?: unkn
 	return "unknown";
 }
 
+/**
+ * Channel of the build actually running, read from the version string.
+ *
+ * Distinct from release_channel, which is what the user opted into. A nightly
+ * build carries "-nightly." in its version (CI stamps 0.11.3-nightly.5); a plain
+ * semver is stable. This is "what am I running", release_channel is "what did I
+ * choose". The two disagree exactly when someone switched channels but has not
+ * updated yet, and that gap is the adoption-lag signal.
+ */
+export type VersionChannel = "stable" | "nightly" | "unknown";
+
+export function versionChannelFrom(appVersion: string): VersionChannel {
+	const v = appVersion.trim();
+	if (!v || v === "unknown") return "unknown";
+	return /-nightly\./i.test(v) ? "nightly" : "stable";
+}
+
 export function buildTelemetryContext(
 	appVersion: string,
 	platform: string,
@@ -107,7 +124,10 @@ export function buildTelemetryContext(
 		app_version: version,
 		ao_version: version,
 		platform,
+		// What they opted into.
 		release_channel: channel,
+		// What they are actually running.
+		version_channel: versionChannelFrom(version),
 		build_mode: import.meta.env.DEV ? "dev" : "packaged",
 		telemetry_schema_version: TELEMETRY_SCHEMA_VERSION,
 	};

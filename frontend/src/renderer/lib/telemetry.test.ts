@@ -16,6 +16,7 @@ import {
 	startDailyActiveHeartbeat,
 	withTelemetryContext,
 	releaseChannelFrom,
+	versionChannelFrom,
 } from "./telemetry";
 import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 
@@ -509,6 +510,23 @@ describe("reserveCapture", () => {
 });
 
 describe("daily active heartbeat", () => {
+	it("derives the running channel from the version string", () => {
+		expect(versionChannelFrom("0.11.3")).toBe("stable");
+		expect(versionChannelFrom("0.11.3-nightly.5")).toBe("nightly");
+		expect(versionChannelFrom("0.12.0-NIGHTLY.1")).toBe("nightly");
+		// A pinned feature build is not nightly, and an absent version is unknown.
+		expect(versionChannelFrom("0.11.3-feature.42")).toBe("stable");
+		expect(versionChannelFrom("")).toBe("unknown");
+		expect(versionChannelFrom("unknown")).toBe("unknown");
+	});
+
+	it("carries intent and reality as separate context properties", () => {
+		const ctx = buildTelemetryContext("0.11.3", "darwin", "nightly");
+		// opted into nightly, still running a stable binary: the gap is the signal.
+		expect(ctx.release_channel).toBe("nightly");
+		expect(ctx.version_channel).toBe("stable");
+	});
+
 	it("maps the Updates setting to a release channel, not the version string", () => {
 		expect(releaseChannelFrom({ channel: "latest", feature: null })).toBe("stable");
 		expect(releaseChannelFrom({ channel: "nightly", feature: null })).toBe("nightly");

@@ -183,3 +183,19 @@ func TestPostHogSinkStampsDefaultAgentAndTenure(t *testing.T) {
 		}
 	}
 }
+
+func TestVersionChannel(t *testing.T) {
+	cases := map[string]string{
+		"0.11.3":            "stable",
+		"1.0.0":             "stable",
+		"0.11.3-nightly.5":  "nightly",
+		"0.12.0-NIGHTLY.1":  "nightly",
+		"":                  "stable", // absent version is not nightly
+		"0.11.3-feature.42": "stable", // a pinned feature build is not a nightly
+	}
+	for v, want := range cases {
+		if got := versionChannel(v); got != want {
+			t.Errorf("versionChannel(%q) = %q, want %q", v, got, want)
+		}
+	}
+}
