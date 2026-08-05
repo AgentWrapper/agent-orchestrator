@@ -6,7 +6,7 @@
     "light": "/docs/logo/ao-logo.svg",
     "dark": "/docs/logo/ao-logo.svg"
   },
-  "favicon": "/docs/favicon.svg",
+  "favicon": "/docs/logo/ao-logo.svg",
   "colors": {
     "primary": "#7bb1d9",
     "light": "#30456d",
