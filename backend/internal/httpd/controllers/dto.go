@@ -363,10 +363,12 @@ type SetSessionMergePolicyResponse struct {
 	Session            SessionView      `json:"session"`
 }
 
+// AutoInjectReviewFeedbackRequest sets the automatic review-feedback delivery policy for a session.
 type AutoInjectReviewFeedbackRequest struct {
 	AutoInjectReviewFeedback bool `json:"autoInjectReviewFeedback"`
 }
 
+// AutoInjectReviewFeedbackResponse reports the persisted review-feedback delivery policy.
 type AutoInjectReviewFeedbackResponse struct {
 	OK                       bool             `json:"ok"`
 	SessionID                domain.SessionID `json:"sessionId"`

@@ -133,6 +133,8 @@ func (s *Store) SetSessionTerminateOnPRMerge(ctx context.Context, id domain.Sess
 	return rows > 0, nil
 }
 
+// SetSessionAutoInjectReviewFeedback persists whether reviewer and SCM review
+// feedback should be delivered automatically to a worker session.
 func (s *Store) SetSessionAutoInjectReviewFeedback(ctx context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
