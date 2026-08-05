@@ -11,7 +11,7 @@ Triage bugs into well-structured GitHub issues on the correct upstream repo.
 ## 1. Pre-flight
 
 - **Pull latest code:** `git pull origin main`. Stale code = bad triage.
-- **Target repo:** Always file on the **upstream org** (`ComposioHQ/agent-orchestrator`), not forks.
+- **Target repo:** Always file on the **current repo** (`Untrivial-ai/agent-orchestrator`), not forks.
 - **Record source:** chat URL, reporter name, attachments.
 
 ## 2. Gather Context
@@ -69,7 +69,7 @@ Event kinds: `session.spawned`, `session.spawn_failed`, `session.killed`, `lifec
 
 ### 3a. Trace the code path
 
-**Always trace the actual code** — don't surface-level diagnose. [#1129](https://github.com/ComposioHQ/agent-orchestrator/issues/1129) looked like a simple `ao stop` issue but was actually a session lineage/cascade problem.
+**Always trace the actual code** — don't surface-level diagnose. [#1129](https://github.com/Untrivial-ai/agent-orchestrator/issues/1129) looked like a simple `ao stop` issue but was actually a session lineage/cascade problem.
 
 ```bash
 git fetch origin main && git log --oneline origin/main -5   # current HEAD
@@ -81,7 +81,7 @@ git fetch origin main && git log --oneline origin/main -5   # current HEAD
 git log --oneline -S 'exact-string' -- <file>
 git show <sha> -- <file> | grep -B 5 -A 10 'pattern'
 ```
-Example: [#1391](https://github.com/ComposioHQ/agent-orchestrator/issues/1391) traced a mobile layout break to a `display: flex` → `display: grid` change.
+Example: [#1391](https://github.com/Untrivial-ai/agent-orchestrator/issues/1391) traced a mobile layout break to a `display: flex` → `display: grid` change.
 
 **Research upstream dependencies** (xterm, node-pty, React, etc.) — check installed vs latest version, search their GitHub issues, check changelogs. Root cause is often upstream.
 
@@ -148,7 +148,7 @@ EOF
 
 ### 5b. Upload screenshots
 
-**⛔ NEVER use placeholder URLs.** Upload BEFORE creating the issue. ([#1151](https://github.com/ComposioHQ/agent-orchestrator/issues/1151) RCA on this pattern.)
+**⛔ NEVER use placeholder URLs.** Upload BEFORE creating the issue. ([#1151](https://github.com/Untrivial-ai/agent-orchestrator/issues/1151) RCA on this pattern.)
 
 ```bash
 SLUG="descriptive-slug"
@@ -212,7 +212,7 @@ gh issue edit <number> --repo <repo> --add-label "bug"
 | **Medium** | Strong hypothesis but unconfirmed | `bug`, `to-explore` |
 | **Low** | Can't trace, multiple conflicting theories | `bug`, `to-reproduce` |
 
-Example: [PR #1608](https://github.com/ComposioHQ/agent-orchestrator/pull/1608) was diagnosed High as xterm v6 issue — real cause was a `=` prefix on tmux `set-option`. Should have been Medium.
+Example: [PR #1608](https://github.com/Untrivial-ai/agent-orchestrator/pull/1608) was diagnosed High as xterm v6 issue — real cause was a `=` prefix on tmux `set-option`. Should have been Medium.
 
 **All available labels:** `priority: critical/high/medium/low`, `bug`, `enhancement`, `good-first-issue`, `to-reproduce`, `to-explore`. No others (no `p0`, `p1`, etc.).
 
@@ -294,11 +294,11 @@ curl -sL https://registry.npmjs.org/@scope/pkg/-/pkg-NEW.tgz | tar xz -C /tmp/ao
 diff -rq /tmp/ao-diff/v1/package/ /tmp/ao-diff/v2/package/
 ```
 
-Example: [PR #1608](https://github.com/ComposioHQ/agent-orchestrator/pull/1608) — source analysis led to wrong theories, npm diff showed the only change was a `=` prefix on tmux `set-option`.
+Example: [PR #1608](https://github.com/Untrivial-ai/agent-orchestrator/pull/1608) — source analysis led to wrong theories, npm diff showed the only change was a `=` prefix on tmux `set-option`.
 
 ## Formatting Rules
 
-- **Linkify all issue/PR refs:** `[#123](https://github.com/ComposioHQ/agent-orchestrator/issues/123)`, `[PR #456](url)`. Never bare `#123`.
+- **Linkify all issue/PR refs:** `[#123](https://github.com/Untrivial-ai/agent-orchestrator/issues/123)`, `[PR #456](url)`. Never bare `#123`.
 
 ## Pitfalls
 
@@ -308,4 +308,4 @@ Example: [PR #1608](https://github.com/ComposioHQ/agent-orchestrator/pull/1608) 
 - **`gh api --jq .content` truncates large files** (>~100KB). Use local git instead.
 - **Push script arg limits** — long commit messages hit `OSError: Argument list too long`. Use a Python script with JSON payloads instead.
 - **`OLD_STRING` must match GitHub byte-for-byte** — local code may differ from `origin/main`.
-- **New fields on shared TS interfaces MUST be optional** (`field?: Type`). Downstream `Partial<X>` spreads break on required fields. Example: [PR #1523](https://github.com/ComposioHQ/agent-orchestrator/pull/1523).
+- **New fields on shared TS interfaces MUST be optional** (`field?: Type`). Downstream `Partial<X>` spreads break on required fields. Example: [PR #1523](https://github.com/Untrivial-ai/agent-orchestrator/pull/1523).

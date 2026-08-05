@@ -6,9 +6,9 @@ trigger: User reports a bug, or asks to triage/file an issue for a reported prob
 
 # Bug Triage Skill
 
-Triage bugs into well-structured GitHub issues on the ReverbCode repo.
+Triage bugs into well-structured GitHub issues on the Agent Orchestrator repo.
 
-> **ReverbCode is Go + Electron.** The backend is a Go daemon (`backend/`)
+> **Agent Orchestrator is Go + Electron.** The backend is a Go daemon (`backend/`)
 > exposing a loopback HTTP API on `127.0.0.1:3001`; the frontend is an Electron +
 > React supervisor (`frontend/`). There is **no** pm2/tmux/Node runtime here —
 > the daemon owns lifecycle and sessions run under the **Zellij** runtime
@@ -16,19 +16,19 @@ Triage bugs into well-structured GitHub issues on the ReverbCode repo.
 
 ## ⚠️ Which `ao` are you running?
 
-**`ReverbCode` ships no `ao` on your PATH.** A bare `ao` very likely resolves to a
+**`Agent Orchestrator` ships no `ao` on your PATH.** A bare `ao` very likely resolves to a
 **different** AO install — e.g. an old npm build at `~/.nvm/.../bin/ao` that talks
 to port **:3000**. Triaging with the wrong binary produces bugs that don't exist
-in ReverbCode (and miss ones that do).
+in Agent Orchestrator (and miss ones that do).
 
 Before any diagnostics:
 
 ```bash
 which -a ao                      # see every ao on PATH — expect surprises
-ao status 2>/dev/null            # if this shows port 3000, it is NOT ReverbCode
+ao status 2>/dev/null            # if this shows port 3000, it is NOT Agent Orchestrator
 ```
 
-Use a ReverbCode binary explicitly:
+Use an Agent Orchestrator binary explicitly:
 
 ```bash
 # Option A — build from this repo (preferred during triage)
@@ -40,7 +40,7 @@ cd backend && go build -o /tmp/ao ./cmd/ao
 ```
 
 **Confirm `ao status` reports `port: 3001` before trusting any output.** Throughout
-this skill, `ao` means _your verified ReverbCode binary_ (`/tmp/ao` or the bundled
+this skill, `ao` means _your verified Agent Orchestrator binary_ (`/tmp/ao` or the bundled
 one), never a bare PATH lookup.
 
 > Note: spawned sessions get a PATH pin so the _session's_ `ao` resolves to the
@@ -51,8 +51,8 @@ one), never a bare PATH lookup.
 ## 1. Pre-flight
 
 - **Pull latest code:** `git pull origin main`. Stale code = bad triage.
-- **Target repo:** Always file on **`aoagents/ReverbCode`** (the product repo, not
-  a fork). ReverbCode is the product, not a thin fork of upstream.
+- **Target repo:** Always file on **`Untrivial-ai/agent-orchestrator`** (the current product repo, not
+  a fork). Agent Orchestrator is the product, not a thin fork of upstream.
 - **Verify your binary:** confirm `ao status` shows port **3001** (see warning above).
 - **Record source:** chat URL, reporter name, attachments.
 
@@ -63,7 +63,7 @@ one), never a bare PATH lookup.
 | Source                   | How to gather                                                                                                                        |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
 | **Discord/Slack thread** | Read full thread. Extract: reporter name, original description (the thread starter, not whoever tagged you), screenshots, follow-ups |
-| **GitHub issue**         | `gh issue view <number> --repo aoagents/ReverbCode --json body,comments`                                                             |
+| **GitHub issue**         | `gh issue view <number> --repo Untrivial-ai/agent-orchestrator --json body,comments`                                                             |
 | **Live observation**     | Pull live state via the daemon: `ao status`, `ao session ls`, `ao session get <id>`                                                  |
 
 ### 2b. Minimum viable report gate
@@ -81,7 +81,7 @@ If insufficient, ask:
 ### 2c. Local diagnostics (if bug is on same machine)
 
 Gather everything yourself before asking the reporter. Use your **verified**
-ReverbCode binary (`/tmp/ao` here) for every `ao` call:
+Agent Orchestrator binary (`/tmp/ao` here) for every `ao` call:
 
 ```bash
 # Environment
@@ -117,7 +117,7 @@ handshake is `~/.ao/running.json`.
 
 **Always trace the actual code** — don't surface-level diagnose. A symptom that
 looks like a simple `ao stop` issue is often a lifecycle/session-manager problem
-one layer down. ReverbCode's layers:
+one layer down. Agent Orchestrator's layers:
 
 - CLI (Cobra, thin client over daemon HTTP): `backend/internal/cli/`, entrypoint
   `backend/cmd/ao/main.go`
@@ -143,7 +143,7 @@ git show <sha> -- <file> | grep -B 5 -A 10 'pattern'
 
 **Research dependencies** (Zellij, the agent harness binary, Electron, React, the
 SQLite driver) — check installed vs latest version, search their issue trackers,
-check changelogs. Root cause is sometimes in a dependency, not ReverbCode.
+check changelogs. Root cause is sometimes in a dependency, not Agent Orchestrator.
 
 ### 3b. Cross-platform check
 
@@ -177,16 +177,16 @@ Stop and ask for more info if:
 Search with multiple strategies, always using `--state all` (closed bugs regress):
 
 ```bash
-gh issue list --repo aoagents/ReverbCode --state all --search "<symptom>"
-gh issue list --repo aoagents/ReverbCode --state all --search "<component-name>"
-gh issue list --repo aoagents/ReverbCode --state all --search "<error-message>"
-gh pr list --repo aoagents/ReverbCode --state all --search "<keywords>"
+gh issue list --repo Untrivial-ai/agent-orchestrator --state all --search "<symptom>"
+gh issue list --repo Untrivial-ai/agent-orchestrator --state all --search "<component-name>"
+gh issue list --repo Untrivial-ai/agent-orchestrator --state all --search "<error-message>"
+gh pr list --repo Untrivial-ai/agent-orchestrator --state all --search "<keywords>"
 ```
 
 ### Duplicate found → comment on existing issue
 
 ```bash
-gh issue comment <number> --repo aoagents/ReverbCode --body "$(cat <<'EOF'
+gh issue comment <number> --repo Untrivial-ai/agent-orchestrator --body "$(cat <<'EOF'
 ## New Report
 **Reported by:** @<reporter> in [chat](<url>)
 **Date:** <YYYY-MM-DD> | **Checkout:** `<commit-hash>`
@@ -204,7 +204,7 @@ EOF
 - [ ] Reporter attribution correct (original reporter, not who tagged you)
 - [ ] Commit hash recorded
 - [ ] AO version recorded (`ao version`)
-- [ ] Reproduced against ReverbCode (:3001 / Go code path), not another AO install
+- [ ] Reproduced against Agent Orchestrator (:3001 / Go code path), not another AO install
 - [ ] Root cause confidence scored (see 5c)
 - [ ] Related issues cross-linked
 - [ ] Reproduction steps are concrete
@@ -217,23 +217,23 @@ EOF
 ```bash
 SLUG="descriptive-slug"
 # Create asset branch
-gh api -X POST repos/aoagents/ReverbCode/git/refs \
+gh api -X POST repos/Untrivial-ai/agent-orchestrator/git/refs \
   -f ref="refs/heads/issue-assets-${SLUG}" \
   -f sha=$(git rev-parse origin/main)
 
 # Upload (portable base64)
 IMG_B64=$(base64 < /path/to/screenshot.png | tr -d '\n')
-gh api -X PUT "repos/aoagents/ReverbCode/contents/.issue-assets/${SLUG}/name.png" \
+gh api -X PUT "repos/Untrivial-ai/agent-orchestrator/contents/.issue-assets/${SLUG}/name.png" \
   -f message="chore: upload screenshot" \
   -f content="$IMG_B64" \
   -f branch="issue-assets-${SLUG}"
-# Use: ![screenshot](https://raw.githubusercontent.com/aoagents/ReverbCode/issue-assets-<slug>/.issue-assets/<file>)
+# Use: ![screenshot](https://raw.githubusercontent.com/Untrivial-ai/agent-orchestrator/issue-assets-<slug>/.issue-assets/<file>)
 ```
 
 ### 5c. Create the issue
 
 ```bash
-gh issue create --repo aoagents/ReverbCode --title "<title>" --body "$(cat <<'EOF'
+gh issue create --repo Untrivial-ai/agent-orchestrator --title "<title>" --body "$(cat <<'EOF'
 ## Bug
 <summary>
 
@@ -260,8 +260,8 @@ EOF
 **Check which labels actually exist first**, then apply only those:
 
 ```bash
-gh label list --repo aoagents/ReverbCode          # source of truth — apply only these
-gh issue edit <number> --repo aoagents/ReverbCode --add-label "bug"
+gh label list --repo Untrivial-ai/agent-orchestrator          # source of truth — apply only these
+gh issue edit <number> --repo Untrivial-ai/agent-orchestrator --add-label "bug"
 ```
 
 The repo currently carries `bug`, `enhancement`, `priority: critical/high/medium/low`,
@@ -298,7 +298,7 @@ Search by subsystem and add a `## Related` section to the issue body:
 
 ### 5f. Push a fix PR (always attempt)
 
-ReverbCode is a Go repo — fixes go through a local branch, build, and `gh pr create`.
+Agent Orchestrator is a Go repo — fixes go through a local branch, build, and `gh pr create`.
 There is no remote-patch script.
 
 - **Unclear fix:** Don't push a guess. Document and flag in the issue.
@@ -312,7 +312,7 @@ There is no remote-patch script.
 
   Fixes #<n>"
   git push -u origin fix/<slug>
-  gh pr create --repo aoagents/ReverbCode --fill \
+  gh pr create --repo Untrivial-ai/agent-orchestrator --fill \
     --title "fix(<scope>): <summary>" \
     --body "Fixes #<n>
 
@@ -324,13 +324,13 @@ There is no remote-patch script.
   ```
 
 - **Non-trivial fix** (broad change, needs iteration, or you can't fully verify):
-  spawn a ReverbCode worker session to do the work in its own worktree instead of
+  spawn an Agent Orchestrator worker session to do the work in its own worktree instead of
   pushing a guess:
 
   ```bash
-  ao spawn --project reverbcode --prompt "Fix #<n>: <one-line problem statement>. \
+  ao spawn --project agent-orchestrator --prompt "Fix #<n>: <one-line problem statement>. \
   Root cause: <file:line + mechanism>. Suggested approach: <approach>. \
-  Build with 'cd backend && go build ./... && go test ./...' before opening a PR against aoagents/ReverbCode."
+  Build with 'cd backend && go build ./... && go test ./...' before opening a PR against Untrivial-ai/agent-orchestrator."
   ```
 
   Note the issue with which path you took (PR or spawned worker).
@@ -372,15 +372,15 @@ any priority/confidence stated in the body), root cause summary.
 ### B. Remote Code Inspection (no local clone)
 
 ```bash
-gh api repos/aoagents/ReverbCode/git/trees/main?recursive=1 --jq '.tree[].path'    # list files
-gh api repos/aoagents/ReverbCode/contents/{path} --jq '.content' | python3 -c "import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))"  # read file
-gh search code "term" --repo aoagents/ReverbCode --json path --jq '.[].path'        # search code
-gh api "repos/aoagents/ReverbCode/commits?path={path}&per_page=10" --jq '.[] | "\(.sha[0:8]) \(.commit.message | split("\n")[0])"'  # file history
+gh api repos/Untrivial-ai/agent-orchestrator/git/trees/main?recursive=1 --jq '.tree[].path'    # list files
+gh api repos/Untrivial-ai/agent-orchestrator/contents/{path} --jq '.content' | python3 -c "import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.stdin.read()))"  # read file
+gh search code "term" --repo Untrivial-ai/agent-orchestrator --json path --jq '.[].path'        # search code
+gh api "repos/Untrivial-ai/agent-orchestrator/commits?path={path}&per_page=10" --jq '.[] | "\(.sha[0:8]) \(.commit.message | split("\n")[0])"'  # file history
 ```
 
 ### C. Build / Version Diagnostics
 
-ReverbCode is built from source, not published to npm. Pin the binary under test
+Agent Orchestrator is built from source, not published to npm. Pin the binary under test
 and reproduce against a known build:
 
 ```bash
@@ -401,18 +401,18 @@ git checkout - ; git stash pop
 
 ## Formatting Rules
 
-- **Linkify all issue/PR refs:** `[#123](https://github.com/aoagents/ReverbCode/issues/123)`, `[PR #456](url)`. Never bare `#123`.
+- **Linkify all issue/PR refs:** `[#123](https://github.com/Untrivial-ai/agent-orchestrator/issues/123)`, `[PR #456](url)`. Never bare `#123`.
 
 ## Pitfalls
 
 - **Wrong `ao` binary.** A bare `ao` may be a different AO install (old npm build on
-  :3000). Always pin a ReverbCode binary and confirm `ao status` shows port **3001**.
-- **Verify the bug reproduces against ReverbCode (:3001 / Go code path) before
+  :3000). Always pin an Agent Orchestrator binary and confirm `ao status` shows port **3001**.
+- **Verify the bug reproduces against Agent Orchestrator (:3001 / Go code path) before
   filing** — symptoms first seen in another AO install may not reproduce here.
 - **Reporter ≠ person who tagged you.** Always attribute to the original reporter.
 - **Record the commit hash** you analyzed — code changes fast.
 - **GitHub issue is mandatory** — every triaged bug gets one, even if fix is trivial.
-- **Only apply labels that exist** (`gh label list --repo aoagents/ReverbCode`).
+- **Only apply labels that exist** (`gh label list --repo Untrivial-ai/agent-orchestrator`).
   State priority/confidence in the body when no matching label exists.
 - **Build before you push.** `cd backend && go build ./... && go test ./...` must
   pass; never open a PR with an unverified Go change.
