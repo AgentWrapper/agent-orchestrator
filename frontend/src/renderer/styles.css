@@ -1,5 +1,9 @@
 @import "tailwindcss";
 @import "../styles/tokens.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:is(.dark *, :root:not([data-theme="light"]) *));
 
 @custom-media --layout-narrow (width <= 680px); /* --breakpoint-layout-narrow */
 
@@ -95,12 +99,15 @@
 	--color-popover-foreground: var(--color-text-primary);
 	--color-input: var(--bridge-border);
 	--color-sidebar: var(--color-bg-sidebar);
-	--color-sidebar-foreground: var(--color-text-muted);
-	--color-sidebar-accent: var(--color-bg-tertiary);
-	--color-sidebar-accent-foreground: var(--color-text-primary);
-	--color-sidebar-border: var(--bridge-border);
-	--color-sidebar-ring: var(--bridge-accent);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-ring: var(--sidebar-ring);
 	--color-terminal: var(--color-bg-terminal);
+	--color-terminal-opaque: var(--color-bg-terminal-opaque);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
 
@@ -161,12 +168,16 @@
 	--duration-fast: var(--duration-fast);
 	--duration-normal: var(--duration-normal);
 
+	/* Motion — press-feedback scale for interactive elements */
+	--scale-press: 0.97;
+
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
+	--spacing-window-titlebar: var(--size-window-titlebar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
-	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
-	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset);
+	/* Fullscreen has no traffic lights — align the cluster to sidebar content. */
+	--spacing-titlebar-cluster-left-fullscreen: var(--space-2);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
@@ -179,12 +190,14 @@
 	--spacing-control-board: var(--size-control-board);
 	--spacing-table-head: var(--size-table-head);
 	--spacing-inspector-tabs: var(--size-inspector-tabs);
+	--spacing-session-topbar: var(--size-session-topbar);
 	--spacing-browser-url: var(--size-browser-url);
 	--spacing-browser-min: var(--size-browser-min);
 	--spacing-dot-sm: var(--size-dot-sm);
 	--spacing-content-max: var(--size-content-max);
 	--spacing-flex-min: var(--size-flex-min);
 	--spacing-shell-tab-min: var(--size-shell-tab-min);
+	--spacing-shell-tab-connected: var(--size-shell-tab-connected);
 	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
@@ -206,22 +219,23 @@
 	--spacing-kv-label: var(--size-kv-label);
 	--spacing-branch-chip: var(--size-branch-chip);
 
-	--color-muted: var(--color-bg-tertiary);
-	--color-muted-foreground: var(--color-text-muted);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
 	--color-passive: var(--color-text-passive);
-	--color-secondary: var(--color-bg-tertiary);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
 
-	--color-primary: var(--bridge-accent);
-	--color-primary-foreground: var(--bridge-accent-fg);
-	--color-accent: var(--bridge-accent);
-	--color-accent-foreground: var(--bridge-accent-fg);
+	--color-primary: var(--primary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--primary-foreground);
 	--color-accent-weak: var(--bridge-accent-weak);
 	--color-accent-dim: var(--bridge-accent-dim);
 	--color-accent-strong: var(--bridge-accent-strong);
 	--color-danger-strong: var(--bridge-danger-strong);
-	--color-ring: var(--bridge-accent);
+	--color-ring: var(--ring);
 
-	--color-border: var(--bridge-border);
+	--color-border: var(--border);
 	--color-border-strong: var(--bridge-border-strong);
 
 	--color-working: var(--bridge-working);
@@ -245,9 +259,15 @@
 	--color-interactive-hover: var(--bridge-interactive-hover);
 	--color-interactive-active: var(--bridge-interactive-active);
 
+	--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
-	--animate-overlay-in: overlay-in 150ms ease-out;
-	--animate-modal-in: modal-in 150ms ease-out;
+	--animate-overlay-in: overlay-in 130ms var(--ease-out);
+	--animate-modal-in: modal-in 180ms var(--ease-out);
+	/* Exits are shorter than entries: the system is responding, not deciding. */
+	--animate-overlay-out: overlay-out 90ms ease-in;
+	--animate-modal-out: modal-out 100ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -328,7 +348,7 @@
 
 @utility session-card-terminated {
 	border-color: color-mix(in srgb, var(--color-status-terminated) 32%, var(--color-border));
-	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-secondary));
+	background-color: color-mix(in srgb, var(--color-status-terminated) 7%, var(--color-bg-primary));
 }
 
 @utility bg-surface-faint {
@@ -383,6 +403,8 @@
 	padding-right: var(--size-center-panel-inline-inset);
 	padding-bottom: var(--size-center-panel-bottom-inset);
 	padding-left: 0;
+	/* Match the sidebar spring settle time (~280ms). */
+	transition: padding 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 @utility center-panel-surface {
@@ -394,6 +416,9 @@
 	border-radius: var(--radius-center-panel);
 	border: 1px solid var(--color-border-strong);
 	background-color: var(--color-bg-primary);
+	transition:
+		border-color 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+		border-radius 280ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 /* A fully hidden sidebar no longer contributes a left layout gutter. Restore
@@ -402,15 +427,73 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
-/* macOS + Linux: one uniform inset on every side (matches the near-flush top
- * that keeps Board/Terminal titles level with the fixed TitlebarNav). Two
- * classes so it also wins over the `.sidebar-hidden` left gutter above. */
+/* macOS + Linux: inset on all sides except left (flush with sidebar). */
 .center-panel-shell.center-panel-shell--mac {
-	padding: var(--size-center-panel-inset-mac);
+	padding-top: var(--size-center-panel-inset-mac);
+	padding-right: var(--size-center-panel-inset-mac);
+	padding-bottom: var(--size-center-panel-inset-mac);
+	padding-left: 0;
 }
 
 .center-panel-shell.center-panel-shell--mac.center-panel-shell--fullscreen {
 	padding: 0;
+}
+
+/* Sidebar closed on mac: content panel expands to fill the full window.
+ * Remove all padding and strip the surface border + radius so it's flush. */
+.sidebar-hidden .center-panel-shell.center-panel-shell--mac {
+	padding: 0;
+}
+
+.sidebar-hidden .center-panel-shell--mac .center-panel-surface {
+	border-color: transparent;
+	border-radius: 0;
+}
+
+/* Session topbar now lives inside .center-panel-surface. When it's rendered
+ * there, drop the outer border and radius (the surface provides both) and keep
+ * only a bottom divider separating the tabs from the terminal below.
+ * When it's rendered in-place (native fullscreen), keep the legacy surface
+ * treatment so the topbar still looks like a standalone panel header. */
+.session-topbar-surface {
+	overflow: hidden;
+	border: 1px solid var(--color-border-strong);
+	border-radius: var(--radius-center-panel) var(--radius-center-panel) 0 0;
+	background-color: var(--color-bg-primary);
+}
+
+.center-panel-surface .session-topbar-surface {
+	border: none;
+	border-bottom: 1px solid var(--color-border-strong);
+	border-radius: 0;
+}
+
+/* When the sidebar is off-canvas, clear only the fixed navigation cluster.
+ * Native macOS fullscreen removes the traffic lights, so the cluster moves to
+ * the compact panel inset instead of retaining the windowed 79px reserve. */
+.session-topbar-titlebar-clearance-mac {
+	padding-left: var(--size-titlebar-content-offset);
+}
+
+.native-fullscreen .session-topbar-titlebar-clearance-mac {
+	padding-left: calc(
+		var(--space-2) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+	);
+}
+
+.session-topbar-titlebar-clearance-linux {
+	padding-left: var(--size-titlebar-content-offset-linux);
+}
+
+.center-panel-shell.center-panel-shell--session {
+	/* No padding override: session pages use the same inset as other pages now
+	 * that SessionTopbarHost lives inside the surface. Class is kept for
+	 * identification (e.g. tests). */
+}
+
+.center-panel-shell--session > .center-panel-surface {
+	/* Session surface uses standard border-radius; topbar clips to rounded corners
+	 * inside the surface. No override needed. */
 }
 
 .center-panel-titlebar {
@@ -422,6 +505,27 @@
 	min-height: var(--size-traffic-light-clearance);
 }
 
+/* Sidebar chrome clearance: size tokens only — set by data-topbar-offset on the
+ * fixed sidebar container so top/height/overlay pad share one offset. */
+[data-topbar-offset="toolbar"] {
+	--sidebar-chrome-offset: var(--size-toolbar);
+}
+[data-topbar-offset="titlebar"] {
+	--sidebar-chrome-offset: var(--size-window-titlebar);
+}
+[data-topbar-offset="trafficLights"] {
+	--sidebar-chrome-offset: var(--size-traffic-light-clearance);
+}
+.native-fullscreen [data-topbar-offset="trafficLights"] {
+	--sidebar-chrome-offset: var(--size-traffic-light-clearance-fullscreen);
+}
+[data-topbar-offset="session"] {
+	--sidebar-chrome-offset: var(--size-session-topbar);
+}
+.platform-windows [data-topbar-offset="session"] {
+	--sidebar-chrome-offset: calc(var(--size-window-titlebar) + var(--size-session-topbar));
+}
+
 /* On macOS the titlebar controls stay fixed when the sidebar is off-canvas.
  * Pad the title past that cluster so it sits next to the buttons. Fullscreen
  * drops the traffic-light reserve so title sits next to the left-edge buttons. */
@@ -429,21 +533,18 @@
 	padding-left: calc(var(--size-titlebar-content-offset) - var(--size-center-panel-inset-mac));
 }
 
-/* Linux clears the cluster from its own left edge (no traffic-light row). */
-.center-panel-shell--linux.center-panel-shell--titlebar-clearance .center-panel-titlebar {
-	padding-left: calc(var(--size-titlebar-content-offset-linux) - var(--size-center-panel-inset-mac));
-}
-
 /* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
 .center-panel-shell--titlebar-clearance-fullscreen .center-panel-titlebar {
 	padding-left: calc(
-		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+		var(--space-2) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
 }
 
-/* Windows: the frameless window's custom titlebar already supplies top chrome,
- * so drop the framed panel's top inset to give content more height. */
-.platform-windows .center-panel-shell {
+/* Windows / Linux: a ShellTopbar already supplies the top chrome, so the
+ * framed panel needs no additional top inset. Windows uses its custom
+ * frameless titlebar; Linux uses the standard ShellTopbar. */
+.platform-windows .center-panel-shell,
+.platform-linux .center-panel-shell {
 	padding-top: 0;
 }
 
@@ -492,9 +593,26 @@ button.settings-row-bar {
 	transition-duration: var(--duration-fast);
 }
 
+.review-run-controls-container {
+	container-type: inline-size;
+	width: 100%;
+}
+
+.review-run-controls {
+	flex-wrap: nowrap;
+	width: 100%;
+}
+
+@container (max-width: 20rem) {
+	.review-run-action-label {
+		display: none;
+	}
+}
+
 @utility settings-menu-surface {
 	display: flex;
-	width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
+	width: max-content;
+	max-width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
 	min-width: var(--size-settings-menu-min-width);
 	max-height: var(--size-select-menu-max);
 	flex-direction: column;
@@ -510,6 +628,7 @@ button.settings-row-bar {
 }
 
 @utility settings-agent-menu-surface {
+	width: var(--size-settings-agent-menu-min-width);
 	min-width: var(--size-settings-agent-menu-min-width);
 	padding: var(--space-3);
 	gap: var(--space-2);
@@ -585,6 +704,11 @@ button.settings-row-bar {
 	}
 }
 
+@utility settings-model-control {
+	width: var(--size-settings-inline-input-max);
+	max-width: var(--size-settings-inline-input-max);
+}
+
 @utility settings-row-value {
 	min-width: 0;
 	max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
@@ -635,13 +759,12 @@ button.settings-row-bar {
 	transition-property: opacity;
 	transition-duration: var(--duration-normal);
 
-	&:hover {
+	&:hover:not(:disabled) {
 		opacity: 0.9;
 	}
 
 	&:disabled {
 		cursor: not-allowed;
-		opacity: 0.5;
 	}
 }
 
@@ -749,18 +872,20 @@ button.settings-row-bar {
 
 @utility import-close-button {
 	position: absolute;
-	top: var(--space-3);
-	right: var(--space-3);
+	top: var(--size-import-modal-padding);
+	right: var(--size-import-modal-padding);
 	z-index: calc(var(--z-chrome) + 1);
 	display: grid;
-	width: calc(var(--spacing) * 5);
-	height: calc(var(--spacing) * 5);
+	width: var(--size-control-md);
+	height: var(--size-control-md);
 	place-items: center;
+	border-radius: var(--radius-md);
 	color: var(--color-text-import-muted);
-	transition-property: color;
+	transition-property: color, background-color;
 	transition-duration: var(--duration-normal);
 
 	&:hover {
+		background-color: var(--color-interactive-hover);
 		color: var(--color-text-import-title);
 	}
 
@@ -808,6 +933,8 @@ body {
 	font-size: var(--font-size-md);
 	line-height: var(--line-height-normal);
 	-webkit-font-smoothing: antialiased;
+	-webkit-user-select: none;
+	user-select: none;
 }
 
 button,
@@ -815,6 +942,13 @@ input,
 textarea,
 select {
 	font: inherit;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+	-webkit-user-select: text;
+	user-select: text;
 }
 
 :is(
@@ -965,6 +1099,20 @@ select {
 	background: var(--color-bg-primary);
 }
 
+/* Paint the pane with the opaque RGB of --color-bg-terminal only. The e7 alpha
+   on the token composites against app chrome and left a #111316 fringe in the
+   p-2 gutter / FitAddon leftover strips. */
+.terminal-surface {
+	background-color: var(--color-bg-terminal-opaque);
+}
+
+.terminal-surface .xterm,
+.terminal-surface .xterm-viewport,
+.terminal-surface .xterm-screen,
+.terminal-surface .xterm-helpers {
+	background-color: var(--color-bg-terminal-opaque) !important;
+}
+
 @keyframes status-pulse {
 	0%,
 	100% {
@@ -1056,6 +1204,15 @@ select {
 	}
 }
 
+@keyframes overlay-out {
+	from {
+		opacity: 1;
+	}
+	to {
+		opacity: 0;
+	}
+}
+
 @keyframes modal-in {
 	from {
 		opacity: 0;
@@ -1064,6 +1221,17 @@ select {
 	to {
 		opacity: 1;
 		scale: 1;
+	}
+}
+
+@keyframes modal-out {
+	from {
+		opacity: 1;
+		scale: 1;
+	}
+	to {
+		opacity: 0;
+		scale: 0.95;
 	}
 }
 
@@ -1085,9 +1253,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 /* Expanded-only sidebar chrome waits for the rail width transition to finish
  * before painting, so tap-to-expand does not flash labels inside the narrow
  * collapsed rail. */
-.sidebar-expanded-chrome {
-	transition: opacity 150ms ease-out;
-}
+.sidebar-expanded-chrome {}
 [data-slot="sidebar-container"][data-expanded-chrome="hidden"] .sidebar-expanded-chrome {
 	opacity: 0;
 	pointer-events: none;
@@ -1101,10 +1267,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	.ao-startup-status,
 	.ao-startup-dots span {
 		animation: none;
-	}
-
-	.sidebar-expanded-chrome {
-		transition: none;
 	}
 
 	[data-slot="command-dialog-overlay"],
@@ -1123,7 +1285,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
  * stops at the header instead of crossing the traffic-light strip. */
 .dashboard-app-header {
 	display: flex;
-	height: 56px;
+	height: var(--size-shell-topbar);
 	flex-shrink: 0;
 	align-items: center;
 	gap: 13px;
@@ -1313,13 +1475,15 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 /* Windows custom title bar (WindowTitlebar): the app paints the sidebar toggle
  * + menu on one row while Electron overlays the native min/max/close buttons on
- * the right. Height must match TITLEBAR_HEIGHT + the Window Controls Overlay
- * height in main.ts so the native buttons line up. The whole strip is the
- * window-drag region; interactive children opt out with
+ * the right. Height uses --size-window-titlebar and must match TITLEBAR_HEIGHT
+ * + the Window Controls Overlay height in main.ts so the native buttons line up.
+ * The whole strip is the window-drag region; interactive children opt out with
  * -webkit-app-region: no-drag. */
 .window-titlebar {
+	position: relative;
+	z-index: var(--z-titlebar);
 	display: flex;
-	height: 36px;
+	height: var(--size-window-titlebar);
 	flex-shrink: 0;
 	align-items: center;
 	gap: 8px;
@@ -1519,6 +1683,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border-radius: 0;
 }
 
+.session-inspector__body--browser .browser-panel__viewport {
+	margin: 0;
+	border-radius: 0;
+	box-shadow: none;
+}
+
 /* Inspector resize handle (shadcn resizable separator, AO visual): a 7px
  * transparent grab strip whose centered 1px line lights accent on hover, drag
  * (rrp sets data-separator="active"), and keyboard focus. */
@@ -1618,14 +1788,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Collapse/expand animation for the inspector panel: rrp v4 drives panel
- * sizes via flex-grow, which is animatable. Suppress it while the separator
- * is actively dragged so resizing tracks the pointer 1:1. */
+/* Do not animate the inspector's flex-grow. The sibling is a live xterm WebGL
+ * surface: interpolating this value makes ResizeObserver fit the terminal at
+ * every intermediate width, reallocating the renderer and eventually causing
+ * a PTY/SIGWINCH repaint. The inspector still opens and closes atomically, and
+ * direct separator drags remain interactive. */
 .session-split #inspector[data-panel] {
-	transition: flex-grow 0.2s linear;
-}
-
-.session-split:has([data-separator="active"]) #inspector[data-panel] {
 	transition: none;
 }
 
@@ -2259,17 +2427,42 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		var(--elevation-sm);
 }
 
-/* Maximized browser overlay: a fixed layer over the app workspace (portaled to
-   <body>, so it covers the sidebar + topbar too, not just the session area).
+/* Maximized workspace overlays: fixed layers portaled to <body>, so they cover
+   the sidebar + topbar too, not just the session area.
    Electron's Window Controls Overlay owns the top-right titlebar region on
-   Windows, so start below its reported safe-area height. Platforms without a
-   titleBarOverlay resolve the env() fallback to 0px and keep the existing
-   edge-to-edge layout. */
-.browser-popout-overlay {
+   Windows, so start below its reported safe-area height. macOS hides the shell
+   topbar; windowed mode reserves the native traffic-light band below, while
+   native fullscreen keeps a 0px top inset. Linux now shows a ShellTopbar, so
+   the overlay must start below --size-toolbar; env(titlebar-area-height)
+   resolves to 0 on Linux (no titleBarOverlay), so we override the top with a
+   platform class. */
+.browser-popout-overlay,
+.files-popout-overlay {
 	position: fixed;
 	inset: env(titlebar-area-height, 0px) 0 0;
 	z-index: 40;
 	background: color-mix(in srgb, var(--bg) 94%, black);
+	/* The macOS shell has a separate traffic-light drag strip. Keep the
+	   maximized browser surface interactive even if those regions overlap while
+	   the window is transitioning between layouts. */
+	-webkit-app-region: no-drag;
+}
+
+/* macOS keeps the native traffic lights visible while the window is not in
+   native fullscreen. Reserve that band instead of rendering beneath them. */
+.browser-popout-overlay--mac-windowed,
+.files-popout-overlay--mac-windowed {
+	top: var(--size-traffic-light-clearance);
+}
+
+.browser-popout-overlay .browser-panel__toolbar,
+.browser-popout-overlay .browser-panel__toolbar * {
+	-webkit-app-region: no-drag;
+}
+
+.platform-linux .browser-popout-overlay,
+.platform-linux .files-popout-overlay {
+	top: var(--size-shell-topbar);
 }
 
 .browser-popout-overlay .browser-panel {
@@ -2418,18 +2611,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	box-shadow: none;
 }
 
-.browser-panel__transition-frame {
-	position: absolute;
-	inset: 0;
-	z-index: 2;
-	width: 100%;
-	height: 100%;
-	object-fit: fill;
-	background: var(--bg);
-	pointer-events: none;
-	animation: browser-transition-frame 240ms ease-out forwards;
-}
-
 .browser-panel__slot {
 	position: absolute;
 	inset: 0;
@@ -2464,15 +2645,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	font-size: 12px;
 }
 
-@keyframes browser-transition-frame {
-	0% {
-		opacity: 1;
-	}
-	100% {
-		opacity: 0;
-	}
-}
-
 @keyframes browser-popout-in {
 	from {
 		opacity: 0.94;
@@ -2485,8 +2657,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.browser-popout-overlay,
-	.browser-panel__transition-frame {
+	.browser-popout-overlay {
 		animation: none;
 	}
 
@@ -2500,4 +2671,42 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	.browser-panel__toolbar button:not(:disabled):active {
 		transform: none;
 	}
+}
+
+/* Notification rows: subtle entrance so new/unread items slide in when the
+   panel opens or a fresh notification arrives. `backwards` fill keeps the
+   run-time animation from pinning transform/opacity afterwards, so the row's
+   own hover/active transforms still apply once it settles. */
+@keyframes notification-row-in {
+	from {
+		opacity: 0;
+		transform: translateY(-6px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.notification-row-enter {
+	animation: notification-row-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.notification-row-enter {
+		animation: none;
+	}
+}
+
+/* Reviewer picker menu: the agent list needs more room than the default option
+   menu so harness names are not truncated mid-word. */
+@utility reviews-agent-menu-surface {
+	min-width: 13rem;
+	padding: var(--space-1_5);
+	gap: var(--space-1);
+}
+
+@utility reviews-agent-menu-item {
+	padding-inline: var(--space-2_5);
+	padding-block: var(--space-2);
 }

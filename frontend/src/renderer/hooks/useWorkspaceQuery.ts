@@ -88,6 +88,12 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						title: session.displayName ?? session.issueId ?? session.id,
 						issueId: session.issueId,
 						provider: toAgentProvider(session.harness),
+						reviewerHarness:
+							session.reviewerHarness === "claude-code" ||
+							session.reviewerHarness === "codex" ||
+							session.reviewerHarness === "opencode"
+								? session.reviewerHarness
+								: undefined,
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
 						branch: session.branch || undefined,
 						status,
@@ -99,6 +105,8 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						activity,
 						previewUrl: session.previewUrl,
 						previewRevision: session.previewRevision,
+						isPinned: session.isPinned ?? false,
+						pinnedAt: session.pinnedAt ?? undefined,
 						prs: (session.prs ?? []).map(toPullRequestFacts),
 					};
 				}),

@@ -69,7 +69,12 @@ var (
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
 )
 
-// Env vars a spawned process reads to learn who it is.
+// Env vars a spawned process reads to learn who it is. A worker that starts
+// its own Docker containers (a database, a queue, any ad-hoc service) should
+// label them `--label ao.session=$AO_SESSION_ID` so AO's container reaper
+// (dockerreap) removes them on session kill/terminal state — see #2652. Add
+// `--label ao.spare=true` to a deliberately shared container that must
+// survive past this session.
 const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
@@ -468,7 +473,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	agentConfig := applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, project.Config), cfg.AgentConfig)
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
@@ -537,6 +542,9 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		RuntimeHandleID:   handle.ID,
 		RuntimeLaunchID:   launchID,
 		Prompt:            prompt,
+	}
+	if projectKind == domain.ProjectKindSingleRepo {
+		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, project.Config.WithDefaults().DefaultBranch)
 	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
 		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
@@ -641,6 +649,54 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 	return info.Root, &info, nil
 }
 
+func resolveSpawnDiffBase(ctx context.Context, root, defaultBranch string) (string, string) {
+	for _, ref := range spawnDiffBaseRefCandidates(defaultBranch) {
+		if sha, ok := spawnGitSingleLine(ctx, root, "merge-base", "HEAD", ref); ok {
+			return sha, ref
+		}
+	}
+	if sha, ok := spawnGitSingleLine(ctx, root, "rev-parse", "HEAD"); ok {
+		return sha, "HEAD"
+	}
+	return "", ""
+}
+
+func spawnDiffBaseRefCandidates(defaultBranch string) []string {
+	defaultBranch = strings.TrimSpace(defaultBranch)
+	if defaultBranch == "" {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var refs []string
+	add := func(ref string) {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return
+		}
+		if _, ok := seen[ref]; ok {
+			return
+		}
+		seen[ref] = struct{}{}
+		refs = append(refs, ref)
+	}
+	if !strings.HasPrefix(defaultBranch, "origin/") && !strings.HasPrefix(defaultBranch, "refs/") {
+		add("origin/" + defaultBranch)
+		add("refs/remotes/origin/" + defaultBranch)
+	}
+	add(defaultBranch)
+	return refs
+}
+
+func spawnGitSingleLine(ctx context.Context, root string, args ...string) (string, bool) {
+	cmd := aoprocess.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	value := strings.TrimSpace(string(out))
+	return value, value != ""
+}
+
 func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
 	if workspaceProject != nil {
 		if adapter, ok := m.workspace.(ports.WorkspaceProject); ok {
@@ -725,10 +781,26 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	if override.Model != "" {
 		merged.Model = override.Model
 	}
+	if override.Mode != "" {
+		merged.Mode = override.Mode
+	}
 	if override.Permissions != "" {
 		merged.Permissions = override.Permissions
 	}
 	return merged
+}
+
+func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
+	if override.Model != "" {
+		base.Model = override.Model
+	}
+	if override.Mode != "" {
+		base.Mode = override.Mode
+	}
+	if override.Permissions != "" {
+		base.Permissions = override.Permissions
+	}
+	return base
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
@@ -1277,7 +1349,13 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("probe existing runtime: %w", err)
+		if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+			return ports.RuntimeHandle{}, fmt.Errorf("probe existing runtime: %w", err)
+		}
+		// The runtime infrastructure itself is gone (e.g. the tmux server was
+		// killed). Restore/restart is exactly the recovery path for that
+		// outage, so proceed as "no existing runtime" and create a fresh one.
+		alive = false
 	}
 	if alive {
 		if restarter, ok := m.runtime.(ports.RuntimeRestarter); ok {
@@ -1423,7 +1501,15 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
 		alive, err := m.runtime.IsAlive(ctx, handle)
-		if err != nil {
+		switch {
+		case err == nil:
+		case errors.Is(err, ports.ErrRuntimeUnavailable):
+			// Boot-time pass with no reachable tmux server (normal after a
+			// machine reboot). The runtime is gone either way; fall through to
+			// save-and-teardown, which keeps the restore marker rather than
+			// silently archiving the session.
+			alive = false
+		default:
 			// A failed probe is not proof of death: leave the session as-is.
 			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
 		}
@@ -1454,6 +1540,9 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 	}
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
+		if errors.Is(err, ports.ErrRuntimeUnavailable) {
+			return nil // no server means no leaked session to reap
+		}
 		return fmt.Errorf("reconcile reap %s: probe: %w", rec.ID, err)
 	}
 	if !alive {

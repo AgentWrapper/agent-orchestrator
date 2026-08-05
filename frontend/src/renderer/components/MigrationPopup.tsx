@@ -1,19 +1,27 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Loader2, X } from "lucide-react";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Button } from "./ui/button";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { aoBridge } from "../lib/bridge";
 import { migrationOfferQueryKey, useMigrationOffer } from "../hooks/useMigrationOffer";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { Button } from "./ui/button";
+import {
+	settingsDialogBodyClass,
+	settingsDialogContentClass,
+	settingsDialogFooterClass,
+	settingsDialogHeaderClass,
+} from "./ui/dialog";
 
 // MigrationPopup is the first-run legacy-AO import offer. It shows only when the
 // app marker is non-terminal (pending/failed) AND the daemon reports legacy data
 // available. Proceed runs the idempotent import through the daemon; Skip dismisses
-// for this launch (re-prompts next launch); Don't Migrate declines permanently
+// for this launch (re-prompts next launch); {t("migration.dontMigrate")} declines permanently
 // (re-runnable later once the Settings entry point lands, issue #2205).
 export function MigrationPopup() {
+	const { t } = useTranslation();
 	const offer = useMigrationOffer();
 	const queryClient = useQueryClient();
 	const [skipped, setSkipped] = useState(false);
@@ -65,32 +73,42 @@ export function MigrationPopup() {
 			}}
 		>
 			<Dialog.Portal>
-				<Dialog.Overlay className="fixed inset-0 z-overlay bg-scrim" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
-					<Dialog.Title className="text-sm font-medium text-foreground">
-						Import projects from your earlier AO?
-					</Dialog.Title>
-					<Dialog.Description className="mt-2 text-control leading-body text-muted-foreground">
-						We found an existing install at <span className="font-mono text-caption text-foreground">{legacyRoot}</span>
-						. Importing brings in your projects. Your old files are never modified, and you can do this later.
-					</Dialog.Description>
-					{error && (
-						<div className="mt-3 text-xs text-destructive">
-							Migration failed: {error}. Your legacy projects are untouched (nothing is ever deleted). You can retry.
-						</div>
-					)}
-					<p className="mt-3 text-caption text-muted-foreground">You can run this again later.</p>
-					<div className="mt-4 flex items-center justify-between gap-2">
-						<Button variant="ghost" className="text-destructive" onClick={dontMigrate} disabled={busy} type="button">
-							Don't Migrate
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
+				<Dialog.Content
+					className={`${settingsDialogContentClass} fixed left-1/2 top-1/2 w-dialog-lg -translate-x-1/2 -translate-y-1/2 data-[state=open]:animate-modal-in`}
+				>
+					<button
+						type="button"
+						className="settings-dialog-close-button settings-close-button"
+						aria-label={t("common.close")}
+						disabled={busy}
+						onClick={() => setSkipped(true)}
+					>
+						<X className="size-5" aria-hidden="true" />
+					</button>
+					<div className={settingsDialogHeaderClass}>
+						<Dialog.Title className="settings-dialog-title">{t("migration.title")}</Dialog.Title>
+						<Dialog.Description className="text-control leading-body text-settings-muted">
+							{t("migration.bodyLead")}{" "}
+							<span className="font-mono text-caption text-foreground">{legacyRoot}</span>
+							. {t("migration.bodyTrail")}
+						</Dialog.Description>
+					</div>
+					<div className={settingsDialogBodyClass}>
+						{error ? <p className="text-xs text-destructive">{t("migration.failed", { error })}</p> : null}
+						<p className="text-caption text-settings-muted">{t("migration.againLater")}</p>
+					</div>
+					<div className={`${settingsDialogFooterClass} justify-between`}>
+						<Button type="button" variant="footer" className="text-destructive" onClick={dontMigrate} disabled={busy}>
+							{t("migration.dontMigrate")}
 						</Button>
-						<div className="flex gap-2">
-							<Button variant="ghost" onClick={() => setSkipped(true)} disabled={busy} type="button">
-								Skip
+						<div className="flex flex-wrap items-center justify-end gap-3">
+							<Button type="button" variant="footer" onClick={() => setSkipped(true)} disabled={busy}>
+								{t("migration.skip")}
 							</Button>
-							<Button variant="primary" onClick={proceed} disabled={busy} type="button">
-								{busy && <Loader2 className="mr-2 size-icon-base animate-spin" />}
-								{error ? "Retry" : "Proceed"}
+							<Button type="button" variant="footer-primary" onClick={proceed} disabled={busy}>
+								{busy ? <Loader2 className="size-icon-base animate-spin" aria-hidden="true" /> : null}
+								{error ? t("migration.retry") : t("migration.proceed")}
 							</Button>
 						</div>
 					</div>

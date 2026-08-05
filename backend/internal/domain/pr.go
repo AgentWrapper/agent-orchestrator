@@ -18,6 +18,7 @@ type PRFacts struct {
 	ReviewComments bool // has unresolved review comments (any author) to address
 	SourceBranch   string
 	TargetBranch   string
+	HeadSHA        string
 	UpdatedAt      time.Time
 }
 
@@ -181,3 +182,54 @@ const (
 	PRCheckSkipped    PRCheckStatus = "skipped"
 	PRCheckCancelled  PRCheckStatus = "cancelled"
 )
+
+// MergeReadiness is the set of durable PR facts that decide whether a PR is
+// waiting on nothing but the user's merge click. It is deliberately the stored
+// shape rather than a provider observation, so the live SCM path and the
+// startup reconciliation path can share one rule instead of writing it twice
+// and drifting apart.
+type MergeReadiness struct {
+	Draft              bool
+	Merged             bool
+	Closed             bool
+	CI                 CIState
+	Review             ReviewDecision
+	Mergeability       Mergeability
+	UnresolvedComments bool
+}
+
+// ReadyToMerge reports whether the PR has no known blocker left. An unknown or
+// still-running CI result is treated as a blocker: AO only claims readiness it
+// can actually prove.
+func (r MergeReadiness) ReadyToMerge() bool {
+	if r.Merged || r.Closed || r.Draft {
+		return false
+	}
+	ci := r.CI
+	if ci == "" {
+		ci = CIUnknown
+	}
+	switch ci {
+	case CIFailing, CIPending, CIUnknown:
+		return false
+	}
+	if r.Review == ReviewChangesRequest || r.UnresolvedComments {
+		return false
+	}
+	return r.Mergeability == MergeMergeable
+}
+
+// MergeReadinessOf projects stored PR facts into the shared readiness rule.
+// hasUnresolvedComments comes from the pr_comment rows AO keeps for the PR,
+// which only ever hold unresolved human threads.
+func MergeReadinessOf(pr PullRequest, hasUnresolvedComments bool) MergeReadiness {
+	return MergeReadiness{
+		Draft:              pr.Draft,
+		Merged:             pr.Merged,
+		Closed:             pr.Closed,
+		CI:                 pr.CI,
+		Review:             pr.Review,
+		Mergeability:       pr.Mergeability,
+		UnresolvedComments: hasUnresolvedComments,
+	}
+}

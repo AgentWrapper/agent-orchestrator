@@ -68,6 +68,10 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 	return s, err
 }
 
+func (f *fakeSessionService) DelegateTask(context.Context, sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error) {
+	return sessionsvc.DelegateTaskOutcome{}, nil
+}
+
 func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Session, error) {
 	return domain.Session{}, nil
 }
@@ -104,8 +108,16 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(context.Context, domain.Sessi
 	return domain.Session{}, nil
 }
 
-func (f *fakeSessionService) CompleteOrchestrator(context.Context, domain.SessionID) error {
-	return nil
+func (f *fakeSessionService) Pin(context.Context, domain.SessionID) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
+func (f *fakeSessionService) Unpin(context.Context, domain.SessionID) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
+func (f *fakeSessionService) SetReviewerHarness(context.Context, domain.SessionID, domain.ReviewerHarness) (domain.Session, error) {
+	return domain.Session{}, nil
 }
 
 func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
@@ -122,6 +134,10 @@ func (f *fakeSessionService) ClaimPR(context.Context, domain.SessionID, string, 
 
 func (f *fakeSessionService) ListWorkspaceFiles(context.Context, domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
 	return sessionsvc.WorkspaceFiles{}, nil
+}
+
+func (f *fakeSessionService) WorkspaceWatchPaths(context.Context, domain.SessionID) ([]string, error) {
+	return nil, nil
 }
 
 func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID, string) (sessionsvc.WorkspaceFileDetail, error) {
@@ -143,6 +159,20 @@ func (f *fakeAgentCatalog) Refresh(context.Context) (agentsvc.Inventory, error) 
 func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.ProbeResult, error) {
 	info := agentsvc.Info{ID: agentID, Label: agentID, AuthStatus: "authorized"}
 	return agentsvc.ProbeResult{Agent: info, Supported: true, Installed: true}, nil
+}
+
+func (f *fakeAgentCatalog) Models(_ context.Context, agentID, _ string, _ bool) (ports.AgentModelCatalog, error) {
+	return ports.AgentModelCatalog{
+		AgentID:       agentID,
+		SelectionMode: ports.ModelSelectionText,
+		Models:        []ports.AgentModelInfo{},
+		AllowCustom:   true,
+		Source:        "test",
+	}, nil
+}
+
+func (f *fakeAgentCatalog) RevalidateModels(ctx context.Context, agentID, projectID string) (ports.AgentModelCatalog, error) {
+	return f.Models(ctx, agentID, projectID, false)
 }
 
 func authorizedCodexInventory() agentsvc.Inventory {

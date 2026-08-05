@@ -92,6 +92,9 @@ func TestCLIInvokedRouteDropsRoutineInternalSuccessTelemetry(t *testing.T) {
 		`{"command":"get","commandPath":"ao project get","actorType":"user"}`,
 		`{"command":"ls","commandPath":"ao orchestrator ls","actorType":"user"}`,
 		`{"command":"hooks","commandPath":"ao hooks","actorType":"agent"}`,
+		`{"command":"hooks","commandPath":"ao  hooks","actorType":"user"}`,
+		`{"command":"hooks","commandPath":"AO HOOKS","actorType":"user"}`,
+		`{"command":"hooks","commandPath":"ao hooks claude-code post-tool-use","actorType":"user"}`,
 		`{"command":"pty-host","commandPath":"ao pty-host","actorType":"system"}`,
 	} {
 		req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-invoked", strings.NewReader(body))
@@ -106,6 +109,23 @@ func TestCLIInvokedRouteDropsRoutineInternalSuccessTelemetry(t *testing.T) {
 
 	if len(sink.events) != 0 {
 		t.Fatalf("events = %#v, want none for routine internal successes", sink.events)
+	}
+}
+
+func TestCLIInvokedRouteDropsUnknownLegacyCommandPaths(t *testing.T) {
+	sink := &captureSink{}
+	r := NewRouterWithControl(config.Config{DataDir: t.TempDir()}, discardLogger(), nil, APIDeps{Telemetry: sink}, ControlDeps{})
+
+	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/internal/telemetry/cli-invoked", strings.NewReader(`{"command":"surprise","commandPath":"ao surprise"}`))
+	req.Host = "127.0.0.1:3001"
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", rec.Code)
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("events = %#v, want none for unknown legacy command", sink.events)
 	}
 }
 
@@ -243,6 +263,7 @@ func TestCLIUsageErrorRouteHashesInvalidCommandsBeforeRemoteExport(t *testing.T)
 		t.TempDir(),
 		"phc_test",
 		"https://us.i.posthog.com",
+		"",
 		telemetryRoundTripper(func(req *http.Request) (*http.Response, error) {
 			defer req.Body.Close()
 			var body map[string]any

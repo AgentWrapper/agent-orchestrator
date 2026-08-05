@@ -49,7 +49,10 @@ func TestNotificationStore_InsertListAndDedupe(t *testing.T) {
 	}
 }
 
-func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
+// Seeing a notification is not the same as fixing what it reported. Dedupe is
+// keyed on the issue being open, so the same session cannot be re-notified
+// about a pause it is still sitting in — only resolving it reopens dedupe.
+func TestNotificationStore_ResolutionNotReadReopensDedupe(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
@@ -87,8 +90,74 @@ func TestNotificationStore_MarkReadReopensUnreadDedupe(t *testing.T) {
 	again := rec
 	again.ID = "ntf_2"
 	again.CreatedAt = now.Add(time.Minute)
+	if _, inserted, err := s.CreateNotification(ctx, again); err != nil || inserted {
+		t.Fatalf("CreateNotification while unresolved inserted=%v err=%v, want false", inserted, err)
+	}
+
+	resolvedAt := now.Add(2 * time.Minute)
+	resolved, err := s.ResolveSessionNotifications(ctx, sess.ID, domain.NotificationNeedsInput, resolvedAt)
+	if err != nil {
+		t.Fatalf("ResolveSessionNotifications: %v", err)
+	}
+	if len(resolved) != 1 || resolved[0].ID != rec.ID || !resolved[0].ResolvedAt.Equal(resolvedAt) {
+		t.Fatalf("resolved = %+v", resolved)
+	}
 	if _, inserted, err := s.CreateNotification(ctx, again); err != nil || !inserted {
-		t.Fatalf("CreateNotification after read inserted=%v err=%v", inserted, err)
+		t.Fatalf("CreateNotification after resolve inserted=%v err=%v, want true", inserted, err)
+	}
+}
+
+// The unresolved list is independent of the seen state and excludes terminal
+// facts: a merged PR is worth seeing once, never worth resolving.
+func TestNotificationStore_ListUnresolvedIgnoresSeenAndTerminalTypes(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	seed := func(id string, typ domain.NotificationType, prURL string) domain.NotificationRecord {
+		rec := domain.NotificationRecord{
+			ID: id, SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: prURL, Type: typ,
+			Title: id, Status: domain.NotificationUnread, CreatedAt: now,
+		}
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("CreateNotification %s inserted=%v err=%v", id, inserted, err)
+		}
+		return rec
+	}
+	seed("ntf_input", domain.NotificationNeedsInput, "")
+	seed("ntf_ready", domain.NotificationReadyToMerge, "https://github.com/o/r/pull/1")
+	seed("ntf_merged", domain.NotificationPRMerged, "https://github.com/o/r/pull/2")
+	if _, err := s.MarkAllNotificationsRead(ctx); err != nil {
+		t.Fatalf("MarkAllNotificationsRead: %v", err)
+	}
+
+	rows, err := s.ListNotifications(ctx, domain.NotificationListUnresolved, time.Time{}, "", 10)
+	if err != nil {
+		t.Fatalf("ListNotifications: %v", err)
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	if len(ids) != 2 || ids[0] == "ntf_merged" || ids[1] == "ntf_merged" {
+		t.Fatalf("unresolved ids = %v, want the two open issues", ids)
+	}
+	count, err := s.CountUnresolvedNotifications(ctx)
+	if err != nil || count != 2 {
+		t.Fatalf("CountUnresolvedNotifications = %d err=%v, want 2", count, err)
+	}
+
+	// Resolving by PR follows the PR, not the session.
+	resolved, err := s.ResolvePRNotifications(ctx, "https://github.com/o/r/pull/1", domain.NotificationReadyToMerge, now)
+	if err != nil || len(resolved) != 1 || resolved[0].ID != "ntf_ready" {
+		t.Fatalf("ResolvePRNotifications = %+v err=%v", resolved, err)
+	}
+	if count, err := s.CountUnresolvedNotifications(ctx); err != nil || count != 1 {
+		t.Fatalf("CountUnresolvedNotifications = %d err=%v, want 1", count, err)
 	}
 }
 
@@ -210,5 +279,132 @@ func TestNotificationStore_CheckConstraintRejectsInvalidStatus(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrInvalidNotificationStatus) {
 		t.Fatalf("err = %v, want invalid status", err)
+	}
+}
+
+// Readiness is more than open/closed. The SCM observer persists PR facts before
+// it asks lifecycle to resolve, so a crash in that window leaves an open PR
+// whose CI (or review, or mergeability) already moved against it. Startup
+// reconciliation has to apply the same rule the live path does.
+func TestNotificationStore_ReconcileAppliesFullReadyToMergePredicate(t *testing.T) {
+	ready := domain.PullRequest{
+		CI: domain.CIPassing, Review: domain.ReviewApproved, Mergeability: domain.MergeMergeable,
+	}
+	withPR := func(mutate func(*domain.PullRequest)) domain.PullRequest {
+		pr := ready
+		mutate(&pr)
+		return pr
+	}
+	for _, tt := range []struct {
+		name         string
+		pr           domain.PullRequest
+		comments     []domain.PullRequestComment
+		wantResolved bool
+	}{
+		{name: "still ready", pr: ready},
+		{name: "merged", pr: withPR(func(p *domain.PullRequest) { p.Merged = true }), wantResolved: true},
+		{name: "closed", pr: withPR(func(p *domain.PullRequest) { p.Closed = true }), wantResolved: true},
+		{name: "draft", pr: withPR(func(p *domain.PullRequest) { p.Draft = true }), wantResolved: true},
+		{name: "ci failing", pr: withPR(func(p *domain.PullRequest) { p.CI = domain.CIFailing }), wantResolved: true},
+		{name: "ci pending", pr: withPR(func(p *domain.PullRequest) { p.CI = domain.CIPending }), wantResolved: true},
+		{
+			name:         "changes requested",
+			pr:           withPR(func(p *domain.PullRequest) { p.Review = domain.ReviewChangesRequest }),
+			wantResolved: true,
+		},
+		{
+			name:         "not mergeable",
+			pr:           withPR(func(p *domain.PullRequest) { p.Mergeability = domain.MergeConflicting }),
+			wantResolved: true,
+		},
+		{
+			name:         "unresolved human comment",
+			pr:           ready,
+			comments:     []domain.PullRequestComment{{ID: "c1", Author: "dev", Body: "please fix", CreatedAt: time.Now().UTC()}},
+			wantResolved: true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			ctx := context.Background()
+			seedProject(t, s, "mer")
+			sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+			if err != nil {
+				t.Fatalf("create session: %v", err)
+			}
+			now := time.Now().UTC().Truncate(time.Second)
+			prURL := "https://github.com/o/r/pull/1"
+			pr := tt.pr
+			pr.URL = prURL
+			pr.SessionID = sess.ID
+			pr.UpdatedAt = now
+			if err := s.WritePR(ctx, pr, nil, tt.comments); err != nil {
+				t.Fatalf("WritePR: %v", err)
+			}
+			rec := domain.NotificationRecord{
+				ID: "ntf_ready", SessionID: sess.ID, ProjectID: sess.ProjectID, PRURL: prURL,
+				Type: domain.NotificationReadyToMerge, Title: "ready", Status: domain.NotificationUnread, CreatedAt: now,
+			}
+			if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+				t.Fatalf("CreateNotification inserted=%v err=%v", inserted, err)
+			}
+
+			resolved, err := s.ReconcileResolvedNotifications(ctx, now.Add(time.Minute))
+			if err != nil {
+				t.Fatalf("ReconcileResolvedNotifications: %v", err)
+			}
+			gotResolved := false
+			for _, r := range resolved {
+				if r.ID == "ntf_ready" {
+					gotResolved = true
+				}
+			}
+			if gotResolved != tt.wantResolved {
+				t.Fatalf("resolved = %v, want %v", gotResolved, tt.wantResolved)
+			}
+			count, err := s.CountUnresolvedNotifications(ctx)
+			if err != nil {
+				t.Fatalf("CountUnresolvedNotifications: %v", err)
+			}
+			wantCount := int64(1)
+			if tt.wantResolved {
+				wantCount = 0
+			}
+			if count != wantCount {
+				t.Fatalf("unresolved count = %d, want %d", count, wantCount)
+			}
+		})
+	}
+}
+
+// Acknowledging must be scoped to the rows a client actually rendered.
+func TestNotificationStore_MarkNotificationsReadOnlyTouchesGivenIDs(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	sess, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	for i, id := range []string{"ntf_1", "ntf_2", "ntf_3"} {
+		rec := domain.NotificationRecord{
+			ID: id, SessionID: sess.ID, ProjectID: sess.ProjectID,
+			PRURL: "https://github.com/o/r/pull/" + id,
+			Type:  domain.NotificationPRMerged, Title: id,
+			Status: domain.NotificationUnread, CreatedAt: now.Add(-time.Duration(i) * time.Minute),
+		}
+		if _, inserted, err := s.CreateNotification(ctx, rec); err != nil || !inserted {
+			t.Fatalf("CreateNotification %s inserted=%v err=%v", id, inserted, err)
+		}
+	}
+
+	updated, err := s.MarkNotificationsRead(ctx, []string{"ntf_1", "ntf_2"})
+	if err != nil || updated != 2 {
+		t.Fatalf("MarkNotificationsRead updated=%d err=%v, want 2", updated, err)
+	}
+	count, err := s.CountUnreadNotifications(ctx)
+	if err != nil || count != 1 {
+		t.Fatalf("unread count = %d err=%v, want 1 (ntf_3 must stay reachable)", count, err)
 	}
 }
