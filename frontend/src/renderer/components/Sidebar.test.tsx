@@ -933,6 +933,16 @@ describe("Sidebar", () => {
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
 	});
 
+	it("aligns the expanded brand and Search content to the same icon grid", () => {
+		renderSidebar();
+
+		expect(document.querySelector('[data-slot="sidebar-brand-row"]')).toHaveClass("gap-2", "px-2.5");
+		expect(document.querySelector('[data-slot="sidebar-search-icon"]')).toHaveClass("size-5.5");
+		expect(screen.getByRole("button", { name: "Orchestrator board" }).querySelector("img")).not.toHaveClass(
+			"-translate-y-[3px]",
+		);
+	});
+
 	it("defers opening the palette until the Search click has been dispatched", async () => {
 		renderSidebar();
 		fireEvent.click(screen.getByRole("button", { name: /Search/ }));
