@@ -99,6 +99,18 @@ function highlightStyle(): CSSStyleDeclaration {
 	return highlight.style;
 }
 
+function shiftKeyDown(repeat = false): void {
+	document.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", bubbles: true, cancelable: true, repeat }));
+}
+
+function selectionBoxes(): HTMLDivElement[] {
+	return Array.from(overlayRoot().querySelectorAll<HTMLDivElement>(".selections .highlight--selected"));
+}
+
+function promptForm(): HTMLFormElement | null {
+	return overlayRoot().querySelector<HTMLFormElement>("form");
+}
+
 function submitPrompt(instruction: string): BrowserAnnotationPageSubmitPayload {
 	const root = overlayRoot();
 	const textarea = root.querySelector<HTMLTextAreaElement>("textarea");
@@ -165,7 +177,9 @@ describe("annotate preload", () => {
 		const payload = submitPrompt("Make this button blue.");
 
 		expect(payload.instruction).toBe("Make this button blue.");
-		expect(payload.context.selector).toBe("button#first");
+		expect(payload.selection.kind).toBe("element");
+		if (payload.selection.kind !== "element") throw new Error("expected an element selection");
+		expect(payload.selection.context.selector).toBe("button#first");
 	});
 
 	it("renders a compact auto-growing prompt and submits from the embedded action", () => {
@@ -284,5 +298,66 @@ describe("annotate preload", () => {
 
 		Object.defineProperty(window, "innerWidth", { configurable: true, value: originalWidth });
 		Object.defineProperty(window, "visualViewport", { configurable: true, value: originalVisualViewport });
+	});
+
+	it("accumulates a multi-selection on Shift and toggles a re-clicked element back out", () => {
+		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
+		const second = elementWithBounds("second", { left: 240, top: 160, width: 80, height: 30 });
+
+		shiftKeyDown();
+		dispatchPageEvent(first, "click");
+		dispatchPageEvent(second, "click");
+		expect(selectionBoxes()).toHaveLength(2);
+
+		dispatchPageEvent(first, "click");
+		expect(selectionBoxes()).toHaveLength(1);
+		expect(selectionBoxes()[0].style.left).toBe("240px");
+		expect(promptForm()).toBeNull();
+	});
+
+	it("opens the prompt with every selected element when Shift is pressed again", () => {
+		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
+		const second = elementWithBounds("second", { left: 240, top: 160, width: 80, height: 30 });
+
+		shiftKeyDown();
+		dispatchPageEvent(first, "click");
+		dispatchPageEvent(second, "click");
+		shiftKeyDown();
+
+		const payload = submitPrompt("Align these two.");
+
+		expect(payload.selection.kind).toBe("elements");
+		if (payload.selection.kind !== "elements") throw new Error("expected an elements selection");
+		expect(payload.selection.contexts.map((context) => context.selector)).toEqual(["button#first", "button#second"]);
+	});
+
+	it("does not open the prompt when Shift is pressed again with nothing selected", () => {
+		shiftKeyDown();
+		shiftKeyDown();
+
+		expect(promptForm()).toBeNull();
+		expect(electronMocks.send).not.toHaveBeenCalledWith("browser:annotation:submit", expect.anything());
+	});
+
+	it("ignores a held-down Shift key repeat so multi-select mode does not toggle off early", () => {
+		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
+
+		shiftKeyDown();
+		shiftKeyDown(true);
+		dispatchPageEvent(first, "click");
+
+		expect(selectionBoxes()).toHaveLength(1);
+		expect(promptForm()).toBeNull();
+	});
+
+	it("cancels an in-progress multi-selection on Escape", () => {
+		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
+
+		shiftKeyDown();
+		dispatchPageEvent(first, "click");
+		document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+
+		expect(electronMocks.send).toHaveBeenCalledWith("browser:annotation:cancel", { reason: "escape" });
+		expect(document.querySelector("[data-ao-annotation-root]")).toBeNull();
 	});
 });
