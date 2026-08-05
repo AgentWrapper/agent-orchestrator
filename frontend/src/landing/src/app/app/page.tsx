@@ -978,6 +978,25 @@ export default function CloudAppPage() {
     ({ provider }) => provider === "daytona",
   );
   const defaultAgent = defaultConnectedAgent(connections);
+  const trustedSharedAgent = selectedShareTrustedStandalone
+    ? ((selectedShare?.sessions?.find(({ harness }) =>
+        CLOUD_AGENTS.some(({ id }) => id === harness),
+      )?.harness as CloudAgent | undefined) ?? "claude-code")
+    : undefined;
+  const agentAvailableForSelectedProject = Boolean(
+    defaultAgent || trustedSharedAgent,
+  );
+  const sessionFormConnections = trustedSharedAgent
+    ? [
+        {
+          id: `shared-${trustedSharedAgent}`,
+          provider: trustedSharedAgent,
+          label: `${trustedSharedAgent} from shared project`,
+          config: {},
+          validationState: "valid" as const,
+        },
+      ]
+    : connections;
   const promptForAgentConnection = () => {
     setShowProjectForm(false);
     setError(null);
@@ -1999,7 +2018,7 @@ export default function CloudAppPage() {
                               setSelectedProjectId(project.id);
                               setSelectedSessionId(null);
                               setView("board");
-                              if (!defaultAgent) {
+                              if (!agentAvailableForSelectedProject) {
                                 promptForAgentConnection();
                                 return;
                               }
@@ -2257,7 +2276,7 @@ export default function CloudAppPage() {
                             aria-label={`New agent in ${share.project.displayName}`}
                             title="New agent"
                             onClick={() => {
-                              if (!defaultAgent) {
+                              if (!agentAvailableForSelectedProject) {
                                 promptForAgentConnection();
                                 return;
                               }
@@ -2670,7 +2689,7 @@ export default function CloudAppPage() {
                 }}
                 onCreateOrchestrator={
                   selectedProjectId &&
-                  defaultAgent &&
+                  agentAvailableForSelectedProject &&
                   canCreateAgentInSelectedProject &&
                   (selectedProjectStandalone || !selectedProjectOrchestrator)
                     ? selectedProjectStandalone
@@ -2678,7 +2697,7 @@ export default function CloudAppPage() {
                       : startOrchestrator
                     : undefined
                 }
-                agentAvailable={Boolean(defaultAgent)}
+                agentAvailable={agentAvailableForSelectedProject}
                 loading={loading}
                 onOpenSettings={openProviderSettings}
               />
@@ -3455,8 +3474,10 @@ export default function CloudAppPage() {
         <SessionForm
           projectId={selectedProjectId}
           standalone={selectedProjectStandalone}
-          providerConnectionId={daytonaConnections[0]?.id}
-          connections={connections}
+          providerConnectionId={
+            selectedShareTrustedStandalone ? undefined : daytonaConnections[0]?.id
+          }
+          connections={sessionFormConnections}
           loading={loading}
           onOpenSettings={() => {
             setShowSessionForm(false);
