@@ -975,32 +975,33 @@
 	--sidebar-ring:               #644ac9;
 }
 
-/* ── Tokyo Night (Storm / Day) ── */
+/* ── Tokyo Night (Night only — not Storm / Day)
+   Source: tokyo-night/tokyo-night-vscode-theme → tokyo-night-color-theme.json ── */
 :root[data-style-theme="tokyo-night"] {
 	/* Dark */
-	--background:                 #24283b;
-	--foreground:                 #e7edff;
-	--card:                       #323647;
-	--card-foreground:            #e7edff;
-	--popover:                    #3c4152;
-	--popover-foreground:         #e7edff;
-	--primary:                    #7aa2f7;
-	--primary-foreground:         #24283b;
-	--secondary:                  #3b3f50;
-	--secondary-foreground:       #e7edff;
-	--muted:                      #3b3f50;
-	--muted-foreground:           #9b9fb4;
-	--accent:                     #3b3f50;
-	--accent-foreground:          #e7edff;
-	--border:                     oklch(1 0 0 / 8%);
-	--input:                      oklch(1 0 0 / 5%);
+	--background:                 #1a1b26; /* editor.background */
+	--foreground:                 #c0caf5; /* variables / bright UI */
+	--card:                       #1e202e; /* editor.lineHighlightBackground */
+	--card-foreground:            #c0caf5;
+	--popover:                    #16161e; /* editorWidget / menus */
+	--popover-foreground:         #c0caf5;
+	--primary:                    #7aa2f7; /* terminal.ansiBlue */
+	--primary-foreground:         #1a1b26;
+	--secondary:                  #202330; /* list.activeSelectionBackground */
+	--secondary-foreground:       #c0caf5;
+	--muted:                      #202330;
+	--muted-foreground:           #787c99; /* sideBar / chrome */
+	--accent:                     #202330;
+	--accent-foreground:          #c0caf5;
+	--border:                     #101014; /* editorGroup / panel borders */
+	--input:                      #14141b; /* input.background */
 	--ring:                       #7aa2f7;
-	--sidebar:                    #1e2131;
-	--sidebar-foreground:         #e7edff;
+	--sidebar:                    #16161e; /* sideBar.background */
+	--sidebar-foreground:         #c0caf5;
 	--sidebar-primary:            #7aa2f7;
-	--sidebar-primary-foreground: #24283b;
-	--sidebar-accent:             #3b3f50;
-	--sidebar-accent-foreground:  #e7edff;
+	--sidebar-primary-foreground: #1a1b26;
+	--sidebar-accent:             #202330;
+	--sidebar-accent-foreground:  #c0caf5;
 	--sidebar-ring:               #7aa2f7;
 }
 :root[data-style-theme="tokyo-night"][data-theme="light"] {
