@@ -105,6 +105,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{Argv: insertBeforeInteractive(argv, policy...)}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Copilot reviewer pane by relaunching
+// with the reviewer profile and current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 // ReviewMessage returns the centrally-authored task for the existing pane.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil

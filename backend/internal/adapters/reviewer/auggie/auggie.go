@@ -43,6 +43,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Auggie reviewer pane by relaunching
+// the reviewer command with the current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 // ReviewMessage returns the next AO-owned task reference.
 func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil

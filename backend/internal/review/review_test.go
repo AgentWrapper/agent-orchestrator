@@ -153,6 +153,7 @@ type fakeLauncher struct {
 	spawnErr         error
 	notifyErr        error
 	spawned          bool
+	restored         bool
 	spawnCount       int
 	notified         bool
 	cancelled        bool
@@ -178,6 +179,15 @@ func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (string, error)
 	}
 	return f.handle, nil
 }
+func (f *fakeLauncher) Restore(_ context.Context, spec LaunchSpec) (string, error) {
+	f.restored = true
+	f.gotSpec = spec
+	f.specs = append(f.specs, spec)
+	if f.spawnErr != nil {
+		return "", f.spawnErr
+	}
+	return f.handle, nil
+}
 func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpec) error {
 	f.notified = true
 	f.gotHandle = handleID
@@ -187,7 +197,7 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 	return f.notifyErr
 }
 func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
-	return f.alive || f.spawned, f.aliveErr
+	return f.alive || f.spawned || f.restored, f.aliveErr
 }
 func (f *fakeLauncher) Reusable(domain.ReviewerHarness) bool { return true }
 func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain.ReviewerHarness) error {
@@ -465,8 +475,8 @@ func TestTriggerRetriesTerminalRowWithNoVerdict(t *testing.T) {
 	if !res.Created || res.Run.ID == "run-empty-verdict" {
 		t.Fatalf("expected retry to create a new run, got %+v", res)
 	}
-	if len(store.runs) != 2 || !launcher.spawned {
-		t.Fatalf("expected new launch/run after terminal empty-verdict row: launched=%v runs=%+v", launcher.spawned, store.runs)
+	if len(store.runs) != 2 || !launcher.restored {
+		t.Fatalf("expected restored launch/run after terminal empty-verdict row: restored=%v runs=%+v", launcher.restored, store.runs)
 	}
 }
 
@@ -514,12 +524,12 @@ func TestTriggerSupersedesOlderRunningRunOnNewCommit(t *testing.T) {
 	if old := store.runs[0]; old.ID != "run-old" || old.Status != domain.ReviewRunFailed {
 		t.Fatalf("expected older running run to be failed, got %+v", old)
 	}
-	if !launcher.spawned || launcher.notified {
+	if !launcher.spawned || launcher.restored || launcher.notified {
 		t.Fatalf("expected superseded active reviewer pane replaced for new commit: %+v", launcher)
 	}
 }
 
-func TestTriggerSpawnsWhenReviewerDead(t *testing.T) {
+func TestTriggerRestoresWhenRecordedReviewerDead(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode, ReviewerHandleID: "review-mer-1"},
 		runs:   []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
@@ -530,8 +540,8 @@ func TestTriggerSpawnsWhenReviewerDead(t *testing.T) {
 	if _, err := eng.Trigger(context.Background(), "mer-1"); err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !launcher.spawned || launcher.notified {
-		t.Fatalf("expected spawn when reviewer dead: %+v", launcher)
+	if !launcher.restored || launcher.spawned || launcher.notified {
+		t.Fatalf("expected restore when recorded reviewer dead: %+v", launcher)
 	}
 }
 
@@ -553,7 +563,7 @@ func TestTriggerRespawnsWhenReviewerHarnessChanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Trigger: %v", err)
 	}
-	if !launcher.spawned || launcher.notified {
+	if !launcher.spawned || launcher.restored || launcher.notified {
 		t.Fatalf("expected respawn under the new harness, not reuse via notify: %+v", launcher)
 	}
 	if launcher.gotSpec.Harness != domain.ReviewerClaudeCode {
@@ -624,7 +634,7 @@ func TestTriggerRespawnsOnNextCommitAfterHarnessSwitchWithNoRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("trigger 2: %v", err)
 	}
-	if !res.Created || !l2.spawned || l2.notified {
+	if !res.Created || !l2.spawned || l2.restored || l2.notified {
 		t.Fatalf("trigger 2 must respawn under the new harness, not reuse the stale pane: res=%+v launcher=%+v", res, l2)
 	}
 	if l2.gotSpec.Harness != domain.ReviewerClaudeCode {
@@ -667,8 +677,8 @@ func TestTriggerRetriesAfterFailedRunForSameCommit(t *testing.T) {
 	if !res.Created || res.Run.ID == "run-failed" {
 		t.Fatalf("expected retry to create a new run, got %+v", res)
 	}
-	if len(store.runs) != 2 || !launcher.spawned {
-		t.Fatalf("expected new launch/run after failed pass: launched=%v runs=%+v", launcher.spawned, store.runs)
+	if len(store.runs) != 2 || !launcher.restored {
+		t.Fatalf("expected restored launch/run after failed pass: restored=%v runs=%+v", launcher.restored, store.runs)
 	}
 }
 
@@ -687,8 +697,8 @@ func TestTriggerRetriesAfterCancelledRunForSameCommit(t *testing.T) {
 	if !res.Created || res.Run.ID == "run-cancelled" {
 		t.Fatalf("expected retry to create a new run, got %+v", res)
 	}
-	if len(store.runs) != 2 || !launcher.spawned {
-		t.Fatalf("expected new launch/run after cancelled pass: launched=%v runs=%+v", launcher.spawned, store.runs)
+	if len(store.runs) != 2 || !launcher.restored {
+		t.Fatalf("expected restored launch/run after cancelled pass: restored=%v runs=%+v", launcher.restored, store.runs)
 	}
 }
 

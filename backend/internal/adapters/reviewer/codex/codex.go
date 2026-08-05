@@ -62,6 +62,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{Argv: insertBeforePrompt(argv, extra...)}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Codex reviewer pane by relaunching
+// with the reviewer sandbox/configuration and current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 // ReviewMessage returns the centrally-authored task for an existing pane.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil

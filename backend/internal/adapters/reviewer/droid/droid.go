@@ -72,6 +72,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Droid reviewer pane by relaunching
+// with the reviewer settings and current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 func writeReviewerSettings(promptRoot string) (string, error) {
 	if !filepath.IsAbs(promptRoot) {
 		return "", errors.New("droid reviewer: absolute task prompt root is required")

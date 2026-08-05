@@ -56,6 +56,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{Argv: argv, InitialMessage: message}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Aider reviewer pane by relaunching
+// the request-scoped reviewer command with the current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 // ReviewMessage returns the next AO-owned task reference.
 func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil

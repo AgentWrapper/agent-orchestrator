@@ -74,6 +74,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Continue reviewer pane by relaunching
+// the reviewer command with the current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 // ReviewPreflight verifies that the Continue executable is available.
 func (r *Reviewer) ReviewPreflight(ctx context.Context, _ string) error {
 	if err := ctx.Err(); err != nil {

@@ -33,6 +33,9 @@ type Launcher interface {
 	// Spawn launches a fresh reviewer and returns the runtime handle id of the
 	// live pane (stable per worker, reused across passes).
 	Spawn(ctx context.Context, spec LaunchSpec) (handleID string, err error)
+	// Restore relaunches a previously recorded reviewer pane, using the
+	// adapter's native restore command when it can target the same transcript.
+	Restore(ctx context.Context, spec LaunchSpec) (handleID string, err error)
 	// Notify asks an already-running reviewer pane to review a new commit.
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
 	// Alive reports whether a reviewer pane is still running.
@@ -206,6 +209,14 @@ func (l *agentLauncher) prepareInvocation(ctx context.Context, spec LaunchSpec) 
 }
 
 func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, error) {
+	return l.launch(ctx, spec, false)
+}
+
+func (l *agentLauncher) Restore(ctx context.Context, spec LaunchSpec) (string, error) {
+	return l.launch(ctx, spec, true)
+}
+
+func (l *agentLauncher) launch(ctx context.Context, spec LaunchSpec, restore bool) (string, error) {
 	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
 	if !ok {
 		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
@@ -220,9 +231,9 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 			return "", fmt.Errorf("reviewer pre-launch: %w", err)
 		}
 	}
-	cmd, err := reviewer.ReviewCommand(ctx, inv)
+	cmd, err := l.reviewCommand(ctx, reviewer, inv, restore)
 	if err != nil {
-		return "", fmt.Errorf("reviewer command: %w", err)
+		return "", err
 	}
 	// The reviewer handle is stable per worker, so a still-live pane from a
 	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
@@ -255,6 +266,25 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 		}
 	}
 	return handle.ID, nil
+}
+
+func (l *agentLauncher) reviewCommand(ctx context.Context, reviewer ports.Reviewer, inv ports.ReviewInvocation, restore bool) (ports.ReviewCommandSpec, error) {
+	if restore {
+		if restorer, ok := reviewer.(ports.ReviewerRestorer); ok {
+			cmd, restored, err := restorer.ReviewRestoreCommand(ctx, inv)
+			if err != nil {
+				return ports.ReviewCommandSpec{}, fmt.Errorf("reviewer restore command: %w", err)
+			}
+			if restored {
+				return cmd, nil
+			}
+		}
+	}
+	cmd, err := reviewer.ReviewCommand(ctx, inv)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, fmt.Errorf("reviewer command: %w", err)
+	}
+	return cmd, nil
 }
 
 func (l *agentLauncher) waitForPromptReadiness(ctx context.Context, reviewer ports.Reviewer, handle ports.RuntimeHandle) error {

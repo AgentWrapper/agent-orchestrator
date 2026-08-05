@@ -24,6 +24,9 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 		if registered[h] {
 			t.Errorf("reviewer harness %q registered twice", h)
 		}
+		if _, ok := a.(ports.ReviewerRestorer); !ok {
+			t.Errorf("reviewer harness %q does not implement restore", h)
+		}
 		canceller, ok := a.(ports.ReviewerCanceller)
 		if !ok {
 			t.Errorf("reviewer harness %q does not implement cancellation", h)

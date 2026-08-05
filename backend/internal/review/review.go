@@ -288,6 +288,7 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 	}
 
 	handleID := ""
+	restoreRecordedPane := false
 	queue := reviewQueue(created)
 	if !supersededRunning && hasReview && reviewRow.ReviewerHandleID != "" && prevHarness == harness && e.launcher.Reusable(harness) {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
@@ -296,6 +297,8 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		}
 		if alive {
 			handleID = reviewRow.ReviewerHandleID
+		} else {
+			restoreRecordedPane = true
 		}
 	}
 	if handleID == "" {
@@ -306,7 +309,11 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID) (Trigger
 		if err := e.launcher.Preflight(ctx, harness, worker.Metadata.WorkspacePath); err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("reviewer preflight: %w", err))
 		}
-		h, err := e.launcher.Spawn(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
+		launch := e.launcher.Spawn
+		if restoreRecordedPane {
+			launch = e.launcher.Restore
+		}
+		h, err := launch(ctx, reviewLaunchSpec(worker, harness, created[0], queue, 0))
 		if err != nil {
 			return TriggerResult{}, failRuns(0, fmt.Errorf("launch reviewer: %w", err))
 		}

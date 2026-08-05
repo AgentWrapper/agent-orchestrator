@@ -113,6 +113,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{Argv: argv, Env: envVars, InitialMessage: inv.Prompt, WorkingDirectory: inv.WorkspacePath}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Vibe reviewer pane by relaunching
+// with the AO-owned profile and current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 // ReviewPreflight verifies that the Vibe executable is available. The pinned
 // CLI probe runs later with AO-owned state roots in ReviewCommand.
 func (r *Reviewer) ReviewPreflight(ctx context.Context, _ string) error {

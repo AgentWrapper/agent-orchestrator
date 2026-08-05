@@ -73,6 +73,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Cursor reviewer pane by relaunching
+// with the AO-owned profile and current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 func cursorPrompt(inv ports.ReviewInvocation) string {
 	if inv.SystemPromptFile != "" {
 		return fmt.Sprintf(

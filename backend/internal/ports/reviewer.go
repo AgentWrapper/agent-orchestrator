@@ -49,6 +49,13 @@ type ReviewerCanceller interface {
 	ReviewCancel(ctx context.Context) (ReviewCancelSpec, error)
 }
 
+// ReviewerRestorer is implemented by reviewer adapters that can relaunch a
+// previously recorded reviewer pane without necessarily starting a fresh native
+// transcript. ok=false means AO should fall back to ReviewCommand.
+type ReviewerRestorer interface {
+	ReviewRestoreCommand(ctx context.Context, inv ReviewInvocation) (cmd ReviewCommandSpec, ok bool, err error)
+}
+
 // ReviewerReusePolicy is implemented by interactive reviewer adapters that
 // need a fresh TUI for each task because request-scoped context is fixed at
 // process launch. Returning false forces a fresh launch for every pass.

@@ -58,6 +58,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Devin reviewer pane by relaunching
+// the reviewer command with the current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 func initialMessage(inv ports.ReviewInvocation) (string, error) {
 	// Preflight builds the command without request-scoped prompt files.
 	if strings.TrimSpace(inv.TaskPromptRoot) == "" {

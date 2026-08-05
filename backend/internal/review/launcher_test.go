@@ -84,6 +84,19 @@ func (f *fakeReviewerWithLaunchSpec) ReviewPromptReadinessHints(context.Context)
 	return f.hints, nil
 }
 
+type fakeRestoringReviewer struct {
+	fakeReviewer
+	restoreSpec ports.ReviewCommandSpec
+	restoreOK   bool
+	restored    bool
+}
+
+func (f *fakeRestoringReviewer) ReviewRestoreCommand(_ context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	f.restored = true
+	f.gotInv = inv
+	return f.restoreSpec, f.restoreOK, nil
+}
+
 func (f *fakeReviewerForPreflight) ReviewCommand(_ context.Context, _ ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	if f.CommandErr != nil {
 		return ports.ReviewCommandSpec{}, f.CommandErr
@@ -259,6 +272,47 @@ func TestLauncherSpawnReplacesStalePane(t *testing.T) {
 	}
 	if !rt.destroyBefore {
 		t.Fatal("stale pane must be destroyed before the fresh pane is created")
+	}
+}
+
+func TestLauncherRestoreUsesReviewerRestoreCommand(t *testing.T) {
+	reviewer := &fakeRestoringReviewer{
+		restoreOK: true,
+		restoreSpec: ports.ReviewCommandSpec{
+			Argv:           []string{"agent", "resume", "review-mer-1"},
+			InitialMessage: "restored task",
+		},
+	}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+
+	if _, err := l.Restore(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if !reviewer.restored {
+		t.Fatal("expected restore command to be requested")
+	}
+	if got := rt.createCfg.Argv; len(got) != 3 || got[0] != "agent" || got[1] != "resume" || got[2] != "review-mer-1" {
+		t.Fatalf("restore argv = %#v", got)
+	}
+	if rt.sentMsg != "restored task" {
+		t.Fatalf("initial message = %q, want restored task", rt.sentMsg)
+	}
+}
+
+func TestLauncherRestoreFallsBackToFreshCommand(t *testing.T) {
+	reviewer := &fakeRestoringReviewer{}
+	rt := &fakeRuntime{}
+	l := newTestLauncher(t, reviewer, rt)
+
+	if _, err := l.Restore(context.Background(), launchSpec()); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if !reviewer.restored {
+		t.Fatal("expected restore command to be requested")
+	}
+	if got := rt.createCfg.Argv; len(got) != 2 || got[0] != "greptile" || got[1] != "review" {
+		t.Fatalf("fallback argv = %#v", got)
 	}
 }
 

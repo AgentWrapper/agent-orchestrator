@@ -57,6 +57,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{Argv: argv}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Kilo Code reviewer pane by
+// relaunching with the reviewer configuration and current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 func withReviewerConfig(argv []string, taskPromptRoot, systemPromptFile string) ([]string, error) {
 	config := map[string]any{}
 	assignmentIndex := -1

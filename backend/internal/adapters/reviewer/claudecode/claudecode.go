@@ -89,6 +89,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{Argv: argv}, nil
 }
 
+// ReviewRestoreCommand restores a recorded Claude Code reviewer pane by
+// relaunching with the reviewer allow/deny policy and current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 // PreLaunch runs any reviewer-specific preflight. For Claude Code this records
 // the worker checkout as trusted before the headless reviewer pane starts.
 func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error {

@@ -60,6 +60,13 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	}, nil
 }
 
+// ReviewRestoreCommand restores a recorded OpenCode reviewer pane by relaunching
+// with the reviewer permission policy and current task context.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, err := r.ReviewCommand(ctx, inv)
+	return cmd, true, err
+}
+
 // buildReviewerConfig keeps OpenCode read-only while allowing it to read the
 // AO-owned task prompts outside the worker checkout. The exception is scoped
 // to the stable reviewer prompt root so a long-lived process can read future
