@@ -856,14 +856,13 @@ it("shares a project from its three-dot menu with the selected role", async () =
   fireEvent.click(screen.getByRole("button", { name: "Share project" }));
 
   expect(
-    screen.getByRole("heading", { name: "Share project" }),
+    screen.getByRole("heading", { name: `Share project - ${project.displayName}` }),
   ).toBeVisible();
   fireEvent.click(screen.getByRole("radio", { name: /Editor/ }));
   fireEvent.click(screen.getByRole("button", { name: /Restricted/ }));
   fireEvent.change(screen.getByLabelText("People"), {
     target: { value: "reader@example.com" },
   });
-  fireEvent.click(screen.getByLabelText("Personal"));
   fireEvent.click(screen.getByRole("button", { name: "Create link" }));
 
   await waitFor(() =>
@@ -874,7 +873,7 @@ it("shares a project from its three-dot menu with the selected role", async () =
         role: "editor",
         accessScope: "restricted",
         recipientEmails: ["reader@example.com"],
-        recipientOrgIds: ["org-one"],
+        recipientOrgIds: [],
       },
     ),
   );
@@ -915,29 +914,19 @@ it("manages redeemed project share access", async () => {
   );
   fireEvent.click(screen.getByRole("button", { name: "Share project" }));
 
-  const accessSelect = await screen.findByLabelText(
-    "Permission for reader@example.com",
+  const agentAccessSelect = await screen.findByLabelText(
+    "Access to readme-reader for reader@example.com",
   );
-  fireEvent.change(accessSelect, { target: { value: "editor" } });
+  fireEvent.change(agentAccessSelect, { target: { value: "editor" } });
   await waitFor(() =>
     expect(apiMocks.updateProjectShareGrant).toHaveBeenCalledWith(
       "org-one",
       project.id,
       "grant-one",
-      { role: "editor" },
-    ),
-  );
-
-  const scopeSelect = await screen.findByLabelText(
-    "Agent scope for reader@example.com",
-  );
-  fireEvent.change(scopeSelect, { target: { value: worker.id } });
-  await waitFor(() =>
-    expect(apiMocks.updateProjectShareGrant).toHaveBeenCalledWith(
-      "org-one",
-      project.id,
-      "grant-one",
-      { role: "viewer", sessionId: worker.id },
+      {
+        role: "viewer",
+        sessionRoles: [{ sessionId: worker.id, role: "editor" }],
+      },
     ),
   );
 

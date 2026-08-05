@@ -191,6 +191,7 @@ export interface CloudProjectShareGrant {
   id: string;
   user: CloudUser;
   sessionId?: string;
+  sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
   role: "viewer" | "editor";
   status: "active" | "revoked";
   redeemedAt: string;
@@ -676,7 +677,11 @@ export class CloudAPI {
     orgId: string,
     projectId: string,
     grantId: string,
-    input: { role: "viewer" | "editor"; sessionId?: string },
+    input: {
+      role: "viewer" | "editor";
+      sessionId?: string;
+      sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
+    },
   ) {
     return this.request<{ grant: CloudProjectShareGrant }>(
       this.orgPath(

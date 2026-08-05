@@ -61,7 +61,7 @@ type store interface {
 	RedeemProjectShareLink(context.Context, string, string) (cloudpostgres.SharedProjectGrant, error)
 	ListSharedProjectGrants(context.Context, string) ([]cloudpostgres.SharedProjectGrant, error)
 	ListProjectShareAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID) (cloudpostgres.ProjectShareAccess, error)
-	UpdateProjectShareGrantAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, string, clouddomain.SessionID) (cloudpostgres.ProjectShareGrant, error)
+	UpdateProjectShareGrantAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, string, clouddomain.SessionID, []cloudpostgres.ProjectShareGrantSessionRole) (cloudpostgres.ProjectShareGrant, error)
 	RevokeProjectShareGrant(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string) error
 	RevokeProjectShareLink(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string) error
 	CreateSession(context.Context, clouddomain.AccountID, cloudpostgres.CreateSessionInput) (cloudpostgres.CreateSessionResult, error)
@@ -218,10 +218,10 @@ type orgContextKey struct{}
 type sharedProjectAccessContextKey struct{}
 
 type sharedProjectAccess struct {
-	ProjectIDs  map[clouddomain.ProjectID]struct{}
-	Roles       map[clouddomain.ProjectID]string
-	SessionIDs  map[clouddomain.ProjectID]map[clouddomain.SessionID]struct{}
-	AllSessions map[clouddomain.ProjectID]struct{}
+	ProjectIDs   map[clouddomain.ProjectID]struct{}
+	Roles        map[clouddomain.ProjectID]string
+	SessionRoles map[clouddomain.ProjectID]map[clouddomain.SessionID]string
+	AllSessions  map[clouddomain.ProjectID]struct{}
 }
 
 func (access sharedProjectAccess) allowsProject(projectID clouddomain.ProjectID) bool {
@@ -241,12 +241,26 @@ func (access sharedProjectAccess) allowsSession(session clouddomain.Session) boo
 	if access.allowsAllProjectSessions(session.ProjectID) {
 		return true
 	}
-	allowedSessions := access.SessionIDs[session.ProjectID]
+	allowedSessions := access.SessionRoles[session.ProjectID]
 	if len(allowedSessions) == 0 {
 		return false
 	}
 	_, ok := allowedSessions[session.ID]
 	return ok
+}
+
+func (access sharedProjectAccess) roleForSession(session clouddomain.Session) string {
+	if !access.allowsSession(session) {
+		return ""
+	}
+	if access.allowsAllProjectSessions(session.ProjectID) {
+		return access.Roles[session.ProjectID]
+	}
+	return access.SessionRoles[session.ProjectID][session.ID]
+}
+
+func (access sharedProjectAccess) canEditSession(session clouddomain.Session) bool {
+	return access.roleForSession(session) == "editor"
 }
 
 func accountFromContext(ctx context.Context) (clouddomain.Account, bool) {
@@ -694,8 +708,9 @@ func (s *Server) updateOrgMemberRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Role      string                `json:"role"`
-		SessionID clouddomain.SessionID `json:"sessionId"`
+		Role         string                                       `json:"role"`
+		SessionID    clouddomain.SessionID                        `json:"sessionId"`
+		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -995,10 +1010,10 @@ func (s *Server) sharedAccessForOrg(
 		return sharedProjectAccess{}, false, err
 	}
 	access := sharedProjectAccess{
-		ProjectIDs:  map[clouddomain.ProjectID]struct{}{},
-		Roles:       map[clouddomain.ProjectID]string{},
-		SessionIDs:  map[clouddomain.ProjectID]map[clouddomain.SessionID]struct{}{},
-		AllSessions: map[clouddomain.ProjectID]struct{}{},
+		ProjectIDs:   map[clouddomain.ProjectID]struct{}{},
+		Roles:        map[clouddomain.ProjectID]string{},
+		SessionRoles: map[clouddomain.ProjectID]map[clouddomain.SessionID]string{},
+		AllSessions:  map[clouddomain.ProjectID]struct{}{},
 	}
 	for _, grant := range grants {
 		if grant.OrgID != orgID {
@@ -1006,14 +1021,23 @@ func (s *Server) sharedAccessForOrg(
 		}
 		access.ProjectIDs[grant.Project.ID] = struct{}{}
 		access.Roles[grant.Project.ID] = grant.Role
+		if len(grant.SessionRoles) > 0 {
+			if _, ok := access.SessionRoles[grant.Project.ID]; !ok {
+				access.SessionRoles[grant.Project.ID] = map[clouddomain.SessionID]string{}
+			}
+			for _, sessionRole := range grant.SessionRoles {
+				access.SessionRoles[grant.Project.ID][sessionRole.SessionID] = sessionRole.Role
+			}
+			continue
+		}
 		if grant.Session == nil || grant.Session.ID == "" {
 			access.AllSessions[grant.Project.ID] = struct{}{}
 			continue
 		}
-		if _, ok := access.SessionIDs[grant.Project.ID]; !ok {
-			access.SessionIDs[grant.Project.ID] = map[clouddomain.SessionID]struct{}{}
+		if _, ok := access.SessionRoles[grant.Project.ID]; !ok {
+			access.SessionRoles[grant.Project.ID] = map[clouddomain.SessionID]string{}
 		}
-		access.SessionIDs[grant.Project.ID][grant.Session.ID] = struct{}{}
+		access.SessionRoles[grant.Project.ID][grant.Session.ID] = grant.Role
 	}
 	return access, len(access.ProjectIDs) > 0, nil
 }
@@ -1033,7 +1057,7 @@ func (s *Server) requireOrgRole(required string) func(http.Handler) http.Handler
 				}
 				account, _ := accountFromContext(r.Context())
 				session, err := s.store.GetSession(r.Context(), account.ID, sessionID)
-				if err != nil || !shared.allowsSession(session) || shared.Roles[session.ProjectID] != "editor" {
+				if err != nil || !shared.canEditSession(session) {
 					writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Viewer access is read-only for this project.")
 					return
 				}
@@ -1496,8 +1520,9 @@ func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request)
 	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
 	grantID := strings.TrimSpace(chi.URLParam(r, "grantId"))
 	var input struct {
-		Role      string                `json:"role"`
-		SessionID clouddomain.SessionID `json:"sessionId"`
+		Role         string                                       `json:"role"`
+		SessionID    clouddomain.SessionID                        `json:"sessionId"`
+		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -1518,7 +1543,28 @@ func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	grant, err := s.store.UpdateProjectShareGrantAccess(r.Context(), org.Organization.ID, projectID, grantID, role, input.SessionID)
+	seenSessionRoles := map[clouddomain.SessionID]struct{}{}
+	for _, sessionRole := range input.SessionRoles {
+		if sessionRole.SessionID == "" || !validProjectShareRole(sessionRole.Role) {
+			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "Each agent access entry must include a session and viewer/editor permission.")
+			return
+		}
+		if _, exists := seenSessionRoles[sessionRole.SessionID]; exists {
+			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "An agent can only appear once in shared access.")
+			return
+		}
+		seenSessionRoles[sessionRole.SessionID] = struct{}{}
+		session, err := s.store.GetSession(r.Context(), clouddomain.AccountID(org.Organization.ID), sessionRole.SessionID)
+		if errors.Is(err, cloudpostgres.ErrSessionNotFound) || session.ProjectID != projectID {
+			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "Share scope must be this project's sessions.")
+			return
+		}
+		if err != nil {
+			s.internalError(w, r, "validate project share session", err)
+			return
+		}
+	}
+	grant, err := s.store.UpdateProjectShareGrantAccess(r.Context(), org.Organization.ID, projectID, grantID, role, input.SessionID, input.SessionRoles)
 	if errors.Is(err, cloudpostgres.ErrProjectShareGrantNotFound) {
 		writeError(w, r, http.StatusNotFound, "SHARE_GRANT_NOT_FOUND", "That shared access no longer exists.")
 		return
@@ -1845,7 +1891,7 @@ func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
 			return
 		}
-		if shared.Roles[existing.ProjectID] != "editor" {
+		if !shared.canEditSession(existing) {
 			writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Viewer access is read-only for this project.")
 			return
 		}
@@ -4022,7 +4068,7 @@ func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
 	scopes := []string{"terminal:read"}
 	canOperate := false
 	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
-		canOperate = shared.allowsSession(session) && shared.Roles[session.ProjectID] == "editor"
+		canOperate = shared.canEditSession(session)
 	} else if org, ok := orgFromContext(r.Context()); !ok || orgRoleAtLeast(org.Membership.Role, "member") {
 		canOperate = true
 	}

@@ -2418,26 +2418,11 @@ export default function CloudAppPage() {
         <AgentConnectionPrompt onClose={closeAgentConnectionPrompt} />
       ) : null}
       {shareProject ? (
-        <Overlay title="Share project" onClose={closeProjectShare}>
+        <Overlay
+          title={`Share project - ${shareProject.displayName}`}
+          onClose={closeProjectShare}
+        >
           <div className="space-y-6 p-5 sm:p-6">
-            <div className="flex items-center gap-4 rounded-xl border border-white/[0.08] bg-white/[0.025] p-4">
-              <div className="grid size-10 shrink-0 place-items-center rounded-lg border border-white/[0.09] bg-white/[0.04]">
-                {isStandaloneProject(shareProject) ? (
-                  <StandaloneProjectIcon className="size-6" />
-                ) : (
-                  <FolderGit2 className="size-4 text-white/55" />
-                )}
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-white/85">
-                  {shareProject.displayName}
-                </div>
-                <div className="mt-1 text-xs leading-5 text-white/35">
-                  Access is limited to this project and its sessions.
-                </div>
-              </div>
-            </div>
-
             <div>
               <div className="mb-3 text-xs font-medium text-white/50">
                 Permission
@@ -2563,44 +2548,6 @@ export default function CloudAppPage() {
                       }}
                     />
                   </label>
-                  <div>
-                    <div className="mb-2 text-xs text-white/45">
-                      Workspaces
-                    </div>
-                    <div className="space-y-1">
-                      {organizations.map(({ organization }) => {
-                        const checked = shareRecipientOrgIds.includes(
-                          organization.id,
-                        );
-                        return (
-                          <label
-                            key={organization.id}
-                            className="flex h-8 items-center gap-2 rounded-lg px-2 text-xs text-white/60 hover:bg-white/[0.04]"
-                          >
-                            <input
-                              type="checkbox"
-                              className="size-3 accent-[#4d8dff]"
-                              checked={checked}
-                              onChange={(event) => {
-                                setShareRecipientOrgIds((current) =>
-                                  event.target.checked
-                                    ? [...current, organization.id]
-                                    : current.filter(
-                                        (id) => id !== organization.id,
-                                      ),
-                                );
-                                setShareLink("");
-                                setShareCopied(false);
-                              }}
-                            />
-                            <span className="truncate">
-                              {organization.displayName}
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  </div>
                 </div>
               ) : null}
             </div>
@@ -2626,7 +2573,52 @@ export default function CloudAppPage() {
               {(shareAccess?.grants.length ?? 0) > 0 ? (
                 <div className="space-y-2">
                   {shareAccess?.grants.map((grant) => {
-                    const scopedSessionId = grant.sessionId ?? "";
+                    const customRoles = new Map(
+                      (grant.sessionRoles ?? []).map((sessionRole) => [
+                        sessionRole.sessionId,
+                        sessionRole.role,
+                      ]),
+                    );
+                    if (customRoles.size === 0 && grant.sessionId) {
+                      customRoles.set(grant.sessionId, grant.role);
+                    }
+                    const projectWide = customRoles.size === 0;
+                    const roleForAgent = (sessionId: string) =>
+                      customRoles.get(sessionId) ??
+                      (projectWide ? grant.role : "none");
+                    const updateAgentRole = (
+                      sessionId: string,
+                      role: "none" | "viewer" | "editor",
+                    ) => {
+                      const nextRoles = new Map<string, "viewer" | "editor">();
+                      if (projectWide) {
+                        for (const cloudSession of shareProjectSessions) {
+                          nextRoles.set(cloudSession.id, grant.role);
+                        }
+                      } else {
+                        for (const [id, value] of customRoles.entries()) {
+                          nextRoles.set(id, value);
+                        }
+                      }
+                      if (role === "none") {
+                        nextRoles.delete(sessionId);
+                      } else {
+                        nextRoles.set(sessionId, role);
+                      }
+                      const sessionRoles = Array.from(nextRoles.entries()).map(
+                        ([id, value]) => ({
+                          sessionId: id,
+                          role: value,
+                        }),
+                      );
+                      void updateShareGrantAccess(grant.id, {
+                        role: grant.role,
+                        ...(sessionRoles.length > 0 ? { sessionRoles } : {}),
+                      });
+                    };
+                    const setAllAgents = (role: "viewer" | "editor") => {
+                      void updateShareGrantAccess(grant.id, { role });
+                    };
                     return (
                       <div
                         key={grant.id}
@@ -2649,54 +2641,67 @@ export default function CloudAppPage() {
                             Remove
                           </button>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <label className="block text-[11px] font-medium text-white/35">
-                            Permission
-                            <select
-                              className="mt-1 h-8 w-full rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
-                              value={grant.role}
-                              disabled={loading}
-                              onChange={(event) =>
-                                void updateShareGrantAccess(grant.id, {
-                                  role: event.target.value as "viewer" | "editor",
-                                  ...(scopedSessionId
-                                    ? { sessionId: scopedSessionId }
-                                    : {}),
-                                })
-                              }
-                              aria-label={`Permission for ${grant.user.email}`}
-                            >
-                              <option value="viewer">Viewer</option>
-                              <option value="editor">Editor</option>
-                            </select>
-                          </label>
-                          <label className="block text-[11px] font-medium text-white/35">
-                            Agent access
-                            <select
-                              className="mt-1 h-8 w-full rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
-                              value={scopedSessionId}
-                              disabled={loading}
-                              onChange={(event) =>
-                                void updateShareGrantAccess(grant.id, {
-                                  role: grant.role,
-                                  ...(event.target.value
-                                    ? { sessionId: event.target.value }
-                                    : {}),
-                                })
-                              }
-                              aria-label={`Agent scope for ${grant.user.email}`}
-                            >
-                              <option value="">All agents</option>
-                              {shareProjectSessions.map((cloudSession) => (
-                                <option
+                        <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/10 p-2">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div className="text-[11px] font-medium text-white/40">
+                              Agent permissions
+                            </div>
+                            <div className="flex gap-1">
+                              <button
+                                type="button"
+                                className="h-7 rounded-md px-2 text-[11px] text-white/40 hover:bg-white/[0.05] hover:text-white/70"
+                                disabled={loading}
+                                onClick={() => setAllAgents("viewer")}
+                              >
+                                All view
+                              </button>
+                              <button
+                                type="button"
+                                className="h-7 rounded-md px-2 text-[11px] text-white/40 hover:bg-white/[0.05] hover:text-white/70"
+                                disabled={loading}
+                                onClick={() => setAllAgents("editor")}
+                              >
+                                All edit
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            {shareProjectSessions.length > 0 ? (
+                              shareProjectSessions.map((cloudSession) => (
+                                <label
                                   key={cloudSession.id}
-                                  value={cloudSession.id}
+                                  className="grid grid-cols-[minmax(0,1fr)_112px] items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-white/[0.03]"
                                 >
-                                  {cloudSession.displayName}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
+                                  <span className="truncate text-white/60">
+                                    {cloudSession.displayName}
+                                  </span>
+                                  <select
+                                    className="h-7 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
+                                    value={roleForAgent(cloudSession.id)}
+                                    disabled={loading}
+                                    onChange={(event) =>
+                                      updateAgentRole(
+                                        cloudSession.id,
+                                        event.target.value as
+                                          | "none"
+                                          | "viewer"
+                                          | "editor",
+                                      )
+                                    }
+                                    aria-label={`Access to ${cloudSession.displayName} for ${grant.user.email}`}
+                                  >
+                                    <option value="none">No access</option>
+                                    <option value="viewer">View</option>
+                                    <option value="editor">Edit</option>
+                                  </select>
+                                </label>
+                              ))
+                            ) : (
+                              <div className="px-2 py-1.5 text-xs text-white/30">
+                                No agents yet.
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

@@ -56,14 +56,15 @@ type CreateProjectShareLinkInput struct {
 
 // SharedProjectGrant is one project/session another user shared with this user.
 type SharedProjectGrant struct {
-	ID            string               `json:"id"`
-	OrgID         clouddomain.OrgID    `json:"orgId"`
-	Project       clouddomain.Project  `json:"project"`
-	Session       *clouddomain.Session `json:"session,omitempty"`
-	Role          string               `json:"role"`
-	SharedByEmail string               `json:"sharedByEmail"`
-	SharedByName  string               `json:"sharedByName"`
-	RedeemedAt    time.Time            `json:"redeemedAt"`
+	ID            string                         `json:"id"`
+	OrgID         clouddomain.OrgID              `json:"orgId"`
+	Project       clouddomain.Project            `json:"project"`
+	Session       *clouddomain.Session           `json:"session,omitempty"`
+	SessionRoles  []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
+	Role          string                         `json:"role"`
+	SharedByEmail string                         `json:"sharedByEmail"`
+	SharedByName  string                         `json:"sharedByName"`
+	RedeemedAt    time.Time                      `json:"redeemedAt"`
 }
 
 // ProjectShareAccess is the owner/admin management view for a project's shares.
@@ -74,13 +75,20 @@ type ProjectShareAccess struct {
 
 // ProjectShareGrant is an active redeemed share for one user.
 type ProjectShareGrant struct {
-	ID         string                `json:"id"`
-	User       clouddomain.User      `json:"user"`
-	SessionID  clouddomain.SessionID `json:"sessionId,omitempty"`
-	Role       string                `json:"role"`
-	Status     string                `json:"status"`
-	RedeemedAt time.Time             `json:"redeemedAt"`
-	UpdatedAt  time.Time             `json:"updatedAt"`
+	ID           string                         `json:"id"`
+	User         clouddomain.User               `json:"user"`
+	SessionID    clouddomain.SessionID          `json:"sessionId,omitempty"`
+	SessionRoles []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
+	Role         string                         `json:"role"`
+	Status       string                         `json:"status"`
+	RedeemedAt   time.Time                      `json:"redeemedAt"`
+	UpdatedAt    time.Time                      `json:"updatedAt"`
+}
+
+// ProjectShareGrantSessionRole grants one user access to one session.
+type ProjectShareGrantSessionRole struct {
+	SessionID clouddomain.SessionID `json:"sessionId"`
+	Role      string                `json:"role"`
 }
 
 // CreateProjectShareLink stores a scoped share link.
@@ -424,7 +432,53 @@ func (s *Store) ListProjectShareAccess(
 		}
 		access.Grants = append(access.Grants, grant)
 	}
-	return access, grantRows.Err()
+	if err := grantRows.Err(); err != nil {
+		return ProjectShareAccess{}, err
+	}
+	grantIDs := make([]string, 0, len(access.Grants))
+	for _, grant := range access.Grants {
+		grantIDs = append(grantIDs, grant.ID)
+	}
+	sessionRoles, err := s.projectShareGrantSessionRoles(ctx, grantIDs)
+	if err != nil {
+		return ProjectShareAccess{}, err
+	}
+	for index := range access.Grants {
+		access.Grants[index].SessionRoles = sessionRoles[access.Grants[index].ID]
+	}
+	return access, nil
+}
+
+func (s *Store) projectShareGrantSessionRoles(
+	ctx context.Context,
+	grantIDs []string,
+) (map[string][]ProjectShareGrantSessionRole, error) {
+	out := make(map[string][]ProjectShareGrantSessionRole, len(grantIDs))
+	for _, grantID := range grantIDs {
+		rows, err := s.pool.Query(ctx, `
+			SELECT session_id, role
+			FROM ao_project_share_grant_sessions
+			WHERE grant_id = $1
+			ORDER BY created_at
+		`, grantID)
+		if err != nil {
+			return nil, fmt.Errorf("list project share grant sessions: %w", err)
+		}
+		for rows.Next() {
+			var sessionRole ProjectShareGrantSessionRole
+			if err := rows.Scan(&sessionRole.SessionID, &sessionRole.Role); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan project share grant session: %w", err)
+			}
+			out[grantID] = append(out[grantID], sessionRole)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		rows.Close()
+	}
+	return out, nil
 }
 
 func (s *Store) projectShareRecipients(
@@ -479,19 +533,49 @@ func (s *Store) UpdateProjectShareGrantAccess(
 	grantID string,
 	role string,
 	sessionID clouddomain.SessionID,
+	sessionRoles []ProjectShareGrantSessionRole,
 ) (ProjectShareGrant, error) {
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ProjectShareGrant{}, fmt.Errorf("begin update project share grant: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	nextSessionID := sessionID
+	if len(sessionRoles) > 0 {
+		nextSessionID = ""
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE ao_project_share_grants
 		SET role = $4,
 			session_id = NULLIF($5, '')::uuid,
 			updated_at = now()
 		WHERE org_id = $1 AND project_id = $2 AND id = $3 AND status = 'active'
-	`, orgID, projectID, grantID, role, string(sessionID))
+	`, orgID, projectID, grantID, role, string(nextSessionID))
 	if err != nil {
 		return ProjectShareGrant{}, fmt.Errorf("update project share grant: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ProjectShareGrant{}, ErrProjectShareGrantNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM ao_project_share_grant_sessions
+		WHERE grant_id = $1
+	`, grantID); err != nil {
+		return ProjectShareGrant{}, fmt.Errorf("clear project share grant sessions: %w", err)
+	}
+	for _, sessionRole := range sessionRoles {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO ao_project_share_grant_sessions (
+				grant_id, org_id, project_id, session_id, role
+			)
+			VALUES ($1, $2, $3, $4, $5)
+		`, grantID, orgID, projectID, sessionRole.SessionID, sessionRole.Role); err != nil {
+			return ProjectShareGrant{}, fmt.Errorf("insert project share grant session: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectShareGrant{}, fmt.Errorf("commit update project share grant: %w", err)
 	}
 	access, err := s.ListProjectShareAccess(ctx, orgID, projectID)
 	if err != nil {
@@ -649,7 +733,21 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 		}
 		out = append(out, grant)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	grantIDs := make([]string, 0, len(out))
+	for _, grant := range out {
+		grantIDs = append(grantIDs, grant.ID)
+	}
+	sessionRoles, err := s.projectShareGrantSessionRoles(ctx, grantIDs)
+	if err != nil {
+		return nil, err
+	}
+	for index := range out {
+		out[index].SessionRoles = sessionRoles[out[index].ID]
+	}
+	return out, nil
 }
 
 var (
