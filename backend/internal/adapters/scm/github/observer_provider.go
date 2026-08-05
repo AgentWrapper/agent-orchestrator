@@ -91,18 +91,130 @@ func (p *Provider) ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([
 	}
 }
 
-// CommitChecksGuard checks GitHub's per-commit check-runs ETag guard.
+// githubCheckRunsPageSize fetches the complete check-run set for a commit in a
+// single REST page when the commit has no more than this many runs. A commit
+// virtually never exceeds GitHub's 100-result cap, so one request carries the
+// whole representation and GitHub's ETag reflects every contributing run.
+const githubCheckRunsPageSize = 100
+
+// restCheckRunsPage is the GitHub list-check-runs response envelope.
+type restCheckRunsPage struct {
+	TotalCount int                  `json:"total_count"`
+	CheckRuns  []restCommitCheckRun `json:"check_runs"`
+}
+
+// restCommitCheckRun is the subset of a GitHub check-run we condition the
+// aggregate CI-state guard on.
+type restCommitCheckRun struct {
+	Name       string `json:"name"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+}
+
+// CommitChecksGuard checks GitHub's per-commit check-runs guard. It conditions
+// the fast CI-state guard on the complete check-run set rather than a single
+// item: GitHub's ETag for a per_page=1 response only reflects that one run, so
+// a different workflow finishing (or failing, or going pending) can leave the
+// returned item unchanged and GitHub answers 304 even though the aggregate CI
+// state AO displays has changed. Requesting the full page makes the guard
+// represent all runs that contribute to the state, and paginating plus
+// fingerprinting stays correct when a commit carries more than one page of
+// runs. DefaultPRMaxAge remains the safety backstop for PR metadata changes not
+// represented by check-state guards.
 func (p *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, headSHA, etag string) (ports.SCMGuardResult, error) {
 	if strings.TrimSpace(headSHA) == "" {
 		return ports.SCMGuardResult{}, fmt.Errorf("%w: empty head sha", ErrNotFound)
 	}
 	q := url.Values{}
-	q.Set("per_page", "1")
+	q.Set("per_page", strconv.Itoa(githubCheckRunsPageSize))
 	resp, err := p.client.doRESTWithETag(ctx, repoPath(repo.Owner, repo.Name, "commits", headSHA, "check-runs"), q, etag)
 	if err != nil {
 		return ports.SCMGuardResult{}, err
 	}
-	return ports.SCMGuardResult{ETag: firstNonEmptyHeader(resp.ETag, etag), NotModified: resp.NotModified}, nil
+	if resp.NotModified {
+		// GitHub confirmed the whole first page is unchanged, which covers every
+		// run for the overwhelmingly common single-page case.
+		return ports.SCMGuardResult{ETag: firstNonEmptyHeader(resp.ETag, etag), NotModified: true}, nil
+	}
+	page, err := decodeRestCheckRunsPage(resp.Body)
+	if err != nil {
+		return ports.SCMGuardResult{}, err
+	}
+	if page.TotalCount > len(page.CheckRuns) {
+		// The commit has more runs than one page fits; rely on a stable
+		// fingerprint over the complete set instead of a single page's ETag so a
+		// transition on a later page still invalidates the guard.
+		runs, err := p.fetchRemainingCommitCheckRuns(ctx, repo, headSHA, page)
+		if err != nil {
+			return ports.SCMGuardResult{}, err
+		}
+		fp := commitCheckRunsFingerprint(runs)
+		if etag == fp {
+			return ports.SCMGuardResult{ETag: fp, NotModified: true}, nil
+		}
+		return ports.SCMGuardResult{ETag: fp}, nil
+	}
+	// A single page carried the whole representation: GitHub's ETag is the
+	// correct validator, so any run transition yields a fresh ETag.
+	return ports.SCMGuardResult{ETag: firstNonEmptyHeader(resp.ETag, etag)}, nil
+}
+
+// decodeRestCheckRunsPage unmarshals a GitHub list-check-runs body.
+func decodeRestCheckRunsPage(body []byte) (restCheckRunsPage, error) {
+	var page restCheckRunsPage
+	if err := json.Unmarshal(body, &page); err != nil {
+		return restCheckRunsPage{}, fmt.Errorf("github scm: decode check runs: %w", err)
+	}
+	return page, nil
+}
+
+// fetchRemainingCommitCheckRuns gathers the check runs a commit carries beyond
+// the first page and returns every run across all pages.
+func (p *Provider) fetchRemainingCommitCheckRuns(ctx context.Context, repo ports.SCMRepo, headSHA string, page restCheckRunsPage) ([]restCommitCheckRun, error) {
+	runs := append([]restCommitCheckRun(nil), page.CheckRuns...)
+	for pageNum := 2; len(runs) < page.TotalCount; pageNum++ {
+		q := url.Values{}
+		q.Set("per_page", strconv.Itoa(githubCheckRunsPageSize))
+		q.Set("page", strconv.Itoa(pageNum))
+		resp, err := p.client.doREST(ctx, http.MethodGet, repoPath(repo.Owner, repo.Name, "commits", headSHA, "check-runs"), q, nil)
+		if err != nil {
+			return nil, err
+		}
+		next, err := decodeRestCheckRunsPage(resp.Body)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, next.CheckRuns...)
+		if len(next.CheckRuns) == 0 {
+			break
+		}
+	}
+	return runs, nil
+}
+
+// commitCheckRunsFingerprint is a stable hash of a commit's complete check-run
+// set, sorted so the order GitHub returns runs in cannot matter. It only hashes
+// the fields that determine the aggregate CI state (name, status, conclusion).
+func commitCheckRunsFingerprint(runs []restCommitCheckRun) string {
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].Name != runs[j].Name {
+			return runs[i].Name < runs[j].Name
+		}
+		if runs[i].Status != runs[j].Status {
+			return runs[i].Status < runs[j].Status
+		}
+		return runs[i].Conclusion < runs[j].Conclusion
+	})
+	h := sha256.New()
+	for _, r := range runs {
+		_, _ = h.Write([]byte(r.Name))
+		h.Write([]byte{0})
+		_, _ = h.Write([]byte(r.Status))
+		h.Write([]byte{0})
+		_, _ = h.Write([]byte(r.Conclusion))
+		h.Write([]byte{0x1e})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // FetchPullRequests fetches normalized PR/check metadata for up to 25 PR refs in
