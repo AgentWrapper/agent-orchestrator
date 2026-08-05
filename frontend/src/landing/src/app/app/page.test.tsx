@@ -567,6 +567,29 @@ it("creates additional standalone agents from a standalone project", async () =>
   expect(screen.queryByRole("button", { name: "Orchestrator" })).not.toBeInTheDocument();
 });
 
+it("offers new agent from the standalone project menu", async () => {
+  const standaloneProject: CloudProject = {
+    ...project,
+    id: "standalone-project",
+    displayName: "Standalone chat",
+    repositoryUrl: "ao-standalone://org-one/session",
+    config: { source: "standalone" },
+  };
+  apiMocks.projects.mockResolvedValue({ projects: [standaloneProject] });
+  apiMocks.sessions.mockResolvedValue({ sessions: [] });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(
+    await screen.findByLabelText("More actions for Standalone chat"),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "New agent" }));
+
+  expect(
+    screen.getByRole("dialog", { name: "New standalone agent" }),
+  ).toBeVisible();
+});
+
 it("prompts for a coding agent before opening provider settings", async () => {
   apiMocks.providerConnections.mockResolvedValue({ providerConnections: [] });
   render(<CloudAppPage />);

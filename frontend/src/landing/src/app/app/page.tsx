@@ -2,6 +2,7 @@
 
 import {
   Bell,
+  Bot,
   Building2,
   ChevronDown,
   ChevronRight,
@@ -138,6 +139,17 @@ function OrchestratorIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
       <circle cx="19" cy="20" r="2" />
       <path d="M12 6v12M5 11h14M5 11v7M19 11v7" />
     </svg>
+  );
+}
+
+function StandaloneProjectIcon({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`relative inline-grid shrink-0 place-items-center rounded-md border border-[#4d8dff]/25 bg-[#4d8dff]/10 text-[#8eb6ff] ${className}`}
+    >
+      <Bot className="size-[13px]" />
+      <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-[#75a5ff] ring-2 ring-[#111317]" />
+    </span>
   );
 }
 
@@ -1602,6 +1614,7 @@ export default function CloudAppPage() {
               const projectSessions = sessions.filter(
                 ({ projectId }) => projectId === project.id,
               );
+              const standaloneProject = isStandaloneProject(project);
               const expanded = !collapsedProjectIds.has(project.id);
               const projectActive =
                 selectedProjectId === project.id && view === "board";
@@ -1649,10 +1662,18 @@ export default function CloudAppPage() {
                             strokeWidth={2.5}
                             aria-hidden="true"
                           />
-                          <FolderGit2 className="size-[15px] shrink-0" />
+                          {standaloneProject ? (
+                            <StandaloneProjectIcon className="size-[18px]" />
+                          ) : (
+                            <FolderGit2 className="size-[15px] shrink-0" />
+                          )}
                         </>
                       ) : (
-                        <FolderGit2 className="size-[15px] shrink-0" />
+                        standaloneProject ? (
+                          <StandaloneProjectIcon className="size-[18px]" />
+                        ) : (
+                          <FolderGit2 className="size-[15px] shrink-0" />
+                        )
                       )}
                       {!sidebarCollapsed ? (
                         <span className="truncate">{project.displayName}</span>
@@ -1678,7 +1699,28 @@ export default function CloudAppPage() {
                       </button>
                     ) : null}
                     {projectMenuOpenId === project.id ? (
-                      <div className="absolute right-0 top-8 z-40 w-36 rounded-lg border border-white/[0.1] bg-[#15171b] p-1 shadow-xl shadow-black/30">
+                      <div className="absolute right-0 top-8 z-40 w-40 rounded-lg border border-white/[0.1] bg-[#15171b] p-1 shadow-xl shadow-black/30">
+                        {standaloneProject ? (
+                          <button
+                            type="button"
+                            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[#9fc0ff] hover:bg-[#4d8dff]/10 hover:text-white"
+                            onClick={() => {
+                              setProjectMenuOpenId(null);
+                              setSelectedShareId(null);
+                              setSelectedProjectId(project.id);
+                              setSelectedSessionId(null);
+                              setView("board");
+                              if (!defaultAgent) {
+                                promptForAgentConnection();
+                                return;
+                              }
+                              setShowSessionForm(true);
+                            }}
+                          >
+                            <Bot className="size-3.5" />
+                            New agent
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-white/70 hover:bg-white/[0.06] hover:text-white"
@@ -1803,6 +1845,7 @@ export default function CloudAppPage() {
                 {sharedProjects.map((share) => {
                   const disclosureID = `shared:${share.id}`;
                   const expanded = !collapsedProjectIds.has(disclosureID);
+                  const standaloneProject = isStandaloneProject(share.project);
                   const projectActive =
                     selectedShareId === share.id &&
                     selectedProjectId === share.project.id &&
@@ -1861,7 +1904,11 @@ export default function CloudAppPage() {
                               : undefined
                           }
                         >
-                          <FolderGit2 className="size-[15px] shrink-0" />
+                          {standaloneProject ? (
+                            <StandaloneProjectIcon className="size-[18px]" />
+                          ) : (
+                            <FolderGit2 className="size-[15px] shrink-0" />
+                          )}
                           {!sidebarCollapsed ? (
                             <span className="truncate">
                               {share.project.displayName}
@@ -2327,7 +2374,11 @@ export default function CloudAppPage() {
           <div className="space-y-6 p-5 sm:p-6">
             <div className="flex items-center gap-4 rounded-xl border border-white/[0.08] bg-white/[0.025] p-4">
               <div className="grid size-10 shrink-0 place-items-center rounded-lg border border-white/[0.09] bg-white/[0.04]">
-                <FolderGit2 className="size-4 text-white/55" />
+                {isStandaloneProject(shareProject) ? (
+                  <StandaloneProjectIcon className="size-6" />
+                ) : (
+                  <FolderGit2 className="size-4 text-white/55" />
+                )}
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium text-white/85">
