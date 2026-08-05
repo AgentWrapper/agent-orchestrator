@@ -157,7 +157,7 @@ func TestPostHogSinkStampsDefaultAgentAndTenure(t *testing.T) {
 				return nil, err
 			}
 			got, _ = body["properties"].(map[string]any)
-			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{}"))}, nil
 		}), nil)
 	if err != nil {
 		t.Fatalf("new sink: %v", err)

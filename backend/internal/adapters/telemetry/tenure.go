@@ -25,6 +25,9 @@ const tenureStateFile = "telemetry_tenure.json"
 // numeric axis and without exposing an exact install date.
 type TenureBucket string
 
+// The buckets, coarsening as tenure grows: a first-day install and a
+// second-day install are different stories, whereas month seven and month eight
+// are not.
 const (
 	TenureFirstDay   TenureBucket = "d0"
 	TenureFirstWeek  TenureBucket = "d1_6"
@@ -113,7 +116,7 @@ func (t *tenureTracker) saveLocked() {
 // observe records that the install was seen now, and returns its tenure. The
 // first call on a fresh install reports age 0 and one active day, so a brand new
 // install is never indistinguishable from one with no record.
-func (t *tenureTracker) observe() (ageDays int, activeDays int, bucket TenureBucket) {
+func (t *tenureTracker) observe() (ageDays, activeDays int, bucket TenureBucket) {
 	now := t.now().UTC()
 	today := now.Format("2006-01-02")
 
