@@ -143,6 +143,18 @@ func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displa
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionPinned(_ context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.IsPinned = isPinned
+	r.PinnedAt = pinnedAt
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
@@ -160,6 +172,17 @@ func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.Se
 		return false, nil
 	}
 	r.TerminateOnPRMerge = terminate
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
+func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.ReviewerHarness = harness
 	r.UpdatedAt = updatedAt
 	f.sessions[id] = r
 	return true, nil
@@ -252,6 +275,45 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 }
 
+func TestSessionPinAndUnpin(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+
+	sess, err := (&Service{store: st, clock: time.Now}).Pin(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.IsPinned || sess.PinnedAt == nil {
+		t.Fatalf("pin was not persisted: session=%+v", sess)
+	}
+	if !st.sessions["mer-1"].IsPinned || st.sessions["mer-1"].PinnedAt == nil {
+		t.Fatalf("pin was not stored: session=%+v", st.sessions["mer-1"])
+	}
+
+	sess, err = (&Service{store: st, clock: time.Now}).Unpin(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.IsPinned || sess.PinnedAt != nil {
+		t.Fatalf("unpin was not persisted: session=%+v", sess)
+	}
+	if st.sessions["mer-1"].IsPinned || st.sessions["mer-1"].PinnedAt != nil {
+		t.Fatalf("unpin was not stored: session=%+v", st.sessions["mer-1"])
+	}
+}
+
+func TestSessionPinUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).Pin(context.Background(), "ghost-1"); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
+func TestSessionUnpinUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).Unpin(context.Background(), "ghost-1"); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
 func TestSessionSetPreviewPersistsURL(t *testing.T) {
 	st := newFakeStore()
 	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
@@ -291,6 +353,31 @@ func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
 func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
 	if _, err := (&Service{store: newFakeStore()}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
 		t.Fatal("expected missing session error")
+	}
+}
+
+func TestSessionSetReviewerHarnessPersistsPerSession(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	st.sessions["mer-2"] = domain.SessionRecord{ID: "mer-2", ProjectID: "mer", Kind: domain.KindWorker}
+
+	sess, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", domain.ReviewerOpenCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.ReviewerHarness != domain.ReviewerOpenCode || st.sessions["mer-1"].ReviewerHarness != domain.ReviewerOpenCode {
+		t.Fatalf("reviewer harness was not persisted: session=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+	if got := st.sessions["mer-2"].ReviewerHarness; got != "" {
+		t.Fatalf("other session reviewer harness = %q, want empty", got)
+	}
+}
+
+func TestSessionSetReviewerHarnessRejectsUnknownHarness(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1"}
+	if _, err := (&Service{store: st}).SetReviewerHarness(context.Background(), "mer-1", "unknown"); err == nil {
+		t.Fatal("expected invalid harness error")
 	}
 }
 
@@ -634,7 +721,16 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 		{SessionID: "ws-1", RepoName: "api", WorktreePath: child, BaseSHA: childBase},
 	}
 
-	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ws-1")
+	svc := &Service{store: st}
+	paths, err := svc.WorkspaceWatchPaths(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || paths[0] != root || paths[1] != child {
+		t.Fatalf("workspace watch paths = %v, want root and child repo", paths)
+	}
+
+	files, err := svc.ListWorkspaceFiles(context.Background(), "ws-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -650,7 +746,7 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 		t.Fatal("child .git internals must not be listed through the workspace root")
 	}
 
-	detail, err := (&Service{store: st}).GetWorkspaceFile(context.Background(), "ws-1", "api/service.go")
+	detail, err := svc.GetWorkspaceFile(context.Background(), "ws-1", "api/service.go")
 	if err != nil {
 		t.Fatal(err)
 	}

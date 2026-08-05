@@ -135,6 +135,7 @@ export type BrowserViewHostOptions = {
 	isMac?: boolean;
 	getKeybindingOverrides?: () => KeybindingOverrides;
 	isKeybindingRecording?: () => boolean;
+	isCloseShellTerminalShortcutEnabled?: () => boolean;
 };
 
 export type BrowserViewHost = {

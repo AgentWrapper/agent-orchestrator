@@ -1224,62 +1224,8 @@ func TestPRObservation_DedupPersistsAcrossPRs(t *testing.T) {
 	}
 }
 
-func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = working("mer-1")
-	msg := &fakeMessenger{}
-	m := New(st, msg)
-	result := ReviewResult{
-		RunID:          "run-1",
-		WorkerID:       "mer-1",
-		PRURL:          "https://github.com/o/r/pull/1",
-		TargetSHA:      "sha1",
-		Verdict:        domain.VerdictChangesRequested,
-		Body:           "fix the bug",
-		GithubReviewID: "98\x1b[2J765",
-	}
-
-	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
-		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
-	}
-	got := msg.msgs[0]
-	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("AO review nudge missing %q: %q", want, got)
-		}
-	}
-	if strings.Contains(got, "\x1b") {
-		t.Fatalf("AO review nudge should sanitize control bytes: %q", got)
-	}
-	if st.signatures[result.PRURL] == "" {
-		t.Fatal("AO review nudge did not persist sendOnce signature")
-	}
-
-	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("repeat ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
-		t.Fatalf("repeat should report delivered outcome and suppress duplicate send, outcome=%q msgs=%v", outcome, msg.msgs)
-	}
-
-	result.RunID = "run-2"
-	result.TargetSHA = "sha2"
-	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("new pass ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 2 {
-		t.Fatalf("new review pass should send again, outcome=%q msgs=%v", outcome, msg.msgs)
-	}
-}
-
-func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
-	// The worker is working at ApplyReviewResult's entry guard (read #1) but a
+func TestApplyReviewBatchSuppressedByJITGuardIsNotDelivered(t *testing.T) {
+	// The worker is working at ApplyReviewBatch's entry guard (read #1) but a
 	// permission dialog stores blocked before sendOnce's just-in-time re-read
 	// (read #2). The nudge must be SUPPRESSED, and the outcome must be
 	// ReviewDeliveryNoop — NOT Sent — so the caller does not stamp the run
@@ -1290,13 +1236,13 @@ func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(bst, msg)
 	result := ReviewResult{
-		RunID: "run-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
+		RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
 		TargetSHA: "sha1", Verdict: domain.VerdictChangesRequested, Body: "fix the bug",
 	}
 
-	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
+	outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", []ReviewResult{result})
 	if err != nil {
-		t.Fatalf("ApplyReviewResult: %v", err)
+		t.Fatalf("ApplyReviewBatch: %v", err)
 	}
 	if outcome != ReviewDeliveryNoop {
 		t.Fatalf("outcome = %q, want no_op (suppressed nudge must not be stamped delivered)", outcome)
@@ -1368,23 +1314,12 @@ func TestApplyReviewBatchNoopsWithoutDeliverableResults(t *testing.T) {
 	}
 }
 
-func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
-	deliveredAt := time.Unix(100, 0).UTC()
+func TestApplyReviewBatchNoopsWhenWorkerCannotBeNudged(t *testing.T) {
 	tests := []struct {
 		name   string
 		result ReviewResult
 		rec    domain.SessionRecord
 	}{
-		{
-			name:   "approved",
-			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictApproved},
-			rec:    working("mer-1"),
-		},
-		{
-			name:   "already delivered",
-			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested, DeliveredAt: &deliveredAt},
-			rec:    working("mer-1"),
-		},
 		{
 			name:   "terminated worker",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
@@ -1405,12 +1340,12 @@ func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m, st, msg := newManager()
 			st.sessions["mer-1"] = tt.rec
-			outcome, err := m.ApplyReviewResult(ctx, "mer-1", tt.result)
+			outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", []ReviewResult{tt.result})
 			if err != nil {
-				t.Fatalf("ApplyReviewResult: %v", err)
+				t.Fatalf("ApplyReviewBatch: %v", err)
 			}
 			if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
-				t.Fatalf("irrelevant result should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
+				t.Fatalf("non-nudgeable worker should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
 			}
 		})
 	}
@@ -1651,12 +1586,18 @@ func TestMarkSpawnedClearsFirstSignal(t *testing.T) {
 }
 
 type fakeNotificationSink struct {
-	intents []ports.NotificationIntent
-	err     error
+	intents     []ports.NotificationIntent
+	resolutions []ports.NotificationResolution
+	err         error
 }
 
 func (f *fakeNotificationSink) Notify(_ context.Context, intent ports.NotificationIntent) error {
 	f.intents = append(f.intents, intent)
+	return f.err
+}
+
+func (f *fakeNotificationSink) Resolve(_ context.Context, res ports.NotificationResolution) error {
+	f.resolutions = append(f.resolutions, res)
 	return f.err
 }
 
@@ -1677,6 +1618,84 @@ func TestActivity_WaitingInputTransitionEmitsNotification(t *testing.T) {
 	intent := sink.intents[0]
 	if intent.Type != domain.NotificationNeedsInput || intent.SessionID != "mer-1" || intent.ProjectID != "mer" || intent.SessionDisplayName != "checkout-flow" {
 		t.Fatalf("intent = %+v", intent)
+	}
+}
+
+// The user answering the agent is what resolves a needs-input notification —
+// there is no manual acknowledgement anywhere in the flow.
+func TestActivity_LeavingNeedsInputResolvesNotification(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		next domain.ActivityState
+	}{
+		{name: "answered", next: domain.ActivityActive},
+		{name: "went idle", next: domain.ActivityIdle},
+		{name: "agent exited", next: domain.ActivityExited},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &fakeNotificationSink{}
+			m := New(st, nil, WithNotificationSink(sink))
+			now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+			m.clock = func() time.Time { return now }
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer",
+				Activity:      domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Minute)},
+				FirstSignalAt: now.Add(-time.Minute),
+			}
+
+			if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: tt.next}); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.resolutions) != 1 {
+				t.Fatalf("resolutions = %+v, want 1", sink.resolutions)
+			}
+			got := sink.resolutions[0]
+			if got.Type != domain.NotificationNeedsInput || got.SessionID != "mer-1" || !got.ResolvedAt.Equal(now) {
+				t.Fatalf("resolution = %+v", got)
+			}
+		})
+	}
+}
+
+// An in-family escalation is still the same pause: nothing was answered, so
+// there is nothing to resolve.
+func TestActivity_WaitingInputToBlockedDoesNotResolve(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Now()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		Activity:      domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now},
+		FirstSignalAt: now,
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.resolutions) != 0 {
+		t.Fatalf("resolutions = %+v, want none", sink.resolutions)
+	}
+}
+
+// Terminating a paused session also clears its ping: nobody is waiting on the
+// user any more.
+func TestMarkTerminated_ResolvesNeedsInputNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Now()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		Activity: domain.Activity{State: domain.ActivityBlocked, LastActivityAt: now},
+	}
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.resolutions) != 1 || sink.resolutions[0].Type != domain.NotificationNeedsInput {
+		t.Fatalf("resolutions = %+v", sink.resolutions)
 	}
 }
 
@@ -1894,6 +1913,53 @@ func TestSCMObservation_Notifications(t *testing.T) {
 			}
 			if got := sink.intents[0]; got.Type != tc.want || got.PRURL != tc.obs.PR.URL || got.PRNumber != tc.obs.PR.Number {
 				t.Fatalf("intent = %+v, want type %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// Merging the PR is what resolves a ready-to-merge ping. So is the PR ceasing
+// to be mergeable — either way there is nothing left for the user to merge.
+func TestSCMObservation_ResolvesReadyToMergeWhenNoLongerReady(t *testing.T) {
+	ready := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing)},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
+	}
+	merged := ready
+	merged.PR.Merged = true
+	ciBroke := ready
+	ciBroke.CI.Summary = string(domain.CIFailing)
+
+	for _, tt := range []struct {
+		name string
+		obs  ports.SCMObservation
+		want int
+	}{
+		{name: "still ready", obs: ready, want: 0},
+		{name: "merged", obs: merged, want: 1},
+		{name: "ci went red", obs: ciBroke, want: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &fakeNotificationSink{}
+			m := New(st, nil, WithNotificationSink(sink))
+			st.sessions["mer-1"] = working("mer-1")
+
+			if err := m.ApplySCMObservation(ctx, "mer-1", tt.obs); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.resolutions) != tt.want {
+				t.Fatalf("resolutions = %+v, want %d", sink.resolutions, tt.want)
+			}
+			if tt.want == 0 {
+				return
+			}
+			got := sink.resolutions[0]
+			if got.Type != domain.NotificationReadyToMerge || got.PRURL != tt.obs.PR.URL {
+				t.Fatalf("resolution = %+v", got)
 			}
 		})
 	}

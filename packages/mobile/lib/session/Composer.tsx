@@ -1,5 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, TextInput, View } from "react-native";
+import { MicKey } from "../voice/MicKey";
+import type { VoiceMode, VoiceState } from "../voice/types";
 import { useTheme, useThemedStyles, useThemeState } from "../ThemeProvider";
 import type { Theme } from "../theme";
 import type { SendTarget } from "./sendRoute";
@@ -15,6 +17,7 @@ export function Composer({
 	sending,
 	target,
 	onTargetChange,
+	voice,
 	keyboardVisible,
 	onDismissKeyboard,
 }: {
@@ -24,6 +27,7 @@ export function Composer({
 	sending: boolean;
 	target: SendTarget;
 	onTargetChange: (target: SendTarget) => void;
+	voice: { state: VoiceState; mode: VoiceMode; pressIn(): void; pressOut(): void };
 	keyboardVisible: boolean;
 	onDismissKeyboard: () => void;
 }) {
@@ -79,6 +83,8 @@ export function Composer({
 					</Pressable>
 				) : null}
 			</View>
+
+			<MicKey state={voice.state} mode={voice.mode} onPressIn={voice.pressIn} onPressOut={voice.pressOut} />
 
 			<Pressable
 				accessibilityRole="button"
@@ -137,8 +143,8 @@ const makeStyles = (t: Theme) =>
 		borderRadius: 8,
 	},
 	routeToggleActive: { backgroundColor: t.tintBlue },
-	// Rounded square rather than a circle, so it matches the radius of the field
-	// beside it instead of being the only circle in the dock.
+	// Rounded square at the same radius as the mic, so the two read as a pair and
+	// match the field beside them rather than being the only circles in the dock.
 	send: {
 		width: CONTROL_SIZE,
 		height: CONTROL_SIZE,

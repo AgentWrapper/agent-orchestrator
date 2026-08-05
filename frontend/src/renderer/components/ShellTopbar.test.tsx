@@ -92,11 +92,11 @@ function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSessio
 	};
 }
 
-function renderTopbar(session: WorkspaceSession) {
-	return renderTopbarSessions([session], session.id);
+function renderTopbar(session: WorkspaceSession, embedded = false) {
+	return renderTopbarSessions([session], session.id, embedded);
 }
 
-function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string) {
+function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string, embedded = false) {
 	const data: WorkspaceSummary[] = [
 		{
 			id: sessions[0].workspaceId,
@@ -112,7 +112,7 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string) {
 	const queryClient = new QueryClient();
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
-			<ShellTopbar />
+			<ShellTopbar embedded={embedded} />
 		</QueryClientProvider>
 	);
 	const result = render(topbar());
@@ -162,6 +162,15 @@ beforeEach(() => {
 });
 
 describe("ShellTopbar status pill", () => {
+	it("renders only session actions when embedded in the terminal bar", () => {
+		renderTopbar(sessionWith(), true);
+
+		expect(screen.queryByText("ao/sess-1")).not.toBeInTheDocument();
+		expect(screen.queryByText("Working")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Kill session" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Open orchestrator" })).toBeInTheDocument();
+	});
+
 	it.each([
 		["active", "Working"],
 		["idle", "Idle"],

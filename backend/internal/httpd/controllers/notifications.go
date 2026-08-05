@@ -3,7 +3,9 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -19,12 +21,12 @@ import (
 type NotificationService interface {
 	List(ctx context.Context, filter notificationsvc.ListFilter) (notificationsvc.ListPage, error)
 	MarkRead(ctx context.Context, id string) (notificationsvc.Notification, bool, error)
-	MarkAllRead(ctx context.Context) (int64, error)
+	MarkAllRead(ctx context.Context, ids []string) (int64, error)
 }
 
 // NotificationStream is the live notification stream used by SSE clients.
 type NotificationStream interface {
-	Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationRecord, func())
+	Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationEvent, func())
 }
 
 // NotificationsController owns the /notifications routes.
@@ -61,9 +63,10 @@ func (c *NotificationsController) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListNotificationsResponse{
-		Notifications: notificationResponses(page.Notifications),
-		NextCursor:    page.NextCursor,
-		UnreadCount:   page.UnreadCount,
+		Notifications:   notificationResponses(page.Notifications),
+		NextCursor:      page.NextCursor,
+		UnreadCount:     page.UnreadCount,
+		UnresolvedCount: page.UnresolvedCount,
 	})
 }
 
@@ -94,7 +97,15 @@ func (c *NotificationsController) markAllRead(w http.ResponseWriter, r *http.Req
 		apispec.NotImplemented(w, r, "POST", "/api/v1/notifications/read-all")
 		return
 	}
-	updatedCount, err := c.Svc.MarkAllRead(r.Context())
+	// The body is optional: older clients POST nothing and mean "everything".
+	var req MarkAllNotificationsReadRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+			return
+		}
+	}
+	updatedCount, err := c.Svc.MarkAllRead(r.Context(), req.IDs)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -130,23 +141,27 @@ func (c *NotificationsController) stream(w http.ResponseWriter, r *http.Request)
 		select {
 		case <-r.Context().Done():
 			return
-		case rec, ok := <-ch:
+		case event, ok := <-ch:
 			if !ok {
 				return
 			}
-			if err := writeNotificationSSE(w, flusher, rec); err != nil {
+			if err := writeNotificationSSE(w, flusher, event); err != nil {
 				return
 			}
 		}
 	}
 }
 
-func writeNotificationSSE(w http.ResponseWriter, flusher http.Flusher, rec domain.NotificationRecord) error {
-	data, err := json.Marshal(notificationResponseFromRecord(rec))
+func writeNotificationSSE(w http.ResponseWriter, flusher http.Flusher, event domain.NotificationEvent) error {
+	data, err := json.Marshal(notificationResponseFromRecord(event.Record))
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "event: notification_created\ndata: %s\n\n", data); err != nil {
+	name := "notification_created"
+	if event.Kind == domain.NotificationResolved {
+		name = "notification_resolved"
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, data); err != nil {
 		return err
 	}
 	flusher.Flush()
@@ -177,7 +192,7 @@ func parseNotificationListFilter(r *http.Request) (notificationsvc.ListFilter, e
 }
 
 var (
-	errNotificationStatusUnsupported = notificationQueryError("status must be unread or all")
+	errNotificationStatusUnsupported = notificationQueryError("status must be unread, unresolved, or all")
 	errNotificationLimitInvalid      = notificationQueryError("limit must be a positive integer")
 )
 
@@ -195,15 +210,16 @@ func notificationResponses(in []notificationsvc.Notification) []NotificationResp
 
 func notificationResponse(n notificationsvc.Notification) NotificationResponse {
 	return NotificationResponse{
-		ID:        n.ID,
-		SessionID: string(n.SessionID),
-		ProjectID: string(n.ProjectID),
-		PRURL:     n.PRURL,
-		Type:      string(n.Type),
-		Title:     n.Title,
-		Body:      n.Body,
-		Status:    string(n.Status),
-		CreatedAt: n.CreatedAt,
+		ID:         n.ID,
+		SessionID:  string(n.SessionID),
+		ProjectID:  string(n.ProjectID),
+		PRURL:      n.PRURL,
+		Type:       string(n.Type),
+		Title:      n.Title,
+		Body:       n.Body,
+		Status:     string(n.Status),
+		CreatedAt:  n.CreatedAt,
+		ResolvedAt: optionalTime(n.ResolvedAt),
 		Target: NotificationTarget{
 			Kind:      string(n.Target.Kind),
 			SessionID: string(n.Target.SessionID),
@@ -214,16 +230,17 @@ func notificationResponse(n notificationsvc.Notification) NotificationResponse {
 
 func notificationResponseFromRecord(rec domain.NotificationRecord) NotificationResponse {
 	return NotificationResponse{
-		ID:        rec.ID,
-		SessionID: string(rec.SessionID),
-		ProjectID: string(rec.ProjectID),
-		PRURL:     rec.PRURL,
-		Type:      string(rec.Type),
-		Title:     rec.Title,
-		Body:      rec.Body,
-		Status:    string(rec.Status),
-		CreatedAt: rec.CreatedAt,
-		Target:    notificationTargetFromRecord(rec),
+		ID:         rec.ID,
+		SessionID:  string(rec.SessionID),
+		ProjectID:  string(rec.ProjectID),
+		PRURL:      rec.PRURL,
+		Type:       string(rec.Type),
+		Title:      rec.Title,
+		Body:       rec.Body,
+		Status:     string(rec.Status),
+		CreatedAt:  rec.CreatedAt,
+		ResolvedAt: optionalTime(rec.ResolvedAt),
+		Target:     notificationTargetFromRecord(rec),
 	}
 }
 

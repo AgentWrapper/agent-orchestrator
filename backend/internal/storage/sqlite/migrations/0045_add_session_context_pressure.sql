@@ -5,7 +5,10 @@ ALTER TABLE sessions ADD COLUMN context_pressure TEXT;
 
 -- Context pressure is a durable harness-reported fact that should invalidate
 -- session views, but it is not an activity state and does not change the
--- activity_state enum.
+-- activity_state enum. The sessions_cdc_update trigger is recreated here in its
+-- full cumulative form: upstream 0043 added the is_pinned/pinned_at clauses, so
+-- this definition must carry those AND the context_pressure clause, otherwise
+-- this migration (which runs after 0043) would silently drop pinning from CDC.
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS sessions_cdc_update;
 -- +goose StatementEnd
@@ -19,6 +22,10 @@ WHEN OLD.activity_state <> NEW.activity_state
     OR OLD.preview_revision <> NEW.preview_revision
     OR OLD.display_name <> NEW.display_name
     OR OLD.terminate_on_pr_merge <> NEW.terminate_on_pr_merge
+    OR OLD.is_pinned <> NEW.is_pinned
+    OR OLD.pinned_at <> NEW.pinned_at
+    OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
+    OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
     OR COALESCE(OLD.context_pressure, '') <> COALESCE(NEW.context_pressure, '')
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
@@ -30,6 +37,7 @@ BEGIN
             'terminateOnPrMerge', json(CASE WHEN NEW.terminate_on_pr_merge THEN 'true' ELSE 'false' END),
             'previewUrl', NEW.preview_url,
             'previewRevision', NEW.preview_revision,
+            'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END),
             'contextPressure', json(NEW.context_pressure)
         ),
         NEW.updated_at);
@@ -37,6 +45,8 @@ END;
 -- +goose StatementEnd
 
 -- +goose Down
+-- Revert the trigger to the 0043 state (is_pinned clauses, no context_pressure)
+-- before dropping the column.
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS sessions_cdc_update;
 -- +goose StatementEnd
@@ -50,6 +60,10 @@ WHEN OLD.activity_state <> NEW.activity_state
     OR OLD.preview_revision <> NEW.preview_revision
     OR OLD.display_name <> NEW.display_name
     OR OLD.terminate_on_pr_merge <> NEW.terminate_on_pr_merge
+    OR OLD.is_pinned <> NEW.is_pinned
+    OR OLD.pinned_at <> NEW.pinned_at
+    OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
+    OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
 BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     VALUES (NEW.project_id, NEW.id, 'session_updated',
@@ -59,7 +73,8 @@ BEGIN
             'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END),
             'terminateOnPrMerge', json(CASE WHEN NEW.terminate_on_pr_merge THEN 'true' ELSE 'false' END),
             'previewUrl', NEW.preview_url,
-            'previewRevision', NEW.preview_revision
+            'previewRevision', NEW.preview_revision,
+            'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
         ),
         NEW.updated_at);
 END;
