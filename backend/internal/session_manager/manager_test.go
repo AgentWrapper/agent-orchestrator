@@ -852,6 +852,18 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 		t.Fatal("runtime env missing AO_SESSION_ID")
 	}
 
+	agent.lastConfig = ports.AgentConfig{}
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindWorker,
+		AgentConfig: ports.AgentConfig{Model: "request-model"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "request-model" {
+		t.Fatalf("launch model = %q, want request model override", agent.lastConfig.Model)
+	}
+
 	// A project with no stored config yields a zero AgentConfig (adapter defaults)
 	// when the spawn explicitly names its agent.
 	st.projects["bare"] = domain.ProjectRecord{ID: "bare"}

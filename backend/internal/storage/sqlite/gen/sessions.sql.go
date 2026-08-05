@@ -19,7 +19,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, model, reviewer_harness
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    reviewer_harness, model, is_pinned, pinned_at
 FROM sessions WHERE id = ?
 `
 
@@ -53,8 +54,10 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.TerminateOnPRMerge,
 		&i.DiffBaseSha,
 		&i.DiffBaseRef,
-		&i.Model,
 		&i.ReviewerHarness,
+		&i.Model,
+		&i.IsPinned,
+		&i.PinnedAt,
 	)
 	return i, err
 }
@@ -66,8 +69,8 @@ INSERT INTO sessions (
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
-    model, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    model, created_at, updated_at, is_pinned, pinned_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -99,6 +102,8 @@ type InsertSessionParams struct {
 	Model              string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	IsPinned           bool
+	PinnedAt           sql.NullTime
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -131,6 +136,8 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.Model,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.IsPinned,
+		arg.PinnedAt,
 	)
 	return err
 }
@@ -141,7 +148,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, model, reviewer_harness
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    reviewer_harness, model, is_pinned, pinned_at
 FROM sessions ORDER BY project_id, num
 `
 
@@ -181,8 +189,10 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
-			&i.Model,
 			&i.ReviewerHarness,
+			&i.Model,
+			&i.IsPinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -203,7 +213,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, model, reviewer_harness
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    reviewer_harness, model, is_pinned, pinned_at
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -243,8 +254,10 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
-			&i.Model,
 			&i.ReviewerHarness,
+			&i.Model,
+			&i.IsPinned,
+			&i.PinnedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -312,6 +325,30 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 	return is_seed, err
 }
 
+const setSessionPinned = `-- name: SetSessionPinned :execrows
+UPDATE sessions SET is_pinned = ?, pinned_at = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionPinnedParams struct {
+	IsPinned  bool
+	PinnedAt  sql.NullTime
+	UpdatedAt time.Time
+	ID        domain.SessionID
+}
+
+func (q *Queries) SetSessionPinned(ctx context.Context, arg SetSessionPinnedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionPinned,
+		arg.IsPinned,
+		arg.PinnedAt,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setSessionPreviewURL = `-- name: SetSessionPreviewURL :execrows
 UPDATE sessions SET preview_url = ?, preview_revision = preview_revision + 1, updated_at = ? WHERE id = ?
 `
@@ -376,7 +413,7 @@ UPDATE sessions SET
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, model = ?, updated_at = ?
+    cleanup_generation = ?, model = ?, updated_at = ?, is_pinned = ?, pinned_at = ?
 WHERE id = ?
 `
 
@@ -405,6 +442,8 @@ type UpdateSessionParams struct {
 	CleanupGeneration  int64
 	Model              string
 	UpdatedAt          time.Time
+	IsPinned           bool
+	PinnedAt           sql.NullTime
 	ID                 domain.SessionID
 }
 
@@ -434,6 +473,8 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.CleanupGeneration,
 		arg.Model,
 		arg.UpdatedAt,
+		arg.IsPinned,
+		arg.PinnedAt,
 		arg.ID,
 	)
 	return err

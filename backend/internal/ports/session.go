@@ -25,6 +25,9 @@ type SpawnConfig struct {
 	// over the project's resolved agent config model and has no effect on the
 	// project config. Empty means fall back to the project's resolved model.
 	Model string
+	// AgentConfig overrides the resolved project/role agent config for this
+	// single spawn. Empty fields keep the project defaults.
+	AgentConfig AgentConfig
 
 	// DisplayName is the user-facing sidebar label. Empty falls back to the
 	// session id in the read model (e.g. orchestrator sessions).

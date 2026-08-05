@@ -7,9 +7,29 @@ package agentbase
 
 import (
 	"context"
+	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+// ModelConfigSpec returns the common optional model config field used by
+// adapters that forward a --model-style argument.
+func ModelConfigSpec(ctx context.Context, description string) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{Fields: []ports.ConfigField{{
+		Key: "model", Type: ports.ConfigFieldString, Description: description,
+	}}}, nil
+}
+
+// AppendModelFlag appends a trimmed model override using the adapter-owned
+// static flag name.
+func AppendModelFlag(cmd *[]string, cfg ports.AgentConfig, flag string) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, flag, model)
+	}
+}
 
 // Base provides no-op defaults for the optional ports.Agent methods. Embed it in
 // a Plugin struct (`agentbase.Base`) and override only what the harness needs.

@@ -30,6 +30,8 @@ import (
 type fakeSessionService struct {
 	sessions        map[domain.SessionID]domain.Session
 	sent            string
+	delegationInput sessionsvc.DelegateTaskInput
+	delegationErr   error
 	cleanupProjects []domain.ProjectID
 	cleanupResult   []domain.SessionID
 	cleanupSkipped  []sessionsvc.CleanupSkipped
@@ -180,6 +182,29 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.
 	return s, nil
 }
 
+func (f *fakeSessionService) Pin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = true
+	now := time.Now().UTC()
+	s.PinnedAt = &now
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) Unpin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = false
+	s.PinnedAt = nil
+	f.sessions[id] = s
+	return s, nil
+}
+
 func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
 	s, ok := f.sessions[id]
 	if !ok {
@@ -244,6 +269,14 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
 	f.sent = message
 	return nil
+}
+
+func (f *fakeSessionService) DelegateTask(_ context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error) {
+	f.delegationInput = in
+	if f.delegationErr != nil {
+		return sessionsvc.DelegateTaskOutcome{}, f.delegationErr
+	}
+	return sessionsvc.DelegateTaskOutcome{WorkerID: "ao-worker", OrchestratorID: "ao-orch"}, nil
 }
 
 func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
@@ -555,6 +588,50 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	}
 	if !svc.sessions["ao-2"].TerminateOnPRMerge {
 		t.Fatalf("session merge policy not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("pin = %d, want 200; body=%s", status, body)
+	}
+	var pinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &pinned)
+	if !pinned.Session.IsPinned {
+		t.Fatalf("pin response = %#v", pinned)
+	}
+	if !svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session pin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("unpin = %d, want 200; body=%s", status, body)
+	}
+	var unpinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &unpinned)
+	if unpinned.Session.IsPinned {
+		t.Fatalf("unpin response = %#v", unpinned)
+	}
+	if svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session unpin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	_, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("pin unknown = %d, want 404", status)
+	}
+
+	_, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("unpin unknown = %d, want 404", status)
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
@@ -1583,6 +1660,54 @@ func TestSessionsAPI_SendValidation(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", `{"message":""}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "MESSAGE_REQUIRED")
+}
+
+func TestSessionsAPI_DelegateTask(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom "}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("delegate = %d, want 202; body=%s", status, body)
+	}
+	var got struct {
+		OK             bool   `json:"ok"`
+		WorkerID       string `json:"workerId"`
+		OrchestratorID string `json:"orchestratorId"`
+	}
+	mustJSON(t, body, &got)
+	if !got.OK || got.WorkerID != "ao-worker" || got.OrchestratorID != "ao-orch" {
+		t.Fatalf("response = %#v", got)
+	}
+	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "Fix it" || svc.delegationInput.RequestedAgent != domain.HarnessCursor || svc.delegationInput.Model != "sonnet-custom" {
+		t.Fatalf("delegation input = %#v", svc.delegationInput)
+	}
+}
+
+func TestSessionsAPI_DelegateTaskValidationAndServiceError(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"  "}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "TASK_REQUIRED")
+
+	svc.delegationErr = apierr.Invalid("UNKNOWN_HARNESS", "Unknown requested agent", nil)
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "UNKNOWN_HARNESS")
+}
+
+func TestSessionsAPI_DelegateTaskRejectsOversizedBody(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	// A brief past the 32 KiB raw-body cap must fail during bounded decoding.
+	// Without MaxBytesReader this would decode and fail later as TASK_TOO_LONG.
+	oversized := `{"projectId":"ao","brief":"` + strings.Repeat("A", 40<<10) + `"}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", oversized)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	if svc.delegationInput.ProjectID != "" {
+		t.Fatalf("delegate service called with oversized body: %#v", svc.delegationInput)
+	}
 }
 
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {

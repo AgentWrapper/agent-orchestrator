@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
 
@@ -22,6 +23,8 @@ export function SettingsOptionMenu<T extends string>({
 	menuClassName,
 	menuItemClassName,
 	menuAlign = "end",
+	searchable = false,
+	searchPlaceholder,
 	"aria-label": ariaLabel,
 }: {
 	value: T;
@@ -35,12 +38,22 @@ export function SettingsOptionMenu<T extends string>({
 	menuClassName?: string;
 	menuItemClassName?: string;
 	menuAlign?: "start" | "center" | "end";
+	searchable?: boolean;
+	searchPlaceholder?: string;
 	"aria-label": string;
 }) {
+	const { t } = useTranslation();
+	const [search, setSearch] = useState("");
 	const selected = options.find((option) => option.value === value);
+	const normalizedSearch = search.trim().toLocaleLowerCase();
+	const visibleOptions = normalizedSearch
+		? options.filter((option) =>
+				`${option.label} ${option.value}`.toLocaleLowerCase().includes(normalizedSearch),
+			)
+		: options;
 
 	return (
-		<DropdownMenu>
+		<DropdownMenu onOpenChange={(open) => !open && setSearch("")}>
 			<DropdownMenuTrigger asChild disabled={disabled}>
 				<button
 					type="button"
@@ -67,11 +80,23 @@ export function SettingsOptionMenu<T extends string>({
 			<DropdownMenuContent
 				align={menuAlign}
 				className={cn(
-					"settings-menu-surface overflow-y-auto! overflow-x-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
+					"settings-menu-surface min-w-[length:var(--size-settings-menu-min-width)] overflow-y-auto! overflow-x-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
 					menuClassName,
 				)}
 			>
-				{options.map((option) => (
+				{searchable && (
+					<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
+						<input
+							type="search"
+							aria-label={t("settings.options.searchAria", { label: ariaLabel.toLocaleLowerCase() })}
+							value={search}
+							onChange={(event) => setSearch(event.target.value)}
+							placeholder={searchPlaceholder ?? t("settings.options.searchPlaceholder")}
+							className="settings-inline-input w-full"
+						/>
+					</div>
+				)}
+				{visibleOptions.map((option) => (
 					<DropdownMenuItem
 						key={option.value}
 						disabled={option.disabled}
@@ -94,6 +119,9 @@ export function SettingsOptionMenu<T extends string>({
 						)}
 					</DropdownMenuItem>
 				))}
+				{visibleOptions.length === 0 && (
+					<p className="px-2 py-1.5 text-xs text-settings-muted">{t("settings.options.noMatches")}</p>
+				)}
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);

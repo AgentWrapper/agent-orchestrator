@@ -3,12 +3,15 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
 	ArrowUpRight,
 	ChevronDown,
 	ChevronRight,
 	Files as FilesIcon,
 	GitPullRequest,
+	GitMerge,
 	Play,
 	Terminal,
 	Trash2,
@@ -20,10 +23,14 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
-import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import {
+	sessionScmSummaryQueryKey,
+	useSessionScmSummary,
+	type SessionPRSummary,
+} from "../hooks/useSessionScmSummary";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
-import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prBrowserUrl, prCardPresentation, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -34,14 +41,14 @@ import { useUiStore } from "../stores/ui-store";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
-import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
-import { StatusPill } from "./StatusPill";
+import { PRCardStatusSummary, PRSummaryMeta } from "./PRSummaryDisplay";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
+import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -84,12 +91,10 @@ const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector
 	},
 ];
 
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
-
 const prStateTone: Record<SessionPRSummary["state"], string> = {
-	open: "border-success/40 bg-success/10 text-success",
-	draft: "border-border bg-raised text-muted-foreground",
-	merged: "border-accent/40 bg-accent-weak text-accent",
+	open: "border-border-strong bg-overlay text-muted-foreground",
+	draft: "border-status-in-review/35 bg-status-in-review/10 text-status-in-review",
+	merged: "border-border-strong bg-overlay text-success",
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
@@ -102,7 +107,9 @@ const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
 
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
-const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
+const inspectorBodyBaseClass = "min-h-0 flex-1";
+
+const inspectorScrollableBodyClass = "overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 
 const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
 
@@ -175,7 +182,7 @@ export function SessionInspector({
 	if (!session) {
 		return (
 			<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
-				<div className={inspectorBodyClass}>
+				<div className={cn(inspectorBodyBaseClass, inspectorScrollableBodyClass)}>
 					<p className={inspectorEmptyClass}>{t("inspector.loadingSession")}</p>
 				</div>
 			</aside>
@@ -221,13 +228,14 @@ export function SessionInspector({
 
 			<div
 				className={cn(
-					inspectorBodyClass,
-					// The Browser tab renders its own bordered panel edge-to-edge, so
-					// drop the body padding for it (except when popped out, where the
-					// body only holds the "return to panel" empty state).
+					inspectorBodyBaseClass,
+					view !== "browser" && view !== "files" && inspectorScrollableBodyClass,
+					// Browser and Files own their viewport spacing. Keep their body
+					// padding out of the class list entirely so a shorthand `p-3`
+					// cannot win over `p-0` through generated utility ordering.
 					view === "browser" &&
 						!browserPoppedOut &&
-						"p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
+						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
 			>
@@ -252,29 +260,33 @@ function Section({
 	action,
 	children,
 	className,
+	surface = true,
 	title,
 }: {
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
-	/** Accepted for call-site compatibility; all sections use the settings-row box. */
 	surface?: boolean;
 	/** Omit where the surrounding tab already names the section. */
 	title?: string;
 }) {
-	// Boxed sections match the settings page row surface (bg + radius) with the
-	// uppercase muted kicker kept inside the card, as in the inspector refs.
-	return (
-		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
-			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
-				{title || action ? (
-					<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
-						{title ? <span>{title}</span> : <span />}
-						{action ?? null}
-					</div>
-				) : null}
-				{children}
+	const heading =
+		title || action ? (
+			<div className="mb-1 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+				{title ? <span>{title}</span> : <span />}
+				{action ?? null}
 			</div>
+		) : null;
+	return (
+		<section className={cn("mb-4 last:mb-0", className)} data-testid="inspector-section">
+			{heading}
+			{surface ? (
+				<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-1.5">
+					{children}
+				</div>
+			) : (
+				children
+			)}
 		</section>
 	);
 }
@@ -295,11 +307,11 @@ function SummaryView({
 
 	return (
 		<div role="tabpanel">
-			<Section title={prSectionTitle}>
+			<Section surface={false} title={prSectionTitle}>
 				<div className="flex flex-col gap-1.5">
 					{hasPRs ? (
 						prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
+							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} sessionId={session.id} />
 						))
 					) : (
 						<p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>
@@ -482,33 +494,97 @@ function updateSessionMergePolicy(
 	}));
 }
 
-function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const presentation = prCardPresentation(pr);
+	const canMerge =
+		pr.state === "open" &&
+		presentation.primary.key === "merge" &&
+		presentation.primary.tone === "success" &&
+		Boolean(pr.url && pr.headSha);
+	const mergePr = useMutation({
+		mutationFn: async () => {
+			if (usePreviewData) return;
+			const { error } = await apiClient.POST("/api/v1/prs/{id}/merge", {
+				params: { path: { id: String(pr.number) } },
+				body: { prUrl: pr.url, expectedHeadSha: pr.headSha },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("pr.merge.failed", { number: pr.number })));
+		},
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(sessionId) }),
+				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+			]);
+		},
+	});
+	const mergeError = mergePr.error instanceof Error ? mergePr.error.message : null;
 	return (
-		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
-			<div className="flex items-center gap-2">
-				<GitPullRequest className="size-icon-md shrink-0 text-settings-muted" aria-hidden="true" />
-				<span className="text-md-sm font-medium text-settings-label">PR #{pr.number}</span>
+		<article className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
+			{pr.title ? (
+				<a
+					className="inline text-sm font-semibold leading-snug tracking-tight text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					href={prBrowserUrl(pr)}
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					{pr.title}
+				</a>
+			) : null}
+			<div className={cn("flex min-w-0 items-center gap-2", pr.title && "mt-1.5")}>
+				<a
+					aria-label={t("inspector.openPR", { number: pr.number })}
+					className="inline-flex min-w-0 items-center gap-1 font-mono text-xs font-medium text-settings-label decoration-muted-foreground underline-offset-2 hover:text-settings-label hover:underline focus-visible:rounded-sm focus-visible:text-settings-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					href={prBrowserUrl(pr)}
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					<GitPullRequest className="size-icon-sm shrink-0" aria-hidden="true" />
+					<span>PR #{pr.number}</span>
+					<ArrowUpRight aria-hidden="true" className="size-icon-2xs shrink-0" strokeWidth={2} />
+				</a>
 				<Badge
 					variant="outline"
 					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
 				>
 					{t(prStateLabelKeys[pr.state])}
 				</Badge>
-				<a
-					href={prBrowserUrl(pr)}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-accent hover:underline"
-				>
-					<span>{t("inspector.open")}</span>
-					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
-				</a>
 			</div>
-			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-settings-label">{pr.title}</div> : null}
-			<PRSummaryMeta className="mt-1" pr={pr} />
-			<PRSummaryParts className="mt-1.5" pr={pr} variant="stacked" />
-		</div>
+			<PRSummaryMeta className="mt-1.5" pr={pr} />
+			{pr.state !== "merged" ? (
+				<>
+					<PRCardStatusSummary
+						action={
+							canMerge ? (
+								<Button
+									aria-label={t("pr.merge.actionFor", { number: pr.number })}
+									className="gap-1 px-2"
+									disabled={mergePr.isPending}
+									onClick={() => mergePr.mutate()}
+									size="sm"
+									type="button"
+								>
+									{mergePr.isPending ? (
+										<Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />
+									) : (
+										<GitMerge className="size-icon-sm" aria-hidden="true" />
+									)}
+									{mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
+								</Button>
+							) : undefined
+						}
+						className="mt-2"
+						pr={pr}
+					/>
+					{mergeError ? (
+						<p className="mt-2 text-2xs leading-normal text-error" role="status">
+							{mergeError}
+						</p>
+					) : null}
+				</>
+			) : null}
+		</article>
 	);
 }
 
@@ -522,7 +598,13 @@ const timelineNodeTone: Record<TimelineTone, string> = {
 };
 
 function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
-	const history: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
+	const history: {
+		tone: TimelineTone;
+		node: ReactNode;
+		ts: string | null;
+		markerTone?: string;
+		markerBreathe?: boolean;
+	}[] = [];
 
 	history.push({
 		tone: "neutral",
@@ -565,6 +647,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	// Current activity is a live reading, not a historical event. Keep it above
 	// the optional reverse-chronological history and do not imply that its last
 	// hook time is when the state transition occurred.
+	const activityView = getAgentActivityView(session.activity);
 	const current = {
 		tone: "now",
 		node: (
@@ -585,7 +668,15 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 			</span>
 		),
 		ts: null,
-	} satisfies { tone: TimelineTone; node: ReactNode; ts: null };
+		markerTone: activityView.tone,
+		markerBreathe: activityView.breathe,
+	} satisfies {
+		tone: TimelineTone;
+		node: ReactNode;
+		ts: null;
+		markerTone: string;
+		markerBreathe: boolean;
+	};
 	const events = [current, ...history.reverse()];
 
 	return (
@@ -609,7 +700,9 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 								"absolute -left-4.5 size-icon-xs rounded-full",
 								event.tone === "now" ? "top-1/2 -translate-y-1/2" : "top-1.5",
 								timelineNodeTone[event.tone],
+								event.markerBreathe && "animate-status-pulse",
 							)}
+							style={event.markerTone ? { background: event.markerTone } : undefined}
 						/>
 						<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
 					</div>
@@ -672,8 +765,12 @@ function InspectorScmPill({ state }: { state: ScmTimelineState }) {
 	return <TimelinePill {...getSessionTimelinePillView(state)} />;
 }
 
-function TimelinePill({ label, tone, breathe }: { label: string; tone: string; breathe: boolean }) {
-	return <StatusPill label={label} tone={tone} breathe={breathe} />;
+function TimelinePill({ label, tone }: { label: string; tone: string; breathe: boolean }) {
+	return (
+		<span className="inline-flex shrink-0 whitespace-nowrap text-xs font-semibold" style={{ color: tone }}>
+			{label}
+		</span>
+	);
 }
 
 function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
@@ -813,8 +910,7 @@ function ReviewsSection({
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
-	const unresolvedTotal = prSummaries
-		.filter((pr) => pr.state === "open")
+	const unresolvedTotal = githubReviews
 		.reduce((total, pr) => total + (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0), 0);
 	const githubReviewCount = githubReviews.reduce((n, pr) => n + (pr.review?.reviews?.length ?? 0), 0);
 
@@ -844,16 +940,18 @@ function ReviewsSection({
 					}}
 					session={session}
 				/>
-			<Section
-				surface
-				title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
-			>
-				<GithubReviewPanel
-					isLoading={scmSummary.isLoading}
-					prs={githubReviews}
-					unresolvedTotal={unresolvedTotal}
-				/>
-			</Section>
+			{scmSummary.isLoading || githubReviewCount > 0 || unresolvedTotal > 0 ? (
+				<Section
+					surface
+					title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
+				>
+					<GithubReviewPanel
+						isLoading={scmSummary.isLoading}
+						prs={githubReviews}
+						unresolvedTotal={unresolvedTotal}
+					/>
+				</Section>
+			) : null}
 		</div>
 	);
 }
@@ -951,8 +1049,8 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 							batchId: `demo-batch-${session.id}`,
 							body:
 								pr.review === "approved"
-									? "Demo review approved. The implementation is ready for the README screenshot flow."
-									: "Demo review found polish feedback for the terminal presentation.",
+									? "Demo review **approved** the README screenshot flow.\n\n- Layout is stable\n- Browser preview opens cleanly"
+									: "Demo review found **polish feedback** for the terminal presentation.\n\n- Tighten toolbar density\n- Recheck contrast",
 							createdAt: reviewedAt,
 							githubReviewId: `${pr.number}01`,
 							harness: "codex",
@@ -1165,10 +1263,23 @@ function ReviewPanel({
 			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
 		}
 	}
+	const triggeredReviewStates = openReviewStates.filter(
+		(reviewState) =>
+			Boolean(reviewState.latestRun) ||
+			Boolean(reviewState.previousRun) ||
+			runs.some((run) => run.prUrl === reviewState.prUrl) ||
+			reviewState.status === "up_to_date" ||
+			reviewState.status === "changes_requested",
+	);
 	const runDisabled =
 		isTriggering ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
+	const primaryReviewActionLabel = reviewRunning
+		? isCancelling
+			? t("inspector.review.cancelling")
+			: t("inspector.review.cancel")
+		: runAction;
 
 	return (
 		<div className="mb-2.5 flex flex-col">
@@ -1199,36 +1310,36 @@ function ReviewPanel({
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select h-control-md w-36 shrink-0 text-xs"
+							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink text-xs"
 							value={reviewerOverride}
 						/>
-						<div className="flex shrink-0 items-center gap-1.5">
+						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
 							<Button
+								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
 								disabled={reviewRunning ? isCancelling : runDisabled}
 								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
+								title={primaryReviewActionLabel}
 								type="button"
 								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 							>
 								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-								{reviewRunning
-									? isCancelling
-										? t("inspector.review.cancelling")
-										: t("inspector.review.cancel")
-									: runAction}
+								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
 							{reviewHasRun ? (
 								<Button
+									aria-label={t("inspector.openTerminal")}
 									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
 									disabled={!terminalEnabled}
 									onClick={openReviewerTerminal}
 									size="sm"
+									title={t("inspector.openTerminal")}
 									type="button"
 									variant="ghost"
 								>
 									<Terminal aria-hidden="true" />
-									{t("inspector.openTerminal")}
+									<span className="review-run-action-label">{t("inspector.openTerminal")}</span>
 								</Button>
 							) : null}
 						</div>
@@ -1243,29 +1354,27 @@ function ReviewPanel({
 					</div>
 				) : null}
 			</Section>
-			<Section surface title={t("inspector.aoCodeReviews")}>
-				<div className="flex flex-col divide-y divide-border">
-					{openReviewStates.length === 0 ? (
-						<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
-				) : (
-					openReviewStates.map((reviewState) => (
-						<ReviewDisclosure
-							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
-							collapsible
-							defaultOpen={false}
+			{triggeredReviewStates.length > 0 ? (
+				<Section surface title={t("inspector.aoCodeReviews")}>
+					<div className="flex flex-col divide-y divide-border">
+						{triggeredReviewStates.map((reviewState) => (
+							<ReviewDisclosure
+								key={`${reviewState.prUrl}:${reviewState.targetSha}`}
+								collapsible
+								defaultOpen={false}
 								meta={aoReviewMeta(reviewState)}
 								verdict={reviewVerdict(reviewState)}
-							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
+								title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 							>
 								<ReviewerRuns
 									reviewState={reviewState}
 									runs={runsByPR.get(reviewState.prUrl) ?? []}
 								/>
 							</ReviewDisclosure>
-					))
-					)}
-				</div>
-			</Section>
+						))}
+					</div>
+				</Section>
+			) : null}
 		</div>
 	);
 }
@@ -1319,6 +1428,39 @@ function GithubReviewPanel({
 
 type GithubReviewEntry = NonNullable<NonNullable<SessionPRSummary["review"]>["reviews"]>[number];
 
+function ReviewMarkdownBody({ body, clamped, testId }: { body: string; clamped: boolean; testId: string }) {
+	return (
+		<div
+			className={cn(
+				"min-w-0 break-words text-2xs leading-relaxed text-muted-foreground",
+				"[&_a]:font-medium [&_a]:text-foreground [&_a]:underline [&_a]:underline-offset-2",
+				"[&_code]:rounded [&_code]:bg-muted/55 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-foreground",
+				"[&_li]:my-0.5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-1.5 [&_pre]:my-2",
+				"[&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-muted/35 [&_pre]:p-2",
+				"[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:text-foreground [&_table]:my-2 [&_table]:w-full",
+				"[&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1",
+				"[&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_th]:text-foreground",
+				"[&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+				clamped && "line-clamp-4",
+			)}
+			data-testid={testId}
+		>
+			<ReactMarkdown
+				components={{
+					a: ({ href, children }) => (
+						<a href={href} target="_blank" rel="noopener noreferrer">
+							{children}
+						</a>
+					),
+				}}
+				remarkPlugins={[remarkGfm]}
+			>
+				{body}
+			</ReactMarkdown>
+		</div>
+	);
+}
+
 function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 	const { t } = useTranslation();
 	const [expanded, setExpanded] = useState(false);
@@ -1336,15 +1478,7 @@ function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 				</span>
 			</div>
 			{body ? (
-				<p
-					className={cn(
-						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
-						clamped && !expanded && "line-clamp-4",
-					)}
-					data-testid="github-review-summary"
-				>
-					{body}
-				</p>
+				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="github-review-summary" />
 			) : null}
 			{clamped || entry.reviewUrl ? (
 				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
@@ -1467,15 +1601,7 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 				</span>
 			</span>
 			{body ? (
-				<p
-					className={cn(
-						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
-						clamped && !expanded && "line-clamp-4",
-					)}
-					data-testid="review-run-summary"
-				>
-					{body}
-				</p>
+				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="review-run-summary" />
 			) : null}
 			{/* One tertiary group, not two competing labels. Below the body's size so
 			    they read as controls rather than sitting in the reading flow, and

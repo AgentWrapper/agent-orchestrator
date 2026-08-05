@@ -22,10 +22,10 @@ import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { hidesShellTopbar } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
-import type { TerminalTarget } from "../types/terminal";
+import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 
-const INSPECTOR_MIN_PERCENT = 22;
+const INSPECTOR_MIN_PERCENT = 30;
 const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
@@ -33,7 +33,7 @@ const shellTopbarHiddenByPlatform = hidesShellTopbar();
 function initialSplitPercent(): number {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
-	if (!Number.isFinite(parsed)) return 28;
+	if (!Number.isFinite(parsed)) return INSPECTOR_MIN_PERCENT;
 	return Math.min(INSPECTOR_MAX_PERCENT, Math.max(INSPECTOR_MIN_PERCENT, parsed));
 }
 
@@ -52,8 +52,9 @@ type SessionViewProps = {
 // ShellTopbar above this view; when the platform hides the shell topbar
 // (macOS), the same topbar mounts here so the outer panel stays full-height.
 // Rendered by both the project-scoped and cross-project session routes.
-// TerminalPane owns the terminal lifetime and remounts by terminal handle so
-// each session gets a clean xterm/mux binding.
+// The persistent shell cache owns terminal lifetime by logical session + handle:
+// route switches retain the xterm instance and latest output, while a replacement
+// handle gets a clean xterm/mux binding.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
 // collapsible inspector driven to 0% via the imperative API from the ui-store
@@ -114,7 +115,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
-					setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+					setTerminalTarget({
+						generation: shell.createdAt,
+						kind: "shell",
+						handleId: shell.handleId,
+						sessionId,
+						title: shell.title,
+					});
 				},
 			},
 		);
@@ -125,22 +132,51 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			const shell = shellTerminals.find((s) => s.handleId === handleId);
 			if (!shell) return;
 			setActiveShellTerminal(shell.handleId);
-			setTerminalTarget({ kind: "shell", handleId: shell.handleId, title: shell.title });
+			setTerminalTarget({
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				sessionId,
+				title: shell.title,
+			});
 		},
 		[shellTerminals, setActiveShellTerminal],
 	);
 
 	const closeShellTerminalByHandle = useCallback(
 		(handleId: string) => {
-			// Fall back to the session pane first: leaving the target pointed at a
-			// handle that is being destroyed would attach to a dead PTY.
-			setTerminalTarget((current) =>
-				current.kind === "shell" && current.handleId === handleId ? { kind: "worker" } : current,
-			);
-			if (activeShellTerminalHandleId === handleId) setActiveShellTerminal(null);
+			if (terminalTarget.kind === "shell" && terminalTarget.handleId === handleId) {
+				const closingIndex = shellTerminals.findIndex((shell) => shell.handleId === handleId);
+				// Match browser-tab ergonomics: closing the selected auxiliary terminal
+				// reveals its nearest predecessor, then the next tab when the first one
+				// closes. The permanent agent terminal is only the final fallback.
+				const nextShell = shellTerminals[closingIndex - 1] ?? shellTerminals[closingIndex + 1];
+				if (nextShell) {
+					setActiveShellTerminal(nextShell.handleId);
+					setTerminalTarget({
+						generation: nextShell.createdAt,
+						kind: "shell",
+						handleId: nextShell.handleId,
+						sessionId,
+						title: nextShell.title,
+					});
+				} else {
+					setActiveShellTerminal(null);
+					setTerminalTarget({ kind: "worker" });
+				}
+			} else if (activeShellTerminalHandleId === handleId) {
+				setActiveShellTerminal(null);
+			}
 			closeShellTerminal.mutate(handleId);
 		},
-		[closeShellTerminal, activeShellTerminalHandleId, setActiveShellTerminal],
+		[
+			activeShellTerminalHandleId,
+			closeShellTerminal,
+			setActiveShellTerminal,
+			sessionId,
+			shellTerminals,
+			terminalTarget,
+		],
 	);
 
 	// Selecting the session's own pane also drops the active shell, so the effect
@@ -159,11 +195,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		const shell = shellTerminals.find((s) => s.handleId === activeShellTerminalHandleId);
 		if (!shell) return;
 		setTerminalTarget((current) =>
-			current.kind === "shell" && current.handleId === shell.handleId
+			current.kind === "shell" &&
+			current.handleId === shell.handleId &&
+			current.generation === shell.createdAt &&
+			current.title === shell.title
 				? current
-				: { kind: "shell", handleId: shell.handleId, title: shell.title },
+				: {
+						generation: shell.createdAt,
+						kind: "shell",
+						handleId: shell.handleId,
+						sessionId,
+						title: shell.title,
+					},
 		);
-	}, [activeShellTerminalHandleId, shellTerminals]);
+	}, [activeShellTerminalHandleId, sessionId, shellTerminals]);
 
 	// If the pane is pointed at a shell that is not in THIS session's strip — e.g.
 	// after navigating to a different session whose globally-active shell belongs
@@ -203,14 +248,21 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setFilesPoppedOut(false);
 	}, [sessionId]);
 
+	// Route props change one render before the passive reset above. Reject the
+	// previous session's shell/reviewer synchronously so its handle can never be
+	// cached under the destination session.
+	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionId)
+		? terminalTarget
+		: ({ kind: "worker" } satisfies TerminalTarget);
+
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
 	// takes the agent's terminal off screen while the route still points here.
 	// Publish which one is showing: the notification runtime lives outside this
 	// subtree and must not treat "on the session route" as "watching the agent".
 	useEffect(() => {
-		setVisibleTerminalKind(sessionId, terminalTarget.kind);
+		setVisibleTerminalKind(sessionId, routedTerminalTarget.kind);
 		return () => clearVisibleTerminalKind(sessionId);
-	}, [clearVisibleTerminalKind, sessionId, setVisibleTerminalKind, terminalTarget.kind]);
+	}, [clearVisibleTerminalKind, routedTerminalTarget.kind, sessionId, setVisibleTerminalKind]);
 
 	const handleOpenFiles = useCallback(() => {
 		setBrowserPoppedOut(false);
@@ -402,7 +454,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						onSelectWorkerTerminal={selectSessionTerminal}
 						session={session}
 						shellTerminals={shellTerminals}
-						terminalTarget={terminalTarget}
+						terminalTarget={routedTerminalTarget}
 						theme={theme}
 						topbarActions={<ShellTopbar embedded />}
 					/>
@@ -438,8 +490,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
-									onOpenReviewerTerminal={({ handleId, harness }) =>
-										setTerminalTarget({ kind: "reviewer", handleId, harness })
+								onOpenReviewerTerminal={({ handleId, harness }) =>
+									setTerminalTarget({
+										kind: "reviewer",
+											handleId,
+											harness,
+											sessionId,
+										})
 									}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}

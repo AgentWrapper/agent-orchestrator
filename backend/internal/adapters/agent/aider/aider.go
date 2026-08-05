@@ -54,6 +54,11 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Aider's optional model override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	return agentbase.ModelConfigSpec(ctx, "Model override passed to `aider --model`.")
+}
+
 // GetLaunchCommand builds the argv to start an interactive Aider session:
 //
 //	aider [permission flags] --no-check-update --no-stream --no-pretty [--read <context file>]
@@ -75,6 +80,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	cmd = append(cmd, "--no-check-update", "--no-stream", "--no-pretty")
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--read", cfg.SystemPromptFile)

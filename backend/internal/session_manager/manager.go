@@ -407,10 +407,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
 
-	// Fold the per-session --model override into the effective agent config and
-	// pin the resolved model on the durable record so `ao session get` reports
-	// what the session actually launched with and a restore keeps the same model.
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config, cfg.Model)
+	// Fold the spawn-scoped model overrides (ao spawn --model and the spawn
+	// API's model/agentConfig fields) into the effective agent config and pin
+	// the resolved model on the durable record so `ao session get` reports what
+	// the session actually launched with and a restore keeps the same model.
+	// Precedence: --model > spawn agentConfig > role agentConfig > project.
+	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config, "")
+	agentConfig = applySpawnAgentConfig(agentConfig, cfg.AgentConfig)
+	if cfg.Model != "" {
+		agentConfig.Model = cfg.Model
+	}
 	cfg.Model = agentConfig.Model
 
 	if err := m.validateRuntimePrerequisites(); err != nil {
@@ -789,6 +795,9 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spa
 	if override.Model != "" {
 		merged.Model = override.Model
 	}
+	if override.Mode != "" {
+		merged.Mode = override.Mode
+	}
 	if override.Permissions != "" {
 		merged.Permissions = override.Permissions
 	}
@@ -796,6 +805,19 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig, spa
 		merged.Model = spawnModel
 	}
 	return merged
+}
+
+func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
+	if override.Model != "" {
+		base.Model = override.Model
+	}
+	if override.Mode != "" {
+		base.Mode = override.Mode
+	}
+	if override.Permissions != "" {
+		base.Permissions = override.Permissions
+	}
+	return base
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
@@ -1346,7 +1368,13 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("probe existing runtime: %w", err)
+		if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+			return ports.RuntimeHandle{}, fmt.Errorf("probe existing runtime: %w", err)
+		}
+		// The runtime infrastructure itself is gone (e.g. the tmux server was
+		// killed). Restore/restart is exactly the recovery path for that
+		// outage, so proceed as "no existing runtime" and create a fresh one.
+		alive = false
 	}
 	if alive {
 		if restarter, ok := m.runtime.(ports.RuntimeRestarter); ok {
@@ -1492,7 +1520,15 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
 		alive, err := m.runtime.IsAlive(ctx, handle)
-		if err != nil {
+		switch {
+		case err == nil:
+		case errors.Is(err, ports.ErrRuntimeUnavailable):
+			// Boot-time pass with no reachable tmux server (normal after a
+			// machine reboot). The runtime is gone either way; fall through to
+			// save-and-teardown, which keeps the restore marker rather than
+			// silently archiving the session.
+			alive = false
+		default:
 			// A failed probe is not proof of death: leave the session as-is.
 			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
 		}
@@ -1523,6 +1559,9 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 	}
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
+		if errors.Is(err, ports.ErrRuntimeUnavailable) {
+			return nil // no server means no leaked session to reap
+		}
 		return fmt.Errorf("reconcile reap %s: probe: %w", rec.ID, err)
 	}
 	if !alive {
