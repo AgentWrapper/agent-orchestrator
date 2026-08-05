@@ -217,15 +217,12 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByText("No session")).toBeInTheDocument();
 	});
 
-	it("positions the framed terminal topbar below its outer breathing room", () => {
+	it("uses the inspector tab height for the terminal header", () => {
 		renderCenterPane({ session: worker });
 
 		const tablist = screen.getByRole("tablist", { name: "Open terminals" });
-		const header = tablist.closest(".h-session-topbar");
-		expect(header).toHaveClass("h-session-topbar", "pt-1");
-		expect(screen.getByTestId("session-workspace-topbar")).not.toHaveClass("py-1");
-		expect(tablist).toHaveClass("self-stretch");
-		expect(tablist).not.toHaveClass("mt-0.5", "h-inspector-tabs", "self-end");
+		const header = tablist.closest(".h-inspector-tabs");
+		expect(header).toHaveClass("h-inspector-tabs");
 		expect(tablist.parentElement).toHaveClass("h-full");
 	});
 
