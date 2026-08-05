@@ -27,7 +27,7 @@ func TestEnrichReadyToMergePrioritizesPRContext(t *testing.T) {
 	if want := "Fix checkout totals · PR #67"; rec.Title != want {
 		t.Fatalf("title = %q, want %q", rec.Title, want)
 	}
-	if want := "Checkout flow is ready to merge. CI passed with no blocking review feedback."; rec.Body != want {
+	if want := "PR from session Checkout flow is ready to merge. CI passed with no blocking review feedback."; rec.Body != want {
 		t.Fatalf("body = %q, want %q", rec.Body, want)
 	}
 }

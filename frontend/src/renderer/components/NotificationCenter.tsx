@@ -446,7 +446,8 @@ function NotificationItem({
 	const Icon = notificationIcon(notification.type);
 	const sessionId = notification.target.sessionId || notification.sessionId;
 	const canOpenSession = Boolean(sessionId) && sessionsReady && !terminated;
-	const showSessionMeta = Boolean(meta?.sessionName) && !notificationMentions(notification, meta?.sessionName ?? "");
+	const copy = notificationCopy(notification, meta?.sessionName);
+	const showSessionMeta = Boolean(meta?.sessionName) && !notificationMentions(copy, meta?.sessionName ?? "");
 	const openRow = () => {
 		if (canOpenSession) onOpenSession(notification);
 	};
@@ -489,12 +490,12 @@ function NotificationItem({
 								highlighted && "font-medium",
 							)}
 						>
-							{notification.title}
+							{copy.title}
 						</span>
 					</div>
-					{notification.body ? (
+					{copy.body ? (
 						<p className="mt-0.5 whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
-							{notification.body}
+							{copy.body}
 						</p>
 					) : null}
 					{meta && (meta.projectName || showSessionMeta) ? (
@@ -539,7 +540,38 @@ function NotificationItem({
 	);
 }
 
-function notificationMentions(notification: NotificationDTO, value: string): boolean {
+type NotificationCopy = Pick<NotificationDTO, "body" | "title">;
+
+function notificationCopy(notification: NotificationDTO, sessionName?: string): NotificationCopy {
+	if (notification.type !== "ready_to_merge") {
+		return { title: notification.title, body: notification.body };
+	}
+
+	const session = sessionName?.trim();
+	if (!session) {
+		return { title: notification.title, body: notification.body };
+	}
+
+	const legacySessionTitle = `${session} is ready to merge`;
+	const title =
+		notification.title.trim().toLocaleLowerCase() === legacySessionTitle.toLocaleLowerCase()
+			? readyNotificationFallbackTitle(notification)
+			: notification.title;
+
+	return {
+		title,
+		body: `PR from session ${session} is ready to merge. CI passed with no blocking review feedback.`,
+	};
+}
+
+function readyNotificationFallbackTitle(notification: NotificationDTO): string {
+	const titleNumber = notification.title.match(/\bPR\s*#(\d+)\b/i)?.[1];
+	const urlNumber = notification.prUrl.match(/\/pull\/(\d+)(?:\/|$)/)?.[1];
+	const number = titleNumber ?? urlNumber;
+	return number ? `PR #${number} is ready to merge` : "Pull request is ready to merge";
+}
+
+function notificationMentions(notification: NotificationCopy, value: string): boolean {
 	const needle = value.trim().toLocaleLowerCase();
 	if (!needle) return false;
 	return `${notification.title}\n${notification.body}`.toLocaleLowerCase().includes(needle);

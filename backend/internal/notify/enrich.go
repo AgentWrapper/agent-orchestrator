@@ -57,7 +57,7 @@ func bodyForIntent(intent Intent) string {
 		return "Your agent is waiting on you to continue."
 	case domain.NotificationReadyToMerge:
 		if session := sessionLabel(intent); session != "session" {
-			return fmt.Sprintf("%s is ready to merge. CI passed with no blocking review feedback.", session)
+			return fmt.Sprintf("PR from session %s is ready to merge. CI passed with no blocking review feedback.", session)
 		}
 		return "CI passed with no blocking review feedback."
 	case domain.NotificationPRMerged:

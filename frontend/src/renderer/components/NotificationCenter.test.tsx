@@ -35,7 +35,7 @@ const allNotifications: NotificationDTO[] = [
 		prUrl: "https://github.com/acme/app/pull/67",
 		type: "ready_to_merge",
 		title: "Fix checkout totals · PR #67",
-		body: "Checkout flow is ready to merge. CI passed with no blocking review feedback.",
+		body: "PR from session Checkout flow is ready to merge. CI passed with no blocking review feedback.",
 		status: "unread",
 		createdAt: "2026-07-21T11:00:00Z",
 		target: { kind: "pr", sessionId: "sess-2", prUrl: "https://github.com/acme/app/pull/67" },
@@ -496,6 +496,37 @@ describe("NotificationCenter", () => {
 		expect(row).not.toBeNull();
 		expect(row).toHaveTextContent("acme/app");
 		expect(row?.textContent?.match(/Checkout flow/g)).toHaveLength(1);
+	});
+
+	it("normalizes legacy ready notifications without rewriting stored history", async () => {
+		const legacyReady = {
+			...allNotifications[0],
+			title: "Checkout flow is ready to merge",
+			body: "CI passed with no blocking review feedback.",
+		};
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) => ({
+			...notificationQueryResult(status),
+			data: {
+				pageParams: [""],
+				pages: [
+					{
+						notifications: [legacyReady],
+						unreadCount: 1,
+						unresolvedCount: 1,
+					},
+				],
+			},
+		}));
+		renderNotificationCenter();
+		await clickOpen();
+
+		expect(screen.getByText("PR #67 is ready to merge")).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"PR from session Checkout flow is ready to merge. CI passed with no blocking review feedback.",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByText("Checkout flow is ready to merge")).not.toBeInTheDocument();
 	});
 
 	it("opens the session with the keyboard from a focused row", async () => {
