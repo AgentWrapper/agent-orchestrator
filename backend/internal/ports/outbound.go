@@ -127,6 +127,21 @@ type SupervisedProcessInspector interface {
 	IsSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
 }
 
+// ContainerReaper removes Docker containers a worker session owns, identified
+// by the ao.session=<id> label convention (see EnvSessionID). It is an
+// optional capability: nil wiring means container reaping is a no-op, not an
+// error. Implementations MUST treat a container's ao.spare=true label as an
+// unconditional skip, and MUST bias toward sparing on any ambiguity (e.g. a
+// docker CLI probe failure reaps nothing rather than guessing) -- a wrongly
+// reaped container can cost a live worker its database.
+type ContainerReaper interface {
+	// ReapSessionContainers force-removes every non-spared container labeled
+	// for session id. removed is the count actually removed; err is non-nil
+	// only for a genuine adapter failure, never for "docker not installed" or
+	// "nothing found" (both return removed=0, err=nil).
+	ReapSessionContainers(ctx context.Context, id domain.SessionID) (removed int, err error)
+}
+
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
 // already-open by a Runtime's Attach. tmux backs it with a local PTY around
 // their attach CLI; conpty backs it with a loopback connection to the pty-host.
@@ -229,6 +244,14 @@ var (
 	// actionable apierr instead of letting it fall through to an opaque 500
 	// with no message (issue #2775).
 	ErrRuntimeWorkspaceCwdMismatch = errors.New("runtime: session working directory mismatch")
+	// ErrRuntimeUnavailable reports that a liveness probe could not reach the
+	// runtime infrastructure at all (e.g. tmux "no server running" or "error
+	// connecting"). It says nothing about any individual session, so callers
+	// must treat it as an inconclusive probe, never as per-session death
+	// (issue #3475: reading a server-level outage as N session deaths archived
+	// every session on the board). Adapters wrap this sentinel via fmt.Errorf
+	// so callers can match it with errors.Is.
+	ErrRuntimeUnavailable = errors.New("runtime: infrastructure unavailable")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

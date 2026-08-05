@@ -63,9 +63,12 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					chooseDirectory: async () => null,
 					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+					checkAncestorRepo: async () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
@@ -135,7 +138,13 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				},
 				notifications: {
 					show: async () => undefined,
+					setBadge: async (_count: number) => undefined,
+					devBounce: async () => undefined,
 					onClick: unsubscribe,
+				},
+				tray: {
+					setAttentionState: () => undefined,
+					onOpenSession: unsubscribe,
 				},
 				appState: {
 					getMigration: async () => ({ status: "completed" }),
@@ -144,6 +153,10 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				updateSettings: {
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
+				},
+				uiSettings: {
+					get: async () => ({ locale: "en" }),
+					set: async (settings) => settings,
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -157,6 +170,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.
@@ -445,9 +459,12 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					chooseDirectory: async () => null,
 					openExternal: async () => undefined,
 					scanImportFolder: async ({ path }: { path: string }) => ({ path, repos: [] }),
+					checkAncestorRepo: async () => undefined,
 					onNewSessionShortcut: unsubscribe,
 					onKeyboardShortcutsHelp: unsubscribe,
 					onNewShellTerminalShortcut: unsubscribe,
+					onCloseShellTerminalShortcut: unsubscribe,
+					setCloseShellTerminalShortcutEnabled: () => undefined,
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
@@ -511,11 +528,21 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onTabsState: unsubscribe,
 					onAgentActivity: unsubscribe,
 				},
-				notifications: { show: async () => undefined, onClick: unsubscribe },
+				notifications: {
+					show: async () => undefined,
+					setBadge: async (_count: number) => undefined,
+					devBounce: async () => undefined,
+					onClick: unsubscribe,
+				},
+				tray: { setAttentionState: () => undefined, onOpenSession: unsubscribe },
 				appState: { getMigration: async () => ({ status: "completed" }), setMigration: async () => undefined },
 				updateSettings: {
 					get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 					set: async () => undefined,
+				},
+				uiSettings: {
+					get: async () => ({ locale: "en" }),
+					set: async (settings) => settings,
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -529,6 +556,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					download: async () => undefined,
 					install: async () => undefined,
 					onStatus: unsubscribe,
+					onTelemetry: unsubscribe,
 				},
 				// UpdatesSection calls featureBuilds.getActive() immediately on mount; an
 				// omitted namespace would surface as a swallowed React Query error.

@@ -118,32 +118,39 @@ const toc = [
 export default function PrivacyPage() {
   return (
     <main className="relative min-h-screen">
-      <div className="mx-auto max-w-[820px] px-6 pb-24 pt-[clamp(120px,13vw,180px)]">
-        <div className="font-mono text-sm text-muted-foreground">Legal</div>
-        <h1 className="mt-4 text-[clamp(34px,5vw,54px)] font-semibold leading-[1.04] tracking-[-0.03em] text-foreground">
-          Privacy Policy
-        </h1>
-        <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
-          Last updated {LAST_UPDATED}
-        </p>
-
-        <div className="mt-9 rounded-[8px] border border-border bg-card/50 p-6 sm:p-7">
-          <p className="text-[15px] leading-[1.75] text-muted-foreground sm:text-[16px]">
-            <Strong>The short version.</Strong> Agent Orchestrator runs on your
-            own machine. No account is required, and no hosted AO service stores
-            your work. We never see your source code, prompts, agent output,
-            terminal contents, repository names, or file paths, and we never
-            sell or rent data to anyone. The desktop app sends{" "}
-            <Strong>anonymous, redacted usage telemetry</Strong> so we can tell
-            whether releases are stable — you can turn it off. Website analytics
-            stay off until you accept them. If you voluntarily join the
-            Windows/Linux waitlist, we process the email you submit only for
-            that purpose. The mobile app sends <Strong>no telemetry at all</Strong>{" "}
-            and talks only to the server you point it at.
+      <header className="relative">
+        <div className="relative mx-auto max-w-3xl px-6 pb-10 pt-16 md:pb-12 md:pt-20">
+          <div className="font-mono text-sm tracking-[0.5px] text-muted-foreground">
+            Legal
+          </div>
+          <h1 className="mt-4 text-[clamp(34px,5vw,54px)] font-semibold leading-[1.04] tracking-[-0.03em] text-foreground">
+            Privacy Policy
+          </h1>
+          <p className="mt-4 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+            Last updated {LAST_UPDATED}
           </p>
-        </div>
 
-        <nav aria-label="On this page" className="mt-10">
+          <div className="mt-8 rounded-[8px] border border-border bg-card/50 p-6 sm:p-7">
+            <p className="text-[15px] leading-[1.75] text-muted-foreground sm:text-[16px]">
+              <Strong>The short version.</Strong> Agent Orchestrator runs on your
+              own machine. No account is required, and no hosted AO service stores
+              your work. We never see your source code, prompts, agent output,
+              terminal contents, repository names, or file paths, and we never
+              sell or rent data to anyone. The desktop app sends{" "}
+              <Strong>anonymous, redacted usage telemetry</Strong> so we can tell
+              whether releases are stable — you can turn it off. Website analytics
+              stay off until you accept them. If you voluntarily join the
+              Windows/Linux waitlist, we process the email you submit only for
+              that purpose. The mobile app sends <Strong>no telemetry at all</Strong>{" "}
+              and talks only to the server you point it at.
+            </p>
+          </div>
+
+        </div>
+      </header>
+
+      <div className="relative mx-auto max-w-3xl px-6 pb-24 pt-12">
+        <nav aria-label="On this page">
           <h2 className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
             On this page
           </h2>
@@ -165,7 +172,7 @@ export default function PrivacyPage() {
           <Section id="scope" title="What this policy covers">
             <p>
               Agent Orchestrator ("AO") is open-source software published by the
-              AgentWrapper project. This policy applies to:
+              Untrivial-ai project. This policy applies to:
             </p>
             <Bullets>
               <Bullet>
@@ -331,12 +338,12 @@ export default function PrivacyPage() {
               connection's IP address; AO itself never sends location data.
             </p>
             <p>
-              The desktop app also enables PostHog{" "}
-              <Strong>session recording</Strong> of the app's own interface for
-              debugging, with local paths, local URLs, and network request names
-              masked before transmission. This records the AO interface only —
-              never other applications, never your desktop, and never keystroke
-              content.
+              The desktop app does <Strong>not</Strong> currently send PostHog{" "}
+              <Strong>session recordings</Strong>. Session recording is disabled
+              by default; if a time-boxed investigation enables it, local paths,
+              local URLs, and network request names are masked before
+              transmission. It would cover the AO interface only — never other
+              applications, never your desktop, and never keystroke content.
             </p>
 
             <div className="rounded-[8px] border border-border bg-card/50 p-5">
@@ -347,7 +354,7 @@ export default function PrivacyPage() {
                 to stop daemon events. Because AO is open source, you can also
                 build it yourself with an empty <Code>VITE_AO_POSTHOG_KEY</Code>
                 , which removes transmission entirely. See{" "}
-                <Ext href="https://github.com/AgentWrapper/agent-orchestrator/blob/main/docs/telemetry.md">
+                <Ext href="https://github.com/Untrivial-ai/agent-orchestrator/blob/main/docs/telemetry.md">
                   docs/telemetry.md
                 </Ext>{" "}
                 for the full, source-level detail.

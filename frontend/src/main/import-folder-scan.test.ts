@@ -94,6 +94,49 @@ describe("scanImportFolder", () => {
 		expect(scan).toEqual({ path: selected, repos: [] });
 	});
 
+	it("warns when workspace parent is nested inside an ancestor repo", async () => {
+		const root = await tempDir();
+		const ancestor = path.join(root, "ancestor");
+		await committedRepo(ancestor);
+		const parent = path.join(ancestor, "inner");
+		await mkdir(parent);
+		await committedRepo(path.join(parent, "api"));
+		await committedRepo(path.join(parent, "ui"));
+
+		const scan = await scanImportFolder(parent, "workspace");
+
+		expect(scan.setupWarning).toContain("Selected folder is inside an existing Git repository at ");
+		expect(scan.repos).toHaveLength(2);
+	});
+
+	it("does not warn when workspace parent is a git repo root", async () => {
+		const root = await tempDir();
+		const parent = path.join(root, "workspace");
+		await committedRepo(parent);
+		await committedRepo(path.join(parent, "api"));
+		await committedRepo(path.join(parent, "ui"));
+
+		const scan = await scanImportFolder(parent, "workspace");
+
+		expect(scan.setupWarning).toBeUndefined();
+		expect(scan.repos).toHaveLength(2);
+	});
+
+	it("does not warn when workspace parent has no ancestor repo", async () => {
+		const root = await tempDir();
+		const parent = path.join(root, "workspace");
+		await mkdir(parent);
+		await committedRepo(path.join(parent, "api"));
+		await committedRepo(path.join(parent, "ui"));
+
+		const scan = await scanImportFolder(parent, "workspace", {
+			env: { ...process.env, GIT_CEILING_DIRECTORIES: root },
+		});
+
+		expect(scan.setupWarning).toBeUndefined();
+		expect(scan.repos).toHaveLength(2);
+	});
+
 	it("reports folders inside AO-managed worktrees before offering setup", async () => {
 		const home = await tempDir();
 		const selected = path.join(home, ".ao", "data", "worktrees", "project", "session");

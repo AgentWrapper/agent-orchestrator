@@ -17,6 +17,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 	"github.com/aoagents/agent-orchestrator/backend/internal/processalive"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 // Execute runs the ao CLI with process stdio.
@@ -211,12 +212,15 @@ type commandContext struct {
 }
 
 func shouldEmitCLIInvocation(cmd *cobra.Command) bool {
-	switch strings.TrimSpace(cmd.CommandPath()) {
+	commandPath := telemetrymeta.NormalizeCommandPath(cmd.CommandPath())
+	if telemetrymeta.IsRoutineInternalCLICommand(commandPath) {
+		return false
+	}
+	switch commandPath {
 	// "ao daemon"/"ao start" are supervisor-driven bootstrapping, and
 	// "ao completion"/"ao help" are shell setup and self-documentation.
 	// "ao pty-host" and "ao agent-process" are internal runtime processes.
-	// None reflect user activity. "ao hooks" is agent activity and is still
-	// reported, but the daemon keeps it out of ao.app.active/DAU.
+	// None reflect user activity.
 	case "ao daemon", "ao start", "ao completion", "ao help", "ao pty-host", "ao agent-process", "ao agent-process supervise":
 		return false
 	default:

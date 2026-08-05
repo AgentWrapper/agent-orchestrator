@@ -24,6 +24,16 @@ import (
 
 const postHogBufferSize = 128
 const maxCommandShapeLength = 48
+const remoteTelemetrySchemaVersion = 2
+
+var remoteEventNameAliases = map[string]string{
+	"ao.app.active":              "ao.v2.app.active",
+	"ao.cli.invoked":             "ao.v2.cli.invoked",
+	"ao.renderer.route_viewed":   "ao.v2.renderer.route_viewed",
+	"ao.renderer.loaded":         "ao.v2.renderer.loaded",
+	"ao.renderer.api_error":      "ao.v2.renderer.api_error",
+	"ao.renderer.daemon_failure": "ao.v2.renderer.daemon_failure",
+}
 
 var remoteCommandTokens = map[string]struct{}{
 	"add":              {},
@@ -178,6 +188,10 @@ type PostHogSink struct {
 	apiKey     string
 	host       string
 	distinctID string
+	// appVersion stamps app_version/ao_version on every exported event. Empty
+	// leaves the properties off entirely rather than reporting a misleading
+	// "unknown" that would show up as a real version in release breakdowns.
+	appVersion string
 	client     postHogClient
 	log        *slog.Logger
 	ch         chan ports.TelemetryEvent
@@ -186,7 +200,7 @@ type PostHogSink struct {
 }
 
 // NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
-func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
+func NewPostHogSink(dataDir, apiKey, host, appVersion string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("posthog api key is required")
 	}
@@ -206,6 +220,7 @@ func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slo
 		distinctID: distinctID,
 		client:     client,
 		log:        telemetryLogger(log),
+		appVersion: strings.TrimSpace(appVersion),
 		ch:         make(chan ports.TelemetryEvent, postHogBufferSize),
 	}
 	s.wg.Add(1)
@@ -246,9 +261,10 @@ func (s *PostHogSink) loop() {
 }
 
 func (s *PostHogSink) send(ev ports.TelemetryEvent) {
+	eventName := remoteEventName(ev.Name)
 	body := map[string]any{
 		"api_key":     s.apiKey,
-		"event":       ev.Name,
+		"event":       eventName,
 		"distinct_id": s.distinctID,
 		"properties":  s.properties(ev),
 		"timestamp":   ev.OccurredAt.UTC().Format(time.RFC3339Nano),
@@ -279,12 +295,23 @@ func (s *PostHogSink) send(ev ports.TelemetryEvent) {
 
 func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	props := map[string]any{
-		"source": ev.Source,
-		"level":  string(ev.Level),
+		"source":                   ev.Source,
+		"level":                    string(ev.Level),
+		"telemetry_schema_version": remoteTelemetrySchemaVersion,
 		// The distinct ID is a random install ID with no person data behind it,
 		// so skip PostHog person-profile processing: identified events bill at
 		// several times the anonymous rate and the profiles would hold nothing.
 		"$process_person_profile": false,
+	}
+	if remoteEventName(ev.Name) != ev.Name {
+		props["legacy_event_name"] = ev.Name
+	}
+	// Without this, every daemon event lands with no version at all, so a
+	// failure rate cannot be attributed to a release. Renderer events already
+	// carry app_version; these are the matching daemon-side values.
+	if s.appVersion != "" {
+		props["app_version"] = s.appVersion
+		props["ao_version"] = s.appVersion
 	}
 	if ev.RequestID != "" {
 		props["request_id"] = ev.RequestID
@@ -299,6 +326,13 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 		props[k] = v
 	}
 	return props
+}
+
+func remoteEventName(name string) string {
+	if alias, ok := remoteEventNameAliases[name]; ok {
+		return alias
+	}
+	return name
 }
 
 func sanitizeRemotePayload(name string, payload map[string]any) map[string]any {

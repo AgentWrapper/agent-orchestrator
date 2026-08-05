@@ -236,7 +236,7 @@ describe("PR hydration for a normal project (#251)", () => {
 		expect(screen.getByLabelText("#281 merged")).toBeInTheDocument();
 		expect(screen.getByLabelText("#282 closed")).toBeInTheDocument();
 		expect(screen.getByText("draft")).toBeInTheDocument();
-		expect(screen.getByText("merged")).toHaveClass("text-accent");
+		expect(screen.getByText("merged")).toHaveClass("text-status-merged");
 		expect(screen.getByText("closed")).toHaveClass("text-error");
 		expect(screen.queryByText("review pending")).not.toBeInTheDocument();
 		expect(screen.queryByText("CI")).not.toBeInTheDocument();

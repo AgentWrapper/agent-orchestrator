@@ -1,7 +1,7 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import MakerNSIS from "./makers/maker-nsis";
-import MakerDMG, { sealDmg } from "./makers/maker-dmg";
+import MakerDMG, { sealDmg, verifyDmg } from "./makers/maker-dmg";
 import MakerAppImage from "./makers/maker-appimage";
 import { writeFileSync } from "node:fs";
 
@@ -38,7 +38,14 @@ const config: ForgeConfig = {
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the
 		// deb/rpm makers below, and the runtime window icon from src/main.ts.
 		icon: "assets/icon",
-		extraResource: ["daemon", "assets/icon.png", "assets/icon.ico", "app-update.yml"],
+		extraResource: [
+			"daemon",
+			"assets/icon.png",
+			"assets/icon.ico",
+			"assets/trayIconTemplate.png",
+			"assets/trayIconTemplate@2x.png",
+			"app-update.yml",
+		],
 		// Notarization. Two paths:
 		//  - CI: an App Store Connect API key. APPLE_API_KEY is a PATH to the .p8
 		//    (the workflow decodes APPLE_API_KEY_BASE64 to a temp file), plus the
@@ -88,11 +95,20 @@ const config: ForgeConfig = {
 		// same credentials packagerConfig already consumes (#3267 decision 3).
 		// The .app inside was already signed + notarized + stapled by
 		// packagerConfig above, before any maker ran; nothing here touches it.
+		//
+		// Then PROVE the seal. sealDmg exiting 0 only says three commands ran on
+		// this machine; it does not say Gatekeeper accepts the published bytes with
+		// a stapled ticket. verify-mac-artifact.sh is the canonical gate for that
+		// (#3288 workstreams 1 and 2), and #3267 decision 3 step 4 asks for exactly
+		// this check on the dmg. Run only when sealDmg actually sealed: an unsigned
+		// local or desktop-testing build has nothing to verify and must keep
+		// producing its dmg.
 		postMake: async (_forgeConfig, makeResults) => {
 			for (const result of makeResults) {
 				if (result.platform !== "darwin") continue;
 				for (const artifact of result.artifacts) {
-					if (artifact.endsWith(".dmg")) await sealDmg(artifact);
+					if (!artifact.endsWith(".dmg")) continue;
+					if (await sealDmg(artifact)) await verifyDmg(artifact);
 				}
 			}
 			return makeResults;

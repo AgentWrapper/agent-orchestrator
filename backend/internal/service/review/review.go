@@ -25,7 +25,7 @@ var (
 
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {
-	Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error)
+	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
@@ -83,9 +83,16 @@ func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
 	return s
 }
 
-// Trigger starts (or reuses) a review pass for a worker's PR.
-func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error) {
-	return s.engine.Trigger(ctx, workerID)
+// Trigger starts (or reuses) a review pass for a worker's PR. An empty harness
+// runs under the project's configured reviewer; a non-empty one overrides it for
+// this pass only, so choosing a reviewer for one session leaves every other
+// session in the project untouched.
+func (s *Service) Trigger(
+	ctx context.Context,
+	workerID domain.SessionID,
+	harness domain.ReviewerHarness,
+) (reviewcore.TriggerResult, error) {
+	return s.engine.Trigger(ctx, workerID, harness)
 }
 
 // Cancel stops the live reviewer pane and marks running review passes as failed.

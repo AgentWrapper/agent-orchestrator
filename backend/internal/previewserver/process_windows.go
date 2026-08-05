@@ -3,6 +3,7 @@
 package previewserver
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,27 +61,89 @@ func quoteWindowsBatchArg(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
-func terminatePreviewProcess(cmd *exec.Cmd) error {
-	if cmd == nil || cmd.Process == nil {
-		return nil
+// errStalePreviewPID reports that a recorded preview PID could not be
+// re-verified as the process AO launched, so nothing was killed.
+var errStalePreviewPID = errors.New("preview pid is stale or recycled; refusing to signal")
+
+// previewProcessStartTime returns pid's kernel creation time as an opaque
+// decimal string, or "" when the process does not exist or cannot be queried.
+// It is captured at launch and compared verbatim before any tree kill: a bare
+// PID stops identifying anything once the child is reaped, and Windows
+// recycles PIDs the same way, so `taskkill /T` on a recycled number would
+// kill an unrelated process tree (issue #3475).
+func previewProcessStartTime(pid int) string {
+	if pid <= 0 {
+		return ""
 	}
-	return aoprocess.Command("taskkill", "/PID", strconv.Itoa(cmd.Process.Pid), "/T").Run()
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = windows.CloseHandle(handle) }()
+	var creation, exit, kernel, user windows.Filetime
+	if err := windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err != nil {
+		return ""
+	}
+	return strconv.FormatUint(uint64(creation.HighDateTime)<<32|uint64(creation.LowDateTime), 10)
 }
 
-func forceKillPreviewPID(pid int) error {
+// killPreviewTree taskkills pid's tree only after re-verifying that the
+// number still identifies the process AO launched. A missing root is a no-op:
+// /T walks the tree from the root, so with the root gone there is nothing
+// left that the daemon can still attribute to itself.
+func killPreviewTree(pid int, recordedStart string, force bool) error {
 	if pid <= 0 {
 		return nil
 	}
-	return aoprocess.Command("taskkill", "/PID", strconv.Itoa(pid), "/T", "/F").Run()
+	if recordedStart == "" {
+		return errStalePreviewPID
+	}
+	current := previewProcessStartTime(pid)
+	if current == "" {
+		return nil
+	}
+	if current != recordedStart {
+		return errStalePreviewPID
+	}
+	args := []string{"/PID", strconv.Itoa(pid), "/T"}
+	if force {
+		args = append(args, "/F")
+	}
+	return aoprocess.Command("taskkill", args...).Run()
 }
 
-func forceKillPreviewProcess(cmd *exec.Cmd) error {
+// killPreviewRoot terminates only the direct child through os.Process, which
+// refuses to act on an already-reaped child, so it can never hit a recycled
+// PID. It is the fallback for runs whose launch identity could not be
+// captured: descendants may leak, innocents never die.
+func killPreviewRoot(cmd *exec.Cmd) error {
+	err := cmd.Process.Kill()
+	if err == nil || errors.Is(err, os.ErrProcessDone) {
+		return nil
+	}
+	return err
+}
+
+func terminatePreviewProcess(cmd *exec.Cmd, startTime string) error {
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	err := aoprocess.Command("taskkill", "/PID", strconv.Itoa(cmd.Process.Pid), "/T", "/F").Run()
-	if err != nil {
-		return cmd.Process.Kill()
+	if startTime == "" {
+		return killPreviewRoot(cmd)
 	}
-	return nil
+	return killPreviewTree(cmd.Process.Pid, startTime, false)
+}
+
+func forceKillPreviewPID(pid int, startTime string) error {
+	return killPreviewTree(pid, startTime, true)
+}
+
+func forceKillPreviewProcess(cmd *exec.Cmd, startTime string) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	if startTime == "" {
+		return killPreviewRoot(cmd)
+	}
+	return killPreviewTree(cmd.Process.Pid, startTime, true)
 }
