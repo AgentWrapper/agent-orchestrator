@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -78,6 +79,21 @@ func (s *Server) processGitHubWebhookDelivery(
 	delivery clouddomain.GitHubWebhookDelivery,
 ) error {
 	if delivery.Event == "ping" {
+		return nil
+	}
+	if delivery.Event == "github_app_authorization" {
+		var payload struct {
+			Action string `json:"action"`
+			Sender struct {
+				ID int64 `json:"id"`
+			} `json:"sender"`
+		}
+		if err := json.Unmarshal(delivery.Payload, &payload); err != nil {
+			return fmt.Errorf("decode GitHub authorization webhook: %w", err)
+		}
+		if strings.EqualFold(payload.Action, "revoked") && payload.Sender.ID > 0 {
+			return s.githubStore.DeleteGitHubUserConnectionByGitHubID(ctx, payload.Sender.ID)
+		}
 		return nil
 	}
 	if delivery.InstallationID == nil || *delivery.InstallationID <= 0 {

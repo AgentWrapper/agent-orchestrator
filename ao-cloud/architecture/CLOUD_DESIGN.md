@@ -93,6 +93,8 @@ tables, linked with foreign keys:
 | `ao_pr_checks` | CI/check facts belonging to a normalized pull request. |
 | `ao_github_install_attempts` | Signed, expiring, single-use AO user/org installation attempts. |
 | `ao_github_installations` | Per-organization bindings for user-owned GitHub App installations; a connection is inherited by every AO organization that user creates. |
+| `ao_github_user_auth_attempts` | Hashed single-use OAuth state plus encrypted PKCE verifiers for account-wide GitHub authorization. |
+| `ao_github_user_connections` | One verified GitHub identity per AO user with encrypted expiring access and rotating refresh tokens. |
 | `ao_github_repositories` | Canonical GitHub repository identity and metadata. |
 | `ao_github_repository_grants` | Durable intervals in which an installation grants an AO organization access to a repository. |
 | `ao_github_webhook_deliveries` | Signed, deduplicated, retryable GitHub webhook inbox. |
@@ -188,6 +190,15 @@ credential.
   attempt. The control plane validates the returned App installation, binds it
   to the organization, and synchronizes the selected repositories into durable
   grants.
+- Each AO user separately completes an authorization-code + PKCE flow once.
+  The control plane encrypts expiring access and rotating refresh tokens and
+  uses them only for installation discovery and user-triggered repository
+  administration. Revocation webhooks remove the connection.
+- Account-wide discovery exposes the user's personal and organization
+  installations independent of the active AO organization. Scratch creation
+  revalidates the selected installation, creates personal repositories through
+  `/user/repos` or organization repositories through `/orgs/{org}/repos`, then
+  binds the repository to the active AO organization before orchestration.
 - Webhooks are signature-verified, deduplicated by GitHub delivery ID, stored
   before processing, and retried with bounded backoff. Installation and
   repository-selection changes reconcile the durable grants.
@@ -206,12 +217,9 @@ credential.
   `/worker/github-token` broker path to obtain a short-lived repository-scoped
   App token for that operation. They do not receive a reusable GitHub token at
   bootstrap.
-- The chosen installation flow does not use GitHub user OAuth or request user
-  authorization. AO proves which AO owner/admin initiated and confirmed the
-  signed attempt and that the installation belongs to the configured App, but
-  cannot cryptographically prove the same GitHub human clicked Install. The AO
-  initiator is responsible for confirming the GitHub account and repository
-  selection.
+- GitHub user credentials and installation credentials remain separate. User
+  tokens never enter workers and cannot replace organization repository grants;
+  worker Git/SCM continues to use narrowly scoped installation tokens.
 
 The demo has a real GitHub App registration, production-style secrets, and
 public callback/webhook URLs. Remaining work is operational hardening:

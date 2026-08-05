@@ -1184,6 +1184,34 @@ type fakeGitHubStore struct {
 	installations       []clouddomain.GitHubInstallation
 }
 
+func (*fakeGitHubStore) CreateGitHubUserAuthAttempt(context.Context, clouddomain.UserID, []byte, []byte, []byte, time.Duration) (clouddomain.GitHubUserAuthAttempt, error) {
+	return clouddomain.GitHubUserAuthAttempt{}, nil
+}
+
+func (*fakeGitHubStore) GetGitHubUserAuthAttempt(context.Context, []byte) (clouddomain.GitHubUserAuthAttempt, error) {
+	return clouddomain.GitHubUserAuthAttempt{}, cloudpostgres.ErrInvalidGitHubUserAuthAttempt
+}
+
+func (*fakeGitHubStore) CompleteGitHubUserAuthorization(context.Context, string, cloudpostgres.GitHubUserConnectionInput) (clouddomain.GitHubUserConnection, error) {
+	return clouddomain.GitHubUserConnection{}, nil
+}
+
+func (*fakeGitHubStore) GitHubUserConnection(context.Context, clouddomain.UserID) (clouddomain.GitHubUserConnection, error) {
+	return clouddomain.GitHubUserConnection{}, cloudpostgres.ErrGitHubUserConnectionNotFound
+}
+
+func (*fakeGitHubStore) UpdateGitHubUserConnectionTokens(context.Context, clouddomain.UserID, cloudpostgres.GitHubUserConnectionInput) (clouddomain.GitHubUserConnection, error) {
+	return clouddomain.GitHubUserConnection{}, nil
+}
+
+func (*fakeGitHubStore) DeleteGitHubUserConnection(context.Context, clouddomain.UserID) error {
+	return nil
+}
+
+func (*fakeGitHubStore) DeleteGitHubUserConnectionByGitHubID(context.Context, int64) error {
+	return nil
+}
+
 func (s *fakeGitHubStore) CreateGitHubInstallAttempt(_ context.Context, orgID clouddomain.OrgID, userID clouddomain.UserID, _ json.RawMessage, ttl time.Duration) (string, clouddomain.GitHubInstallAttempt, error) {
 	s.createCalls++
 	s.createOrgID = orgID

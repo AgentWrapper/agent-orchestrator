@@ -42,6 +42,63 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 	if err != nil {
 		t.Fatalf("EnsureAccount(B) error = %v", err)
 	}
+	stateHashA := make([]byte, 32)
+	binary.BigEndian.PutUint64(stateHashA[24:], uint64(integrationGitHubID()))
+	attemptA, err := store.CreateGitHubUserAuthAttempt(
+		ctx,
+		clouddomain.UserID(userA),
+		stateHashA,
+		[]byte("encrypted-verifier-a"),
+		[]byte("verifier-nonce-a"),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("CreateGitHubUserAuthAttempt(A) error = %v", err)
+	}
+	if _, err := store.GetGitHubUserAuthAttempt(ctx, stateHashA); err != nil {
+		t.Fatalf("GetGitHubUserAuthAttempt(A) error = %v", err)
+	}
+	githubUserID := integrationGitHubID()
+	accessExpiresAt := time.Now().Add(time.Hour)
+	refreshExpiresAt := time.Now().Add(24 * time.Hour)
+	connectionInput := GitHubUserConnectionInput{
+		GitHubUserID:          githubUserID,
+		GitHubLogin:           "github-user-a",
+		AccessTokenEncrypted:  []byte("encrypted-access-a"),
+		AccessTokenNonce:      []byte("access-nonce-a"),
+		AccessTokenExpiresAt:  &accessExpiresAt,
+		RefreshTokenEncrypted: []byte("encrypted-refresh-a"),
+		RefreshTokenNonce:     []byte("refresh-nonce-a"),
+		RefreshTokenExpiresAt: &refreshExpiresAt,
+	}
+	if _, err := store.CompleteGitHubUserAuthorization(ctx, attemptA.ID, connectionInput); err != nil {
+		t.Fatalf("CompleteGitHubUserAuthorization(A) error = %v", err)
+	}
+	if _, err := store.CompleteGitHubUserAuthorization(ctx, attemptA.ID, connectionInput); !errors.Is(err, ErrInvalidGitHubUserAuthAttempt) {
+		t.Fatalf("GitHub user authorization replay error = %v, want invalid attempt", err)
+	}
+	if connection, err := store.GitHubUserConnection(ctx, clouddomain.UserID(userA)); err != nil ||
+		connection.GitHubLogin != "github-user-a" {
+		t.Fatalf("GitHubUserConnection(A) = %#v, %v", connection, err)
+	}
+
+	stateHashB := make([]byte, 32)
+	binary.BigEndian.PutUint64(stateHashB[24:], uint64(integrationGitHubID()))
+	attemptB, err := store.CreateGitHubUserAuthAttempt(
+		ctx,
+		clouddomain.UserID(userB),
+		stateHashB,
+		[]byte("encrypted-verifier-b"),
+		[]byte("verifier-nonce-b"),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatalf("CreateGitHubUserAuthAttempt(B) error = %v", err)
+	}
+	if _, err := store.CompleteGitHubUserAuthorization(ctx, attemptB.ID, connectionInput); !errors.Is(err, ErrGitHubUserConnectionConflict) {
+		t.Fatalf("cross-user GitHub identity claim error = %v, want conflict", err)
+	}
+
 	orgA := clouddomain.OrgID(accountA.ID)
 	orgB := clouddomain.OrgID(accountB.ID)
 	ownedBefore, err := store.CreateOrganization(ctx, CreateOrganizationInput{
@@ -110,11 +167,14 @@ func TestGitHubStoreIntegrationIsolationRevocationAndAtomicConfirmation(t *testi
 	if _, err := store.ConfirmGitHubInstallation(ctx, orgB, clouddomain.UserID(userB), stateB, GitHubInstallationConfirmation{
 		Installation: installation,
 		Repositories: []clouddomain.GitHubRepository{repository},
-	}); !errors.Is(err, ErrGitHubInstallationConflict) {
-		t.Fatalf("cross-org installation confirmation error = %v, want ErrGitHubInstallationConflict", err)
+	}); err != nil {
+		t.Fatalf("shared installation confirmation error = %v", err)
 	}
-	if _, err := store.GetPendingGitHubInstallation(ctx, orgB, clouddomain.UserID(userB), stateB); err != nil {
-		t.Fatalf("cross-org conflict consumed pending attempt: %v", err)
+	if _, err := store.GetPendingGitHubInstallation(ctx, orgB, clouddomain.UserID(userB), stateB); !errors.Is(err, ErrInvalidGitHubInstallAttempt) {
+		t.Fatalf("shared installation pending attempt error = %v, want consumed", err)
+	}
+	if _, err := store.FindActiveGitHubRepositoryGrant(ctx, orgB, repositoryID); err != nil {
+		t.Fatalf("shared installation grant error = %v", err)
 	}
 
 	if err := store.RevokeGitHubRepositoryGrant(ctx, orgA, repositoryID, "integration_test"); err != nil {

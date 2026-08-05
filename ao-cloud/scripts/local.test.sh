@@ -29,6 +29,7 @@ export PATH="$temp_dir/bin:$PATH"
 source "$script_dir/local.sh"
 
 export AO_GITHUB_APP_PRIVATE_KEY_PATH="$AO_DATA_DIR/cloud-local/github-app.private-key.pem"
+export AO_GITHUB_APP_CLIENT_SECRET="github-app-client-secret"
 export AO_GITHUB_APP_WEBHOOK_SECRET="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 export AO_GITHUB_APP_STATE_SECRET="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 export AO_LOCAL_GITHUB_TOKEN="must-be-cleared"
@@ -43,6 +44,7 @@ gh() {
 require_github_app_env
 [[ "$AO_GITHUB_APP_ID" == "4475070" ]]
 [[ "$AO_GITHUB_APP_CLIENT_ID" == "Iv23liLaAnXMSyGGzVl4" ]]
+[[ "$AO_GITHUB_APP_CLIENT_SECRET" == "github-app-client-secret" ]]
 [[ "$AO_GITHUB_APP_SLUG" == "ao-cloud-test" ]]
 [[ "$AO_GITHUB_AUTH_MODE" == "github-app" ]]
 [[ -z "$AO_LOCAL_GITHUB_TOKEN" ]]
@@ -64,6 +66,7 @@ done
 
 AO_GITHUB_APP_ID="should-be-cleared"
 AO_GITHUB_APP_CLIENT_ID="should-be-cleared"
+AO_GITHUB_APP_CLIENT_SECRET="should-be-cleared"
 AO_GITHUB_APP_SLUG="should-be-cleared"
 AO_GITHUB_APP_PRIVATE_KEY_PATH="/should-be-cleared"
 AO_GITHUB_APP_WEBHOOK_SECRET="should-be-cleared"
@@ -73,6 +76,7 @@ configure_local_github >/dev/null
 [[ "$AO_LOCAL_GITHUB_TOKEN" == "local-test-token" ]]
 [[ -z "$AO_GITHUB_APP_ID" ]]
 [[ -z "$AO_GITHUB_APP_CLIENT_ID" ]]
+[[ -z "$AO_GITHUB_APP_CLIENT_SECRET" ]]
 [[ -z "$AO_GITHUB_APP_SLUG" ]]
 [[ -z "$AO_GITHUB_APP_PRIVATE_KEY_PATH" ]]
 [[ -z "$AO_GITHUB_APP_WEBHOOK_SECRET" ]]

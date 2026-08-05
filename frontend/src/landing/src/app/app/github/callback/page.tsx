@@ -15,10 +15,16 @@ const githubSettingsPath = "/app?settings=github";
 
 export default function GitHubCallbackPage() {
   const router = useRouter();
-  const { session, status } = useAuth();
+  const { session, status, refreshSession } = useAuth();
   const api = useMemo(
-    () => (session?.accessToken ? new CloudAPI(session.accessToken) : null),
-    [session?.accessToken],
+    () =>
+      session?.accessToken
+        ? new CloudAPI(
+            session.accessToken,
+            async () => (await refreshSession())?.accessToken ?? null,
+          )
+        : null,
+    [refreshSession, session?.accessToken],
   );
   const loadStarted = useRef(false);
   const [phase, setPhase] = useState<

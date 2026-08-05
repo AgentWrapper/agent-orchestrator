@@ -143,12 +143,13 @@ configure_local_github() {
   AO_GITHUB_AUTH_MODE="local-gh"
   AO_GITHUB_APP_ID=""
   AO_GITHUB_APP_CLIENT_ID=""
+  AO_GITHUB_APP_CLIENT_SECRET=""
   AO_GITHUB_APP_SLUG=""
   AO_GITHUB_APP_PRIVATE_KEY_PATH=""
   AO_GITHUB_APP_WEBHOOK_SECRET=""
   AO_GITHUB_APP_STATE_SECRET=""
   export AO_GITHUB_AUTH_MODE
-  export AO_GITHUB_APP_ID AO_GITHUB_APP_CLIENT_ID AO_GITHUB_APP_SLUG
+  export AO_GITHUB_APP_ID AO_GITHUB_APP_CLIENT_ID AO_GITHUB_APP_CLIENT_SECRET AO_GITHUB_APP_SLUG
   export AO_GITHUB_APP_PRIVATE_KEY_PATH AO_GITHUB_APP_WEBHOOK_SECRET AO_GITHUB_APP_STATE_SECRET
 
   if ! command -v gh >/dev/null 2>&1; then
@@ -183,6 +184,7 @@ require_github_app_env() {
   local missing=()
   [[ "${AO_GITHUB_APP_ID:-}" == "$github_app_id" ]] || missing+=("AO_GITHUB_APP_ID=$github_app_id")
   [[ "${AO_GITHUB_APP_CLIENT_ID:-}" == "$github_app_client_id" ]] || missing+=("AO_GITHUB_APP_CLIENT_ID=$github_app_client_id")
+  [[ -n "${AO_GITHUB_APP_CLIENT_SECRET:-}" ]] || missing+=("AO_GITHUB_APP_CLIENT_SECRET")
   [[ "${AO_GITHUB_APP_SLUG:-}" == "$github_app_slug" ]] || missing+=("AO_GITHUB_APP_SLUG=$github_app_slug")
   [[ -n "${AO_GITHUB_APP_WEBHOOK_SECRET:-}" ]] || missing+=("AO_GITHUB_APP_WEBHOOK_SECRET")
   [[ -n "${AO_GITHUB_APP_STATE_SECRET:-}" ]] || missing+=("AO_GITHUB_APP_STATE_SECRET")
@@ -245,7 +247,7 @@ require_github_app_env() {
   AO_LOCAL_GITHUB_TOKEN=""
   AO_GITHUB_APP_PRIVATE_KEY_PATH="$private_key_path"
   export AO_GITHUB_AUTH_MODE AO_LOCAL_GITHUB_TOKEN AO_GITHUB_APP_PRIVATE_KEY_PATH
-  export AO_GITHUB_APP_WEBHOOK_SECRET AO_GITHUB_APP_STATE_SECRET
+  export AO_GITHUB_APP_CLIENT_SECRET AO_GITHUB_APP_WEBHOOK_SECRET AO_GITHUB_APP_STATE_SECRET
 }
 
 configure_github_profile() {

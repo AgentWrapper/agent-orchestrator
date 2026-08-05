@@ -23,6 +23,8 @@ const (
 	DefaultAPIBaseURL = "https://api.github.com"
 	// DefaultGraphQLURL is GitHub's public GraphQL API endpoint.
 	DefaultGraphQLURL = "https://api.github.com/graphql"
+	// DefaultOAuthBaseURL is GitHub's user authorization origin.
+	DefaultOAuthBaseURL = "https://github.com"
 	// APIVersion is the GitHub REST API version requested by this client.
 	APIVersion = "2022-11-28"
 
@@ -40,9 +42,10 @@ type Config struct {
 	PrivateKeyPEM []byte
 
 	// APIBaseURL and GraphQLURL may be overridden for GitHub Enterprise or tests.
-	APIBaseURL string
-	GraphQLURL string
-	HTTPClient *http.Client
+	APIBaseURL   string
+	GraphQLURL   string
+	OAuthBaseURL string
+	HTTPClient   *http.Client
 
 	RequestTimeout     time.Duration
 	MaxResponseBytes   int64
@@ -60,6 +63,7 @@ type Client struct {
 	privateKey        *rsa.PrivateKey
 	apiBaseURL        *url.URL
 	graphQLURL        *url.URL
+	oauthBaseURL      *url.URL
 	http              *http.Client
 	requestTimeout    time.Duration
 	maxResponseBytes  int64
@@ -84,6 +88,10 @@ func New(config Config) (*Client, error) {
 		return nil, err
 	}
 	graphQLURL, err := parseBaseURL(config.GraphQLURL, DefaultGraphQLURL, "GitHub GraphQL")
+	if err != nil {
+		return nil, err
+	}
+	oauthBaseURL, err := parseBaseURL(config.OAuthBaseURL, DefaultOAuthBaseURL, "GitHub OAuth base")
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +142,7 @@ func New(config Config) (*Client, error) {
 		privateKey:        key,
 		apiBaseURL:        apiBaseURL,
 		graphQLURL:        graphQLURL,
+		oauthBaseURL:      oauthBaseURL,
 		http:              httpClient,
 		requestTimeout:    requestTimeout,
 		maxResponseBytes:  maxResponseBytes,

@@ -59,6 +59,7 @@ type Config struct {
 	GitHubAuthMode           string
 	GitHubAppID              int64
 	GitHubAppClientID        string
+	GitHubAppClientSecret    string
 	GitHubAppSlug            string
 	GitHubAppPrivateKeyPEM   []byte
 	GitHubAppWebhookSecret   string
@@ -131,6 +132,7 @@ func Load() (Config, error) {
 		GitHubAuthMode:           gitHubAuthMode,
 		GitHubAppID:              gitHubAppID,
 		GitHubAppClientID:        strings.TrimSpace(os.Getenv("AO_GITHUB_APP_CLIENT_ID")),
+		GitHubAppClientSecret:    strings.TrimSpace(os.Getenv("AO_GITHUB_APP_CLIENT_SECRET")),
 		GitHubAppSlug:            strings.TrimSpace(os.Getenv("AO_GITHUB_APP_SLUG")),
 		GitHubAppPrivateKeyPEM:   gitHubAppPrivateKey,
 		GitHubAppWebhookSecret:   strings.TrimSpace(os.Getenv("AO_GITHUB_APP_WEBHOOK_SECRET")),
@@ -223,6 +225,9 @@ func (c Config) Validate() error {
 		}
 		if strings.TrimSpace(c.GitHubAppClientID) == "" {
 			return errors.New("AO_GITHUB_APP_CLIENT_ID is required")
+		}
+		if strings.TrimSpace(c.GitHubAppClientSecret) == "" {
+			return errors.New("AO_GITHUB_APP_CLIENT_SECRET is required")
 		}
 		if strings.TrimSpace(c.GitHubAppSlug) == "" {
 			return errors.New("AO_GITHUB_APP_SLUG is required")

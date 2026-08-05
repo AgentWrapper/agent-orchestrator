@@ -283,6 +283,9 @@ func TestLoadAcceptsArbitraryGitHubAppConfiguration(t *testing.T) {
 	if cfg.GitHubAppClientID != "Iv_production_client" {
 		t.Fatalf("GitHubAppClientID = %q", cfg.GitHubAppClientID)
 	}
+	if cfg.GitHubAppClientSecret != "github-app-client-secret" {
+		t.Fatalf("GitHubAppClientSecret was not loaded")
+	}
 	if cfg.GitHubAppSlug != "ao-cloud-production" {
 		t.Fatalf("GitHubAppSlug = %q", cfg.GitHubAppSlug)
 	}
@@ -304,6 +307,7 @@ func TestLoadRejectsMissingGitHubAppIdentity(t *testing.T) {
 	}{
 		{name: "app ID", env: "AO_GITHUB_APP_ID", value: "0", want: "AO_GITHUB_APP_ID"},
 		{name: "client ID", env: "AO_GITHUB_APP_CLIENT_ID", value: "", want: "AO_GITHUB_APP_CLIENT_ID"},
+		{name: "client secret", env: "AO_GITHUB_APP_CLIENT_SECRET", value: "", want: "AO_GITHUB_APP_CLIENT_SECRET"},
 		{name: "slug", env: "AO_GITHUB_APP_SLUG", value: "", want: "AO_GITHUB_APP_SLUG"},
 	}
 	for _, test := range tests {
@@ -405,6 +409,7 @@ func configureGitHubApp(t *testing.T) string {
 	t.Setenv("AO_GITHUB_AUTH_MODE", "github-app")
 	t.Setenv("AO_GITHUB_APP_ID", "4475070")
 	t.Setenv("AO_GITHUB_APP_CLIENT_ID", "Iv23liLaAnXMSyGGzVl4")
+	t.Setenv("AO_GITHUB_APP_CLIENT_SECRET", "github-app-client-secret")
 	t.Setenv("AO_GITHUB_APP_SLUG", "ao-cloud-test")
 	t.Setenv("AO_GITHUB_APP_PRIVATE_KEY_PATH", privateKeyPath)
 	t.Setenv("AO_GITHUB_APP_WEBHOOK_SECRET", strings.Repeat("a", 64))

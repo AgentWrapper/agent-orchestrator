@@ -43,6 +43,23 @@ export interface CloudGitHubConnection {
   repositories: CloudGitHubGrantedRepository[];
 }
 
+export interface CloudGitHubUserInstallation {
+  githubInstallationId: number;
+  accountLogin: string;
+  accountType: string;
+  repositorySelection: string;
+  canCreateRepository: boolean;
+  unavailableReason?: string;
+}
+
+export interface CloudGitHubUserConnection {
+  connected: boolean;
+  login?: string;
+  avatarUrl?: string;
+  installations: CloudGitHubUserInstallation[];
+  lastSyncedAt?: string;
+}
+
 export interface CloudGitHubPendingInstallation {
   accountLogin: string;
   accountType: string;
@@ -317,14 +334,19 @@ export class CloudAPIError extends Error {
 
 export class CloudAPI {
   readonly baseURL: string;
-  readonly accessToken: string;
+  accessToken: string;
+  readonly refreshAccessToken?: () => Promise<string | null>;
 
-  constructor(accessToken: string) {
+  constructor(
+    accessToken: string,
+    refreshAccessToken?: () => Promise<string | null>,
+  ) {
     if (!env.NEXT_PUBLIC_API_URL) {
       throw new Error("NEXT_PUBLIC_API_URL is not configured.");
     }
     this.baseURL = env.NEXT_PUBLIC_API_URL.replace(/\/+$/, "");
     this.accessToken = accessToken;
+    this.refreshAccessToken = refreshAccessToken;
   }
 
   static async signUp(input: {
@@ -475,6 +497,28 @@ export class CloudAPI {
     return this.request<CloudGitHubConnection>(
       this.orgPath(orgId, "/github"),
     );
+  }
+
+  async githubUserConnection() {
+    return this.request<CloudGitHubUserConnection>("/github/user");
+  }
+
+  async startGitHubUserAuthorization() {
+    return this.request<{ authorizeUrl: string }>("/github/user/authorize", {
+      method: "POST",
+      body: {},
+    });
+  }
+
+  async syncGitHubUserConnection() {
+    return this.request<CloudGitHubUserConnection>("/github/user/sync", {
+      method: "POST",
+      body: {},
+    });
+  }
+
+  async disconnectGitHubUser() {
+    return this.request<void>("/github/user", { method: "DELETE" });
   }
 
   async startGitHubInstall(orgId: string) {
@@ -908,16 +952,14 @@ export class CloudAPI {
     path: string,
     options: FetchOptions = {},
   ): Promise<T> {
-    const headers = new Headers(options.headers);
-    headers.set("Authorization", `Bearer ${this.accessToken}`);
-    if (options.body !== undefined)
-      headers.set("Content-Type", "application/json");
-    const response = await fetch(this.baseURL + path, {
-      ...options,
-      headers,
-      body:
-        options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
+    let response = await this.fetchWithAccessToken(path, options);
+    if (response.status === 401 && this.refreshAccessToken) {
+      const refreshed = await this.refreshAccessToken().catch(() => null);
+      if (refreshed) {
+        this.accessToken = refreshed;
+        response = await this.fetchWithAccessToken(path, options);
+      }
+    }
     if (!response.ok) {
       const failure = (await response.json().catch(() => null)) as {
         message?: string;
@@ -932,5 +974,18 @@ export class CloudAPI {
     }
     if (response.status === 204) return undefined as T;
     return (await response.json()) as T;
+  }
+
+  private fetchWithAccessToken(path: string, options: FetchOptions) {
+    const headers = new Headers(options.headers);
+    headers.set("Authorization", `Bearer ${this.accessToken}`);
+    if (options.body !== undefined)
+      headers.set("Content-Type", "application/json");
+    return fetch(this.baseURL + path, {
+      ...options,
+      headers,
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
   }
 }

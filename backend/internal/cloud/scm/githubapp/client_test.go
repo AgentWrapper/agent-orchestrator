@@ -509,6 +509,152 @@ func TestGraphQLErrorsAreReturned(t *testing.T) {
 	}
 }
 
+func TestGitHubUserAuthorizationExchangeAndDiscovery(t *testing.T) {
+	now := time.Date(2026, 8, 5, 14, 0, 0, 0, time.UTC)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/login/oauth/access_token":
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("ParseForm: %v", err)
+				http.Error(w, "bad form", http.StatusBadRequest)
+				return
+			}
+			if r.Form.Get("client_id") != "client-id" ||
+				r.Form.Get("client_secret") != "client-secret" ||
+				r.Form.Get("code") != "authorization-code" ||
+				r.Form.Get("code_verifier") != "pkce-verifier" {
+				t.Errorf("unexpected OAuth form: %#v", r.Form)
+			}
+			_, _ = w.Write([]byte(`{
+				"access_token":"github_pat_secret",
+				"expires_in":28800,
+				"refresh_token":"github_refresh_secret",
+				"refresh_token_expires_in":15811200
+			}`))
+		case "/api/v3/user":
+			if r.Header.Get("Authorization") != "Bearer github_pat_secret" {
+				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{"id":7,"login":"amoreX","avatar_url":"https://avatars.example/7"}`))
+		case "/api/v3/user/installations":
+			if r.Header.Get("Authorization") != "Bearer github_pat_secret" {
+				t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{"installations":[{
+				"id":42,
+				"app_id":123456,
+				"client_id":"client-id",
+				"account":{"id":7,"login":"amoreX","type":"User"},
+				"repository_selection":"all",
+				"permissions":{"administration":"write"}
+			}]}`))
+		default:
+			http.Error(w, "unexpected route", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL, Config{Now: func() time.Time { return now }})
+	token, err := client.ExchangeUserCode(
+		context.Background(),
+		"client-id",
+		"client-secret",
+		"authorization-code",
+		"https://cloud.example/api/cloud/v1/github/user/callback",
+		"pkce-verifier",
+	)
+	if err != nil {
+		t.Fatalf("ExchangeUserCode: %v", err)
+	}
+	if token.Token() != "github_pat_secret" ||
+		token.RefreshToken() != "github_refresh_secret" ||
+		token.ExpiresAt == nil ||
+		!token.ExpiresAt.Equal(now.Add(8*time.Hour)) {
+		t.Fatalf("unexpected token metadata: %#v", token)
+	}
+	if strings.Contains(fmt.Sprintf("%v %#v", token, token), "secret") {
+		t.Fatal("user token formatting leaked credential")
+	}
+	user, err := client.GetUser(context.Background(), token.Token())
+	if err != nil || user.ID != 7 || user.Login != "amoreX" {
+		t.Fatalf("GetUser = %#v, %v", user, err)
+	}
+	installations, err := client.ListUserInstallations(context.Background(), token.Token())
+	if err != nil || len(installations) != 1 ||
+		installations[0].Account.Login != "amoreX" {
+		t.Fatalf("ListUserInstallations = %#v, %v", installations, err)
+	}
+}
+
+func TestCreateRepositoryAsUserSupportsPersonalAndOrganizationOwners(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodDelete {
+			if strings.Contains(r.URL.Path, "/applications/") {
+				username, password, ok := r.BasicAuth()
+				if !ok || username != "client-id" || password != "client-secret" {
+					t.Errorf("unexpected revocation Basic auth")
+				}
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		var input struct {
+			Name     string `json:"name"`
+			AutoInit bool   `json:"auto_init"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Errorf("decode repository request: %v", err)
+			return
+		}
+		if input.Name != "scratch-app" || !input.AutoInit {
+			t.Errorf("repository input = %#v", input)
+		}
+		_, _ = w.Write([]byte(`{
+			"id":991,
+			"name":"scratch-app",
+			"full_name":"owner/scratch-app",
+			"html_url":"https://github.com/owner/scratch-app",
+			"clone_url":"https://github.com/owner/scratch-app.git",
+			"default_branch":"main",
+			"owner":{"id":7,"login":"owner","type":"User"}
+		}`))
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, Config{})
+
+	if _, err := client.CreateRepositoryAsUser(
+		context.Background(), "user-token", "owner", "User", "scratch-app", true,
+	); err != nil {
+		t.Fatalf("create personal repository: %v", err)
+	}
+	if _, err := client.CreateRepositoryAsUser(
+		context.Background(), "user-token", "aoagents", "Organization", "scratch-app", true,
+	); err != nil {
+		t.Fatalf("create organization repository: %v", err)
+	}
+	if err := client.DeleteRepositoryAsUser(
+		context.Background(), "user-token", "owner", "scratch-app",
+	); err != nil {
+		t.Fatalf("delete repository: %v", err)
+	}
+	if err := client.RevokeUserAuthorization(
+		context.Background(), "client-id", "client-secret", "user-token",
+	); err != nil {
+		t.Fatalf("revoke user authorization: %v", err)
+	}
+	want := []string{
+		"POST /api/v3/user/repos",
+		"POST /api/v3/orgs/aoagents/repos",
+		"DELETE /api/v3/repos/owner/scratch-app",
+		"DELETE /api/v3/applications/client-id/grant",
+	}
+	if fmt.Sprint(paths) != fmt.Sprint(want) {
+		t.Fatalf("paths = %#v, want %#v", paths, want)
+	}
+}
+
 func newTestClient(t *testing.T, serverURL string, override Config) *Client {
 	t.Helper()
 	_, encoded := testRSAKey(t)
@@ -517,6 +663,7 @@ func newTestClient(t *testing.T, serverURL string, override Config) *Client {
 	config.PrivateKeyPEM = encoded
 	config.APIBaseURL = serverURL + "/api/v3"
 	config.GraphQLURL = serverURL + "/api/graphql"
+	config.OAuthBaseURL = serverURL
 	client, err := New(config)
 	if err != nil {
 		t.Fatalf("New: %v", err)

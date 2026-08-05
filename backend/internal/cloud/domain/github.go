@@ -25,6 +25,39 @@ type GitHubInstallAttempt struct {
 	CreatedAt                   time.Time       `json:"createdAt"`
 }
 
+// GitHubUserAuthAttempt is a short-lived, single-use GitHub user authorization
+// request. OAuth state and the PKCE verifier are never persisted in plaintext.
+type GitHubUserAuthAttempt struct {
+	ID                    string     `json:"id"`
+	UserID                UserID     `json:"userId"`
+	StateHash             []byte     `json:"-"`
+	CodeVerifierEncrypted []byte     `json:"-"`
+	CodeVerifierNonce     []byte     `json:"-"`
+	ExpiresAt             time.Time  `json:"expiresAt"`
+	ConsumedAt            *time.Time `json:"consumedAt,omitempty"`
+	CreatedAt             time.Time  `json:"createdAt"`
+}
+
+// GitHubUserConnection is AO's encrypted, account-wide authorization to act as
+// one GitHub user. Its credentials are control-plane-only.
+type GitHubUserConnection struct {
+	UserID                UserID     `json:"userId"`
+	GitHubUserID          int64      `json:"githubUserId"`
+	GitHubLogin           string     `json:"githubLogin"`
+	GitHubAvatarURL       string     `json:"githubAvatarUrl,omitempty"`
+	AccessTokenEncrypted  []byte     `json:"-"`
+	AccessTokenNonce      []byte     `json:"-"`
+	AccessTokenExpiresAt  *time.Time `json:"accessTokenExpiresAt,omitempty"`
+	RefreshTokenEncrypted []byte     `json:"-"`
+	RefreshTokenNonce     []byte     `json:"-"`
+	RefreshTokenExpiresAt *time.Time `json:"refreshTokenExpiresAt,omitempty"`
+	Status                string     `json:"status"`
+	LastSyncedAt          time.Time  `json:"lastSyncedAt"`
+	RevokedAt             *time.Time `json:"revokedAt,omitempty"`
+	CreatedAt             time.Time  `json:"createdAt"`
+	UpdatedAt             time.Time  `json:"updatedAt"`
+}
+
 // GitHubPendingInstallation is the provider-verified installation summary an
 // AO administrator must review before the installation can be bound.
 type GitHubPendingInstallation struct {

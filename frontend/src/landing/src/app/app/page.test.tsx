@@ -15,6 +15,7 @@ import {
 import CloudAppPage, { SessionBoard } from "./page";
 
 const apiMocks = vi.hoisted(() => ({
+  refreshAuthSession: vi.fn(),
   me: vi.fn(),
   projects: vi.fn(),
   sessions: vi.fn(),
@@ -24,6 +25,10 @@ const apiMocks = vi.hoisted(() => ({
   workspaceFiles: vi.fn(),
   repositories: vi.fn(),
   githubConnection: vi.fn(),
+  githubUserConnection: vi.fn(),
+  startGitHubUserAuthorization: vi.fn(),
+  syncGitHubUserConnection: vi.fn(),
+  disconnectGitHubUser: vi.fn(),
   startGitHubInstall: vi.fn(),
   syncGitHub: vi.fn(),
   disconnectGitHubInstallation: vi.fn(),
@@ -75,6 +80,10 @@ vi.mock("@/lib/cloud-api", () => ({
     workspaceFiles = apiMocks.workspaceFiles;
     repositories = apiMocks.repositories;
     githubConnection = apiMocks.githubConnection;
+    githubUserConnection = apiMocks.githubUserConnection;
+    startGitHubUserAuthorization = apiMocks.startGitHubUserAuthorization;
+    syncGitHubUserConnection = apiMocks.syncGitHubUserConnection;
+    disconnectGitHubUser = apiMocks.disconnectGitHubUser;
     startGitHubInstall = apiMocks.startGitHubInstall;
     syncGitHub = apiMocks.syncGitHub;
     disconnectGitHubInstallation = apiMocks.disconnectGitHubInstallation;
@@ -119,6 +128,7 @@ vi.mock("../auth/AuthProvider", () => ({
     status: "authenticated",
     login: vi.fn(),
     logout: vi.fn(),
+    refreshSession: apiMocks.refreshAuthSession,
   }),
 }));
 
@@ -185,6 +195,14 @@ beforeEach(() => {
   window.localStorage.clear();
   window.history.replaceState({}, "", "/app");
   vi.clearAllMocks();
+  apiMocks.refreshAuthSession.mockResolvedValue({
+    accessToken: "test-token",
+    user: {
+      id: "user-one",
+      email: "user@example.com",
+      displayName: "User",
+    },
+  });
   apiMocks.me.mockResolvedValue({
     user: {
       id: "user-one",
@@ -232,6 +250,31 @@ beforeEach(() => {
     installations: [],
     repositories: [],
   });
+  apiMocks.githubUserConnection.mockResolvedValue({
+    connected: true,
+    login: "aoagents",
+    installations: [
+      {
+        githubInstallationId: 42,
+        accountLogin: "aoagents",
+        accountType: "Organization",
+        repositorySelection: "all",
+        canCreateRepository: true,
+      },
+    ],
+  });
+  apiMocks.githubUserConnection.mockResolvedValue({
+    connected: false,
+    installations: [],
+  });
+  apiMocks.startGitHubUserAuthorization.mockResolvedValue({
+    authorizeUrl: "https://github.com/login/oauth/authorize",
+  });
+  apiMocks.syncGitHubUserConnection.mockResolvedValue({
+    connected: false,
+    installations: [],
+  });
+  apiMocks.disconnectGitHubUser.mockResolvedValue(undefined);
   apiMocks.startGitHubInstall.mockResolvedValue({
     installUrl: "https://github.com/apps/ao-cloud/installations/new",
   });
@@ -378,7 +421,7 @@ it("loads GitHub repositories only when the project form opens", async () => {
 
   fireEvent.click(addProject);
 
-  expect(await screen.findByText("GitHub not connected.")).toBeVisible();
+  expect(await screen.findByText("GitHub account not connected.")).toBeVisible();
   expect(apiMocks.repositories).toHaveBeenCalledTimes(1);
   expect(
     screen.getByRole("button", {
@@ -399,7 +442,7 @@ it("opens the project dialog before provider settings when no agent is connected
   expect(
     await screen.findByRole("dialog", { name: "Add cloud project" }),
   ).toBeVisible();
-  expect(screen.getByText("GitHub not connected.")).toBeVisible();
+  expect(screen.getByText("GitHub account not connected.")).toBeVisible();
   expect(
     screen.queryByRole("heading", { name: "Provider connections" }),
   ).not.toBeInTheDocument();
@@ -427,6 +470,19 @@ it("creates a scratch project through the connected GitHub installation", async 
       },
     ],
     repositories: [],
+  });
+  apiMocks.githubUserConnection.mockResolvedValue({
+    connected: true,
+    login: "aoagents",
+    installations: [
+      {
+        githubInstallationId: 42,
+        accountLogin: "aoagents",
+        accountType: "Organization",
+        repositorySelection: "all",
+        canCreateRepository: true,
+      },
+    ],
   });
   apiMocks.createScratchProject.mockResolvedValue({
     project: scratchProject,
@@ -498,6 +554,33 @@ it("creates a scratch project in the selected connected organization", async () 
     ],
     repositories: [],
   });
+  apiMocks.githubUserConnection.mockResolvedValue({
+    connected: true,
+    login: "amoreX",
+    installations: [
+      {
+        githubInstallationId: 41,
+        accountLogin: "amoreX",
+        accountType: "User",
+        repositorySelection: "all",
+        canCreateRepository: true,
+      },
+      {
+        githubInstallationId: 42,
+        accountLogin: "rae-app",
+        accountType: "Organization",
+        repositorySelection: "all",
+        canCreateRepository: true,
+      },
+      {
+        githubInstallationId: 43,
+        accountLogin: "unordinarytech",
+        accountType: "Organization",
+        repositorySelection: "all",
+        canCreateRepository: true,
+      },
+    ],
+  });
   apiMocks.createScratchProject.mockResolvedValue({
     project: {
       ...project,
@@ -527,12 +610,18 @@ it("creates a scratch project in the selected connected organization", async () 
   fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
 
   const ownerSelect = screen.getByRole("combobox", {
-    name: "GitHub organization",
+    name: "GitHub owner",
   });
-  expect(within(ownerSelect).queryByRole("option", { name: "amoreX" })).toBeNull();
-  expect(within(ownerSelect).getByRole("option", { name: "rae-app" })).toBeVisible();
   expect(
-    within(ownerSelect).getByRole("option", { name: "unordinarytech" }),
+    within(ownerSelect).getByRole("option", { name: "amoreX · personal" }),
+  ).toBeVisible();
+  expect(
+    within(ownerSelect).getByRole("option", { name: "rae-app · organization" }),
+  ).toBeVisible();
+  expect(
+    within(ownerSelect).getByRole("option", {
+      name: "unordinarytech · organization",
+    }),
   ).toBeVisible();
 
   fireEvent.change(ownerSelect, { target: { value: "43" } });
@@ -851,7 +940,7 @@ it("shows local GitHub authentication as locally managed without app controls", 
   ).not.toBeInTheDocument();
 });
 
-it("keeps GitHub App connection status read-only for members", async () => {
+it("lets members manage their account-wide GitHub identity", async () => {
   apiMocks.me.mockResolvedValue({
     user: {
       id: "user-one",
@@ -881,6 +970,19 @@ it("keeps GitHub App connection status read-only for members", async () => {
     ],
     repositories: [],
   });
+  apiMocks.githubUserConnection.mockResolvedValue({
+    connected: true,
+    login: "aoagents",
+    installations: [
+      {
+        githubInstallationId: 42,
+        accountLogin: "aoagents",
+        accountType: "Organization",
+        repositorySelection: "all",
+        canCreateRepository: true,
+      },
+    ],
+  });
 
   render(<CloudAppPage />);
 
@@ -889,14 +991,11 @@ it("keeps GitHub App connection status read-only for members", async () => {
     await screen.findByRole("button", { name: "Provider connections" }),
   );
 
-  expect(await screen.findByText("aoagents")).toBeVisible();
-  expect(screen.getByText("Read only")).toBeVisible();
+  expect((await screen.findAllByText("aoagents")).length).toBeGreaterThan(0);
   expect(
-    screen.queryByRole("button", { name: /Connect/ }),
+    screen.queryByRole("button", { name: "Install on another account" }),
   ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Disconnect" }),
-  ).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Disconnect" })).toBeVisible();
 });
 
 it("opens provider settings when returning from the GitHub callback", async () => {
@@ -904,7 +1003,7 @@ it("opens provider settings when returning from the GitHub callback", async () =
 
   render(<CloudAppPage />);
 
-  expect(await screen.findByText("GitHub App not connected")).toBeVisible();
+  expect(await screen.findByText("GitHub account not connected")).toBeVisible();
   expect(screen.getByText("Coding agents")).toBeVisible();
   expect(window.location.search).toBe("");
 });

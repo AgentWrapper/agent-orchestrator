@@ -381,16 +381,11 @@ func bindGitHubInstallation(
 			account_type, status, repository_selection, permissions, events,
 			installed_by_user_id, suspended_at, disconnected_at, deleted_at
 		)
-		SELECT
+		VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
 			CASE WHEN $6 = 'suspended' THEN now() END,
 			CASE WHEN $6 = 'disconnected' THEN now() END,
 			CASE WHEN $6 = 'deleted' THEN now() END
-		WHERE NOT EXISTS (
-			SELECT 1
-			FROM ao_github_installations
-			WHERE github_installation_id = $2
-				AND installed_by_user_id <> $10
 		)
 		ON CONFLICT (org_id, github_installation_id) DO UPDATE
 		SET github_account_id = EXCLUDED.github_account_id,
@@ -400,13 +395,10 @@ func bindGitHubInstallation(
 			repository_selection = EXCLUDED.repository_selection,
 			permissions = EXCLUDED.permissions,
 			events = EXCLUDED.events,
-			installed_by_user_id = EXCLUDED.installed_by_user_id,
 			suspended_at = EXCLUDED.suspended_at,
 			disconnected_at = EXCLUDED.disconnected_at,
 			deleted_at = EXCLUDED.deleted_at,
 			updated_at = now()
-		WHERE ao_github_installations.installed_by_user_id =
-			EXCLUDED.installed_by_user_id
 		RETURNING id, org_id, github_installation_id, github_account_id,
 			account_login, account_type, status, repository_selection, permissions,
 			events, installed_by_user_id, suspended_at, disconnected_at, deleted_at,
@@ -414,9 +406,6 @@ func bindGitHubInstallation(
 	`, orgID, input.InstallationID, input.AccountID, input.AccountLogin,
 		input.AccountType, input.Status, input.RepositorySelection, input.Permissions,
 		input.Events, userID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return clouddomain.GitHubInstallation{}, ErrGitHubInstallationConflict
-	}
 	if err != nil {
 		return clouddomain.GitHubInstallation{}, fmt.Errorf("bind GitHub installation: %w", err)
 	}

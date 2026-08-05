@@ -146,13 +146,21 @@ In the GitHub App settings, configure:
 
 ```text
 Homepage URL: http://127.0.0.1:5174
+Callback URL: http://127.0.0.1:3010/api/cloud/v1/github/user/callback
 Setup URL:    http://127.0.0.1:3010/api/cloud/v1/github/install/callback
 ```
 
-That second field is the **Setup URL**, under post-installation settings. It is
-not a GitHub OAuth callback URL. Leave GitHub user OAuth unconfigured and leave
-“Request user authorization (OAuth) during installation” disabled. AO does not
-request GitHub user authorization in this flow.
+Enable **Expire user authorization tokens**. AO starts its explicit
+authorization-code + PKCE flow from Settings, so **Request user authorization
+(OAuth) during installation** may remain disabled. Generate a client secret in
+the App settings and add it to `.env.cloud.local`:
+
+```bash
+AO_GITHUB_APP_CLIENT_SECRET=<GitHub App client secret>
+```
+
+The secret is required only by the control plane and must never be added to the
+browser environment or committed.
 
 Enable the webhook and keep SSL verification on. The Webhook URL is not fixed:
 `npm run cloud:workos` and `npm run cloud:workos:gated` start a Cloudflare Quick
@@ -162,6 +170,7 @@ Tunnel and print the full dynamic URL to use. It ends in
 Set these repository permissions:
 
 ```text
+Administration:  Read and write
 Contents:        Read and write
 Issues:          Read-only
 Pull requests:   Read and write
@@ -174,6 +183,7 @@ Metadata:        Read-only (implicit)
 Subscribe to these events:
 
 ```text
+github_app_authorization
 installation
 installation_repositories
 pull_request
@@ -198,7 +208,8 @@ brew install cloudflared
 ```
 
 On first run, the runner generates `AO_GITHUB_APP_STATE_SECRET` and
-`AO_GITHUB_APP_WEBHOOK_SECRET` in `.env.cloud.local`.
+`AO_GITHUB_APP_WEBHOOK_SECRET` in `.env.cloud.local`. It cannot generate the
+GitHub client secret; copy that value from the App settings first.
 
 Then run one of these:
 
@@ -225,14 +236,17 @@ AO-only and must not be entered in GitHub.
 
 ### Exercise the GitHub App flow
 
-1. Sign in to AO as an owner or admin, open **Settings → GitHub**, and select
-   **Connect GitHub**.
-2. On GitHub, choose the account and either all repositories or selected
-   repositories, then install the App. GitHub returns through the Setup URL.
-3. Review the server-verified account, account type, and repository count in AO,
-   then select **Confirm** to consume the signed, single-use install attempt.
-   Back in GitHub settings, select **Sync** and confirm the grants remain current.
-4. Create a project and verify its repository picker contains only an active
+1. Sign in to AO, open **Settings → GitHub**, and select **Connect GitHub**.
+   Authorize the App once. GitHub returns through the user Callback URL, and AO
+   shows the personal and organization installations visible to that user.
+2. If no installation is available, select **Install on another account**,
+   choose the account and repository access in GitHub, and complete the signed,
+   single-use Setup URL confirmation. Select **Sync** after returning.
+3. Create a scratch project. Verify the owner picker includes the authorized
+   personal account and organizations. Scratch creation requires an
+   all-repository installation; selected-repository installations show a
+   Configure action because GitHub cannot add the new repository automatically.
+4. Create an existing-repository project and verify its picker contains only an active
    grant. Create the project and start a session to exercise clone/fetch and SCM
    reads through the control-plane repository proxy.
 5. Select **Configure**, change the installation's selected repositories in
@@ -241,12 +255,11 @@ AO-only and must not be entered in GitHub.
 6. Select **Disconnect**, confirm the prompt, and verify that installation's
    grants are no longer available to new or running project operations.
 
-AO verifies that the install attempt was initiated by the current AO
-organization owner/admin and that the returned installation belongs to the
-configured App. Because this deliberately selected flow has no GitHub user
-OAuth, AO cannot cryptographically prove that the same GitHub human clicked
-Install. The initiating AO owner/admin must confirm the account and repository
-selection on GitHub before completing the installation.
+AO stores the GitHub user access and rotating refresh tokens encrypted with
+`AO_ENCRYPTION_KEY`. OAuth state is random, hashed at rest, single-use, and
+short-lived; the PKCE verifier is encrypted. AO revalidates scratch owners
+against GitHub at request time. Installation tokens remain separate and scoped
+to repository operations.
 
 In GitHub App mode, workers receive only AO worker credentials. The control
 plane checks the active organization/repository grant and mints a short-lived

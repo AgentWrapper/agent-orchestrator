@@ -265,6 +265,7 @@ func (s *Server) routes() http.Handler {
 		api.Get("/terminal", s.terminalSocket)
 		api.HandleFunc("/preview/{token}/*", s.workspacePreviewProxy)
 		api.Get("/github/install/callback", s.githubInstallCallback)
+		api.Get("/github/user/callback", s.githubUserCallback)
 		api.Post("/github/webhooks", s.githubWebhook)
 		api.Group(func(worker chi.Router) {
 			worker.Use(s.workerAuth)
@@ -298,6 +299,10 @@ func (s *Server) routes() http.Handler {
 			protected.Post("/invitations/{invitationId}/decline", s.declineInvitation)
 			protected.Get("/shares", s.listSharedProjects)
 			protected.Post("/share-links/{token}/redeem", s.redeemProjectShareLink)
+			protected.Get("/github/user", s.getGitHubUser)
+			protected.Post("/github/user/authorize", s.createGitHubUserAuthorization)
+			protected.Post("/github/user/sync", s.getGitHubUser)
+			protected.Delete("/github/user", s.deleteGitHubUser)
 			// Compatibility aliases for existing local tests/tools. The browser UI
 			// uses the explicit /orgs/{orgId}/... routes below.
 			protected.Get("/projects", s.listProjects)

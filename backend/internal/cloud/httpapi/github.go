@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,10 +36,8 @@ const (
 
 var githubEventNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
-// GitHubAppClient is the App-authenticated subset of the GitHub client used by
-// the install flow and durable webhook processor.
-// AO login remains the human identity boundary; this integration deliberately
-// does not add GitHub user OAuth.
+// GitHubAppClient is the App-authenticated subset used by installation and
+// durable webhook processing.
 type GitHubAppClient interface {
 	GetInstallation(context.Context, int64) (cloudgithubapp.Installation, error)
 	ListInstallationRepositories(context.Context, int64) ([]cloudgithubapp.Repository, error)
@@ -46,11 +45,31 @@ type GitHubAppClient interface {
 	DeleteRepository(context.Context, int64, string, string) error
 }
 
+// GitHubUserClient is the user-to-server subset used for account-wide
+// installation discovery and user-triggered repository creation.
+type GitHubUserClient interface {
+	UserAuthorizationURL(string, string, string, string) (string, error)
+	ExchangeUserCode(context.Context, string, string, string, string, string) (cloudgithubapp.UserAccessToken, error)
+	RefreshUserAccessToken(context.Context, string, string, string) (cloudgithubapp.UserAccessToken, error)
+	GetUser(context.Context, string) (cloudgithubapp.User, error)
+	ListUserInstallations(context.Context, string) ([]cloudgithubapp.Installation, error)
+	RevokeUserAuthorization(context.Context, string, string, string) error
+	CreateRepositoryAsUser(context.Context, string, string, string, string, bool) (cloudgithubapp.Repository, error)
+	DeleteRepositoryAsUser(context.Context, string, string, string) error
+}
+
 // RepositoryRefresh performs a canonical provider refresh for active SCM
 // targets linked to one organization repository.
 type RepositoryRefresh func(context.Context, clouddomain.OrgID, int64) error
 
 type githubStore interface {
+	CreateGitHubUserAuthAttempt(context.Context, clouddomain.UserID, []byte, []byte, []byte, time.Duration) (clouddomain.GitHubUserAuthAttempt, error)
+	GetGitHubUserAuthAttempt(context.Context, []byte) (clouddomain.GitHubUserAuthAttempt, error)
+	CompleteGitHubUserAuthorization(context.Context, string, cloudpostgres.GitHubUserConnectionInput) (clouddomain.GitHubUserConnection, error)
+	GitHubUserConnection(context.Context, clouddomain.UserID) (clouddomain.GitHubUserConnection, error)
+	UpdateGitHubUserConnectionTokens(context.Context, clouddomain.UserID, cloudpostgres.GitHubUserConnectionInput) (clouddomain.GitHubUserConnection, error)
+	DeleteGitHubUserConnection(context.Context, clouddomain.UserID) error
+	DeleteGitHubUserConnectionByGitHubID(context.Context, int64) error
 	CreateGitHubInstallAttempt(context.Context, clouddomain.OrgID, clouddomain.UserID, json.RawMessage, time.Duration) (string, clouddomain.GitHubInstallAttempt, error)
 	RecordPendingGitHubInstallation(context.Context, clouddomain.OrgID, clouddomain.UserID, string, cloudpostgres.GitHubPendingInstallationInput) (clouddomain.GitHubInstallAttempt, error)
 	GetPendingGitHubInstallation(context.Context, clouddomain.OrgID, clouddomain.UserID, string) (clouddomain.GitHubInstallAttempt, error)
@@ -75,10 +94,13 @@ type GitHubAppConfig struct {
 	Mode              string
 	AppID             int64
 	ClientID          string
+	ClientSecret      string
 	AppSlug           string
+	UserCallbackURL   string
 	StateSecret       []byte
 	WebhookSecret     []byte
 	Client            GitHubAppClient
+	UserClient        GitHubUserClient
 	RepositoryRefresh RepositoryRefresh
 	Now               func() time.Time
 	ProcessorInterval time.Duration
@@ -103,10 +125,13 @@ func WithGitHubApp(config GitHubAppConfig) Option {
 			mode:              strings.TrimSpace(config.Mode),
 			appID:             config.AppID,
 			clientID:          strings.TrimSpace(config.ClientID),
+			clientSecret:      strings.TrimSpace(config.ClientSecret),
 			appSlug:           strings.TrimSpace(config.AppSlug),
+			userCallbackURL:   strings.TrimSpace(config.UserCallbackURL),
 			stateSecret:       append([]byte(nil), config.StateSecret...),
 			webhookSecret:     append([]byte(nil), config.WebhookSecret...),
 			client:            config.Client,
+			userClient:        config.UserClient,
 			repositoryRefresh: config.RepositoryRefresh,
 			now:               now,
 			processorInterval: interval,
@@ -118,13 +143,17 @@ type githubAppRuntime struct {
 	mode              string
 	appID             int64
 	clientID          string
+	clientSecret      string
 	appSlug           string
+	userCallbackURL   string
 	stateSecret       []byte
 	webhookSecret     []byte
 	client            GitHubAppClient
+	userClient        GitHubUserClient
 	repositoryRefresh RepositoryRefresh
 	now               func() time.Time
 	processorInterval time.Duration
+	userTokenMu       sync.Mutex
 }
 
 type githubInstallState struct {
@@ -227,6 +256,7 @@ func (s *Server) createScratchProject(w http.ResponseWriter, r *http.Request) {
 	}
 	account, _ := accountFromContext(r.Context())
 	org, _ := orgFromContext(r.Context())
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
 	var input struct {
 		DisplayName          string `json:"displayName"`
 		GitHubInstallationID int64  `json:"githubInstallationId"`
@@ -261,27 +291,47 @@ func (s *Server) createScratchProject(w http.ResponseWriter, r *http.Request) {
 	if credential != nil {
 		credential.Secret = ""
 	}
-	installation, ok := s.selectScratchGitHubInstallation(w, r, org.Organization.ID, input.GitHubInstallationID)
+	installation, userToken, ok := s.selectScratchGitHubInstallation(
+		w,
+		r,
+		clouddomain.UserID(principal.UserID),
+		input.GitHubInstallationID,
+	)
 	if !ok {
+		return
+	}
+	if err := s.bindAndSyncGitHubInstallation(
+		r.Context(),
+		org.Organization.ID,
+		clouddomain.UserID(principal.UserID),
+		installation,
+	); err != nil {
+		s.internalError(w, r, "bind scratch GitHub owner", err)
 		return
 	}
 	private := true
 	if input.Private != nil {
 		private = *input.Private
 	}
-	repository, err := s.createScratchGitHubRepository(r.Context(), installation, displayName, private)
+	repository, err := s.createScratchGitHubRepository(
+		r.Context(),
+		userToken,
+		installation,
+		displayName,
+		private,
+	)
 	if err != nil {
 		var apiError *cloudgithubapp.APIError
 		if errors.As(err, &apiError) && apiError.StatusCode == http.StatusForbidden {
-			writeError(w, r, http.StatusForbidden, "GITHUB_REPOSITORY_CREATE_FORBIDDEN", "The GitHub App installation cannot create repositories for that account.")
+			writeError(w, r, http.StatusForbidden, "GITHUB_REPOSITORY_CREATE_FORBIDDEN", "Your GitHub account cannot create repositories for that owner.")
 			return
 		}
 		s.internalError(w, r, "create scratch GitHub repository", err)
 		return
 	}
-	synced, err := s.syncScratchRepositoryGrant(r.Context(), org.Organization.ID, installation.GitHubInstallationID, repository)
+	synced, err := s.syncScratchRepositoryGrant(r.Context(), org.Organization.ID, installation.ID, repository)
 	if err != nil {
-		s.cleanupScratchGitHubRepository(r.Context(), installation, repository)
+		s.cleanupScratchGitHubRepository(r.Context(), userToken, installation, repository)
 		s.internalError(w, r, "sync scratch GitHub repository grant", err)
 		return
 	}
@@ -298,12 +348,12 @@ func (s *Server) createScratchProject(w http.ResponseWriter, r *http.Request) {
 		Config:             json.RawMessage(`{"source":"scratch"}`),
 	})
 	if errors.Is(err, cloudpostgres.ErrProjectExists) {
-		s.cleanupScratchGitHubRepository(r.Context(), installation, repository)
+		s.cleanupScratchGitHubRepository(r.Context(), userToken, installation, repository)
 		writeError(w, r, http.StatusConflict, "PROJECT_EXISTS", "This repository is already registered.")
 		return
 	}
 	if err != nil {
-		s.cleanupScratchGitHubRepository(r.Context(), installation, repository)
+		s.cleanupScratchGitHubRepository(r.Context(), userToken, installation, repository)
 		s.internalError(w, r, "create scratch project", err)
 		return
 	}
@@ -327,7 +377,7 @@ func (s *Server) createScratchProject(w http.ResponseWriter, r *http.Request) {
 				)
 			}
 		}
-		s.cleanupScratchGitHubRepository(context.WithoutCancel(r.Context()), installation, repository)
+		s.cleanupScratchGitHubRepository(context.WithoutCancel(r.Context()), userToken, installation, repository)
 		if s.writeScratchSessionError(w, r, err) {
 			return
 		}
@@ -344,43 +394,53 @@ func (s *Server) createScratchProject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) selectScratchGitHubInstallation(
 	w http.ResponseWriter,
 	r *http.Request,
-	orgID clouddomain.OrgID,
+	userID clouddomain.UserID,
 	requestedInstallationID int64,
-) (clouddomain.GitHubInstallation, bool) {
-	installations, err := s.githubStore.ListGitHubInstallations(r.Context(), orgID)
-	if err != nil {
-		s.internalError(w, r, "list GitHub installations for scratch project", err)
-		return clouddomain.GitHubInstallation{}, false
+) (cloudgithubapp.Installation, string, bool) {
+	if requestedInstallationID <= 0 {
+		writeError(w, r, http.StatusBadRequest, "GITHUB_INSTALLATION_REQUIRED", "Choose which GitHub account should own the new repository.")
+		return cloudgithubapp.Installation{}, "", false
 	}
-	active := make([]clouddomain.GitHubInstallation, 0, len(installations))
-	for _, installation := range installations {
-		if installation.Status == "active" {
-			active = append(active, installation)
-		}
-	}
-	if len(active) == 0 {
+	_, accessToken, err := s.githubUserAccessToken(r.Context(), userID)
+	if errors.Is(err, cloudpostgres.ErrGitHubUserConnectionNotFound) ||
+		errors.Is(err, errGitHubUserReauthorizationRequired) {
 		writeError(w, r, http.StatusConflict, "GITHUB_CONNECTION_REQUIRED", "Connect GitHub before creating a project.")
-		return clouddomain.GitHubInstallation{}, false
+		return cloudgithubapp.Installation{}, "", false
 	}
-	if requestedInstallationID > 0 {
-		for _, installation := range active {
-			if installation.GitHubInstallationID == requestedInstallationID {
-				return installation, true
-			}
+	if err != nil {
+		s.internalError(w, r, "load GitHub user for scratch project", err)
+		return cloudgithubapp.Installation{}, "", false
+	}
+	installations, err := s.githubApp.userClient.ListUserInstallations(r.Context(), accessToken)
+	if err != nil {
+		s.internalError(w, r, "list GitHub owners for scratch project", err)
+		return cloudgithubapp.Installation{}, "", false
+	}
+	for _, installation := range installations {
+		if installation.ID != requestedInstallationID {
+			continue
 		}
-		writeError(w, r, http.StatusForbidden, "GITHUB_INSTALLATION_NOT_FOUND", "The selected GitHub installation is not connected to this organization.")
-		return clouddomain.GitHubInstallation{}, false
+		if !s.isConfiguredGitHubInstallation(installation) {
+			break
+		}
+		if !strings.EqualFold(installation.RepositorySelection, "all") {
+			writeError(w, r, http.StatusConflict, "GITHUB_ALL_REPOSITORIES_REQUIRED", "Configure this GitHub App installation for all repositories before creating a scratch project.")
+			return cloudgithubapp.Installation{}, "", false
+		}
+		if !strings.EqualFold(installation.Permissions["administration"], "write") {
+			writeError(w, r, http.StatusForbidden, "GITHUB_REPOSITORY_ADMIN_REQUIRED", "The GitHub App needs repository administration write access.")
+			return cloudgithubapp.Installation{}, "", false
+		}
+		return installation, accessToken, true
 	}
-	if len(active) > 1 {
-		writeError(w, r, http.StatusBadRequest, "GITHUB_INSTALLATION_REQUIRED", "Choose which connected GitHub account should own the new repository.")
-		return clouddomain.GitHubInstallation{}, false
-	}
-	return active[0], true
+	writeError(w, r, http.StatusForbidden, "GITHUB_INSTALLATION_NOT_FOUND", "The selected GitHub owner is not available to your connected GitHub account.")
+	return cloudgithubapp.Installation{}, "", false
 }
 
 func (s *Server) createScratchGitHubRepository(
 	ctx context.Context,
-	installation clouddomain.GitHubInstallation,
+	userToken string,
+	installation cloudgithubapp.Installation,
 	displayName string,
 	private bool,
 ) (cloudgithubapp.Repository, error) {
@@ -394,11 +454,11 @@ func (s *Server) createScratchGitHubRepository(
 		if attempt > 0 {
 			name = baseName + "-" + strings.ToLower(uuid.NewString()[:4])
 		}
-		repository, err := s.githubApp.client.CreateRepository(
+		repository, err := s.githubApp.userClient.CreateRepositoryAsUser(
 			ctx,
-			installation.GitHubInstallationID,
-			installation.AccountLogin,
-			installation.AccountType,
+			userToken,
+			installation.Account.Login,
+			installation.Account.Type,
 			name,
 			private,
 		)
@@ -478,18 +538,19 @@ func (s *Server) syncScratchRepositoryGrant(
 
 func (s *Server) cleanupScratchGitHubRepository(
 	ctx context.Context,
-	installation clouddomain.GitHubInstallation,
+	userToken string,
+	installation cloudgithubapp.Installation,
 	repository cloudgithubapp.Repository,
 ) {
 	owner := strings.TrimSpace(repository.Owner.Login)
 	if owner == "" {
-		owner = installation.AccountLogin
+		owner = installation.Account.Login
 	}
 	name := strings.TrimSpace(repository.Name)
 	if owner == "" || name == "" {
 		return
 	}
-	if err := s.githubApp.client.DeleteRepository(ctx, installation.GitHubInstallationID, owner, name); err != nil {
+	if err := s.githubApp.userClient.DeleteRepositoryAsUser(ctx, userToken, owner, name); err != nil {
 		if s.log != nil {
 			s.log.Warn("scratch GitHub repository cleanup failed",
 				"repository", owner+"/"+name,
@@ -1195,6 +1256,7 @@ func allowedGitHubWebhookEvent(event string) bool {
 	switch event {
 	case "installation",
 		"installation_repositories",
+		"github_app_authorization",
 		"pull_request",
 		"pull_request_review",
 		"pull_request_review_thread",

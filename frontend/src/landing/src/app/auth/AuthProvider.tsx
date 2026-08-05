@@ -25,6 +25,7 @@ interface AuthContextValue {
   error: string | null;
   login: () => Promise<void>;
   logout: () => Promise<void>;
+  refreshSession: () => Promise<CloudAuthSession | null>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -42,9 +43,34 @@ export function AuthProvider({
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [error, setError] = useState<string | null>(null);
   const sessionRef = useRef<CloudAuthSession | null>(null);
+  const refreshInFlight = useRef<Promise<CloudAuthSession | null> | null>(null);
   useEffect(() => {
     sessionRef.current = session;
   }, [session]);
+
+  const refreshSession = useCallback(() => {
+    if (authMode !== "workos") {
+      return Promise.resolve(sessionRef.current);
+    }
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const request = (async () => {
+      const refreshed = await restoreWorkOSSession();
+      if (!refreshed) {
+        window.localStorage.removeItem(cloudSessionKey);
+        setSession(null);
+        setStatus("unauthenticated");
+        return null;
+      }
+      window.localStorage.setItem(cloudSessionKey, JSON.stringify(refreshed));
+      setSession(refreshed);
+      setStatus("authenticated");
+      return refreshed;
+    })().finally(() => {
+      refreshInFlight.current = null;
+    });
+    refreshInFlight.current = request;
+    return request;
+  }, [authMode]);
 
   useEffect(() => {
     if (authMode === "workos" && env.NEXT_PUBLIC_WEB_URL) {
@@ -154,8 +180,8 @@ export function AuthProvider({
   }, [session]);
 
   const value = useMemo(
-    () => ({ session, status, error, login, logout }),
-    [error, login, logout, session, status],
+    () => ({ session, status, error, login, logout, refreshSession }),
+    [error, login, logout, refreshSession, session, status],
   );
 
   return (

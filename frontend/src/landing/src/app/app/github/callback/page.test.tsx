@@ -18,12 +18,14 @@ const mocks = vi.hoisted(() => ({
       },
     },
     status: "authenticated",
+    refreshSession: vi.fn(),
   } as {
     session: {
       accessToken: string;
       user: { id: string; email: string; displayName: string };
     } | null;
     status: "loading" | "authenticated" | "unauthenticated";
+    refreshSession: ReturnType<typeof vi.fn>;
   },
 }));
 
@@ -53,6 +55,7 @@ beforeEach(() => {
     },
   };
   mocks.auth.status = "authenticated";
+  mocks.auth.refreshSession.mockResolvedValue(mocks.auth.session);
   mocks.pendingGitHubInstall.mockResolvedValue({
     accountLogin: "aoagents",
     accountType: "Organization",

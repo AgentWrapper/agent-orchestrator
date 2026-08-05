@@ -6,6 +6,52 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it("refreshes the WorkOS token once before surfacing an auth error", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: "AUTH_REQUIRED",
+          message: "A valid AO Cloud login is required.",
+        }),
+        { status: 401, headers: { "Content-Type": "application/json" } },
+      ),
+    )
+    .mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          user: { id: "user-one", email: "user@example.com", displayName: "User" },
+          organizations: [],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  vi.stubGlobal("fetch", fetchMock);
+  const refreshAccessToken = vi.fn().mockResolvedValue("fresh-token");
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "stale-token",
+    refreshAccessToken,
+  });
+
+  await expect(api.me()).resolves.toEqual(
+    expect.objectContaining({ user: expect.objectContaining({ id: "user-one" }) }),
+  );
+  expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(
+    new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get(
+      "Authorization",
+    ),
+  ).toBe("Bearer stale-token");
+  expect(
+    new Headers((fetchMock.mock.calls[1]?.[1] as RequestInit).headers).get(
+      "Authorization",
+    ),
+  ).toBe("Bearer fresh-token");
+});
+
 it("preserves API error codes for caller-specific recovery", async () => {
   vi.stubGlobal(
     "fetch",
