@@ -279,6 +279,8 @@ export default function CloudAppPage() {
   >({});
   const [error, setError] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
+  const [showAgentConnectionPrompt, setShowAgentConnectionPrompt] =
+    useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
@@ -816,6 +818,15 @@ export default function CloudAppPage() {
     ({ provider }) => provider === "daytona",
   );
   const defaultAgent = defaultConnectedAgent(connections);
+  const promptForAgentConnection = () => {
+    setShowProjectForm(false);
+    setError(null);
+    setShowAgentConnectionPrompt(true);
+  };
+  const closeAgentConnectionPrompt = () => {
+    setShowAgentConnectionPrompt(false);
+    openProviderSettings();
+  };
   const selectedProjectOrchestrator = activeSessions.find(
     ({ projectId, kind, isTerminated }) =>
       projectId === selectedProjectId &&
@@ -1035,9 +1046,11 @@ export default function CloudAppPage() {
     defaultBranch: string;
     githubRepositoryId?: number;
   }) => {
-    if (!api || !selectedOrgId || selectedShare || !defaultAgent || !canEditOrg) {
-      setError("Connect a coding agent before creating a cloud project.");
-      openProviderSettings();
+    if (!defaultAgent) {
+      promptForAgentConnection();
+      return;
+    }
+    if (!api || !selectedOrgId || selectedShare || !canEditOrg) {
       return;
     }
     setLoading(true);
@@ -1081,9 +1094,11 @@ export default function CloudAppPage() {
     githubInstallationId?: number;
     private?: boolean;
   }) => {
-    if (!api || !selectedOrgId || selectedShare || !defaultAgent || !canEditOrg) {
-      setError("Connect GitHub and a coding agent before creating a cloud project.");
-      openProviderSettings();
+    if (!defaultAgent) {
+      promptForAgentConnection();
+      return;
+    }
+    if (!api || !selectedOrgId || selectedShare || !canEditOrg) {
       return;
     }
     setLoading(true);
@@ -1477,11 +1492,15 @@ export default function CloudAppPage() {
             <button
               className="grid size-5 place-items-center rounded-md text-[#646a73] transition-colors hover:bg-white/[0.04] hover:text-white"
               onClick={() => {
-                if (canEditOrg) setShowProjectForm(true);
-                else {
-                  setSettingsPanelTarget("agents");
-                  setView("settings");
+                if (!canEditOrg) {
+                  openProviderSettings();
+                  return;
                 }
+                if (!defaultAgent) {
+                  promptForAgentConnection();
+                  return;
+                }
+                setShowProjectForm(true);
               }}
               aria-label="Add cloud project"
               title={
@@ -2166,6 +2185,9 @@ export default function CloudAppPage() {
           onSubmitScratch={createScratchProjectAndPrewarmOrchestrator}
         />
       )}
+      {showAgentConnectionPrompt ? (
+        <AgentConnectionPrompt onClose={closeAgentConnectionPrompt} />
+      ) : null}
       {shareProject ? (
         <Overlay title="Share project" onClose={closeProjectShare}>
           <div className="space-y-6 p-5 sm:p-6">
@@ -4396,6 +4418,29 @@ function Overlay({
         {children}
       </section>
     </div>
+  );
+}
+
+function AgentConnectionPrompt({ onClose }: { onClose: () => void }) {
+  return (
+    <Overlay title="Connect a coding agent" onClose={onClose}>
+      <div className="space-y-5 p-5 sm:p-6">
+        <div className="space-y-2">
+          <p className="text-sm leading-6 text-white/80">
+            A coding agent is required before AO can initialize a project and
+            start its orchestrator.
+          </p>
+          <p className="text-xs leading-5 text-white/45">
+            Connect Claude Code, Codex, or Cursor in Provider connections.
+          </p>
+        </div>
+        <div className="flex justify-end border-t border-white/[0.08] pt-4">
+          <button type="button" className={primaryButton} onClick={onClose}>
+            Continue to provider settings
+          </button>
+        </div>
+      </div>
+    </Overlay>
   );
 }
 

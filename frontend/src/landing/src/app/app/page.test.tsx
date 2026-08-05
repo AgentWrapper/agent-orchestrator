@@ -431,7 +431,7 @@ it("loads GitHub repositories only when the project form opens", async () => {
   expect(screen.getByText(project.displayName)).toBeVisible();
 });
 
-it("opens the project dialog before provider settings when no agent is connected", async () => {
+it("prompts for a coding agent before opening provider settings", async () => {
   apiMocks.providerConnections.mockResolvedValue({ providerConnections: [] });
   render(<CloudAppPage />);
 
@@ -439,13 +439,24 @@ it("opens the project dialog before provider settings when no agent is connected
     await screen.findByRole("button", { name: "Add cloud project" }),
   );
 
+  const prompt = await screen.findByRole("dialog", {
+    name: "Connect a coding agent",
+  });
+  expect(prompt).toBeVisible();
   expect(
-    await screen.findByRole("dialog", { name: "Add cloud project" }),
-  ).toBeVisible();
-  expect(screen.getByText("GitHub account not connected.")).toBeVisible();
+    screen.queryByRole("dialog", { name: "Add cloud project" }),
+  ).not.toBeInTheDocument();
+  expect(apiMocks.repositories).not.toHaveBeenCalled();
   expect(
     screen.queryByRole("heading", { name: "Provider connections" }),
   ).not.toBeInTheDocument();
+
+  fireEvent.click(within(prompt).getByRole("button", { name: "Close" }));
+
+  expect(
+    await screen.findByRole("heading", { name: "Provider connections" }),
+  ).toBeVisible();
+  expect(screen.getByText("Coding agents")).toBeVisible();
 });
 
 it("creates a scratch project through the connected GitHub installation", async () => {
