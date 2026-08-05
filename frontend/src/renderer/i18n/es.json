@@ -608,6 +608,7 @@
 	"shell.openKanban": "Abrir Kanban",
 	"shell.openProjectDashboard": "Abrir panel de {{name}}",
 	"shell.openProjectOrchestrator": "Abrir orquestador de {{name}}",
+	"shell.toggleProject": "Alternar sesiones de {{name}}",
 	"shell.openSession": "Abrir {{title}}",
 	"shell.openOrchestrator": "Abrir orquestador",
 	"shell.orchestrator": "Orquestador",

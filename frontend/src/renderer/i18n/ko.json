@@ -597,6 +597,7 @@
 	"shell.openKanban": "칸반 열기",
 	"shell.openProjectDashboard": "{{name}} 대시보드 열기",
 	"shell.openProjectOrchestrator": "{{name}} 오케스트레이터 열기",
+	"shell.toggleProject": "{{name}} 세션 전환",
 	"shell.openSession": "{{title}} 열기",
 	"shell.openOrchestrator": "오케스트레이터 열기",
 	"shell.orchestrator": "오케스트레이터",

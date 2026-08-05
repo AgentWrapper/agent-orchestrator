@@ -585,6 +585,7 @@
 	"shell.openKanban": "Open Kanban",
 	"shell.openProjectDashboard": "Open {{name}} dashboard",
 	"shell.openProjectOrchestrator": "Open {{name}} orchestrator",
+	"shell.toggleProject": "Toggle {{name}} sessions",
 	"shell.openSession": "Open {{title}}",
 	"shell.openOrchestrator": "Open orchestrator",
 	"shell.orchestrator": "Orchestrator",
