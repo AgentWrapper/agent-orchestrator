@@ -5961,14 +5961,14 @@ function ProjectForm({
             <div className="grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
-                className="group flex min-h-64 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
+                className="group flex min-h-44 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
                 disabled={githubImportUnavailable || loading}
                 onClick={() => setMode("github")}
               >
-                <span className="flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
-                  <Github className="size-8 text-white/55 transition-colors group-hover:text-white" />
+                <span className="flex h-16 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
+                  <Github className="size-6 text-white/55 transition-colors group-hover:text-white" />
                 </span>
-                <span className="mt-5 text-sm font-medium text-white">
+                <span className="mt-4 text-sm font-medium text-white">
                   From GitHub
                 </span>
                 <span className="mt-1 text-xs leading-5 text-white/42">
@@ -5977,14 +5977,14 @@ function ProjectForm({
               </button>
               <button
                 type="button"
-                className="group flex min-h-64 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
+                className="group flex min-h-44 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
                 disabled={loading}
                 onClick={() => setMode("scratch")}
               >
-                <span className="flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
-                  <FolderGit2 className="size-8 text-white/55 transition-colors group-hover:text-white" />
+                <span className="flex h-16 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
+                  <FolderGit2 className="size-6 text-white/55 transition-colors group-hover:text-white" />
                 </span>
-                <span className="mt-5 text-sm font-medium text-white">
+                <span className="mt-4 text-sm font-medium text-white">
                   Start from scratch
                 </span>
                 <span className="mt-1 text-xs leading-5 text-white/42">
