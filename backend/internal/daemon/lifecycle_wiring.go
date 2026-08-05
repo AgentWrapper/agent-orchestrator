@@ -215,7 +215,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
 	lcm.SetReviewerAutoStart(func(ctx context.Context, workerID domain.SessionID) error {
-		_, err := reviewSvc.Trigger(ctx, workerID)
+		_, err := reviewSvc.Trigger(ctx, workerID, "")
 		return err
 	})
 	return sessionSvc, reviewSvc, mgr, nil
