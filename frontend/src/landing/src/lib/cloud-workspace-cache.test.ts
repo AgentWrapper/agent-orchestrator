@@ -82,3 +82,36 @@ it("publishes partial refreshes without discarding cached data", async () => {
   expect(listener).toHaveBeenCalledTimes(1);
   unsubscribe();
 });
+
+it("can prewarm files without requesting a diff", async () => {
+  const api = {
+    workspaceDiff: vi.fn().mockResolvedValue({
+      status: "",
+      staged: "",
+      unstaged: "",
+    }),
+    workspaceFiles: vi.fn().mockResolvedValue({
+      path: ".",
+      entries: [
+        {
+          name: "README.md",
+          path: "README.md",
+          isDir: false,
+          size: 10,
+          mode: "-rw-r--r--",
+          modTime: "2026-08-01T00:00:00Z",
+        },
+      ],
+    }),
+  } as unknown as CloudAPI;
+
+  await warmWorkspaceSession(api, "org-one", "session-one", {
+    includeDiff: false,
+  });
+
+  expect(api.workspaceDiff).not.toHaveBeenCalled();
+  expect(api.workspaceFiles).toHaveBeenCalledTimes(1);
+  expect(getWorkspaceSnapshot("session-one")?.rootEntries?.[0]?.path).toBe(
+    "README.md",
+  );
+});

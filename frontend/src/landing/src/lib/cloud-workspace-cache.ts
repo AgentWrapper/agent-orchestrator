@@ -13,7 +13,10 @@ export interface WorkspaceSnapshot {
 }
 
 const snapshots = new Map<string, WorkspaceSnapshot>();
-const inFlight = new Map<string, Promise<void>>();
+const inFlight = new Map<
+  string,
+  { request: Promise<void>; includeDiff: boolean }
+>();
 const listeners = new Map<string, Set<() => void>>();
 const generations = new Map<string, number>();
 
@@ -48,13 +51,20 @@ export function warmWorkspaceSession(
   api: CloudAPI,
   orgId: string,
   sessionId: string,
-) {
+  options: { includeDiff?: boolean } = {},
+): Promise<void> {
+  const includeDiff = options.includeDiff ?? true;
   const existing = inFlight.get(sessionId);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.includeDiff || !includeDiff) return existing.request;
+    return existing.request.then(() =>
+      warmWorkspaceSession(api, orgId, sessionId, { includeDiff: true }),
+    );
+  }
   const generation = generations.get(sessionId) ?? 0;
   let request: Promise<void>;
   request = Promise.allSettled([
-    api.workspaceDiff(orgId, sessionId),
+    includeDiff ? api.workspaceDiff(orgId, sessionId) : Promise.resolve(undefined),
     api.workspaceFiles(orgId, sessionId),
   ])
     .then(([diffResult, filesResult]) => {
@@ -62,13 +72,15 @@ export function warmWorkspaceSession(
       const current = snapshots.get(sessionId);
       snapshots.set(sessionId, {
         diff:
-          diffResult.status === "fulfilled" ? diffResult.value : current?.diff,
+          diffResult.status === "fulfilled" && diffResult.value
+            ? diffResult.value
+            : current?.diff,
         rootEntries:
           filesResult.status === "fulfilled"
             ? filesResult.value.entries
             : current?.rootEntries,
         diffError:
-          diffResult.status === "rejected"
+          includeDiff && diffResult.status === "rejected"
             ? errorMessage(diffResult.reason, "Could not load changes.")
             : undefined,
         filesError:
@@ -80,9 +92,9 @@ export function warmWorkspaceSession(
       notify(sessionId);
     })
     .finally(() => {
-      if (inFlight.get(sessionId) === request) inFlight.delete(sessionId);
+      if (inFlight.get(sessionId)?.request === request) inFlight.delete(sessionId);
     });
-  inFlight.set(sessionId, request);
+  inFlight.set(sessionId, { request, includeDiff });
   return request;
 }
 

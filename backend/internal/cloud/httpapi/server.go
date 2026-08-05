@@ -1968,6 +1968,10 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
+	ownerOrgID := account.ID
+	if org, ok := orgFromContext(r.Context()); ok && org.Organization.ID != "" {
+		ownerOrgID = clouddomain.AccountID(org.Organization.ID)
+	}
 	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if idempotencyKey == "" || len(idempotencyKey) > 200 {
 		writeError(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key is required.")
@@ -2016,7 +2020,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	project, err := s.store.GetProject(r.Context(), account.ID, input.ProjectID)
+	project, err := s.store.GetProject(r.Context(), ownerOrgID, input.ProjectID)
 	if errors.Is(err, cloudpostgres.ErrProjectNotFound) {
 		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
 		return
@@ -2043,7 +2047,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	}
-	credential, err := s.loadAgentCredential(r.Context(), account.ID, input.Harness)
+	credential, err := s.loadAgentCredential(r.Context(), ownerOrgID, input.Harness)
 	if errors.Is(err, errAgentConnectionRequired) {
 		writeError(
 			w,
@@ -2061,7 +2065,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	if credential != nil {
 		credential.Secret = ""
 	}
-	result, err := s.store.CreateSession(r.Context(), account.ID, cloudpostgres.CreateSessionInput{
+	result, err := s.store.CreateSession(r.Context(), ownerOrgID, cloudpostgres.CreateSessionInput{
 		IdempotencyKey:           idempotencyKey,
 		ProjectID:                input.ProjectID,
 		Kind:                     input.Kind,

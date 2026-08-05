@@ -681,7 +681,9 @@ export default function CloudAppPage() {
     removeWorkspaceSnapshots(activeSessionIDs);
     const warmAll = () => {
       for (const sessionID of connectedWorkspaceSessionIDs) {
-        void warmWorkspaceSession(api, activeOrgId, sessionID);
+        void warmWorkspaceSession(api, activeOrgId, sessionID, {
+          includeDiff: false,
+        });
       }
     };
     warmAll();
@@ -2276,13 +2278,10 @@ export default function CloudAppPage() {
                             aria-label={`New agent in ${share.project.displayName}`}
                             title="New agent"
                             onClick={() => {
-                              if (!agentAvailableForSelectedProject) {
-                                promptForAgentConnection();
-                                return;
-                              }
                               setSelectedShareId(share.id);
                               setSelectedProjectId(share.project.id);
                               setSelectedSessionId(null);
+                              setView("board");
                               setShowSessionForm(true);
                             }}
                           >
@@ -3470,7 +3469,10 @@ export default function CloudAppPage() {
           </div>
         </Overlay>
       ) : null}
-      {showSessionForm && selectedOrgId && !selectedShare && selectedProjectId && (
+      {showSessionForm &&
+      activeOrgId &&
+      selectedProjectId &&
+      (!selectedShare || selectedShareTrustedStandalone) ? (
         <SessionForm
           projectId={selectedProjectId}
           standalone={selectedProjectStandalone}
@@ -3492,7 +3494,7 @@ export default function CloudAppPage() {
             if (created) setShowSessionForm(false);
           }}
         />
-      )}
+      ) : null}
     </main>
   );
 }
