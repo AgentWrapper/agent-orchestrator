@@ -538,6 +538,16 @@
 	padding-top: 0;
 }
 
+/* Windows/Linux: rectangular frameless window — the macOS nested-radius
+ * formula (window_radius − inset) only makes sense inside a rounded macOS
+ * window. Strip it so the framed panel has sharp corners, consistent with the
+ * flush left edge (padding-left: 0). Without this the right/bottom corners
+ * curve away from the window edge while the left stays square. */
+.platform-windows .center-panel-surface,
+.platform-linux .center-panel-surface {
+	border-radius: 0;
+}
+
 @utility settings-row-bar {
 	display: flex;
 	height: var(--size-settings-row);
