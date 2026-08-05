@@ -1,0 +1,4 @@
+interface:
+  display_name: "AO Desktop Dev"
+  short_description: "Run the real AO Electron app from a checkout"
+  default_prompt: "Use $ao-desktop-dev to launch this checkout’s Electron app against real local AO data and verify the requested UI."

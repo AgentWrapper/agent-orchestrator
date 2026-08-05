@@ -108,6 +108,10 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "AgentHarness"
+          - column: "sessions.reviewer_harness"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ReviewerHarness"
           - column: "sessions.activity_state"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -147,11 +151,3 @@ sql:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "ProjectID"
               pointer: true
-          - column: "worker_idle_events.project_id"
-            go_type:
-              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "ProjectID"
-          - column: "worker_idle_events.worker_id"
-            go_type:
-              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "SessionID"

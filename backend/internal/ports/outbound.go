@@ -127,6 +127,21 @@ type SupervisedProcessInspector interface {
 	IsSupervisedProcessAlive(ctx context.Context, handle RuntimeHandle, ref SupervisedProcessRef) (bool, error)
 }
 
+// ContainerReaper removes Docker containers a worker session owns, identified
+// by the ao.session=<id> label convention (see EnvSessionID). It is an
+// optional capability: nil wiring means container reaping is a no-op, not an
+// error. Implementations MUST treat a container's ao.spare=true label as an
+// unconditional skip, and MUST bias toward sparing on any ambiguity (e.g. a
+// docker CLI probe failure reaps nothing rather than guessing) -- a wrongly
+// reaped container can cost a live worker its database.
+type ContainerReaper interface {
+	// ReapSessionContainers force-removes every non-spared container labeled
+	// for session id. removed is the count actually removed; err is non-nil
+	// only for a genuine adapter failure, never for "docker not installed" or
+	// "nothing found" (both return removed=0, err=nil).
+	ReapSessionContainers(ctx context.Context, id domain.SessionID) (removed int, err error)
+}
+
 // Stream is one live terminal attach: PTY-like bytes plus resize. Returned
 // already-open by a Runtime's Attach. tmux backs it with a local PTY around
 // their attach CLI; conpty backs it with a loopback connection to the pty-host.
@@ -205,6 +220,14 @@ var (
 	// this state after path-safety checks, while real preserve failures remain
 	// fatal.
 	ErrWorkspaceStale = errors.New("workspace: stale managed worktree")
+	// ErrWorkspaceLocked reports a registered git worktree whose directory is
+	// missing but whose registration is locked (`git worktree lock`). `git
+	// worktree prune` deliberately leaves a locked registration in place even
+	// when its directory is gone, and `git worktree add`/`remove` at the same
+	// path then fail with an opaque git error. Callers must not treat this as
+	// recoverable on their own; the operator has to unlock or remove the
+	// registration first.
+	ErrWorkspaceLocked = errors.New("workspace: registered worktree is locked")
 	// ErrPreservedConflict is returned by ApplyPreserved when replaying a
 	// preserved ref onto the worktree produces merge conflicts. The ref is
 	// kept intact (never deleted on conflict); the working tree is left with
@@ -214,6 +237,21 @@ var (
 	// ErrRuntimePrerequisite reports a missing host prerequisite for the selected
 	// runtime before a session can be created.
 	ErrRuntimePrerequisite = errors.New("runtime: prerequisite missing")
+	// ErrRuntimeWorkspaceCwdMismatch reports that a runtime session's working
+	// directory never settled on the wanted workspace path after Create's
+	// retried verification (see the tmux adapter's verifyPaneWorkingDirectory).
+	// Wrapping this sentinel lets the session service map it to a typed,
+	// actionable apierr instead of letting it fall through to an opaque 500
+	// with no message (issue #2775).
+	ErrRuntimeWorkspaceCwdMismatch = errors.New("runtime: session working directory mismatch")
+	// ErrRuntimeUnavailable reports that a liveness probe could not reach the
+	// runtime infrastructure at all (e.g. tmux "no server running" or "error
+	// connecting"). It says nothing about any individual session, so callers
+	// must treat it as an inconclusive probe, never as per-session death
+	// (issue #3475: reading a server-level outage as N session deaths archived
+	// every session on the board). Adapters wrap this sentinel via fmt.Errorf
+	// so callers can match it with errors.Is.
+	ErrRuntimeUnavailable = errors.New("runtime: infrastructure unavailable")
 )
 
 // WorkspaceConfig is the spec for creating or restoring a session's workspace.

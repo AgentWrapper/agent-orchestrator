@@ -1,6 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { CancelledError } from "@tanstack/react-query";
 import { Suspense, type ComponentType, type PropsWithChildren } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { KeybindingOverrides } from "../../shared/shortcuts";
 import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSummary } from "../types/workspace";
 
@@ -14,11 +16,23 @@ const shellMocks = vi.hoisted(() => {
 		nextSessionListener: undefined as (() => void) | undefined,
 		focusTerminalListener: undefined as (() => void) | undefined,
 		routeParams: {} as { projectId?: string; sessionId?: string },
+		routeSearch: {} as Record<string, unknown>,
 		workspaces: [] as WorkspaceSummary[],
+		workspaceQuery: {
+			data: [] as WorkspaceSummary[],
+			dataUpdatedAt: 0,
+			isError: false,
+			isSuccess: true,
+		},
+		daemonStatus: { state: "stopped" } as {
+			state: "ready" | "starting" | "stopped" | "error";
+			port?: number;
+			code?: "not_ready";
+		},
+		shellValue: undefined as { workspaceStartupState?: string } | undefined,
 	};
 	return {
 		navigate: vi.fn(),
-		setTrafficLightsInset: vi.fn(async () => undefined),
 		onNewSessionShortcut: vi.fn((listener: () => void) => {
 			state.newSessionListener = listener;
 			return vi.fn();
@@ -48,9 +62,13 @@ const shellMocks = vi.hoisted(() => {
 			state.focusTerminalListener = listener;
 			return vi.fn();
 		}),
+		getKeybindings: vi.fn(async () => ({})),
+		setKeybindings: vi.fn(async (overrides: KeybindingOverrides) => overrides),
+		setKeybindingRecording: vi.fn(async () => undefined),
 		queryClient: {
 			ensureQueryData: vi.fn(),
 			fetchQuery: vi.fn(),
+			getQueryState: vi.fn(),
 			invalidateQueries: vi.fn(),
 			setQueryData: vi.fn(),
 		},
@@ -58,8 +76,12 @@ const shellMocks = vi.hoisted(() => {
 	};
 });
 
-vi.mock("@tanstack/react-query", () => ({
+vi.mock("@tanstack/react-query", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@tanstack/react-query")>()),
 	useQueryClient: () => shellMocks.queryClient,
+	// TerminalCacheProvider owns reviewer queries in production. This shell-only
+	// harness has no routed terminal children and intentionally omits a provider.
+	useQueries: () => [],
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -69,6 +91,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 	useMatchRoute: () => () => false,
 	useNavigate: () => shellMocks.navigate,
 	useParams: () => shellMocks.state.routeParams,
+	useSearch: () => shellMocks.state.routeSearch,
 }));
 
 vi.mock("../lib/bridge", () => ({
@@ -82,25 +105,33 @@ vi.mock("../lib/bridge", () => ({
 			onNextSessionShortcut: shellMocks.onNextSessionShortcut,
 			onFocusTerminalShortcut: shellMocks.onFocusTerminalShortcut,
 		},
-		window: {
-			setTrafficLightsInset: shellMocks.setTrafficLightsInset,
+		keybindings: {
+			get: shellMocks.getKeybindings,
+			set: shellMocks.setKeybindings,
+			setRecording: shellMocks.setKeybindingRecording,
+		},
+		window: {},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
 		},
 	},
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
-	useWorkspaceQuery: () => ({ data: shellMocks.state.workspaces, isError: false }),
+	useWorkspaceQuery: () => shellMocks.state.workspaceQuery,
 	workspaceQueryKey: ["workspaces"],
 	workspaceQueryOptions: {},
 }));
 
 vi.mock("../hooks/useDaemonStatus", () => ({
-	useDaemonStatus: () => ({ state: "stopped" }),
+	useDaemonStatus: () => shellMocks.state.daemonStatus,
 }));
 
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
 vi.mock("../hooks/useShellTerminals", () => ({
+	useShellTerminals: () => ({ data: [], isSuccess: true }),
 	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
@@ -136,7 +167,10 @@ vi.mock("../components/KeyboardShortcutsDialog", () => ({
 	KeyboardShortcutsDialog: ({ open }: { open: boolean }) => (open ? <div data-testid="keyboard-shortcuts" /> : null),
 }));
 vi.mock("../lib/shell-context", () => ({
-	ShellProvider: ({ children }: PropsWithChildren) => children,
+	ShellProvider: ({ children, value }: PropsWithChildren<{ value?: { workspaceStartupState?: string } }>) => {
+		shellMocks.state.shellValue = value;
+		return children;
+	},
 }));
 vi.mock("../components/ui/sidebar", () => ({
 	SidebarProvider: ({ children, open }: PropsWithChildren<{ open?: boolean }>) => (
@@ -159,10 +193,10 @@ vi.mock("../components/GlobalNewTaskDialog", async () => {
 vi.mock("../components/Sidebar", async () => {
 	const { useUiStore: useStore } = await vi.importActual<typeof import("../stores/ui-store")>("../stores/ui-store");
 	return {
-		Sidebar: ({ isOverlay, onPreviewLeave }: { isOverlay?: boolean; onPreviewLeave?: () => void }) => {
+		Sidebar: ({ isOverlay, onPreviewLeave, topbarOffset }: { isOverlay?: boolean; onPreviewLeave?: () => void; topbarOffset?: string }) => {
 			const nonce = useStore((state) => state.createProjectNonce);
 			return (
-				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" onPointerLeave={onPreviewLeave}>
+				<div data-overlay={isOverlay ? "true" : "false"} data-testid="sidebar" data-topbar-offset={topbarOffset} onPointerLeave={onPreviewLeave}>
 					{nonce > 0 ? <div data-testid="create-project-flow" /> : null}
 				</div>
 			);
@@ -171,6 +205,7 @@ vi.mock("../components/Sidebar", async () => {
 });
 
 import { Route } from "../routes/_shell";
+const ShellRoute = Route.options.component as ComponentType;
 
 const workspaces = [
 	{
@@ -178,30 +213,37 @@ const workspaces = [
 		name: "Project One",
 		path: "/one",
 		sessions: [
-			{ id: "sess-1", status: "working" },
-			{ id: "sess-2", status: "terminated" },
-			{ id: "sess-merged-terminated", status: "merged", isTerminated: true },
-			{ id: "sess-3", status: "idle" },
+			{ id: "sess-1", workspaceId: "proj-1", status: "working" },
+			{ id: "sess-2", workspaceId: "proj-1", status: "terminated" },
+			{ id: "sess-merged-terminated", workspaceId: "proj-1", status: "merged", isTerminated: true },
+			{ id: "sess-3", workspaceId: "proj-1", status: "idle" },
 		],
+	},
+	{
+		id: "proj-2",
+		name: "Project Two",
+		path: "/two",
+		sessions: [{ id: "sess-cross", workspaceId: "proj-2", status: "working" }],
 	},
 ] as unknown as WorkspaceSummary[];
 
 async function renderShell() {
-	const ShellRoute = Route.options.component as ComponentType;
+	let view: ReturnType<typeof render> | undefined;
 	await act(async () => {
-		render(
+		view = render(
 			<Suspense fallback={null}>
 				<ShellRoute />
 			</Suspense>,
 		);
 	});
-	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1));
+	await waitFor(() => expect(shellMocks.onNewSessionShortcut).toHaveBeenCalledTimes(1), { timeout: 30_000 });
 	await waitFor(() => expect(shellMocks.onKeyboardShortcutsHelp).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onNewShellTerminalShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onOpenSettingsShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onPreviousSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onNextSessionShortcut).toHaveBeenCalledTimes(1));
 	await waitFor(() => expect(shellMocks.onFocusTerminalShortcut).toHaveBeenCalledTimes(1));
+	return view!;
 }
 
 function emitShortcut() {
@@ -214,7 +256,6 @@ beforeEach(() => {
 	shellMocks.navigate.mockReset();
 	shellMocks.onNewSessionShortcut.mockClear();
 	shellMocks.onKeyboardShortcutsHelp.mockClear();
-	shellMocks.setTrafficLightsInset.mockClear();
 	shellMocks.onNewShellTerminalShortcut.mockClear();
 	shellMocks.openShellTerminal.mockClear();
 	shellMocks.state.newShellTerminalListener = undefined;
@@ -229,7 +270,18 @@ beforeEach(() => {
 	shellMocks.state.nextSessionListener = undefined;
 	shellMocks.state.focusTerminalListener = undefined;
 	shellMocks.state.routeParams = {};
+	shellMocks.state.routeSearch = {};
 	shellMocks.state.workspaces = workspaces;
+	shellMocks.state.workspaceQuery = {
+		data: workspaces,
+		dataUpdatedAt: 0,
+		isError: false,
+		isSuccess: true,
+	};
+	shellMocks.state.daemonStatus = { state: "error", code: "not_ready" };
+	shellMocks.state.shellValue = undefined;
+	shellMocks.queryClient.fetchQuery.mockReset();
+	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
 	useUiStore.setState({
 		createProjectNonce: 0,
 		isSidebarOpen: true,
@@ -238,21 +290,122 @@ beforeEach(() => {
 	});
 });
 
-describe("shell sidebar hover preview", () => {
-	it("moves native traffic lights only with persistent sidebar state", async () => {
+describe("shell workspace startup", () => {
+	it("places the topbar host inside the center panel surface on session routes", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();
-		await waitFor(() => expect(shellMocks.setTrafficLightsInset).toHaveBeenLastCalledWith(false));
 
-		fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-		await waitFor(() => expect(shellMocks.setTrafficLightsInset).toHaveBeenLastCalledWith(true));
-
-		fireEvent.pointerEnter(screen.getByRole("button", { name: "Expand sidebar" }));
-		expect(shellMocks.setTrafficLightsInset).toHaveBeenCalledTimes(2);
-
-		fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
-		await waitFor(() => expect(shellMocks.setTrafficLightsInset).toHaveBeenLastCalledWith(false));
+		const host = screen.getByTestId("session-topbar-host");
+		const sidebar = screen.getByTestId("sidebar");
+		// Host now lives inside center-panel-surface (after the sidebar in DOM order).
+		expect(host.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+		expect(host).toHaveClass("h-inspector-tabs");
+		// Sidebar uses the same topbar offset as non-session routes (no longer "session").
+		expect(sidebar).not.toHaveAttribute("data-topbar-offset", "session");
+		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")).toBeInTheDocument();
+		// Host must be a descendant of the session surface.
+		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")?.contains(host)).toBe(true);
 	});
 
+	it("forces a confirmed fetch and preserves a collapsed sidebar preference", async () => {
+		let resolveFetch: ((value: WorkspaceSummary[]) => void) | undefined;
+		useUiStore.setState({ isSidebarOpen: false });
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.state.workspaceQuery = {
+			data: [],
+			dataUpdatedAt: 100,
+			isError: false,
+			isSuccess: true,
+		};
+		shellMocks.queryClient.getQueryState.mockReturnValue({ dataUpdatedAt: 100 });
+		shellMocks.queryClient.fetchQuery.mockReturnValueOnce(
+			new Promise<WorkspaceSummary[]>((resolve) => {
+				resolveFetch = resolve;
+			}),
+		);
+
+		const view = await renderShell();
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+		expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 }));
+
+		await act(async () => resolveFetch?.(workspaces));
+
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
+		expect(screen.getByTestId("sidebar-provider")).toHaveAttribute("data-open", "false");
+		expect(useUiStore.getState().isSidebarOpen).toBe(false);
+		view.unmount();
+	});
+
+	it("does not turn a cancelled confirmed fetch into a startup error", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.state.workspaceQuery = {
+			data: [],
+			dataUpdatedAt: 100,
+			isError: false,
+			isSuccess: true,
+		};
+		shellMocks.queryClient.getQueryState.mockReturnValue({ dataUpdatedAt: 100 });
+		shellMocks.queryClient.fetchQuery.mockRejectedValueOnce(new CancelledError());
+
+		await renderShell();
+
+		await waitFor(() =>
+			expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 })),
+		);
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+	});
+
+	it("forces a workspace fetch when a daemon returns ready on the same port", async () => {
+		shellMocks.state.daemonStatus = { state: "starting", port: 4777 };
+		shellMocks.queryClient.fetchQuery.mockResolvedValue(workspaces);
+
+		const view = await renderShell();
+		expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("loading");
+		expect(shellMocks.queryClient.fetchQuery).not.toHaveBeenCalled();
+
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		view.rerender(
+			<Suspense fallback={null}>
+				<ShellRoute />
+			</Suspense>,
+		);
+
+		await waitFor(() =>
+			expect(shellMocks.queryClient.fetchQuery).toHaveBeenCalledWith(expect.objectContaining({ staleTime: 0 })),
+		);
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
+	});
+
+	it("recovers after a newer workspace query succeeds", async () => {
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.state.workspaceQuery = {
+			data: workspaces,
+			dataUpdatedAt: 100,
+			isError: false,
+			isSuccess: true,
+		};
+		shellMocks.queryClient.getQueryState.mockReturnValue({ dataUpdatedAt: 100 });
+		shellMocks.queryClient.fetchQuery.mockRejectedValueOnce(new Error("temporary failure"));
+
+		const view = await renderShell();
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("error"));
+
+		shellMocks.state.workspaceQuery = {
+			...shellMocks.state.workspaceQuery,
+			dataUpdatedAt: 200,
+		};
+		view.rerender(
+			<Suspense fallback={null}>
+				<ShellRoute />
+			</Suspense>,
+		);
+
+		await waitFor(() => expect(shellMocks.state.shellValue?.workspaceStartupState).toBe("ready"));
+	});
+});
+
+describe("shell sidebar hover preview", () => {
 	it("temporarily overlays a collapsed sidebar from the titlebar toggle and closes after pointer leave", async () => {
 		useUiStore.setState({ isSidebarOpen: false });
 		await renderShell();
@@ -315,6 +468,35 @@ describe("shell new-shell-terminal shortcut subscription", () => {
 
 		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
 			expect.objectContaining({ projectId: "proj-1" }),
+			expect.anything(),
+		);
+	});
+
+	// Regression: a terminal opened from a session view must carry the session
+	// id, not just its owning project's, so the daemon can resolve the
+	// session's own worktree instead of the registered project root.
+	it("scopes the terminal to the session in scope", async () => {
+		shellMocks.state.routeParams = { sessionId: "sess-1" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "proj-1", sessionId: "sess-1" }),
+			expect.anything(),
+		);
+	});
+
+	// Session terminals always belong to the session on screen — there is no
+	// longer an "owner" session whose worktree could be borrowed here (#3208).
+	it("scopes the terminal to the session on screen, not the route's project alone", async () => {
+		shellMocks.state.routeParams = { projectId: "proj-2", sessionId: "sess-cross" };
+		await renderShell();
+
+		pressNewShellTerminal();
+
+		expect(shellMocks.openShellTerminal).toHaveBeenCalledWith(
+			expect.objectContaining({ projectId: "proj-2", sessionId: "sess-cross" }),
 			expect.anything(),
 		);
 	});
@@ -405,15 +587,25 @@ describe("shell application shortcut subscriptions", () => {
 		});
 	});
 
-	it("focuses the mounted terminal", async () => {
-		const terminalInput = document.createElement("textarea");
-		terminalInput.className = "xterm-helper-textarea";
-		document.body.appendChild(terminalInput);
+	it("focuses the active terminal without targeting an earlier parked xterm", async () => {
+		const parked = document.createElement("div");
+		parked.dataset.terminalActivationPhase = "parked";
+		parked.inert = true;
+		const parkedInput = document.createElement("textarea");
+		parkedInput.className = "xterm-helper-textarea";
+		parked.appendChild(parkedInput);
+		const active = document.createElement("div");
+		active.dataset.terminalActivationPhase = "visible";
+		const activeInput = document.createElement("textarea");
+		activeInput.className = "xterm-helper-textarea";
+		active.appendChild(activeInput);
+		document.body.append(parked, active);
 		await renderShell();
 
 		act(() => shellMocks.state.focusTerminalListener?.());
 
-		expect(document.activeElement).toBe(terminalInput);
-		terminalInput.remove();
+		expect(document.activeElement).toBe(activeInput);
+		parked.remove();
+		active.remove();
 	});
 });

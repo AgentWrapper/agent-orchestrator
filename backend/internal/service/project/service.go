@@ -329,19 +329,6 @@ func classifyRepositorySetupTarget(ctx context.Context, path string) (repository
 		return repositorySetupUnbornRepo, nil
 	}
 
-	if top, err := gitOutput(ctx, path, "rev-parse", "--show-toplevel"); err == nil {
-		root := normalizeGitReportedPath(path, strings.TrimSpace(top))
-		selected := comparablePath(path)
-		if !samePath(root, selected) {
-			return repositorySetupPlainFolder, apierr.Invalid("PROJECT_PATH_NOT_REPO_ROOT", "Selected folder is inside a Git repository. Select the repository root instead.", map[string]any{
-				"path":         path,
-				"repoRoot":     root,
-				"suggestedFix": "Select the repository root folder, then try again.",
-			})
-		}
-		return repositorySetupPlainFolder, apierr.Invalid("UNSUPPORTED_GIT_REPO", "Selected folder contains an unsupported Git repository layout.", map[string]any{"path": path})
-	}
-
 	if hasGitMetadata(path) {
 		return repositorySetupPlainFolder, apierr.Invalid("UNSUPPORTED_GIT_REPO", "Selected folder contains Git metadata that AO could not inspect.", map[string]any{
 			"path":         path,
@@ -839,21 +826,8 @@ func isGitRepo(path string) bool {
 	if err != nil {
 		return false
 	}
-	top := filepath.Clean(strings.TrimSpace(string(out)))
-	path = filepath.Clean(path)
-	top, err = filepath.EvalSymlinks(top)
-	if err != nil {
-		return false
-	}
-	path, err = filepath.EvalSymlinks(path)
-	if err != nil {
-		return false
-	}
-
-	if strings.EqualFold(top, path) {
-		return true
-	}
-	return top == path
+	top := normalizeGitReportedPath(path, strings.TrimSpace(string(out)))
+	return samePath(top, comparablePath(path))
 }
 
 func defaultProjectID(path string) domain.ProjectID {

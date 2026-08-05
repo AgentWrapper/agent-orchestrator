@@ -49,6 +49,21 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Amp's built-in operating modes. Amp deliberately
+// chooses the underlying models for a mode, so AO exposes mode rather than a
+// misleading raw-model field.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{Fields: []ports.ConfigField{{
+		Key:         "mode",
+		Type:        ports.ConfigFieldEnum,
+		Description: "Amp agent mode.",
+		Enum:        []string{"low", "medium", "high", "ultra"},
+	}}}, nil
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Amp session:
 //
 //	amp
@@ -72,6 +87,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
+	if mode := strings.TrimSpace(cfg.Config.Mode); mode != "" {
+		cmd = append(cmd, "--mode", mode)
+	}
 	return cmd, nil
 }
 
@@ -122,7 +140,11 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	// Capacity fits binary + --resume + sessionID.
 	cmd = make([]string, 0, 3)
-	cmd = append(cmd, binary, "--resume", agentSessionID)
+	cmd = append(cmd, binary)
+	if mode := strings.TrimSpace(cfg.Config.Mode); mode != "" {
+		cmd = append(cmd, "--mode", mode)
+	}
+	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }
 

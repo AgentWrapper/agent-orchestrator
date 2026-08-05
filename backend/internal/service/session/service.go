@@ -23,9 +23,12 @@ type Store interface {
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
 	SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error)
+	SetSessionPinned(ctx context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error)
+	SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
+	ListSessionWorktrees(ctx context.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
 	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
 	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
 	ListPRReviewThreads(ctx context.Context, prURL string) ([]domain.PullRequestReviewThread, error)
@@ -166,6 +169,22 @@ func NewWithDeps(d Deps) *Service {
 // Spawn creates a session and returns the API-facing read model plus
 // ephemeral prompt size measurements.
 func (s *Service) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
+	if cfg.Kind == domain.KindOrchestrator {
+		unlock := s.lockOrchestratorProject(cfg.ProjectID)
+		defer unlock()
+
+		existing, err := s.activeOrchestrators(ctx, cfg.ProjectID)
+		if err != nil {
+			return domain.Session{}, 0, 0, err
+		}
+		if len(existing) > 0 {
+			return newestSession(existing), 0, 0, nil
+		}
+	}
+	return s.spawn(ctx, cfg)
+}
+
+func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error) {
 	project, err := s.requireProject(ctx, cfg.ProjectID)
 	if err != nil {
 		return domain.Session{}, 0, 0, err
@@ -310,9 +329,8 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	if err != nil {
 		return domain.Session{}, err
 	}
-	active := true
 	if clean {
-		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		existing, err := s.activeOrchestrators(ctx, projectID)
 		if err != nil {
 			return domain.Session{}, err
 		}
@@ -323,8 +341,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			}
 		}
 	} else {
-		// ponytail: check-then-spawn is not atomic; fine for the single-frontend ensure-on-load case. Upgrade path: a partial unique index on (project_id) where kind=orchestrator and not terminated.
-		existing, err := s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
+		existing, err := s.activeOrchestrators(ctx, projectID)
 		if err != nil {
 			return domain.Session{}, err
 		}
@@ -332,7 +349,7 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return newestSession(existing), nil
 		}
 	}
-	sess, _, _, err := s.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	sess, _, _, err := s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -340,6 +357,11 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 		return domain.Session{}, err
 	}
 	return sess, nil
+}
+
+func (s *Service) activeOrchestrators(ctx context.Context, projectID domain.ProjectID) ([]domain.Session, error) {
+	active := true
+	return s.List(ctx, ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
 }
 
 const orchestratorRetireNotice = "AO is replacing this project orchestrator. Stop coordinating new work now; a fresh orchestrator will take over in a new workspace."
@@ -524,6 +546,48 @@ func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID
 	return s.Get(ctx, id)
 }
 
+// Pin marks a session as pinned and returns the refreshed read model.
+func (s *Service) Pin(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+	now := s.now()
+	updated, err := s.store.SetSessionPinned(ctx, id, true, &now, now)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("pin %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// Unpin marks a session as unpinned and returns the refreshed read model.
+func (s *Service) Unpin(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+	now := s.now()
+	updated, err := s.store.SetSessionPinned(ctx, id, false, nil, now)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("unpin %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// SetReviewerHarness persists the reviewer selected for this session. Empty
+// clears the preference and restores the project-level fallback.
+func (s *Service) SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
+	if harness != "" && !harness.IsKnown() {
+		return domain.Session{}, apierr.Invalid("UNKNOWN_REVIEWER_HARNESS", "Unknown reviewer harness", nil)
+	}
+	updated, err := s.store.SetSessionReviewerHarness(ctx, id, harness, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set reviewer harness %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
 // Cleanup delegates terminal workspace cleanup to the internal manager and
 // reports both reclaimed and preserved (skipped) workspaces.
 func (s *Service) Cleanup(ctx context.Context, project domain.ProjectID) (CleanupOutcome, error) {
@@ -669,6 +733,10 @@ func toAPIError(err error) error {
 		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, ports.ErrRuntimePrerequisite):
 		return apierr.Invalid("RUNTIME_PREREQUISITE_MISSING", err.Error(), nil)
+	case errors.Is(err, ports.ErrRuntimeWorkspaceCwdMismatch):
+		return apierr.Conflict("WORKSPACE_CWD_MISMATCH", err.Error(), nil)
+	case errors.Is(err, ports.ErrWorkspaceLocked):
+		return apierr.Conflict("WORKSPACE_LOCKED", err.Error(), nil)
 	default:
 		return err
 	}
@@ -679,6 +747,7 @@ func (s *Service) toSession(ctx context.Context, rec domain.SessionRecord) (doma
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("pr facts %s: %w", rec.ID, err)
 	}
+	prs = deduplicatePRFacts(prs)
 	return domain.Session{
 		SessionRecord:    rec,
 		Status:           deriveStatus(rec, prs, s.now(), s.harnessSignals(rec.Harness)),

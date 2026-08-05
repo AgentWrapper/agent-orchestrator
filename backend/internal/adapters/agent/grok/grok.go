@@ -5,10 +5,13 @@
 // hooks into .claude/settings.local.json with Grok-specific AO hook commands.
 // Grok will pick them up via its compat layer.
 //
-// Launch uses a positional prompt for the initial task (in-command delivery).
+// Launch starts Grok's interactive TUI without a prompt. AO delivers the
+// initial task through the terminal after the TUI is ready because Grok's
+// `-p`/`--single` mode is headless and bare positional arguments are parsed as
+// subcommands.
 // AO's standing instructions are appended with `--rules` so Grok's built-in
 // coding-agent system prompt is preserved. Permission handling uses
-// `--permission-mode`. We also pass `--no-auto-update` for headless/scripted use
+// `--permission-mode`. We also pass `--no-auto-update` for AO-managed sessions
 // (parity with Codex no-update).
 // Restore prefers the hook-captured native session id via `-r <id>`.
 //
@@ -22,6 +25,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
@@ -105,8 +109,15 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetLaunchCommand builds `grok --no-auto-update [--permission-mode <mode>] [-- prompt]`.
-// Prompt is delivered positionally so Grok starts an interactive coding session.
+// GetConfigSpec reports Grok Build's optional model override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	return agentbase.ModelConfigSpec(ctx, "Model override passed to `grok --model`.")
+}
+
+// GetLaunchCommand builds `grok --no-auto-update [--permission-mode <mode>]`
+// and leaves the prompt for AO's after-start terminal delivery. Grok's
+// `-p`/`--single` flag runs one headless turn and exits, while a bare prompt is
+// parsed as a subcommand by current Grok versions.
 //
 // Uses --permission-mode (acceptEdits / auto / bypassPermissions) to match
 // `grok -h` output. Default omits the flag so Grok uses its config.
@@ -118,6 +129,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary, "--no-auto-update"}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 
 	systemPrompt, err := launchSystemPromptText(cfg)
 	if err != nil {
@@ -127,11 +139,32 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--rules", systemPrompt)
 	}
 
-	if cfg.Prompt != "" {
-		cmd = append(cmd, "--", cfg.Prompt)
-	}
-
 	return cmd, nil
+}
+
+// GetPromptDeliveryStrategy reports that AO should inject prompted Grok tasks
+// into the interactive terminal after startup.
+func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return ports.PromptDeliveryAfterStart, nil
+}
+
+// PromptReadinessHints waits for Grok's interactive UI before AO injects the
+// worker's first task. Timeout falls back to delivery so a changed startup
+// banner cannot permanently block spawning.
+func (p *Plugin) PromptReadinessHints(ctx context.Context, _ ports.LaunchConfig) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 750 * time.Millisecond,
+		Patterns:     []string{"Grok Build"},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      8 * time.Second,
+		Lines:        80,
+	}, nil
 }
 
 // GetAgentHooks installs Claude Code-shaped hooks because Grok Build has a
@@ -182,6 +215,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 4)
 	cmd = append(cmd, binary, "--no-auto-update")
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	systemPrompt, err := restoreSystemPromptText(cfg)
 	if err != nil {
 		return nil, false, err

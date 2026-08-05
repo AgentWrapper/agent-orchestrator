@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -33,13 +34,16 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
+func TestGetConfigSpecReportsModes(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	if len(spec.Fields) != 1 || spec.Fields[0].Key != "mode" {
+		t.Fatalf("unexpected fields: %#v", spec.Fields)
+	}
+	if want := []string{"low", "medium", "high", "ultra"}; !reflect.DeepEqual(spec.Fields[0].Enum, want) {
+		t.Fatalf("mode enum = %#v, want %#v", spec.Fields[0].Enum, want)
 	}
 }
 
@@ -78,6 +82,17 @@ func TestGetLaunchCommandBypassWithPromptLeavesPromptForAfterStartDelivery(t *te
 		t.Fatalf("unexpected command\nwant: %#v\n got: %#v", want, cmd)
 	}
 	assertAmpPermissionFlagsAbsent(t, cmd)
+}
+
+func TestGetLaunchCommandForwardsMode(t *testing.T) {
+	p := &Plugin{resolvedBinary: "amp"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{Config: ports.AgentConfig{Mode: " high "}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"amp", "--mode", "high"}; !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
 }
 
 func TestGetLaunchCommandPermissionModesEmitNoFlag(t *testing.T) {
@@ -251,7 +266,7 @@ func TestGetAgentHooksInstallsSystemPromptPlugin(t *testing.T) {
 	text := string(data)
 	for _, want := range []string{
 		ampPluginSentinel,
-		promptFile,
+		strconv.Quote(promptFile),
 		"agent.start",
 		"display: false",
 		"readFile(systemPromptFile",
@@ -340,7 +355,7 @@ func TestGetAgentHooksSystemPromptFileTakesPrecedenceOverInline(t *testing.T) {
 		t.Fatalf("read plugin: %v", err)
 	}
 	text := string(data)
-	if !strings.Contains(text, promptFile) {
+	if !strings.Contains(text, strconv.Quote(promptFile)) {
 		t.Fatalf("plugin missing prompt file path:\n%s", text)
 	}
 	if strings.Contains(text, "inline rules") {

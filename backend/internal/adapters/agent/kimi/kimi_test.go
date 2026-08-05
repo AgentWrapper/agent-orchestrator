@@ -32,6 +32,16 @@ func TestManifest(t *testing.T) {
 	}
 }
 
+func TestKimiBinarySpecIncludesSelfManagedInstallPath(t *testing.T) {
+	want := []string{".kimi-code", "bin", "kimi"}
+	for _, path := range kimiBinarySpec.UnixHomePaths {
+		if reflect.DeepEqual(path, want) {
+			return
+		}
+	}
+	t.Fatalf("UnixHomePaths = %#v, want %v", kimiBinarySpec.UnixHomePaths, want)
+}
+
 func TestGetConfigSpecAdvertisesModelField(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {

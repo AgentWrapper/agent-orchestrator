@@ -31,8 +31,15 @@ const (
 	defaultEnterDelay = 300 * time.Millisecond
 	// defaultReapGrace is how long Destroy waits between SIGTERM and SIGKILL when
 	// reaping a pane's leftover background processes, giving them a chance to
-	// exit cleanly (release ports) before being forced (issue #2523).
+	// exit cleanly (release ports) before being forced (issue #2523). It is a
+	// ceiling, not a fixed wait: reapPollInterval decides how soon a pane that
+	// is already empty lets Destroy return.
 	defaultReapGrace = 5 * time.Second
+	// reapPollInterval is how often the reap rechecks for survivors while the
+	// grace runs. A plain shell exits within a tick or two, so Destroy returns
+	// in roughly this long instead of always burning the full grace — which the
+	// DELETE handler blocks on, and the user sees as a tab that will not close.
+	reapPollInterval = 50 * time.Millisecond
 )
 
 var sessionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -78,36 +85,93 @@ type runner interface {
 // SIGKILLs survivors. Best-effort: `pkill` is absent on Windows, where tmux is
 // never the runtime, so the calls simply no-op there.
 func killSessionsByPID(ctx context.Context, pids []int, grace time.Duration) {
+	reapPaneSessions(ctx, pids, grace, signalSessions, sessionsHaveProcesses)
+}
+
+// reapPaneSessions is killSessionsByPID's logic with the pkill/pgrep calls
+// injected, so the SIGTERM → wait → SIGKILL sequence is testable without real
+// processes.
+func reapPaneSessions(
+	ctx context.Context,
+	pids []int,
+	grace time.Duration,
+	signal func(ctx context.Context, pids []int, sig string) bool,
+	hasProcesses func(ctx context.Context, pids []int) bool,
+) {
 	if len(pids) == 0 {
 		return
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace+5*time.Second)
 	defer cancel()
 
-	signalSessions(cleanupCtx, pids, "-TERM")
-	if !sessionsHaveProcesses(cleanupCtx, pids) {
+	// `-s` is a Linux procps extension; BSD/macOS pkill rejects it outright. When
+	// the platform cannot signal by session id, no amount of waiting reaps
+	// anything — the SIGTERM never landed and the SIGKILL would not either — so
+	// return instead of blocking the caller for the whole grace. Destroy runs
+	// inside the shell-terminal DELETE handler, and that dead wait was the
+	// several-second delay users saw when closing a terminal on macOS.
+	if !signal(cleanupCtx, pids, "-TERM") {
+		return
+	}
+	if !hasProcesses(cleanupCtx, pids) {
 		return
 	}
 
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-	select {
-	case <-cleanupCtx.Done():
-		return
-	case <-timer.C:
+	// Poll rather than sleep the whole grace. Callers block on this (Destroy runs
+	// inside the shell-terminal DELETE handler), and the common case — an
+	// interactive shell with nothing behind it — is empty almost immediately. A
+	// process that really needs the time still gets the full grace before SIGKILL.
+	deadline := time.NewTimer(grace)
+	defer deadline.Stop()
+	ticker := time.NewTicker(reapPollInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-cleanupCtx.Done():
+			return
+		case <-ticker.C:
+			if !hasProcesses(cleanupCtx, pids) {
+				return
+			}
+		case <-deadline.C:
+			if !hasProcesses(cleanupCtx, pids) {
+				return
+			}
+			signal(cleanupCtx, pids, "-KILL")
+			return
+		}
 	}
-	if !sessionsHaveProcesses(cleanupCtx, pids) {
-		return
-	}
-	signalSessions(cleanupCtx, pids, "-KILL")
 }
 
 // signalSessions sends a pkill signal flag (e.g. "-TERM") to every process in
-// each pane session, matched by session id via `pkill -s`.
-func signalSessions(ctx context.Context, pids []int, sig string) {
+// each pane session, matched by session id via `pkill -s`. It reports whether
+// the platform supports signalling by session id at all: exit 2 is a usage
+// error on both procps and BSD pkill, which is how macOS answers `-s`, and
+// there the call reaches no process.
+func signalSessions(ctx context.Context, pids []int, sig string) bool {
+	supported := false
 	for _, pid := range pids {
-		_ = exec.CommandContext(ctx, "pkill", sig, "-s", strconv.Itoa(pid)).Run()
+		err := exec.CommandContext(ctx, "pkill", sig, "-s", strconv.Itoa(pid)).Run()
+		if !isUnsupportedMatcher(err) {
+			supported = true
+		}
 	}
+	return supported
+}
+
+// isUnsupportedMatcher reports whether a pgrep/pkill invocation failed because
+// the platform rejects the matcher itself (exit 2, a usage error) rather than
+// because nothing matched (exit 1) or the process is missing entirely.
+func isUnsupportedMatcher(err error) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return exitErr.ExitCode() >= 2
+	}
+	// pkill/pgrep absent (Windows, minimal containers): equally unusable.
+	return true
 }
 
 // sessionsHaveProcesses reports whether any process remains in the pane
@@ -132,7 +196,44 @@ type execRunner struct{}
 func (execRunner) Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Env = append(append([]string(nil), os.Environ()...), env...)
+	// Run from a stable directory, not whatever the daemon process's cwd happens
+	// to be. The first tmux CLI call auto-starts tmux's persistent server, which
+	// inherits ITS launching process's cwd and keeps it for the server's entire
+	// lifetime, regardless of what any later `new-session -c <dir>` asks for
+	// (issue #2775). A packaged desktop build can start the daemon with its cwd
+	// inside a Squirrel/ShipIt staging directory that the very next auto-update
+	// deletes, permanently pinning the tmux server to a path that no longer
+	// exists. os.TempDir() outlives app bundle swaps and update staging dirs, so
+	// pinning here keeps the server cwd valid across the app's lifetime.
+	cmd.Dir = stableRunDir()
 	return cmd.CombinedOutput()
+}
+
+// stableRunDir returns the directory execRunner.Run pins the tmux CLI to.
+//
+// os.TempDir() is the preferred answer (see execRunner.Run), but it returns
+// $TMPDIR verbatim without checking that it exists. A stale or bogus TMPDIR
+// would then make exec fail with "chdir <dir>: no such file or directory" on
+// EVERY tmux command, taking the whole runtime down for exactly the reason
+// #2775 did: a cwd that no longer exists. So stat the candidates and degrade
+// rather than hard-fail. The last resort is the empty string, which leaves
+// cmd.Dir unset so the command inherits the daemon's own cwd: that is the
+// pre-fix behavior and merely risks the poisoned-server race the pin avoids,
+// which the retry in verifyPaneWorkingDirectory already tolerates.
+func stableRunDir() string {
+	candidates := []string{os.TempDir()}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, home)
+	}
+	for _, dir := range candidates {
+		if dir == "" {
+			continue
+		}
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return dir
+		}
+	}
+	return ""
 }
 
 // New builds a tmux Runtime, filling unset Options with defaults: binary "tmux"
@@ -283,16 +384,54 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	return handle, nil
 }
 
+// paneCwdVerifyAttempts and paneCwdVerifyRetryDelay bound how long Create
+// waits for the pane's working directory to settle before giving up.
+// buildLaunchCommand's `cd '<workspace>' || exit;` guard corrects a pane that
+// started in the tmux server's own (possibly poisoned) cwd, but only once the
+// pane's shell actually runs that cd. Measured live on 2026-07-25:
+// #{pane_current_path} sampled immediately after `new-session` was stale, and
+// the same probe sampled 50ms later was already correct. A single-shot check
+// therefore lost that race every time and turned a spawn that was actually
+// going to succeed into a hard failure (issue #2775): retrying gives the cd
+// guard the moment it needs to run.
+const (
+	paneCwdVerifyAttempts   = 5
+	paneCwdVerifyRetryDelay = 50 * time.Millisecond
+)
+
 func (r *Runtime) verifyPaneWorkingDirectory(ctx context.Context, id, want string) error {
-	out, err := r.run(ctx, paneCurrentPathArgs(id)...)
-	if err != nil {
-		return fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+	var lastErr error
+	for attempt := 0; attempt < paneCwdVerifyAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(paneCwdVerifyRetryDelay):
+			}
+		}
+		out, err := r.run(ctx, paneCurrentPathArgs(id)...)
+		if err != nil {
+			// A later transient probe failure (e.g. a one-off tmux CLI hiccup)
+			// must not overwrite an already-observed cwd mismatch: the mismatch
+			// is the classifiable, actionable error toAPIError maps via
+			// ports.ErrRuntimeWorkspaceCwdMismatch (Fix 4), and losing it here
+			// would silently regress that mapping back to a bare, unclassifiable
+			// 500 whenever the very last attempt happened to hit a probe error.
+			if !errors.Is(lastErr, ports.ErrRuntimeWorkspaceCwdMismatch) {
+				lastErr = fmt.Errorf("tmux runtime: verify working directory %s: %w", id, err)
+			}
+			continue
+		}
+		got := strings.TrimSpace(string(out))
+		if sameDirectory(got, want) {
+			return nil
+		}
+		lastErr = fmt.Errorf(
+			"%w: session %s started in %q, want %q (the worktree may be missing, or the tmux server may be pinned to a stale directory)",
+			ports.ErrRuntimeWorkspaceCwdMismatch, id, got, want,
+		)
 	}
-	got := strings.TrimSpace(string(out))
-	if sameDirectory(got, want) {
-		return nil
-	}
-	return fmt.Errorf("tmux runtime: session %s started in %q, want %q", id, got, want)
+	return lastErr
 }
 
 // Destroy kills the handle's tmux session and reaps the pane processes it
@@ -350,11 +489,14 @@ func (r *Runtime) paneSessionIDs(ctx context.Context, id string) []int {
 }
 
 // IsAlive reports whether the handle's session still exists via `tmux
-// has-session`. Exit 0 means alive. A non-zero exit with output indicating the
-// session or server is missing is a definitive false, nil. Any other non-zero
-// exit is a probe error (not proof of death) so callers (the reaper feeding
-// the LCM) treat it as a failed probe and never kill a session on a transient
-// error.
+// has-session`. Exit 0 means alive. A non-zero exit with output naming this
+// session as missing is a definitive false, nil. A server-level failure ("no
+// server running", "error connecting") wraps ports.ErrRuntimeUnavailable: the
+// probe learned nothing about this session — the agent process may well still
+// be running as an orphan of the dead server — so it must never be read as
+// per-session death (issue #3475). Any other non-zero exit is a plain probe
+// error so callers (the reaper feeding the LCM) treat it as a failed probe
+// and never kill a session on a transient error.
 func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
 	id, err := handleID(handle)
 	if err != nil {
@@ -363,8 +505,14 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 	out, err := r.run(ctx, hasSessionArgs(id)...)
 	if err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) && sessionMissingOutput(string(out)) {
-			return false, nil
+		if errors.As(err, &exitErr) {
+			if sessionMissingOutput(string(out)) {
+				return false, nil
+			}
+			if serverUnreachableOutput(string(out)) {
+				return false, fmt.Errorf("tmux runtime: probe session %s: %w: %s",
+					id, ports.ErrRuntimeUnavailable, strings.TrimSpace(string(out)))
+			}
 		}
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
 	}
@@ -415,10 +563,24 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 	}
 	enterCtx := ctx
 	if message != "" {
-		for _, chunk := range chunks(message, r.chunkSize) {
-			if _, err := r.run(ctx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+		messageChunks := chunks(message, r.chunkSize)
+		sendCtx := ctx
+		var finishCancel context.CancelFunc
+		for i, chunk := range messageChunks {
+			if _, err := r.run(sendCtx, sendKeysLiteralArgs(id, chunk)...); err != nil {
+				if finishCancel != nil {
+					finishCancel()
+				}
 				return fmt.Errorf("tmux runtime: send message %s: %w", id, err)
 			}
+			if i == 0 {
+				completionBudget := sendCompletionBudget(len(messageChunks), r.timeout, r.enterDelay)
+				enterCtx, finishCancel = context.WithTimeout(context.WithoutCancel(ctx), completionBudget)
+				sendCtx = enterCtx
+			}
+		}
+		if finishCancel != nil {
+			defer finishCancel()
 		}
 		// Give the target TUI a moment to accept the pasted text before the
 		// trailing Enter, mirroring conpty's ptyInputEnterDelay. Without it a
@@ -430,9 +592,9 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		// the Enter are detached from the caller's cancellation (bounded by
 		// their own timeout instead): abandoning mid-pause would strand an
 		// unsubmitted draft that a retried send would then double-paste.
-		var cancel context.CancelFunc
-		enterCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), r.enterDelay+5*time.Second)
-		defer cancel()
+		// Errors reported by tmux after it accepts a chunk still return to the
+		// caller; they are not retried because AO cannot safely distinguish
+		// whether tmux applied the failed command.
 		if r.enterDelay > 0 {
 			select {
 			case <-enterCtx.Done():
@@ -445,6 +607,10 @@ func (r *Runtime) SendMessage(ctx context.Context, handle ports.RuntimeHandle, m
 		return fmt.Errorf("tmux runtime: send enter %s: %w", id, err)
 	}
 	return nil
+}
+
+func sendCompletionBudget(chunkCount int, commandTimeout, enterDelay time.Duration) time.Duration {
+	return time.Duration(chunkCount)*commandTimeout + enterDelay
 }
 
 // Interrupt sends Ctrl-C to the foreground process without destroying the tmux
@@ -715,21 +881,34 @@ func handleID(handle ports.RuntimeHandle) (string, error) {
 
 // -- output detection helpers --
 
-// sessionMissingOutput reports whether a non-zero `tmux has-session` or
-// `tmux kill-session` exit is definitively "session does not exist" rather
-// than a transient probe failure.
+// sessionMissingOutput reports whether a non-zero `tmux has-session` exit is
+// definitively "this session does not exist" — evidence about the probed
+// session itself. Server-level failures deliberately do not match: "no server
+// running" describes the whole server and "error connecting" is a transient
+// socket failure; neither says anything about one session, so treating them as
+// per-session death let a single server outage archive every session on the
+// board (issue #3475).
 func sessionMissingOutput(out string) bool {
 	s := strings.ToLower(out)
 	return strings.Contains(s, "can't find session") ||
-		strings.Contains(s, "no server running") ||
-		strings.Contains(s, "error connecting") ||
 		strings.Contains(s, "session not found")
 }
 
+// serverUnreachableOutput reports whether a non-zero tmux exit means the
+// server itself could not be reached, which is inconclusive for any single
+// session's liveness.
+func serverUnreachableOutput(out string) bool {
+	s := strings.ToLower(out)
+	return strings.Contains(s, "no server running") ||
+		strings.Contains(s, "error connecting")
+}
+
 // killSessionMissingOutput reports whether a non-zero `tmux kill-session`
-// failed because the session was already gone.
+// failed because the session was already gone. Teardown stays generous: a
+// missing server also means there is nothing left to kill, so it shares the
+// server-level patterns that liveness probing must not use.
 func killSessionMissingOutput(out string) bool {
-	return sessionMissingOutput(out)
+	return sessionMissingOutput(out) || serverUnreachableOutput(out)
 }
 
 // -- text helpers --

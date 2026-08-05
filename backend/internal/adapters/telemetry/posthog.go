@@ -23,14 +23,75 @@ import (
 )
 
 const postHogBufferSize = 128
+const maxCommandShapeLength = 48
+const remoteTelemetrySchemaVersion = 2
+
+var remoteEventNameAliases = map[string]string{
+	"ao.app.active":              "ao.v2.app.active",
+	"ao.cli.invoked":             "ao.v2.cli.invoked",
+	"ao.renderer.route_viewed":   "ao.v2.renderer.route_viewed",
+	"ao.renderer.loaded":         "ao.v2.renderer.loaded",
+	"ao.renderer.api_error":      "ao.v2.renderer.api_error",
+	"ao.renderer.daemon_failure": "ao.v2.renderer.daemon_failure",
+}
+
+var remoteCommandTokens = map[string]struct{}{
+	"add":              {},
+	"agent":            {},
+	"agent-process":    {},
+	"cancel":           {},
+	"claim-pr":         {},
+	"cleanup":          {},
+	"clear":            {},
+	"completion":       {},
+	"daemon":           {},
+	"delete":           {},
+	"dev":              {},
+	"doctor":           {},
+	"execute":          {},
+	"get":              {},
+	"help":             {},
+	"hooks":            {},
+	"import":           {},
+	"import-projects":  {},
+	"kill":             {},
+	"launch":           {},
+	"list":             {},
+	"ls":               {},
+	"merge":            {},
+	"orchestrator":     {},
+	"preview":          {},
+	"pr":               {},
+	"project":          {},
+	"remove":           {},
+	"rename":           {},
+	"resolve-comments": {},
+	"restart":          {},
+	"restore":          {},
+	"review":           {},
+	"rm":               {},
+	"send":             {},
+	"session":          {},
+	"set-config":       {},
+	"spawn":            {},
+	"start":            {},
+	"status":           {},
+	"stop":             {},
+	"submit":           {},
+	"supervise":        {},
+	"trigger":          {},
+	"version":          {},
+}
 
 var remotePayloadAllowlist = map[string]map[string]struct{}{
 	"ao.app.active": {
+		"actor_type":   {},
 		"channel":      {},
 		"command":      {},
 		"command_path": {},
 	},
 	"ao.cli.invoked": {
+		"actor_type":   {},
 		"command":      {},
 		"command_path": {},
 	},
@@ -127,6 +188,10 @@ type PostHogSink struct {
 	apiKey     string
 	host       string
 	distinctID string
+	// appVersion stamps app_version/ao_version on every exported event. Empty
+	// leaves the properties off entirely rather than reporting a misleading
+	// "unknown" that would show up as a real version in release breakdowns.
+	appVersion string
 	client     postHogClient
 	log        *slog.Logger
 	ch         chan ports.TelemetryEvent
@@ -135,7 +200,7 @@ type PostHogSink struct {
 }
 
 // NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
-func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
+func NewPostHogSink(dataDir, apiKey, host, appVersion string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("posthog api key is required")
 	}
@@ -155,6 +220,7 @@ func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slo
 		distinctID: distinctID,
 		client:     client,
 		log:        telemetryLogger(log),
+		appVersion: strings.TrimSpace(appVersion),
 		ch:         make(chan ports.TelemetryEvent, postHogBufferSize),
 	}
 	s.wg.Add(1)
@@ -195,9 +261,10 @@ func (s *PostHogSink) loop() {
 }
 
 func (s *PostHogSink) send(ev ports.TelemetryEvent) {
+	eventName := remoteEventName(ev.Name)
 	body := map[string]any{
 		"api_key":     s.apiKey,
-		"event":       ev.Name,
+		"event":       eventName,
 		"distinct_id": s.distinctID,
 		"properties":  s.properties(ev),
 		"timestamp":   ev.OccurredAt.UTC().Format(time.RFC3339Nano),
@@ -228,12 +295,23 @@ func (s *PostHogSink) send(ev ports.TelemetryEvent) {
 
 func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	props := map[string]any{
-		"source": ev.Source,
-		"level":  string(ev.Level),
+		"source":                   ev.Source,
+		"level":                    string(ev.Level),
+		"telemetry_schema_version": remoteTelemetrySchemaVersion,
 		// The distinct ID is a random install ID with no person data behind it,
 		// so skip PostHog person-profile processing: identified events bill at
 		// several times the anonymous rate and the profiles would hold nothing.
 		"$process_person_profile": false,
+	}
+	if remoteEventName(ev.Name) != ev.Name {
+		props["legacy_event_name"] = ev.Name
+	}
+	// Without this, every daemon event lands with no version at all, so a
+	// failure rate cannot be attributed to a release. Renderer events already
+	// carry app_version; these are the matching daemon-side values.
+	if s.appVersion != "" {
+		props["app_version"] = s.appVersion
+		props["ao_version"] = s.appVersion
 	}
 	if ev.RequestID != "" {
 		props["request_id"] = ev.RequestID
@@ -250,6 +328,13 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	return props
 }
 
+func remoteEventName(name string) string {
+	if alias, ok := remoteEventNameAliases[name]; ok {
+		return alias
+	}
+	return name
+}
+
 func sanitizeRemotePayload(name string, payload map[string]any) map[string]any {
 	allowed := remotePayloadAllowlist[name]
 	if len(allowed) == 0 || len(payload) == 0 {
@@ -261,18 +346,56 @@ func sanitizeRemotePayload(name string, payload map[string]any) map[string]any {
 		if !ok {
 			continue
 		}
-		if safe, ok := sanitizeRemoteValue(value); ok {
+		if safe, ok := sanitizeRemoteValue(key, value); ok {
 			sanitized[key] = safe
 		}
 	}
 	return sanitized
 }
 
-func sanitizeRemoteValue(v any) (any, bool) {
+func isAllowedCommandValue(key, value string) bool {
+	if value == "" || len(value) > maxCommandShapeLength {
+		return false
+	}
+	tokens := strings.Split(value, " ")
+	if key == "command" {
+		if len(tokens) != 1 {
+			return false
+		}
+		if value == "ao" || value == "<unknown>" {
+			return true
+		}
+		_, ok := remoteCommandTokens[value]
+		return ok
+	}
+	if key != "command_path" || tokens[0] != "ao" {
+		return false
+	}
+	for i, token := range tokens[1:] {
+		if token == "<unknown>" {
+			if i != len(tokens[1:])-1 {
+				return false
+			}
+			continue
+		}
+		if _, ok := remoteCommandTokens[token]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func sanitizeRemoteValue(key string, v any) (any, bool) {
 	switch value := v.(type) {
 	case string:
 		value = strings.TrimSpace(value)
-		return value, value != ""
+		if value == "" {
+			return nil, false
+		}
+		if (key == "command" || key == "command_path") && !isAllowedCommandValue(key, value) {
+			return "sha256:" + sha256String(value)[:16], true
+		}
+		return value, true
 	case bool:
 		return value, true
 	case int:

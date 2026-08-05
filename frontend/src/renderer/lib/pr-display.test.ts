@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import type { WorkspaceSession } from "../types/workspace";
-import { prBrowserUrl, prDiffSummary, prStatusRows, prSummaryParts, sessionPRDisplaySummaries } from "./pr-display";
+import {
+	prBrowserUrl,
+	prCardPresentation,
+	prDiffSummary,
+	prStatusRows,
+	prSummaryParts,
+	sessionPRDisplaySummaries,
+} from "./pr-display";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -26,6 +33,18 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	ciObservedAt: "2026-06-15T00:00:00Z",
 	reviewObservedAt: "2026-06-15T00:00:00Z",
 	...overrides,
+});
+
+const session = (prs: WorkspaceSession["prs"]): WorkspaceSession => ({
+	id: "sess-1",
+	workspaceId: "ws-1",
+	workspaceName: "repo",
+	title: "Fix timing",
+	provider: "codex",
+	branch: "feat/timing",
+	status: "review_pending",
+	updatedAt: "2026-06-15T12:00:00Z",
+	prs,
 });
 
 describe("prStatusRows", () => {
@@ -57,6 +76,111 @@ describe("prDiffSummary", () => {
 	});
 });
 
+describe("prCardPresentation", () => {
+	it("shows a required review once instead of repeating it as a merge blocker", () => {
+		const presentation = prCardPresentation(
+			summary({
+				review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+				mergeability: {
+					state: "blocked",
+					reasons: ["review_required"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary).toMatchObject({
+			key: "review",
+			label: "Review required",
+			detail: "Merge blocked until a required review is submitted.",
+			tone: "review",
+		});
+		expect(presentation.supporting.map((status) => status.label)).toEqual(["Checks passing"]);
+	});
+
+	it("prioritizes failing checks over lower-priority review and merge facts", () => {
+		const presentation = prCardPresentation(
+			summary({
+				ci: {
+					state: "failing",
+					failingChecks: [{ name: "unit", status: "failed", conclusion: "failure", url: "https://ci/unit" }],
+				},
+				review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+				mergeability: {
+					state: "blocked",
+					reasons: ["review_required"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary.label).toBe("Checks failing");
+		expect(presentation.primary.links[0]).toMatchObject({ label: "unit", href: "https://ci/unit" });
+		expect(presentation.supporting).toEqual([]);
+	});
+
+	it("retains running checks as linked supporting state when review is the primary action", () => {
+		const presentation = prCardPresentation(
+			summary({
+				ci: { state: "pending", failingChecks: [] },
+				review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+				mergeability: {
+					state: "blocked",
+					reasons: ["review_required"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary.label).toBe("Review required");
+		expect(presentation.supporting[0]).toMatchObject({
+			label: "Checks running",
+			href: "https://github.com/acme/repo/pull/7/checks",
+			breathe: true,
+		});
+	});
+
+	it("shows running checks instead of an internal provider blocker", () => {
+		const presentation = prCardPresentation(
+			summary({
+				ci: { state: "pending", failingChecks: [] },
+				mergeability: {
+					state: "unstable",
+					reasons: ["blocked_by_provider"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary).toMatchObject({
+			key: "ci",
+			label: "Checks running",
+			href: "https://github.com/acme/repo/pull/7/checks",
+			breathe: true,
+		});
+		expect(presentation.supporting).toEqual([]);
+	});
+
+	it("uses customer-facing copy for an unexplained merge blocker", () => {
+		const presentation = prCardPresentation(
+			summary({
+				mergeability: {
+					state: "blocked",
+					reasons: ["blocked_by_provider"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary).toMatchObject({
+			key: "merge",
+			label: "Merge unavailable",
+			detail: "GitHub currently reports this pull request can't be merged.",
+			links: [],
+		});
+	});
+});
+
 describe("prBrowserUrl", () => {
 	it("normalizes issue-shaped GitHub PR URLs to the pull request page", () => {
 		expect(
@@ -72,16 +196,8 @@ describe("prBrowserUrl", () => {
 
 describe("sessionPRDisplaySummaries", () => {
 	it("leaves lifecycle timing absent for fallback PR facts until provider times arrive", () => {
-		const session: WorkspaceSession = {
-			id: "sess-1",
-			workspaceId: "ws-1",
-			workspaceName: "repo",
-			title: "Fix timing",
-			provider: "codex",
-			branch: "feat/timing",
-			status: "review_pending",
-			updatedAt: "2026-06-15T12:00:00Z",
-			prs: [
+		const [fallback] = sessionPRDisplaySummaries(
+			session([
 				{
 					url: "https://github.com/acme/repo/pull/7",
 					number: 7,
@@ -92,14 +208,235 @@ describe("sessionPRDisplaySummaries", () => {
 					reviewComments: false,
 					updatedAt: "2026-06-15T11:00:00Z",
 				},
-			],
-		};
-
-		const [fallback] = sessionPRDisplaySummaries(session);
+			]),
+		);
 
 		expect(fallback.updatedAt).toBe("2026-06-15T11:00:00Z");
 		expect(fallback.createdAt).toBeUndefined();
 		expect(fallback.stateChangedAt).toBeUndefined();
+	});
+
+	it("deduplicates repeated API summaries before rendering", () => {
+		const got = sessionPRDisplaySummaries(session([]), [
+			summary({ number: 7, title: "first observed PR #7" }),
+			summary({ number: 7, title: "duplicate PR #7" }),
+			summary({ number: 8, title: "PR #8" }),
+		]);
+
+		expect(got.map((pr) => pr.number)).toEqual([7, 8]);
+		expect(got[0].title).toBe("first observed PR #7");
+	});
+
+	it("keeps same-number PRs from different repositories distinct", () => {
+		const got = sessionPRDisplaySummaries(session([]), [
+			summary({
+				url: "https://github.com/acme/api/pull/7",
+				htmlUrl: "https://github.com/acme/api/pull/7",
+				repo: "acme/api",
+				number: 7,
+				title: "API PR #7",
+			}),
+			summary({
+				url: "https://github.com/acme/web/pull/7",
+				htmlUrl: "https://github.com/acme/web/pull/7",
+				repo: "acme/web",
+				number: 7,
+				title: "Web PR #7",
+			}),
+		]);
+
+		expect(got.map((pr) => pr.title)).toEqual(["API PR #7", "Web PR #7"]);
+	});
+
+	it("keeps same-number PRs with the same repository basename from different owners distinct", () => {
+		const got = sessionPRDisplaySummaries(session([]), [
+			summary({
+				url: "https://github.com/acme/repo/pull/7",
+				htmlUrl: "https://github.com/acme/repo/pull/7",
+				repo: "acme/repo",
+				number: 7,
+				title: "Acme PR #7",
+				headSha: "acme-head",
+			}),
+			summary({
+				url: "https://github.com/other/repo/pull/7",
+				htmlUrl: "https://github.com/other/repo/pull/7",
+				repo: "other/repo",
+				number: 7,
+				title: "Other PR #7",
+				headSha: "other-head",
+			}),
+		]);
+
+		expect(got.map((pr) => pr.title)).toEqual(["Acme PR #7", "Other PR #7"]);
+	});
+
+	it("deduplicates transferred GitHub repository aliases", () => {
+		const got = sessionPRDisplaySummaries(session([]), [
+			summary({
+				url: "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+				htmlUrl: "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
+				repo: "AgentWrapper/agent-orchestrator",
+				number: 3193,
+				title: "first observed alias",
+			}),
+			summary({
+				url: "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+				htmlUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
+				repo: "Untrivial-ai/agent-orchestrator",
+				number: 3193,
+				title: "duplicate transferred alias",
+			}),
+		]);
+
+		expect(got).toHaveLength(1);
+		expect(got[0].title).toBe("first observed alias");
+	});
+
+	it("uses the enriched summary for a unique session fact when URL identities differ", () => {
+		const got = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://example.com/pr/8",
+					number: 8,
+					state: "draft",
+					ci: "pending",
+					review: "none",
+					mergeability: "unknown",
+					reviewComments: false,
+					updatedAt: "2026-06-15T10:00:00Z",
+				},
+			]),
+			[
+				summary({
+					number: 8,
+					url: "https://api.github.com/repos/acme/repo/pulls/8",
+					htmlUrl: "https://github.com/acme/repo/pull/8",
+					title: "enriched PR #8",
+				}),
+			],
+		);
+
+		expect(got).toHaveLength(1);
+		expect(got[0]).toMatchObject({
+			number: 8,
+			title: "enriched PR #8",
+			htmlUrl: "https://github.com/acme/repo/pull/8",
+		});
+	});
+
+	it("keeps a same-number summary for another repository after an exact fact match", () => {
+		const got = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://github.com/acme/api/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T10:00:00Z",
+				},
+			]),
+			[
+				summary({
+					url: "https://github.com/acme/api/pull/7",
+					htmlUrl: "https://github.com/acme/api/pull/7",
+					repo: "acme/api",
+					number: 7,
+					title: "API PR #7",
+				}),
+				summary({
+					url: "https://github.com/acme/web/pull/7",
+					htmlUrl: "https://github.com/acme/web/pull/7",
+					repo: "acme/web",
+					number: 7,
+					title: "Web PR #7",
+				}),
+			],
+		);
+
+		expect(got.map((pr) => pr.title)).toEqual(["API PR #7", "Web PR #7"]);
+	});
+
+	it("deduplicates repeated session facts and uses the enriched summary for the surviving card", () => {
+		const got = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "pending",
+					review: "none",
+					mergeability: "unknown",
+					reviewComments: false,
+					updatedAt: "2026-06-15T10:00:00Z",
+				},
+				{
+					url: "https://github.com/acme/repo/issues/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			]),
+			[
+				summary({ number: 7, title: "enriched PR #7", ci: { state: "passing", failingChecks: [] } }),
+				summary({ number: 7, title: "duplicate enriched PR #7" }),
+			],
+		);
+
+		expect(got).toHaveLength(1);
+		expect(got[0]).toMatchObject({ number: 7, title: "enriched PR #7", ci: { state: "passing" } });
+	});
+
+	it("keeps the next selected session's PR list independent after a duplicated list", () => {
+		const firstSelection = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T10:00:00Z",
+				},
+				{
+					url: "https://github.com/acme/repo/issues/7",
+					number: 7,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			]),
+			[summary({ number: 7 }), summary({ number: 7 })],
+		);
+		const nextSelection = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://github.com/acme/repo/pull/9",
+					number: 9,
+					state: "open",
+					ci: "passing",
+					review: "approved",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T12:00:00Z",
+				},
+			]),
+		);
+
+		expect(firstSelection.map((pr) => pr.number)).toEqual([7]);
+		expect(nextSelection.map((pr) => pr.number)).toEqual([9]);
 	});
 });
 

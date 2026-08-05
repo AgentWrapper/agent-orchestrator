@@ -66,7 +66,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				workspaceId: "ao-demo",
 				workspaceName: "ao-demo",
 				title: "Build screenshot-ready dashboard data",
-				provider: "codex",
+				provider: "cursor",
 				branch: "demo/dashboard-screenshot",
 				status: "working",
 				createdAt: hoursAgo(3),
@@ -104,7 +104,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				workspaceId: "ao-demo",
 				workspaceName: "ao-demo",
 				title: "Review stacked browser preview flow",
-				provider: "codex",
+				provider: "copilot",
 				branch: "demo/browser-preview-stack",
 				status: "review_pending",
 				createdAt: hoursAgo(7),
@@ -144,7 +144,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				workspaceId: "ao-demo",
 				workspaceName: "ao-demo",
 				title: "Merge README screenshot asset update",
-				provider: "codex",
+				provider: "aider",
 				branch: "demo/readme-assets",
 				status: "mergeable",
 				createdAt: hoursAgo(9),
@@ -162,7 +162,7 @@ export const mockWorkspaces: WorkspaceSummary[] = [
 				workspaceId: "ao-demo",
 				workspaceName: "ao-demo",
 				title: "Fix flaky NewTaskDialog smoke test",
-				provider: "codex",
+				provider: "grok",
 				branch: "demo/new-task-flake",
 				status: "ci_failed",
 				createdAt: hoursAgo(8),
@@ -271,6 +271,48 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 };
 
 export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
+	// Carries human + bot PR reviews and an unresolved thread, so the Reviews
+	// tab's Pull request pane has something to show in the browser preview.
+	"demo-needs-input": [
+		prSummary("demo-needs-input", 318, {
+			changedFiles: 2,
+			additions: 68,
+			deletions: 12,
+			review: {
+				decision: "changes_requested",
+				hasUnresolvedHumanComments: true,
+				reviews: [
+					{
+						reviewerId: "prateek",
+						verdict: "changes_requested",
+						submittedAt: minutesAgo(18),
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
+						body: "The activity sample is **tighter**, but the toolbar density change needs a second look before this lands.\n\n- Check compact spacing\n- Keep button labels readable",
+					},
+					{
+						reviewerId: "codex",
+						isBot: true,
+						verdict: "approved",
+						submittedAt: minutesAgo(15),
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3102",
+						body: "No issues found in the terminal pane changes.",
+					},
+				],
+				unresolvedBy: [
+					{
+						reviewerId: "prateek",
+						count: 2,
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
+						// Two comments, two separate threads — resolving addresses threads.
+						links: [
+							{ file: "frontend/src/renderer/components/TerminalPane.tsx", line: 84 },
+							{ file: "frontend/src/renderer/styles.css", line: 219 },
+						],
+					},
+				],
+			},
+		}),
+	],
 	"demo-review-stack": [
 		prSummary("demo-review-stack", 321, {
 			createdAt: hoursAgo(2),
@@ -379,8 +421,25 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			additions: 128,
 			deletions: 31,
 			review: {
-				decision: "review_required",
+				decision: "approved",
 				hasUnresolvedHumanComments: false,
+				reviews: [
+					{
+						reviewerId: "prateek",
+						verdict: "approved",
+						submittedAt: minutesAgo(41),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/52#pullrequestreview-2001",
+						body: "Pan clamping reads cleanly now and the easing feels right. Good to go.",
+					},
+					{
+						reviewerId: "codex",
+						isBot: true,
+						verdict: "approved",
+						submittedAt: minutesAgo(38),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/52#pullrequestreview-2002",
+						body: "No issues found across the changed camera math.",
+					},
+				],
 				unresolvedBy: [],
 			},
 		}),
@@ -393,6 +452,23 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			review: {
 				decision: "changes_requested",
 				hasUnresolvedHumanComments: true,
+				reviews: [
+					{
+						reviewerId: "maya",
+						verdict: "changes_requested",
+						submittedAt: minutesAgo(24),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/56#pullrequestreview-1001",
+						body: "Pointer lock leaks its pointermove listener when the canvas unmounts — tear it down in the effect cleanup.",
+					},
+					{
+						reviewerId: "copilot",
+						isBot: true,
+						verdict: "none",
+						submittedAt: minutesAgo(19),
+						reviewUrl: "https://github.com/me/webgl-preview/pull/56#pullrequestreview-1002",
+						body: "Consider guarding requestPointerLock behind a user-gesture check to avoid the console warning.",
+					},
+				],
 				unresolvedBy: [
 					{
 						reviewerId: "maya",

@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { expect, test, vi } from "vitest";
 import { ConfirmDialog } from "./ConfirmDialog";
 
-test("confirm kill button renders without a leading icon while busy", () => {
+test("uses the same centered settings-dialog layout as nearby app dialogs", () => {
 	render(
 		<ConfirmDialog
 			open
@@ -16,7 +16,8 @@ test("confirm kill button renders without a leading icon while busy", () => {
 		/>,
 	);
 
-	const confirmButton = screen.getByRole("button", { name: "Confirm kill" });
+	const dialog = screen.getByRole("dialog", { name: "Kill session?" });
 
-	expect(confirmButton.querySelector("svg")).toBeNull();
+	expect(dialog).toHaveClass("left-[50%]", "top-[50%]", "z-overlay", "bg-popover", "p-0");
+	expect(screen.getByRole("button", { name: "Confirm kill" }).querySelector("svg")).toBeNull();
 });

@@ -18,6 +18,16 @@ function setupHost() {
 	let currentURL = "";
 	let displayHandler: DisplayHandler | null = null;
 	const webContentsListeners = new Map<string, (...args: never[]) => void>();
+	const debuggerListeners = new Map<string, (...args: never[]) => void>();
+	let debuggerAttached = false;
+	const debuggerSendCommand = vi.fn(async (method: string): Promise<unknown> => {
+		if (method === "Accessibility.getFullAXTree") return { nodes: [] };
+		if (method === "DOM.resolveNode") return { object: { objectId: "object-1" } };
+		if (method === "Runtime.evaluate") return { result: { value: true } };
+		return {};
+	});
+	const setPermissionCheckHandler = vi.fn();
+	const setPermissionRequestHandler = vi.fn();
 	const webContents = {
 		id: 99,
 		mainFrame: { frameToken: "preview-frame" },
@@ -26,7 +36,20 @@ function setupHost() {
 		capturePage: vi.fn(async () => ({
 			isEmpty: () => false,
 			toJPEG: () => Buffer.from("snapshot"),
+			toPNG: () => Buffer.from("png-snapshot"),
+			getSize: () => ({ width: 640, height: 480 }),
 		})),
+		debugger: {
+			attach: vi.fn(() => {
+				debuggerAttached = true;
+			}),
+			detach: vi.fn(() => {
+				debuggerAttached = false;
+			}),
+			isAttached: () => debuggerAttached,
+			on: (event: string, listener: (...args: never[]) => void) => debuggerListeners.set(event, listener),
+			sendCommand: debuggerSendCommand,
+		},
 		clearHistory: () => undefined,
 		getTitle: () => "",
 		getURL: () => currentURL,
@@ -39,15 +62,21 @@ function setupHost() {
 		on: (event: string, listener: (...args: never[]) => void) => {
 			webContentsListeners.set(event, listener);
 		},
-		reload: () => undefined,
+		focus: vi.fn(),
+		reload: vi.fn(),
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
 		stop: () => undefined,
-		close: () => undefined,
+		close: vi.fn(),
+		session: {
+			setPermissionCheckHandler,
+			setPermissionRequestHandler,
+		},
 	};
 	const view = {
 		webContents,
 		setBounds: vi.fn(),
+		setBorderRadius: vi.fn(),
 		setVisible: vi.fn(),
 	};
 	const handlers = new Map<string, InvokeHandler>();
@@ -122,11 +151,146 @@ function setupHost() {
 		rendererFrame,
 		send,
 		sent,
+		setPermissionCheckHandler,
+		setPermissionRequestHandler,
 		shellFocus,
 		shellSend,
 		view,
 		webContents,
+		webContentsListeners,
+		debuggerListeners,
+		debuggerSendCommand,
 	};
+}
+
+function setupTabHost() {
+	const constructorOptions: Array<{ webPreferences: { partition?: string } }> = [];
+	const handlers = new Map<string, InvokeHandler>();
+	const eventHandlers = new Map<string, EventHandler>();
+	const sent: Array<{ channel: string; payload: unknown }> = [];
+	const views: Array<{
+		webContents: {
+			id: number;
+			getURL: () => string;
+			loadURL: ReturnType<typeof vi.fn>;
+			openWindow: (url: string) => void;
+			close: ReturnType<typeof vi.fn>;
+			};
+			setBounds: ReturnType<typeof vi.fn>;
+			setBorderRadius: ReturnType<typeof vi.fn>;
+			setVisible: ReturnType<typeof vi.fn>;
+		}> = [];
+	let nextID = 100;
+	const makeView = () => {
+		let currentURL = "";
+		let windowOpenHandler:
+			| ((details: { url: string }) => {
+					action: string;
+					createWindow?: () => { loadURL: (url: string) => Promise<void> };
+			  })
+			| undefined;
+		const listeners = new Map<string, (...args: never[]) => void>();
+		let debuggerAttached = false;
+		const webContents = {
+			id: nextID++,
+			mainFrame: {},
+			canGoBack: () => false,
+			canGoForward: () => false,
+			capturePage: vi.fn(async () => ({
+				isEmpty: () => false,
+				toJPEG: () => Buffer.from("snapshot"),
+				toPNG: () => Buffer.from("snapshot"),
+				getSize: () => ({ width: 640, height: 480 }),
+			})),
+			clearHistory: () => undefined,
+			debugger: {
+				attach: () => {
+					debuggerAttached = true;
+				},
+				detach: () => {
+					debuggerAttached = false;
+				},
+				isAttached: () => debuggerAttached,
+				on: () => undefined,
+				sendCommand: async (method: string) => {
+					if (method === "Runtime.evaluate") return { result: { value: true } };
+					if (method === "Accessibility.getFullAXTree") {
+						return {
+							nodes: [
+								{
+									nodeId: "1",
+									backendDOMNodeId: 42,
+									role: { value: "button" },
+									name: { value: "Open" },
+								},
+							],
+						};
+					}
+					if (method === "DOM.resolveNode") return { object: { objectId: "button" } };
+					return {};
+				},
+			},
+			getTitle: () => (currentURL ? `Title ${currentURL}` : ""),
+			getURL: () => currentURL,
+			goBack: () => undefined,
+			goForward: () => undefined,
+			isLoading: () => false,
+			loadURL: vi.fn(async (url: string) => {
+				currentURL = url;
+			}),
+			on: (event: string, listener: (...args: never[]) => void) => listeners.set(event, listener),
+			reload: () => undefined,
+			send: () => undefined,
+			setWindowOpenHandler: (
+				handler: (details: { url: string }) => {
+					action: string;
+					createWindow?: () => { loadURL: (url: string) => Promise<void> };
+				},
+			) => {
+				windowOpenHandler = handler;
+			},
+			stop: () => undefined,
+			close: vi.fn(),
+			openWindow: (url: string) => {
+				const result = windowOpenHandler?.({ url });
+				if (result?.action === "allow") {
+					void result.createWindow?.().loadURL(url);
+				}
+			},
+		};
+		const view = { webContents, setBounds: vi.fn(), setBorderRadius: vi.fn(), setVisible: vi.fn() };
+		views.push(view);
+		return view;
+	};
+	const host = createBrowserViewHost({
+		mainWindow: {
+			contentView: { addChildView: () => undefined, removeChildView: () => undefined },
+			getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+			webContents: {
+				id: 1,
+				focus: () => undefined,
+				send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
+			},
+		} as never,
+		ipcMain: {
+			handle: (channel: string, fn: InvokeHandler) => handlers.set(channel, fn),
+			on: (channel: string, fn: EventHandler) => eventHandlers.set(channel, fn),
+			removeHandler: () => undefined,
+			off: (channel: string) => eventHandlers.delete(channel),
+		} as never,
+		shell: { openExternal: async () => undefined },
+		WebContentsView: function (options: { webPreferences: { partition?: string } }) {
+			constructorOptions.push(options);
+			return makeView();
+		} as never,
+		annotatePreloadPath: "/preload.js",
+		rendererOrigin: "http://localhost:5173",
+	});
+	const invoke = (channel: string, ...args: unknown[]) =>
+		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
+	const emit = (channel: string, ...args: unknown[]) =>
+		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
+	return { constructorOptions, emit, host, invoke, sent, views };
 }
 
 describe("new-session shortcut forwarding", () => {
@@ -242,6 +406,721 @@ describe("browser:capture", () => {
 	});
 });
 
+describe("agent browser runtime", () => {
+	it("denies browser-partition permissions by default", async () => {
+		const { host, setPermissionCheckHandler, setPermissionRequestHandler } = setupHost();
+		await host.execute("sess-1", "tabs");
+
+		expect(setPermissionCheckHandler).toHaveBeenCalledWith(expect.any(Function));
+		expect(setPermissionCheckHandler.mock.calls[0][0]()).toBe(false);
+		const callback = vi.fn();
+		setPermissionRequestHandler.mock.calls[0][0]({}, "camera", callback);
+		expect(callback).toHaveBeenCalledWith(false);
+	});
+
+	it("rounds every native browser tab view to match the renderer shell", async () => {
+		const { host, views } = setupTabHost();
+
+		await host.execute("sess-1", "tabs");
+		await host.execute("sess-1", "tab-new");
+
+		expect(views).toHaveLength(2);
+		for (const view of views) {
+			expect(view.setBorderRadius).toHaveBeenCalled();
+			expect(view.setBorderRadius.mock.calls.every(([radius]) => radius === 8)).toBe(true);
+		}
+	});
+
+	it("emits started and finished browser activity with one command id", async () => {
+		const { host, sent } = setupHost();
+
+		await host.execute("sess-1", "tabs");
+
+		const activity = sent.filter((event) => event.channel === "browser:agentActivity");
+		expect(activity).toHaveLength(2);
+		expect(activity[0].payload).toMatchObject({
+			viewId: "0:sess-1",
+			active: true,
+			action: "tabs",
+			phase: "started",
+			commandId: expect.any(String),
+		});
+		expect(activity[1].payload).toMatchObject({
+			viewId: "0:sess-1",
+			active: false,
+			action: "tabs",
+			phase: "finished",
+			commandId: (activity[0].payload as { commandId: string }).commandId,
+		});
+	});
+
+	it("rejects local files and implicit searches from agent-originated navigation", async () => {
+		const { host, webContents } = setupHost();
+
+		await expect(host.execute("sess-1", "open", { url: "file:///tmp/secret" })).rejects.toMatchObject({
+			code: "BROWSER_URL_FORBIDDEN",
+		});
+		await expect(host.execute("sess-1", "open", { url: "search these words" })).rejects.toMatchObject({
+			code: "INVALID_URL",
+		});
+		expect(webContents.loadURL).not.toHaveBeenCalled();
+	});
+
+	it("destroys a headless session target through the daemon lifecycle command", async () => {
+		const { host, webContents } = setupHost();
+		await host.execute("sess-1", "tabs");
+
+		await expect(host.execute("sess-1", "__destroy-session")).resolves.toEqual({ destroyed: true });
+		expect(webContents.close).toHaveBeenCalledTimes(1);
+		await expect(host.execute("sess-1", "__destroy-session")).resolves.toEqual({ destroyed: false });
+	});
+
+	it("caps session tabs", async () => {
+		const { host } = setupHost();
+		await host.execute("sess-1", "tabs");
+		for (let i = 1; i < 16; i += 1) {
+			await host.execute("sess-1", "tab-new");
+		}
+		await expect(host.execute("sess-1", "tab-new")).rejects.toMatchObject({ code: "BROWSER_TAB_LIMIT" });
+	});
+
+	it("creates one hidden target per session and reuses it when the panel mounts", async () => {
+		const { host, invoke, view } = setupHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:4173" });
+
+		const state = await invoke("browser:ensure", "sess-1");
+
+		expect(state.viewId).toBe("0:sess-1");
+		expect(view.webContents.loadURL).toHaveBeenCalledTimes(1);
+	});
+
+	it("reports snapshot truncation after filtering instead of silently slicing raw AX nodes", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: Array.from({ length: 1_005 }, (_, index) => ({
+						nodeId: String(index + 1),
+						role: { value: "text" },
+						name: { value: `node-${index + 1}` },
+					})),
+				};
+			}
+			return {};
+		});
+
+		const snapshot = (await host.execute("sess-1", "snapshot")) as {
+			text: string;
+			totalNodes: number;
+			truncated: boolean;
+		};
+		expect(snapshot.totalNodes).toBe(1_005);
+		expect(snapshot.truncated).toBe(true);
+		expect(snapshot.text).toContain("Snapshot truncated");
+	});
+
+	it("returns compact refs and targets only the referenced WebContents node", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: [
+						{ nodeId: "1", role: { value: "document" }, name: { value: "Demo" } },
+						{
+							nodeId: "2",
+							parentId: "1",
+							backendDOMNodeId: 42,
+							role: { value: "button" },
+							name: { value: "Save" },
+						},
+					],
+				};
+			}
+			if (method === "DOM.resolveNode") return { object: { objectId: "save-button" } };
+			if (method === "DOM.getBoxModel") {
+				return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
+			}
+			if (method === "Page.getLayoutMetrics") {
+				return { cssVisualViewport: { pageX: 0, pageY: 0 } };
+			}
+			if (method === "Runtime.callFunctionOn") return { result: { value: true } };
+			return {};
+		});
+
+		const snapshot = (await host.execute("sess-1", "snapshot", {})) as { text: string };
+		await host.execute("sess-1", "click", { ref: "e1" });
+
+		expect(snapshot.text).toContain('button "Save" [ref=e1]');
+		expect(debuggerSendCommand).toHaveBeenCalledWith("DOM.resolveNode", { backendNodeId: 42 });
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Runtime.callFunctionOn",
+			expect.objectContaining({ objectId: "save-button" }),
+		);
+	});
+
+	it("fills the same session target mounted in the visible browser panel", async () => {
+		const { debuggerSendCommand, emit, host, invoke, view } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: [
+						{
+							nodeId: "1",
+							backendDOMNodeId: 77,
+							role: { value: "textbox" },
+							name: { value: "Profile" },
+						},
+					],
+				};
+			}
+			if (method === "DOM.resolveNode") return { object: { objectId: "profile-input" } };
+			return {};
+		});
+
+		await host.execute("sess-1", "snapshot", { interactive: true });
+		const panelState = await invoke("browser:ensure", "sess-1");
+		emit("browser:setBounds", 1, {
+			viewId: panelState.viewId,
+			rect: { x: 20, y: 30, width: 400, height: 300 },
+			visible: true,
+		});
+		await host.execute("sess-1", "fill", { ref: "e1", text: "hello i am AO" });
+
+		expect(panelState.viewId).toBe("0:sess-1");
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Runtime.callFunctionOn",
+			expect.objectContaining({
+				objectId: "profile-input",
+				arguments: [{ value: "hello i am AO" }],
+			}),
+		);
+	});
+
+	it("supports keyboard, pointer, form, scroll, and property actions on the session target", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: [
+						{
+							nodeId: "1",
+							backendDOMNodeId: 88,
+							role: { value: "textbox" },
+							name: { value: "Search" },
+						},
+					],
+				};
+			}
+			if (method === "DOM.resolveNode") return { object: { objectId: "target-element" } };
+			if (method === "DOM.getBoxModel") {
+				return { model: { border: [10, 20, 30, 20, 30, 40, 10, 40] } };
+			}
+			if (method === "Page.getLayoutMetrics") {
+				return { cssVisualViewport: { pageX: 0, pageY: 0 } };
+			}
+			if (method === "Runtime.evaluate") return { result: { value: { x: 400, y: 300 } } };
+			if (method === "Runtime.callFunctionOn") {
+				const declaration = String(params?.functionDeclaration ?? "");
+				if (declaration.includes("elementFromPoint")) {
+					return { result: { value: true } };
+				}
+				if (declaration.includes("HTMLSelectElement")) {
+					return { result: { value: { supported: true, matched: true, value: "large" } } };
+				}
+				if (declaration.includes("'checked' in this")) {
+					const desired = (params?.arguments as Array<{ value?: boolean }> | undefined)?.[0]?.value;
+					return { result: { value: { supported: true, checked: desired } } };
+				}
+				if (declaration.includes("function(property)")) {
+					return { result: { value: "current value" } };
+				}
+			}
+			return {};
+		});
+
+		await host.execute("sess-1", "snapshot", { interactive: true });
+		await host.execute("sess-1", "type", { ref: "e1", text: "hello" });
+		await host.execute("sess-1", "press", { key: "Control+A" });
+		await host.execute("sess-1", "hover", { ref: "e1" });
+		await host.execute("sess-1", "highlight", { ref: "e1" });
+		await host.execute("sess-1", "unhighlight");
+		await host.execute("sess-1", "scroll", { direction: "down", amount: 450 });
+		await host.execute("sess-1", "select", { ref: "e1", value: "large" });
+		await host.execute("sess-1", "check", { ref: "e1" });
+		await host.execute("sess-1", "uncheck", { ref: "e1" });
+		const property = (await host.execute("sess-1", "get", {
+			property: "value",
+			ref: "e1",
+		})) as { value: string };
+
+		expect(property.value).toBe("current value");
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Input.insertText", { text: "hello" });
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Input.dispatchKeyEvent",
+			expect.objectContaining({ type: "rawKeyDown", key: "a", modifiers: 2 }),
+		);
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Input.dispatchMouseEvent", {
+			type: "mouseMoved",
+			x: 20,
+			y: 30,
+		});
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Overlay.highlightNode",
+			expect.objectContaining({
+				objectId: "target-element",
+				highlightConfig: expect.objectContaining({
+					borderColor: { r: 37, g: 99, b: 235, a: 1 },
+				}),
+			}),
+		);
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Overlay.hideHighlight");
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Input.dispatchMouseEvent",
+			expect.objectContaining({ type: "mouseWheel", deltaY: 450, x: 400, y: 300 }),
+		);
+		expect(debuggerSendCommand).toHaveBeenCalledWith(
+			"Runtime.callFunctionOn",
+			expect.objectContaining({
+				arguments: [{ value: false }],
+				functionDeclaration: expect.stringContaining("this.click()"),
+			}),
+		);
+	});
+
+	it("rejects unsupported keys, scroll directions, and property names", async () => {
+		const { host } = setupHost();
+
+		await expect(host.execute("sess-1", "press", { key: "Hyper+K" })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+		await expect(host.execute("sess-1", "scroll", { direction: "diagonal" })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+		await expect(host.execute("sess-1", "get", { property: "html" })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+	});
+
+	it("waits for load completion, disappearance, and DOM stability", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		const expressions: string[] = [];
+		debuggerSendCommand.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+			if (method !== "Runtime.evaluate") return {};
+			const expression = String(params?.expression ?? "");
+			expressions.push(expression);
+			if (expression.includes("__ao_browser_dom_stability__")) {
+				return { result: { value: 500 } };
+			}
+			return { result: { value: true } };
+		});
+
+		await host.execute("sess-1", "wait", { load: true, timeoutMs: 500 });
+		await host.execute("sess-1", "wait", { textGone: "Saving...", timeoutMs: 500 });
+		await host.execute("sess-1", "wait", { selectorGone: ".spinner", timeoutMs: 500 });
+		await host.execute("sess-1", "wait", { stableMs: 250, timeoutMs: 500 });
+
+		expect(expressions).toEqual(
+			expect.arrayContaining([
+				"document.readyState === 'complete'",
+				expect.stringContaining("!document.body.innerText.includes"),
+				expect.stringContaining("!document.querySelector"),
+				expect.stringContaining("__ao_browser_dom_stability__"),
+			]),
+		);
+	});
+
+	it("retries a wait when navigation briefly replaces the execution context", async () => {
+		const { debuggerSendCommand, host } = setupHost();
+		let attempts = 0;
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method !== "Runtime.evaluate") return {};
+			attempts++;
+			if (attempts === 1) throw new Error("Execution context was destroyed");
+			return { result: { value: true } };
+		});
+
+		await expect(host.execute("sess-1", "wait", { text: "Ready", timeoutMs: 500 })).resolves.toMatchObject({
+			condition: 'text "Ready"',
+		});
+		expect(attempts).toBe(2);
+	});
+
+	it("invalidates refs after navigation", async () => {
+		const { debuggerSendCommand, host, webContentsListeners } = setupHost();
+		debuggerSendCommand.mockImplementation(async (method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return {
+					nodes: [{ nodeId: "1", backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Save" } }],
+				};
+			}
+			return {};
+		});
+		await host.execute("sess-1", "snapshot", {});
+		webContentsListeners.get("did-start-loading")?.();
+
+		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
+			code: "STALE_REFERENCE",
+		});
+	});
+
+	it("captures a PNG and separates errors from other console messages", async () => {
+		const { host, webContentsListeners } = setupHost();
+		const screenshot = (await host.execute("sess-1", "screenshot")) as { data: string; width: number };
+		const consoleListener = webContentsListeners.get("console-message");
+		consoleListener?.({} as never, { level: "info", message: "ready" } as never);
+		consoleListener?.({} as never, { level: "error", message: "boom" } as never);
+
+		const errors = (await host.execute("sess-1", "errors")) as { messages: Array<{ message: string }> };
+		expect(screenshot.data).toBe(Buffer.from("png-snapshot").toString("base64"));
+		expect(screenshot.width).toBe(640);
+		expect(errors.messages).toHaveLength(1);
+		expect(errors.messages[0].message).toContain("BEGIN UNTRUSTED EXTERNAL CONTENT");
+		expect(errors.messages[0].message).toContain("boom");
+	});
+
+	it("reports agent activity only while a browser command is executing", async () => {
+		const { debuggerSendCommand, host, sent } = setupHost();
+		let resolveSnapshot: (value: unknown) => void = () => undefined;
+		debuggerSendCommand.mockImplementation((method: string) => {
+			if (method === "Accessibility.getFullAXTree") {
+				return new Promise((resolve) => {
+					resolveSnapshot = resolve;
+				});
+			}
+			return Promise.resolve({});
+		});
+
+		const pendingSnapshot = host.execute("sess-1", "snapshot");
+		await vi.waitFor(() =>
+			expect(sent).toContainEqual(
+				expect.objectContaining({
+					channel: "browser:agentActivity",
+					payload: expect.objectContaining({
+						viewId: "0:sess-1",
+						active: true,
+						action: "snapshot",
+						phase: "started",
+						commandId: expect.any(String),
+					}),
+				}),
+			),
+		);
+		const startedActivity = sent.find(({ channel, payload }) => {
+			if (channel !== "browser:agentActivity") return false;
+			return (payload as { active?: boolean; action?: string }).active === true;
+		})?.payload as { commandId: string };
+		await vi.waitFor(() => expect(debuggerSendCommand).toHaveBeenCalledWith("Accessibility.getFullAXTree"));
+
+		resolveSnapshot({ nodes: [] });
+		await pendingSnapshot;
+
+		expect(
+			sent
+				.filter(({ channel }) => channel === "browser:agentActivity")
+				.map(({ payload }) => payload),
+		).toEqual([
+			expect.objectContaining({
+				viewId: "0:sess-1",
+				active: true,
+				action: "snapshot",
+				phase: "started",
+				commandId: startedActivity.commandId,
+			}),
+			expect.objectContaining({
+				viewId: "0:sess-1",
+				active: false,
+				action: "snapshot",
+				phase: "finished",
+				commandId: startedActivity.commandId,
+			}),
+		]);
+	});
+
+	it("keeps stable logical tab IDs, separate targets, and the selected tab active", async () => {
+		const { emit, host, invoke, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+		await host.execute("sess-1", "snapshot");
+		const created = (await host.execute("sess-1", "tab-new", {
+			url: "http://localhost:4173",
+		})) as { id: string };
+		expect(views[0].setBounds).toHaveBeenCalledWith({
+			x: -10_000,
+			y: -10_000,
+			width: 1280,
+			height: 720,
+		});
+
+		const listed = (await host.execute("sess-1", "tabs")) as {
+			activeTabId: string;
+			tabs: Array<{ id: string; url: string; active: boolean }>;
+		};
+		expect(created.id).toBe("t2");
+		expect(listed.activeTabId).toBe("t2");
+		expect(listed.tabs).toEqual([
+			expect.objectContaining({ id: "t1", url: "http://localhost:3000/", active: false }),
+			expect.objectContaining({ id: "t2", url: "http://localhost:4173/", active: true }),
+		]);
+		expect(views).toHaveLength(2);
+		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+		emit("browser:setBounds", {
+			viewId: ensured.viewId,
+			rect: { x: 10, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+
+		await host.execute("sess-1", "tab-select", { tabId: "t1" });
+		const current = (await host.execute("sess-1", "get", { property: "url" })) as { value: string };
+		expect(current.value).toBe("http://localhost:3000/");
+		expect(views[1].setVisible).toHaveBeenLastCalledWith(false);
+		await host.execute("sess-1", "tab-select", { tabId: "t2" });
+		await host.execute("sess-1", "tab-select", { tabId: "t1" });
+		await host.execute("sess-1", "tab-select", { tabId: "t2" });
+		expect(views[0].setVisible).toHaveBeenLastCalledWith(false);
+		expect(views[0].setBounds).toHaveBeenLastCalledWith({
+			x: -10_000,
+			y: -10_000,
+			width: 1280,
+			height: 720,
+		});
+		expect(views[1].setVisible).toHaveBeenLastCalledWith(true);
+		expect(views[1].setBounds).toHaveBeenLastCalledWith({
+			x: 10,
+			y: 20,
+			width: 320,
+			height: 240,
+		});
+		await expect(host.execute("sess-1", "click", { ref: "e1" })).rejects.toMatchObject({
+			code: "STALE_REFERENCE",
+		});
+		await host.execute("sess-1", "tab-close", { tabId: "t2" });
+		const replacement = (await host.execute("sess-1", "tab-new")) as { id: string };
+		expect(replacement.id).toBe("t3");
+	});
+
+	it("shares one ephemeral profile across a worker's tabs and isolates other workers", async () => {
+		const { constructorOptions, host } = setupTabHost();
+		await host.execute("sess-1", "tabs");
+		await host.execute("sess-1", "tab-new");
+		await host.execute("sess-2", "tabs");
+
+		const firstPartition = constructorOptions[0].webPreferences.partition;
+		expect(firstPartition).toMatch(/^ao-browser-/);
+		expect(firstPartition).not.toMatch(/^persist:/);
+		expect(constructorOptions[1].webPreferences.partition).toBe(firstPartition);
+		expect(constructorOptions[2].webPreferences.partition).not.toBe(firstPartition);
+
+		host.destroy("0:sess-1");
+		await host.execute("sess-1", "tabs");
+		expect(constructorOptions[3].webPreferences.partition).not.toBe(firstPartition);
+	});
+
+	it("captures allowed popups as new tabs and protects the final tab", async () => {
+		const { host, views } = setupTabHost();
+		await host.execute("sess-1", "open", { url: "http://localhost:3000" });
+
+		views[0].webContents.openWindow("http://localhost:3000/popup");
+		await Promise.resolve();
+
+		const listed = (await host.execute("sess-1", "tabs")) as {
+			activeTabId: string;
+			tabs: Array<{ id: string; url: string }>;
+		};
+		expect(listed.activeTabId).toBe("t2");
+		expect(listed.tabs[1]).toEqual(
+			expect.objectContaining({ id: "t2", url: "http://localhost:3000/popup" }),
+		);
+
+		await host.execute("sess-1", "tab-close");
+		await expect(host.execute("sess-1", "tab-close")).rejects.toMatchObject({
+			code: "CANNOT_CLOSE_LAST_TAB",
+		});
+	});
+
+	it("exposes owned tab state and manual tab actions to the renderer", async () => {
+		const { invoke, sent, views } = setupTabHost();
+		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
+
+		views[0].webContents.openWindow("http://localhost:3000/popup");
+		await vi.waitFor(async () => {
+			const state = (await invoke("browser:getTabs", ensured.viewId)) as {
+				activeTabId: string;
+				tabs: Array<{ id: string }>;
+			};
+			expect(state.tabs).toHaveLength(2);
+			expect(state.activeTabId).toBe("t2");
+		});
+		expect(sent).toContainEqual({
+			channel: "browser:tabsState",
+			payload: expect.objectContaining({
+				viewId: ensured.viewId,
+				change: { kind: "popup", tabId: "t2" },
+			}),
+		});
+
+		const selected = (await invoke("browser:selectTab", {
+			viewId: ensured.viewId,
+			tabId: "t1",
+		})) as { activeTabId: string };
+		expect(selected.activeTabId).toBe("t1");
+
+		const closed = (await invoke("browser:closeTab", {
+			viewId: ensured.viewId,
+			tabId: "t2",
+		})) as { tabs: Array<{ id: string }> };
+		expect(closed.tabs.map((tab) => tab.id)).toEqual(["t1"]);
+		expect(views[1].webContents.close).toHaveBeenCalled();
+	});
+});
+
+describe("agent browser network capture", () => {
+	it("is opt-in and exposes only sanitized request metadata", async () => {
+		const { debuggerListeners, debuggerSendCommand, host } = setupHost();
+		const emitDebuggerMessage = (method: string, params: Record<string, unknown>) =>
+			debuggerListeners.get("message")?.({} as never, method as never, params as never);
+
+		emitDebuggerMessage("Network.requestWillBeSent", {
+			requestId: "before-start",
+			request: { method: "GET", url: "https://example.test/unobserved" },
+		});
+		expect(await host.execute("sess-1", "network-list")).toMatchObject({
+			active: false,
+			requestCount: 0,
+			requests: [],
+		});
+
+		expect(await host.execute("sess-1", "network-start", { durationSeconds: 30 })).toMatchObject({
+			active: true,
+			metadataOnly: true,
+			tabId: "t1",
+			requestCount: 0,
+			maxEntries: 200,
+		});
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Network.enable");
+
+		emitDebuggerMessage("Network.requestWillBeSent", {
+			requestId: "request-1",
+			timestamp: 12,
+			wallTime: 1_750_000_000,
+			type: "XHR",
+			request: {
+				method: "POST",
+				url: "https://user:password@api.example.test/items?token=secret&page=2#private",
+				postData: "must-not-be-stored",
+				headers: {
+					Authorization: "Bearer very-secret",
+					Cookie: "session=very-secret",
+					"Content-Type": "application/json",
+					Origin: "https://app.example.test",
+				},
+			},
+		});
+		emitDebuggerMessage("Network.responseReceived", {
+			requestId: "request-1",
+			response: {
+				status: 401,
+				statusText: "Unauthorized",
+				mimeType: "application/json",
+				headers: {
+					"Set-Cookie": "session=server-secret",
+					"Content-Type": "application/json",
+					"Access-Control-Allow-Origin": "https://app.example.test",
+				},
+			},
+		});
+		emitDebuggerMessage("Network.loadingFinished", { requestId: "request-1", timestamp: 12.125 });
+
+		const result = (await host.execute("sess-1", "network-list")) as {
+			requestCount: number;
+			requests: Array<Record<string, unknown>>;
+		};
+		expect(result.requestCount).toBe(1);
+		expect(result.requests[0]).toMatchObject({
+			id: "n1",
+			method: "POST",
+			resourceType: "xhr",
+			status: 401,
+			durationMs: 125,
+			requestHeaders: {
+				"content-type": "application/json",
+				origin: "https://app.example.test",
+			},
+			responseHeaders: {
+				"content-type": "application/json",
+				"access-control-allow-origin": "https://app.example.test",
+			},
+		});
+		expect(JSON.stringify(result)).not.toContain("very-secret");
+		expect(JSON.stringify(result)).not.toContain("must-not-be-stored");
+		expect(JSON.stringify(result)).not.toContain("password");
+		expect(result.requests[0]?.url).toContain("token=%5Bredacted%5D");
+		expect(result.requests[0]).not.toHaveProperty("protocolRequestId");
+		expect(result.requests[0]).not.toHaveProperty("startedMonotonic");
+
+		expect(await host.execute("sess-1", "network-stop")).toMatchObject({
+			active: false,
+			stopReason: "stopped",
+			requestCount: 1,
+		});
+		expect(debuggerSendCommand).toHaveBeenCalledWith("Network.disable");
+	});
+
+	it("retains only the newest 200 requests and validates the capture duration", async () => {
+		const { debuggerListeners, host } = setupHost();
+		await expect(host.execute("sess-1", "network-start", { durationSeconds: 0 })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+		await expect(host.execute("sess-1", "network-start", { durationSeconds: 301 })).rejects.toMatchObject({
+			code: "INVALID_ARGUMENT",
+		});
+
+		await host.execute("sess-1", "network-start", { durationSeconds: 30 });
+		const emitDebuggerMessage = debuggerListeners.get("message")!;
+		for (let index = 0; index < 205; index++) {
+			emitDebuggerMessage(
+				{} as never,
+				"Network.requestWillBeSent" as never,
+				{
+					requestId: `request-${index}`,
+					request: {
+						method: "GET",
+						url: `https://api.example.test/items?index=${index}`,
+					},
+				} as never,
+			);
+		}
+
+		const result = (await host.execute("sess-1", "network-list")) as {
+			requestCount: number;
+			requests: Array<{ id: string }>;
+		};
+		expect(result.requestCount).toBe(200);
+		expect(result.requests[0]?.id).toBe("n6");
+		expect(result.requests.at(-1)?.id).toBe("n205");
+		await host.execute("sess-1", "network-stop");
+	});
+
+	it("expires automatically without enabling status or list checks", async () => {
+		vi.useFakeTimers();
+		try {
+			const { debuggerSendCommand, host } = setupHost();
+			expect(await host.execute("sess-1", "network-status")).toMatchObject({ active: false });
+			expect(debuggerSendCommand).not.toHaveBeenCalledWith("Network.enable");
+
+			await host.execute("sess-1", "network-start", { durationSeconds: 1 });
+			await vi.advanceTimersByTimeAsync(1_000);
+
+			expect(await host.execute("sess-1", "network-status")).toMatchObject({
+				active: false,
+				stopReason: "expired",
+			});
+			expect(debuggerSendCommand).toHaveBeenCalledWith("Network.disable");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+});
+
 describe("browser:requestMirror", () => {
 	it("grants the display-media request from the frame that armed the mirror", async () => {
 		const { getDisplayHandler, invoke, rendererFrame, webContents } = setupHost();
@@ -312,6 +1191,7 @@ describe("browser:setBounds parked", () => {
 	it("moves the view offscreen at full size while keeping it visible", async () => {
 		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
+		view.setBorderRadius.mockClear();
 
 		emit("browser:setBounds", 1, {
 			viewId: "1:sess-1",
@@ -321,6 +1201,10 @@ describe("browser:setBounds parked", () => {
 		});
 
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: -10_000, y: 0, width: 320, height: 240 });
+		expect(view.setBorderRadius).toHaveBeenLastCalledWith(8);
+		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
+			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
+		);
 		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 });
@@ -329,6 +1213,7 @@ describe("browser:setBounds", () => {
 	it("converts page-zoomed renderer slot bounds before positioning the native view", async () => {
 		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
+		view.setBorderRadius.mockClear();
 
 		emit("browser:setBounds", 1.25, {
 			viewId: "1:sess-1",
@@ -337,6 +1222,55 @@ describe("browser:setBounds", () => {
 		});
 
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 125, y: 25, width: 400, height: 300 });
+		expect(view.setBorderRadius).toHaveBeenLastCalledWith(8);
+		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
+			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
+		);
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+	});
+
+	it("does not let a hidden page navigation grant native visibility", async () => {
+		const { emit, invoke, view, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 100, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 0, y: 0, width: 0, height: 0 },
+			visible: false,
+		});
+
+		view.setBounds.mockClear();
+		view.setVisible.mockClear();
+		webContentsListeners.get("did-navigate")?.();
+
+		expect(view.setVisible).not.toHaveBeenCalledWith(true);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
+	});
+
+	it("restores renderer-owned bounds when reloading after a failed load", async () => {
+		const { emit, invoke, view, webContents, webContentsListeners } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 100, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+
+		webContentsListeners.get("did-fail-load")?.({} as never, -105 as never, "Name not resolved" as never);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
+
+		view.setBounds.mockClear();
+		view.setVisible.mockClear();
+		await invoke("browser:reload", "1:sess-1");
+
+		expect(webContents.reload).toHaveBeenCalled();
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 100, y: 20, width: 320, height: 240 });
 		expect(view.setVisible).toHaveBeenLastCalledWith(true);
 	});
 });
@@ -360,19 +1294,43 @@ describe("browser annotation IPC", () => {
 		expect(webContents.send).not.toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
 	});
 
-	it("forwards preview annotation submissions to the renderer-owned view", async () => {
+	it("focuses the preview webContents when annotation mode is enabled, so a keypress reaches it without a prior click", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+
+		expect(webContents.focus).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not steal focus when annotation mode is turned off", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		webContents.focus.mockClear();
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: false });
+
+		expect(webContents.focus).not.toHaveBeenCalled();
+	});
+
+	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {
 		const { invoke, send, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
 		send("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
-			context: {
-				url: "http://localhost:5173/",
-				tag: "button",
-				classes: [],
-				selector: "button",
-				rect: { x: 0, y: 0, width: 80, height: 30 },
-				computedStyle: {},
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					rect: { x: 0, y: 0, width: 80, height: 30 },
+					nearbyText: [],
+					computedStyle: {},
+				},
 			},
 		});
 
@@ -381,9 +1339,112 @@ describe("browser annotation IPC", () => {
 			payload: expect.objectContaining({
 				viewId: "1:sess-1",
 				instruction: "Make this button blue.",
-				context: expect.objectContaining({ selector: "button" }),
+				selection: expect.objectContaining({
+					kind: "element",
+					context: expect.objectContaining({ selector: "button" }),
+				}),
 			}),
 		});
+	});
+
+	it("forwards a multi-element preview annotation submission to the renderer-owned view", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Align these two.",
+			selection: {
+				kind: "elements",
+				contexts: [
+					{
+						url: "http://localhost:5173/",
+						tag: "button",
+						classes: [],
+						selector: "button#a",
+						rect: { x: 0, y: 0, width: 80, height: 30 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+					{
+						url: "http://localhost:5173/",
+						tag: "button",
+						classes: [],
+						selector: "button#b",
+						rect: { x: 100, y: 0, width: 80, height: 30 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+				],
+			},
+		});
+
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:submitted",
+			payload: expect.objectContaining({
+				viewId: "1:sess-1",
+				instruction: "Align these two.",
+				selection: expect.objectContaining({
+					kind: "elements",
+					contexts: [
+						expect.objectContaining({ selector: "button#a" }),
+						expect.objectContaining({ selector: "button#b" }),
+					],
+				}),
+			}),
+		});
+	});
+
+	it("ignores a malformed annotation selection instead of forwarding it", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: { kind: "elements", contexts: [] },
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
+	});
+
+	it("ignores a single-element selection whose context is missing required fields", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: {
+				kind: "element",
+				context: { tag: "button" },
+			},
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
+	});
+
+	it("ignores a multi-element selection containing a malformed context entry", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Align these two.",
+			selection: {
+				kind: "elements",
+				contexts: [
+					{
+						url: "http://localhost/",
+						tag: "button",
+						classes: [],
+						selector: "button",
+						rect: { x: 0, y: 0, width: 1, height: 1 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+					null,
+				],
+			},
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
 	});
 
 	it("ignores preview annotation events after the view is destroyed", async () => {

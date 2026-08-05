@@ -22,8 +22,8 @@ func TestManifestReportsFakeHarness(t *testing.T) {
 	if domain.AgentHarness(m.ID) != domain.HarnessFake {
 		t.Fatalf("manifest id %q does not match domain.HarnessFake %q", m.ID, domain.HarnessFake)
 	}
-	if !domain.HarnessFake.IsKnown() {
-		t.Fatal("domain.HarnessFake is not registered as a known harness")
+	if domain.HarnessFake.IsKnown() {
+		t.Fatal("domain.HarnessFake must not be registered as a user-selectable harness")
 	}
 	found := false
 	for _, c := range m.Capabilities {
@@ -233,26 +233,8 @@ func (s *lifecycleStore) UpdatePRLastNudgeSignature(_ context.Context, _ string,
 	return nil
 }
 
-// The worker-idle outbox methods are inert stubs like the PR methods above:
-// this test drives activity transitions only, never idle-event delivery.
 func (s *lifecycleStore) ListSessions(_ context.Context, _ domain.ProjectID) ([]domain.SessionRecord, error) {
 	return nil, nil
-}
-
-func (s *lifecycleStore) RecordWorkerIdle(ctx context.Context, rec domain.SessionRecord, _ domain.WorkerIdleEvent) error {
-	return s.UpdateSession(ctx, rec)
-}
-
-func (s *lifecycleStore) ListPendingWorkerIdleEventsByProject(_ context.Context, _ domain.ProjectID) ([]domain.WorkerIdleEvent, error) {
-	return nil, nil
-}
-
-func (s *lifecycleStore) ListPendingWorkerIdleEvents(_ context.Context) ([]domain.WorkerIdleEvent, error) {
-	return nil, nil
-}
-
-func (s *lifecycleStore) MarkWorkerIdleEventDelivered(_ context.Context, _ string, _ time.Time) error {
-	return nil
 }
 
 // TestFullLifecycleSpawnToTermination is the end-to-end integration test the

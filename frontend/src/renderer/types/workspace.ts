@@ -126,6 +126,8 @@ export type WorkspaceSession = {
 	/** Raw issue/task identifier from the daemon. Intake ids are provider-prefixed. */
 	issueId?: string;
 	provider: AgentProvider;
+	/** Reviewer selected for this session; absent means use the project default. */
+	reviewerHarness?: "claude-code" | "codex" | "opencode";
 	kind?: SessionKind;
 	branch?: string;
 	status: SessionStatus;
@@ -139,6 +141,8 @@ export type WorkspaceSession = {
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;
+	isPinned?: boolean;
+	pinnedAt?: string;
 	/** Raw agent lifecycle activity from the daemon. */
 	activity?: SessionActivity;
 	/**
@@ -290,6 +294,12 @@ export type WorkspaceSummary = {
 	};
 	sessions: WorkspaceSession[];
 };
+
+export function hasConfiguredOrchestratorAgent(
+	workspace: Pick<WorkspaceSummary, "orchestratorAgent"> | undefined,
+): boolean {
+	return Boolean(workspace?.orchestratorAgent);
+}
 
 export function orchestratorNeedsRestart(workspace: WorkspaceSummary, orchestrator?: WorkspaceSession): boolean {
 	if (!orchestrator || !workspace.orchestratorAgent) return false;

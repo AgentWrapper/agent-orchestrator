@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,8 +17,6 @@ type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
 	prs        map[domain.SessionID][]domain.PullRequest
 	signatures map[string]string
-	idleEvents []domain.WorkerIdleEvent
-	delivered  map[string]bool
 
 	listPRsErr        error
 	signatureWriteErr error
@@ -27,45 +24,7 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}, delivered: map[string]bool{}}
-}
-
-func (f *fakeStore) RecordWorkerIdle(_ context.Context, rec domain.SessionRecord, ev domain.WorkerIdleEvent) error {
-	f.sessions[rec.ID] = rec
-	for i := range f.idleEvents {
-		e := f.idleEvents[i]
-		if e.WorkerID == ev.WorkerID && !f.delivered[e.ID] {
-			f.idleEvents[i].TransitionAt = ev.TransitionAt
-			return nil
-		}
-	}
-	f.idleEvents = append(f.idleEvents, ev)
-	return nil
-}
-
-func (f *fakeStore) ListPendingWorkerIdleEventsByProject(_ context.Context, project domain.ProjectID) ([]domain.WorkerIdleEvent, error) {
-	var out []domain.WorkerIdleEvent
-	for _, e := range f.idleEvents {
-		if e.ProjectID == project && !f.delivered[e.ID] {
-			out = append(out, e)
-		}
-	}
-	return out, nil
-}
-
-func (f *fakeStore) ListPendingWorkerIdleEvents(_ context.Context) ([]domain.WorkerIdleEvent, error) {
-	var out []domain.WorkerIdleEvent
-	for _, e := range f.idleEvents {
-		if !f.delivered[e.ID] {
-			out = append(out, e)
-		}
-	}
-	return out, nil
-}
-
-func (f *fakeStore) MarkWorkerIdleEventDelivered(_ context.Context, id string, _ time.Time) error {
-	f.delivered[id] = true
-	return nil
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -144,26 +103,6 @@ func (f *fakeMessenger) Send(_ context.Context, id domain.SessionID, msg string)
 	f.msgs = append(f.msgs, msg)
 	f.ids = append(f.ids, id)
 	return nil
-}
-
-// lockedMessenger is the concurrency-safe counterpart used by tests that drive
-// two dispatchers at once.
-type lockedMessenger struct {
-	mu   sync.Mutex
-	msgs []string
-}
-
-func (l *lockedMessenger) Send(_ context.Context, _ domain.SessionID, msg string) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.msgs = append(l.msgs, msg)
-	return nil
-}
-
-func (l *lockedMessenger) count() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.msgs)
 }
 
 func newManager() (*Manager, *fakeStore, *fakeMessenger) {
@@ -302,6 +241,74 @@ func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
 	}
 	if got.Activity != rec.Activity {
 		t.Fatalf("same-state metadata signal changed activity: got %+v, want %+v", got.Activity, rec.Activity)
+	}
+}
+
+func TestActivity_ReconciledIdleRequiresUnchangedActiveSnapshot(t *testing.T) {
+	m, st, _ := newManager()
+	updatedAt := time.Unix(100, 0).UTC()
+	rec := working("mer-1")
+	rec.Kind = domain.KindWorker
+	rec.FirstSignalAt = updatedAt
+	rec.UpdatedAt = updatedAt
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityIdle,
+		Event:             "terminal-idle",
+		ExpectedUpdatedAt: updatedAt.Add(-time.Second),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("stale reconciliation changed activity to %q", got)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityIdle,
+		Event:             "terminal-idle",
+		ExpectedUpdatedAt: updatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("current reconciliation left activity %q", got)
+	}
+}
+
+func TestActivity_RepeatedUserPromptFencesTerminalReconciliation(t *testing.T) {
+	m, st, _ := newManager()
+	before := time.Unix(100, 0).UTC()
+	after := time.Unix(200, 0).UTC()
+	m.clock = func() time.Time { return after }
+	rec := working("mer-1")
+	rec.FirstSignalAt = before
+	rec.UpdatedAt = before
+	st.sessions[rec.ID] = rec
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid: true,
+		State: domain.ActivityActive,
+		Event: "user-prompt-submit",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].UpdatedAt; !got.Equal(after) {
+		t.Fatalf("updated at = %v, want %v", got, after)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityIdle,
+		Event:             "terminal-idle",
+		ExpectedUpdatedAt: before,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("fresh prompt was overwritten with %q", got)
 	}
 }
 
@@ -1188,62 +1195,8 @@ func TestPRObservation_DedupPersistsAcrossPRs(t *testing.T) {
 	}
 }
 
-func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = working("mer-1")
-	msg := &fakeMessenger{}
-	m := New(st, msg)
-	result := ReviewResult{
-		RunID:          "run-1",
-		WorkerID:       "mer-1",
-		PRURL:          "https://github.com/o/r/pull/1",
-		TargetSHA:      "sha1",
-		Verdict:        domain.VerdictChangesRequested,
-		Body:           "fix the bug",
-		GithubReviewID: "98\x1b[2J765",
-	}
-
-	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
-		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
-	}
-	got := msg.msgs[0]
-	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("AO review nudge missing %q: %q", want, got)
-		}
-	}
-	if strings.Contains(got, "\x1b") {
-		t.Fatalf("AO review nudge should sanitize control bytes: %q", got)
-	}
-	if st.signatures[result.PRURL] == "" {
-		t.Fatal("AO review nudge did not persist sendOnce signature")
-	}
-
-	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("repeat ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
-		t.Fatalf("repeat should report delivered outcome and suppress duplicate send, outcome=%q msgs=%v", outcome, msg.msgs)
-	}
-
-	result.RunID = "run-2"
-	result.TargetSHA = "sha2"
-	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("new pass ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 2 {
-		t.Fatalf("new review pass should send again, outcome=%q msgs=%v", outcome, msg.msgs)
-	}
-}
-
-func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
-	// The worker is working at ApplyReviewResult's entry guard (read #1) but a
+func TestApplyReviewBatchSuppressedByJITGuardIsNotDelivered(t *testing.T) {
+	// The worker is working at ApplyReviewBatch's entry guard (read #1) but a
 	// permission dialog stores blocked before sendOnce's just-in-time re-read
 	// (read #2). The nudge must be SUPPRESSED, and the outcome must be
 	// ReviewDeliveryNoop — NOT Sent — so the caller does not stamp the run
@@ -1254,13 +1207,13 @@ func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(bst, msg)
 	result := ReviewResult{
-		RunID: "run-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
+		RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
 		TargetSHA: "sha1", Verdict: domain.VerdictChangesRequested, Body: "fix the bug",
 	}
 
-	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
+	outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", []ReviewResult{result})
 	if err != nil {
-		t.Fatalf("ApplyReviewResult: %v", err)
+		t.Fatalf("ApplyReviewBatch: %v", err)
 	}
 	if outcome != ReviewDeliveryNoop {
 		t.Fatalf("outcome = %q, want no_op (suppressed nudge must not be stamped delivered)", outcome)
@@ -1332,23 +1285,12 @@ func TestApplyReviewBatchNoopsWithoutDeliverableResults(t *testing.T) {
 	}
 }
 
-func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
-	deliveredAt := time.Unix(100, 0).UTC()
+func TestApplyReviewBatchNoopsWhenWorkerCannotBeNudged(t *testing.T) {
 	tests := []struct {
 		name   string
 		result ReviewResult
 		rec    domain.SessionRecord
 	}{
-		{
-			name:   "approved",
-			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictApproved},
-			rec:    working("mer-1"),
-		},
-		{
-			name:   "already delivered",
-			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested, DeliveredAt: &deliveredAt},
-			rec:    working("mer-1"),
-		},
 		{
 			name:   "terminated worker",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
@@ -1369,12 +1311,12 @@ func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m, st, msg := newManager()
 			st.sessions["mer-1"] = tt.rec
-			outcome, err := m.ApplyReviewResult(ctx, "mer-1", tt.result)
+			outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", []ReviewResult{tt.result})
 			if err != nil {
-				t.Fatalf("ApplyReviewResult: %v", err)
+				t.Fatalf("ApplyReviewBatch: %v", err)
 			}
 			if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
-				t.Fatalf("irrelevant result should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
+				t.Fatalf("non-nudgeable worker should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
 			}
 		})
 	}
@@ -1615,12 +1557,18 @@ func TestMarkSpawnedClearsFirstSignal(t *testing.T) {
 }
 
 type fakeNotificationSink struct {
-	intents []ports.NotificationIntent
-	err     error
+	intents     []ports.NotificationIntent
+	resolutions []ports.NotificationResolution
+	err         error
 }
 
 func (f *fakeNotificationSink) Notify(_ context.Context, intent ports.NotificationIntent) error {
 	f.intents = append(f.intents, intent)
+	return f.err
+}
+
+func (f *fakeNotificationSink) Resolve(_ context.Context, res ports.NotificationResolution) error {
+	f.resolutions = append(f.resolutions, res)
 	return f.err
 }
 
@@ -1641,6 +1589,84 @@ func TestActivity_WaitingInputTransitionEmitsNotification(t *testing.T) {
 	intent := sink.intents[0]
 	if intent.Type != domain.NotificationNeedsInput || intent.SessionID != "mer-1" || intent.ProjectID != "mer" || intent.SessionDisplayName != "checkout-flow" {
 		t.Fatalf("intent = %+v", intent)
+	}
+}
+
+// The user answering the agent is what resolves a needs-input notification —
+// there is no manual acknowledgement anywhere in the flow.
+func TestActivity_LeavingNeedsInputResolvesNotification(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		next domain.ActivityState
+	}{
+		{name: "answered", next: domain.ActivityActive},
+		{name: "went idle", next: domain.ActivityIdle},
+		{name: "agent exited", next: domain.ActivityExited},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &fakeNotificationSink{}
+			m := New(st, nil, WithNotificationSink(sink))
+			now := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
+			m.clock = func() time.Time { return now }
+			st.sessions["mer-1"] = domain.SessionRecord{
+				ID: "mer-1", ProjectID: "mer",
+				Activity:      domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Minute)},
+				FirstSignalAt: now.Add(-time.Minute),
+			}
+
+			if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: tt.next}); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.resolutions) != 1 {
+				t.Fatalf("resolutions = %+v, want 1", sink.resolutions)
+			}
+			got := sink.resolutions[0]
+			if got.Type != domain.NotificationNeedsInput || got.SessionID != "mer-1" || !got.ResolvedAt.Equal(now) {
+				t.Fatalf("resolution = %+v", got)
+			}
+		})
+	}
+}
+
+// An in-family escalation is still the same pause: nothing was answered, so
+// there is nothing to resolve.
+func TestActivity_WaitingInputToBlockedDoesNotResolve(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Now()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		Activity:      domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now},
+		FirstSignalAt: now,
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{Valid: true, State: domain.ActivityBlocked}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.resolutions) != 0 {
+		t.Fatalf("resolutions = %+v, want none", sink.resolutions)
+	}
+}
+
+// Terminating a paused session also clears its ping: nobody is waiting on the
+// user any more.
+func TestMarkTerminated_ResolvesNeedsInputNotification(t *testing.T) {
+	st := newFakeStore()
+	sink := &fakeNotificationSink{}
+	m := New(st, nil, WithNotificationSink(sink))
+	now := time.Now()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer",
+		Activity: domain.Activity{State: domain.ActivityBlocked, LastActivityAt: now},
+	}
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sink.resolutions) != 1 || sink.resolutions[0].Type != domain.NotificationNeedsInput {
+		t.Fatalf("resolutions = %+v", sink.resolutions)
 	}
 }
 
@@ -1863,6 +1889,53 @@ func TestSCMObservation_Notifications(t *testing.T) {
 	}
 }
 
+// Merging the PR is what resolves a ready-to-merge ping. So is the PR ceasing
+// to be mergeable — either way there is nothing left for the user to merge.
+func TestSCMObservation_ResolvesReadyToMergeWhenNoLongerReady(t *testing.T) {
+	ready := ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing)},
+		Review:       ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)},
+	}
+	merged := ready
+	merged.PR.Merged = true
+	ciBroke := ready
+	ciBroke.CI.Summary = string(domain.CIFailing)
+
+	for _, tt := range []struct {
+		name string
+		obs  ports.SCMObservation
+		want int
+	}{
+		{name: "still ready", obs: ready, want: 0},
+		{name: "merged", obs: merged, want: 1},
+		{name: "ci went red", obs: ciBroke, want: 1},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := newFakeStore()
+			sink := &fakeNotificationSink{}
+			m := New(st, nil, WithNotificationSink(sink))
+			st.sessions["mer-1"] = working("mer-1")
+
+			if err := m.ApplySCMObservation(ctx, "mer-1", tt.obs); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.resolutions) != tt.want {
+				t.Fatalf("resolutions = %+v, want %d", sink.resolutions, tt.want)
+			}
+			if tt.want == 0 {
+				return
+			}
+			got := sink.resolutions[0]
+			if got.Type != domain.NotificationReadyToMerge || got.PRURL != tt.obs.PR.URL {
+				t.Fatalf("resolution = %+v", got)
+			}
+		})
+	}
+}
+
 func TestSCMObservation_NotReadyWhenCIOrReviewBlocks(t *testing.T) {
 	for _, obs := range []ports.SCMObservation{
 		{Fetched: true, PR: ports.SCMPRObservation{URL: "https://github.com/o/r/pull/1", Number: 1}, CI: ports.SCMCIObservation{Summary: string(domain.CIFailing)}, Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable)}},
@@ -1905,7 +1978,7 @@ func TestSCMObservation_ReadyToMergeSuppressedWhileWaitingInput(t *testing.T) {
 	}
 }
 
-func TestActivity_WorkerIdleNudgesOrchestrator(t *testing.T) {
+func TestActivity_WorkerIdleDoesNotNudgeOrchestrator(t *testing.T) {
 	m, st, msg := newManager()
 	now := time.Now()
 	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
@@ -1914,331 +1987,11 @@ func TestActivity_WorkerIdleNudgesOrchestrator(t *testing.T) {
 	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
 		t.Fatal(err)
 	}
-	if len(msg.msgs) != 1 {
-		t.Fatalf("orchestrator nudges = %d, want 1", len(msg.msgs))
-	}
-	if !strings.Contains(msg.msgs[0], "mer-8") {
-		t.Fatalf("nudge missing worker id: %q", msg.msgs[0])
-	}
-	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
-		t.Fatalf("nudge destination = %v, want [mer-orch]", msg.ids)
-	}
-}
-
-func TestActivity_WorkerIdleSteerableActiveOrchestratorDelivers(t *testing.T) {
-	st := newFakeStore()
-	msg := &fakeMessenger{}
-	// Steering is an adapter-declared capability; without it an active
-	// orchestrator is never written to (see TestActivity_WorkerIdleOrchestratorActiveDefersNoNudge).
-	m := New(st, msg, WithActiveSteering(func(h domain.AgentHarness) bool { return h == domain.HarnessCodex }))
-	now := time.Now()
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-
-	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
-		t.Fatalf("steerable active orchestrator not delivered: ids=%v", msg.ids)
-	}
-}
-
-func TestActivity_WorkerIdleMissingOrchestratorRetainsEvent(t *testing.T) {
-	m, st, msg := newManager()
-	now := time.Now()
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-
-	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
-		t.Fatal(err)
+	if got := st.sessions["mer-8"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("worker activity = %q, want idle", got)
 	}
 	if len(msg.msgs) != 0 {
-		t.Fatalf("nudges = %d, want 0", len(msg.msgs))
-	}
-	pending, _ := st.ListPendingWorkerIdleEventsByProject(ctx, "mer")
-	if len(pending) != 1 {
-		t.Fatalf("pending events = %d, want 1 (retained)", len(pending))
-	}
-}
-
-func TestActivity_WorkerIdleCoalescesWhileOrchestratorBusy(t *testing.T) {
-	m, st, msg := newManager()
-	now := time.Now()
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-
-	// Two completions while the orchestrator is busy coalesce to one pending event.
-	for i := 0; i < 2; i++ {
-		ts := now.Add(time.Duration(i) * time.Minute)
-		if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: ts}); err != nil {
-			t.Fatal(err)
-		}
-		if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: ts.Add(time.Second)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	pending, _ := st.ListPendingWorkerIdleEvents(ctx)
-	if len(pending) != 1 {
-		t.Fatalf("pending events = %d, want 1 (coalesced)", len(pending))
-	}
-
-	// Orchestrator frees up: exactly one delivery, not a storm.
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.msgs) != 1 {
-		t.Fatalf("deliveries = %d, want 1", len(msg.msgs))
-	}
-}
-
-func TestDispatchAllPendingWorkerIdleEvents_DeliversWhenOrchestratorSafe(t *testing.T) {
-	m, st, msg := newManager()
-	now := time.Now()
-	// A pending event with no orchestrator yet (as if left across a restart).
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
-
-	m.DispatchAllPendingWorkerIdleEvents(ctx)
-	if len(msg.msgs) != 0 {
-		t.Fatalf("delivered with no orchestrator: %d, want 0", len(msg.msgs))
-	}
-
-	// An orchestrator appears and the sweep delivers.
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	m.DispatchAllPendingWorkerIdleEvents(ctx)
-	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
-		t.Fatalf("sweep delivery = %v, want [mer-orch]", msg.ids)
-	}
-	// Delivered events are not redelivered on a later sweep.
-	m.DispatchAllPendingWorkerIdleEvents(ctx)
-	if len(msg.msgs) != 1 {
-		t.Fatalf("redelivered after mark: %d, want 1", len(msg.msgs))
-	}
-}
-
-// staleSnapshotStore returns an idle orchestrator from ListSessions (the
-// dispatcher's snapshot) while GetSession — the guard's just-in-time read at the
-// write boundary — reports it active. It reproduces the TOCTOU window where the
-// orchestrator starts a turn between the safety check and the write.
-type staleSnapshotStore struct {
-	*fakeStore
-	orchestrator domain.SessionID
-}
-
-func (s *staleSnapshotStore) GetSession(ctx context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
-	rec, ok, err := s.fakeStore.GetSession(ctx, id)
-	if ok && id == s.orchestrator {
-		rec.Activity.State = domain.ActivityActive
-	}
-	return rec, ok, err
-}
-
-func TestDispatch_SuppressesWhenOrchestratorGoesActiveBeforeWrite(t *testing.T) {
-	st := newFakeStore()
-	now := time.Now()
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessClaudeCode, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
-
-	msg := &fakeMessenger{}
-	m := New(&staleSnapshotStore{fakeStore: st, orchestrator: "mer-orch"}, msg)
-
-	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
-
-	if len(msg.msgs) != 0 {
-		t.Fatalf("wrote into an active non-steering orchestrator: %d, want 0", len(msg.msgs))
-	}
-	pending, _ := st.ListPendingWorkerIdleEventsByProject(ctx, "mer")
-	if len(pending) != 1 {
-		t.Fatalf("suppressed event not retained: pending = %d, want 1", len(pending))
-	}
-}
-
-func TestDispatch_SteerableHarnessStillDeliversWhenActiveAtWriteBoundary(t *testing.T) {
-	st := newFakeStore()
-	now := time.Now()
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
-
-	msg := &fakeMessenger{}
-	m := New(&staleSnapshotStore{fakeStore: st, orchestrator: "mer-orch"}, msg,
-		WithActiveSteering(func(h domain.AgentHarness) bool { return h == domain.HarnessCodex }))
-
-	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
-
-	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
-		t.Fatalf("steerable harness not delivered mid-turn: ids = %v", msg.ids)
-	}
-}
-
-// serializingStore makes the list->send->mark window wide and deterministic: the
-// first lister blocks until the second has also entered, so an unserialized
-// dispatcher would hand both the same pending row.
-type serializingStore struct {
-	*fakeStore
-	entered chan struct{}
-	release chan struct{}
-	once    sync.Once
-}
-
-func (s *serializingStore) ListPendingWorkerIdleEventsByProject(ctx context.Context, project domain.ProjectID) ([]domain.WorkerIdleEvent, error) {
-	s.once.Do(func() {
-		close(s.entered)
-		<-s.release
-	})
-	return s.fakeStore.ListPendingWorkerIdleEventsByProject(ctx, project)
-}
-
-func TestDispatch_ConcurrentDispatchDeliversEventOnce(t *testing.T) {
-	st := newFakeStore()
-	now := time.Now()
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
-
-	blocking := &serializingStore{fakeStore: st, entered: make(chan struct{}), release: make(chan struct{})}
-	msg := &lockedMessenger{}
-	m := New(blocking, msg)
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		m.DispatchPendingWorkerIdleEvents(ctx, "mer")
-	}()
-	<-blocking.entered
-	go func() {
-		defer wg.Done()
-		m.DispatchPendingWorkerIdleEvents(ctx, "mer")
-	}()
-	close(blocking.release)
-	wg.Wait()
-
-	if got := msg.count(); got != 1 {
-		t.Fatalf("concurrent dispatch delivered %d times, want 1", got)
-	}
-}
-
-func TestDispatch_WaitingInputAndTerminatedOrchestratorRetain(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		state      domain.ActivityState
-		terminated bool
-	}{
-		{"waiting_input", domain.ActivityWaitingInput, false},
-		{"blocked", domain.ActivityBlocked, false},
-		{"terminated", domain.ActivityIdle, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m, st, msg := newManager()
-			now := time.Now()
-			st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, IsTerminated: tc.terminated, Activity: domain.Activity{State: tc.state, LastActivityAt: now}, FirstSignalAt: now}
-			st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-			st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
-
-			m.DispatchPendingWorkerIdleEvents(ctx, "mer")
-
-			if len(msg.msgs) != 0 {
-				t.Fatalf("delivered to %s orchestrator: %d, want 0", tc.name, len(msg.msgs))
-			}
-			pending, _ := st.ListPendingWorkerIdleEventsByProject(ctx, "mer")
-			if len(pending) != 1 {
-				t.Fatalf("event not retained for %s: pending = %d, want 1", tc.name, len(pending))
-			}
-		})
-	}
-}
-
-func TestActivity_SteerableOrchestratorLeavingBlockedDispatches(t *testing.T) {
-	st := newFakeStore()
-	now := time.Now()
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Harness: domain.HarnessCodex, Activity: domain.Activity{State: domain.ActivityBlocked, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
-
-	msg := &fakeMessenger{}
-	m := New(st, msg, WithActiveSteering(func(h domain.AgentHarness) bool { return h == domain.HarnessCodex }))
-
-	// blocked -> active is deliverable for a steerable harness: no waiting on the sweep.
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityActive}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
-		t.Fatalf("blocked->active did not dispatch for steerable harness: ids = %v", msg.ids)
-	}
-}
-
-func TestDispatch_DeliversAtMostOnePerCycleAndDrainsOnReturnToIdle(t *testing.T) {
-	st := newFakeStore()
-	now := time.Now()
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-9"] = domain.SessionRecord{ID: "mer-9", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.idleEvents = []domain.WorkerIdleEvent{
-		{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now},
-		{ID: "wie_2", ProjectID: "mer", WorkerID: "mer-9", TransitionAt: now.Add(time.Second), CreatedAt: now.Add(time.Second)},
-	}
-	msg := &fakeMessenger{}
-	m := New(st, msg)
-
-	// One cycle delivers exactly one, even with two pending: pasting the nudge
-	// changes the orchestrator's state only asynchronously.
-	m.DispatchPendingWorkerIdleEvents(ctx, "mer")
-	if len(msg.msgs) != 1 {
-		t.Fatalf("first cycle deliveries = %d, want 1", len(msg.msgs))
-	}
-
-	// The orchestrator processes the nudge (active) then returns to idle, which
-	// re-triggers dispatch and drains the second event.
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now.Add(time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(2 * time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.msgs) != 2 {
-		t.Fatalf("after return-to-idle deliveries = %d, want 2", len(msg.msgs))
-	}
-	if pending, _ := st.ListPendingWorkerIdleEvents(ctx); len(pending) != 0 {
-		t.Fatalf("pending after drain = %d, want 0", len(pending))
-	}
-}
-
-func TestDispatch_UnsettledOrchestratorRetainsUntilFirstSignal(t *testing.T) {
-	st := newFakeStore()
-	now := time.Now()
-	// A freshly restored orchestrator: seeded idle but no authentic signal yet.
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, FirstSignalAt: now}
-	st.idleEvents = []domain.WorkerIdleEvent{{ID: "wie_1", ProjectID: "mer", WorkerID: "mer-8", TransitionAt: now, CreatedAt: now}}
-	msg := &fakeMessenger{}
-	m := New(st, msg)
-
-	// Boot/sweep dispatch must not write into a runtime that hasn't proven it's up.
-	m.DispatchAllPendingWorkerIdleEvents(ctx)
-	if len(msg.msgs) != 0 {
-		t.Fatalf("delivered to unsettled orchestrator: %d, want 0", len(msg.msgs))
-	}
-
-	// Its first authentic activity signal marks the runtime settled and delivers.
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(time.Second)}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.ids) != 1 || msg.ids[0] != "mer-orch" {
-		t.Fatalf("first signal did not deliver: ids = %v", msg.ids)
-	}
-}
-
-func TestActivity_WorkerIdleNoOrchestratorNoNudge(t *testing.T) {
-	m, st, msg := newManager()
-	now := time.Now()
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-
-	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.msgs) != 0 {
-		t.Fatalf("nudges = %d, want 0", len(msg.msgs))
+		t.Fatalf("orchestrator nudges = %d, want 0", len(msg.msgs))
 	}
 }
 
@@ -2249,6 +2002,9 @@ func TestActivity_OrchestratorIdleDoesNotNudge(t *testing.T) {
 
 	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
 		t.Fatal(err)
+	}
+	if got := st.sessions["mer-orch"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("orchestrator activity = %q, want idle", got)
 	}
 	if len(msg.msgs) != 0 {
 		t.Fatalf("orchestrator idle self-nudged: %d, want 0", len(msg.msgs))
@@ -2297,39 +2053,211 @@ func TestActivity_WorkerIdleOrchestratorActiveDefersNoNudge(t *testing.T) {
 	}
 }
 
-func TestActivity_DeferredReportFlushedWhenOrchestratorIdle(t *testing.T) {
-	m, st, msg := newManager()
-	now := time.Now()
-	st.sessions["mer-orch"] = domain.SessionRecord{ID: "mer-orch", ProjectID: "mer", Kind: domain.KindOrchestrator, Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
-	st.sessions["mer-8"] = domain.SessionRecord{ID: "mer-8", ProjectID: "mer", Kind: domain.KindWorker, DisplayName: "husky-setup", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: now}, FirstSignalAt: now}
+// fakeLifecycleContainerReaper is a minimal ports.ContainerReaper test double.
+type fakeLifecycleContainerReaper struct {
+	sessions []domain.SessionID
+	removed  int
+	err      error
+}
 
-	// Worker finishes while the orchestrator is busy: deferred, no nudge yet.
-	if err := m.ApplyActivitySignal(ctx, "mer-8", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.msgs) != 0 {
-		t.Fatalf("nudged while orchestrator busy: %d, want 0", len(msg.msgs))
-	}
+func (f *fakeLifecycleContainerReaper) ReapSessionContainers(_ context.Context, id domain.SessionID) (int, error) {
+	f.sessions = append(f.sessions, id)
+	return f.removed, f.err
+}
 
-	// Orchestrator becomes idle: the deferred report is delivered.
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle}); err != nil {
-		t.Fatal(err)
-	}
-	if len(msg.msgs) != 1 {
-		t.Fatalf("flushed nudges = %d, want 1", len(msg.msgs))
-	}
-	if !strings.Contains(msg.msgs[0], "mer-8") {
-		t.Fatalf("flushed nudge missing worker id: %q", msg.msgs[0])
-	}
+// fakeProjectConfigLoader is a minimal projectConfigLoader test double.
+type fakeProjectConfigLoader struct {
+	projects map[string]domain.ProjectRecord
+	err      error
+}
 
-	// A second orchestrator idle transition must not re-deliver.
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityActive, Timestamp: now.Add(time.Second)}); err != nil {
+func (f *fakeProjectConfigLoader) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	if f.err != nil {
+		return domain.ProjectRecord{}, false, f.err
+	}
+	rec, ok := f.projects[id]
+	return rec, ok, nil
+}
+
+func newManagerWithContainerReaper(cr ports.ContainerReaper, pl projectConfigLoader) (*Manager, *fakeStore, *fakeMessenger) {
+	st := newFakeStore()
+	msg := &fakeMessenger{}
+	m := New(st, msg, WithContainerReaper(cr, pl))
+	return m, st, msg
+}
+
+// TestMarkTerminated_ReapsContainers is the #2652 regression for hooking the
+// shared teardown path: MarkTerminated must reap the terminated session's
+// containers, covering every terminal-state path (Kill, daemon shutdown,
+// Cleanup, RetireForReplacement, tracker-driven termination) through this one
+// choke point rather than only explicit ao session kill.
+func TestMarkTerminated_ReapsContainers(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{removed: 2}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.ApplyActivitySignal(ctx, "mer-orch", ports.ActivitySignal{Valid: true, State: domain.ActivityIdle, Timestamp: now.Add(2 * time.Second)}); err != nil {
+	if len(cr.sessions) != 1 || cr.sessions[0] != "mer-1" {
+		t.Fatalf("expected container reap for mer-1, got %v", cr.sessions)
+	}
+}
+
+// TestMarkTerminated_ContainerReapFailureDoesNotFailTermination asserts the
+// best-effort contract: a container reaper error must never fail
+// MarkTerminated, matching every other best-effort teardown step in AO.
+func TestMarkTerminated_ContainerReapFailureDoesNotFailTermination(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{err: errors.New("docker rm: permission denied")}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatalf("a container reap failure must not fail MarkTerminated: %v", err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated {
+		t.Fatal("session must still be marked terminated despite the reap failure")
+	}
+	if len(cr.sessions) != 1 {
+		t.Fatalf("expected container reap to still be attempted, got %v", cr.sessions)
+	}
+}
+
+// TestMarkTerminated_SkipsReapWhenProjectDisables covers the project-level
+// opt-out: ContainerReap.Disabled must suppress the reap without affecting
+// termination.
+func TestMarkTerminated_SkipsReapWhenProjectDisables(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{ContainerReap: domain.ContainerReapConfig{Disabled: true}}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
 		t.Fatal(err)
 	}
-	if len(msg.msgs) != 1 {
-		t.Fatalf("re-delivered deferred report: %d, want 1", len(msg.msgs))
+	if len(cr.sessions) != 0 {
+		t.Fatalf("expected no reap call when project disables container reap, got %v", cr.sessions)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated when reap is disabled")
+	}
+}
+
+// TestMarkTerminated_ProjectLoadErrorSkipsRatherThanReaps is the regression
+// for failing open: a project-config load error must skip reaping rather than
+// guess and reap anyway. This package's stated bias throughout is to spare on
+// ambiguity, never to reap on it.
+func TestMarkTerminated_ProjectLoadErrorSkipsRatherThanReaps(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{err: errors.New("db unavailable")}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.sessions) != 0 {
+		t.Fatalf("a project-load error must skip reaping (spare on ambiguity), got calls: %v", cr.sessions)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated when the project lookup fails")
+	}
+}
+
+// TestMarkTerminated_NilReaperSkipsWithoutProjectLookup confirms nil wiring
+// (the common case — most AO installs run without Docker) skips reaping
+// cleanly without even attempting a project lookup.
+func TestMarkTerminated_NilReaperSkipsWithoutProjectLookup(t *testing.T) {
+	m, st, _ := newManager() // newManager wires no container reaper at all
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated with no reaper wired")
+	}
+}
+
+// TestMarkTerminated_MissingProjectSkipsRatherThanReaps is the regression for
+// failing open on a missing project record: GetProject returning ok=false,
+// err=nil is ambiguity (AO cannot know whether ContainerReap.Disabled would
+// have applied), not a green light to reap. Must be treated the same as the
+// error path.
+func TestMarkTerminated_MissingProjectSkipsRatherThanReaps(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{}} // no "mer" entry: ok=false, err=nil
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.sessions) != 0 {
+		t.Fatalf("a missing project record must skip reaping (spare on ambiguity), got calls: %v", cr.sessions)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must still be marked terminated when the project record is missing")
+	}
+}
+
+// TestRuntimeObservation_ConfirmedDeathReapsContainers is the regression for
+// the review finding that ApplyRuntimeObservation's reaper-driven terminal
+// transition (crash/SIGKILL detected by the runtime reaper) bypassed
+// MarkTerminated entirely and left containers unreaped. This confirms the
+// container leg of #2652 now fires on this path too, not just explicit kill.
+func TestRuntimeObservation_ConfirmedDeathReapsContainers(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{removed: 1}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{Runtime: ports.ProbeDead, Workload: ports.ProbeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
+		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+	if len(cr.sessions) != 1 || cr.sessions[0] != "mer-1" {
+		t.Fatalf("expected container reap for mer-1 on reaper-observed death, got %v", cr.sessions)
+	}
+}
+
+// TestRuntimeObservation_WorkloadDeathAloneDoesNotReap confirms the
+// non-terminal workload-dead branch (runtime alive, workload dead) does NOT
+// trigger a container reap — only a confirmed session termination should.
+func TestRuntimeObservation_WorkloadDeathAloneDoesNotReap(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyRuntimeObservation(ctx, "mer-1", ports.RuntimeFacts{LaunchID: "launch-1", Runtime: ports.ProbeAlive, Workload: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if got.IsTerminated {
+		t.Fatal("workload death alone must not terminate the session")
+	}
+	if len(cr.sessions) != 0 {
+		t.Fatalf("expected no reap call for a non-terminal transition, got %v", cr.sessions)
 	}
 }

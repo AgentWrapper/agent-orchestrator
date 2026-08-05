@@ -2,6 +2,7 @@ package kimi
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,7 +47,18 @@ func kimiLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 	if !ok {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
-	return kimiConfigAuthStatus(filepath.Join(home, "config.toml"))
+	configStatus, configOK, err := kimiConfigAuthStatus(filepath.Join(home, "config.toml"))
+	if err != nil || configStatus == ports.AgentAuthStatusAuthorized {
+		return configStatus, configOK, err
+	}
+	credentialsStatus, credentialsOK, err := kimiCredentialsAuthStatus(filepath.Join(home, "credentials", "kimi-code.json"))
+	if err != nil || credentialsOK {
+		return credentialsStatus, credentialsOK, err
+	}
+	if configOK {
+		return configStatus, configOK, nil
+	}
+	return ports.AgentAuthStatusUnknown, false, nil
 }
 
 func kimiCodeHome() (string, bool) {
@@ -83,6 +95,32 @@ func kimiConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 				return ports.AgentAuthStatusAuthorized, true, nil
 			}
 		}
+	}
+	return ports.AgentAuthStatusUnauthorized, true, nil
+}
+
+func kimiCredentialsAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return ports.AgentAuthStatusUnknown, false, nil
+	}
+	if err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return ports.AgentAuthStatusUnknown, false, nil
+	}
+
+	var credentials struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.Unmarshal(data, &credentials); err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	if strings.TrimSpace(credentials.AccessToken) != "" ||
+		strings.TrimSpace(credentials.RefreshToken) != "" {
+		return ports.AgentAuthStatusAuthorized, true, nil
 	}
 	return ports.AgentAuthStatusUnauthorized, true, nil
 }

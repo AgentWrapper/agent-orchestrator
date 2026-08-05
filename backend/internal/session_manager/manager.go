@@ -69,7 +69,12 @@ var (
 	ErrAwaitingDecision = errors.New("session: awaiting a user decision")
 )
 
-// Env vars a spawned process reads to learn who it is.
+// Env vars a spawned process reads to learn who it is. A worker that starts
+// its own Docker containers (a database, a queue, any ad-hoc service) should
+// label them `--label ao.session=$AO_SESSION_ID` so AO's container reaper
+// (dockerreap) removes them on session kill/terminal state — see #2652. Add
+// `--label ao.spare=true` to a deliberately shared container that must
+// survive past this session.
 const (
 	EnvSessionID = "AO_SESSION_ID"
 	EnvProjectID = "AO_PROJECT_ID"
@@ -78,6 +83,11 @@ const (
 	EnvRuntimeLaunchID = "AO_RUNTIME_LAUNCH_ID"
 	// EnvDataDir tells a spawned agent's AO hook commands where the store lives.
 	EnvDataDir = "AO_DATA_DIR"
+	// EnvBrowserCapability proves ownership of the session's browser target.
+	EnvBrowserCapability = "AO_BROWSER_CAPABILITY"
+	// EnvBrowserRuntimeToken must never be inherited by a worker. It authenticates
+	// the privileged Electron runtime, not session-scoped browser callers.
+	EnvBrowserRuntimeToken = "AO_BROWSER_RUNTIME_TOKEN" //nolint:gosec // Environment variable name, not a credential.
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -91,6 +101,30 @@ type lifecycleRecorder interface {
 	CancelLaunch(id domain.SessionID, launchID string)
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
+}
+
+// ShellTerminalCloser gates a session's scoped shell terminals around every
+// path that releases its worktree (Kill, Cleanup, RetireForReplacement, the
+// reconcile/shutdown save-and-teardown path), so none of them removes a
+// worktree out from under a shell whose cwd still points into it — on Windows
+// an open handle on that directory can even make the removal itself fail.
+//
+// BeginSessionTeardown drains the session's open shells and, on success,
+// blocks any new OpenShellTerminal for that session until the returned
+// release function is called — the caller MUST call it exactly once
+// (typically via defer) once its own worktree work finishes, whatever the
+// outcome. That release is tied to this specific acquisition (a fresh
+// closure), not looked up by session id, so it can never be confused with — or
+// release — a different, unrelated Begin for the same session. An error from
+// BeginSessionTeardown means some scoped runtime could not be confirmed dead;
+// the caller MUST NOT touch the worktree in that case, and release is nil (the
+// gate already released itself on that error path).
+//
+// Late-bound via SetShellTerminalCloser: shellterm.Service is built after
+// Session Manager during boot (see daemon.startShellTerminals), mirroring why
+// lifecycle.Manager takes its completion terminator the same way.
+type ShellTerminalCloser interface {
+	BeginSessionTeardown(ctx context.Context, id domain.SessionID) (release func(), err error)
 }
 
 type runtimeController interface {
@@ -165,10 +199,13 @@ type Manager struct {
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
 	// its Outcome; Spawn/Restore use the interface-level Send for
 	// initial-prompt delivery, where a blocked session is impossible.
-	messenger *sessionguard.Guard
-	lcm       lifecycleRecorder
-	dataDir   string
-	clock     func() time.Time
+	messenger           *sessionguard.Guard
+	lcm                 lifecycleRecorder
+	preview             PreviewLifecycle
+	browser             BrowserLifecycle
+	browserCapabilities BrowserCapabilityIssuer
+	dataDir             string
+	clock               func() time.Time
 	// lookPath is exec.LookPath in production; tests substitute a stub so
 	// they don't need real binaries on PATH. Returns ports.ErrAgentBinaryNotFound
 	// when the binary is missing so the sentinel propagates through toAPIError.
@@ -185,6 +222,58 @@ type Manager struct {
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
 	logger      *slog.Logger
+
+	// shellTerminalsMu guards shellTerminals: it is late-bound (see
+	// ShellTerminalCloser) after Manager already exists, so a setter mutates it
+	// under lock rather than through the constructor.
+	shellTerminalsMu sync.Mutex
+	shellTerminals   ShellTerminalCloser
+}
+
+// SetShellTerminalCloser wires every worktree-releasing path to gate the
+// session's scoped shell terminals shut first. Safe to leave unset: a nil
+// closer makes beginShellTerminalTeardown a no-op (release=nil, err=nil),
+// which is what every test in this package that does not care about shell
+// terminals relies on.
+func (m *Manager) SetShellTerminalCloser(closer ShellTerminalCloser) {
+	m.shellTerminalsMu.Lock()
+	defer m.shellTerminalsMu.Unlock()
+	m.shellTerminals = closer
+}
+
+// beginShellTerminalTeardown starts the shell-terminal gate for id ahead of
+// releasing its worktree. release==nil, err==nil means no closer is wired
+// (nothing to gate; proceed exactly as before this mechanism existed).
+// err!=nil means some scoped shell terminal could not be confirmed closed —
+// the caller MUST NOT touch the worktree, and release is nil (the gate
+// already released itself). On success release is non-nil and tied to this
+// specific acquisition; the caller MUST call it exactly once, typically via
+// defer, once its own worktree work finishes.
+func (m *Manager) beginShellTerminalTeardown(ctx context.Context, id domain.SessionID) (release func(), err error) {
+	m.shellTerminalsMu.Lock()
+	closer := m.shellTerminals
+	m.shellTerminalsMu.Unlock()
+	if closer == nil {
+		return nil, nil
+	}
+	return closer.BeginSessionTeardown(ctx, id)
+}
+
+// PreviewLifecycle is the narrow teardown hook consumed by Session Manager.
+// Keeping it here follows the consumer-owned interface boundary.
+type PreviewLifecycle interface {
+	StopSession(ctx context.Context, id domain.SessionID) error
+}
+
+// BrowserLifecycle is the narrow Electron-target teardown hook consumed by
+// Session Manager. It must work even when no renderer panel mounted.
+type BrowserLifecycle interface {
+	DestroySession(ctx context.Context, id domain.SessionID) error
+}
+
+// BrowserCapabilityIssuer derives the capability injected into a worker.
+type BrowserCapabilityIssuer interface {
+	Token(id domain.SessionID) string
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -214,12 +303,15 @@ const (
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
-	Runtime   runtimeController
-	Agents    ports.AgentResolver
-	Workspace ports.Workspace
-	Store     Store
-	Messenger ports.AgentMessenger
-	Lifecycle lifecycleRecorder
+	Runtime             runtimeController
+	Agents              ports.AgentResolver
+	Workspace           ports.Workspace
+	Store               Store
+	Messenger           ports.AgentMessenger
+	Lifecycle           lifecycleRecorder
+	Preview             PreviewLifecycle
+	Browser             BrowserLifecycle
+	BrowserCapabilities BrowserCapabilityIssuer
 	// DataDir is exported to spawned agents as AO_DATA_DIR so their hook
 	// commands can open the same store.
 	DataDir string
@@ -243,17 +335,20 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:     d.Runtime,
-		agents:      d.Agents,
-		workspace:   d.Workspace,
-		store:       d.Store,
-		lcm:         d.Lifecycle,
-		dataDir:     d.DataDir,
-		clock:       d.Clock,
-		lookPath:    d.LookPath,
-		executable:  d.Executable,
-		newLaunchID: d.NewLaunchID,
-		resuming:    make(map[domain.SessionID]struct{}),
+		runtime:             d.Runtime,
+		agents:              d.Agents,
+		workspace:           d.Workspace,
+		store:               d.Store,
+		lcm:                 d.Lifecycle,
+		preview:             d.Preview,
+		browser:             d.Browser,
+		browserCapabilities: d.BrowserCapabilities,
+		dataDir:             d.DataDir,
+		clock:               d.Clock,
+		lookPath:            d.LookPath,
+		executable:          d.Executable,
+		newLaunchID:         d.NewLaunchID,
+		resuming:            make(map[domain.SessionID]struct{}),
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -350,8 +445,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// Per-project workspace provisioning: symlink shared files, then run any
 	// post-create commands (e.g. `pnpm install`) before the agent launches.
 	if err := m.provisionWorkspace(ctx, project, ws.Path); err != nil {
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: provision: %w", id, err)
 	}
 
@@ -363,8 +457,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if len(cfg.Attachments) > 0 {
 		refs, err := writeSpawnAttachments(ws.Path, cfg.Attachments)
 		if err != nil {
-			_ = m.workspace.Destroy(ctx, ws)
-			m.rollbackSpawnSeedRow(ctx, id)
+			m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: attachments: %w", id, err)
 		}
 		// Keep the attachments dir out of git status. Best-effort: the images are
@@ -377,16 +470,14 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 
 	agent, ok := m.agents.Agent(cfg.Harness)
 	if !ok {
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
-	agentConfig := effectiveAgentConfig(cfg.Kind, project.Config)
+	agentConfig := applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, project.Config), cfg.AgentConfig)
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
-		m.destroySpawnWorkspace(ctx, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	launchCfg := ports.LaunchConfig{
@@ -403,8 +494,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	delivery, err := agent.GetPromptDeliveryStrategy(ctx, launchCfg)
 	if err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: prompt delivery: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart {
@@ -412,8 +502,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 	argv, err := agent.GetLaunchCommand(ctx, launchCfg)
 	if err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: launch command: %w", id, err)
 	}
 	// Pre-flight: confirm argv[0] actually exists on PATH (or as an absolute
@@ -421,20 +510,17 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	// tmux happily creates a session+pane around a missing command, so an
 	// unresolved binary would leak through as a "live" session that never ran.
 	if err := m.validateAgentBinary(argv); err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
 	m.augmentRuntimePATHForLaunchBinary(ctx, env, argv)
 	argv, launchID, err := m.superviseAgentProcess(agent, id, env, argv)
 	if err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: supervisor: %w", id, err)
 	}
 	if err := m.lcm.PrepareLaunch(id, launchID); err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: prepare launch: %w", id, err)
 	}
 	defer m.lcm.CancelLaunch(id, launchID)
@@ -445,8 +531,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		Env:           env,
 	})
 	if err != nil {
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-		m.rollbackSpawnSeedRow(ctx, id)
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
 
@@ -458,17 +543,24 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		RuntimeLaunchID:   launchID,
 		Prompt:            prompt,
 	}
+	if projectKind == domain.ProjectKindSingleRepo {
+		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, project.Config.WithDefaults().DefaultBranch)
+	}
 	if err := m.lcm.MarkSpawned(ctx, id, metadata); err != nil {
-		_ = m.runtime.Destroy(ctx, handle)
-		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
+		runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
+		m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
 		m.markSpawnFailedTerminated(ctx, id)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: completed: %w", id, err)
 	}
 	if delivery == ports.PromptDeliveryAfterStart && prompt != "" {
 		if err := m.deliverAfterStartPrompt(ctx, agent, launchCfg, handle, id, prompt); err != nil {
-			_ = m.runtime.Destroy(ctx, handle)
-			m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject)
-			m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			runtimeDestroyed := m.runtime.Destroy(ctx, handle) == nil
+			workspaceDestroyed := m.rollbackPreparedSpawnWorkspace(ctx, rec, ws, workspaceProject, runtimeDestroyed)
+			if runtimeDestroyed && workspaceDestroyed {
+				m.markSpawnFailedTerminatedWithoutWorkspace(ctx, id)
+			} else {
+				m.markSpawnFailedTerminated(ctx, id)
+			}
 			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
 		}
 	}
@@ -557,6 +649,54 @@ func (m *Manager) createSessionWorkspace(ctx context.Context, project domain.Pro
 	return info.Root, &info, nil
 }
 
+func resolveSpawnDiffBase(ctx context.Context, root, defaultBranch string) (string, string) {
+	for _, ref := range spawnDiffBaseRefCandidates(defaultBranch) {
+		if sha, ok := spawnGitSingleLine(ctx, root, "merge-base", "HEAD", ref); ok {
+			return sha, ref
+		}
+	}
+	if sha, ok := spawnGitSingleLine(ctx, root, "rev-parse", "HEAD"); ok {
+		return sha, "HEAD"
+	}
+	return "", ""
+}
+
+func spawnDiffBaseRefCandidates(defaultBranch string) []string {
+	defaultBranch = strings.TrimSpace(defaultBranch)
+	if defaultBranch == "" {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var refs []string
+	add := func(ref string) {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			return
+		}
+		if _, ok := seen[ref]; ok {
+			return
+		}
+		seen[ref] = struct{}{}
+		refs = append(refs, ref)
+	}
+	if !strings.HasPrefix(defaultBranch, "origin/") && !strings.HasPrefix(defaultBranch, "refs/") {
+		add("origin/" + defaultBranch)
+		add("refs/remotes/origin/" + defaultBranch)
+	}
+	add(defaultBranch)
+	return refs
+}
+
+func spawnGitSingleLine(ctx context.Context, root string, args ...string) (string, bool) {
+	cmd := aoprocess.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	value := strings.TrimSpace(string(out))
+	return value, value != ""
+}
+
 func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) bool {
 	if workspaceProject != nil {
 		if adapter, ok := m.workspace.(ports.WorkspaceProject); ok {
@@ -570,9 +710,46 @@ func (m *Manager) destroySpawnWorkspace(ctx context.Context, ws ports.WorkspaceI
 	return err == nil
 }
 
-func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo) {
+func (m *Manager) rollbackPreparedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, runtimeDestroyed bool) bool {
 	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
 		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		return true
+	}
+	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws, runtimeDestroyed)
+	return false
+}
+
+func (m *Manager) rollbackSeedSpawnWorkspace(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo, workspaceProject *ports.WorkspaceProjectInfo, prepared bool) {
+	if m.destroySpawnWorkspace(ctx, ws, workspaceProject) {
+		if prepared {
+			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		}
+		m.rollbackSpawnSeedRow(ctx, rec.ID)
+		return
+	}
+	m.preserveFailedSpawnWorkspace(ctx, rec.ID, ws, true)
+	m.markSpawnFailedTerminated(ctx, rec.ID)
+}
+
+func (m *Manager) preserveFailedSpawnWorkspace(ctx context.Context, id domain.SessionID, ws ports.WorkspaceInfo, runtimeDestroyed bool) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		m.logger.Warn("spawn rollback: failed to load session for preserved workspace", "sessionID", id, "workspacePath", ws.Path, "error", err)
+		return
+	}
+	if !ok {
+		m.logger.Warn("spawn rollback: session missing for preserved workspace", "sessionID", id, "workspacePath", ws.Path)
+		return
+	}
+	rec.Metadata.Branch = ws.Branch
+	rec.Metadata.WorkspacePath = ws.Path
+	rec.Metadata.WorkspaceRepoPath = ws.RepoPath
+	if runtimeDestroyed {
+		rec.Metadata.RuntimeHandleID = ""
+		rec.Metadata.RuntimeLaunchID = ""
+	}
+	if err := m.store.UpdateSession(ctx, rec); err != nil {
+		m.logger.Warn("spawn rollback: failed to record preserved workspace", "sessionID", id, "workspacePath", ws.Path, "error", err)
 	}
 }
 
@@ -604,10 +781,26 @@ func effectiveAgentConfig(kind domain.SessionKind, cfg domain.ProjectConfig) por
 	if override.Model != "" {
 		merged.Model = override.Model
 	}
+	if override.Mode != "" {
+		merged.Mode = override.Mode
+	}
 	if override.Permissions != "" {
 		merged.Permissions = override.Permissions
 	}
 	return merged
+}
+
+func applySpawnAgentConfig(base, override ports.AgentConfig) ports.AgentConfig {
+	if override.Model != "" {
+		base.Model = override.Model
+	}
+	if override.Mode != "" {
+		base.Mode = override.Mode
+	}
+	if override.Permissions != "" {
+		base.Permissions = override.Permissions
+	}
+	return base
 }
 
 func roleOverride(kind domain.SessionKind, cfg domain.ProjectConfig) domain.RoleOverride {
@@ -718,6 +911,8 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if !ok {
 		return false, nil // already gone: benign race
 	}
+	m.stopPreviewBestEffort(ctx, id)
+	m.destroyBrowserBestEffort(ctx, id)
 	handle := runtimeHandle(rec.Metadata)
 	ws := workspaceInfo(rec)
 
@@ -733,6 +928,33 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
+		}
+	}
+	// Gate shut any shell terminal scoped to this session BEFORE the worktree
+	// goes away: an open shell whose cwd is that directory can otherwise
+	// survive the removal (and on Windows can even block it — an open handle
+	// on a directory refuses deletion), or a concurrent Open could land a new
+	// one in the same race window. A runtime that cannot be confirmed dead
+	// stops Kill here — same shape as a dirty-workspace refusal — rather than
+	// letting the worktree disappear out from under it.
+	if ws.Path != "" {
+		release, err := m.beginShellTerminalTeardown(ctx, id)
+		if err != nil {
+			// Same shape as the dirty-workspace refusal below: the worktree is
+			// left alone, but the restore marker still must not survive a user
+			// kill, or the next boot's RestoreAll could resurrect a session the
+			// user explicitly terminated (#2319).
+			if err := m.store.DeleteSessionWorktrees(ctx, id); err != nil {
+				m.logger.Warn("kill: delete restore marker failed", "sessionID", id, "error", err)
+			}
+			if err := m.lcm.MarkTerminated(ctx, id); err != nil {
+				return false, fmt.Errorf("kill %s: %w", id, err)
+			}
+			m.cleanupSystemPromptDir(id)
+			return false, nil
+		}
+		if release != nil {
+			defer release()
 		}
 	}
 	freed := false
@@ -798,6 +1020,8 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 	if !ok || rec.IsTerminated {
 		return nil
 	}
+	m.stopPreviewBestEffort(ctx, id)
+	m.destroyBrowserBestEffort(ctx, id)
 	if rec.Metadata.WorkspacePath == "" || rec.Metadata.Branch == "" {
 		if err := m.store.DeleteSessionWorktrees(ctx, rec.ID); err != nil {
 			return fmt.Errorf("retire replacement %s: clear restore markers: %w", id, err)
@@ -813,6 +1037,20 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		}
 		return nil
 	}
+	// Gate shut this session's scoped shell terminals before either branch
+	// below force-removes its worktree (or worktrees, for a workspace
+	// project). Unlike Kill there is no dirty-refusal path here — retirement
+	// always force-destroys — so a shell that cannot be confirmed closed fails
+	// the whole retirement instead of silently force-removing ground out from
+	// under it.
+	release, closeErr := m.beginShellTerminalTeardown(ctx, id)
+	if closeErr != nil {
+		return fmt.Errorf("retire replacement %s: %w", id, closeErr)
+	}
+	if release != nil {
+		defer release()
+	}
+
 	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
 		return fmt.Errorf("retire replacement %s: workspace rows: %w", id, rowErr)
 	} else if ok {
@@ -848,6 +1086,26 @@ func (m *Manager) RetireForReplacement(ctx context.Context, id domain.SessionID)
 		return fmt.Errorf("retire replacement %s: mark terminated: %w", id, err)
 	}
 	return nil
+}
+
+func (m *Manager) stopPreviewBestEffort(ctx context.Context, id domain.SessionID) {
+	if m.preview == nil {
+		return
+	}
+	if err := m.preview.StopSession(ctx, id); err != nil {
+		m.logger.Warn("session preview cleanup failed", "sessionID", id, "error", err)
+	}
+}
+
+func (m *Manager) destroyBrowserBestEffort(ctx context.Context, id domain.SessionID) {
+	if m.browser == nil {
+		return
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := m.browser.DestroySession(cleanupCtx, id); err != nil {
+		m.logger.Warn("session browser cleanup failed", "sessionID", id, "error", err)
+	}
 }
 
 func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec domain.SessionRecord, rows []ports.WorkspaceRepoInfo) error {
@@ -1091,7 +1349,13 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 func (m *Manager) restartRuntime(ctx context.Context, handle ports.RuntimeHandle, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("probe existing runtime: %w", err)
+		if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+			return ports.RuntimeHandle{}, fmt.Errorf("probe existing runtime: %w", err)
+		}
+		// The runtime infrastructure itself is gone (e.g. the tmux server was
+		// killed). Restore/restart is exactly the recovery path for that
+		// outage, so proceed as "no existing runtime" and create a fresh one.
+		alive = false
 	}
 	if alive {
 		if restarter, ok := m.runtime.(ports.RuntimeRestarter); ok {
@@ -1149,6 +1413,18 @@ func (m *Manager) SaveAndTeardownAll(ctx context.Context) error {
 // ForceDestroy; if either capture or the DB write fails, ForceDestroy is
 // not called.
 func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionRecord, destroyRuntime bool) error {
+	// Gate shut this session's scoped shell terminals before either branch
+	// below force-removes its worktree. Both SaveAndTeardownAll and
+	// reconcileLive only reach here for a session with a real workspace, so
+	// there is always a worktree to protect.
+	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
+	if closeErr != nil {
+		return fmt.Errorf("save %s: %w", rec.ID, closeErr)
+	}
+	if release != nil {
+		defer release()
+	}
+
 	if rows, ok, err := m.workspaceProjectRows(ctx, rec); err != nil {
 		return fmt.Errorf("save %s: workspace rows: %w", rec.ID, err)
 	} else if ok {
@@ -1225,7 +1501,15 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID != "" {
 		alive, err := m.runtime.IsAlive(ctx, handle)
-		if err != nil {
+		switch {
+		case err == nil:
+		case errors.Is(err, ports.ErrRuntimeUnavailable):
+			// Boot-time pass with no reachable tmux server (normal after a
+			// machine reboot). The runtime is gone either way; fall through to
+			// save-and-teardown, which keeps the restore marker rather than
+			// silently archiving the session.
+			alive = false
+		default:
 			// A failed probe is not proof of death: leave the session as-is.
 			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
 		}
@@ -1256,6 +1540,9 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 	}
 	alive, err := m.runtime.IsAlive(ctx, handle)
 	if err != nil {
+		if errors.Is(err, ports.ErrRuntimeUnavailable) {
+			return nil // no server means no leaked session to reap
+		}
 		return fmt.Errorf("reconcile reap %s: probe: %w", rec.ID, err)
 	}
 	if !alive {
@@ -1876,6 +2163,7 @@ func (m *Manager) confirmActive(ctx context.Context, guard *sessionguard.Guard, 
 			return
 		}
 		if attempt >= m.sendConfirm.maxAttempts {
+			m.logger.Warn("send: activity confirmation budget exhausted", "sessionID", id, "attempts", attempt)
 			return
 		}
 		// Timed out with budget remaining: the previous Enter did not land.
@@ -1969,34 +2257,57 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 		if h := runtimeHandle(rec.Metadata); h.ID != "" {
 			_ = m.runtime.Destroy(ctx, h) // best effort; usually already gone
 		}
-		if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
-			m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: "workspace teardown failed"})
+		if reason := m.cleanupOne(ctx, rec, ws); reason != "" {
+			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: reason})
 			continue
-		} else if ok {
-			if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
-				if !errors.Is(err, ports.ErrWorkspaceDirty) {
-					m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-				}
-				result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-				continue
-			}
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
-		} else if err := m.workspace.Destroy(ctx, ws); err != nil {
-			if !errors.Is(err, ports.ErrWorkspaceDirty) {
-				// The public reason stays a fixed string (the raw error carries
-				// internal filesystem paths); the full cause lands here.
-				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
-			}
-			result.Skipped = append(result.Skipped, CleanupSkip{SessionID: rec.ID, Reason: cleanupSkipReason(err)})
-			continue
-		} else {
-			m.cleanupAgentWorkspace(ctx, rec, ws.Path)
 		}
 		m.cleanupSystemPromptDir(rec.ID)
 		result.Cleaned = append(result.Cleaned, rec.ID)
 	}
 	return result, nil
+}
+
+// cleanupOne reclaims one terminated session's workspace, gating shut any
+// shell terminal scoped to it first (same ordering as Kill). Split out of
+// Cleanup's loop so the release function's defer is scoped to one session's
+// call, not deferred across every iteration until Cleanup itself returns.
+// Returns "" when the workspace was reclaimed; a non-empty reason means it was
+// left alone this run (Cleanup records it in Skipped and can retry on a later
+// call) — most commonly because a scoped shell terminal could not be
+// confirmed closed, so reclaiming would pull the ground out from under it.
+func (m *Manager) cleanupOne(ctx context.Context, rec domain.SessionRecord, ws ports.WorkspaceInfo) (skipReason string) {
+	release, closeErr := m.beginShellTerminalTeardown(ctx, rec.ID)
+	if closeErr != nil {
+		m.logger.Warn("cleanup: shell terminal still open", "sessionID", rec.ID, "error", closeErr)
+		return "shell terminal still open"
+	}
+	if release != nil {
+		defer release()
+	}
+
+	if rows, ok, rowErr := m.workspaceProjectRows(ctx, rec); rowErr != nil {
+		m.logger.Warn("cleanup: workspace rows failed", "sessionID", rec.ID, "error", rowErr)
+		return "workspace teardown failed"
+	} else if ok {
+		if _, err := m.destroyWorkspaceProjectRows(ctx, rows); err != nil {
+			if !errors.Is(err, ports.ErrWorkspaceDirty) {
+				m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+			}
+			return cleanupSkipReason(err)
+		}
+		m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+		return ""
+	}
+	if err := m.workspace.Destroy(ctx, ws); err != nil {
+		if !errors.Is(err, ports.ErrWorkspaceDirty) {
+			// The public reason stays a fixed string (the raw error carries
+			// internal filesystem paths); the full cause lands here.
+			m.logger.Warn("cleanup: workspace teardown failed", "sessionID", rec.ID, "path", ws.Path, "error", err)
+		}
+		return cleanupSkipReason(err)
+	}
+	m.cleanupAgentWorkspace(ctx, rec, ws.Path)
+	return ""
 }
 
 // cleanupSkipReason renders a workspace teardown refusal as a short
@@ -2262,8 +2573,15 @@ func (m *Manager) aoSkillPointer() string {
 	dir := skillassets.Dir(m.dataDir)
 	skillFile := filepath.ToSlash(filepath.Join(dir, "SKILL.md"))
 	commandsGlob := filepath.ToSlash(filepath.Join(dir, "commands", "*.md"))
+	browserFile := filepath.ToSlash(filepath.Join(dir, "commands", "browser.md"))
+	previewFile := filepath.ToSlash(filepath.Join(dir, "commands", "preview.md"))
 	return "\n\n" + "## Using the ao CLI\n\n" +
-		"When you need to use the `ao` CLI, read `" + skillFile + "` first (and the relevant `" + commandsGlob + "`) for the full command catalog, flags, and examples."
+		"When using `ao`, read `" + skillFile + "` and only the relevant file under `" + commandsGlob + "`; do not load unrelated command guides.\n\n" +
+		"## AO desktop Browser panel\n\n" +
+		"For frontend work, read `" + previewFile + "` before previewing or starting an app: open static HTML or Markdown directly; Never create or modify `package.json` or install dependencies solely to display static files. Do not create `.ao/launch.json` unless the user asks. Automatically open the primary requested browser-displayable artifact immediately after creating or materially updating it, but do not replace an active application preview with a supporting asset. " +
+		"For page inspection or interaction, read `" + browserFile + "` and use `ao browser` from this AO session. Browser network capture is optional and off by default; follow that guide and never enable it for routine browser actions. " +
+		"Do not use Codex/host in-app browser connectors, `agent.browsers.get(\"iab\")`, or a browser MCP for the AO Browser panel: those are separate browser runtimes and cannot see or control AO's session-owned page. " +
+		"`ao browser` operates the same live page the user sees in that panel."
 }
 
 func (m *Manager) workspaceProjectPrompt(ctx context.Context, kind domain.SessionKind, projectID domain.ProjectID) (string, error) {
@@ -2414,6 +2732,10 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // logged so the degradation isn't silent.
 func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
 	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
+	if m.browserCapabilities != nil {
+		env[EnvBrowserCapability] = m.browserCapabilities.Token(id)
+	}
+	env[EnvBrowserRuntimeToken] = ""
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",

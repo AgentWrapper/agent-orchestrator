@@ -12,6 +12,15 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+type AgentModelCatalog struct {
+	AgentID       string
+	ProjectID     string
+	BinaryVersion string
+	CatalogJson   string
+	Source        string
+	FetchedAt     time.Time
+}
+
 type ChangeLog struct {
 	Seq       int64
 	ProjectID domain.ProjectID
@@ -22,15 +31,16 @@ type ChangeLog struct {
 }
 
 type Notification struct {
-	ID        string
-	SessionID domain.SessionID
-	ProjectID domain.ProjectID
-	PRURL     string
-	Type      domain.NotificationType
-	Title     string
-	Body      string
-	Status    domain.NotificationStatus
-	CreatedAt time.Time
+	ID         string
+	SessionID  domain.SessionID
+	ProjectID  domain.ProjectID
+	PRURL      string
+	Type       domain.NotificationType
+	Title      string
+	Body       string
+	Status     domain.NotificationStatus
+	CreatedAt  time.Time
+	ResolvedAt sql.NullTime
 }
 
 type PR struct {
@@ -187,6 +197,11 @@ type Session struct {
 	RuntimeLaunchID    string
 	WorkspaceRepoPath  string
 	TerminateOnPRMerge bool
+	DiffBaseSha        string
+	DiffBaseRef        string
+	IsPinned           bool
+	PinnedAt           sql.NullTime
+	ReviewerHarness    domain.ReviewerHarness
 }
 
 type SessionCleanupFact struct {
@@ -230,16 +245,6 @@ type TelemetryEvent struct {
 	SessionID   sql.NullString
 	RequestID   string
 	PayloadJson string
-}
-
-type WorkerIdleEvent struct {
-	ID            string
-	ProjectID     domain.ProjectID
-	WorkerID      domain.SessionID
-	TransitionAt  time.Time
-	DeliveryState string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
 }
 
 type WorkspaceRepo struct {

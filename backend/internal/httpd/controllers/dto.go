@@ -8,6 +8,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
@@ -155,7 +156,7 @@ type SpawnSessionRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
+	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
@@ -194,35 +195,43 @@ type SpawnSessionResponse struct {
 
 // ListWorkspaceFilesResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/files.
 type ListWorkspaceFilesResponse struct {
-	SessionID domain.SessionID       `json:"sessionId"`
-	Files     []WorkspaceFileSummary `json:"files"`
-	Truncated bool                   `json:"truncated"`
+	SessionID      domain.SessionID                `json:"sessionId"`
+	CompareBaseSHA string                          `json:"compareBaseSha,omitempty"`
+	CompareBaseRef string                          `json:"compareBaseRef,omitempty"`
+	CompareMode    sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
+	Files          []WorkspaceFileSummary          `json:"files"`
+	Truncated      bool                            `json:"truncated"`
 }
 
 // WorkspaceFileSummary is one file row in the session workspace browser.
 type WorkspaceFileSummary struct {
-	Path      string                         `json:"path"`
-	Status    sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
-	Additions int                            `json:"additions"`
-	Deletions int                            `json:"deletions"`
-	Size      int64                          `json:"size"`
-	Binary    bool                           `json:"binary"`
+	Path         string                         `json:"path"`
+	PreviousPath string                         `json:"previousPath,omitempty"`
+	Status       sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions    int                            `json:"additions"`
+	Deletions    int                            `json:"deletions"`
+	Size         int64                          `json:"size"`
+	Binary       bool                           `json:"binary"`
 }
 
 // WorkspaceFileResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/file.
 type WorkspaceFileResponse struct {
-	SessionID        domain.SessionID               `json:"sessionId"`
-	Path             string                         `json:"path"`
-	Status           sessionsvc.WorkspaceFileStatus `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
-	Additions        int                            `json:"additions"`
-	Deletions        int                            `json:"deletions"`
-	Size             int64                          `json:"size"`
-	Binary           bool                           `json:"binary"`
-	Deleted          bool                           `json:"deleted"`
-	Content          string                         `json:"content"`
-	ContentTruncated bool                           `json:"contentTruncated"`
-	Diff             string                         `json:"diff"`
-	DiffTruncated    bool                           `json:"diffTruncated"`
+	SessionID        domain.SessionID                `json:"sessionId"`
+	Path             string                          `json:"path"`
+	PreviousPath     string                          `json:"previousPath,omitempty"`
+	Status           sessionsvc.WorkspaceFileStatus  `json:"status" enum:"unmodified,modified,added,deleted,renamed"`
+	Additions        int                             `json:"additions"`
+	Deletions        int                             `json:"deletions"`
+	Size             int64                           `json:"size"`
+	Binary           bool                            `json:"binary"`
+	Deleted          bool                            `json:"deleted"`
+	Content          string                          `json:"content"`
+	ContentTruncated bool                            `json:"contentTruncated"`
+	Diff             string                          `json:"diff"`
+	DiffTruncated    bool                            `json:"diffTruncated"`
+	CompareBaseSHA   string                          `json:"compareBaseSha,omitempty"`
+	CompareBaseRef   string                          `json:"compareBaseRef,omitempty"`
+	CompareMode      sessionsvc.WorkspaceCompareMode `json:"compareMode,omitempty" enum:"base,head_fallback"`
 }
 
 // SessionPreviewResponse is the body of GET /api/v1/sessions/{sessionId}/preview.
@@ -237,11 +246,75 @@ type RenameSessionRequest struct {
 	DisplayName string `json:"displayName" minLength:"1"`
 }
 
+// SetSessionReviewerRequest sets the durable reviewer preference for a session.
+// Empty clears the preference and falls back to project configuration.
+type SetSessionReviewerRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
+}
+
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
 // An empty url asks the daemon to autodetect a static entry point in the
 // session workspace; a non-empty url is used verbatim as the preview target.
 type SetSessionPreviewRequest struct {
 	URL string `json:"url,omitempty" description:"Preview target URL. When empty, the daemon autodetects a static entry point in the session workspace."`
+}
+
+// StartPreviewServerRequest selects one named entry from .ao/launch.json. The
+// name may be omitted when the file contains exactly one configuration.
+type StartPreviewServerRequest struct {
+	Configuration string `json:"configuration,omitempty" description:"Named preview configuration. Optional when exactly one configuration exists."`
+}
+
+// PreviewServerStatusResponse reports the deterministic server AO owns for one
+// session. Logs are bounded to the latest lines and never contain global
+// process or port discovery.
+type PreviewServerStatusResponse struct {
+	SessionID     domain.SessionID `json:"sessionId"`
+	State         string           `json:"state" enum:"stopped,starting,ready,stopping,failed"`
+	Configuration string           `json:"configuration,omitempty"`
+	TargetKind    string           `json:"targetKind,omitempty" enum:"app,api"`
+	URL           string           `json:"url,omitempty"`
+	Port          int              `json:"port,omitempty"`
+	StartedAt     time.Time        `json:"startedAt,omitempty"`
+	Error         string           `json:"error,omitempty"`
+	Logs          []string         `json:"logs"`
+}
+
+// BrowserStatusQuery selects the session whose logical browser is inspected.
+type BrowserStatusQuery struct {
+	SessionID domain.SessionID `query:"sessionId" description:"AO session identifier."`
+}
+
+// BrowserCapabilityHeader proves that the caller owns the target session.
+type BrowserCapabilityHeader struct {
+	Capability string `header:"X-AO-Browser-Capability" description:"Opaque browser capability injected into the owning AO worker."`
+}
+
+// BrowserStatusResponse reports whether the desktop-owned browser transport is
+// ready. A connected runtime can create the session target while its panel is
+// hidden; panel visibility is intentionally not part of this state.
+type BrowserStatusResponse struct {
+	SessionID   domain.SessionID `json:"sessionId"`
+	Connected   bool             `json:"connected"`
+	ConnectedAt time.Time        `json:"connectedAt,omitempty"`
+	Transport   string           `json:"transport"`
+}
+
+// BrowserCommandRequest is the stable daemon-facing command envelope. Action
+// arguments remain action-specific JSON so new target-scoped operations do not
+// require a new transport or Electron IPC surface.
+type BrowserCommandRequest struct {
+	SessionID domain.SessionID       `json:"sessionId"`
+	Action    string                 `json:"action"`
+	Args      map[string]interface{} `json:"args,omitempty"`
+}
+
+// BrowserCommandResponse returns a correlated result from the browser runtime.
+type BrowserCommandResponse struct {
+	RequestID string           `json:"requestId"`
+	SessionID domain.SessionID `json:"sessionId"`
+	Action    string           `json:"action"`
+	Result    interface{}      `json:"result"`
 }
 
 // SetSessionMergePolicyRequest is the body of PATCH /api/v1/sessions/{sessionId}/merge-policy.
@@ -322,6 +395,26 @@ type SendSessionMessageResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
 	Message   string           `json:"message"`
+}
+
+// DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
+// An omitted agent tells the orchestrator to use the project's worker default.
+// Attachments are intentionally absent from this MVP contract: delegation uses
+// the string-only guarded messenger and cannot safely hand image bytes to a
+// worker that does not exist yet without a durable attachment store.
+type DelegateTaskRequest struct {
+	ProjectID domain.ProjectID    `json:"projectId"`
+	Brief     string              `json:"brief" maxLength:"4096"`
+	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
+	Model     string              `json:"model,omitempty" maxLength:"256"`
+}
+
+// DelegateTaskResponse confirms which worker was spawned and, when available,
+// which orchestrator received the follow-up title request.
+type DelegateTaskResponse struct {
+	OK             bool             `json:"ok"`
+	WorkerID       domain.SessionID `json:"workerId"`
+	OrchestratorID domain.SessionID `json:"orchestratorId,omitempty"`
 }
 
 // SessionPRFacts is the pull-request read shape returned under session PR routes.
@@ -580,12 +673,31 @@ type RefreshAgentsResponse = agentsvc.Inventory
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
 
+// AgentModelsQuery scopes a model catalog to a project where providers may be
+// configured per workspace.
+type AgentModelsQuery struct {
+	ProjectID string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+}
+
+// AgentModelsRefreshQuery controls forced refresh versus cheap background
+// revalidation for a project-scoped model catalog.
+type AgentModelsRefreshQuery struct {
+	ProjectID  string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+	Revalidate bool   `query:"revalidate,omitempty" description:"When true, compare executable and config metadata before running discovery."`
+}
+
+// AgentModelsResponse is the normalized model picker for one agent.
+type AgentModelsResponse = ports.AgentModelCatalog
+
+// AgentModelInfo is one selectable model or agent-owned mode.
+type AgentModelInfo = ports.AgentModelInfo
+
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
-	Status string `query:"status,omitempty" enum:"unread,all" description:"Notification status filter. Defaults to unread; all includes read history."`
+	Status string `query:"status,omitempty" enum:"unread,all,unresolved" description:"Notification filter. Defaults to unread (unseen); unresolved returns notifications whose underlying issue is still open; all includes read history."`
 	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 100."`
 	Cursor string `query:"cursor,omitempty" description:"Opaque cursor returned by the previous page."`
 }
@@ -609,23 +721,28 @@ type NotificationTarget struct {
 
 // NotificationResponse is one stored notification returned by the API.
 type NotificationResponse struct {
-	ID        string             `json:"id"`
-	SessionID string             `json:"sessionId"`
-	ProjectID string             `json:"projectId"`
-	PRURL     string             `json:"prUrl"`
-	Type      string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
-	Title     string             `json:"title"`
-	Body      string             `json:"body"`
-	Status    string             `json:"status" enum:"unread,read"`
-	CreatedAt time.Time          `json:"createdAt"`
-	Target    NotificationTarget `json:"target"`
+	ID        string    `json:"id"`
+	SessionID string    `json:"sessionId"`
+	ProjectID string    `json:"projectId"`
+	PRURL     string    `json:"prUrl"`
+	Type      string    `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Status    string    `json:"status" enum:"unread,read" description:"Seen state. unread means the user has not opened the notification panel since it arrived."`
+	CreatedAt time.Time `json:"createdAt"`
+	// ResolvedAt is set by AO when the underlying issue goes away (the session
+	// received its input, the PR stopped waiting on a merge). Absent means the
+	// issue is still open. There is no user-facing action that sets it.
+	ResolvedAt *time.Time         `json:"resolvedAt,omitempty"`
+	Target     NotificationTarget `json:"target"`
 }
 
 // ListNotificationsResponse is one history page from GET /api/v1/notifications.
 type ListNotificationsResponse struct {
-	Notifications []NotificationResponse `json:"notifications"`
-	NextCursor    string                 `json:"nextCursor,omitempty"`
-	UnreadCount   int                    `json:"unreadCount"`
+	Notifications   []NotificationResponse `json:"notifications"`
+	NextCursor      string                 `json:"nextCursor,omitempty"`
+	UnreadCount     int                    `json:"unreadCount"`
+	UnresolvedCount int                    `json:"unresolvedCount"`
 }
 
 // MarkNotificationReadRequest is the body of PATCH /api/v1/notifications/{id}.
@@ -678,6 +795,12 @@ type ShellTerminalEnvelope struct {
 	ShellTerminal ShellTerminalResponse `json:"shellTerminal"`
 }
 
+// MarkAllNotificationsReadRequest is the optional body of
+// POST /api/v1/notifications/read-all.
+type MarkAllNotificationsReadRequest struct {
+	IDs []string `json:"ids,omitempty" description:"Acknowledge exactly these notifications. Omit to acknowledge every unread notification; paginating clients should send the ids they actually rendered so later pages stay unread."`
+}
+
 // MarkAllNotificationsReadResponse is the body of POST /api/v1/notifications/read-all.
 type MarkAllNotificationsReadResponse struct {
 	Notifications []NotificationResponse `json:"notifications" description:"Deprecated compatibility field. Always empty so mark-all responses stay bounded."`
@@ -711,6 +834,12 @@ type DevImportProjectsResponse struct {
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.
 type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`
+}
+
+// MergePRRequest is the body of POST /api/v1/prs/{id}/merge.
+type MergePRRequest struct {
+	PRURL           string `json:"prUrl" minLength:"1"`
+	ExpectedHeadSHA string `json:"expectedHeadSha" minLength:"40"`
 }
 
 // MergePRResponse is the body of POST /api/v1/prs/{id}/merge (200).
@@ -774,4 +903,12 @@ type PushDeviceEnvelope struct {
 type UnregisterPushDeviceResponse struct {
 	Token   string `json:"token"`
 	Deleted bool   `json:"deleted"`
+}
+
+// TriggerReviewRequest is the optional body of the review trigger route. An
+// empty harness keeps the project's configured reviewer; setting one overrides
+// it for this pass only, without editing project config, so one session's choice
+// cannot change what another session in the project runs.
+type TriggerReviewRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
 }

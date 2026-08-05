@@ -62,7 +62,7 @@ describe("renderer platform behavior", () => {
 		expect(usesBoardActionsInPanel()).toBe(false);
 	});
 
-	it("uses the framed app topbar on Linux", () => {
+	it("shows the shell topbar on Linux (same as Windows, not macOS)", () => {
 		spoofPlatform("Linux x86_64");
 
 		expect(isLinuxPlatform()).toBe(true);
