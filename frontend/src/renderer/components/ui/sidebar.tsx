@@ -69,8 +69,12 @@ function SidebarProvider({
 
 	const [isReady, setIsReady] = React.useState(false);
 	React.useEffect(() => {
+		// Only arm animations after the sidebar has been open at least once.
+		// This keeps the startup open (from isStartupLoading=false) instant
+		// while subsequent open/close transitions use the spring.
+		if (!open) return;
 		setIsReady(true);
-	}, []);
+	}, [open]);
 	const setOpen = React.useCallback(
 		(value: boolean | ((value: boolean) => boolean)) => {
 			const openState = typeof value === "function" ? value(open) : value;
