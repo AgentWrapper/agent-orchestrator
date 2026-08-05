@@ -91,7 +91,7 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 	}
-	maxActiveSandboxesPerOrg, err := envInt("AO_MAX_ACTIVE_SANDBOXES_PER_ORG", 10)
+	maxActiveSandboxesPerOrg, err := envInt("AO_MAX_ACTIVE_SANDBOXES_PER_ORG", 12)
 	if err != nil {
 		return Config{}, err
 	}

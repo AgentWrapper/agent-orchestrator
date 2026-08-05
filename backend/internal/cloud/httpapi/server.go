@@ -185,7 +185,7 @@ func New(
 		secretCipher:             secretCipher,
 		agentCredentials:         newAgentCredentialValidator(nil),
 		sandboxProvider:          sandboxProvider,
-		maxActiveSandboxesPerOrg: 10,
+		maxActiveSandboxesPerOrg: 12,
 		daytonaAPIURL:            strings.TrimRight(daytonaAPIURL, "/"),
 		daytonaTarget:            daytonaTarget,
 		workerHub:                workerHub,

@@ -37,7 +37,7 @@ func TestLoadRequiresCloudSecrets(t *testing.T) {
 	if cfg.SandboxProvider != "daytona" {
 		t.Fatalf("SandboxProvider = %q", cfg.SandboxProvider)
 	}
-	if cfg.MaxActiveSandboxesPerOrg != 10 {
+	if cfg.MaxActiveSandboxesPerOrg != 12 {
 		t.Fatalf("MaxActiveSandboxesPerOrg = %d", cfg.MaxActiveSandboxesPerOrg)
 	}
 	if cfg.AuthMode != "local" {

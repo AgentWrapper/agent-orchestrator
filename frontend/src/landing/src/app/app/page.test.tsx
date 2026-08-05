@@ -439,6 +439,14 @@ it("loads GitHub repositories only when the project form opens", async () => {
 
   fireEvent.click(addProject);
 
+  expect(
+    await screen.findByRole("button", { name: /Create a Project/ }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Create a Standalone Agent/ }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /Create a Project/ }));
+
   expect(await screen.findByRole("button", { name: /From GitHub/ })).toBeVisible();
   expect(screen.getByRole("button", { name: /Start from scratch/ })).toBeVisible();
   expect(screen.queryByText("Enable scratch projects")).not.toBeInTheDocument();
@@ -471,13 +479,14 @@ it("creates a standalone project without GitHub authorization", async () => {
   render(<CloudAppPage />);
 
   fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Create a Project/ }));
   fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
 
   expect(screen.queryByText("Enable scratch projects")).not.toBeInTheDocument();
   expect(
-    screen.getByText(/empty cloud workspace with a local git repository/),
+    screen.getByText(/empty project with a local git repository/),
   ).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Start standalone" }));
+  fireEvent.click(screen.getByRole("button", { name: "Create project" }));
 
   await waitFor(() =>
     expect(apiMocks.createStandaloneProject).toHaveBeenCalledWith("org-one", {
@@ -500,6 +509,7 @@ it("shows scratch GitHub authorization copy only when GitHub backing is selected
   render(<CloudAppPage />);
 
   fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Create a Project/ }));
   fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
   expect(screen.queryByText("Enable scratch projects")).not.toBeInTheDocument();
 
@@ -547,7 +557,7 @@ it("creates additional standalone agents from a standalone project", async () =>
   render(<CloudAppPage />);
 
   fireEvent.click(
-    await screen.findByRole("button", { name: "Standalone chat" }),
+    await screen.findByRole("button", { name: "First agent" }),
   );
   fireEvent.click(await screen.findByRole("button", { name: "New agent" }));
 
@@ -576,7 +586,7 @@ it("creates additional standalone agents from a standalone project", async () =>
   expect(screen.queryByRole("button", { name: "Orchestrator" })).not.toBeInTheDocument();
 });
 
-it("offers new agent from the standalone project menu", async () => {
+it("offers new standalone agent from the sidebar section", async () => {
   const standaloneProject: CloudProject = {
     ...project,
     id: "standalone-project",
@@ -590,12 +600,11 @@ it("offers new agent from the standalone project menu", async () => {
   render(<CloudAppPage />);
 
   fireEvent.click(
-    await screen.findByLabelText("More actions for Standalone chat"),
+    await screen.findByRole("button", { name: "New standalone agent" }),
   );
-  fireEvent.click(await screen.findByRole("button", { name: "New agent" }));
 
   expect(
-    screen.getByRole("dialog", { name: "New standalone agent" }),
+    screen.getByRole("dialog", { name: "Create standalone agent" }),
   ).toBeVisible();
 });
 
@@ -680,6 +689,7 @@ it("creates a scratch project through the connected GitHub installation", async 
   render(<CloudAppPage />);
 
   fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Create a Project/ }));
   fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
   fireEvent.click(
     screen.getByRole("checkbox", {
@@ -800,6 +810,7 @@ it("creates a scratch project in the selected connected organization", async () 
   render(<CloudAppPage />);
 
   fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Create a Project/ }));
   fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
   fireEvent.click(
     screen.getByRole("checkbox", {

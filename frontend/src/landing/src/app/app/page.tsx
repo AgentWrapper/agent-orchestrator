@@ -87,6 +87,12 @@ import { CloudInspector, type CloudInspectorTab } from "./CloudInspector";
 import { CloudTerminal } from "./CloudTerminal";
 
 type View = "board" | "session" | "settings";
+type ProjectFormMode =
+  | "choose"
+  | "project"
+  | "github"
+  | "scratch"
+  | "standaloneAgent";
 type SettingsPanelName =
   | "profile"
   | "notifications"
@@ -414,6 +420,9 @@ export default function CloudAppPage() {
   >({});
   const [error, setError] = useState<string | null>(null);
   const [showProjectForm, setShowProjectForm] = useState(false);
+  const [projectFormInitialMode, setProjectFormInitialMode] = useState<
+    ProjectFormMode
+  >("choose");
   const [showAgentConnectionPrompt, setShowAgentConnectionPrompt] =
     useState(false);
   const [showSessionForm, setShowSessionForm] = useState(false);
@@ -933,6 +942,10 @@ export default function CloudAppPage() {
     selectedShare?.project ??
     projects.find(({ id }) => id === selectedProjectId);
   const selectedProjectStandalone = isStandaloneProject(selectedProject);
+  const projectItems = projects.filter((project) => !isStandaloneProject(project));
+  const standaloneProjectItems = projects.filter((project) =>
+    isStandaloneProject(project),
+  );
   const selectedShareTrustedStandalone =
     Boolean(selectedShare) &&
     selectedProjectStandalone &&
@@ -1321,8 +1334,10 @@ export default function CloudAppPage() {
 
   const createStandaloneProjectAndPrewarmOrchestrator = async (input: {
     displayName: string;
+    harness?: CloudAgent;
   }) => {
-    if (!defaultAgent) {
+    const harness = input.harness ?? defaultAgent;
+    if (!harness) {
       promptForAgentConnection();
       return;
     }
@@ -1335,7 +1350,7 @@ export default function CloudAppPage() {
         await api.createStandaloneProject(selectedOrgId, {
           displayName: input.displayName.trim() || "New chat",
           orchestrator: {
-            harness: defaultAgent,
+            harness,
             providerConnectionId: daytonaConnections[0]?.id,
           },
         });
@@ -1903,6 +1918,7 @@ export default function CloudAppPage() {
                   promptForAgentConnection();
                   return;
                 }
+                setProjectFormInitialMode("choose");
                 setShowProjectForm(true);
               }}
               aria-label="Add cloud project"
@@ -1920,7 +1936,7 @@ export default function CloudAppPage() {
             </button>
           </div>
           <div className="mt-1 min-h-0 flex-1 overflow-auto px-1.5">
-            {projects.map((project) => {
+            {projectItems.map((project) => {
               const projectSessions = sessions.filter(
                 ({ projectId }) => projectId === project.id,
               );
@@ -2181,6 +2197,142 @@ export default function CloudAppPage() {
                 </div>
               );
             })}
+            <div className="mt-4 border-t border-white/[0.06] pt-3">
+              <div
+                className={`mb-1 flex items-center ${
+                  sidebarCollapsed ? "justify-center" : "justify-between px-1.5"
+                }`}
+              >
+                {!sidebarCollapsed ? (
+                  <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em] text-[#646a73]">
+                    Standalone Agents
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="grid size-5 place-items-center rounded-md text-[#646a73] transition-colors hover:bg-white/[0.04] hover:text-white"
+                  onClick={() => {
+                    if (!canEditOrg) {
+                      openProviderSettings();
+                      return;
+                    }
+                    if (!defaultAgent) {
+                      promptForAgentConnection();
+                      return;
+                    }
+                    setProjectFormInitialMode("standaloneAgent");
+                    setShowProjectForm(true);
+                  }}
+                  aria-label="New standalone agent"
+                  title={sidebarCollapsed ? "New standalone agent" : undefined}
+                >
+                  <Plus className="size-[15px]" />
+                </button>
+              </div>
+              <div className="space-y-1">
+                {standaloneProjectItems.flatMap((project) =>
+                  sessions
+                    .filter(({ projectId }) => projectId === project.id)
+                    .map((cloudSession) => (
+                      <div
+                        key={cloudSession.id}
+                        className="group/session relative flex items-center"
+                      >
+                        <button
+                          className={`flex h-8 min-w-0 flex-1 items-center rounded-lg text-left text-[12px] ${
+                            sidebarCollapsed
+                              ? "justify-center px-0"
+                              : "gap-2 px-2"
+                          } ${
+                            selectedProjectId === project.id &&
+                            selectedSessionId === cloudSession.id &&
+                            view === "session"
+                              ? "bg-white/[0.07] text-white"
+                              : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
+                          }`}
+                          onClick={() => {
+                            setSelectedShareId(null);
+                            setSelectedProjectId(project.id);
+                            setSelectedSessionId(cloudSession.id);
+                            setView("session");
+                          }}
+                          aria-label={cloudSession.displayName}
+                          title={
+                            sidebarCollapsed
+                              ? cloudSession.displayName
+                              : undefined
+                          }
+                        >
+                          <AgentAvatar
+                            agent={cloudSession.harness}
+                            className="size-[15px]"
+                          />
+                          {!sidebarCollapsed ? (
+                            <span className="truncate">
+                              {cloudSession.displayName}
+                            </span>
+                          ) : null}
+                          {!sidebarCollapsed &&
+                          activeChatSessionIds.has(cloudSession.id) ? (
+                            <LoaderCircle
+                              className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
+                              aria-label="Working"
+                            />
+                          ) : !sidebarCollapsed ? (
+                            <span
+                              className={`ml-auto size-1.5 shrink-0 rounded-full ${statusColor(
+                                cloudSession,
+                              )}`}
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                        </button>
+                        {!sidebarCollapsed && canEditOrg ? (
+                          <button
+                            type="button"
+                            className={`mr-0.5 grid size-6 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-white/[0.06] hover:text-white ${
+                              sessionMenuOpenId === cloudSession.id
+                                ? "bg-white/[0.06] text-white"
+                                : "opacity-0 group-hover/session:opacity-100 focus:opacity-100"
+                            }`}
+                            aria-label={`More actions for ${cloudSession.displayName}`}
+                            aria-expanded={sessionMenuOpenId === cloudSession.id}
+                            onClick={() =>
+                              setSessionMenuOpenId((current) =>
+                                current === cloudSession.id
+                                  ? null
+                                  : cloudSession.id,
+                              )
+                            }
+                          >
+                            <MoreHorizontal className="size-3.5" />
+                          </button>
+                        ) : null}
+                        {sessionMenuOpenId === cloudSession.id ? (
+                          <div className="absolute right-0 top-7 z-40 w-36 rounded-lg border border-white/[0.1] bg-[#15171b] p-1 shadow-xl shadow-black/30">
+                            <button
+                              type="button"
+                              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-white/70 hover:bg-white/[0.06] hover:text-white"
+                              onClick={() => {
+                                setSessionMenuOpenId(null);
+                                setRenameSession(cloudSession);
+                              }}
+                            >
+                              <PencilLine className="size-3.5" />
+                              Rename agent
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    )),
+                )}
+                {standaloneProjectItems.length === 0 && !sidebarCollapsed ? (
+                  <div className="px-2 py-1 text-[10px] text-white/25">
+                    No standalone agents
+                  </div>
+                ) : null}
+              </div>
+            </div>
           </div>
           {sharedProjects.length > 0 ? (
             <div className="border-t border-white/[0.06] px-1.5 py-3">
@@ -2463,7 +2615,9 @@ export default function CloudAppPage() {
                 {view === "settings"
                   ? "Cloud settings"
                   : selectedSession
-                    ? `${selectedProject?.displayName ?? "Project"} / ${selectedSession.displayName}`
+                    ? selectedProjectStandalone
+                      ? selectedSession.displayName
+                      : `${selectedProject?.displayName ?? "Project"} / ${selectedSession.displayName}`
                     : (selectedProject?.displayName ?? "Board")}
               </h1>
             </div>
@@ -2707,12 +2861,14 @@ export default function CloudAppPage() {
 
       {showProjectForm && (
         <ProjectForm
+          initialMode={projectFormInitialMode}
           repositories={repositories}
           repositoriesLoading={repositoriesLoading}
           repositoriesError={repositoriesError}
           error={error}
           githubConnection={githubConnection}
           githubUserConnection={githubUserConnection}
+          connections={connections}
           loading={loading}
           onOpenGitHubSettings={() => {
             setShowProjectForm(false);
@@ -5575,12 +5731,14 @@ function RenameSessionDialog({
 }
 
 function ProjectForm({
+  initialMode,
   repositories,
   repositoriesLoading,
   repositoriesError,
   error,
   githubConnection,
   githubUserConnection,
+  connections,
   loading,
   onOpenGitHubSettings,
   onClose,
@@ -5588,12 +5746,14 @@ function ProjectForm({
   onSubmitScratch,
   onSubmitStandalone,
 }: {
+  initialMode: ProjectFormMode;
   repositories: CloudRepository[];
   repositoriesLoading: boolean;
   repositoriesError: string | null;
   error: string | null;
   githubConnection: CloudGitHubConnection | null;
   githubUserConnection: CloudGitHubUserConnection | null;
+  connections: ProviderConnection[];
   loading: boolean;
   onOpenGitHubSettings: () => void;
   onClose: () => void;
@@ -5608,15 +5768,36 @@ function ProjectForm({
     githubInstallationId?: number;
     private?: boolean;
   }) => Promise<void>;
-  onSubmitStandalone: (input: { displayName: string }) => Promise<void>;
+  onSubmitStandalone: (input: {
+    displayName: string;
+    harness?: CloudAgent;
+  }) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<"choose" | "github" | "scratch">("choose");
+  const [mode, setMode] = useState<ProjectFormMode>(initialMode);
   const [repositoryURL, setRepositoryURL] = useState(
     repositories[0]?.url ?? "",
   );
   const [scratchName, setScratchName] = useState("");
   const [scratchUsesGitHub, setScratchUsesGitHub] = useState(false);
   const [scratchPrivate, setScratchPrivate] = useState(true);
+  const [standaloneName, setStandaloneName] = useState("");
+  const availableAgents = useMemo(
+    () => connectedAgentIDs(connections),
+    [connections],
+  );
+  const [standaloneHarness, setStandaloneHarness] = useState<CloudAgent | "">(
+    defaultConnectedAgent(connections) ?? "",
+  );
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
+  useEffect(() => {
+    setStandaloneHarness((current) =>
+      current && availableAgents.has(current)
+        ? current
+        : (defaultConnectedAgent(connections) ?? ""),
+    );
+  }, [connections, availableAgents]);
   useEffect(() => {
     setRepositoryURL((current) =>
       repositories.some(({ url }) => url === current)
@@ -5665,8 +5846,14 @@ function ProjectForm({
       (installation) =>
         String(installation.githubInstallationId) === scratchInstallationId,
     );
+  const title =
+    mode === "standaloneAgent"
+      ? "Create standalone agent"
+      : mode === "project" || mode === "github" || mode === "scratch"
+        ? "Create project"
+        : "Create cloud work";
   return (
-    <Overlay title="Add cloud project" onClose={onClose}>
+    <Overlay title={title} onClose={onClose}>
       <div className="space-y-4 p-4">
         {error ? (
           <div
@@ -5692,6 +5879,54 @@ function ProjectForm({
           </div>
         ) : null}
         {mode === "choose" ? (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                className="group flex min-h-64 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={loading}
+                onClick={() => setMode("project")}
+              >
+                <span className="flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
+                  <FolderGit2 className="size-8 text-white/55 transition-colors group-hover:text-white" />
+                </span>
+                <span className="mt-5 text-sm font-medium text-white">
+                  Create a Project
+                </span>
+                <span className="mt-1 text-xs leading-5 text-white/42">
+                  Use GitHub or start from scratch with the current project workflow.
+                </span>
+              </button>
+              <button
+                type="button"
+                className="group flex min-h-64 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={loading}
+                onClick={() => setMode("standaloneAgent")}
+              >
+                <span className="flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
+                  <Bot className="size-8 text-white/55 transition-colors group-hover:text-white" />
+                </span>
+                <span className="mt-5 text-sm font-medium text-white">
+                  Create a Standalone Agent
+                </span>
+                <span className="mt-1 text-xs leading-5 text-white/42">
+                  Start one independent agent runtime shown directly in the sidebar.
+                </span>
+              </button>
+            </div>
+            <div className="-mx-4 -mb-4 flex justify-end border-t border-white/[0.08] px-4 py-3">
+              <button
+                type="button"
+                className={button}
+                onClick={onClose}
+                disabled={loading}
+              >
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : null}
+        {mode === "project" ? (
           <>
             <div className="grid gap-3 sm:grid-cols-2">
               <button
@@ -5723,11 +5958,19 @@ function ProjectForm({
                   Start from scratch
                 </span>
                 <span className="mt-1 text-xs leading-5 text-white/42">
-                  Start a standalone AO workspace, optionally backed by a new GitHub repo.
+                  Start an empty project, optionally backed by a new GitHub repo.
                 </span>
               </button>
             </div>
-            <div className="-mx-4 -mb-4 flex justify-end border-t border-white/[0.08] px-4 py-3">
+            <div className="-mx-4 -mb-4 flex justify-between border-t border-white/[0.08] px-4 py-3">
+              <button
+                type="button"
+                className={button}
+                onClick={() => setMode("choose")}
+                disabled={loading}
+              >
+                Back
+              </button>
               <button
                 type="button"
                 className={button}
@@ -5738,6 +5981,78 @@ function ProjectForm({
               </button>
             </div>
           </>
+        ) : null}
+        {mode === "standaloneAgent" ? (
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!standaloneHarness) return;
+              void onSubmitStandalone({
+                displayName: standaloneName.trim() || "New agent",
+                harness: standaloneHarness,
+              });
+            }}
+          >
+            <label className="block text-xs text-white/45">
+              Agent name
+              <input
+                className={`${field} mt-1.5`}
+                value={standaloneName}
+                onChange={(event) => setStandaloneName(event.target.value)}
+                placeholder="New agent"
+                maxLength={80}
+                disabled={loading}
+              />
+            </label>
+            <label className="block text-xs text-white/45">
+              Coding agent
+              <select
+                className={`${field} mt-1.5`}
+                value={standaloneHarness}
+                onChange={(event) =>
+                  setStandaloneHarness(event.target.value as CloudAgent | "")
+                }
+                disabled={loading || availableAgents.size === 0}
+                required
+              >
+                <option value="" disabled>
+                  Select coding agent
+                </option>
+                {CLOUD_AGENTS.map((agent) => {
+                  const available = availableAgents.has(agent.id);
+                  return (
+                    <option key={agent.id} value={agent.id} disabled={!available}>
+                      {agent.label}
+                      {available ? "" : " - Not connected"}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <div className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/45">
+              Standalone agents run independently and appear directly in the
+              sidebar. They can still use your normal cloud agent setup and
+              GitHub tooling inside the runtime when credentials are available.
+            </div>
+            {availableAgents.size === 0 ? (
+              <button
+                type="button"
+                className="text-left text-xs text-[#e8c14a] hover:underline"
+                onClick={onOpenGitHubSettings}
+              >
+                Connect a coding agent in Cloud settings.
+              </button>
+            ) : null}
+            <ProjectFormActions
+              loading={loading}
+              primaryDisabled={!standaloneHarness || loading}
+              primaryLabel="Create standalone agent"
+              loadingLabel="Starting…"
+              onBack={() => setMode("choose")}
+              onClose={onClose}
+            />
+          </form>
         ) : null}
         {mode === "github" ? (
           <form
@@ -5790,7 +6105,7 @@ function ProjectForm({
               primaryDisabled={!selected || loading || repositoriesLoading}
               primaryLabel="Add project"
               loadingLabel="Starting…"
-              onBack={() => setMode("choose")}
+              onBack={() => setMode("project")}
               onClose={onClose}
             />
           </form>
@@ -5836,7 +6151,7 @@ function ProjectForm({
               <span>
                 Create a GitHub repository for this project.
                 <span className="block text-white/35">
-                  Leave unchecked for a standalone AO workspace with no GitHub setup.
+                  Leave unchecked for a local AO project with no GitHub setup.
                 </span>
               </span>
             </label>
@@ -5911,7 +6226,7 @@ function ProjectForm({
               </div>
             ) : (
               <div className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/45">
-                AO will start an empty cloud workspace with a local git repository and no GitHub remote.
+                AO will start an empty project with a local git repository and no GitHub remote.
               </div>
             )}
             <ProjectFormActions
@@ -5921,10 +6236,10 @@ function ProjectForm({
                 (scratchUsesGitHub && !selectedScratchInstallation)
               }
               primaryLabel={
-                scratchUsesGitHub ? "Create from scratch" : "Start standalone"
+                scratchUsesGitHub ? "Create from scratch" : "Create project"
               }
               loadingLabel="Creating…"
-              onBack={() => setMode("choose")}
+              onBack={() => setMode("project")}
               onClose={onClose}
             />
           </form>
