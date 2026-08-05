@@ -421,11 +421,16 @@ it("loads GitHub repositories only when the project form opens", async () => {
 
   fireEvent.click(addProject);
 
-  expect(await screen.findByText("GitHub account not connected.")).toBeVisible();
+  expect(await screen.findByText("Enable scratch projects")).toBeVisible();
+  expect(
+    screen.getByText(
+      "Authorize AO with your GitHub account to create new repositories.",
+    ),
+  ).toBeVisible();
   expect(apiMocks.repositories).toHaveBeenCalledTimes(1);
   expect(
     screen.getByRole("button", {
-      name: "Connect GitHub in Settings",
+      name: "Authorize AO in Settings",
     }),
   ).toBeVisible();
   expect(screen.getByText(project.displayName)).toBeVisible();

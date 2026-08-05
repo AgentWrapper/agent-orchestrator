@@ -4545,19 +4545,16 @@ function ProjectForm({
         ) : null}
         {scratchUnavailable ? (
           <div className="rounded-lg border border-[#e8c14a]/20 bg-[#e8c14a]/[0.06] px-3 py-2.5">
-            <p className="text-sm text-[#e8c14a]">
-              GitHub account not connected.
-            </p>
+            <p className="text-sm text-[#e8c14a]">Enable scratch projects</p>
             <p className="mt-1 text-xs leading-5 text-white/45">
-              Authorize GitHub once to discover your personal account and
-              organization installations.
+              Authorize AO with your GitHub account to create new repositories.
             </p>
             <button
               type="button"
               className="mt-2 text-xs text-[#8eb6ff] hover:underline"
               onClick={onOpenGitHubSettings}
             >
-              Connect GitHub in Settings
+              Authorize AO in Settings
             </button>
           </div>
         ) : null}
