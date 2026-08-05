@@ -45,6 +45,9 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 			if !cmd.spawned || cmd.spawnedCfg.ProjectID != "ao" || cmd.spawnedCfg.Kind != domain.KindWorker || cmd.spawnedCfg.Harness != tt.wantAgent || cmd.spawnedCfg.Prompt != brief || cmd.spawnedCfg.DisplayName != "" {
 				t.Fatalf("spawn cfg = %#v", cmd.spawnedCfg)
 			}
+			if cmd.spawnedCfg.AgentConfig.Model != strings.TrimSpace(tt.model) {
+				t.Fatalf("spawn model = %q, want %q", cmd.spawnedCfg.AgentConfig.Model, strings.TrimSpace(tt.model))
+			}
 			if len(cmd.sent) != 1 || cmd.sent[0] != "orch-new" {
 				t.Fatalf("sent = %#v; want orch-new", cmd.sent)
 			}
