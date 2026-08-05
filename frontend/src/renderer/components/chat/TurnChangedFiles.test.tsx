@@ -264,4 +264,14 @@ describe("ActivityRow command labels", () => {
 		expect(row.querySelector(".flex-1")).toBeNull();
 		expect(row.textContent).toMatch(/^Checked repositoryexit 1/);
 	});
+
+	it("shows an interrupted command as stopped instead of leaving a live spinner", () => {
+		render(
+			<ActivityRow
+				activity={commandActivity({ command: "sleep 60", output: "started\n" }, "cancelled")}
+			/>,
+		);
+		expect(screen.getByText("stopped")).toBeInTheDocument();
+		expect(screen.queryByLabelText("running")).not.toBeInTheDocument();
+	});
 });

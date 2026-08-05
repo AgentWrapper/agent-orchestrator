@@ -47,11 +47,10 @@ export type ActivityKind =
 	| "user_input";
 
 /**
- * `running` can be where an activity stops: a provider may start a command and
- * supersede it without ever completing it, so the UI must render that state
- * rather than waiting forever for a completion that is not coming.
+ * `cancelled` means the enclosing turn stopped before the provider completed the
+ * item. It is intentionally distinct from `failed`: the user stopped the work.
  */
-export type ActivityStatus = "running" | "completed" | "failed" | "pending" | "resolved";
+export type ActivityStatus = "running" | "completed" | "failed" | "cancelled" | "pending" | "resolved";
 
 /**
  * Delivery state for a message AO sent. `uncertain` is deliberately not merged

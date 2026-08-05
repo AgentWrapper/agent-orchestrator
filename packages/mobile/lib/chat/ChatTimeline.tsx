@@ -304,6 +304,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 					{meta.prefix ? `${meta.prefix} ` : ""}{detail.command || detail.toolName || activity.summary}
 				</Text>
 				{activity.status === "running" ? <ActivityIndicator size="small" color={t.orange} /> : null}
+				{activity.status === "cancelled" ? <Text style={styles.activityStopped}>stopped</Text> : null}
 				{expandable ? <Feather name={open ? "chevron-up" : "chevron-right"} size={13} color={t.textFaint} /> : null}
 			</Pressable>
 			{open ? (
@@ -340,7 +341,7 @@ function McpToolRow({ activity }: { activity: ConversationActivity }) {
 			<Text style={[styles.server, failed && { color: t.red }]}>{detail.server ?? detail.namespace ? `${detail.server ?? detail.namespace}/` : ""}</Text>
 			<Text numberOfLines={1} style={[styles.activitySummary, failed && { color: t.red }]}>{detail.toolName || activity.summary}</Text>
 			{detail.progress ? <Text numberOfLines={1} style={styles.activityProgress}>{lastLine(detail.progress)}</Text> : null}
-			{activity.status === "running" ? <ActivityIndicator size="small" color={t.purple} /> : body ? <Feather name={open ? "chevron-up" : "chevron-right"} size={13} color={t.textFaint} /> : null}
+			{activity.status === "running" ? <ActivityIndicator size="small" color={t.purple} /> : activity.status === "cancelled" ? <Text style={styles.activityStopped}>stopped</Text> : body ? <Feather name={open ? "chevron-up" : "chevron-right"} size={13} color={t.textFaint} /> : null}
 		</Pressable>
 		{open && body ? <View style={styles.activityDetail}>{detail.error ? <Text style={[styles.detailCopy, { color: t.red }]}>{detail.error}</Text> : null}{detail.arguments !== undefined ? <JsonPayload label="Arguments" value={detail.arguments} /> : null}{detail.result !== undefined ? <JsonPayload label="Result" value={detail.result} /> : null}{detail.progress ? <View><Text style={styles.detailLabel}>PROGRESS</Text><CodeOutput value={detail.progress} />{detail.progressTruncated ? <Text style={styles.partial}>Progress was longer than AO stores.</Text> : null}</View> : null}</View> : null}
 	</View>;
@@ -408,6 +409,7 @@ function ActivityRun({ activities }: { activities: ConversationActivity[] }) {
 	if (activities.length === 1 && hierarchy[0]?.children.length === 0) return <ActivityRow activity={activities[0]} />;
 	const running = activities.some((activity) => activity.status === "running");
 	const failed = activities.filter((activity) => activity.status === "failed").length;
+	const cancelled = activities.filter((activity) => activity.status === "cancelled").length;
 	const streaming = activities.some((activity) => activity.status === "running" && Boolean(activity.detail?.output));
 	const open = override ?? streaming;
 	return <View style={styles.runWrap}>
@@ -419,6 +421,7 @@ function ActivityRun({ activities }: { activities: ConversationActivity[] }) {
 		>
 			<Text style={styles.runText}>{summarizeActivities(activities)}</Text>
 			{failed ? <Text style={styles.runFailed}>{failed} failed</Text> : null}
+			{cancelled ? <Text style={styles.runStopped}>{cancelled} stopped</Text> : null}
 			{running ? <ActivityIndicator size="small" color={t.textTertiary} /> : null}
 			<Feather name={open ? "chevron-down" : "chevron-right"} size={13} color={t.textFaint} />
 		</Pressable>
@@ -803,6 +806,7 @@ const makeStyles = (t: Theme) => StyleSheet.create({
 	activitySummary: { flex: 1, color: t.textSecondary, fontSize: 13, lineHeight: 18, fontFamily: t.fontMono },
 	server: { color: t.textTertiary, fontSize: 10, fontFamily: t.fontMono },
 	activityProgress: { maxWidth: "28%", color: t.textFaint, fontSize: 10 },
+	activityStopped: { color: t.textFaint, fontSize: 10, fontWeight: "600" },
 	activityDetail: { marginLeft: 21, marginBottom: 7, borderLeftWidth: 1, borderLeftColor: t.borderSubtle, paddingLeft: 11, gap: 7 },
 	terminalInput: { gap: 4 },
 	terminalInputTitle: { flexDirection: "row", alignItems: "center", gap: 5 },
@@ -813,6 +817,7 @@ const makeStyles = (t: Theme) => StyleSheet.create({
 	runSummary: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6 },
 	runText: { flex: 1, color: t.textTertiary, fontSize: 12 },
 	runFailed: { color: t.red, fontSize: 10, fontWeight: "600" },
+	runStopped: { color: t.textFaint, fontSize: 10, fontWeight: "600" },
 	runDetail: { marginBottom: 7, borderRadius: 10, borderWidth: 1, borderColor: t.borderSubtle, backgroundColor: t.bgSubtle, paddingHorizontal: 9, paddingVertical: 3 },
 	subagent: { marginLeft: 20, marginBottom: 5, borderLeftWidth: 1, borderLeftColor: t.borderStrong, paddingLeft: 8 },
 	subagentHeader: { minHeight: 34, flexDirection: "row", alignItems: "center", gap: 6, paddingVertical: 6 },

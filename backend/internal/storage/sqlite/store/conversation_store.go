@@ -272,7 +272,29 @@ func (s *Store) SettleTurn(
 	}); err != nil {
 		return fmt.Errorf("settle turn %s: %w", turn.ID, err)
 	}
+	if err := q.SettleRunningConversationActivitiesForTurn(ctx,
+		gen.SettleRunningConversationActivitiesForTurnParams{
+			Status:         terminalActivityStatus(state),
+			UpdatedAt:      now,
+			ConversationID: conversationID,
+			TurnID:         sql.NullString{String: turn.ID, Valid: true},
+		}); err != nil {
+		return fmt.Errorf("settle running activities for turn %s: %w", turn.ID, err)
+	}
 	return nil
+}
+
+// terminalActivityStatus mirrors why the enclosing turn ended. Interrupted work
+// is neither successful nor failed: it stopped because the user asked it to.
+func terminalActivityStatus(state domain.TurnState) domain.ActivityStatus {
+	switch state {
+	case domain.TurnStateCompleted:
+		return domain.ActivityStatusCompleted
+	case domain.TurnStateInterrupted:
+		return domain.ActivityStatusCancelled
+	default:
+		return domain.ActivityStatusFailed
+	}
 }
 
 // SettleOrphanedTurns marks anything a dead controller left in flight. A turn the
@@ -281,6 +303,13 @@ func (s *Store) SettleTurn(
 func (s *Store) SettleOrphanedTurns(ctx context.Context, session domain.SessionID, now time.Time) error {
 	q, unlock := s.conversationWriter(ctx)
 	defer unlock()
+	if err := q.FailOrphanedConversationActivities(ctx,
+		gen.FailOrphanedConversationActivitiesParams{
+			UpdatedAt:          now,
+			HandledBySessionID: session,
+		}); err != nil {
+		return fmt.Errorf("settle orphaned activities for %s: %w", session, err)
+	}
 	if err := q.SettleOrphanedConversationTurns(ctx,
 		gen.SettleOrphanedConversationTurnsParams{
 			CompletedAt:        sql.NullTime{Time: now, Valid: true},

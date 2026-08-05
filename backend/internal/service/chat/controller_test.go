@@ -581,13 +581,17 @@ func TestControllerDeathSettlesInFlightWork(t *testing.T) {
 	}
 	h.conv.emit(
 		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"},
+		startedCommand("provider-turn-1", "exec-1", "sleep 60"),
+	)
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Activities) == 1 })
+	h.conv.emit(
 		ports.ChatEvent{
 			Kind: ports.ChatEventApprovalRequested, ProviderTurnID: "provider-turn-1",
 			ProviderItemID: "0", RequestID: "0", ActivityKind: domain.ActivityKindCommand,
 			ActivityStatus: domain.ActivityStatusPending, Summary: "Run something",
 		},
 	)
-	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Activities) == 1 })
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Activities) == 2 })
 
 	// The provider process dies: the stream closes with the turn still open.
 	_ = h.conv.Close()
@@ -605,8 +609,11 @@ func TestControllerDeathSettlesInFlightWork(t *testing.T) {
 	if snapshot.Turns[0].ErrorMessage == "" {
 		t.Error("orphaned turn carries no explanation")
 	}
-	if got := snapshot.Activities[0].Status; got == domain.ActivityStatusPending {
+	if got := findActivity(t, snapshot, "0").Status; got == domain.ActivityStatusPending {
 		t.Error("approval left pending after its controller died — the user can never answer it")
+	}
+	if got := findActivity(t, snapshot, "exec-1").Status; got != domain.ActivityStatusFailed {
+		t.Errorf("running activity after controller death = %q, want failed", got)
 	}
 }
 

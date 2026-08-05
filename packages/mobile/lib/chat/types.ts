@@ -2,7 +2,7 @@ import type { SessionMode } from "../api";
 
 export type ControllerState = "connecting" | "ready" | "busy" | "recovering" | "stopped";
 export type TurnState = "queued" | "running" | "completed" | "interrupted" | "failed";
-export type ActivityStatus = "running" | "completed" | "failed" | "pending" | "resolved";
+export type ActivityStatus = "running" | "completed" | "failed" | "cancelled" | "pending" | "resolved";
 export type ActivityKind =
 	| "command"
 	| "file_change"

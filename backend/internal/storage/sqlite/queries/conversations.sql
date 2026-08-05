@@ -176,6 +176,29 @@ UPDATE conversation_turns
 SET state = ?, error_message = ?, completed_at = ?
 WHERE id = ?;
 
+-- A provider can acknowledge an interrupted/failed turn without first emitting
+-- item/completed for the command it killed. Settle those rows with the enclosing
+-- turn so clients never show a permanent live spinner for work that has stopped.
+-- name: SettleRunningConversationActivitiesForTurn :exec
+UPDATE conversation_activities
+SET status = sqlc.arg(status), revision = revision + 1, updated_at = sqlc.arg(updated_at)
+WHERE conversation_id = sqlc.arg(conversation_id)
+  AND turn_id = sqlc.arg(turn_id)
+  AND status = 'running';
+
+-- The same invariant applies when startup discovers work abandoned by a dead
+-- controller. This runs before SettleOrphanedConversationTurns while their turn
+-- states still identify the affected rows.
+-- name: FailOrphanedConversationActivities :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = sqlc.arg(updated_at)
+WHERE status = 'running'
+  AND turn_id IN (
+      SELECT id FROM conversation_turns
+      WHERE handled_by_session_id = sqlc.arg(handled_by_session_id)
+        AND state IN ('queued', 'running')
+  );
+
 -- Restart reconciliation: a turn left running by a dead controller is not
 -- evidence the work finished, so it is settled honestly rather than silently
 -- completed.
@@ -385,7 +408,7 @@ INSERT INTO conversation_activities (
 -- name: SettleConversationActivity :exec
 UPDATE conversation_activities
 SET status = ?, summary = ?, detail_json = ?, revision = revision + 1, updated_at = ?
-WHERE conversation_id = ? AND provider_item_id = ?;
+WHERE conversation_id = ? AND provider_item_id = ? AND status <> 'cancelled';
 
 -- Resolving an approval matches on the provider's request id, so a card the user
 -- left on screen cannot answer a request that replaced it.
@@ -436,7 +459,8 @@ SET command_output = substr(command_output || sqlc.arg(delta), 1, sqlc.arg(max_o
     revision = revision + 1,
     updated_at = sqlc.arg(updated_at)
 WHERE conversation_id = sqlc.arg(conversation_id)
-  AND provider_item_id = sqlc.arg(provider_item_id);
+  AND provider_item_id = sqlc.arg(provider_item_id)
+  AND status <> 'cancelled';
 
 -- Append provider prose streamed for one activity, capped in one statement.
 --
@@ -461,7 +485,8 @@ SET streamed_text = substr(streamed_text || sqlc.arg(delta), 1, sqlc.arg(max_tex
     revision = revision + 1,
     updated_at = sqlc.arg(updated_at)
 WHERE conversation_id = sqlc.arg(conversation_id)
-  AND provider_item_id = sqlc.arg(provider_item_id);
+  AND provider_item_id = sqlc.arg(provider_item_id)
+  AND status <> 'cancelled';
 
 -- Replace the streamed text with the provider's settled version.
 --
@@ -475,7 +500,7 @@ WHERE conversation_id = sqlc.arg(conversation_id)
 -- name: SettleConversationActivityStreamedText :execrows
 UPDATE conversation_activities
 SET streamed_text = ?, streamed_text_truncated = 0, revision = revision + 1, updated_at = ?
-WHERE conversation_id = ? AND provider_item_id = ?;
+WHERE conversation_id = ? AND provider_item_id = ? AND status <> 'cancelled';
 
 -- name: SelectConversationActivityByProviderItem :one
 SELECT * FROM conversation_activities

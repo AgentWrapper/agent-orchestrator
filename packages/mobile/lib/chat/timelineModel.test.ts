@@ -65,6 +65,8 @@ describe("mobile Chat timeline model", () => {
 		expect(activityStartsExpanded(running)).toBe(false);
 		running.status = "failed";
 		expect(activityStartsExpanded(running)).toBe(true);
+		running.status = "cancelled";
+		expect(activityStartsExpanded(running)).toBe(false);
 	});
 
 	it("builds nested provider work without hiding or looping malformed events", () => {

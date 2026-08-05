@@ -99,6 +99,65 @@ func TestCommandOutputDeltasAccumulateOntoOneActivity(t *testing.T) {
 	}
 }
 
+// Some providers report turn/interrupted after killing a process but omit the
+// command's item/completed notification. The turn is the authoritative terminal
+// boundary, so its command must stop spinning even when that item event is lost.
+func TestInterruptedTurnCancelsItsStillRunningActivities(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "run something slow", ClientMessageID: "c1", Origin: domain.MessageOriginHuman,
+	}); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	h.conv.emit(
+		ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"},
+		startedCommand("provider-turn-1", "exec-1", "sleep 60"),
+		outputDelta("provider-turn-1", "exec-1", "started\n"),
+		ports.ChatEvent{
+			Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+			TurnState: domain.TurnStateInterrupted,
+		},
+	)
+
+	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Activities) == 1 && len(s.Turns) == 1 &&
+			s.Turns[0].State.Terminal()
+	})
+	if snapshot.Turns[0].State != domain.TurnStateInterrupted {
+		t.Errorf("turn state = %q, want interrupted", snapshot.Turns[0].State)
+	}
+	activity := snapshot.Activities[0]
+	if activity.Status != domain.ActivityStatusCancelled {
+		t.Errorf("activity status = %q, want cancelled", activity.Status)
+	}
+	if activity.CommandOutput != "started\n" {
+		t.Errorf("command output = %q, want the output received before stop", activity.CommandOutput)
+	}
+
+	// A killed process may report its own completion after the provider has already
+	// acknowledged the interrupt. That late item cannot resurrect stopped work.
+	h.conv.emit(
+		ports.ChatEvent{
+			Kind: ports.ChatEventActivityCompleted, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: "exec-1", ActivityKind: domain.ActivityKindCommand,
+			ActivityStatus: domain.ActivityStatusCompleted, Summary: "sleep 60",
+		},
+		ports.ChatEvent{
+			Kind: ports.ChatEventMessageCompleted, ProviderTurnID: "provider-turn-1",
+			ProviderItemID: "late-marker", Text: "late event projected",
+		},
+	)
+	snapshot = h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Messages) == 2
+	})
+	if got := findActivity(t, snapshot, "exec-1").Status; got != domain.ActivityStatusCancelled {
+		t.Errorf("activity status after late completion = %q, want cancelled", got)
+	}
+}
+
 // Output is capped, and the cap is stated rather than applied silently. A build
 // that prints for an hour must not put megabytes into a row every snapshot reads.
 func TestCommandOutputIsCappedAndSaysSo(t *testing.T) {

@@ -544,6 +544,13 @@ function ActivityState({
 			</span>
 		);
 	}
+	if (status === "cancelled") {
+		return (
+			<span className="shrink-0 font-mono text-[10px] text-muted-foreground/70">
+				stopped
+			</span>
+		);
+	}
 	// Everything else settled fine, which is the boring majority. A chevron on
 	// hover is the whole affordance; a duration or timestamp on every row builds a
 	// column of numbers nobody reads.
@@ -794,6 +801,8 @@ function McpToolRow({ activity }: { activity: ConversationActivity }) {
 					/>
 				) : failed ? (
 					<span className="shrink-0 text-[10px] text-destructive">failed</span>
+				) : activity.status === "cancelled" ? (
+					<span className="shrink-0 text-[10px] text-muted-foreground/70">stopped</span>
 				) : hasBody ? (
 					<ChevronRight
 						aria-hidden="true"

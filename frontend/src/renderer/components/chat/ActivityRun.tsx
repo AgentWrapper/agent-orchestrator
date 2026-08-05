@@ -25,6 +25,7 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 	const [override, setOverride] = useState<boolean | null>(null);
 	const running = activities.some((a) => a.status === "running");
 	const failed = activities.filter((a) => a.status === "failed").length;
+	const cancelled = activities.filter((a) => a.status === "cancelled").length;
 
 	// A single call is its own best summary — collapsing one row into a count of
 	// one would be worse than just showing it.
@@ -50,6 +51,11 @@ export function ActivityRun({ activities }: { activities: ConversationActivity[]
 				{failed > 0 ? (
 					<span className="text-[11px] text-destructive">
 						{failed} failed
+					</span>
+				) : null}
+				{cancelled > 0 ? (
+					<span className="text-[11px] text-muted-foreground/70">
+						{cancelled} stopped
 					</span>
 				) : null}
 				{running ? (

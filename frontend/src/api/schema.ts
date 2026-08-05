@@ -1332,7 +1332,7 @@ export interface components {
             /** Format: int64 */
             sequence: number;
             /** @enum {string} */
-            status: "running" | "completed" | "failed" | "pending" | "resolved";
+            status: "running" | "completed" | "failed" | "cancelled" | "pending" | "resolved";
             summary: string;
             turnId?: string;
         };

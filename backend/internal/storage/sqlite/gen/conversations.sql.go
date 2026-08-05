@@ -60,6 +60,7 @@ SET command_output = substr(command_output || ?1, 1, ?2),
     updated_at = ?3
 WHERE conversation_id = ?4
   AND provider_item_id = ?5
+  AND status <> 'cancelled'
 `
 
 type AppendConversationActivityOutputParams struct {
@@ -112,6 +113,7 @@ SET streamed_text = substr(streamed_text || ?1, 1, ?2),
     updated_at = ?3
 WHERE conversation_id = ?4
   AND provider_item_id = ?5
+  AND status <> 'cancelled'
 `
 
 type AppendConversationActivityStreamedTextParams struct {
@@ -264,6 +266,30 @@ type CancelQueuedConversationTurnsParams struct {
 // is still delivered rather than swept up by a cancellation it predates.
 func (q *Queries) CancelQueuedConversationTurns(ctx context.Context, arg CancelQueuedConversationTurnsParams) error {
 	_, err := q.db.ExecContext(ctx, cancelQueuedConversationTurns, arg.CompletedAt, arg.ConversationID, arg.RequestedAt)
+	return err
+}
+
+const failOrphanedConversationActivities = `-- name: FailOrphanedConversationActivities :exec
+UPDATE conversation_activities
+SET status = 'failed', revision = revision + 1, updated_at = ?1
+WHERE status = 'running'
+  AND turn_id IN (
+      SELECT id FROM conversation_turns
+      WHERE handled_by_session_id = ?2
+        AND state IN ('queued', 'running')
+  )
+`
+
+type FailOrphanedConversationActivitiesParams struct {
+	UpdatedAt          time.Time
+	HandledBySessionID domain.SessionID
+}
+
+// The same invariant applies when startup discovers work abandoned by a dead
+// controller. This runs before SettleOrphanedConversationTurns while their turn
+// states still identify the affected rows.
+func (q *Queries) FailOrphanedConversationActivities(ctx context.Context, arg FailOrphanedConversationActivitiesParams) error {
+	_, err := q.db.ExecContext(ctx, failOrphanedConversationActivities, arg.UpdatedAt, arg.HandledBySessionID)
 	return err
 }
 
@@ -1382,7 +1408,7 @@ func (q *Queries) SelectProjectConversation(ctx context.Context, projectID domai
 const settleConversationActivity = `-- name: SettleConversationActivity :exec
 UPDATE conversation_activities
 SET status = ?, summary = ?, detail_json = ?, revision = revision + 1, updated_at = ?
-WHERE conversation_id = ? AND provider_item_id = ?
+WHERE conversation_id = ? AND provider_item_id = ? AND status <> 'cancelled'
 `
 
 type SettleConversationActivityParams struct {
@@ -1409,7 +1435,7 @@ func (q *Queries) SettleConversationActivity(ctx context.Context, arg SettleConv
 const settleConversationActivityStreamedText = `-- name: SettleConversationActivityStreamedText :execrows
 UPDATE conversation_activities
 SET streamed_text = ?, streamed_text_truncated = 0, revision = revision + 1, updated_at = ?
-WHERE conversation_id = ? AND provider_item_id = ?
+WHERE conversation_id = ? AND provider_item_id = ? AND status <> 'cancelled'
 `
 
 type SettleConversationActivityStreamedTextParams struct {
@@ -1505,6 +1531,34 @@ type SettleOrphanedConversationTurnsParams struct {
 // completed.
 func (q *Queries) SettleOrphanedConversationTurns(ctx context.Context, arg SettleOrphanedConversationTurnsParams) error {
 	_, err := q.db.ExecContext(ctx, settleOrphanedConversationTurns, arg.CompletedAt, arg.HandledBySessionID)
+	return err
+}
+
+const settleRunningConversationActivitiesForTurn = `-- name: SettleRunningConversationActivitiesForTurn :exec
+UPDATE conversation_activities
+SET status = ?1, revision = revision + 1, updated_at = ?2
+WHERE conversation_id = ?3
+  AND turn_id = ?4
+  AND status = 'running'
+`
+
+type SettleRunningConversationActivitiesForTurnParams struct {
+	Status         domain.ActivityStatus
+	UpdatedAt      time.Time
+	ConversationID string
+	TurnID         sql.NullString
+}
+
+// A provider can acknowledge an interrupted/failed turn without first emitting
+// item/completed for the command it killed. Settle those rows with the enclosing
+// turn so clients never show a permanent live spinner for work that has stopped.
+func (q *Queries) SettleRunningConversationActivitiesForTurn(ctx context.Context, arg SettleRunningConversationActivitiesForTurnParams) error {
+	_, err := q.db.ExecContext(ctx, settleRunningConversationActivitiesForTurn,
+		arg.Status,
+		arg.UpdatedAt,
+		arg.ConversationID,
+		arg.TurnID,
+	)
 	return err
 }
 

@@ -1154,7 +1154,7 @@ type ConversationActivityResponse struct {
 	// approval is a question waiting on a person, while an auto-review is a decision
 	// the provider already made on their behalf, and those are opposites.
 	ActivityKind string `json:"activityKind" enum:"command,file_change,plan,reasoning,approval,usage,error,system,mcp_tool,auto_review,user_input"`
-	Status       string `json:"status" enum:"running,completed,failed,pending,resolved"`
+	Status       string `json:"status" enum:"running,completed,failed,cancelled,pending,resolved"`
 	Summary      string `json:"summary"`
 	// Detail is the provider-neutral typed payload for this kind. For an approval
 	// it carries the provider's own offered decisions, which is what the client

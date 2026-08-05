@@ -114,9 +114,9 @@ const (
 	ActivityKindUserInput ActivityKind = "user_input"
 )
 
-// ActivityStatus is the lifecycle of one activity. Started items are not
-// guaranteed to complete — a provider can start a command and supersede it — so
-// readers must tolerate an activity that stays running.
+// ActivityStatus is the lifecycle of one activity. A provider may omit an item's
+// completion when its enclosing turn stops, so the turn settlement path also
+// settles any activity that is still running.
 type ActivityStatus string
 
 // Activity statuses.
@@ -124,6 +124,7 @@ const (
 	ActivityStatusRunning   ActivityStatus = "running"
 	ActivityStatusCompleted ActivityStatus = "completed"
 	ActivityStatusFailed    ActivityStatus = "failed"
+	ActivityStatusCancelled ActivityStatus = "cancelled"
 	ActivityStatusPending   ActivityStatus = "pending"
 	ActivityStatusResolved  ActivityStatus = "resolved"
 )
