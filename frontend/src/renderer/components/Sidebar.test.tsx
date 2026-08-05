@@ -933,6 +933,16 @@ describe("Sidebar", () => {
 		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
 	});
 
+	it("aligns the expanded brand and Search content to the same icon grid", () => {
+		renderSidebar();
+
+		expect(document.querySelector('[data-slot="sidebar-brand-row"]')).toHaveClass("gap-2", "px-2.5");
+		expect(document.querySelector('[data-slot="sidebar-search-icon"]')).toHaveClass("size-5.5");
+		expect(screen.getByRole("button", { name: "Orchestrator board" }).querySelector("img")).not.toHaveClass(
+			"-translate-y-[3px]",
+		);
+	});
+
 	it("defers opening the palette until the Search click has been dispatched", async () => {
 		renderSidebar();
 		fireEvent.click(screen.getByRole("button", { name: /Search/ }));
@@ -984,6 +994,16 @@ describe("Sidebar", () => {
 		expect(sessionItem).not.toHaveClass("pl-7");
 		expect(screen.getByLabelText("Open fix login").querySelector("[data-session-status]")).toHaveClass("size-2");
 		expect(screen.getByLabelText("Open fix login").querySelector("[data-session-agent]")).not.toBeInTheDocument();
+	});
+
+	it("renders pinned sessions as top-level rows without project-child indentation", () => {
+		const pinnedSession = { ...session, isPinned: true, pinnedAt: "2026-06-30T01:00:00Z" };
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [pinnedSession] }] });
+
+		const pinnedList = screen.getByTestId("pinned-session-list");
+		const pinnedItem = within(pinnedList).getByLabelText("Open fix login").closest("li");
+		expect(pinnedList).toHaveClass("mx-0", "ml-0", "px-0");
+		expect(pinnedItem).not.toHaveClass("pl-4.5");
 	});
 
 	it("gives session names the pencil width until the rename action is revealed", async () => {

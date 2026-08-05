@@ -303,7 +303,9 @@
 
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 40px;
-	--size-traffic-light-clearance-fullscreen: var(--space-2);
+	/* Fullscreen has no traffic lights, but the left navigation still needs one
+	 * compact row before sidebar content begins. */
+	--size-traffic-light-clearance-fullscreen: calc(var(--size-control-md) + var(--space-1));
 	/* Resize handle straddles the sidebar-panel boundary: offset = half the width
 	 * so the hairline lands exactly at the junction and the drag zone covers 6px
 	 * on each side of it. */
