@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ post: vi.fn(), capture: vi.fn() }));
+const h = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), capture: vi.fn() }));
 
 vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
@@ -17,7 +17,7 @@ vi.mock("./CreateProjectAgentSheet", () => ({
 
 vi.mock("../lib/api-client", () => ({
 	apiClient: {
-		GET: vi.fn(async () => ({ data: { status: "ok", project: { config: {} } } })),
+		GET: h.get,
 		POST: h.post,
 	},
 	apiErrorMessage: (_e: unknown, fallback = "err") => fallback,
@@ -34,7 +34,25 @@ function Wrap({ children }: { children: ReactNode }) {
 
 const task = () => screen.getByPlaceholderText(/Describe the change/i);
 
+beforeEach(() => {
+	h.get.mockImplementation(async (path: string) => {
+		if (path.includes("/models")) {
+			return {
+				data: {
+					agent: "codex",
+					selectionMode: "text",
+					models: [],
+					allowCustom: true,
+					refreshRecommended: false,
+				},
+			};
+		}
+		return { data: { status: "ok", project: { config: {} } } };
+	});
+});
+
 afterEach(() => {
+	h.get.mockReset();
 	h.post.mockReset();
 	h.capture.mockReset();
 });
@@ -96,5 +114,50 @@ describe("TaskComposer", () => {
 		expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 		unmount();
 		expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+	});
+
+	it("uses the project worker model as the new task model default", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "text",
+						models: [],
+						allowCustom: true,
+						refreshRecommended: false,
+					},
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						config: { worker: { agent: "codex", agentConfig: { model: "gpt-5" } } },
+					},
+				},
+			};
+		});
+		h.post.mockResolvedValueOnce({ data: { workerId: "sess-2" } });
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const model = await screen.findByDisplayValue("gpt-5");
+		fireEvent.change(model, { target: { value: "gpt-5.1" } });
+		fireEvent.change(task(), { target: { value: "Use the selected model" } });
+		fireEvent.click(screen.getByText("Start task"));
+
+		await waitFor(() =>
+			expect(h.post).toHaveBeenCalledWith(
+				"/api/v1/orchestrators/delegate",
+				expect.objectContaining({
+					body: expect.objectContaining({ model: "gpt-5.1" }),
+				}),
+			),
+		);
 	});
 });

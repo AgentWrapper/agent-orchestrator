@@ -1,15 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import {
+	agentModelsQueryKey,
+	agentModelsQueryOptions,
+	refreshAgentModels,
+	revalidateAgentModels,
+	type AgentModelCatalog,
+} from "../hooks/useAgentModelsQuery";
+import { cn } from "../lib/utils";
+import { AgentModelCombobox } from "./settings/AgentModelCombobox";
+import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 
 type Project = components["schemas"]["Project"];
 type DelegateAgent = components["schemas"]["DelegateTaskRequest"]["agent"];
@@ -45,8 +54,10 @@ export function TaskComposer({
 	const agentId = useId();
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("");
+	const [mode, setMode] = useState("");
 	const [agent, setAgent] = useState("");
 	const [agentTouched, setAgentTouched] = useState(false);
+	const [modelTouched, setModelTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const createTask = useCallback(
@@ -92,13 +103,26 @@ export function TaskComposer({
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
 	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
+	const selectedAgent = agent || defaultWorkerAgent;
+	const defaultWorkerModel =
+		projectQuery.data?.config?.worker?.agentConfig?.model ?? projectQuery.data?.config?.agentConfig?.model ?? "";
+	const defaultWorkerMode =
+		projectQuery.data?.config?.worker?.agentConfig?.mode ?? projectQuery.data?.config?.agentConfig?.mode ?? "";
+	const defaultModelForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerModel : "";
+	const defaultModeForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerMode : "";
 	const agentCatalog = agentsQuery.data;
 
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
 	}, [agentTouched, defaultWorkerAgent]);
+	useEffect(() => {
+		if (!modelTouched) {
+			setModel(defaultModelForSelectedAgent);
+			setMode(defaultModeForSelectedAgent);
+		}
+	}, [defaultModelForSelectedAgent, defaultModeForSelectedAgent, modelTouched]);
 
-	const isDirty = prompt.trim() !== "" || model.trim() !== "";
+	const isDirty = prompt.trim() !== "" || modelTouched;
 	useEffect(() => {
 		onDirtyChange?.(isDirty);
 	}, [isDirty, onDirtyChange]);
@@ -115,6 +139,11 @@ export function TaskComposer({
 
 		const cleanPrompt = prompt.trim();
 		const cleanModel = model.trim();
+		const cleanMode = mode.trim();
+		const requestedModel =
+			modelTouched && (cleanModel !== defaultModelForSelectedAgent || cleanMode !== defaultModeForSelectedAgent)
+				? cleanModel || cleanMode || undefined
+				: undefined;
 		if (!cleanPrompt) {
 			setError(t("newTask.taskRequired"));
 			return;
@@ -127,7 +156,7 @@ export function TaskComposer({
 				projectId,
 				brief: prompt,
 				agent: agentTouched && agent ? (agent as CreateTaskInput["agent"]) : undefined,
-				model: cleanModel || undefined,
+				model: requestedModel,
 			});
 			onCreated(sessionId);
 		} catch (err) {
@@ -178,6 +207,7 @@ export function TaskComposer({
 						onChange={(value) => {
 							setAgent(value);
 							setAgentTouched(true);
+							setModelTouched(false);
 						}}
 					/>
 					<button
@@ -193,11 +223,22 @@ export function TaskComposer({
 					<Label className="text-xs font-medium text-muted-foreground" htmlFor={modelId}>
 						{t("newTask.model")}
 					</Label>
-					<Input
+					<TaskModelPicker
 						id={modelId}
-						placeholder={t("newTask.projectDefault")}
+						agentId={selectedAgent}
+						projectId={projectId ?? ""}
 						value={model}
-						onChange={(event) => setModel(event.target.value)}
+						mode={mode}
+						onModelChange={(value) => {
+							setModel(value);
+							setMode("");
+							setModelTouched(true);
+						}}
+						onModeChange={(value) => {
+							setMode(value);
+							setModel("");
+							setModelTouched(true);
+						}}
 					/>
 				</div>
 			</div>
@@ -228,5 +269,171 @@ export function TaskComposer({
 				</Button>
 			</div>
 		</form>
+	);
+}
+
+function TaskModelPicker({
+	id,
+	agentId,
+	projectId,
+	value,
+	mode,
+	onModelChange,
+	onModeChange,
+}: {
+	id: string;
+	agentId: string;
+	projectId: string;
+	value: string;
+	mode: string;
+	onModelChange: (value: string) => void;
+	onModeChange: (value: string) => void;
+}) {
+	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
+	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
+	const catalog: AgentModelCatalog | undefined = query.data;
+	const revalidationQuery = useQuery({
+		queryKey: ["agent-model-revalidation", agentId, projectId, catalog?.validatedAt ?? ""],
+		queryFn: () => revalidateAgentModels(agentId, projectId),
+		enabled: agentId !== "" && catalog?.refreshRecommended === true,
+		staleTime: Number.POSITIVE_INFINITY,
+		retry: false,
+	});
+	useEffect(() => {
+		if (revalidationQuery.data) {
+			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
+		}
+	}, [agentId, projectId, queryClient, revalidationQuery.data]);
+	const refreshMutation = useMutation({
+		mutationFn: () => refreshAgentModels(agentId, projectId),
+		onSuccess: (catalog) => queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), catalog),
+	});
+	const warning =
+		(refreshMutation.isError
+			? refreshMutation.error instanceof Error
+				? refreshMutation.error.message
+				: t("settings.models.refreshFailed")
+			: undefined) ??
+		(revalidationQuery.isError
+			? revalidationQuery.error instanceof Error
+				? revalidationQuery.error.message
+				: t("settings.models.validateFailed")
+			: undefined) ??
+		catalog?.warning ??
+		(query.isError ? (query.error instanceof Error ? query.error.message : t("settings.models.loadFailed")) : undefined);
+
+	if (catalog?.selectionMode === "mode") {
+		const options = [
+			{ value: "__default__", label: t("settings.models.agentDefault") },
+			...(catalog.models ?? []).map((item) => ({ value: item.id, label: item.label })),
+		];
+		return (
+			<>
+				<div className="flex min-w-0 items-center gap-2">
+					<TaskModelRefreshButton
+						label={t("newTask.model")}
+						pending={refreshMutation.isPending}
+						disabled={agentId === ""}
+						onClick={() => refreshMutation.mutate()}
+					/>
+					<SettingsOptionMenu
+						aria-label={t("newTask.model")}
+						value={mode || "__default__"}
+						options={options}
+						triggerClassName="h-9 flex-1 justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+						onChange={(nextMode) => onModeChange(nextMode === "__default__" ? "" : nextMode)}
+					/>
+				</div>
+				{warning && <p className="text-xs text-warning">{warning}</p>}
+			</>
+		);
+	}
+
+	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
+	const modelIsInCatalog = catalog?.models?.some((item) => item.id === value) ?? false;
+	const showCustomInput = hasCatalog && (customAgentId === agentId || (value !== "" && !modelIsInCatalog));
+	const selectCatalogModel = (nextModel: string) => {
+		setCustomAgentId(null);
+		onModelChange(nextModel);
+	};
+	const selectCustomModel = (nextModel: string) => {
+		setCustomAgentId(agentId);
+		onModelChange(nextModel);
+	};
+
+	return (
+		<>
+			<div className="flex min-w-0 items-center gap-2">
+				<TaskModelRefreshButton
+					label={t("newTask.model")}
+					pending={refreshMutation.isPending}
+					disabled={agentId === ""}
+					onClick={() => refreshMutation.mutate()}
+				/>
+				{hasCatalog && !showCustomInput ? (
+					<AgentModelCombobox
+						aria-label={t("newTask.model")}
+						value={value}
+						models={catalog.models ?? []}
+						allowCustom={catalog.allowCustom}
+						onChange={selectCatalogModel}
+						onCustom={selectCustomModel}
+						triggerClassName="h-9 flex-1 justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+					/>
+				) : (
+					<>
+						<input
+							id={id}
+							className="flex h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-xs outline-none transition placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+							value={value}
+							disabled={agentId === ""}
+							onChange={(event) => onModelChange(event.target.value)}
+							placeholder={query.isFetching ? t("settings.models.loading") : t("newTask.projectDefault")}
+						/>
+						{hasCatalog && (
+							<AgentModelCombobox
+								aria-label={t("settings.models.optionsAria", { label: t("newTask.model") })}
+								value={value}
+								models={catalog.models ?? []}
+								allowCustom={catalog.allowCustom}
+								onChange={selectCatalogModel}
+								onCustom={selectCustomModel}
+								triggerLabel={t("settings.models.browse")}
+								triggerClassName="shrink-0"
+							/>
+						)}
+					</>
+				)}
+			</div>
+			{warning && <p className="text-xs text-warning">{warning}</p>}
+		</>
+	);
+}
+
+function TaskModelRefreshButton({
+	label,
+	pending,
+	disabled,
+	onClick,
+}: {
+	label: string;
+	pending: boolean;
+	disabled: boolean;
+	onClick: () => void;
+}) {
+	const { t } = useTranslation();
+	return (
+		<button
+			type="button"
+			aria-label={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
+			title={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
+			className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+			disabled={disabled || pending}
+			onClick={onClick}
+		>
+			<RefreshCw className={cn("size-4", pending && "animate-spin")} aria-hidden="true" />
+		</button>
 	);
 }
