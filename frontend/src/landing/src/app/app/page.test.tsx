@@ -465,6 +465,95 @@ it("creates a scratch project through the connected GitHub installation", async 
   expect(apiMocks.createSession).not.toHaveBeenCalled();
 });
 
+it("creates a scratch project in the selected connected organization", async () => {
+  apiMocks.repositories.mockResolvedValue({ repositories: [] });
+  apiMocks.githubConnection.mockResolvedValue({
+    mode: "github-app",
+    appSlug: "ao-cloud",
+    installations: [
+      {
+        id: "installation-personal",
+        githubInstallationId: 41,
+        accountLogin: "amoreX",
+        accountType: "User",
+        status: "active",
+        repositorySelection: "all",
+      },
+      {
+        id: "installation-one",
+        githubInstallationId: 42,
+        accountLogin: "rae-app",
+        accountType: "Organization",
+        status: "active",
+        repositorySelection: "all",
+      },
+      {
+        id: "installation-two",
+        githubInstallationId: 43,
+        accountLogin: "unordinarytech",
+        accountType: "Organization",
+        status: "active",
+        repositorySelection: "all",
+      },
+    ],
+    repositories: [],
+  });
+  apiMocks.createScratchProject.mockResolvedValue({
+    project: {
+      ...project,
+      id: "scratch-project",
+      displayName: "Scratch App",
+      repositoryUrl: "https://github.com/unordinarytech/scratch-app",
+    },
+    repository: {
+      id: 991,
+      fullName: "unordinarytech/scratch-app",
+      htmlUrl: "https://github.com/unordinarytech/scratch-app",
+      defaultBranch: "main",
+      private: true,
+      archived: false,
+      disabled: false,
+    },
+    session: {
+      ...orchestrator,
+      id: "scratch-orchestrator",
+      projectId: "scratch-project",
+    },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
+
+  const ownerSelect = screen.getByRole("combobox", {
+    name: "GitHub organization",
+  });
+  expect(within(ownerSelect).queryByRole("option", { name: "amoreX" })).toBeNull();
+  expect(within(ownerSelect).getByRole("option", { name: "rae-app" })).toBeVisible();
+  expect(
+    within(ownerSelect).getByRole("option", { name: "unordinarytech" }),
+  ).toBeVisible();
+
+  fireEvent.change(ownerSelect, { target: { value: "43" } });
+  fireEvent.change(screen.getByPlaceholderText("my-new-app"), {
+    target: { value: "Scratch App" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create from scratch" }));
+
+  await waitFor(() =>
+    expect(apiMocks.createScratchProject).toHaveBeenCalledWith("org-one", {
+      displayName: "Scratch App",
+      githubInstallationId: 43,
+      private: true,
+      orchestrator: {
+        harness: "claude-code",
+        providerConnectionId: undefined,
+      },
+    }),
+  );
+});
+
 it("opens provider connections from the no-agent empty state", async () => {
   apiMocks.providerConnections.mockResolvedValue({ providerConnections: [] });
   render(<CloudAppPage />);

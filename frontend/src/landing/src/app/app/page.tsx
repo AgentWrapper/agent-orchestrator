@@ -4190,27 +4190,39 @@ function ProjectForm({
       ) ?? [],
     [githubConnection?.installations],
   );
+  const scratchInstallations = useMemo(
+    () =>
+      activeInstallations.filter(
+        (installation) =>
+          installation.accountType.trim().toLowerCase() === "organization",
+      ),
+    [activeInstallations],
+  );
   const [scratchInstallationId, setScratchInstallationId] = useState("");
   useEffect(() => {
     setScratchInstallationId((current) =>
-      activeInstallations.some(
+      scratchInstallations.some(
         (installation) => String(installation.githubInstallationId) === current,
       )
         ? current
-        : activeInstallations.length === 1
-          ? String(activeInstallations[0].githubInstallationId)
+        : scratchInstallations.length === 1
+          ? String(scratchInstallations[0].githubInstallationId)
           : "",
     );
-  }, [activeInstallations]);
+  }, [scratchInstallations]);
   const hasActiveGitHubAppInstallation =
     githubConnection?.mode === "github-app" && activeInstallations.length > 0;
   const showRepositorySelect = repositoriesLoading || repositories.length > 0;
   const githubUnavailable = !hasActiveGitHubAppInstallation;
   const selectedScratchInstallation =
-    activeInstallations.find(
+    scratchInstallations.find(
       (installation) =>
         String(installation.githubInstallationId) === scratchInstallationId,
-    ) ?? activeInstallations[0];
+    );
+  const personalInstallations = activeInstallations.filter(
+    (installation) =>
+      installation.accountType.trim().toLowerCase() !== "organization",
+  );
   return (
     <Overlay title="Add cloud project" onClose={onClose}>
       <div className="space-y-4 p-4">
@@ -4375,40 +4387,57 @@ function ProjectForm({
                 disabled={loading}
               />
             </label>
-            {activeInstallations.length > 1 ? (
-              <label className="block text-xs text-white/45">
-                GitHub owner
-                <select
-                  className={`${field} mt-1.5`}
-                  value={scratchInstallationId}
-                  onChange={(event) =>
-                    setScratchInstallationId(event.target.value)
-                  }
-                  disabled={loading}
-                  required
-                >
-                  <option value="" disabled>
-                    Choose owner
+            <label className="block text-xs text-white/45">
+              GitHub organization
+              <select
+                className={`${field} mt-1.5`}
+                value={scratchInstallationId}
+                onChange={(event) =>
+                  setScratchInstallationId(event.target.value)
+                }
+                disabled={loading || scratchInstallations.length === 0}
+                required
+              >
+                <option value="">
+                  {scratchInstallations.length > 0
+                    ? "Choose organization"
+                    : "No connected organizations"}
+                </option>
+                {scratchInstallations.map((installation) => (
+                  <option
+                    key={installation.githubInstallationId}
+                    value={installation.githubInstallationId}
+                  >
+                    {installation.accountLogin}
                   </option>
-                  {activeInstallations.map((installation) => (
-                    <option
-                      key={installation.githubInstallationId}
-                      value={installation.githubInstallationId}
-                    >
-                      {installation.accountLogin} ·{" "}
-                      {installation.accountType.toLowerCase()}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <div className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/45">
-                Repository owner:{" "}
+                ))}
+              </select>
+            </label>
+            <div className="flex items-start justify-between gap-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/45">
+              <span>
+                Only organizations connected to this AO organization are shown.
+              </span>
+              <button
+                type="button"
+                className="shrink-0 text-[#8eb6ff] hover:underline"
+                onClick={onOpenGitHubSettings}
+                disabled={loading}
+              >
+                Connect another
+              </button>
+            </div>
+            {personalInstallations.length > 0 ? (
+              <p className="rounded-lg border border-[#e8c14a]/20 bg-[#e8c14a]/[0.06] px-3 py-2 text-xs leading-5 text-white/50">
+                Personal account{" "}
                 <span className="text-white/70">
-                  {selectedScratchInstallation?.accountLogin ?? "GitHub"}
-                </span>
-              </div>
-            )}
+                  {personalInstallations
+                    .map((installation) => installation.accountLogin)
+                    .join(", ")}
+                </span>{" "}
+                can supply existing repositories, but GitHub Apps cannot create
+                personal repositories automatically.
+              </p>
+            ) : null}
             <label className="flex items-start gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/50">
               <input
                 className="mt-1"
