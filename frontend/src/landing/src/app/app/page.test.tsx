@@ -1365,7 +1365,7 @@ it("shows invitation status, inviter, and settings notification badge", async ()
 
   const settings = await screen.findByRole("button", { name: /Settings/ });
   expect(
-    await screen.findByLabelText("3 settings notifications"),
+    await screen.findByLabelText("2 settings notifications"),
   ).toBeVisible();
   fireEvent.click(settings);
 

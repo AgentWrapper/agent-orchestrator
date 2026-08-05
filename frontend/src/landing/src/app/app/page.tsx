@@ -818,8 +818,6 @@ export default function CloudAppPage() {
   );
   const pendingInvitationCount =
     incomingInvitations.filter((invitation) => invitation.status === "pending")
-      .length +
-    orgInvitations.filter((invitation) => invitation.status === "pending")
       .length;
   const switchOrg = (nextOrgId: string | null) => {
     selectedOrgIdRef.current = nextOrgId;
