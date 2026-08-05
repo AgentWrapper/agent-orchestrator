@@ -756,8 +756,8 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != childBase {
 		t.Fatalf("child detail compare = mode:%q sha:%q, want base %s", detail.CompareMode, detail.CompareBaseSHA, childBase)
 	}
-	if detail.CompareBaseRef != "" {
-		t.Fatalf("child detail compare ref = %q, want empty because worktree rows store only a SHA", detail.CompareBaseRef)
+	if detail.CompareBaseRef != "main" {
+		t.Fatalf("child detail compare ref = %q, want main", detail.CompareBaseRef)
 	}
 }
 
