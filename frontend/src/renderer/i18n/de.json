@@ -623,6 +623,7 @@
 	"shell.openKanban": "Kanban öffnen",
 	"shell.openProjectDashboard": "Dashboard von {{name}} öffnen",
 	"shell.openProjectOrchestrator": "Orchestrator von {{name}} öffnen",
+	"shell.toggleProject": "Toggle {{name}}-Sitzungen",
 	"shell.openSession": "{{title}} öffnen",
 	"shell.openOrchestrator": "Orchestrator öffnen",
 	"shell.orchestrator": "Orchestrator",

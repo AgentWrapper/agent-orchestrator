@@ -172,7 +172,6 @@ function ShellLayout() {
 		!usesPreviewWorkspaceData &&
 		!daemonStatus.code &&
 		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
-
 	const cancelSidebarPeekClose = useCallback(() => {
 		if (sidebarPeekCloseTimerRef.current === undefined) return;
 		window.clearTimeout(sidebarPeekCloseTimerRef.current);
