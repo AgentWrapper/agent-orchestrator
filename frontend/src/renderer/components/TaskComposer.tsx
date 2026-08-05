@@ -29,6 +29,9 @@ type CreateTaskInput = {
 	model?: string;
 };
 
+const newTaskSelectSurfaceClass =
+	"h-control-form w-full flex-1 justify-between rounded-md border border-transparent bg-input/50 px-3 py-2 text-control text-foreground transition-[color,box-shadow,background-color,border-color] hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30";
+
 export type TaskComposerProps = {
 	projectId?: string;
 	onCreated: (sessionId: string) => void;
@@ -335,7 +338,7 @@ function TaskModelPicker({
 						aria-label={t("newTask.model")}
 						value={mode || "__default__"}
 						options={options}
-						triggerClassName="h-9 flex-1 justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+						triggerClassName={newTaskSelectSurfaceClass}
 						onChange={(nextMode) => onModeChange(nextMode === "__default__" ? "" : nextMode)}
 					/>
 				</div>
@@ -372,13 +375,13 @@ function TaskModelPicker({
 						allowCustom={catalog.allowCustom}
 						onChange={selectCatalogModel}
 						onCustom={selectCustomModel}
-						triggerClassName="h-9 flex-1 justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+						triggerClassName={newTaskSelectSurfaceClass}
 					/>
 				) : (
 					<>
 						<input
 							id={id}
-							className="flex h-9 min-w-0 flex-1 rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground shadow-xs outline-none transition placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
+							className="h-control-form flex min-w-0 flex-1 rounded-md border border-transparent bg-input/50 px-3 py-2 text-control text-foreground outline-none transition-[color,box-shadow,background-color,border-color] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50"
 							value={value}
 							disabled={agentId === ""}
 							onChange={(event) => onModelChange(event.target.value)}
