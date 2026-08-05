@@ -319,52 +319,54 @@ BEGIN
         NEW.updated_at);
 END`,
 		}},
-		// 0048_review_auto_inject_toggle.sql. Recreate the trigger so the repaired
-		// column participates in the same session invalidation stream as normal
-		// migration histories.
-		{table: "sessions", column: "auto_inject_review_feedback",
-			addDDL: `ALTER TABLE sessions ADD COLUMN auto_inject_review_feedback BOOLEAN NOT NULL DEFAULT TRUE`,
-			postAdd: []string{
-				`DROP TRIGGER IF EXISTS sessions_cdc_update`,
-				`CREATE TRIGGER sessions_cdc_update
+	// 0048_review_auto_inject_toggle.sql. Recreate the trigger so the repaired
+	// column participates in the same session invalidation stream as normal
+	// migration histories.
+	{table: "sessions", column: "auto_inject_review_feedback",
+		addDDL:  `ALTER TABLE sessions ADD COLUMN auto_inject_review_feedback BOOLEAN NOT NULL DEFAULT TRUE`,
+		postAdd: sessionsCDCUpdateWithAutoInjectTrigger},
+	// A pre-renumbered chat-mode branch created conversations before the
+	// current_session_id controller binding existed, then later builds recorded
+	// 0052 as applied. Generated chat queries require the column on startup.
+	{table: "conversations", column: "current_session_id",
+		addDDL: `ALTER TABLE conversations ADD COLUMN current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
+		postAdd: []string{
+			`UPDATE conversations SET current_session_id = session_id WHERE current_session_id IS NULL AND session_id IS NOT NULL`,
+			`CREATE INDEX IF NOT EXISTS idx_conversations_current_session ON conversations(current_session_id)
+	    WHERE current_session_id IS NOT NULL`,
+		}},
+}
+
+var sessionsCDCUpdateWithAutoInjectTrigger = []string{
+	`DROP TRIGGER IF EXISTS sessions_cdc_update`,
+	`CREATE TRIGGER sessions_cdc_update
 	AFTER UPDATE ON sessions
 	WHEN OLD.activity_state <> NEW.activity_state
 	    OR OLD.is_terminated <> NEW.is_terminated
-	    OR (OLD.first_signal_at IS NULL AND NEW.first_signal_at IS NOT NULL)
-	    OR OLD.preview_url <> NEW.preview_url
-	    OR OLD.preview_revision <> NEW.preview_revision
-	    OR OLD.display_name <> NEW.display_name
-	    OR OLD.terminate_on_pr_merge <> NEW.terminate_on_pr_merge
-	    OR OLD.is_pinned <> NEW.is_pinned
-	    OR OLD.pinned_at <> NEW.pinned_at
-	    OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
-	    OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
-	    OR OLD.auto_inject_review_feedback <> NEW.auto_inject_review_feedback
-	BEGIN
-	    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
-	    VALUES (NEW.project_id, NEW.id, 'session_updated',
-	        json_object(
-	            'id', NEW.id,
-	            'activity', NEW.activity_state,
-	            'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END),
-	            'terminateOnPrMerge', json(CASE WHEN NEW.terminate_on_pr_merge THEN 'true' ELSE 'false' END),
-	            'previewUrl', NEW.preview_url,
-	            'previewRevision', NEW.preview_revision,
-	            'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
+    OR (OLD.first_signal_at IS NULL AND NEW.first_signal_at IS NOT NULL)
+    OR OLD.preview_url <> NEW.preview_url
+    OR OLD.preview_revision <> NEW.preview_revision
+    OR OLD.display_name <> NEW.display_name
+    OR OLD.terminate_on_pr_merge <> NEW.terminate_on_pr_merge
+    OR OLD.is_pinned <> NEW.is_pinned
+    OR OLD.pinned_at <> NEW.pinned_at
+    OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
+    OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
+    OR OLD.auto_inject_review_feedback <> NEW.auto_inject_review_feedback
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (NEW.project_id, NEW.id, 'session_updated',
+        json_object(
+            'id', NEW.id,
+            'activity', NEW.activity_state,
+            'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END),
+            'terminateOnPrMerge', json(CASE WHEN NEW.terminate_on_pr_merge THEN 'true' ELSE 'false' END),
+            'previewUrl', NEW.preview_url,
+            'previewRevision', NEW.preview_revision,
+            'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
 	        ),
 	        NEW.updated_at);
-	END`,
-			}},
-		// A pre-renumbered chat-mode branch created conversations before the
-		// current_session_id controller binding existed, then later builds recorded
-		// 0052 as applied. Generated chat queries require the column on startup.
-	{table: "conversations", column: "current_session_id",
-		addDDL: `ALTER TABLE conversations ADD COLUMN current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
-			postAdd: []string{
-				`UPDATE conversations SET current_session_id = session_id WHERE current_session_id IS NULL AND session_id IS NOT NULL`,
-				`CREATE INDEX IF NOT EXISTS idx_conversations_current_session ON conversations(current_session_id)
-	    WHERE current_session_id IS NOT NULL`,
-			}},
+		END`,
 }
 
 // reconcileSchema verifies that the columns in schemaRepairs physically exist
@@ -396,8 +398,31 @@ func reconcileSchema(db *sql.DB) error {
 			}
 		}
 	}
+	if err := replayFinalSessionCDCTrigger(db); err != nil {
+		return err
+	}
 	if err := reconcileHarnessConstraint(db); err != nil {
 		return err
+	}
+	return nil
+}
+
+func replayFinalSessionCDCTrigger(db *sql.DB) error {
+	for _, column := range []string{"is_pinned", "pinned_at", "auto_inject_review_feedback"} {
+		var count int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = ?`, column,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("schema verification: inspect sessions.%s before trigger replay: %w", column, err)
+		}
+		if count == 0 {
+			return nil
+		}
+	}
+	for _, stmt := range sessionsCDCUpdateWithAutoInjectTrigger {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("schema repair: replay final sessions_cdc_update trigger: %w", err)
+		}
 	}
 	return nil
 }

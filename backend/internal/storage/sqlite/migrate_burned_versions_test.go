@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pressly/goose/v3"
 
@@ -80,6 +81,68 @@ var shippedMigrations = map[int64]string{
 	77: "0077_cancelled_conversation_activities.sql",
 	78: "0078_session_interface_transitions.sql",
 	79: "0079_session_interface_transition_delivery.sql",
+}
+
+func TestSchemaRepairReplaysAutoInjectCDCTriggerAfterPinnedRepair(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 42)
+	if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN auto_inject_review_feedback BOOLEAN NOT NULL DEFAULT TRUE`); err != nil {
+		t.Fatalf("seed mixed schema auto-inject column: %v", err)
+	}
+
+	if err := reconcileSchema(db); err != nil {
+		t.Fatalf("reconcile mixed schema: %v", err)
+	}
+
+	ctx := t.Context()
+	store := sqlitestore.NewStore(db, db)
+	if _, err := db.Exec(`
+	INSERT INTO projects (
+		id, path, repo_origin_url, display_name, registered_at, config, kind
+	) VALUES (?, ?, ?, ?, ?, ?, ?)
+	`,
+		"mer",
+		`C:\src\mer`,
+		"https://example.com/mer.git",
+		"Mer",
+		"2026-07-23T00:00:00Z",
+		`{"worker":{"agent":"claude-code"}}`,
+		"single_repo",
+	); err != nil {
+		t.Fatalf("seed project: %v", err)
+	}
+	created, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID:                "mer",
+		Kind:                     domain.KindWorker,
+		Harness:                  domain.HarnessClaudeCode,
+		AutoInjectReviewFeedback: true,
+		Activity:                 domain.Activity{State: domain.ActivityActive},
+	})
+	if err != nil {
+		t.Fatalf("create session on repaired mixed schema: %v", err)
+	}
+
+	ok, err := store.SetSessionAutoInjectReviewFeedback(ctx, created.ID, false, time.Now())
+	if err != nil {
+		t.Fatalf("toggle auto-inject policy: %v", err)
+	}
+	if !ok {
+		t.Fatal("toggle auto-inject policy returned not found")
+	}
+	var updates int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM change_log WHERE session_id = ? AND event_type = 'session_updated'`, created.ID,
+	).Scan(&updates); err != nil {
+		t.Fatalf("count session_updated CDC: %v", err)
+	}
+	if updates != 1 {
+		t.Fatalf("session_updated events after auto-inject toggle = %d, want 1", updates)
+	}
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
