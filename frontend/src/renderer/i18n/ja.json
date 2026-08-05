@@ -514,6 +514,7 @@
 	"settings.project.workspaceRepos": "ワークスペースのリポジトリ",
 	"settings.project.worktrees": "ワークツリー",
 	"settings.reportProblem": "問題を報告",
+	"settings.colorTheme": "カラーテーマ",
 	"settings.theme": "テーマ",
 	"settings.theme.dark": "ダーク",
 	"settings.theme.light": "ライト",

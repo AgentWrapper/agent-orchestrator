@@ -523,6 +523,7 @@
 	"settings.project.workspaceRepos": "Dépôts de l'espace de travail",
 	"settings.project.worktrees": "Worktrees",
 	"settings.reportProblem": "Signaler un problème",
+	"settings.colorTheme": "Thème de couleur",
 	"settings.theme": "Thème",
 	"settings.theme.dark": "Sombre",
 	"settings.theme.light": "Clair",
