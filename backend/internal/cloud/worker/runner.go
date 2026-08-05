@@ -31,6 +31,8 @@ const (
 	terminalOutputMaxAttempts = 5
 	terminalOutputQueueWait   = time.Second
 	terminalOutputAttemptTTL  = 5 * time.Second
+	cloudGitAuthorName        = "AO Cloud Agent"
+	cloudGitAuthorEmail       = "noreply@aoagents.com"
 	// Match the local tmux runtime's paste-to-Enter delay. Claude's Ink TUI can
 	// render a pasted prompt before its internal composer state has caught up.
 	interactivePromptEnterDelay = 300 * time.Millisecond
@@ -622,6 +624,9 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 		} else if err := r.configureWorkerGitCredential(ctx, workerGitHelperPath); err != nil {
 			return err
 		}
+		if err := r.configureWorkerGitIdentity(ctx); err != nil {
+			return err
+		}
 		if err := r.checkoutBranch(ctx); err != nil {
 			return err
 		}
@@ -679,6 +684,9 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 			return err
 		}
 	} else if err := r.configureWorkerGitCredential(ctx, workerGitHelperPath); err != nil {
+		return err
+	}
+	if err := r.configureWorkerGitIdentity(ctx); err != nil {
 		return err
 	}
 	if err := r.checkoutBranch(ctx); err != nil {
@@ -814,6 +822,23 @@ func (r *Runner) configureLocalGitHubCredential(ctx context.Context, tokenPath s
 		if output, err := command.CombinedOutput(); err != nil {
 			return fmt.Errorf(
 				"configure local GitHub credential: %w: %s",
+				err,
+				strings.TrimSpace(string(output)),
+			)
+		}
+	}
+	return nil
+}
+
+func (r *Runner) configureWorkerGitIdentity(ctx context.Context) error {
+	for _, arguments := range [][]string{
+		{"config", "--local", "--replace-all", "user.name", cloudGitAuthorName},
+		{"config", "--local", "--replace-all", "user.email", cloudGitAuthorEmail},
+	} {
+		command := exec.CommandContext(ctx, "git", append([]string{"-C", r.workspaceDir}, arguments...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf(
+				"configure worker Git identity: %w: %s",
 				err,
 				strings.TrimSpace(string(output)),
 			)

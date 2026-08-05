@@ -684,6 +684,30 @@ func assertWorkerGitRepositoryConfig(t *testing.T, workspaceDir, helperPath, tok
 	if useHTTPPath != "true" {
 		t.Fatalf("credential.useHttpPath = %q, want true", useHTTPPath)
 	}
+	authorName := strings.TrimSpace(string(runGitTestCommand(
+		t,
+		workspaceDir,
+		nil,
+		"config",
+		"--local",
+		"--get",
+		"user.name",
+	)))
+	if authorName != cloudGitAuthorName {
+		t.Fatalf("user.name = %q, want %q", authorName, cloudGitAuthorName)
+	}
+	authorEmail := strings.TrimSpace(string(runGitTestCommand(
+		t,
+		workspaceDir,
+		nil,
+		"config",
+		"--local",
+		"--get",
+		"user.email",
+	)))
+	if authorEmail != cloudGitAuthorEmail {
+		t.Fatalf("user.email = %q, want %q", authorEmail, cloudGitAuthorEmail)
+	}
 	credential := string(runGitTestCommand(
 		t,
 		workspaceDir,
