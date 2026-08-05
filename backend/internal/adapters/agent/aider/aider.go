@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -54,6 +55,22 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports the per-project agent config keys Aider understands.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.ConfigSpec{}, err
+	}
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `aider --model`.",
+			},
+		},
+	}, nil
+}
+
 // GetLaunchCommand builds the argv to start an interactive Aider session:
 //
 //	aider [permission flags] --no-check-update --no-stream --no-pretty [--read <context file>]
@@ -75,6 +92,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	appendModelFlag(&cmd, cfg.Config)
 	cmd = append(cmd, "--no-check-update", "--no-stream", "--no-pretty")
 	if cfg.SystemPromptFile != "" {
 		cmd = append(cmd, "--read", cfg.SystemPromptFile)
@@ -92,6 +110,14 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchCo
 		return "", err
 	}
 	return ports.PromptDeliveryAfterStart, nil
+}
+
+// appendModelFlag forwards the configured role model to Aider. Without it a
+// configured worker silently falls back to Aider's own default model.
+func appendModelFlag(cmd *[]string, cfg ports.AgentConfig) {
+	if model := strings.TrimSpace(cfg.Model); model != "" {
+		*cmd = append(*cmd, "--model", model)
+	}
 }
 
 // normalizePermissionMode collapses an empty mode onto PermissionModeDefault so
