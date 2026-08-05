@@ -36,6 +36,23 @@ describe("TitlebarNav", () => {
 		expect(screen.getByRole("button", { name: "Go back" })).toHaveClass("disabled:opacity-55");
 	});
 
+	it("centers collapsed fullscreen navigation on the inset session topbar", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		const { container } = render(<TitlebarNav hasSessionTopbar isFullScreen />);
+
+		const nav = container.querySelector('[data-slot="titlebar-nav"]');
+		expect(nav).toHaveClass("top-1.5", "left-titlebar-cluster-left-fullscreen");
+		expect(nav).not.toHaveClass("top-0");
+	});
+
+	it("keeps expanded fullscreen navigation at the top of the sidebar chrome row", () => {
+		const { container } = render(<TitlebarNav hasSessionTopbar isFullScreen />);
+
+		const nav = container.querySelector('[data-slot="titlebar-nav"]');
+		expect(nav).toHaveClass("top-0");
+		expect(nav).not.toHaveClass("top-1.5");
+	});
+
 	it("retains the traffic-light geometry in a windowed macOS shell", () => {
 		const { container } = render(<TitlebarNav />);
 
