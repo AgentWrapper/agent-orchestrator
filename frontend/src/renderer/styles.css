@@ -592,6 +592,12 @@ button.settings-row-bar {
 	width: 100%;
 }
 
+@container (max-width: 20rem) {
+	.review-run-action-label {
+		display: none;
+	}
+}
+
 @utility settings-menu-surface {
 	display: flex;
 	width: max-content;

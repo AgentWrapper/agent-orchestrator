@@ -1272,6 +1272,11 @@ function ReviewPanel({
 		isTriggering ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
+	const primaryReviewActionLabel = reviewRunning
+		? isCancelling
+			? t("inspector.review.cancelling")
+			: t("inspector.review.cancel")
+		: runAction;
 
 	return (
 		<div className="mb-2.5 flex flex-col">
@@ -1307,31 +1312,31 @@ function ReviewPanel({
 						/>
 						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
 							<Button
+								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
 								disabled={reviewRunning ? isCancelling : runDisabled}
 								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
+								title={primaryReviewActionLabel}
 								type="button"
 								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 							>
 								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-								{reviewRunning
-									? isCancelling
-										? t("inspector.review.cancelling")
-										: t("inspector.review.cancel")
-									: runAction}
+								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
 							{reviewHasRun ? (
 								<Button
+									aria-label={t("inspector.openTerminal")}
 									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
 									disabled={!terminalEnabled}
 									onClick={openReviewerTerminal}
 									size="sm"
+									title={t("inspector.openTerminal")}
 									type="button"
 									variant="ghost"
 								>
 									<Terminal aria-hidden="true" />
-									{t("inspector.openTerminal")}
+									<span className="review-run-action-label">{t("inspector.openTerminal")}</span>
 								</Button>
 							) : null}
 						</div>
