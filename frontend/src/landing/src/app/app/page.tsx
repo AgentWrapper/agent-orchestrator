@@ -2216,40 +2216,21 @@ export default function CloudAppPage() {
                 </div>
               );
             })}
-            <div className="mt-4 border-t border-white/[0.06] pt-3">
-              <div
-                className={`mb-1 flex items-center ${
-                  sidebarCollapsed ? "justify-center" : "justify-between px-1.5"
-                }`}
-              >
-                {!sidebarCollapsed ? (
-                  <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em] text-[#646a73]">
-                    Standalone Agents
-                  </span>
-                ) : null}
-                <button
-                  type="button"
-                  className="grid size-5 place-items-center rounded-md text-[#646a73] transition-colors hover:bg-white/[0.04] hover:text-white"
-                  onClick={() => {
-                    if (!canEditOrg) {
-                      openProviderSettings();
-                      return;
-                    }
-                    if (!defaultAgent) {
-                      promptForAgentConnection();
-                      return;
-                    }
-                    setProjectFormInitialMode("standaloneAgent");
-                    setShowProjectForm(true);
-                  }}
-                  aria-label="New standalone agent"
-                  title={sidebarCollapsed ? "New standalone agent" : undefined}
+            {standaloneAgentProjectItems.length > 0 ? (
+              <div className="mt-4 border-t border-white/[0.06] pt-3">
+                <div
+                  className={`mb-1 flex items-center ${
+                    sidebarCollapsed ? "justify-center" : "justify-between px-1.5"
+                  }`}
                 >
-                  <Plus className="size-[15px]" />
-                </button>
-              </div>
-              <div className="space-y-1">
-                {standaloneAgentProjectItems.flatMap((project) =>
+                  {!sidebarCollapsed ? (
+                    <span className="font-mono text-[10.5px] font-medium uppercase tracking-[0.05em] text-[#646a73]">
+                      Standalone Agents
+                    </span>
+                  ) : null}
+                </div>
+                <div className="space-y-1">
+                  {standaloneAgentProjectItems.flatMap((project) =>
                   sessions
                     .filter(({ projectId }) => projectId === project.id)
                     .map((cloudSession) => (
@@ -2358,14 +2339,10 @@ export default function CloudAppPage() {
                         ) : null}
                       </div>
                     )),
-                )}
-                {standaloneAgentProjectItems.length === 0 && !sidebarCollapsed ? (
-                  <div className="px-2 py-1 text-[10px] text-white/25">
-                    No standalone agents
-                  </div>
-                ) : null}
+                  )}
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
           {sharedProjects.length > 0 ? (
             <div className="border-t border-white/[0.06] px-1.5 py-3">

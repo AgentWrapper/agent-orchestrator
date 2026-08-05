@@ -587,7 +587,7 @@ it("creates additional standalone agents from a standalone project", async () =>
   expect(screen.queryByRole("button", { name: "Orchestrator" })).not.toBeInTheDocument();
 });
 
-it("offers new standalone agent from the sidebar section", async () => {
+it("offers new standalone agent from the main create flow", async () => {
   const standaloneProject: CloudProject = {
     ...project,
     id: "standalone-project",
@@ -600,8 +600,11 @@ it("offers new standalone agent from the sidebar section", async () => {
 
   render(<CloudAppPage />);
 
+  expect(screen.queryByText("Standalone Agents")).not.toBeInTheDocument();
+
+  fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
   fireEvent.click(
-    await screen.findByRole("button", { name: "New standalone agent" }),
+    await screen.findByRole("button", { name: /Create a Standalone Agent/ }),
   );
 
   expect(
