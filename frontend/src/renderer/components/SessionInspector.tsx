@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
 	ArrowUpRight,
 	ChevronDown,
@@ -905,11 +907,9 @@ function ReviewsSection({
 	const githubReviews = prSummaries.filter(
 		(pr) =>
 			pr.state === "open" &&
-			((pr.review?.reviews?.length ?? 0) > 0 ||
-				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
+			(pr.review?.reviews?.length ?? 0) > 0,
 	);
-	const unresolvedTotal = prSummaries
-		.filter((pr) => pr.state === "open")
+	const unresolvedTotal = githubReviews
 		.reduce((total, pr) => total + (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0), 0);
 	const githubReviewCount = githubReviews.reduce((n, pr) => n + (pr.review?.reviews?.length ?? 0), 0);
 
@@ -939,16 +939,18 @@ function ReviewsSection({
 					}}
 					session={session}
 				/>
-			<Section
-				surface
-				title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
-			>
-				<GithubReviewPanel
-					isLoading={scmSummary.isLoading}
-					prs={githubReviews}
-					unresolvedTotal={unresolvedTotal}
-				/>
-			</Section>
+			{scmSummary.isLoading || githubReviewCount > 0 ? (
+				<Section
+					surface
+					title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
+				>
+					<GithubReviewPanel
+						isLoading={scmSummary.isLoading}
+						prs={githubReviews}
+						unresolvedTotal={unresolvedTotal}
+					/>
+				</Section>
+			) : null}
 		</div>
 	);
 }
@@ -1046,8 +1048,8 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 							batchId: `demo-batch-${session.id}`,
 							body:
 								pr.review === "approved"
-									? "Demo review approved. The implementation is ready for the README screenshot flow."
-									: "Demo review found polish feedback for the terminal presentation.",
+									? "Demo review **approved** the README screenshot flow.\n\n- Layout is stable\n- Browser preview opens cleanly"
+									: "Demo review found **polish feedback** for the terminal presentation.\n\n- Tighten toolbar density\n- Recheck contrast",
 							createdAt: reviewedAt,
 							githubReviewId: `${pr.number}01`,
 							harness: "codex",
@@ -1260,6 +1262,12 @@ function ReviewPanel({
 			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
 		}
 	}
+	const triggeredReviewStates = openReviewStates.filter(
+		(reviewState) =>
+			Boolean(reviewState.latestRun) ||
+			Boolean(reviewState.previousRun) ||
+			runs.some((run) => run.prUrl === reviewState.prUrl),
+	);
 	const runDisabled =
 		isTriggering ||
 		openReviewStates.length === 0 ||
@@ -1338,29 +1346,27 @@ function ReviewPanel({
 					</div>
 				) : null}
 			</Section>
-			<Section surface title={t("inspector.aoCodeReviews")}>
-				<div className="flex flex-col divide-y divide-border">
-					{openReviewStates.length === 0 ? (
-						<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
-				) : (
-					openReviewStates.map((reviewState) => (
-						<ReviewDisclosure
-							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
-							collapsible
-							defaultOpen={false}
+			{triggeredReviewStates.length > 0 ? (
+				<Section surface title={t("inspector.aoCodeReviews")}>
+					<div className="flex flex-col divide-y divide-border">
+						{triggeredReviewStates.map((reviewState) => (
+							<ReviewDisclosure
+								key={`${reviewState.prUrl}:${reviewState.targetSha}`}
+								collapsible
+								defaultOpen={false}
 								meta={aoReviewMeta(reviewState)}
 								verdict={reviewVerdict(reviewState)}
-							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
+								title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 							>
 								<ReviewerRuns
 									reviewState={reviewState}
 									runs={runsByPR.get(reviewState.prUrl) ?? []}
 								/>
 							</ReviewDisclosure>
-					))
-					)}
-				</div>
-			</Section>
+						))}
+					</div>
+				</Section>
+			) : null}
 		</div>
 	);
 }
@@ -1414,6 +1420,39 @@ function GithubReviewPanel({
 
 type GithubReviewEntry = NonNullable<NonNullable<SessionPRSummary["review"]>["reviews"]>[number];
 
+function ReviewMarkdownBody({ body, clamped, testId }: { body: string; clamped: boolean; testId: string }) {
+	return (
+		<div
+			className={cn(
+				"min-w-0 break-words text-2xs leading-relaxed text-muted-foreground",
+				"[&_a]:font-medium [&_a]:text-foreground [&_a]:underline [&_a]:underline-offset-2",
+				"[&_code]:rounded [&_code]:bg-muted/55 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-foreground",
+				"[&_li]:my-0.5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-1.5 [&_pre]:my-2",
+				"[&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-muted/35 [&_pre]:p-2",
+				"[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:text-foreground [&_table]:my-2 [&_table]:w-full",
+				"[&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1",
+				"[&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_th]:text-foreground",
+				"[&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+				clamped && "line-clamp-4",
+			)}
+			data-testid={testId}
+		>
+			<ReactMarkdown
+				components={{
+					a: ({ href, children }) => (
+						<a href={href} target="_blank" rel="noopener noreferrer">
+							{children}
+						</a>
+					),
+				}}
+				remarkPlugins={[remarkGfm]}
+			>
+				{body}
+			</ReactMarkdown>
+		</div>
+	);
+}
+
 function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 	const { t } = useTranslation();
 	const [expanded, setExpanded] = useState(false);
@@ -1431,15 +1470,7 @@ function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 				</span>
 			</div>
 			{body ? (
-				<p
-					className={cn(
-						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
-						clamped && !expanded && "line-clamp-4",
-					)}
-					data-testid="github-review-summary"
-				>
-					{body}
-				</p>
+				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="github-review-summary" />
 			) : null}
 			{clamped || entry.reviewUrl ? (
 				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
@@ -1562,15 +1593,7 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 				</span>
 			</span>
 			{body ? (
-				<p
-					className={cn(
-						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
-						clamped && !expanded && "line-clamp-4",
-					)}
-					data-testid="review-run-summary"
-				>
-					{body}
-				</p>
+				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="review-run-summary" />
 			) : null}
 			{/* One tertiary group, not two competing labels. Below the body's size so
 			    they read as controls rather than sitting in the reading flow, and
