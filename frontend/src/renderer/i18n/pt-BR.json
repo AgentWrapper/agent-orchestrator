@@ -478,6 +478,7 @@
 	"settings.project.agents": "Agentes",
 	"settings.project.agentsRequired": "Os agentes worker e orchestrator são obrigatórios.",
 	"settings.project.agentDefault": "(padrão do agente)",
+	"settings.project.autoReviewPullRequests": "Revisar pull requests automaticamente",
 	"settings.project.childReposEmpty": "Nenhum repositório filho registrado.",
 	"settings.project.default": "Padrão do projeto",
 	"settings.project.defaultBranch": "Branch padrão",

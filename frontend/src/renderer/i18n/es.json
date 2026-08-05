@@ -478,6 +478,7 @@
 	"settings.project.agents": "Agentes",
 	"settings.project.agentsRequired": "Se requieren agentes de trabajo y orquestador.",
 	"settings.project.agentDefault": "(predeterminado del agente)",
+	"settings.project.autoReviewPullRequests": "Revisar pull requests automáticamente",
 	"settings.project.childReposEmpty": "No hay repositorios secundarios registrados.",
 	"settings.project.default": "Predeterminado del proyecto",
 	"settings.project.defaultBranch": "Rama predeterminada",

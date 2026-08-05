@@ -469,6 +469,7 @@
 	"settings.project.agents": "エージェント",
 	"settings.project.agentsRequired": "ワーカーとオーケストレーターのエージェントは必須です。",
 	"settings.project.agentDefault": "（エージェントのデフォルト）",
+	"settings.project.autoReviewPullRequests": "Pull request を自動レビュー",
 	"settings.project.childReposEmpty": "子リポジトリは登録されていません。",
 	"settings.project.default": "プロジェクトのデフォルト",
 	"settings.project.defaultBranch": "デフォルトブランチ",

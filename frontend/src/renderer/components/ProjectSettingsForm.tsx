@@ -376,9 +376,9 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 										disabled={agentsQuery.isFetching && agentCatalog === undefined}
 									/>
 								</SettingsRow>
-								<SettingsRow icon={Shield} label="Auto-review pull requests">
+								<SettingsRow icon={Shield} label={t("settings.project.autoReviewPullRequests")}>
 									<Switch
-										aria-label="Auto-review pull requests"
+										aria-label={t("settings.project.autoReviewPullRequests")}
 										checked={form.autoReviewPullRequests}
 										onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReviewPullRequests: checked }))}
 									/>

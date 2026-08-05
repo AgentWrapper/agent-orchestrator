@@ -469,6 +469,7 @@
 	"settings.project.agents": "Agenten",
 	"settings.project.agentsRequired": "Worker- und Orchestrator-Agenten sind erforderlich.",
 	"settings.project.agentDefault": "(Agent-Standard)",
+	"settings.project.autoReviewPullRequests": "Pull Requests automatisch reviewen",
 	"settings.project.childReposEmpty": "Keine untergeordneten Repositories registriert.",
 	"settings.project.default": "Projektdefault",
 	"settings.project.defaultBranch": "Standard-Branch",
