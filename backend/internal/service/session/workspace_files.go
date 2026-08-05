@@ -305,7 +305,7 @@ func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, defa
 func workspaceBaseRefCandidates(defaultBranch string) []string {
 	defaultBranch = strings.TrimSpace(defaultBranch)
 	if defaultBranch == "" {
-		return nil
+		defaultBranch = domain.DefaultBranchName
 	}
 	seen := map[string]struct{}{}
 	var refs []string
