@@ -20,17 +20,18 @@ import (
 )
 
 type fakeNotificationService struct {
-	gotFilter    notificationsvc.ListFilter
-	gotMarkID    string
-	items        []notificationsvc.Notification
-	markItem     notificationsvc.Notification
-	markAllCount int64
-	err          error
+	gotFilter     notificationsvc.ListFilter
+	gotMarkID     string
+	gotMarkAllIDs []string
+	items         []notificationsvc.Notification
+	markItem      notificationsvc.Notification
+	markAllCount  int64
+	err           error
 }
 
 type fakeNotificationStream struct {
 	gotProject domain.ProjectID
-	ch         chan domain.NotificationRecord
+	ch         chan domain.NotificationEvent
 }
 
 func (f *fakeNotificationService) List(_ context.Context, filter notificationsvc.ListFilter) (notificationsvc.ListPage, error) {
@@ -43,14 +44,15 @@ func (f *fakeNotificationService) MarkRead(_ context.Context, id string) (notifi
 	return f.markItem, f.err == nil, f.err
 }
 
-func (f *fakeNotificationService) MarkAllRead(context.Context) (int64, error) {
+func (f *fakeNotificationService) MarkAllRead(_ context.Context, ids []string) (int64, error) {
+	f.gotMarkAllIDs = ids
 	return f.markAllCount, f.err
 }
 
-func (f *fakeNotificationStream) Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationRecord, func()) {
+func (f *fakeNotificationStream) Subscribe(projectID domain.ProjectID) (<-chan domain.NotificationEvent, func()) {
 	f.gotProject = projectID
 	if f.ch == nil {
-		f.ch = make(chan domain.NotificationRecord, 1)
+		f.ch = make(chan domain.NotificationEvent, 1)
 	}
 	return f.ch, func() {}
 }
@@ -211,6 +213,30 @@ func TestNotificationsAPI_MarkAllRead(t *testing.T) {
 	if len(resp.Notifications) != 0 || resp.UpdatedCount != 123 {
 		t.Fatalf("resp = %+v", resp)
 	}
+	if svc.gotMarkAllIDs != nil {
+		t.Fatalf("empty body must mean every unread row, got ids %v", svc.gotMarkAllIDs)
+	}
+}
+
+// A paginating client acknowledges exactly what it rendered, so notifications
+// past its last loaded page stay unread and remain reachable.
+func TestNotificationsAPI_MarkAllReadAcknowledgesOnlyGivenIDs(t *testing.T) {
+	svc := &fakeNotificationService{markAllCount: 2}
+	srv := newNotificationTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/notifications/read-all", `{"ids":["ntf_1","ntf_2"]}`)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", status, body)
+	}
+	if len(svc.gotMarkAllIDs) != 2 || svc.gotMarkAllIDs[0] != "ntf_1" || svc.gotMarkAllIDs[1] != "ntf_2" {
+		t.Fatalf("ids = %v", svc.gotMarkAllIDs)
+	}
+}
+
+func TestNotificationsAPI_MarkAllReadRejectsInvalidBody(t *testing.T) {
+	srv := newNotificationTestServer(t, &fakeNotificationService{})
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/notifications/read-all", "{not json")
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 }
 
 func TestNotificationsAPI_WithoutServiceIs501(t *testing.T) {
@@ -221,7 +247,7 @@ func TestNotificationsAPI_WithoutServiceIs501(t *testing.T) {
 }
 
 func TestNotificationsAPI_StreamCreatedNotifications(t *testing.T) {
-	stream := &fakeNotificationStream{ch: make(chan domain.NotificationRecord, 1)}
+	stream := &fakeNotificationStream{ch: make(chan domain.NotificationEvent, 1)}
 	srv := newNotificationStreamTestServer(t, &fakeNotificationService{}, stream)
 
 	resp, err := srv.Client().Get(srv.URL + "/api/v1/notifications/stream?projectId=mer")
@@ -239,17 +265,33 @@ func TestNotificationsAPI_StreamCreatedNotifications(t *testing.T) {
 		t.Fatalf("project filter = %q", stream.gotProject)
 	}
 
-	stream.ch <- domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs input", Status: domain.NotificationUnread, CreatedAt: time.Now()}
+	rec := domain.NotificationRecord{ID: "ntf_1", SessionID: "mer-1", ProjectID: "mer", Type: domain.NotificationNeedsInput, Title: "needs input", Status: domain.NotificationUnread, CreatedAt: time.Now()}
+	stream.ch <- domain.NotificationEvent{Kind: domain.NotificationCreated, Record: rec}
 	reader := bufio.NewReader(resp.Body)
-	eventLine, err := reader.ReadString('\n')
-	if err != nil {
+	readSSE := func() (string, string) {
+		t.Helper()
+		eventLine, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		dataLine, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(eventLine), dataLine
+	}
+	if eventLine, dataLine := readSSE(); eventLine != "event: notification_created" || !strings.Contains(dataLine, `"id":"ntf_1"`) {
+		t.Fatalf("eventLine=%q dataLine=%q", eventLine, dataLine)
+	}
+
+	// A resolved event lets an open panel drop the row without a refetch.
+	if _, err := reader.ReadString('\n'); err != nil { // blank separator line
 		t.Fatal(err)
 	}
-	dataLine, err := reader.ReadString('\n')
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.TrimSpace(eventLine) != "event: notification_created" || !strings.Contains(dataLine, `"id":"ntf_1"`) {
+	resolved := rec
+	resolved.ResolvedAt = time.Now()
+	stream.ch <- domain.NotificationEvent{Kind: domain.NotificationResolved, Record: resolved}
+	if eventLine, dataLine := readSSE(); eventLine != "event: notification_resolved" || !strings.Contains(dataLine, `"resolvedAt"`) {
 		t.Fatalf("eventLine=%q dataLine=%q", eventLine, dataLine)
 	}
 }

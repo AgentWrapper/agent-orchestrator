@@ -71,6 +71,80 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// ModelSelectionMode tells clients how to render an agent's model control.
+type ModelSelectionMode string
+
+const (
+	// ModelSelectionCatalog renders a searchable list with a custom-id escape hatch.
+	ModelSelectionCatalog ModelSelectionMode = "catalog"
+	// ModelSelectionText renders a free-form model id input.
+	ModelSelectionText ModelSelectionMode = "text"
+	// ModelSelectionModeList renders an agent-owned mode list rather than model ids.
+	ModelSelectionModeList ModelSelectionMode = "mode"
+)
+
+// AgentModelInfo is one model or mode that an adapter reports as selectable.
+type AgentModelInfo struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Provider  string `json:"provider,omitempty"`
+	IsDefault bool   `json:"isDefault,omitempty"`
+}
+
+// AgentModelCatalog is AO's normalized model-picker response.
+type AgentModelCatalog struct {
+	AgentID       string             `json:"agentId"`
+	SelectionMode ModelSelectionMode `json:"selectionMode" enum:"catalog,text,mode"`
+	Models        []AgentModelInfo   `json:"models"`
+	AllowCustom   bool               `json:"allowCustom"`
+	Source        string             `json:"source"`
+	// BinaryVersion is the legacy wire name for AO's non-sensitive executable
+	// and configuration metadata fingerprint.
+	BinaryVersion string    `json:"binaryVersion,omitempty"`
+	FetchedAt     time.Time `json:"fetchedAt"`
+	ValidatedAt   time.Time `json:"validatedAt,omitempty"`
+	// RefreshRecommended tells cache-first clients to revalidate in the
+	// background while continuing to display the cached catalog.
+	RefreshRecommended bool   `json:"refreshRecommended,omitempty"`
+	Stale              bool   `json:"stale"`
+	Warning            string `json:"warning,omitempty"`
+}
+
+// CachedAgentModelCatalog is the persistence record used by the model-catalog
+// service. CatalogJSON contains a serialized AgentModelCatalog.
+type CachedAgentModelCatalog struct {
+	AgentID       string
+	ProjectID     string
+	BinaryVersion string // Legacy field name for the discovery-input metadata fingerprint.
+	CatalogJSON   string
+	Source        string
+	FetchedAt     time.Time
+}
+
+// AgentModelCatalogCache persists normalized model catalogs across daemon
+// restarts. Implementations must treat agent+project as the logical key.
+type AgentModelCatalogCache interface {
+	GetAgentModelCatalog(ctx context.Context, agentID, projectID string) (CachedAgentModelCatalog, bool, error)
+	UpsertAgentModelCatalog(ctx context.Context, record CachedAgentModelCatalog) error
+}
+
+// AgentModelDiscoveryRequest describes one bounded, adapter-defined model
+// discovery attempt. Args remain owned by the concrete discovery adapter.
+type AgentModelDiscoveryRequest struct {
+	AgentID    string
+	Binary     string
+	WorkingDir string
+	Env        map[string]string
+}
+
+// AgentModelDiscoverer isolates CLI execution and executable fingerprinting
+// from the core agent service.
+type AgentModelDiscoverer interface {
+	Discover(ctx context.Context, request AgentModelDiscoveryRequest) (AgentModelCatalog, error)
+	BinaryVersion(ctx context.Context, binary string) string
+	Manual(agentID string) AgentModelCatalog
+}
+
 // AgentExitDetectionMode describes how AO learns that an agent CLI process
 // ended while its terminal runtime remains alive.
 type AgentExitDetectionMode string

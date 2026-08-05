@@ -28,7 +28,7 @@ function DialogOverlay({ className, ...props }: React.ComponentProps<typeof Dial
 		<DialogPrimitive.Overlay
 			data-slot="dialog-overlay"
 			className={cn(
-				"dialog-overlay data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0",
+				"dialog-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out",
 				className,
 			)}
 			{...props}
@@ -51,7 +51,7 @@ function DialogContent({
 			<DialogPrimitive.Content
 				data-slot="dialog-content"
 				className={cn(
-					"fixed left-[50%] top-[50%] z-50 w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex flex-col gap-4 bg-background shadow-lg transition ease-in-out data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] border p-4 sm:rounded-lg",
+					"fixed left-[50%] top-[50%] z-50 w-full max-w-lg translate-x-[-50%] translate-y-[-50%] flex flex-col gap-4 bg-background shadow-lg data-[state=open]:animate-modal-in data-[state=closed]:animate-modal-out motion-reduce:animate-none border p-4 sm:rounded-lg",
 					className,
 				)}
 				{...props}
@@ -114,12 +114,13 @@ export {
 // share the same frame, spacing, and typography. Every value resolves to a
 // design token; no raw pixel values here.
 export const settingsDialogContentClass =
-	"z-overlay flex max-h-[min(var(--size-settings-dialog-max-h),calc(100svh-var(--space-8)))] w-[min(var(--size-settings-dialog),calc(100vw-var(--space-8)))] max-w-none flex-col gap-0 overflow-hidden rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-settings-dialog p-0 text-settings-label shadow-[var(--shadow-settings-dialog)]";
+	"z-overlay flex max-h-[min(var(--size-settings-dialog-max-h),calc(100svh-var(--space-8)))] w-[min(var(--size-settings-dialog),calc(100vw-var(--space-8)))] max-w-none flex-col gap-0 overflow-hidden rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-popover p-0 text-settings-label shadow-[var(--shadow-settings-dialog)]";
 
 export const settingsDialogHeaderClass =
-	"flex shrink-0 flex-col gap-1 border-b border-(--color-border-settings-dialog-header) px-6 pt-5 pb-4";
+	"flex shrink-0 flex-col gap-1 border-b border-(--color-border-settings-dialog-header) p-(--size-modal-padding)";
 
-export const settingsDialogBodyClass = "flex min-h-0 flex-col gap-4 overflow-y-auto px-6 pt-4 pb-5";
+export const settingsDialogBodyClass =
+	"flex min-h-0 flex-col gap-4 overflow-y-auto p-(--size-modal-padding)";
 
 export const settingsDialogFooterClass =
-	"flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border-settings-dialog-header)] px-6 py-3.5";
+	"flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--color-border-settings-dialog-header)] p-(--size-modal-padding)";

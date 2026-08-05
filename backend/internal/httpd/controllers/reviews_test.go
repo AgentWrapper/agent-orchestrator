@@ -19,15 +19,22 @@ import (
 )
 
 type fakeReviewService struct {
-	triggerErr error
-	cancelErr  error
-	trigger    reviewcore.TriggerResult
-	cancel     reviewcore.CancelResult
-	list       reviewcore.SessionReviews
-	submitted  []reviewsvc.SubmittedReview
+	// triggeredHarness records the override the controller forwarded.
+	triggeredHarness domain.ReviewerHarness
+	triggerErr       error
+	cancelErr        error
+	trigger          reviewcore.TriggerResult
+	cancel           reviewcore.CancelResult
+	list             reviewcore.SessionReviews
+	submitted        []reviewsvc.SubmittedReview
 }
 
-func (f *fakeReviewService) Trigger(context.Context, domain.SessionID) (reviewcore.TriggerResult, error) {
+func (f *fakeReviewService) Trigger(
+	_ context.Context,
+	_ domain.SessionID,
+	harness domain.ReviewerHarness,
+) (reviewcore.TriggerResult, error) {
+	f.triggeredHarness = harness
 	if f.triggerErr != nil {
 		return reviewcore.TriggerResult{}, f.triggerErr
 	}
