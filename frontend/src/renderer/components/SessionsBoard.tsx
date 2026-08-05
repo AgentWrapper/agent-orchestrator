@@ -1083,7 +1083,7 @@ function groupPRsByLifecycle(prs: SessionPRSummary[]): BoardPRGroup[] {
 
 function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
 	if (pr.state === "draft") return { label: "draft", className: "text-passive" };
-	if (pr.state === "merged") return { label: "merged", className: "text-accent" };
+	if (pr.state === "merged") return { label: "merged", className: "text-status-merged" };
 	if (pr.state === "closed") return { label: "closed", className: "text-error" };
 	return { label: "open", className: "text-success" };
 }
