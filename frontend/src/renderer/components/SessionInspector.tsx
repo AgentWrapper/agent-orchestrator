@@ -514,12 +514,14 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 					<span>PR #{pr.number}</span>
 					<ArrowUpRight aria-hidden="true" className="size-icon-2xs shrink-0" strokeWidth={2} />
 				</a>
-				<Badge
-					variant="outline"
-					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
-				>
-					{t(prStateLabelKeys[pr.state])}
-				</Badge>
+				{pr.state !== "merged" ? (
+					<Badge
+						variant="outline"
+						className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
+					>
+						{t(prStateLabelKeys[pr.state])}
+					</Badge>
+				) : null}
 			</div>
 			<PRSummaryMeta className="mt-1.5" pr={pr} />
 			<PRCardStatusSummary className="mt-2" pr={pr} />

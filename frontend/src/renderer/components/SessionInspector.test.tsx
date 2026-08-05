@@ -299,6 +299,14 @@ describe("SessionInspector PR section", () => {
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
 	});
 
+	it("omits the redundant state chip after a pull request merges", () => {
+		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+
+		const card = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
+		expect(within(card).queryByText("merged", { exact: true })).not.toBeInTheDocument();
+		expect(within(card).getByText("Pull request merged")).toBeInTheDocument();
+	});
+
 	it("shows the empty state when there are no PRs", () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 		expect(screen.getByText("No pull request opened yet.")).toBeInTheDocument();
