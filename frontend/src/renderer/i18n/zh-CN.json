@@ -914,5 +914,7 @@
 	"settings.dev.activitySpreadLabel": "活动分布（分钟）",
 	"settings.dev.activitySpreadAria": "活动分布（分钟）",
 	"settings.dev.resetDefaultsLabel": "重置默认值",
-	"settings.dev.resetReload": "重置并重新加载"
+	"settings.dev.resetReload": "重置并重新加载",
+	"settings.dev.decreaseAria": "减少{{label}}",
+	"settings.dev.increaseAria": "增加{{label}}"
 }

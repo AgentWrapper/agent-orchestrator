@@ -63,6 +63,7 @@ type NumberStepperProps = {
 };
 
 function NumberStepper({ "aria-label": ariaLabel, max, min, onChange, step = 1, value }: NumberStepperProps) {
+	const { t } = useTranslation();
 	const clamp = (next: number) => Math.max(min, Math.min(max, next));
 	const [draft, setDraft] = useState(String(value));
 
@@ -80,7 +81,7 @@ function NumberStepper({ "aria-label": ariaLabel, max, min, onChange, step = 1, 
 	return (
 		<div className="flex items-center gap-1.5">
 			<StepperButton
-				aria-label={`Decrease ${ariaLabel}`}
+				aria-label={t("settings.dev.decreaseAria", { label: ariaLabel })}
 				disabled={value <= min}
 				onClick={() => onChange(clamp(value - step))}
 			>
@@ -113,7 +114,7 @@ function NumberStepper({ "aria-label": ariaLabel, max, min, onChange, step = 1, 
 				)}
 			/>
 			<StepperButton
-				aria-label={`Increase ${ariaLabel}`}
+				aria-label={t("settings.dev.increaseAria", { label: ariaLabel })}
 				disabled={value >= max}
 				onClick={() => onChange(clamp(value + step))}
 			>
