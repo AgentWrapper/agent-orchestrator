@@ -29,6 +29,11 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
+import {
+	decideRelocation,
+	inspectInstalledBundle,
+	installedBundlePath,
+} from "./main/relocation";
 import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -1638,12 +1643,32 @@ app.whenReady().then(async () => {
 	}
 
 	if (process.platform === "darwin" && app.isPackaged) {
-		try {
-			// On success this restarts the app from /Applications, so code past
-			// here only runs when no move happened (already there, or declined).
-			app.moveToApplicationsFolder();
-		} catch (err) {
-			console.error("relocation to Applications failed:", err);
+		const bundlePath = resolveBundlePath();
+		const action = decideRelocation({
+			inApplicationsFolder: app.isInApplicationsFolder(),
+			runningVersion: app.getVersion(),
+			...inspectInstalledBundle(bundlePath),
+		});
+		if (action === "handoff") {
+			// A stale copy (the original download, a mounted dmg) launching while a
+			// newer build sits in /Applications. Relocating here would trash that
+			// build and pin the user to this bundle's version forever, so open the
+			// install and quit instead. Return before the marker write below: the
+			// instance we just launched records the path and version.
+			const installed = installedBundlePath(bundlePath);
+			console.info(`newer install at ${installed}; handing off and quitting`);
+			await shell.openPath(installed);
+			app.quit();
+			return;
+		}
+		if (action === "relocate") {
+			try {
+				// On success this restarts the app from /Applications, so code past
+				// here only runs when no move happened (already there, or declined).
+				app.moveToApplicationsFolder();
+			} catch (err) {
+				console.error("relocation to Applications failed:", err);
+			}
 		}
 	}
 
