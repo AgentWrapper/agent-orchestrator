@@ -2,18 +2,25 @@ package pr
 
 import "context"
 
-// ActionManager is the controller-facing contract for PR action routes.
-// Production currently leaves this dependency nil, so the HTTP surface returns
-// NOT_IMPLEMENTED instead of pretending to merge or resolve comments.
+// ActionManager is the controller-facing contract for guarded PR mutations.
 type ActionManager interface {
-	Merge(ctx context.Context, prID string) (MergeResult, error)
+	Merge(ctx context.Context, request MergeRequest) (MergeResult, error)
 	ResolveComments(ctx context.Context, prID string, commentIDs []string) (ResolveResult, error)
+}
+
+// MergeRequest identifies the tracked PR and pins the mutation to the exact
+// head the user saw when they clicked Merge.
+type MergeRequest struct {
+	PRID            string
+	PRURL           string
+	ExpectedHeadSHA string
 }
 
 // MergeResult is the successful outcome of a PR merge.
 type MergeResult struct {
-	PRNumber int
-	Method   string
+	PRNumber       int
+	Method         string
+	MergeCommitSHA string
 }
 
 // ResolveResult is the successful outcome of a resolve-comments operation.

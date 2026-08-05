@@ -108,53 +108,73 @@ function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
 	);
 }
 
-export function PRCardStatusSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+export function PRCardStatusSummary({
+	action,
+	className,
+	pr,
+}: {
+	action?: ReactNode;
+	className?: string;
+	pr: SessionPRSummary;
+}) {
 	const presentation = prCardPresentation(pr);
 	return (
 		<div className={cn("border-t border-border pt-2", className)}>
-			<div className="flex min-w-0 items-start gap-2">
-				<span
-					aria-hidden="true"
-					className={cn(
-						"mt-1.5 size-dot-sm shrink-0 rounded-full bg-current",
-						toneClass[presentation.primary.tone],
-						presentation.primary.breathe && "animate-status-pulse",
-					)}
-				/>
-				<div className="min-w-0 flex-1">
-					<div className={cn("text-xs font-semibold leading-4", toneClass[presentation.primary.tone])}>
-						<PRCardStatusLink status={presentation.primary} />
+			<div className="flex min-w-0 items-center gap-3">
+				<div className="flex min-w-0 flex-1 flex-col gap-1.5">
+					<div className="flex min-w-0 items-start gap-2">
+						<span
+							aria-hidden="true"
+							className={cn(
+								"mt-1.5 size-dot-sm shrink-0 rounded-full bg-current",
+								toneClass[presentation.primary.tone],
+								presentation.primary.breathe && "animate-status-pulse",
+							)}
+						/>
+						<div className="min-w-0 flex-1">
+							<div className={cn("text-xs font-semibold leading-4", toneClass[presentation.primary.tone])}>
+								<PRCardStatusLink status={presentation.primary} />
+							</div>
+							{presentation.primary.detail ? (
+								<div className="mt-0.5 text-2xs leading-4 text-muted-foreground">
+									{presentation.primary.detail}
+								</div>
+							) : null}
+							{presentation.primary.links.length > 0 ? (
+								<div className="mt-1 flex min-w-0 flex-wrap gap-x-1.5 gap-y-1 font-mono text-2xs">
+									{presentation.primary.links.slice(0, 3).map((link, index) => (
+										<SummaryLink
+											className={toneClass[presentation.primary.tone]}
+											interactive
+											key={`${presentation.primary.key}-${index}-${link.label}`}
+											link={link}
+										/>
+									))}
+								</div>
+							) : null}
+						</div>
 					</div>
-					{presentation.primary.detail ? (
-						<div className="mt-0.5 text-2xs leading-4 text-muted-foreground">{presentation.primary.detail}</div>
-					) : null}
-					{presentation.primary.links.length > 0 ? (
-						<div className="mt-1 flex min-w-0 flex-wrap gap-x-1.5 gap-y-1 font-mono text-2xs">
-							{presentation.primary.links.slice(0, 3).map((link, index) => (
-								<SummaryLink
-									className={toneClass[presentation.primary.tone]}
-									interactive
-									key={`${presentation.primary.key}-${index}-${link.label}`}
-									link={link}
-								/>
-							))}
+					{presentation.supporting.length > 0 ? (
+						<div className="min-w-0 pl-4">
+							<div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 font-mono text-2xs">
+								{presentation.supporting.map((status) => (
+									<span
+										className={cn("inline-flex items-center gap-1", toneClass[status.tone])}
+										key={status.key}
+									>
+										<span
+											aria-hidden="true"
+											className={cn("size-1 rounded-full bg-current", status.breathe && "animate-status-pulse")}
+										/>
+										<PRCardStatusLink status={status} />
+									</span>
+								))}
+							</div>
 						</div>
 					) : null}
 				</div>
+				{action ? <div className="shrink-0 self-center">{action}</div> : null}
 			</div>
-			{presentation.supporting.length > 0 ? (
-				<div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 pl-4 font-mono text-2xs">
-					{presentation.supporting.map((status) => (
-						<span className={cn("inline-flex items-center gap-1", toneClass[status.tone])} key={status.key}>
-							<span
-								aria-hidden="true"
-								className={cn("size-1 rounded-full bg-current", status.breathe && "animate-status-pulse")}
-							/>
-							<PRCardStatusLink status={status} />
-						</span>
-					))}
-				</div>
-			) : null}
 		</div>
 	);
 }

@@ -1140,6 +1140,10 @@ export interface components {
              */
             status: "read";
         };
+        MergePRRequest: {
+            expectedHeadSha: string;
+            prUrl: string;
+        };
         MergePRResponse: {
             method: string;
             ok: boolean;
@@ -2954,7 +2958,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MergePRRequest"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -2963,6 +2971,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MergePRResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Not Found */
