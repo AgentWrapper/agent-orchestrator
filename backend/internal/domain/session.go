@@ -48,13 +48,16 @@ type SessionMetadata struct {
 // facts: identity, agent harness, activity_state, is_terminated, and operational
 // metadata. The user-facing Status is derived from these facts plus PR facts.
 type SessionRecord struct {
-	ID          SessionID    `json:"id"`
-	ProjectID   ProjectID    `json:"projectId"`
-	IssueID     IssueID      `json:"issueId,omitempty"`
-	Kind        SessionKind  `json:"kind"`
-	Harness     AgentHarness `json:"harness,omitempty"`
-	DisplayName string       `json:"displayName,omitempty"`
-	Activity    Activity     `json:"activity"`
+	ID        SessionID    `json:"id"`
+	ProjectID ProjectID    `json:"projectId"`
+	IssueID   IssueID      `json:"issueId,omitempty"`
+	Kind      SessionKind  `json:"kind"`
+	Harness   AgentHarness `json:"harness,omitempty"`
+	// ReviewerHarness is this session's preferred reviewer. Empty delegates to
+	// the project configuration.
+	ReviewerHarness ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,opencode"`
+	DisplayName     string          `json:"displayName,omitempty"`
+	Activity        Activity        `json:"activity"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus
@@ -71,9 +74,11 @@ type SessionRecord struct {
 	// durable cleanup facts with the generation they were written for so a
 	// finalize started under an earlier terminal episode cannot satisfy a later
 	// one. Internal fact, not part of the API read model.
-	CleanupGeneration int64     `json:"-"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	CleanupGeneration int64      `json:"-"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
+	IsPinned          bool       `json:"isPinned"`
+	PinnedAt          *time.Time `json:"pinnedAt,omitempty"`
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord

@@ -108,6 +108,10 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "AgentHarness"
+          - column: "sessions.reviewer_harness"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "ReviewerHarness"
           - column: "sessions.activity_state"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
