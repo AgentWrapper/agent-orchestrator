@@ -126,7 +126,7 @@ export function PRCardStatusSummary({
 						<span
 							aria-hidden="true"
 							className={cn(
-								"mt-1.5 size-dot-sm shrink-0 rounded-full bg-current",
+								"mt-1 size-dot-sm shrink-0 rounded-full bg-current",
 								toneClass[presentation.primary.tone],
 								presentation.primary.breathe && "animate-status-pulse",
 							)}

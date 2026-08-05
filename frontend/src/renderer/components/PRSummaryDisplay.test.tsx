@@ -69,6 +69,14 @@ describe("PRSummaryParts", () => {
 		expect(container.querySelector(".animate-status-pulse")).toBeInTheDocument();
 	});
 
+	it("optically centers the primary status marker with its text line", () => {
+		const { container } = render(<PRCardStatusSummary pr={summary()} />);
+
+		const marker = container.querySelector(".size-dot-sm");
+		expect(marker).toHaveClass("mt-1");
+		expect(marker).not.toHaveClass("mt-1.5");
+	});
+
 	it("centers a supplied primary action beside the compact status stack", () => {
 		const { container } = render(<PRCardStatusSummary action={<button type="button">Merge</button>} pr={summary()} />);
 
