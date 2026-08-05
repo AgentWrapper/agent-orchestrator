@@ -258,15 +258,16 @@ export function Sidebar({
 		>
 			<SidebarHeader
 				className={cn(
-					"gap-0 p-0 px-1 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
+					"gap-0 p-0 px-2 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
 					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
 				)}
 			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
 				<div
+					data-slot="sidebar-brand-row"
 					className={cn(
-						"flex shrink-0 items-center gap-1.5 px-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
+						"flex shrink-0 items-center gap-2 px-2.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
 						commandPaletteEnabled ? "pb-2" : "pb-3",
 					)}
 				>
@@ -284,7 +285,7 @@ export function Sidebar({
 								onClick={selection.goHome}
 								type="button"
 							>
-								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 -translate-y-[3px] rounded-md object-cover" />
+								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 rounded-md object-cover" />
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
@@ -1047,9 +1048,11 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
 				)}
 			>
-				<Search strokeWidth={1.75} aria-hidden="true" />
+				<span className="grid size-5.5 shrink-0 place-items-center" data-slot="sidebar-search-icon">
+					<Search strokeWidth={1.75} aria-hidden="true" />
+				</span>
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
-						{t("shell.search")}
+					{t("shell.search")}
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
