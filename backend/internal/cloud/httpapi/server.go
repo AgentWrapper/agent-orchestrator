@@ -1640,9 +1640,6 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Resource != defaultResource {
 		message := "Cloud V1 requires 4 CPU, 8 GiB memory, and 10 GiB disk."
-		if cloudProjectStandalone(project) {
-			message = "Standalone projects require 8 CPU, 16 GiB memory, and 20 GiB disk."
-		}
 		writeError(
 			w,
 			r,
