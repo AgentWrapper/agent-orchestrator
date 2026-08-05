@@ -177,6 +177,17 @@ func (f *fakeStore) SetSessionTerminateOnPRMerge(_ context.Context, id domain.Se
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionAutoInjectReviewFeedback(_ context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.AutoInjectReviewFeedback = autoInject
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
@@ -352,6 +363,25 @@ func TestSessionSetTerminateOnPRMergePersistsPolicy(t *testing.T) {
 
 func TestSessionSetTerminateOnPRMergeUnknownSession(t *testing.T) {
 	if _, err := (&Service{store: newFakeStore()}).SetTerminateOnPRMerge(context.Background(), "ghost-1", true); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
+func TestSessionSetAutoInjectReviewFeedbackPersistsPolicy(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, AutoInjectReviewFeedback: true}
+
+	sess, err := (&Service{store: st}).SetAutoInjectReviewFeedback(context.Background(), "mer-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.AutoInjectReviewFeedback || st.sessions["mer-1"].AutoInjectReviewFeedback {
+		t.Fatalf("auto-inject review feedback policy was not persisted: session=%+v stored=%+v", sess, st.sessions["mer-1"])
+	}
+}
+
+func TestSessionSetAutoInjectReviewFeedbackUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).SetAutoInjectReviewFeedback(context.Background(), "ghost-1", false); err == nil {
 		t.Fatal("expected missing session error")
 	}
 }

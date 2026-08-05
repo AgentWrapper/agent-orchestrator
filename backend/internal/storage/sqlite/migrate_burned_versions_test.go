@@ -63,6 +63,7 @@ var shippedMigrations = map[int64]string{
 	43: "0043_add_session_pinned.sql",
 	44: "0044_backfill_review_run_batch_id.sql",
 	47: "0047_agent_model_catalog.sql",
+	48: "0048_review_auto_inject_toggle.sql",
 	52: "0052_model_usage.sql",
 	53: "0053_allow_muse_harness.sql",
 	66: "0066_chat_session_mode.sql",

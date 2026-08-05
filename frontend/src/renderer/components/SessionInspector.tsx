@@ -1143,6 +1143,17 @@ function ReviewsSection({
 			return data ?? ({ reviewerHandleId: "", reviews: [], runs: [] } satisfies ReviewsResponse);
 		},
 	});
+	const policy = useMutation({
+
+		mutationFn: async (autoInjectReviewFeedback: boolean) => {
+
+				const { error, response } = await apiClient.PATCH("/api/v1/sessions/{sessionId}/auto-inject-review-feedback", {
+				params: { path: { sessionId: session.id } },
+				body: { autoInjectReviewFeedback },
+			});
+			if (error) throw new Error(apiErrorMessage(error, `Failed to update auto-inject review feedback policy (${response.status})`));
+		}
+	})
 	const agentsQuery = useQuery(agentsQueryOptions);
 	const projectConfigQuery = useQuery({
 		queryKey: ["project-config", session.workspaceId],

@@ -148,6 +148,7 @@ export type WorkspaceSession = {
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
+	autoInjectReviewFeedback?: boolean;
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */
 	updatedAt: string;

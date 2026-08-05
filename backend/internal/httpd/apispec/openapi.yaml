@@ -4311,6 +4311,8 @@ components:
       properties:
         activity:
           $ref: '#/components/schemas/DomainActivity'
+        autoInjectReviewFeedback:
+          type: boolean
         branch:
           type: string
         createdAt:
@@ -4400,6 +4402,7 @@ components:
       - activity
       - isTerminated
       - terminateOnPrMerge
+      - autoInjectReviewFeedback
       - createdAt
       - updatedAt
       - isPinned

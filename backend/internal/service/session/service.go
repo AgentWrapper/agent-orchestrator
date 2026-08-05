@@ -24,6 +24,7 @@ type Store interface {
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
 	SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error)
 	SetSessionPinned(ctx context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error)
+	SetSessionAutoInjectReviewFeedback(ctx context.Context, id domain.SessionID, autoInject bool, updatedAt time.Time) (bool, error)
 	SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
@@ -657,6 +658,19 @@ func (s *Service) Unpin(ctx context.Context, id domain.SessionID) (domain.Sessio
 	updated, err := s.store.SetSessionPinned(ctx, id, false, nil, now)
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("unpin %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// SetAutoInjectReviewFeedback persists whether review feedback from AO's
+// reviewer and the SCM observer should be sent to the worker session.
+func (s *Service) SetAutoInjectReviewFeedback(ctx context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
+	updated, err := s.store.SetSessionAutoInjectReviewFeedback(ctx, id, autoInject, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set auto-inject-review-feedback %s: %w", id, err)
 	}
 	if !updated {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")

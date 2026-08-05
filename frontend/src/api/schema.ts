@@ -1433,6 +1433,7 @@ export interface components {
         };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
+            autoInjectReviewFeedback: boolean;
             branch?: string;
             /** Format: date-time */
             createdAt: string;

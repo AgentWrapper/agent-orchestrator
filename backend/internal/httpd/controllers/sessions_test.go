@@ -107,7 +107,7 @@ func (f *fakeManagedPreviewServer) Status(sessionID domain.SessionID) previewser
 
 func newFakeSessionService() *fakeSessionService {
 	now := time.Now().UTC()
-	s := domain.Session{SessionRecord: domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle, TerminalHandleID: "ao-1/terminal_0"}
+	s := domain.Session{SessionRecord: domain.SessionRecord{ID: "ao-1", ProjectID: "ao", Kind: domain.KindWorker, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, AutoInjectReviewFeedback: true, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle, TerminalHandleID: "ao-1/terminal_0"}
 	return &fakeSessionService{sessions: map[domain.SessionID]domain.Session{s.ID: s}}
 }
 
@@ -133,7 +133,7 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 		return domain.Session{}, 0, 0, f.spawnErr
 	}
 	now := time.Now().UTC()
-	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, DisplayName: cfg.DisplayName, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
+	s := domain.Session{SessionRecord: domain.SessionRecord{ID: domain.SessionID(string(cfg.ProjectID) + "-2"), ProjectID: cfg.ProjectID, IssueID: cfg.IssueID, Kind: cfg.Kind, Harness: cfg.Harness, DisplayName: cfg.DisplayName, Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}, AutoInjectReviewFeedback: true, CreatedAt: now, UpdatedAt: now}, Status: domain.StatusIdle}
 	f.sessions[s.ID] = s
 	return s, len(cfg.Prompt), 0, nil
 }
@@ -206,6 +206,16 @@ func (f *fakeSessionService) Unpin(_ context.Context, id domain.SessionID) (doma
 	}
 	s.IsPinned = false
 	s.PinnedAt = nil
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) SetAutoInjectReviewFeedback(_ context.Context, id domain.SessionID, autoInject bool) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.AutoInjectReviewFeedback = autoInject
 	f.sessions[id] = s
 	return s, nil
 }
@@ -649,6 +659,23 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 	_, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ghost-1/pin", "")
 	if status != http.StatusNotFound {
 		t.Fatalf("unpin unknown = %d, want 404", status)
+	}
+
+	body, status, _ = doRequest(t, srv, "PATCH", "/api/v1/sessions/ao-2/auto-inject-review-feedback", `{"autoInjectReviewFeedback":false}`)
+	if status != http.StatusOK {
+		t.Fatalf("auto-inject review feedback policy = %d, want 200; body=%s", status, body)
+	}
+	var reviewPolicy struct {
+		OK                       bool   `json:"ok"`
+		SessionID                string `json:"sessionId"`
+		AutoInjectReviewFeedback bool   `json:"autoInjectReviewFeedback"`
+	}
+	mustJSON(t, body, &reviewPolicy)
+	if !reviewPolicy.OK || reviewPolicy.SessionID != "ao-2" || reviewPolicy.AutoInjectReviewFeedback {
+		t.Fatalf("auto-inject review feedback response = %#v", reviewPolicy)
+	}
+	if svc.sessions["ao-2"].AutoInjectReviewFeedback {
+		t.Fatalf("session auto-inject review feedback policy not updated: %+v", svc.sessions["ao-2"])
 	}
 
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
@@ -1818,16 +1845,17 @@ func TestSessionsAPI_CleanupWithoutProjectFilter(t *testing.T) {
 }
 
 type sessionBody struct {
-	ID               string `json:"id"`
-	ProjectID        string `json:"projectId"`
-	IssueID          string `json:"issueId"`
-	Kind             string `json:"kind"`
-	Harness          string `json:"harness"`
-	DisplayName      string `json:"displayName"`
-	Branch           string `json:"branch"`
-	Status           string `json:"status"`
-	SCMStatus        string `json:"scmStatus"`
-	TerminalHandleID string `json:"terminalHandleId"`
+	ID                       string `json:"id"`
+	ProjectID                string `json:"projectId"`
+	IssueID                  string `json:"issueId"`
+	Kind                     string `json:"kind"`
+	Harness                  string `json:"harness"`
+	DisplayName              string `json:"displayName"`
+	Branch                   string `json:"branch"`
+	Status                   string `json:"status"`
+	SCMStatus                string `json:"scmStatus"`
+	TerminalHandleID         string `json:"terminalHandleId"`
+	AutoInjectReviewFeedback bool   `json:"autoInjectReviewFeedback"`
 }
 
 func TestSessionsAPI_PRRoutes(t *testing.T) {

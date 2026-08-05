@@ -363,6 +363,16 @@ type SetSessionMergePolicyResponse struct {
 	Session            SessionView      `json:"session"`
 }
 
+type AutoInjectReviewFeedbackRequest struct {
+	AutoInjectReviewFeedback bool `json:"autoInjectReviewFeedback"`
+}
+
+type AutoInjectReviewFeedbackResponse struct {
+	OK                       bool             `json:"ok"`
+	SessionID                domain.SessionID `json:"sessionId"`
+	AutoInjectReviewFeedback bool             `json:"autoInjectReviewFeedback"`
+}
+
 // RestoreSessionResponse is the body of POST /api/v1/sessions/{sessionId}/restore.
 type RestoreSessionResponse struct {
 	OK          bool                       `json:"ok"`
