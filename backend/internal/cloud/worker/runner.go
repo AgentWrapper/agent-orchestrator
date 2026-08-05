@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/creack/pty"
 
@@ -108,31 +109,85 @@ func (r *agentTerminalReady) markReady() {
 }
 
 func claudeTerminalReady(output string) bool {
-	output = strings.ToLower(stripANSICSI(output))
-	return strings.Contains(output, "bypass permissions") ||
-		strings.Contains(output, "shift+tab to cycle")
+	compact := compactTerminalText(output)
+	return strings.Contains(compact, "bypasspermissions") ||
+		strings.Contains(compact, "shifttabtocycle")
 }
 
-func stripANSICSI(value string) string {
+// compactTerminalText removes terminal control sequences and all visual
+// separators before matching stable composer phrases. Ink may lay out words
+// with cursor-positioning CSI sequences instead of literal spaces, so matching
+// the rendered byte stream directly is not reliable across widths or versions.
+func compactTerminalText(value string) string {
+	plain := stripANSIControlSequences(value)
+	var compact strings.Builder
+	compact.Grow(len(plain))
+	for _, character := range strings.ToLower(plain) {
+		if unicode.IsLetter(character) || unicode.IsNumber(character) {
+			compact.WriteRune(character)
+		}
+	}
+	return compact.String()
+}
+
+func stripANSIControlSequences(value string) string {
 	var plain strings.Builder
 	plain.Grow(len(value))
 	for index := 0; index < len(value); index++ {
-		if value[index] == '\x1b' &&
-			index+1 < len(value) &&
-			value[index+1] == '[' {
-			index += 2
-			for index < len(value) {
-				final := value[index] >= 0x40 && value[index] <= 0x7e
-				if final {
-					break
-				}
-				index++
+		switch value[index] {
+		case '\x1b':
+			if index+1 >= len(value) {
+				continue
 			}
-			continue
+			index++
+			switch value[index] {
+			case '[':
+				index = skipANSICSI(value, index+1)
+			case ']', 'P', '^', '_':
+				index = skipANSIString(value, index+1)
+			default:
+				// Two-byte ESC controls include save/restore cursor, keypad
+				// modes, and reset. For controls with intermediate bytes,
+				// consume through the first final byte.
+				for index+1 < len(value) &&
+					value[index] >= 0x20 &&
+					value[index] <= 0x2f {
+					index++
+				}
+			}
+		case '\x9b':
+			index = skipANSICSI(value, index+1)
+		default:
+			plain.WriteByte(value[index])
 		}
-		plain.WriteByte(value[index])
 	}
 	return plain.String()
+}
+
+func skipANSICSI(value string, index int) int {
+	for index < len(value) {
+		if value[index] >= 0x40 && value[index] <= 0x7e {
+			return index
+		}
+		index++
+	}
+	return len(value) - 1
+}
+
+func skipANSIString(value string, index int) int {
+	for index < len(value) {
+		switch {
+		case value[index] == '\a':
+			return index
+		case value[index] == '\x1b' &&
+			index+1 < len(value) &&
+			value[index+1] == '\\':
+			return index + 1
+		default:
+			index++
+		}
+	}
+	return len(value) - 1
 }
 
 func promptDeliveryCanWaitForTerminal(

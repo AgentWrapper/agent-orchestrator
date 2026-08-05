@@ -3168,6 +3168,16 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 			s.internalError(w, r, "claim durable chat turn", err)
 			return
 		}
+		if _, err := s.store.TransitionActiveTurn(
+			r.Context(),
+			claims.AccountID,
+			claims.SessionID,
+			"running",
+			"",
+		); err != nil {
+			s.internalError(w, r, "start acknowledged chat turn", err)
+			return
+		}
 	}
 	if input.Type == "agent.activity" {
 		var activity struct {

@@ -1,0 +1,15 @@
+{
+  "version": "2.1.221",
+  "terminalColumns": 80,
+  "chunks": [
+    "\u001b7\u001b[r\u001b8\u001b[?25h",
+    "\u001b[?25l",
+    "\u001b[?2004h\u001b[?1004h\u001b[?2031h",
+    "\u001b]0;✳ Claude Code\u0007",
+    "╭───\u001b[6GClaude\u001b[13GCode\u001b[18Gv2.1.221\u001b[27G─────────────────────────────────────────────────────╮\r\n│\u001b[29G│\u001b[31GTips\u001b[36Gfor\u001b[40Ggetting\u001b[48Gstarted\u001b[80G│\r\n│\u001b[9GWelcome\u001b[17Gback!\u001b[29G│\u001b[31GRun\u001b[35G/init\u001b[41Gto\u001b[44Gcreate\u001b[51Ga\u001b[53GCLAUDE.md\u001b[63Gfile\u001b[68Gwith\u001b[73Ginstr…\u001b[80G│\r\n│\u001b[29G│\u001b[31G────────────────────────────────────────────────\u001b[80G│\r\n│\u001b[12G▐▛███▜▌\u001b[29G│\u001b[31GWhat's\u001b[38Gnew\u001b[80G│\r\n│\u001b[11G▝▜█████▛▘\u001b[29G│\u001b[31GFixed\u001b[37Gworktree-isolated\u001b[55Gsessions\u001b[64Gand\u001b[68Gtheir\u001b[74Gsuba…\u001b[80G│\r\n│\u001b[13G▘▘\u001b[16G▝▝\u001b[29G│\u001b[31GFixed\u001b[37GPreToolUse\u001b[48Gauto-allow\u001b[59Ghooks\u001b[65Gbypassing\u001b[75Gtoo…\u001b[80G│\r\n│\u001b[29G│\u001b[31GFixed\u001b[37G`/usage-credits`\u001b[54Gon\u001b[57GTeam\u001b[62Gand\u001b[66GEnterprise\u001b[77Gs…\u001b[80G│\r\n│\u001b[5GSonnet\u001b[12G5\u001b[14G·\u001b[16GClaude\u001b[23GAPI\u001b[29G│\u001b[31G/release-notes\u001b[46Gfor\u001b[50Gmore\u001b[80G│\r\n│\u001b[5G/workspace/repository\u001b[29G│\u001b[80G│\r\n╰──────────────────────────────────────────────────────────────────────────────╯\r\n\r\n\r\n────────────────────────────────────────────────────────────────────────────────\r\n❯ Try\u001b[7G\"create\u001b[15Ga\u001b[17Gutil\u001b[22Glogging.py\u001b[33Gthat...\"\r\n────────────────────────────────────────────────────────────────────────────────\r\n\u001b[3G⏵⏵\u001b[6Gbypass\u001b[13Gpermissions\u001b[25Gon\u001b[28G(shift+tab\u001b[39Gto\u001b[42Gcycle)\u001b[49G·\u001b[51G←\u001b[53Gfor\u001b[57Gagents\r\n\u001b[63G●\u001b[65Ghigh\u001b[70G·\u001b[72G/effort\r\n\u001b[2C\u001b[4A\u001b[?25h",
+    "\u001b[>0q",
+    "\u001b[c",
+    "\u001b[?25l\u001b[2D\u001b[4B\r\u001b[2C\u001b[4A\u001b[K\r\n\r\n\r\n\r\n\u001b[2C\u001b[4A\u001b[?25h",
+    "\u001b[?25l\u001b[2D\u001b[4B\u001b[2K\u001b[G\u001b[1A\u001b[K\u001b[2C\u001b[3A\u001b[?25h"
+  ]
+}

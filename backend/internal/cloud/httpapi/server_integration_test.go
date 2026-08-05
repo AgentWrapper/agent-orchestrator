@@ -761,6 +761,92 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 	}
 }
 
+func TestPromptAcknowledgementStartsInitialDurableTurn(t *testing.T) {
+	server, store := integrationAPI(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	account, err := store.EnsureAccount(ctx, tokenID("user-one"), "User One")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, account.ID, cloudpostgres.CreateProjectInput{
+		DisplayName:   "Initial prompt acknowledgement",
+		RepositoryURL: "https://github.com/example/" + uuid.NewString(),
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CreateSession(ctx, account.ID, cloudpostgres.CreateSessionInput{
+		IdempotencyKey: uuid.NewString(),
+		ProjectID:      project.ID,
+		Kind:           "worker",
+		Harness:        "claude-code",
+		DisplayName:    "initial-prompt",
+		Prompt:         "say hello world",
+		Resource:       clouddomain.DefaultResourceProfile(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.ChatEventsAfter(ctx, account.ID, created.Session.ID, 0, 10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("initial chat events = %#v, error = %v", events, err)
+	}
+	initialTurn, err := store.GetActiveTurn(ctx, account.ID, created.Session.ID)
+	if err != nil || initialTurn == nil || initialTurn.State != "provisioning" {
+		t.Fatalf("initial durable turn = %#v, error = %v", initialTurn, err)
+	}
+
+	token := bootstrapWorker(t, server, store, account.ID, created.Session.ID, []string{
+		"worker:connect",
+		"worker:event",
+	})
+	acknowledge := func() {
+		t.Helper()
+		response := requestJSON(
+			t,
+			server,
+			http.MethodPost,
+			"/api/cloud/v1/worker/events",
+			"",
+			map[string]any{
+				"type": "worker.prompt_accepted",
+				"payload": map[string]int64{
+					"sequence": events[0].Sequence,
+				},
+			},
+			map[string]string{"Authorization": "Worker " + token},
+		)
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusAccepted {
+			payload, _ := io.ReadAll(response.Body)
+			t.Fatalf("prompt acknowledgement status = %d: %s", response.StatusCode, payload)
+		}
+	}
+	acknowledge()
+
+	accepted, err := store.LatestPromptAcceptedSequence(ctx, account.ID, created.Session.ID)
+	if err != nil || accepted != events[0].Sequence {
+		t.Fatalf("accepted sequence = %d, want %d, error = %v", accepted, events[0].Sequence, err)
+	}
+	activeTurn, err := store.GetActiveTurn(ctx, account.ID, created.Session.ID)
+	if err != nil ||
+		activeTurn == nil ||
+		activeTurn.State != "running" ||
+		activeTurn.WorkerEpoch <= 0 ||
+		activeTurn.AttemptCount != 1 {
+		t.Fatalf("acknowledged durable turn = %#v, error = %v", activeTurn, err)
+	}
+
+	acknowledge()
+	repeatedTurn, err := store.GetActiveTurn(ctx, account.ID, created.Session.ID)
+	if err != nil || repeatedTurn == nil || repeatedTurn.AttemptCount != 1 {
+		t.Fatalf("repeated acknowledgement turn = %#v, error = %v", repeatedTurn, err)
+	}
+}
+
 func TestChatMessageAuthIdempotencyAndWorkerReplay(t *testing.T) {
 	server, store, api := integrationAPIWithServer(t)
 	api.workerReplayWait = 25 * time.Millisecond

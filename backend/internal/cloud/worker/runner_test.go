@@ -234,9 +234,131 @@ func TestNonClaudeTerminalReadyImmediately(t *testing.T) {
 }
 
 func TestClaudeTerminalReadyToleratesStyledComposerFooter(t *testing.T) {
-	output := "\x1b[2m bypass\x1b[0m \x1b[1mpermissions\x1b[0m on"
-	if !claudeTerminalReady(output) {
-		t.Fatal("styled Claude composer footer was not detected")
+	separators := map[string]string{
+		"space":                 " ",
+		"mixed whitespace":      "\t\r\n\u00a0",
+		"style reset":           "\x1b[2m\x1b[0m",
+		"cursor positioning":    "\x1b[13G",
+		"OSC title":             "\x1b]0;temporary title\a",
+		"OSC string terminator": "\x1b]0;temporary title\x1b\\",
+	}
+	for name, separator := range separators {
+		t.Run(name+"/permission-mode", func(t *testing.T) {
+			if !claudeTerminalReady("BYPASS" + separator + "permissions on") {
+				t.Fatal("Claude permission-mode footer was not detected")
+			}
+		})
+		t.Run(name+"/keyboard-hint", func(t *testing.T) {
+			output := "shift" + separator + "+" + separator + "tab" +
+				separator + "to" + separator + "cycle"
+			if !claudeTerminalReady(output) {
+				t.Fatal("Claude keyboard hint was not detected")
+			}
+		})
+	}
+}
+
+func TestClaudeTerminalReadyRejectsUnrelatedStartupText(t *testing.T) {
+	for _, output := range []string{
+		"Welcome back!",
+		"permissions",
+		"shift tab",
+		"Fixed PreToolUse auto-allow hooks bypassing too broadly",
+		"\x1b]0;Claude Code\a",
+	} {
+		if claudeTerminalReady(output) {
+			t.Fatalf("unrelated output marked Claude ready: %q", output)
+		}
+	}
+}
+
+func TestClaudeTerminalReadyToleratesMixedKeyboardHintSeparators(t *testing.T) {
+	separators := []string{
+		"",
+		" ",
+		"\t\r\n\u00a0",
+		"\x1b[13G",
+		"\x1b[2m\x1b[0m",
+		"\x1b]0;temporary title\a",
+		"\x1bPtemporary device string\x1b\\",
+	}
+	for firstIndex, first := range separators {
+		for secondIndex, second := range separators {
+			for thirdIndex, third := range separators {
+				for fourthIndex, fourth := range separators {
+					output := "shift" + first + "+" + second + "tab" +
+						third + "to" + fourth + "cycle"
+					if !claudeTerminalReady(output) {
+						t.Fatalf(
+							"mixed separators [%d,%d,%d,%d] were not detected",
+							firstIndex,
+							secondIndex,
+							thirdIndex,
+							fourthIndex,
+						)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestClaudeTerminalReadyMatchesClaude221CursorPositionedFixture(t *testing.T) {
+	fixture := readClaudeComposerFixture(t)
+	if fixture.Version != "2.1.221" || fixture.TerminalColumns != 80 {
+		t.Fatalf("fixture metadata = %#v", fixture)
+	}
+
+	ready := newAgentTerminalReady("claude-code")
+	for index, chunk := range fixture.Chunks {
+		ready.observe([]byte(chunk))
+		if index < 4 {
+			select {
+			case <-ready.ready:
+				t.Fatalf("Claude marked ready before composer chunk %d", index)
+			default:
+			}
+		}
+	}
+	if err := ready.wait(context.Background()); err != nil {
+		t.Fatalf("wait() error = %v", err)
+	}
+
+	compact := compactTerminalText(strings.Join(fixture.Chunks, ""))
+	if !strings.Contains(compact, "bypasspermissionsonshifttabtocycle") {
+		t.Fatalf("normalized fixture does not contain composer marker: %q", compact)
+	}
+}
+
+func TestClaudeTerminalReadyHandlesEveryChunkBoundaryInFixture(t *testing.T) {
+	fixture := readClaudeComposerFixture(t)
+	output := strings.Join(fixture.Chunks, "")
+	for split := 1; split < len(output); split++ {
+		ready := newAgentTerminalReady("claude-code")
+		ready.observe([]byte(output[:split]))
+		ready.observe([]byte(output[split:]))
+		select {
+		case <-ready.ready:
+		default:
+			t.Fatalf("Claude fixture was not detected at byte split %d", split)
+		}
+	}
+
+	bytewise := newAgentTerminalReady("claude-code")
+	for index := range len(output) {
+		bytewise.observe([]byte(output[index : index+1]))
+	}
+	if err := bytewise.wait(context.Background()); err != nil {
+		t.Fatalf("bytewise fixture wait() error = %v", err)
+	}
+}
+
+func TestClaudeTerminalReadyRetainsComposerMarkerAfterBufferTruncation(t *testing.T) {
+	ready := newAgentTerminalReady("claude-code")
+	ready.observe([]byte(strings.Repeat("unrelated startup output ", 600)))
+	ready.observe([]byte("\x1b[6Gbypass\x1b[13Gpermissions"))
+	if err := ready.wait(context.Background()); err != nil {
+		t.Fatalf("wait() error = %v", err)
 	}
 }
 
@@ -357,14 +479,16 @@ func TestClaudePromptPrecedesBrowserCommandsDuringStartup(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	terminalReady.observe([]byte("\x1b[2m bypass\x1b[0m \x1b[1mpermissions\x1b[0m on"))
+	for _, chunk := range readClaudeComposerFixture(t).Chunks {
+		terminalReady.observe([]byte(chunk))
+	}
 
 	select {
 	case <-promptAccepted:
 	case err := <-serverErrors:
 		t.Fatalf("accept startup prompt: %v", err)
 	case <-time.After(2 * time.Second):
-		t.Fatal("styled Claude composer did not release the startup prompt")
+		t.Fatal("Claude 2.1.221 composer did not release the startup prompt")
 	}
 
 	terminalInput := make(chan string, 1)
@@ -393,6 +517,28 @@ func TestClaudePromptPrecedesBrowserCommandsDuringStartup(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("browser input was not restored after startup prompt")
 	}
+}
+
+type claudeComposerFixture struct {
+	Version         string   `json:"version"`
+	TerminalColumns int      `json:"terminalColumns"`
+	Chunks          []string `json:"chunks"`
+}
+
+func readClaudeComposerFixture(t *testing.T) claudeComposerFixture {
+	t.Helper()
+	contents, err := os.ReadFile(filepath.Join("testdata", "claude-2.1.221-composer.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture claudeComposerFixture
+	if err := json.Unmarshal(contents, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Chunks) == 0 {
+		t.Fatal("Claude composer fixture has no chunks")
+	}
+	return fixture
 }
 
 func TestTerminalInputAllowedAfterAgentReady(t *testing.T) {
