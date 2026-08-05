@@ -5,6 +5,8 @@ import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
 	linkHandler: null as null | ((event: MouseEvent, uri: string) => void),
+	fitCalls: 0,
+	resizeObserverCallbacks: [] as Array<() => void>,
 	lastTerminal: null as null | {
 		keyHandler?: (event: KeyboardEvent) => boolean;
 		wheelHandler?: (event: WheelEvent) => boolean;
@@ -106,7 +108,12 @@ vi.mock("@xterm/xterm", () => ({
 
 vi.mock("@xterm/addon-fit", () => ({
 	FitAddon: class FakeFitAddon {
-		fit() {}
+		fit() {
+			state.fitCalls += 1;
+		}
+		proposeDimensions() {
+			return { cols: 80, rows: 24 };
+		}
 	},
 }));
 
@@ -152,6 +159,8 @@ describe("XtermTerminal", () => {
 	beforeEach(() => {
 		state.lastTerminal = null;
 		state.linkHandler = null;
+		state.fitCalls = 0;
+		state.resizeObserverCallbacks = [];
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
@@ -830,5 +839,93 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!._core._selectionService.enable).toHaveBeenCalled();
 		expect(state.lastTerminal!._core.element.classList.remove).toHaveBeenCalledWith("enable-mouse-events");
 		expect(state.lastTerminal!._core._selectionService.shouldForceSelection({} as MouseEvent)).toBe(true);
+	});
+
+	describe("settled resize scheduling", () => {
+		function stubResizeObserver() {
+			vi.stubGlobal(
+				"ResizeObserver",
+				class {
+					constructor(callback: () => void) {
+						state.resizeObserverCallbacks.push(callback);
+					}
+					observe() {}
+					unobserve() {}
+					disconnect() {}
+				},
+			);
+		}
+
+		function stubAnimationFrameAsTimeout() {
+			vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+				window.setTimeout(() => callback(performance.now()), 0),
+			);
+			vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+		}
+
+		function fireResize() {
+			const callback = state.resizeObserverCallbacks.at(-1);
+			expect(callback).toBeTypeOf("function");
+			callback!();
+		}
+
+		/** Keep the quiet timer armed while time advances (continuous drag). */
+		async function dragFor(ms: number, step = 40) {
+			let elapsed = 0;
+			while (elapsed < ms) {
+				fireResize();
+				const slice = Math.min(step, ms - elapsed);
+				await act(async () => {
+					vi.advanceTimersByTime(slice);
+				});
+				elapsed += slice;
+			}
+		}
+
+		it("does not fit while resize events keep arriving inside the quiet window", async () => {
+			vi.useFakeTimers();
+			stubAnimationFrameAsTimeout();
+			stubResizeObserver();
+			try {
+				render(<XtermTerminal theme="dark" />);
+				// Drain mount rAF + initial settle schedules (50/250/… + quiet 80).
+				await act(async () => {
+					vi.advanceTimersByTime(1300);
+				});
+				const settled = state.fitCalls;
+
+				// Past one cap interval without a quiet gap — must not commit mid-drag.
+				await dragFor(499);
+				expect(state.fitCalls).toBe(settled);
+
+				await act(async () => {
+					vi.advanceTimersByTime(80);
+				});
+				expect(state.fitCalls).toBe(settled + 1);
+			} finally {
+				vi.useRealTimers();
+				vi.unstubAllGlobals();
+			}
+		});
+
+		it("still covers a continuous drag after the deferred-cap ceiling", async () => {
+			vi.useFakeTimers();
+			stubAnimationFrameAsTimeout();
+			stubResizeObserver();
+			try {
+				render(<XtermTerminal theme="dark" />);
+				await act(async () => {
+					vi.advanceTimersByTime(1300);
+				});
+				const settled = state.fitCalls;
+
+				// 4 deferred caps (4 * 500ms) then the 5th forces a covered fit.
+				await dragFor(2500);
+				expect(state.fitCalls).toBeGreaterThan(settled);
+			} finally {
+				vi.useRealTimers();
+				vi.unstubAllGlobals();
+			}
+		});
 	});
 });
