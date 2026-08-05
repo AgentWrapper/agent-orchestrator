@@ -522,7 +522,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 				</Badge>
 			</div>
 			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRCardStatusSummary className="mt-2" pr={pr} />
+			{pr.state !== "merged" ? <PRCardStatusSummary className="mt-2" pr={pr} /> : null}
 		</article>
 	);
 }
