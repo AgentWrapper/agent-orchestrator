@@ -188,6 +188,10 @@ type PostHogSink struct {
 	apiKey     string
 	host       string
 	distinctID string
+	// appVersion stamps app_version/ao_version on every exported event. Empty
+	// leaves the properties off entirely rather than reporting a misleading
+	// "unknown" that would show up as a real version in release breakdowns.
+	appVersion string
 	client     postHogClient
 	log        *slog.Logger
 	ch         chan ports.TelemetryEvent
@@ -196,7 +200,7 @@ type PostHogSink struct {
 }
 
 // NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
-func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
+func NewPostHogSink(dataDir, apiKey, host, appVersion string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("posthog api key is required")
 	}
@@ -216,6 +220,7 @@ func NewPostHogSink(dataDir, apiKey, host string, client postHogClient, log *slo
 		distinctID: distinctID,
 		client:     client,
 		log:        telemetryLogger(log),
+		appVersion: strings.TrimSpace(appVersion),
 		ch:         make(chan ports.TelemetryEvent, postHogBufferSize),
 	}
 	s.wg.Add(1)
@@ -300,6 +305,13 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	}
 	if remoteEventName(ev.Name) != ev.Name {
 		props["legacy_event_name"] = ev.Name
+	}
+	// Without this, every daemon event lands with no version at all, so a
+	// failure rate cannot be attributed to a release. Renderer events already
+	// carry app_version; these are the matching daemon-side values.
+	if s.appVersion != "" {
+		props["app_version"] = s.appVersion
+		props["ao_version"] = s.appVersion
 	}
 	if ev.RequestID != "" {
 		props["request_id"] = ev.RequestID

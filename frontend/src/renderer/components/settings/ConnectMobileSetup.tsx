@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { RadioGroup } from "radix-ui";
 
 interface ConnectMobileSetupProps {
@@ -19,6 +20,7 @@ type SetupMode = "lan" | "tailscale";
 // because AutopickLANIP skips utun* interfaces and rejects Tailscale's
 // 100.64.0.0/10 CGNAT range as non-private (backend/internal/mobilebridge/netiface.go).
 export function ConnectMobileSetup({ port, enabled }: ConnectMobileSetupProps) {
+	const { t } = useTranslation();
 	const [mode, setMode] = useState<SetupMode>("lan");
 
 	// Margin-free on purpose: the modal owns the spacing around this block.
@@ -27,34 +29,35 @@ export function ConnectMobileSetup({ port, enabled }: ConnectMobileSetupProps) {
 			<RadioGroup.Root
 				value={mode}
 				onValueChange={(value) => setMode(value as SetupMode)}
-				aria-label="Connection method"
+				aria-label={t("mobile.connectionMethod")}
 				className="settings-segment"
 			>
 				<RadioGroup.Item value="lan" tabIndex={enabled ? 0 : -1} className="settings-segment-item">
-					LAN
+					{t("mobile.lan")}
 				</RadioGroup.Item>
 				<RadioGroup.Item value="tailscale" tabIndex={enabled ? 0 : -1} className="settings-segment-item">
-					Tailscale
+					{t("mobile.tailscale")}
 				</RadioGroup.Item>
 			</RadioGroup.Root>
 
 			{mode === "lan" ? (
 				<div className="mt-3 w-full px-(--size-settings-mobile-details-pad-x)">
 					<ol className="settings-mobile-steps">
-						<li>Put your phone on the same Wi-Fi as this computer.</li>
-						<li>Open Agent Orchestrator on your phone and tap Scan.</li>
-						<li>Scan the code below — address and password fill in automatically.</li>
+						<li>{t("mobile.lan.step1")}</li>
+						<li>{t("mobile.lan.step2")}</li>
+						<li>{t("mobile.lan.step3")}</li>
 					</ol>
 				</div>
 			) : (
 				<div className="mt-3 w-full px-(--size-settings-mobile-details-pad-x)">
 					<ol className="settings-mobile-steps">
-						<li>Install Tailscale here and on your phone, signed into the same account.</li>
+						<li>{t("mobile.tailscale.step1")}</li>
 						<li>
-							Run <span className="tracking-settings-mono text-settings-label">tailscale ip -4</span> here to get your
-							100.x address.
+							{t("mobile.tailscale.step2Lead")}{" "}
+							<span className="tracking-settings-mono text-settings-label">tailscale ip -4</span>{" "}
+							{t("mobile.tailscale.step2Trail")}
 						</li>
-						<li>In the app's Settings, enter that address, port {port}, and the password below. Leave Use TLS off.</li>
+						<li>{t("mobile.tailscale.step3", { port })}</li>
 					</ol>
 				</div>
 			)}

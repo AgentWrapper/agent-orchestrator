@@ -100,3 +100,31 @@ func TestMigration0013DedupesExistingDuplicates(t *testing.T) {
 		t.Fatal("expected unique-index violation inserting a duplicate (session_id, target_sha)")
 	}
 }
+
+func TestMigration0044BackfillsBatchlessReviewRuns(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 43)
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("disable foreign keys: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO review_run (id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at)
+		 VALUES ('run-1', 'review-1', 'session-1', 'claude-code', 'pr1', 'sha1', 'running', '', '', '2026-06-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatalf("seed batchless review run: %v", err)
+	}
+
+	upTo(t, db, 44)
+	var batchID string
+	if err := db.QueryRow(`SELECT batch_id FROM review_run WHERE id = 'run-1'`).Scan(&batchID); err != nil {
+		t.Fatalf("query migrated batch id: %v", err)
+	}
+	if batchID != "run-1" {
+		t.Fatalf("batch_id = %q, want run id", batchID)
+	}
+}

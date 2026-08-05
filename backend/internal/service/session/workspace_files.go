@@ -90,6 +90,39 @@ type WorkspaceFileDetail struct {
 	CompareMode        WorkspaceCompareMode
 }
 
+// WorkspaceWatchPaths returns every worktree that contributes files to a
+// session workspace read model. Workspace projects include child repositories
+// that are deliberately ignored by the parent Git repository.
+func (s *Service) WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error) {
+	rec, err := s.sessionWorkspaceRecord(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{rec.Metadata.WorkspacePath}
+	seen := map[string]struct{}{filepath.Clean(rec.Metadata.WorkspacePath): {}}
+	rows, err := s.store.ListSessionWorktrees(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list workspace project rows: %w", err)
+	}
+	for _, row := range rows {
+		workspacePath := strings.TrimSpace(row.WorktreePath)
+		if workspacePath == "" {
+			continue
+		}
+		workspacePath = filepath.Clean(workspacePath)
+		if _, ok := seen[workspacePath]; ok {
+			continue
+		}
+		info, statErr := os.Stat(workspacePath)
+		if statErr != nil || !info.IsDir() {
+			continue
+		}
+		seen[workspacePath] = struct{}{}
+		paths = append(paths, workspacePath)
+	}
+	return paths, nil
+}
+
 // ListWorkspaceFiles returns all tracked and untracked, non-ignored files in a
 // session worktree, annotated with their current git status against the
 // session's recorded base when available.
@@ -257,6 +290,7 @@ func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef
 }
 
 func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, defaultBranch string) workspaceCompareTarget {
+	defaultBranch = workspaceDefaultBranch(defaultBranch)
 	for _, ref := range workspaceBaseRefCandidates(defaultBranch) {
 		if sha, ok := gitMergeBase(ctx, root, ref); ok {
 			return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
@@ -264,16 +298,13 @@ func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, defa
 	}
 	recordedSHA = strings.TrimSpace(recordedSHA)
 	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
-		return workspaceCompareTarget{BaseSHA: recordedSHA, Mode: WorkspaceCompareBase}
+		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: defaultBranch, Mode: WorkspaceCompareBase}
 	}
 	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
 }
 
 func workspaceBaseRefCandidates(defaultBranch string) []string {
-	defaultBranch = strings.TrimSpace(defaultBranch)
-	if defaultBranch == "" {
-		return nil
-	}
+	defaultBranch = workspaceDefaultBranch(defaultBranch)
 	seen := map[string]struct{}{}
 	var refs []string
 	add := func(ref string) {
@@ -293,6 +324,14 @@ func workspaceBaseRefCandidates(defaultBranch string) []string {
 	}
 	add(defaultBranch)
 	return refs
+}
+
+func workspaceDefaultBranch(defaultBranch string) string {
+	defaultBranch = strings.TrimSpace(defaultBranch)
+	if defaultBranch == "" {
+		return domain.DefaultBranchName
+	}
+	return defaultBranch
 }
 
 func selectWorkspaceComparePR(prs []domain.PullRequest, defaultBranch string) (domain.PullRequest, bool) {

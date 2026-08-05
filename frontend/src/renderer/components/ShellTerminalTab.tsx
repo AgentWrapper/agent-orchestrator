@@ -1,5 +1,6 @@
-import { X } from "lucide-react";
+import { SquareTerminal, X } from "lucide-react";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { isWindowsPlatform } from "../lib/platform";
@@ -10,22 +11,32 @@ type ShellTerminalTabProps = {
 	isActive: boolean;
 	onSelect: () => void;
 	onClose: () => void;
+	/** Visually connects the active tab to a terminal pane directly below it. */
+	appearance?: "pill" | "connected";
 	/** Commit a new tab title. Omitted where rename is not wired. */
 	onRename?: (title: string) => void;
 };
 
 // One standalone-shell tab, shared by the session pane's tab strip (CenterPane)
 // and the standalone /terminals screen (ShellTerminalsView) so the two never
-// drift. The open tab gets the rounded background highlight used by the
-// inspector rail tabs; the full title only becomes the hover tooltip when the
-// strip truncates it; the close control appears on hover/focus.
+// drift. Session-pane tabs use a connected treatment that visually continues
+// into xterm below; the standalone terminals screen keeps its compact pill.
+// The full title only becomes the hover tooltip when the strip truncates it.
 //
 // Renaming happens inline with the platform's native gesture: double-click on
 // macOS/Linux, right-click on Windows. Enter or blur commits, Escape cancels,
 // and an empty or unchanged name is discarded. The close control is a sibling
 // button, not nested inside the tab button - nesting interactive elements is
 // invalid HTML and breaks keyboard traversal.
-export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename }: ShellTerminalTabProps) {
+export function ShellTerminalTab({
+	shell,
+	isActive,
+	onSelect,
+	onClose,
+	appearance = "pill",
+	onRename,
+}: ShellTerminalTabProps) {
+	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(shell.title);
@@ -52,7 +63,12 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 	// the native dblclick event: some trackpad configurations deliver two taps as
 	// two separate clicks that never synthesize a dblclick, so onDoubleClick would
 	// never fire. Two clicks within 500ms anywhere on the tab start the rename.
-	const handleClick = () => {
+	const handleClick = (event: MouseEvent) => {
+		onSelect();
+		// Roving tab navigation activates the focused tab with HTMLElement.click(),
+		// whose detail is 0. It should select, but must not participate in the
+		// pointer-only double-click rename gesture.
+		if (renameViaRightClick || event.detail === 0) return;
 		const now = Date.now();
 		const isDoubleClick = now - lastClickAtRef.current < 500;
 		lastClickAtRef.current = isDoubleClick ? 0 : now;
@@ -66,6 +82,7 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 		? {}
 		: renameViaRightClick
 			? {
+					onClick: handleClick,
 					onContextMenu: (event: MouseEvent) => {
 						event.preventDefault();
 						beginEdit();
@@ -88,15 +105,30 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 	return (
 		<span
 			className={cn(
-				"group inline-flex min-w-shell-tab-min items-center gap-1 rounded-md px-2 py-1 transition-colors",
-				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
+				"group relative min-w-shell-tab-min items-center transition-colors",
+				appearance === "connected"
+					? "grid w-shell-tab-connected grid-cols-[auto_minmax(0,1fr)_auto] self-stretch border-x border-transparent pl-2 pr-0"
+					: "inline-flex gap-1 rounded-md px-2 py-1",
+				appearance === "connected"
+					? isActive
+						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+						: "border-transparent text-passive hover:bg-interactive-hover/60 hover:text-foreground"
+					: isActive
+						? "bg-interactive-active"
+						: "hover:bg-interactive-hover/60",
 			)}
 			{...containerRenameHandlers}
 		>
+			{appearance === "connected" ? (
+				<SquareTerminal aria-hidden="true" className="mr-1 size-icon-sm shrink-0 translate-y-px" />
+			) : null}
 			{isEditing ? (
 				<input
-					aria-label={`Rename terminal ${shell.title}`}
-					className="min-w-flex-min max-w-shell-tab-max rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent"
+					aria-label={t("terminal.rename", { title: shell.title })}
+					className={cn(
+						"rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent",
+						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
+					)}
 					onBlur={commit}
 					onChange={(event) => setDraft(event.target.value)}
 					onKeyDown={(event) => {
@@ -115,15 +147,21 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 				<button
 					ref={ref}
 					aria-current={isActive}
+					aria-selected={isActive}
 					className={cn(
-						"min-w-flex-min max-w-shell-tab-max select-none truncate font-mono text-control font-semibold transition-colors",
-						isActive ? "text-foreground" : "text-passive hover:text-foreground",
+						"select-none truncate text-control transition-colors",
+						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
+						appearance === "connected" ? "font-normal" : "font-mono font-semibold",
+						isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 					)}
-					onClick={onSelect}
+					role="tab"
+					tabIndex={isActive ? 0 : -1}
 					title={
 						isTruncated
 							? shell.title
-							: `${shell.workingDir} (${renameViaRightClick ? "right-click" : "double-click"} to rename)`
+							: t(renameViaRightClick ? "terminal.renameHintRightClick" : "terminal.renameHintDoubleClick", {
+									workingDir: shell.workingDir,
+								})
 					}
 					type="button"
 				>
@@ -131,15 +169,22 @@ export function ShellTerminalTab({ shell, isActive, onSelect, onClose, onRename 
 				</button>
 			)}
 			<button
-				aria-label={`Close terminal ${shell.title}`}
-				className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+				aria-label={t("terminal.closeNamed", { title: shell.title })}
+				className={cn(
+					"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+					appearance === "connected"
+						? isActive
+							? "ml-1 w-control-sm opacity-100"
+							: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
+						: "w-control-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+				)}
 				onClick={(event) => {
 					event.stopPropagation();
 					onClose();
 				}}
 				onDoubleClick={(event) => event.stopPropagation()}
 				onContextMenu={(event) => event.stopPropagation()}
-				title="Close terminal"
+				title={t("terminal.close")}
 				type="button"
 			>
 				<X aria-hidden="true" className="size-icon-sm" />

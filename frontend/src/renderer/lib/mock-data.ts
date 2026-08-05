@@ -271,6 +271,48 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 };
 
 export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
+	// Carries human + bot PR reviews and an unresolved thread, so the Reviews
+	// tab's Pull request pane has something to show in the browser preview.
+	"demo-needs-input": [
+		prSummary("demo-needs-input", 318, {
+			changedFiles: 2,
+			additions: 68,
+			deletions: 12,
+			review: {
+				decision: "changes_requested",
+				hasUnresolvedHumanComments: true,
+				reviews: [
+					{
+						reviewerId: "prateek",
+						verdict: "changes_requested",
+						submittedAt: minutesAgo(18),
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
+						body: "The activity sample is **tighter**, but the toolbar density change needs a second look before this lands.\n\n- Check compact spacing\n- Keep button labels readable",
+					},
+					{
+						reviewerId: "codex",
+						isBot: true,
+						verdict: "approved",
+						submittedAt: minutesAgo(15),
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3102",
+						body: "No issues found in the terminal pane changes.",
+					},
+				],
+				unresolvedBy: [
+					{
+						reviewerId: "prateek",
+						count: 2,
+						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
+						// Two comments, two separate threads — resolving addresses threads.
+						links: [
+							{ file: "frontend/src/renderer/components/TerminalPane.tsx", line: 84 },
+							{ file: "frontend/src/renderer/styles.css", line: 219 },
+						],
+					},
+				],
+			},
+		}),
+	],
 	"demo-review-stack": [
 		prSummary("demo-review-stack", 321, {
 			createdAt: hoursAgo(2),

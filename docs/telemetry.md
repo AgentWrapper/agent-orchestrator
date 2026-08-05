@@ -18,10 +18,33 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
 - Renderer exceptions, reduced to error name and coarse context
 - Daemon operational events: CLI invocation, session spawn/failure, waiting-input
   transitions, HTTP 5xx, and daemon panics
+- Desktop update outcomes: `ao.renderer.update_failed`,
+  `ao.renderer.update_downloaded`, and `ao.renderer.update_unsupported`. These
+  carry a coarse `error_category`, the `phase` (`check` or `download`), whether
+  the operation was `automatic` or `manual`, and the target version. The
+  updater's raw error message is never sent, because it can contain feed URLs
+  and local staging paths; it is bucketed into a category first. Progress is not
+  reported, since it fires per percent tick and the UI already shows it.
+
+  These are decided in the **main process**, at the updater's operation
+  boundary, and pushed to the renderer on a channel separate from
+  `updates:status`. That separation matters: `auto-updater.ts` deliberately
+  suppresses the UI status when an *automatic* check fails, and automatic checks
+  run hourly. A renderer observer watching statuses would therefore miss the
+  silent-failure case these exist to diagnose. Owning it in main also makes
+  `phase` and `to_version` authoritative, since only main knows which operation
+  was running and what it was fetching
 - AO version context (`app_version` / `ao_version`), platform, and build mode
 
-PostHog session recording is disabled by default. If a time-boxed investigation
-enables it, network request names are masked before recording.
+PostHog session recording is disabled in the client via
+`disable_session_recording`, so the project-side replay toggle cannot turn it on.
+Replay is billed per recording rather than per event, which puts it outside every
+rate limit described below, and AO does not watch replays. If a time-boxed
+investigation ever needs it, network request names are masked before recording.
+
+Feature flags and surveys are also disabled in the client
+(`advanced_disable_flags`, `disable_surveys`). AO reads no flags and ships no
+surveys, and `/flags` requests are billed, so those requests were pure cost.
 
 ## Privacy
 
@@ -240,7 +263,49 @@ AO_TELEMETRY_POSTHOG_KEY=phc_yourkey
 AO_TELEMETRY_POSTHOG_HOST=https://us.i.posthog.com
 ```
 
+The supervisor also passes `AO_TELEMETRY_APP_VERSION` (the Electron app version)
+so daemon events carry `app_version`/`ao_version`. The daemon binary has no
+version of its own that release tooling sets, so without this every daemon event
+arrives unattributable to a release and a failure rate cannot be traced to the
+build that caused it.
+
 Local daemon telemetry is retained in SQLite for 30 days.
+
+### Kill switch
+
+`AO_TELEMETRY_DISABLED_EVENTS` is a comma-separated list of event streams that
+must never reach PostHog:
+
+```bash
+AO_TELEMETRY_DISABLED_EVENTS="ao.v2.app.active, ao.renderer.*"
+```
+
+An entry ending in `*` matches by prefix. Matching is case-insensitive and
+accepts either the internal name (`ao.app.active`) or the exported PostHog alias
+(`ao.v2.app.active`), so the name visible in PostHog works without translation.
+
+The list is enforced in two places, because AO has two producers: the daemon's
+billed sink, and the renderer, which talks to PostHog directly. The supervisor
+passes the list to the daemon as an environment variable and to the renderer on
+the telemetry bootstrap, so denying `ao.v2.app.active` silences both rather than
+leaving the renderer sending under the same exported name.
+
+Renderer export is additionally off by default on unpackaged builds, so a
+developer's ordinary session does not appear in the production project as a real
+install. `AO_TELEMETRY_RENDERER=on` opts a dev build back in for deliberate
+testing; `off` opts a packaged build out.
+
+This exists because every other control in this document is compiled into the
+build. Silencing a stream previously meant shipping a release and waiting for
+users to install it, which took weeks the one time a stream turned out to be
+expensive. The denylist is applied by the daemon at startup, so it takes effect
+on installs that already exist.
+
+The switch is applied outermost on the remote chain: a silenced stream consumes
+no aggregation window, no rate-limit slot, and no export. Local SQLite storage is
+deliberately unaffected, so a stream silenced in production stays debuggable
+locally. Unrecognized entries are inert rather than fatal, because the switch has
+to be usable in a hurry.
 
 ## PostHog Retention And Geography Dashboard
 

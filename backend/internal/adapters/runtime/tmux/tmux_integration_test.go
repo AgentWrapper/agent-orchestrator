@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -66,12 +67,15 @@ func TestRuntimeIntegration(t *testing.T) {
 		t.Fatalf("output after SendMessage = %q, want hello-send", out)
 	}
 
-	// Destroy and verify liveness goes false.
+	// Destroy and verify liveness goes false. When this was the server's last
+	// session the server itself exits with it, and the probe reports the
+	// server-level outage as an inconclusive ErrRuntimeUnavailable rather than
+	// a per-session death (issue #3475); both outcomes mean the handle is gone.
 	if err := r.Destroy(ctx, h); err != nil {
 		t.Fatalf("Destroy: %v", err)
 	}
 	alive, err = r.IsAlive(ctx, h)
-	if err != nil {
+	if err != nil && !errors.Is(err, ports.ErrRuntimeUnavailable) {
 		t.Fatalf("IsAlive after destroy: %v", err)
 	}
 	if alive {
