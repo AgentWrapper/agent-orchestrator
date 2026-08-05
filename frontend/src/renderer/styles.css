@@ -13,6 +13,17 @@
  * (:root[data-theme="light"]). apply-initial-theme runs before CSS load; the
  * Zustand theme toggle updates data-theme on <html>.
  */
+
+/*
+ * Theme switches run under document.startViewTransition so per-element
+ * color/background transitions are hidden behind a snapshot. Kill the
+ * default root crossfade — we want an instant cut, not an animation.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation: none;
+	mix-blend-mode: normal;
+}
 @theme inline {
 	--font-sans: var(--font-family-base);
 	--font-mono: var(--font-family-mono);
