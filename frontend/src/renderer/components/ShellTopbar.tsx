@@ -2,8 +2,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
-import { LayoutGroup, motion, useReducedMotion } from "motion/react";
+import { useEffect, useState } from "react";
+import { LayoutGroup, motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
@@ -54,8 +54,6 @@ const PADDING_DEFAULT = 18; // 1.125rem
 const PADDING_CLEARANCE = 170;
 const PADDING_CLEARANCE_FULLSCREEN = 112;
 
-const TOPBAR_SPRING = { type: "spring" as const, stiffness: 420, damping: 40, mass: 0.6 };
-
 export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -72,12 +70,17 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 	const isFullScreen = useWindowFullScreen();
 	const prefersReducedMotion = useReducedMotion();
 	const mac = isMacPlatform();
-	const titlebarPaddingLeft =
+	const targetPaddingLeft =
 		!embedded && mac && !isSidebarOpen
 			? isFullScreen
 				? PADDING_CLEARANCE_FULLSCREEN
 				: PADDING_CLEARANCE
 			: PADDING_DEFAULT;
+	const paddingMV = useMotionValue(targetPaddingLeft);
+	const paddingLeft = useSpring(paddingMV, prefersReducedMotion ? { duration: 0 } : { stiffness: 420, damping: 40, mass: 0.6 });
+	useEffect(() => {
+		paddingMV.set(targetPaddingLeft);
+	}, [targetPaddingLeft, paddingMV]);
 	const [isSpawning, setIsSpawning] = useState(false);
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
@@ -164,9 +167,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 		<LayoutGroup id="shell-topbar">
 		<motion.header
 			className={embedded ? "contents" : topbarHeaderClass}
-			style={embedded ? undefined : dragStyle}
-			animate={embedded ? undefined : { paddingLeft: titlebarPaddingLeft }}
-			transition={prefersReducedMotion ? { duration: 0 } : TOPBAR_SPRING}
+			style={embedded ? undefined : { ...dragStyle, paddingLeft }}
 		>
 			{!embedded ? (
 				<div className="flex min-w-0 items-center gap-3">
