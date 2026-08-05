@@ -29,13 +29,13 @@ const hookState = vi.hoisted(() => ({
 	selectTab: vi.fn(),
 	closeTab: vi.fn(),
 	prepareForOverlay: vi.fn(async () => undefined),
+	finishOverlay: vi.fn(),
 	setAnnotationMode: vi.fn(),
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
 	tabNotice: "",
 	agentBrowserActive: false,
 	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
-	visualTransition: null as { kind: "tab-switch" | "popout"; snapshotUrl: string } | null,
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -64,10 +64,10 @@ vi.mock("../hooks/useBrowserView", () => ({
 			tabNotice: hookState.tabNotice,
 			agentBrowserActive: hookState.agentBrowserActive,
 			agentBrowserActivity: hookState.agentBrowserActivity,
-			visualTransition: hookState.visualTransition,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
 			prepareForOverlay: hookState.prepareForOverlay,
+			finishOverlay: hookState.finishOverlay,
 			annotationMode: false,
 			setAnnotationMode: hookState.setAnnotationMode,
 		};
@@ -154,6 +154,7 @@ describe("BrowserPanel", () => {
 		hookState.selectTab.mockReset();
 		hookState.closeTab.mockReset();
 		hookState.prepareForOverlay.mockReset();
+		hookState.finishOverlay.mockReset();
 		hookState.setAnnotationMode.mockReset();
 		hookState.setAnnotationMode.mockResolvedValue(undefined);
 		postMock.mockReset();
@@ -178,7 +179,6 @@ describe("BrowserPanel", () => {
 		hookState.tabNotice = "";
 		hookState.agentBrowserActive = false;
 		hookState.agentBrowserActivity = null;
-		hookState.visualTransition = null;
 		hookState.navState = {
 			viewId: "42:sess-1",
 			url: "",
@@ -254,11 +254,45 @@ describe("BrowserPanel", () => {
 		expect(tabsButton).toHaveClass("bg-accent-weak");
 		await userEvent.click(tabsButton);
 		await userEvent.click(screen.getByText("First app"));
-		expect(hookState.selectTab).toHaveBeenCalledWith("t1");
+		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
+		expect(hookState.finishOverlay).toHaveBeenCalledTimes(1);
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 
 		await userEvent.click(tabsButton);
 		await userEvent.click(screen.getByRole("menuitem", { name: "Close tab First app" }));
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
+	});
+
+	it("releases the tabs overlay when tab selection fails", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
+		];
+		hookState.selectTab.mockRejectedValueOnce(new Error("selection failed"));
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
+		await userEvent.click(screen.getByText("Second app"));
+
+		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalled());
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+	});
+
+	it("releases the tabs overlay when the menu is dismissed", async () => {
+		hookState.tabs = [
+			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: true },
+			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: false },
+		];
+		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
+		expect(await screen.findByRole("menu")).toBeInTheDocument();
+		hookState.finishOverlay.mockClear();
+
+		await userEvent.keyboard("{Escape}");
+
+		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalledTimes(1));
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
 
 	it("surfaces a popup-created tab without adding a full tab strip", () => {
@@ -353,16 +387,6 @@ describe("BrowserPanel", () => {
 
 		expect(screen.getByText("Agent clicking")).toBeInTheDocument();
 		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
-	});
-
-	it("renders a captured transition frame over the native browser slot", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.visualTransition = { kind: "tab-switch", snapshotUrl: "data:image/jpeg;base64,snapshot" };
-
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		const frame = screen.getByTestId("browser-transition-frame");
-		expect(frame).toHaveAttribute("src", "data:image/jpeg;base64,snapshot");
 	});
 
 	it("renders the premium browser shell hooks in the default view", () => {
