@@ -1406,23 +1406,31 @@ export default function CloudAppPage() {
     await refresh();
   };
 
-  const deleteSelectedWorkerMachine = async () => {
-    if (!api || !activeOrgId || !selectedSession || selectedSession.kind !== "worker") return;
+  const deleteWorkerMachine = async (sessionToDelete: CloudSession) => {
+    if (!api || !activeOrgId || sessionToDelete.kind !== "worker") return;
     const confirmed = window.confirm(
-      `Delete ${selectedSession.displayName}'s cloud session, machine, and workspace volume?\n\nThis stops the worker and removes its Postgres records.`,
+      `Delete ${sessionToDelete.displayName}'s agent and machine?\n\nThis removes its cloud session and workspace volume.`,
     );
     if (!confirmed) return;
     const deleted = await run(() =>
-      api.deleteSession(activeOrgId, selectedSession.id),
+      api.deleteSession(activeOrgId, sessionToDelete.id),
     );
     if (!deleted) return;
     setActiveChatSessionIds((current) => {
       const next = new Set(current);
-      next.delete(selectedSession.id);
+      next.delete(sessionToDelete.id);
       return next;
     });
-    setSelectedSessionId(null);
-    setView("board");
+    if (selectedSessionId === sessionToDelete.id) {
+      setSelectedSessionId(null);
+      setView("board");
+    }
+    await refresh();
+  };
+
+  const deleteSelectedWorkerMachine = async () => {
+    if (!selectedSession) return;
+    await deleteWorkerMachine(selectedSession);
   };
 
   const deleteProject = async (project: CloudProject) => {
@@ -2335,6 +2343,17 @@ export default function CloudAppPage() {
                               <PencilLine className="size-3.5" />
                               Rename agent
                             </button>
+                            <button
+                              type="button"
+                              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-[#ef6b6b] hover:bg-[#ef6b6b]/10"
+                              onClick={() => {
+                                setSessionMenuOpenId(null);
+                                void deleteWorkerMachine(cloudSession);
+                              }}
+                            >
+                              <Trash2 className="size-3.5" />
+                              Delete agent
+                            </button>
                           </div>
                         ) : null}
                       </div>
@@ -2669,6 +2688,15 @@ export default function CloudAppPage() {
                       <span className="hidden xl:inline">Kanban</span>
                     </button>
                   ) : null}
+                  <button
+                    className={button}
+                    disabled={loading}
+                    onClick={() => void refresh()}
+                    aria-label="Refresh agent"
+                    title="Refresh agent"
+                  >
+                    <RefreshCw className="size-3.5" />
+                  </button>
                   <span className="mr-1 inline-flex h-7 items-center gap-1.5 rounded-md border border-white/10 px-2 font-mono text-[10px] uppercase tracking-[0.05em] text-[#9ba1aa]">
                     {activeChatSessionIds.has(selectedSession.id) ? (
                       <LoaderCircle
@@ -6055,10 +6083,7 @@ function ProjectForm({
                 })}
               </select>
             </label>
-            <div className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/45">
-              Independent cloud agent. GitHub tools work inside the runtime when
-              credentials are available.
-            </div>
+            <p className="text-xs leading-5 text-white/45">Independent agent.</p>
             {availableAgents.size === 0 ? (
               <button
                 type="button"
