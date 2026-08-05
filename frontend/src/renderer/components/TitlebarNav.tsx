@@ -53,11 +53,11 @@ export function TitlebarNav({
 
 	if (!isMac && !isLinux) return null;
 
-	// macOS: pinned beside the traffic lights. Native dots sit at y: 12 with a
-	// 12px hit target (centerline 18); the 40px clearance band is items-centered,
-	// so top: -2px puts the toggle/arrows on that same centerline. Linux: no
-	// traffic lights, so it sits at the sidebar's top-left within the reserved
-	// titlebar band.
+	// macOS: pinned beside the traffic lights. With the sidebar open, optically
+	// lift the outlined glyphs onto the dots' centerline. When the sidebar is
+	// off-canvas, lower the same fixed cluster into the exposed panel header so
+	// it does not float against the window edge. Linux has its own titlebar row;
+	// Windows never renders this component.
 	const leftClass = !isMac
 		? "left-0"
 		: isFullScreen
@@ -65,7 +65,13 @@ export function TitlebarNav({
 			: "left-titlebar-cluster-left";
 	// Linux: match the framed board titlebar's y (mac inset 2px + surface border
 	// 1px) so the cluster shares its centerline with the project title.
-	const topClass = !isMac ? "top-0.75" : isFullScreen ? "top-0" : "-top-0.6";
+	const topClass = !isMac
+		? "top-0.75"
+		: isFullScreen
+			? "top-0"
+			: isSidebarOpen
+				? "-top-1.25"
+				: "top-1";
 	const heightClass = isMac && isFullScreen ? "h-traffic-light-clearance-fullscreen" : "h-traffic-light-clearance";
 
 	return (

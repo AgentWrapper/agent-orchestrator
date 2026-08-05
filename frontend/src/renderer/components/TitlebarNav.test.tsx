@@ -40,6 +40,24 @@ describe("TitlebarNav", () => {
 		const { container } = render(<TitlebarNav />);
 
 		const nav = container.querySelector('[data-slot="titlebar-nav"]');
-		expect(nav).toHaveClass("left-titlebar-cluster-left", "h-traffic-light-clearance", "-top-0.6");
+		expect(nav).toHaveClass("left-titlebar-cluster-left", "h-traffic-light-clearance", "-top-1.25");
+	});
+
+	it("lowers the windowed cluster into the panel header when the sidebar is collapsed", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		const { container } = render(<TitlebarNav />);
+
+		const nav = container.querySelector('[data-slot="titlebar-nav"]');
+		expect(nav).toHaveClass("left-titlebar-cluster-left", "h-traffic-light-clearance", "top-1");
+		expect(nav).not.toHaveClass("-top-1.25");
+	});
+
+	it("does not apply the collapsed window offset in native fullscreen", () => {
+		useUiStore.setState({ isSidebarOpen: false });
+		const { container } = render(<TitlebarNav isFullScreen />);
+
+		const nav = container.querySelector('[data-slot="titlebar-nav"]');
+		expect(nav).toHaveClass("top-0", "h-traffic-light-clearance-fullscreen");
+		expect(nav).not.toHaveClass("top-1");
 	});
 });
