@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { aoBridge } from "../lib/bridge";
 import type { NotificationDTO, NotificationListStatus } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
 import { NotificationCenter, NotificationRuntime } from "./NotificationCenter";
@@ -300,7 +301,7 @@ describe("NotificationCenter", () => {
 		expect(screen.queryByRole("button", { name: "Mark notification read" })).not.toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input")).toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input").className).toContain("font-medium");
-		expect(screen.getByText("Fix checkout totals · PR #67").className).toContain("font-medium");
+		expect(screen.getByLabelText("Fix checkout totals · PR #67").className).toContain("font-medium");
 		expect(screen.getByText("Docs sweep needs input").className).not.toContain("font-medium");
 	});
 
@@ -473,13 +474,11 @@ describe("NotificationCenter", () => {
 		});
 	});
 
-	// A PR row navigates to its owning session like any other row. The title is
-	// no longer a separate link, so clicking it never opens the PR in a browser.
-	it("opens the session from a PR row title without opening the PR in a browser", async () => {
+	it("opens the session from the non-link portion of a PR row title", async () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		await userEvent.click(screen.getByText("Fix checkout totals · PR #67"));
+		await userEvent.click(screen.getByLabelText("Fix checkout totals · PR #67"));
 		expect(window.open).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
@@ -487,11 +486,23 @@ describe("NotificationCenter", () => {
 		});
 	});
 
+	it("opens the linked PR number in the system browser without opening the session", async () => {
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderNotificationCenter();
+		await clickOpen();
+
+		await userEvent.click(screen.getByRole("link", { name: "Open PR #67 in browser" }));
+
+		expect(openExternal).toHaveBeenCalledWith("https://github.com/acme/app/pull/67");
+		expect(navigateMock).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
 	it("shows the PR title prominently and does not repeat the session name in metadata", async () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		const title = screen.getByText("Fix checkout totals · PR #67");
+		const title = screen.getByLabelText("Fix checkout totals · PR #67");
 		const row = title.closest('[role="listitem"]');
 		expect(row).not.toBeNull();
 		expect(row).toHaveTextContent("acme/app");
@@ -520,7 +531,7 @@ describe("NotificationCenter", () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		expect(screen.getByText("PR #67 is ready to merge")).toBeInTheDocument();
+		expect(screen.getByLabelText("PR #67 is ready to merge")).toBeInTheDocument();
 		expect(
 			screen.getByText(
 				"PR from session Checkout flow is ready to merge. CI passed with no blocking review feedback.",
