@@ -8,6 +8,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
@@ -155,7 +156,7 @@ type SpawnSessionRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
+	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
@@ -243,6 +244,12 @@ type SessionPreviewResponse struct {
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionRequest struct {
 	DisplayName string `json:"displayName" minLength:"1"`
+}
+
+// SetSessionReviewerRequest sets the durable reviewer preference for a session.
+// Empty clears the preference and falls back to project configuration.
+type SetSessionReviewerRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
 }
 
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
@@ -646,6 +653,25 @@ type RefreshAgentsResponse = agentsvc.Inventory
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
 
+// AgentModelsQuery scopes a model catalog to a project where providers may be
+// configured per workspace.
+type AgentModelsQuery struct {
+	ProjectID string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+}
+
+// AgentModelsRefreshQuery controls forced refresh versus cheap background
+// revalidation for a project-scoped model catalog.
+type AgentModelsRefreshQuery struct {
+	ProjectID  string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+	Revalidate bool   `query:"revalidate,omitempty" description:"When true, compare executable and config metadata before running discovery."`
+}
+
+// AgentModelsResponse is the normalized model picker for one agent.
+type AgentModelsResponse = ports.AgentModelCatalog
+
+// AgentModelInfo is one selectable model or agent-owned mode.
+type AgentModelInfo = ports.AgentModelInfo
+
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
 
@@ -790,6 +816,12 @@ type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`
 }
 
+// MergePRRequest is the body of POST /api/v1/prs/{id}/merge.
+type MergePRRequest struct {
+	PRURL           string `json:"prUrl" minLength:"1"`
+	ExpectedHeadSHA string `json:"expectedHeadSha" minLength:"40"`
+}
+
 // MergePRResponse is the body of POST /api/v1/prs/{id}/merge (200).
 type MergePRResponse struct {
 	OK       bool   `json:"ok"`
@@ -851,4 +883,12 @@ type PushDeviceEnvelope struct {
 type UnregisterPushDeviceResponse struct {
 	Token   string `json:"token"`
 	Deleted bool   `json:"deleted"`
+}
+
+// TriggerReviewRequest is the optional body of the review trigger route. An
+// empty harness keeps the project's configured reviewer; setting one overrides
+// it for this pass only, without editing project config, so one session's choice
+// cannot change what another session in the project runs.
+type TriggerReviewRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
 }

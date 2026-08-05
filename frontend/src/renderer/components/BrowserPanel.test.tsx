@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BrowserPanel, BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { useBrowserView, type BrowserNavState } from "../hooks/useBrowserView";
 import type { WorkspaceSession } from "../types/workspace";
-import type { BrowserAnnotationCancelPayload, BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import type {
+	BrowserAnnotationCancelPayload,
+	BrowserAnnotationContext,
+	BrowserAnnotationSubmitPayload,
+} from "../../shared/browser-annotations";
 
 const postMock = vi.hoisted(() => vi.fn());
 
@@ -83,18 +87,25 @@ const session: WorkspaceSession = {
 	prs: [],
 };
 
-function annotationPayload(instruction: string): BrowserAnnotationSubmitPayload {
+type ElementAnnotationPayload = BrowserAnnotationSubmitPayload & {
+	selection: { kind: "element"; context: BrowserAnnotationContext };
+};
+
+function annotationPayload(instruction: string): ElementAnnotationPayload {
 	return {
 		viewId: "42:sess-1",
 		instruction,
-		context: {
-			url: "http://localhost:5173/",
-			tag: "button",
-			classes: [],
-			selector: "button",
-			rect: { x: 0, y: 0, width: 80, height: 30 },
-			nearbyText: [],
-			computedStyle: {},
+		selection: {
+			kind: "element",
+			context: {
+				url: "http://localhost:5173/",
+				tag: "button",
+				classes: [],
+				selector: "button",
+				rect: { x: 0, y: 0, width: 80, height: 30 },
+				nearbyText: [],
+				computedStyle: {},
+			},
 		},
 	};
 }
@@ -408,17 +419,20 @@ describe("BrowserPanel", () => {
 				listener({
 					viewId: "42:sess-1",
 					instruction: "Make this button blue.",
-					context: {
-						url: "http://localhost:5173/",
-						title: "Preview",
-						tag: "button",
-						id: "save",
-						classes: ["primary"],
-						selector: "button#save",
-						rect: { x: 16, y: 24, width: 140, height: 36 },
-						visibleText: "Save changes",
-						nearbyText: ["Profile settings"],
-						computedStyle: {},
+					selection: {
+						kind: "element",
+						context: {
+							url: "http://localhost:5173/",
+							title: "Preview",
+							tag: "button",
+							id: "save",
+							classes: ["primary"],
+							selector: "button#save",
+							rect: { x: 16, y: 24, width: 140, height: 36 },
+							visibleText: "Save changes",
+							nearbyText: ["Profile settings"],
+							computedStyle: {},
+						},
 					},
 				}),
 			);
@@ -554,17 +568,20 @@ describe("BrowserPanel", () => {
 		const { rerender } = render(
 			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />,
 		);
-		const payload = {
+		const payload: BrowserAnnotationSubmitPayload = {
 			viewId: "42:sess-1",
 			instruction: "Make this button yellow.",
-			context: {
-				url: "http://localhost:5173/",
-				tag: "button",
-				classes: [],
-				selector: "button",
-				rect: { x: 0, y: 0, width: 80, height: 30 },
-				nearbyText: [],
-				computedStyle: {},
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					rect: { x: 0, y: 0, width: 80, height: 30 },
+					nearbyText: [],
+					computedStyle: {},
+				},
 			},
 		};
 
@@ -613,14 +630,17 @@ describe("BrowserPanel", () => {
 				listener({
 					viewId: "42:sess-1",
 					instruction: "Move this card higher.",
-					context: {
-						url: "http://localhost:5173/",
-						tag: "section",
-						classes: [],
-						selector: "section",
-						rect: { x: 0, y: 0, width: 320, height: 180 },
-						nearbyText: [],
-						computedStyle: {},
+					selection: {
+						kind: "element",
+						context: {
+							url: "http://localhost:5173/",
+							tag: "section",
+							classes: [],
+							selector: "section",
+							rect: { x: 0, y: 0, width: 320, height: 180 },
+							nearbyText: [],
+							computedStyle: {},
+						},
 					},
 				}),
 			);
@@ -673,14 +693,17 @@ describe("BrowserPanel", () => {
 				listener({
 					viewId: "42:sess-1",
 					instruction: "Make this button blue.",
-					context: {
-						url: "http://localhost:5173/",
-						tag: "button",
-						classes: [],
-						selector: "button",
-						rect: { x: 0, y: 0, width: 80, height: 30 },
-						nearbyText: [],
-						computedStyle: {},
+					selection: {
+						kind: "element",
+						context: {
+							url: "http://localhost:5173/",
+							tag: "button",
+							classes: [],
+							selector: "button",
+							rect: { x: 0, y: 0, width: 80, height: 30 },
+							nearbyText: [],
+							computedStyle: {},
+						},
 					},
 				}),
 			);
@@ -701,9 +724,9 @@ describe("BrowserPanel", () => {
 			annotationSubmitListeners.forEach((listener) =>
 				listener({
 					...payload,
-					context: {
-						...payload.context,
-						selector: "button#save",
+					selection: {
+						kind: "element",
+						context: { ...payload.selection.context, selector: "button#save" },
 					},
 				}),
 			);

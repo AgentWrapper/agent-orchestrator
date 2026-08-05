@@ -1,14 +1,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
+import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
 import {
 	buildCommands,
+	buildSessionActions,
 	displayGroups,
+	filterCommands,
+	findSession,
 	type CommandItem as CommandItemModel,
 	type NavigateTarget,
 } from "../lib/command-palette";
@@ -20,9 +24,16 @@ import { useShell } from "../lib/shell-context";
 import { findProjectOrchestrator, hasConfiguredOrchestratorAgent } from "../types/workspace";
 import { useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
+import { Button } from "./ui/button";
 import { CreateProjectFlow } from "./CreateProjectFlow";
-import { NewTaskDialog } from "./NewTaskDialog";
+import { TaskComposer } from "./TaskComposer";
 import { CommandDialog, CommandEmpty, CommandFooter, CommandGroup, CommandInput, CommandItem, CommandList } from "./ui/command";
+
+type PaletteView =
+	| { mode: "root" }
+	| { mode: "session-actions"; sessionId: string }
+	| { mode: "new-task"; projectId: string };
+
 
 function terminalHasFocus(): boolean {
 	if (typeof document === "undefined") return false;
@@ -35,6 +46,7 @@ export function CommandPalette() {
 	const enabled = useCommandPaletteEnabled();
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const restoreSessionById = useRestoreSession();
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const workspaces = useWorkspaceQuery().data ?? [];
 	const { createProject, initializeProjectRepository } = useShell();
@@ -44,21 +56,24 @@ export function CommandPalette() {
 	const setOpen = useUiStore((s) => s.setCommandPaletteOpen);
 	const restartingProjectIds = useUiStore((s) => s.restartingProjectIds);
 
+	const [view, setView] = useState<PaletteView>({ mode: "root" });
 	const [query, setQuery] = useState("");
 	const [selectedValue, setSelectedValue] = useState("");
 	const [error, setError] = useState<string | null>(null);
-	const [newTaskProjectId, setNewTaskProjectId] = useState<string | undefined>();
-	const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
 	const [pendingId, setPendingId] = useState<string | null>(null);
+	const [pendingDismiss, setPendingDismiss] = useState<null | "pop" | "close">(null);
 	const pendingRef = useRef(false);
+	const runGenerationRef = useRef(0);
 	const choosePathRef = useRef<(() => void) | null>(null);
+	const composerDirtyRef = useRef(false);
+	const composerBusyRef = useRef(false);
+	const viewRef = useRef(view);
+	viewRef.current = view;
 
-	const currentSession = params.sessionId
-		? workspaces.flatMap((w) => w.sessions).find((s) => s.id === params.sessionId)
-		: undefined;
+	const currentSession = params.sessionId ? findSession(workspaces, params.sessionId)?.session : undefined;
 	const currentProjectId = currentSession?.workspaceId ?? params.projectId;
 
-	const items = useMemo(
+	const rootItems = useMemo(
 		() =>
 			buildCommands({
 				workspaces,
@@ -68,7 +83,21 @@ export function CommandPalette() {
 			}, t),
 		[workspaces, currentProjectId, params.sessionId, restartingProjectIds, t, i18n.resolvedLanguage],
 	);
-	const groups = useMemo(() => displayGroups(items, query, t), [items, query, t, i18n.resolvedLanguage]);
+	const scoped = useMemo(
+		() => (view.mode === "session-actions" ? findSession(workspaces, view.sessionId) : undefined),
+		[view, workspaces],
+	);
+	const sessionActionItems = useMemo(
+		() => (scoped ? buildSessionActions(scoped.workspace, scoped.session, t) : []),
+		[scoped, t],
+	);
+
+	const groups = useMemo(() => {
+		if (view.mode === "session-actions") {
+			return [{ id: "actions", label: "", items: filterCommands(sessionActionItems, query) }];
+		}
+		return displayGroups(rootItems, query, t);
+	}, [view.mode, rootItems, sessionActionItems, query, t, i18n.resolvedLanguage]);
 
 	const visibleItems = useMemo(() => groups.flatMap((group) => group.items), [groups]);
 	const value =
@@ -76,12 +105,78 @@ export function CommandPalette() {
 			? selectedValue
 			: (visibleItems.find((item) => !item.disabled) ?? visibleItems[0])?.id) ?? "";
 
-	const closePalette = useCallback(() => {
-		setOpen(false);
+	const resetTransient = useCallback(() => {
+		runGenerationRef.current += 1;
 		setQuery("");
 		setSelectedValue("");
 		setError(null);
-	}, [setOpen]);
+	}, []);
+
+	const closePalette = useCallback(() => {
+		setOpen(false);
+		setView({ mode: "root" });
+		setPendingDismiss(null);
+		resetTransient();
+	}, [setOpen, resetTransient]);
+
+	const popToRoot = useCallback(() => {
+		setView({ mode: "root" });
+		setPendingDismiss(null);
+		resetTransient();
+	}, [resetTransient]);
+
+	const pushView = useCallback(
+		(next: PaletteView) => {
+			setView(next);
+			setPendingDismiss(null);
+			resetTransient();
+		},
+		[resetTransient],
+	);
+
+	const requestDismiss = useCallback(
+		(target: "pop" | "close") => {
+			const current = viewRef.current;
+			if (composerBusyRef.current) return;
+			if (current.mode === "new-task" && composerDirtyRef.current) {
+				setPendingDismiss(target);
+				return;
+			}
+			if (target === "close" || current.mode === "root") {
+				closePalette();
+			} else {
+				popToRoot();
+			}
+		},
+		[closePalette, popToRoot],
+	);
+
+	const onComposerDirtyChange = useCallback((dirty: boolean) => {
+		composerDirtyRef.current = dirty;
+	}, []);
+
+	const onComposerSubmittingChange = useCallback((submitting: boolean) => {
+		composerBusyRef.current = submitting;
+		if (submitting) setPendingDismiss(null);
+	}, []);
+
+	const confirmDiscard = useCallback(() => {
+		if (composerBusyRef.current) return;
+		const target = pendingDismiss;
+		composerDirtyRef.current = false;
+		setPendingDismiss(null);
+		if (target === "close") closePalette();
+		else popToRoot();
+	}, [pendingDismiss, closePalette, popToRoot]);
+
+	useEffect(() => {
+		if (view.mode === "session-actions" && !scoped) {
+			setView({ mode: "root" });
+			setQuery("");
+			setSelectedValue("");
+			setError(t("command.sessionUnavailable"));
+		}
+	}, [view, scoped, t]);
 
 	const toggleTheme = useCallback(() => {
 		setThemePreference(resolvedTheme === "dark" ? "light" : "dark");
@@ -141,6 +236,16 @@ export function CommandPalette() {
 		[workspaces, navigateToTarget, queryClient, closePalette, blockedByRestart],
 	);
 
+	const resumeSession = useCallback(
+		async (sessionId: string) => {
+			const result = await restoreSessionById(sessionId);
+			if (result.status === "success") return null;
+			if (result.status === "not_resumable") return t("command.resumeNotResumable");
+			return result.message;
+		},
+		[restoreSessionById, t],
+	);
+
 	const runAction = useCallback(
 		async (item: CommandItemModel) => {
 			const action = item.action;
@@ -148,6 +253,8 @@ export function CommandPalette() {
 			setError(null);
 			pendingRef.current = true;
 			setPendingId(item.id);
+			const generation = runGenerationRef.current;
+			const isCurrentRun = () => runGenerationRef.current === generation;
 			try {
 				switch (action.kind) {
 					case "navigate":
@@ -162,28 +269,43 @@ export function CommandPalette() {
 						await aoBridge.clipboard.writeText(action.branch);
 						closePalette();
 						break;
+					case "open-session-actions":
+						pushView({ mode: "session-actions", sessionId: action.sessionId });
+						break;
+					case "resume-session": {
+						const message = await resumeSession(action.sessionId);
+						if (!isCurrentRun()) break;
+						if (message) {
+							setError(message);
+							break;
+						}
+						navigateToTarget({
+							to: "/projects/$projectId/sessions/$sessionId",
+							params: { projectId: action.projectId, sessionId: action.sessionId },
+						});
+						closePalette();
+						break;
+					}
 					case "open-new-task":
 						if (blockedByRestart(action.projectId)) break;
-						setNewTaskProjectId(action.projectId);
-						setIsNewTaskOpen(true);
-						closePalette();
+						pushView({ mode: "new-task", projectId: action.projectId });
 						break;
 					case "open-new-project":
 						closePalette();
 						choosePathRef.current?.();
 						break;
 					case "open-orchestrator":
-						await openOrchestrator(action.projectId);
-						break;
+							await openOrchestrator(action.projectId);
+							break;
 				}
 			} catch (err) {
-				setError(err instanceof Error ? err.message : t("command.failed"));
+				if (isCurrentRun()) setError(err instanceof Error ? err.message : t("command.failed"));
 			} finally {
 				pendingRef.current = false;
 				setPendingId(null);
 			}
 		},
-		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, blockedByRestart, t],
+		[navigateToTarget, closePalette, toggleTheme, openOrchestrator, resumeSession, pushView, blockedByRestart, t],
 	);
 
 	const onSelectItem = useCallback(
@@ -196,15 +318,15 @@ export function CommandPalette() {
 	);
 
 	const handleTaskCreated = useCallback(
-		async (sessionId: string) => {
-			if (!newTaskProjectId) return;
+		async (projectId: string, sessionId: string) => {
+			closePalette();
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
-				params: { projectId: newTaskProjectId, sessionId },
+				params: { projectId, sessionId },
 			});
 		},
-		[navigate, newTaskProjectId, queryClient],
+		[navigate, queryClient, closePalette],
 	);
 
 	useEffect(() => {
@@ -220,7 +342,7 @@ export function CommandPalette() {
 
 			if (isOpen) {
 				event.preventDefault();
-				closePalette();
+				requestDismiss("close");
 				return;
 			}
 			// Preserve the default Ctrl+K readline command in terminals. A user
@@ -242,15 +364,33 @@ export function CommandPalette() {
 		};
 		window.addEventListener("keydown", handleKeyDown, true);
 		return () => window.removeEventListener("keydown", handleKeyDown, true);
-	}, [enabled, isOpen, setOpen, closePalette]);
+	}, [enabled, isOpen, setOpen, requestDismiss]);
 
 	if (!enabled) return null;
+
+	const contextLabel =
+		view.mode === "session-actions"
+			? (scoped?.session.title ?? t("command.sessionFallback"))
+			: view.mode === "new-task"
+				? t("command.newTask")
+				: "";
 
 	return (
 		<>
 			<CommandDialog
 				open={isOpen}
-				onOpenChange={(open) => (open ? setOpen(true) : closePalette())}
+				onOpenChange={(open) => (open ? setOpen(true) : requestDismiss("close"))}
+				contentProps={{
+					onEscapeKeyDown: (event) => {
+						event.preventDefault();
+						if (event.isComposing) return;
+						if (pendingDismiss !== null) {
+							setPendingDismiss(null);
+							return;
+						}
+						requestDismiss(viewRef.current.mode === "root" ? "close" : "pop");
+					},
+				}}
 				commandProps={{
 					shouldFilter: false,
 					value,
@@ -259,72 +399,122 @@ export function CommandPalette() {
 					label: t("command.palette"),
 				}}
 			>
-				<CommandInput
-					value={query}
-					onValueChange={(next) => {
-						setQuery(next);
-						setError(null);
-					}}
-				placeholder={t("command.searchPlaceholder")}
-				/>
-				<CommandList>
-					<CommandEmpty>{t("command.noResults")}</CommandEmpty>
-					{error && (
-						<div
-							role="alert"
-							className="mx-2 mb-1 overflow-hidden rounded-[var(--radius-command-item)] border border-destructive/40 bg-destructive/10 px-5 py-2 text-xs wrap-break-word text-destructive"
+				{view.mode !== "root" && (
+					<div className="flex items-center gap-2 border-b border-border px-3 py-2">
+						<button
+							type="button"
+							onClick={() => requestDismiss("pop")}
+							className="grid size-10 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
+							aria-label={t("command.back")}
 						>
-							{error}
-						</div>
-					)}
-					{groups.map((group) => (
-						<CommandGroup key={group.id} heading={group.label}>
-							{group.items.map((item) => {
-								const Icon = iconForCommand(item);
-								return (
-									<CommandItem
-										key={item.id}
-										value={item.id}
-										disabled={item.disabled || (pendingId !== null && pendingId !== item.id)}
-										onSelect={() => onSelectItem(item)}
-									>
-										{Icon ? <Icon strokeWidth={1.75} aria-hidden="true" /> : null}
-										<span className="min-w-0 flex-1 truncate">{item.title}</span>
-										{pendingId === item.id ? (
-											<Loader2 className="ml-auto size-3.5 animate-spin text-[var(--color-text-command-muted)]" aria-hidden="true" />
-										) : item.disabled && item.disabledReason ? (
-											<span className="ml-auto text-control text-[var(--color-text-command-muted)]">
-												{item.disabledReason}
-											</span>
-										) : item.subtitle ? (
-											<span className="ml-auto max-w-command-subtitle truncate text-control text-[var(--color-text-command-muted)]">
-												{item.subtitle}
-											</span>
-										) : null}
-									</CommandItem>
-								);
-							})}
-						</CommandGroup>
-					))}
-				</CommandList>
-				<CommandFooter aria-hidden="true">
-					<span className="inline-flex items-center gap-1.5">
-						<span>↑↓</span>
-						<span>{t("command.select")}</span>
-					</span>
-					<span className="inline-flex items-center gap-1.5">
-						<span>↵</span>
-						<span>{t("command.open")}</span>
-					</span>
-				</CommandFooter>
-			</CommandDialog>
+							<ArrowLeft className="size-icon-base" aria-hidden="true" />
+						</button>
+						<span className="min-w-0 truncate rounded-md bg-surface px-2 py-0.5 text-2xs font-medium text-muted-foreground">
+							{contextLabel}
+						</span>
+					</div>
+				)}
 
-			<NewTaskDialog
-				open={isNewTaskOpen}
-				projectId={newTaskProjectId}
-				onCreated={(sessionId) => void handleTaskCreated(sessionId)}
-				onOpenChange={setIsNewTaskOpen}
-			/>
+				{view.mode === "new-task" ? (
+					<div onKeyDown={(event) => event.stopPropagation()}>
+						{pendingDismiss !== null && (
+							<div className="mx-3 mt-3 rounded-md border border-border bg-surface px-3 py-2 text-xs text-foreground">
+								<p className="text-muted-foreground">{t("command.discardDraft")}</p>
+								<div className="mt-2 flex justify-end gap-3">
+									<Button type="button" variant="footer" onClick={() => setPendingDismiss(null)}>
+										{t("command.keepEditing")}
+									</Button>
+									<Button type="button" variant="footer" className="text-destructive" onClick={confirmDiscard}>
+										{t("command.discard")}
+									</Button>
+								</div>
+							</div>
+						)}
+						<TaskComposer
+							projectId={view.projectId}
+							autoFocusTitle
+							onDirtyChange={onComposerDirtyChange}
+							onSubmittingChange={onComposerSubmittingChange}
+							onCreated={(sessionId) => void handleTaskCreated(view.projectId, sessionId)}
+							onCancel={() => requestDismiss("pop")}
+						/>
+					</div>
+				) : (
+					<>
+						<CommandInput
+							value={query}
+								onValueChange={(next) => {
+									setQuery(next);
+									setError(null);
+								}}
+							placeholder={
+								view.mode === "session-actions" ? t("command.searchActionsPlaceholder") : t("command.searchPlaceholder")
+							}
+							onKeyDown={(event) => {
+								if (
+									event.key === "Backspace" &&
+									query === "" &&
+									!event.nativeEvent.isComposing &&
+									viewRef.current.mode !== "root"
+								) {
+									event.preventDefault();
+									requestDismiss("pop");
+								}
+							}}
+						/>
+						<CommandList>
+							<CommandEmpty>{t("command.noResults")}</CommandEmpty>
+							{error && (
+								<div
+									role="alert"
+									className="mx-1 mb-1 overflow-hidden rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs wrap-break-word text-destructive"
+								>
+									{error}
+								</div>
+							)}
+							{groups.map((group) => (
+								<CommandGroup key={group.id} heading={group.label || undefined}>
+									{group.items.map((item) => {
+										const Icon = iconForCommand(item);
+										return (
+										<CommandItem
+											key={item.id}
+											value={item.id}
+											disabled={item.disabled || (pendingId !== null && pendingId !== item.id)}
+											onSelect={() => onSelectItem(item)}
+										>
+											{Icon ? <Icon strokeWidth={1.75} aria-hidden="true" /> : null}
+											<span className="min-w-0 flex-1 truncate">{item.title}</span>
+											{pendingId === item.id ? (
+												<Loader2 className="ml-auto size-3.5 animate-spin text-[var(--color-text-command-muted)]" aria-hidden="true" />
+											) : item.disabled && item.disabledReason ? (
+												<span className="ml-auto text-control text-[var(--color-text-command-muted)]">
+													{item.disabledReason}
+												</span>
+											) : item.subtitle ? (
+												<span className="ml-auto max-w-command-subtitle truncate text-control text-[var(--color-text-command-muted)]">
+													{item.subtitle}
+												</span>
+											) : null}
+										</CommandItem>
+										);
+									})}
+								</CommandGroup>
+							))}
+						</CommandList>
+						<CommandFooter aria-hidden="true">
+							<span className="inline-flex items-center gap-1.5">
+								<span>↑↓</span>
+								<span>{t("command.select")}</span>
+							</span>
+							<span className="inline-flex items-center gap-1.5">
+								<span>↵</span>
+								<span>{t("command.open")}</span>
+							</span>
+						</CommandFooter>
+					</>
+				)}
+			</CommandDialog>
 
 			<CreateProjectFlow
 				mode="choose"

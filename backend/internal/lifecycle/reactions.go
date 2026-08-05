@@ -17,8 +17,8 @@ import (
 
 const reviewMaxNudge = 3
 
-// ReviewDeliveryOutcome reports what ApplyReviewResult did with a completed
-// AO-internal review pass.
+// ReviewDeliveryOutcome reports what ApplyReviewBatch did with completed
+// AO-internal review passes.
 type ReviewDeliveryOutcome string
 
 const (
@@ -258,47 +258,6 @@ func (m *Manager) terminateCompletedSession(ctx context.Context, id domain.Sessi
 		return fmt.Errorf("terminate completed session %s: %w", id, err)
 	}
 	return nil
-}
-
-// ApplyReviewResult reacts to a completed AO-internal review pass after the
-// review service has persisted the run result. It mirrors ApplyPRObservation:
-// no change_log reads, no review_run writes, only lifecycle side effects.
-func (m *Manager) ApplyReviewResult(ctx context.Context, workerID domain.SessionID, r ReviewResult) (ReviewDeliveryOutcome, error) {
-	if r.Verdict != domain.VerdictChangesRequested || r.DeliveredAt != nil {
-		return ReviewDeliveryNoop, nil
-	}
-	rec, ok, err := m.store.GetSession(ctx, workerID)
-	if err != nil || !ok {
-		return ReviewDeliveryNoop, err
-	}
-	if cannotNudge(rec) {
-		return ReviewDeliveryNoop, nil
-	}
-	if m.guard == nil {
-		return ReviewDeliveryNoop, nil
-	}
-	msg := fmt.Sprintf("[AO reviewer] AO's internal code reviewer submitted a review.\n\nPR: %s\nVerdict: %s", domain.SanitizeControlChars(r.PRURL), domain.SanitizeControlChars(string(r.Verdict)))
-	if r.GithubReviewID != "" {
-		safeReviewID := domain.SanitizeControlChars(r.GithubReviewID)
-		msg += fmt.Sprintf("\nGitHub review: %s", safeReviewID)
-		msg += fmt.Sprintf("\n\nOnce you have addressed it, reply on GitHub review %s with how you addressed it, then resolve the review comment threads you addressed.", safeReviewID)
-	}
-	if r.Body != "" {
-		msg += "\n\nReview body:\n" + domain.SanitizeControlChars(r.Body)
-	}
-	key := "review:" + r.PRURL + ":ao:" + r.RunID
-	sig := strings.Join([]string{r.TargetSHA, r.RunID, r.GithubReviewID, r.Body}, "\x00")
-	outcome, err := m.sendOnce(ctx, workerID, r.PRURL, key, sig, msg, reviewMaxNudge)
-	if err != nil {
-		return ReviewDeliveryNoop, err
-	}
-	if outcome == sendOnceSuppressed {
-		// Suppressed by the just-in-time guard (worker went terminated/exited/needs-
-		// input): the review feedback did not reach the worker, so leave the run
-		// undelivered to re-fire on the next observation.
-		return ReviewDeliveryNoop, nil
-	}
-	return ReviewDeliverySent, nil
 }
 
 // sessionComplete reports whether the session has reached the multi-PR

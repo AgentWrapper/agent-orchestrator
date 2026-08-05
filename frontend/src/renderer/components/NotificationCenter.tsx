@@ -1,24 +1,26 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 import {
+	ArrowUpRight,
 	Bell,
 	BellRing,
 	CheckCheck,
 	CircleAlert,
-	ExternalLink,
 	GitMerge,
-	GitPullRequest,
+	GitPullRequestArrow,
+	GitPullRequestClosed,
 	Inbox,
 	LoaderCircle,
+	MessageSquareDot,
 	RotateCcw,
-	XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMarkAllNotificationsReadMutation, useNotificationsQuery } from "../hooks/useNotificationsQuery";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { aoBridge } from "../lib/bridge";
+import { openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { formatTimeCompact } from "../lib/format-time";
 import {
 	createNotificationsTransport,
@@ -31,6 +33,7 @@ import {
 	unreadNotificationsQueryKey,
 } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
+import { useNavigateToSession } from "../lib/navigate-to-session";
 import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { TopbarButton } from "./TopbarButton";
@@ -42,22 +45,15 @@ type NotificationCenterProps = {
 };
 
 function useNotificationTargetNavigation() {
-	const navigate = useNavigate();
+	const navigateToSession = useNavigateToSession();
 	const openSession = useCallback(
 		(notification: NotificationDTO) => {
 			const sessionId = notification.target.sessionId || notification.sessionId;
 			if (!sessionId) return;
 			void captureRendererEvent("ao.renderer.notification_opened", { target: "session" });
-			if (notification.projectId) {
-				void navigate({
-					to: "/projects/$projectId/sessions/$sessionId",
-					params: { projectId: notification.projectId, sessionId },
-				});
-				return;
-			}
-			void navigate({ to: "/sessions/$sessionId", params: { sessionId } });
+			navigateToSession(notification.projectId, sessionId);
 		},
-		[navigate],
+		[navigateToSession],
 	);
 
 	const openPrimary = useCallback(
@@ -108,6 +104,8 @@ function useSessionTerminationLookup(): {
 export function NotificationRuntime() {
 	const queryClient = useQueryClient();
 	const { openPrimary } = useNotificationTargetNavigation();
+	const unreadQuery = useNotificationsQuery("unread");
+	const unreadCount = getCachedUnreadCount(unreadQuery.data);
 	const params = useParams({ strict: false }) as { sessionId?: string };
 	const routeSessionIdRef = useRef(params.sessionId);
 	routeSessionIdRef.current = params.sessionId;
@@ -127,6 +125,13 @@ export function NotificationRuntime() {
 		() => createNotificationsTransport(queryClient, getVisibleAgentSessionId).connect(),
 		[getVisibleAgentSessionId, queryClient],
 	);
+
+	// Keep the OS launcher badge in sync here rather than in NotificationCenter:
+	// NotificationRuntime is always mounted in the shell, whereas the notification
+	// bell is absent from the Linux topbar and only mounts on the sessions board.
+	useEffect(() => {
+		void aoBridge.notifications.setBadge(unreadCount);
+	}, [unreadCount]);
 
 	useEffect(() => {
 		return aoBridge.notifications.onClick((id) => {
@@ -160,9 +165,21 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 	const markAllRead = useMarkAllNotificationsReadMutation();
 	const restoreSession = useRestoreSession();
 	const { retryWorkspace, sessionsReady, terminatedIds, workspaceError } = useSessionTerminationLookup();
+	const { data: workspaces } = useWorkspaceQuery();
+	// Resolve the human project + session names for each notification so the row
+	// can show where it came from (the DTO only carries opaque ids).
+	const sessionMeta = useMemo(() => {
+		const map = new Map<string, { projectName: string; sessionName: string }>();
+		for (const workspace of workspaces ?? []) {
+			for (const session of workspace.sessions) {
+				map.set(session.id, { projectName: workspace.name, sessionName: session.title });
+			}
+		}
+		return map;
+	}, [workspaces]);
 	const notifications = useMemo(() => getCachedNotifications(allQuery.data), [allQuery.data]);
 	const unreadCount = getCachedUnreadCount(unreadQuery.data);
-	const { openPrimary, openSession } = useNotificationTargetNavigation();
+	const { openSession } = useNotificationTargetNavigation();
 	const markAllMutate = markAllRead.mutateAsync;
 
 	// Concrete ids only — never `[]` — so unread pages past the first stay
@@ -233,11 +250,6 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 
 	const openSessionAndDismiss = (notification: NotificationDTO) => {
 		openSession(notification);
-		setPanelOpen(false);
-	};
-
-	const openPrimaryAndDismiss = (notification: NotificationDTO) => {
-		openPrimary(notification);
 		setPanelOpen(false);
 	};
 
@@ -352,8 +364,8 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 								<NotificationItem
 									highlighted={highlightedIds.has(notification.id) || notification.status === "unread"}
 									key={notification.id}
+									meta={sessionId ? sessionMeta.get(sessionId) : undefined}
 									notification={notification}
-									onOpenPrimary={openPrimaryAndDismiss}
 									onOpenSession={openSessionAndDismiss}
 									onRestore={() => void restoreAndOpen(notification)}
 									restoring={restoringSessionId === sessionId}
@@ -413,8 +425,8 @@ function NotificationEmpty({ icon: Icon, message }: { icon: typeof Bell; message
  */
 function NotificationItem({
 	highlighted,
+	meta,
 	notification,
-	onOpenPrimary,
 	onOpenSession,
 	onRestore,
 	restoring,
@@ -423,8 +435,8 @@ function NotificationItem({
 	terminated,
 }: {
 	highlighted: boolean;
+	meta?: { projectName: string; sessionName: string };
 	notification: NotificationDTO;
-	onOpenPrimary: (notification: NotificationDTO) => void;
 	onOpenSession: (notification: NotificationDTO) => void;
 	onRestore: () => void;
 	restoring: boolean;
@@ -434,9 +446,11 @@ function NotificationItem({
 }) {
 	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
-	const isPR = notification.target.kind === "pr" && Boolean(notification.target.prUrl);
 	const sessionId = notification.target.sessionId || notification.sessionId;
 	const canOpenSession = Boolean(sessionId) && sessionsReady && !terminated;
+	const copy = notificationCopy(notification, meta?.sessionName);
+	const titleLink = notificationPRTitleLink(notification, copy.title);
+	const showSessionMeta = Boolean(meta?.sessionName) && !notificationMentions(copy, meta?.sessionName ?? "");
 	const openRow = () => {
 		if (canOpenSession) onOpenSession(notification);
 	};
@@ -444,8 +458,11 @@ function NotificationItem({
 		<div role="listitem">
 			<div
 				className={cn(
-					"group grid grid-cols-notification items-start gap-3 px-4 py-3 text-left transition-[background-color,opacity] duration-fast",
-					canOpenSession ? "cursor-pointer hover:bg-interactive-hover" : "cursor-default",
+					"group grid grid-cols-notification items-start gap-3 px-4 py-3 text-left transition-[background-color,opacity,transform] duration-fast will-change-transform",
+					highlighted && "notification-row-enter",
+					canOpenSession
+						? "cursor-pointer hover:bg-interactive-hover active:scale-[0.99] active:bg-interactive-active"
+						: "cursor-default",
 					!highlighted && "opacity-55 hover:opacity-80",
 				)}
 				onClick={openRow}
@@ -461,48 +478,60 @@ function NotificationItem({
 			>
 				<div
 					className={cn(
-						"grid size-notification-icon shrink-0 place-items-center rounded-md bg-surface",
+						"grid size-notification-icon shrink-0 place-items-center transition-transform duration-fast group-hover:brightness-110 group-active:scale-90",
 						notificationIconClass(notification.type),
 					)}
 				>
-					<Icon className="size-icon-base" aria-hidden="true" />
+					<Icon className="size-5" strokeWidth={2} aria-hidden="true" />
 				</div>
 				<div className="min-w-0">
 					{/* Match the 26px icon band so the title centers with the left glyph. */}
 					<div className="flex min-h-notification-icon items-center">
-						{isPR ? (
-							<a
-								className={cn(
-									"inline-flex min-w-0 items-center gap-1 text-left text-control leading-snug text-foreground underline decoration-border-strong underline-offset-3 transition-colors hover:text-accent hover:decoration-accent/60",
-									highlighted && "font-medium",
-								)}
-								href={notification.target.prUrl}
-								onClick={(event) => {
-									event.preventDefault();
-									event.stopPropagation();
-									onOpenPrimary(notification);
-								}}
-								rel="noreferrer"
-								target="_blank"
-								title={t("notify.openPR")}
-							>
-								<span className="break-words">{notification.title}</span>
-								<ExternalLink className="size-3 shrink-0" aria-hidden="true" />
-							</a>
-						) : (
-							<span
-								className={cn(
-									"min-w-0 break-words text-control leading-snug text-foreground",
-									highlighted && "font-medium",
-								)}
-							>
-								{notification.title}
-							</span>
-						)}
+						<span
+							aria-label={copy.title}
+							className={cn(
+								"min-w-0 break-words text-control leading-snug text-foreground",
+								highlighted && "font-medium",
+							)}
+						>
+							{titleLink ? (
+								<>
+									{titleLink.before}
+									<a
+										aria-label={t("inspector.openPR", { number: titleLink.number })}
+										className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+										href={titleLink.url}
+										onClick={(event) => {
+											event.preventDefault();
+											event.stopPropagation();
+											void captureRendererEvent("ao.renderer.notification_opened", { target: "pr" });
+											void openLinkInSystemBrowser(titleLink.url);
+										}}
+										rel="noopener noreferrer"
+										target="_blank"
+									>
+										{titleLink.label}
+										<ArrowUpRight aria-hidden="true" className="size-icon-2xs shrink-0" strokeWidth={2} />
+									</a>
+									{titleLink.after}
+								</>
+							) : (
+								copy.title
+							)}
+						</span>
 					</div>
-					{notification.body ? (
+					{copy.body ? (
 						<p className="mt-0.5 whitespace-pre-wrap break-words text-caption leading-snug text-muted-foreground">
-							{notification.body}
+							{copy.body}
+						</p>
+					) : null}
+					{meta && (meta.projectName || showSessionMeta) ? (
+						<p className="mt-1 flex min-w-0 items-center gap-1.5 text-caption leading-none text-passive">
+							{meta.projectName ? (
+								<span className="truncate font-medium text-muted-foreground">{meta.projectName}</span>
+							) : null}
+							{meta.projectName && showSessionMeta ? <span aria-hidden="true">·</span> : null}
+							{showSessionMeta ? <span className="truncate">{meta.sessionName}</span> : null}
 						</p>
 					) : null}
 				</div>
@@ -538,21 +567,78 @@ function NotificationItem({
 	);
 }
 
+type NotificationCopy = Pick<NotificationDTO, "body" | "title">;
+
+function notificationPRTitleLink(
+	notification: NotificationDTO,
+	title: string,
+): { after: string; before: string; label: string; number: string; url: string } | null {
+	const url = notification.target.kind === "pr" ? notification.target.prUrl : notification.prUrl;
+	if (!url) return null;
+	const match = /\bPR\s*#(\d+)\b/i.exec(title);
+	if (!match || match.index === undefined) return null;
+	return {
+		before: title.slice(0, match.index),
+		label: match[0],
+		number: match[1],
+		after: title.slice(match.index + match[0].length),
+		url,
+	};
+}
+
+function notificationCopy(notification: NotificationDTO, sessionName?: string): NotificationCopy {
+	if (notification.type !== "ready_to_merge") {
+		return { title: notification.title, body: notification.body };
+	}
+
+	const session = sessionName?.trim();
+	if (!session) {
+		return { title: notification.title, body: notification.body };
+	}
+
+	const legacySessionTitle = `${session} is ready to merge`;
+	const title =
+		notification.title.trim().toLocaleLowerCase() === legacySessionTitle.toLocaleLowerCase()
+			? readyNotificationFallbackTitle(notification)
+			: notification.title;
+
+	return {
+		title,
+		body: `PR from session ${session} is ready to merge. CI passed with no blocking review feedback.`,
+	};
+}
+
+function readyNotificationFallbackTitle(notification: NotificationDTO): string {
+	const titleNumber = notification.title.match(/\bPR\s*#(\d+)\b/i)?.[1];
+	const urlNumber = notification.prUrl.match(/\/pull\/(\d+)(?:\/|$)/)?.[1];
+	const number = titleNumber ?? urlNumber;
+	return number ? `PR #${number} is ready to merge` : "Pull request is ready to merge";
+}
+
+function notificationMentions(notification: NotificationCopy, value: string): boolean {
+	const needle = value.trim().toLocaleLowerCase();
+	if (!needle) return false;
+	return `${notification.title}\n${notification.body}`.toLocaleLowerCase().includes(needle);
+}
+
 function notificationIcon(type: string) {
 	switch (type) {
 		case "needs_input":
-			return CircleAlert;
+			return MessageSquareDot;
 		case "ready_to_merge":
-			return GitPullRequest;
+			return GitPullRequestArrow;
 		case "pr_merged":
 			return GitMerge;
 		case "pr_closed_unmerged":
-			return XCircle;
+			return GitPullRequestClosed;
 		default:
 			return Bell;
 	}
 }
 
+// Bare colored glyph per type (no tile). Merged uses GitHub's PR-merged purple;
+// the accent token is a near-black surface color in this theme and reads as
+// invisible, so it must not be used for a glyph.
 function notificationIconClass(type: string): string {
 	switch (type) {
 		case "needs_input":
@@ -560,7 +646,7 @@ function notificationIconClass(type: string): string {
 		case "ready_to_merge":
 			return "text-success";
 		case "pr_merged":
-			return "text-accent";
+			return "text-[#a371f7]";
 		case "pr_closed_unmerged":
 			return "text-error";
 		default:

@@ -290,6 +290,7 @@ func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef
 }
 
 func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, defaultBranch string) workspaceCompareTarget {
+	defaultBranch = workspaceDefaultBranch(defaultBranch)
 	for _, ref := range workspaceBaseRefCandidates(defaultBranch) {
 		if sha, ok := gitMergeBase(ctx, root, ref); ok {
 			return workspaceCompareTarget{BaseSHA: sha, BaseRef: ref, Mode: WorkspaceCompareBase}
@@ -297,16 +298,13 @@ func resolveWorkspaceProjectCompare(ctx context.Context, root, recordedSHA, defa
 	}
 	recordedSHA = strings.TrimSpace(recordedSHA)
 	if recordedSHA != "" && gitCommitExists(ctx, root, recordedSHA) {
-		return workspaceCompareTarget{BaseSHA: recordedSHA, Mode: WorkspaceCompareBase}
+		return workspaceCompareTarget{BaseSHA: recordedSHA, BaseRef: defaultBranch, Mode: WorkspaceCompareBase}
 	}
 	return workspaceCompareTarget{Mode: WorkspaceCompareHeadFallback}
 }
 
 func workspaceBaseRefCandidates(defaultBranch string) []string {
-	defaultBranch = strings.TrimSpace(defaultBranch)
-	if defaultBranch == "" {
-		return nil
-	}
+	defaultBranch = workspaceDefaultBranch(defaultBranch)
 	seen := map[string]struct{}{}
 	var refs []string
 	add := func(ref string) {
@@ -326,6 +324,14 @@ func workspaceBaseRefCandidates(defaultBranch string) []string {
 	}
 	add(defaultBranch)
 	return refs
+}
+
+func workspaceDefaultBranch(defaultBranch string) string {
+	defaultBranch = strings.TrimSpace(defaultBranch)
+	if defaultBranch == "" {
+		return domain.DefaultBranchName
+	}
+	return defaultBranch
 }
 
 func selectWorkspaceComparePR(prs []domain.PullRequest, defaultBranch string) (domain.PullRequest, bool) {

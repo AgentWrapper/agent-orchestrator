@@ -12,6 +12,15 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+type AgentModelCatalog struct {
+	AgentID       string
+	ProjectID     string
+	BinaryVersion string
+	CatalogJson   string
+	Source        string
+	FetchedAt     time.Time
+}
+
 type ChangeLog struct {
 	Seq       int64
 	ProjectID domain.ProjectID
@@ -190,6 +199,9 @@ type Session struct {
 	TerminateOnPRMerge bool
 	DiffBaseSha        string
 	DiffBaseRef        string
+	IsPinned           bool
+	PinnedAt           sql.NullTime
+	ReviewerHarness    domain.ReviewerHarness
 }
 
 type SessionCleanupFact struct {

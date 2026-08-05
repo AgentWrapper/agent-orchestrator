@@ -34,7 +34,7 @@ func reviewErrorKind(err error) string {
 
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {
-	Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error)
+	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
@@ -63,7 +63,6 @@ type Store interface {
 // Reducer is the lifecycle reaction boundary used after a review result has
 // been persisted.
 type Reducer interface {
-	ApplyReviewResult(ctx context.Context, workerID domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 	ApplyReviewBatch(ctx context.Context, workerID domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 }
 
@@ -124,9 +123,16 @@ func New(engine *reviewcore.Engine, store Store, opts ...Option) *Service {
 	return s
 }
 
-// Trigger starts (or reuses) a review pass for a worker's PR.
-func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (reviewcore.TriggerResult, error) {
-	result, err := s.engine.Trigger(ctx, workerID)
+// Trigger starts (or reuses) a review pass for a worker's PR. An empty harness
+// runs under the project's configured reviewer; a non-empty one overrides it for
+// this pass only, so choosing a reviewer for one session leaves every other
+// session in the project untouched.
+func (s *Service) Trigger(
+	ctx context.Context,
+	workerID domain.SessionID,
+	harness domain.ReviewerHarness,
+) (reviewcore.TriggerResult, error) {
+	result, err := s.engine.Trigger(ctx, workerID, harness)
 	if err != nil {
 		s.emit("ao.review.trigger_failed", workerID, map[string]any{
 			"error_kind": reviewErrorKind(err),
@@ -134,7 +140,9 @@ func (s *Service) Trigger(ctx context.Context, workerID domain.SessionID) (revie
 		return result, err
 	}
 	// created_runs distinguishes a genuinely new pass from a reuse of a running
-	// or up-to-date one, which the engine also reports as success.
+	// or up-to-date one, which the engine also reports as success. harness is the
+	// one actually used, resolved by the engine, not the caller's override, which
+	// may be empty.
 	s.emit("ao.review.triggered", workerID, map[string]any{
 		"harness":      string(result.Run.Harness),
 		"created_runs": len(result.CreatedRuns),
@@ -294,12 +302,7 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 		return nil, nil
 	}
 	results := reviewResults(workerID, deliverable)
-	var outcome lifecycle.ReviewDeliveryOutcome
-	if len(results) == 1 && results[0].BatchID == "" {
-		outcome, err = s.lifecycle.ApplyReviewResult(ctx, workerID, results[0])
-	} else {
-		outcome, err = s.lifecycle.ApplyReviewBatch(ctx, workerID, results[0].BatchID, results)
-	}
+	outcome, err := s.lifecycle.ApplyReviewBatch(ctx, workerID, results[0].BatchID, results)
 	if err != nil {
 		return nil, err
 	}
@@ -332,7 +335,7 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
 			continue
 		}
-		if run.BatchID != "" && currentHeads[run.PRURL] != run.TargetSHA {
+		if currentHeads[run.PRURL] != run.TargetSHA {
 			continue
 		}
 		deliverable = append(deliverable, run)

@@ -33,6 +33,119 @@ paths:
       summary: Return cached supported and locally installed agent adapters
       tags:
       - agents
+  /api/v1/agents/{agent}/models:
+    get:
+      operationId: getAgentModels
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      - description: Optional project identifier used as the model-catalog cache scope.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project identifier used as the model-catalog cache
+            scope.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the cached model picker for one agent, discovering it on first
+        use
+      tags:
+      - agents
+  /api/v1/agents/{agent}/models/refresh:
+    post:
+      operationId: refreshAgentModels
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      - description: Optional project identifier used as the model-catalog cache scope.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project identifier used as the model-catalog cache
+            scope.
+          type: string
+      - description: When true, compare executable and config metadata before running
+          discovery.
+        in: query
+        name: revalidate
+        schema:
+          description: When true, compare executable and config metadata before running
+            discovery.
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Refresh and cache the model picker for one agent
+      tags:
+      - agents
   /api/v1/agents/{agent}/probe:
     post:
       operationId: probeAgent
@@ -993,6 +1106,12 @@ paths:
         schema:
           description: PR number.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MergePRRequest'
+        required: true
       responses:
         "200":
           content:
@@ -1000,6 +1119,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MergePRResponse'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "404":
           content:
             application/json:
@@ -1452,6 +1577,83 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Configure whether PR completion terminates the session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/pin:
+    delete:
+      operationId: unpinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Unpin a session
+      tags:
+      - sessions
+    post:
+      operationId: pinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Pin a session
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/pr:
@@ -2006,6 +2208,63 @@ paths:
       summary: Resume an exited agent in its existing session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/reviewer:
+    put:
+      operationId: setSessionReviewer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionReviewerRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set the reviewer harness for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/reviews:
     get:
       operationId: listReviews
@@ -2140,6 +2399,11 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerReviewRequest'
       responses:
         "200":
           content:
@@ -2627,6 +2891,8 @@ components:
       type: object
     AgentConfig:
       properties:
+        mode:
+          type: string
         model:
           type: string
         permissions:
@@ -2649,6 +2915,61 @@ components:
       required:
       - id
       - label
+      type: object
+    AgentModelInfo:
+      properties:
+        id:
+          type: string
+        isDefault:
+          type: boolean
+        label:
+          type: string
+        provider:
+          type: string
+      required:
+      - id
+      - label
+      type: object
+    AgentModelsResponse:
+      properties:
+        agentId:
+          type: string
+        allowCustom:
+          type: boolean
+        binaryVersion:
+          type: string
+        fetchedAt:
+          format: date-time
+          type: string
+        models:
+          items:
+            $ref: '#/components/schemas/AgentModelInfo'
+          type: array
+        refreshRecommended:
+          type: boolean
+        selectionMode:
+          enum:
+          - catalog
+          - text
+          - mode
+          type: string
+        source:
+          type: string
+        stale:
+          type: boolean
+        validatedAt:
+          format: date-time
+          type: string
+        warning:
+          type: string
+      required:
+      - agentId
+      - selectionMode
+      - models
+      - allowCustom
+      - source
+      - fetchedAt
+      - stale
       type: object
     BrowserCommandRequest:
       properties:
@@ -2788,12 +3109,19 @@ components:
           type: string
         id:
           type: string
+        isPinned:
+          type: boolean
         isTerminated:
           type: boolean
         issueId:
           type: string
         kind:
           type: string
+        pinnedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         previewRevision:
           format: int64
           type: integer
@@ -2805,6 +3133,12 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        reviewerHarness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
+          type: string
         scmStatus:
           enum:
           - pr_open
@@ -2849,6 +3183,7 @@ components:
       - terminateOnPrMerge
       - createdAt
       - updatedAt
+      - isPinned
       - status
       - prs
       type: object
@@ -3082,9 +3417,14 @@ components:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
+        runs:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - reviewerHandleId
       - reviews
+      - runs
       type: object
     ListSessionPRsResponse:
       properties:
@@ -3175,6 +3515,18 @@ components:
           type: string
       required:
       - status
+      type: object
+    MergePRRequest:
+      properties:
+        expectedHeadSha:
+          minLength: 40
+          type: string
+        prUrl:
+          minLength: 1
+          type: string
+      required:
+      - prUrl
+      - expectedHeadSha
       type: object
     MergePRResponse:
       properties:
@@ -4111,6 +4463,15 @@ components:
             entry point in the session workspace.
           type: string
       type: object
+    SetSessionReviewerRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
+          type: string
+      type: object
     ShellTerminalEnvelope:
       properties:
         shellTerminal:
@@ -4191,7 +4552,6 @@ components:
           - vibe
           - pi
           - autohand
-          - fake
           type: string
         issueId:
           type: string
@@ -4277,6 +4637,15 @@ components:
           - github
           type: string
         repo:
+          type: string
+      type: object
+    TriggerReviewRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
           type: string
       type: object
     TriggerReviewResponse:
