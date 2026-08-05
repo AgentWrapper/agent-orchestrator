@@ -564,21 +564,21 @@ function AgentModelField({
 			<>
 				<SettingsRow icon={Sparkles} label={label}>
 					<div className="flex min-w-0 items-center gap-2">
-						<SettingsOptionMenu
-							aria-label={label}
-							value={mode || "__default__"}
-							options={options}
-							triggerClassName="settings-inline-input settings-model-control justify-end"
-							onChange={(value) => {
-								onModeChange(value === "__default__" ? "" : value);
-								onModelChange("");
-							}}
-						/>
 						<ModelRefreshButton
 							label={label}
 							pending={refreshMutation.isPending}
 							disabled={agentId === ""}
 							onClick={() => refreshMutation.mutate()}
+						/>
+						<SettingsOptionMenu
+							aria-label={label}
+							value={mode || "__default__"}
+							options={options}
+							triggerClassName="justify-end"
+							onChange={(value) => {
+								onModeChange(value === "__default__" ? "" : value);
+								onModelChange("");
+							}}
 						/>
 					</div>
 				</SettingsRow>
@@ -604,6 +604,12 @@ function AgentModelField({
 		<>
 			<SettingsRow icon={Sparkles} label={label}>
 				<div className="flex min-w-0 items-center gap-2">
+					<ModelRefreshButton
+						label={label}
+						pending={refreshMutation.isPending}
+						disabled={agentId === ""}
+						onClick={() => refreshMutation.mutate()}
+					/>
 					{hasCatalog && !showCustomInput ? (
 						<AgentModelCombobox
 							aria-label={label}
@@ -612,7 +618,7 @@ function AgentModelField({
 							allowCustom={catalog.allowCustom}
 							onChange={selectCatalogModel}
 							onCustom={selectCustomModel}
-							triggerClassName="settings-inline-input settings-model-control justify-end"
+							triggerClassName="justify-end"
 						/>
 					) : (
 						<>
@@ -642,12 +648,6 @@ function AgentModelField({
 							)}
 						</>
 					)}
-					<ModelRefreshButton
-						label={label}
-						pending={refreshMutation.isPending}
-						disabled={agentId === ""}
-						onClick={() => refreshMutation.mutate()}
-					/>
 				</div>
 			</SettingsRow>
 			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
