@@ -312,6 +312,8 @@
 	"newTask.optional": "任意",
 	"newTask.projectDefault": "プロジェクトのデフォルト",
 	"newTask.refreshAgents": "エージェントを更新",
+	"newTask.refreshModels": "Refresh models",
+	"newTask.refreshingModels": "Refreshing models...",
 	"newTask.refreshFailed": "エージェントカタログを更新できませんでした。",
 	"newTask.refreshingAgents": "エージェントを更新中...",
 	"newTask.removeImage": "画像 {{number}} を削除",

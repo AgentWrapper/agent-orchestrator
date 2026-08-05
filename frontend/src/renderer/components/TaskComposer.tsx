@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
@@ -16,7 +16,6 @@ import {
 	revalidateAgentModels,
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
-import { cn } from "../lib/utils";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 
@@ -332,12 +331,6 @@ function TaskModelPicker({
 		return (
 			<>
 				<div className="flex min-w-0 items-center gap-2">
-					<TaskModelRefreshButton
-						label={t("newTask.model")}
-						pending={refreshMutation.isPending}
-						disabled={agentId === ""}
-						onClick={() => refreshMutation.mutate()}
-					/>
 					<SettingsOptionMenu
 						aria-label={t("newTask.model")}
 						value={mode || "__default__"}
@@ -346,6 +339,11 @@ function TaskModelPicker({
 						onChange={(nextMode) => onModeChange(nextMode === "__default__" ? "" : nextMode)}
 					/>
 				</div>
+				<TaskModelRefreshButton
+					pending={refreshMutation.isPending}
+					disabled={agentId === ""}
+					onClick={() => refreshMutation.mutate()}
+				/>
 				{warning && <p className="text-xs text-warning">{warning}</p>}
 			</>
 		);
@@ -366,12 +364,6 @@ function TaskModelPicker({
 	return (
 		<>
 			<div className="flex min-w-0 items-center gap-2">
-				<TaskModelRefreshButton
-					label={t("newTask.model")}
-					pending={refreshMutation.isPending}
-					disabled={agentId === ""}
-					onClick={() => refreshMutation.mutate()}
-				/>
 				{hasCatalog && !showCustomInput ? (
 					<AgentModelCombobox
 						aria-label={t("newTask.model")}
@@ -407,18 +399,21 @@ function TaskModelPicker({
 					</>
 				)}
 			</div>
+			<TaskModelRefreshButton
+				pending={refreshMutation.isPending}
+				disabled={agentId === ""}
+				onClick={() => refreshMutation.mutate()}
+			/>
 			{warning && <p className="text-xs text-warning">{warning}</p>}
 		</>
 	);
 }
 
 function TaskModelRefreshButton({
-	label,
 	pending,
 	disabled,
 	onClick,
 }: {
-	label: string;
 	pending: boolean;
 	disabled: boolean;
 	onClick: () => void;
@@ -427,13 +422,11 @@ function TaskModelRefreshButton({
 	return (
 		<button
 			type="button"
-			aria-label={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
-			title={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
-			className="inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+			className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
 			disabled={disabled || pending}
 			onClick={onClick}
 		>
-			<RefreshCw className={cn("size-4", pending && "animate-spin")} aria-hidden="true" />
+			{pending ? t("newTask.refreshingModels") : t("newTask.refreshModels")}
 		</button>
 	);
 }

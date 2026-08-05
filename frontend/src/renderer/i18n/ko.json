@@ -312,6 +312,8 @@
 	"newTask.optional": "선택 사항",
 	"newTask.projectDefault": "프로젝트 기본값",
 	"newTask.refreshAgents": "에이전트 새로고침",
+	"newTask.refreshModels": "Refresh models",
+	"newTask.refreshingModels": "Refreshing models...",
 	"newTask.refreshFailed": "에이전트 카탈로그를 새로고침할 수 없습니다.",
 	"newTask.refreshingAgents": "에이전트 새로고침 중...",
 	"newTask.removeImage": "이미지 {{number}} 제거",

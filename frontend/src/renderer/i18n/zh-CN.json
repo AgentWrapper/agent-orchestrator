@@ -312,6 +312,8 @@
 	"newTask.optional": "可选",
 	"newTask.projectDefault": "项目默认",
 	"newTask.refreshAgents": "刷新代理",
+	"newTask.refreshModels": "Refresh models",
+	"newTask.refreshingModels": "Refreshing models...",
 	"newTask.refreshFailed": "无法刷新代理目录。",
 	"newTask.refreshingAgents": "正在刷新代理...",
 	"newTask.removeImage": "移除图片 {{number}}",

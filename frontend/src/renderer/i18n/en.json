@@ -312,6 +312,8 @@
 	"newTask.optional": "optional",
 	"newTask.projectDefault": "Project default",
 	"newTask.refreshAgents": "Refresh agents",
+	"newTask.refreshModels": "Refresh models",
+	"newTask.refreshingModels": "Refreshing models...",
 	"newTask.refreshFailed": "Could not refresh agent catalog.",
 	"newTask.refreshingAgents": "Refreshing agents...",
 	"newTask.removeImage": "Remove image {{number}}",

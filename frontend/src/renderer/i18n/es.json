@@ -314,6 +314,8 @@
 	"newTask.optional": "opcional",
 	"newTask.projectDefault": "Predeterminado del proyecto",
 	"newTask.refreshAgents": "Actualizar agentes",
+	"newTask.refreshModels": "Refresh models",
+	"newTask.refreshingModels": "Refreshing models...",
 	"newTask.refreshFailed": "No se pudo actualizar el catálogo de agentes.",
 	"newTask.refreshingAgents": "Actualizando agentes...",
 	"newTask.removeImage": "Quitar imagen {{number}}",
