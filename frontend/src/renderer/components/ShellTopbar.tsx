@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { LayoutGroup, motion } from "motion/react";
+import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
@@ -26,6 +26,7 @@ import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
@@ -45,6 +46,16 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // workers open their orchestrator); otherwise it's the dashboard crumb plus the
 // Orchestrator launcher when a project is in scope. Embedded mode contributes
 // only session actions to the terminal bar; other routes retain this full bar.
+// Pixel equivalents of the CSS custom properties used for titlebar clearance.
+// --size-titlebar-cluster-left (72) + --size-titlebar-cluster-width (3×28+2×4=92)
+// + --size-titlebar-content-gap (12) = 176; minus --size-center-panel-inset-mac (6) = 170.
+// Fullscreen: --space-2 (8) + 92 + 12 = 112.
+const PADDING_DEFAULT = 18; // 1.125rem
+const PADDING_CLEARANCE = 170;
+const PADDING_CLEARANCE_FULLSCREEN = 112;
+
+const TOPBAR_SPRING = { type: "spring" as const, stiffness: 420, damping: 40, mass: 0.6 };
+
 export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -57,6 +68,16 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
+	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
+	const isFullScreen = useWindowFullScreen();
+	const prefersReducedMotion = useReducedMotion();
+	const mac = isMacPlatform();
+	const titlebarPaddingLeft =
+		!embedded && mac && !isSidebarOpen
+			? isFullScreen
+				? PADDING_CLEARANCE_FULLSCREEN
+				: PADDING_CLEARANCE
+			: PADDING_DEFAULT;
 	const [isSpawning, setIsSpawning] = useState(false);
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
@@ -141,7 +162,12 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 
 	return (
 		<LayoutGroup id="shell-topbar">
-		<header className={embedded ? "contents" : topbarHeaderClass} style={embedded ? undefined : dragStyle}>
+		<motion.header
+			className={embedded ? "contents" : topbarHeaderClass}
+			style={embedded ? undefined : dragStyle}
+			animate={embedded ? undefined : { paddingLeft: titlebarPaddingLeft }}
+			transition={prefersReducedMotion ? { duration: 0 } : TOPBAR_SPRING}
+		>
 			{!embedded ? (
 				<div className="flex min-w-0 items-center gap-3">
 				{isSessionRoute && isOrchestrator ? (
@@ -311,7 +337,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 				{/* The bell always trails the actions row, on every platform. */}
 				<NotificationCenter style={noDragStyle} />
 			</div>
-		</header>
+		</motion.header>
 	</LayoutGroup>
 	);
 }

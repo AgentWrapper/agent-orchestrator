@@ -487,13 +487,6 @@
 
 .center-panel-titlebar {
 	padding-left: 1.125rem; /* matches former px-4.5 */
-	transition: padding-left 220ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.center-panel-titlebar {
-		transition: none;
-	}
 }
 
 .center-panel-shell--mac .center-panel-titlebar {
