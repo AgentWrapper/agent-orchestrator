@@ -299,11 +299,15 @@ describe("SessionInspector PR section", () => {
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
 	});
 
-	it("omits the redundant state chip after a pull request merges", () => {
+	it("keeps a legible state chip after a pull request merges", () => {
 		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
 
 		const card = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
-		expect(within(card).queryByText("merged", { exact: true })).not.toBeInTheDocument();
+		expect(within(card).getByText("merged", { exact: true })).toHaveClass(
+			"border-success/40",
+			"bg-success/10",
+			"text-success",
+		);
 		expect(within(card).getByText("Pull request merged")).toBeInTheDocument();
 	});
 
