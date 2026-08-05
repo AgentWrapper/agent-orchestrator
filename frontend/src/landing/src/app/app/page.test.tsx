@@ -895,6 +895,11 @@ it("shows simplified GitHub organization access controls", async () => {
     name: "Organization repository access",
   });
   const gitHubSection = within(organizationAccess.closest("section")!);
+  const organizationAccessHeader = within(organizationAccess.parentElement!);
+  const manageAccess = organizationAccessHeader.getByRole("button", {
+    name: "Manage organization repository access",
+  });
+  expect(manageAccess).toBeVisible();
   expect(gitHubSection.queryByText(/granted repositor/)).not.toBeInTheDocument();
   expect(
     gitHubSection.queryByText("aoagents/agent-orchestrator"),
@@ -904,9 +909,11 @@ it("shows simplified GitHub organization access controls", async () => {
   expect(gitHubSection.getByText("Organization · selected repositories")).toBeVisible();
   expect(gitHubSection.queryByRole("link", { name: /Configure/ })).not.toBeInTheDocument();
   expect(gitHubSection.queryByRole("button", { name: /Sync/ })).not.toBeInTheDocument();
-  expect(gitHubSection.getByRole("link", { name: /Manage/ })).toHaveAttribute(
-    "href",
-    "https://github.com/organizations/aoagents/settings/installations/42",
+  expect(gitHubSection.queryByRole("link", { name: /Manage/ })).not.toBeInTheDocument();
+
+  fireEvent.click(manageAccess);
+  await waitFor(() =>
+    expect(apiMocks.startGitHubInstall).toHaveBeenCalledWith("org-one"),
   );
 
   fireEvent.click(gitHubSection.getByRole("button", { name: "Disconnect" }));

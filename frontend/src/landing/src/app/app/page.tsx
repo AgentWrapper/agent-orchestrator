@@ -51,7 +51,6 @@ import {
   type CloudAgent,
   type CloudGitHubConnection,
   type CloudGitHubGrantedRepository,
-  type CloudGitHubInstallation,
   type CloudGitHubUserConnection,
   type CloudOrgMember,
   type CloudOrgMembership,
@@ -3674,19 +3673,6 @@ function CloudSettings({
   );
 }
 
-function gitHubInstallationSettingsURL(
-  installation: Pick<
-    CloudGitHubInstallation,
-    "githubInstallationId" | "accountLogin" | "accountType"
-  >,
-) {
-  const id = encodeURIComponent(installation.githubInstallationId);
-  if (installation.accountType.toLowerCase() === "organization") {
-    return `https://github.com/organizations/${encodeURIComponent(installation.accountLogin)}/settings/installations/${id}`;
-  }
-  return `https://github.com/settings/installations/${id}`;
-}
-
 function gitHubCallbackNotice(result: string | null) {
   switch (result) {
     case "connected":
@@ -3965,7 +3951,19 @@ export function GitHubConnectionSettings({
           ) : null}
 
           {hasActiveOrganizationConnection ? (
-            <GitHubAccessDisclosure title="Organization repository access">
+            <GitHubAccessDisclosure
+              title="Organization repository access"
+              action={
+                canAdmin && orgId
+                  ? {
+                      label: "Manage",
+                      ariaLabel: "Manage organization repository access",
+                      disabled: loading,
+                      onClick: () => void run(startOrganizationInstall),
+                    }
+                  : undefined
+              }
+            >
               {activeOrganizationInstallations.map((installation) => (
                 <div
                   key={installation.id}
@@ -3983,39 +3981,28 @@ export function GitHubConnectionSettings({
                     </p>
                   </div>
                   {canAdmin && orgId ? (
-                    <div className="flex items-center gap-1">
-                      <a
-                        className={button}
-                        href={gitHubInstallationSettingsURL(installation)}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Manage
-                        <ExternalLink className="size-3" />
-                      </a>
-                      <button
-                        type="button"
-                        className={`${button} text-[#ef9b9b] hover:bg-[#ef6b6b]/10`}
-                        disabled={loading}
-                        onClick={() => {
-                          if (
-                            !window.confirm(
-                              `Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`,
-                            )
-                          ) {
-                            return;
-                          }
-                          void run(() =>
-                            api.disconnectGitHubInstallation(
-                              orgId,
-                              installation.githubInstallationId,
-                            ),
-                          );
-                        }}
-                      >
-                        Disconnect
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      className={`${button} text-[#ef9b9b] hover:bg-[#ef6b6b]/10`}
+                      disabled={loading}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`,
+                          )
+                        ) {
+                          return;
+                        }
+                        void run(() =>
+                          api.disconnectGitHubInstallation(
+                            orgId,
+                            installation.githubInstallationId,
+                          ),
+                        );
+                      }}
+                    >
+                      Disconnect
+                    </button>
                   ) : null}
                 </div>
               ))}
@@ -4054,28 +4041,49 @@ export function GitHubConnectionSettings({
 
 function GitHubAccessDisclosure({
   title,
+  action,
   children,
 }: {
   title: string;
+  action?: {
+    label: string;
+    ariaLabel: string;
+    disabled?: boolean;
+    onClick: () => void;
+  };
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
 
   return (
     <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-[#111317]">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <ChevronDown
-          className={`size-3.5 shrink-0 text-white/35 transition-transform ${
-            open ? "" : "-rotate-90"
-          }`}
-        />
-        <span className="min-w-0 flex-1 text-sm text-white/70">{title}</span>
-      </button>
+      <div className="flex items-center">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <ChevronDown
+            className={`size-3.5 shrink-0 text-white/35 transition-transform ${
+              open ? "" : "-rotate-90"
+            }`}
+          />
+          <span className="min-w-0 flex-1 text-sm text-white/70">{title}</span>
+        </button>
+        {action ? (
+          <button
+            type="button"
+            className={`${button} mr-2 h-7`}
+            aria-label={action.ariaLabel}
+            disabled={action.disabled}
+            onClick={action.onClick}
+          >
+            {action.label}
+            <ExternalLink className="size-3" />
+          </button>
+        ) : null}
+      </div>
       {open ? (
         <div className="divide-y divide-white/[0.06] border-t border-white/[0.08]">
           {children}
