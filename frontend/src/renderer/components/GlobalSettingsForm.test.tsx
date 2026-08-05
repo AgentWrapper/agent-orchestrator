@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { UiSettings } from "../../shared/ui-locale";
 import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
@@ -121,9 +122,7 @@ beforeEach(async () => {
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
 	getUiSettings.mockResolvedValue({ locale: "en" });
-	setUiSettings.mockImplementation(async (settings: { locale: string }) => ({
-		locale: settings.locale,
-	}));
+	setUiSettings.mockImplementation(async (settings: UiSettings): Promise<UiSettings> => settings);
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
 	updReturnHome.mockResolvedValue(undefined);
@@ -160,21 +159,21 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
 
-	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
+	it("switches General settings labels to Brazilian Portuguese and persists the regional locale", async () => {
 		const user = userEvent.setup();
 		renderForm();
 		expect(await screen.findByText("General")).toBeInTheDocument();
 		expect(screen.getByLabelText("Language")).toBeInTheDocument();
 
 		await user.click(screen.getByLabelText("Language"));
-		await user.click(await screen.findByRole("menuitem", { name: "Simplified Chinese" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Português (Brasil)" }));
 
-		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ locale: "zh-CN" }));
-		await waitFor(() => expect(screen.getByText("通用")).toBeInTheDocument());
-		expect(screen.getByText("语言")).toBeInTheDocument();
-		expect(screen.getByText("主题")).toBeInTheDocument();
-		expect(document.documentElement.lang).toBe("zh-CN");
-		expect(useLocaleStore.getState().locale).toBe("zh-CN");
+		await waitFor(() => expect(setUiSettings).toHaveBeenCalledWith({ locale: "pt-BR" }));
+		await waitFor(() => expect(screen.getByText("Geral")).toBeInTheDocument());
+		expect(screen.getByText("Idioma")).toBeInTheDocument();
+		expect(screen.getByText("Tema")).toBeInTheDocument();
+		expect(document.documentElement.lang).toBe("pt-BR");
+		expect(useLocaleStore.getState().locale).toBe("pt-BR");
 	});
 
 	it("keeps the current language and reports a persistence failure", async () => {

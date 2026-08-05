@@ -1,6 +1,6 @@
 import type { AppLocale } from "../../shared/ui-locale";
 
-export { APP_LOCALES, DEFAULT_LOCALE, coerceLocale } from "../../shared/ui-locale";
+export { APP_LOCALES, APP_LOCALE_LABEL_KEYS, DEFAULT_LOCALE, coerceLocale } from "../../shared/ui-locale";
 export type { AppLocale } from "../../shared/ui-locale";
 
 /** Value for `document.documentElement.lang`. */

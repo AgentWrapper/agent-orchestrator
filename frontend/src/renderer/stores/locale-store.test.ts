@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { UiSettings } from "../../shared/ui-locale";
 import { appI18n } from "../i18n";
 
 const getUiSettings = vi.fn();
@@ -20,7 +21,7 @@ describe("locale-store", () => {
 		getUiSettings.mockReset();
 		setUiSettings.mockReset();
 		getUiSettings.mockResolvedValue({ locale: "en" });
-		setUiSettings.mockImplementation(async (settings: { locale: string }) => settings);
+		setUiSettings.mockImplementation(async (settings: UiSettings): Promise<UiSettings> => settings);
 		await appI18n.changeLanguage("en");
 		useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
 		document.documentElement.lang = "en";
@@ -43,13 +44,13 @@ describe("locale-store", () => {
 		expect(useLocaleStore.getState().loaded).toBe(true);
 	});
 
-	it("persists locale changes and updates document lang", async () => {
-		await useLocaleStore.getState().setLocale("zh-CN");
-		expect(setUiSettings).toHaveBeenCalledWith({ locale: "zh-CN" });
-		expect(useLocaleStore.getState().locale).toBe("zh-CN");
-		expect(document.documentElement.lang).toBe("zh-CN");
+	it("persists a regional locale, loads its catalog, and updates document lang", async () => {
+		await useLocaleStore.getState().setLocale("pt-BR");
+		expect(setUiSettings).toHaveBeenCalledWith({ locale: "pt-BR" });
+		expect(useLocaleStore.getState().locale).toBe("pt-BR");
+		expect(document.documentElement.lang).toBe("pt-BR");
 		expect(document.documentElement.dir).toBe("ltr");
-		expect(appI18n.t("settings.language")).toBe("语言");
+		expect(appI18n.t("settings.language")).toBe("Idioma");
 	});
 
 	it("does not reload after the first successful load", async () => {

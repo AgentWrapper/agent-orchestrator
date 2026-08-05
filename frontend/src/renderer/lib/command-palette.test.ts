@@ -13,7 +13,7 @@ import {
 	type CommandItem,
 } from "./command-palette";
 import type { PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { appI18n } from "../i18n";
+import { appI18n, prepareAppLocale } from "../i18n";
 
 function session(overrides: Partial<WorkspaceSession> & { id: string }): WorkspaceSession {
 	return {
@@ -73,7 +73,8 @@ describe("findSession", () => {
 });
 
 describe("buildCommands grouping", () => {
-	it("uses the translator supplied by the reactive caller", () => {
+	it("uses the translator supplied by the reactive caller", async () => {
+		await prepareAppLocale("zh-CN");
 		const items = buildCommands(
 			{ workspaces: workspaces(), currentProjectId: "proj-1" },
 			appI18n.getFixedT("zh-CN"),

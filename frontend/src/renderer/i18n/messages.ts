@@ -1,22 +1,8 @@
 import en from "./en.json";
-import zhCN from "./zh-CN.json";
-import ja from "./ja.json";
-import ko from "./ko.json";
-import es from "./es.json";
-import fr from "./fr.json";
-import de from "./de.json";
-import ptBR from "./pt-BR.json";
-import type { AppLocale } from "./locales";
+import { DEFAULT_LOCALE, type AppLocale } from "./locales";
 
 /** English is the source-of-truth catalog; keys are typed from it. */
 export const enMessages = en;
-export const zhCNMessages = zhCN;
-export const jaMessages = ja;
-export const koMessages = ko;
-export const esMessages = es;
-export const frMessages = fr;
-export const deMessages = de;
-export const ptBRMessages = ptBR;
 
 export type MessageKey = keyof typeof enMessages;
 
@@ -29,17 +15,31 @@ export type PluralMessageKey = MessageKey extends infer Key extends string
 
 export type MessageCatalog = Record<MessageKey, string>;
 
-const catalogs: Record<AppLocale, Readonly<Record<string, string>>> = {
-	en: enMessages,
-	"zh-CN": zhCNMessages,
-	ja: jaMessages,
-	ko: koMessages,
-	es: esMessages,
-	fr: frMessages,
-	de: deMessages,
-	"pt-BR": ptBRMessages,
-};
+export type LoadedMessageCatalog = Readonly<Record<string, string>>;
+type DeferredLocale = Exclude<AppLocale, typeof DEFAULT_LOCALE>;
+type CatalogLoader = () => Promise<LoadedMessageCatalog>;
 
-export function catalogFor(locale: AppLocale): Readonly<Record<string, string>> {
-	return catalogs[locale] ?? catalogs.en;
+const catalogLoaders = {
+	"zh-CN": () => import("./zh-CN.json").then((module) => module.default),
+	ja: () => import("./ja.json").then((module) => module.default),
+	ko: () => import("./ko.json").then((module) => module.default),
+	es: () => import("./es.json").then((module) => module.default),
+	fr: () => import("./fr.json").then((module) => module.default),
+	de: () => import("./de.json").then((module) => module.default),
+	"pt-BR": () => import("./pt-BR.json").then((module) => module.default),
+} satisfies Record<DeferredLocale, CatalogLoader>;
+
+const pendingCatalogs: Partial<Record<DeferredLocale, Promise<LoadedMessageCatalog>>> = {};
+
+/** Load one catalog on demand and share concurrent requests for the same locale. */
+export function loadCatalog(locale: AppLocale): Promise<LoadedMessageCatalog> {
+	if (locale === DEFAULT_LOCALE) return Promise.resolve(enMessages);
+	const existing = pendingCatalogs[locale];
+	if (existing) return existing;
+	const loading = catalogLoaders[locale]().catch((error: unknown) => {
+		delete pendingCatalogs[locale];
+		throw error;
+	});
+	pendingCatalogs[locale] = loading;
+	return loading;
 }
