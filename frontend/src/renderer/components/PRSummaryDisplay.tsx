@@ -108,7 +108,15 @@ function PRDiffMeta({ pr }: { pr: SessionPRSummary }) {
 	);
 }
 
-export function PRCardStatusSummary({ className, pr }: { className?: string; pr: SessionPRSummary }) {
+export function PRCardStatusSummary({
+	action,
+	className,
+	pr,
+}: {
+	action?: ReactNode;
+	className?: string;
+	pr: SessionPRSummary;
+}) {
 	const presentation = prCardPresentation(pr);
 	return (
 		<div className={cn("border-t border-border pt-2", className)}>
@@ -142,17 +150,20 @@ export function PRCardStatusSummary({ className, pr }: { className?: string; pr:
 					) : null}
 				</div>
 			</div>
-			{presentation.supporting.length > 0 ? (
-				<div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 pl-4 font-mono text-2xs">
-					{presentation.supporting.map((status) => (
-						<span className={cn("inline-flex items-center gap-1", toneClass[status.tone])} key={status.key}>
-							<span
-								aria-hidden="true"
-								className={cn("size-1 rounded-full bg-current", status.breathe && "animate-status-pulse")}
-							/>
-							<PRCardStatusLink status={status} />
-						</span>
-					))}
+			{presentation.supporting.length > 0 || action ? (
+				<div className="mt-1.5 flex min-w-0 items-end justify-between gap-3 pl-4">
+					<div className="flex min-w-0 flex-wrap gap-x-3 gap-y-1 font-mono text-2xs">
+						{presentation.supporting.map((status) => (
+							<span className={cn("inline-flex items-center gap-1", toneClass[status.tone])} key={status.key}>
+								<span
+									aria-hidden="true"
+									className={cn("size-1 rounded-full bg-current", status.breathe && "animate-status-pulse")}
+								/>
+								<PRCardStatusLink status={status} />
+							</span>
+						))}
+					</div>
+					{action ? <div className="shrink-0">{action}</div> : null}
 				</div>
 			) : null}
 		</div>

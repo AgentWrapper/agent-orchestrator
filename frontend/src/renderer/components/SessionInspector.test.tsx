@@ -297,6 +297,40 @@ describe("SessionInspector PR section", () => {
 			"https://example.com/pr/7",
 		);
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
+		expect(prSection("Pull request").getByRole("button", { name: "Merge PR #7" })).toBeInTheDocument();
+	});
+
+	it("confirms before merging a ready pull request through the daemon", async () => {
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
+
+		await userEvent.click(screen.getByRole("button", { name: "Merge PR #7" }));
+		const dialog = screen.getByRole("dialog", { name: "Merge PR #7?" });
+		expect(dialog).toHaveTextContent("This will squash-merge PR #7 in the remote repository.");
+		expect(postMock).not.toHaveBeenCalledWith("/api/v1/prs/{id}/merge", expect.anything());
+
+		await userEvent.click(within(dialog).getByRole("button", { name: "Merge" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", {
+				params: { path: { id: "7" } },
+			}),
+		);
+		await waitFor(() => expect(screen.queryByRole("dialog", { name: "Merge PR #7?" })).not.toBeInTheDocument());
+	});
+
+	it("does not offer Merge when the pull request is not ready", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([
+					pr(7, "open", {
+						ci: "failing",
+						mergeability: "blocked",
+					}),
+				])}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Merge PR #7" })).not.toBeInTheDocument();
 	});
 
 	it("shows the empty state when there are no PRs", () => {
