@@ -304,8 +304,8 @@ describe("SessionInspector PR section", () => {
 
 		const card = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
 		expect(within(card).getByText("merged", { exact: true })).toHaveClass(
-			"border-success/40",
-			"bg-success/10",
+			"border-border-strong",
+			"bg-overlay",
 			"text-success",
 		);
 		expect(within(card).getByText("Pull request merged")).toBeInTheDocument();
