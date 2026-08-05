@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { LayoutGroup, motion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
@@ -139,13 +140,21 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 	};
 
 	return (
+		<LayoutGroup id="shell-topbar">
 		<header className={embedded ? "contents" : topbarHeaderClass} style={embedded ? undefined : dragStyle}>
 			{!embedded ? (
 				<div className="flex min-w-0 items-center gap-3">
-					{isSessionRoute && isOrchestrator ? (
-						<div className="inline-flex min-w-0 items-center gap-2">
-							<div className="inline-flex min-w-0 items-center gap-1.5">
-								<span className={topbarProjectLabelClass}>{projectLabel}</span>
+				{isSessionRoute && isOrchestrator ? (
+					<div className="inline-flex min-w-0 items-center gap-2">
+						<div className="inline-flex min-w-0 items-center gap-1.5">
+							<motion.span
+								layoutId="topbar-project-label"
+								layout="position"
+								className={topbarProjectLabelClass}
+								transition={{ type: "spring", stiffness: 400, damping: 40 }}
+							>
+								{projectLabel}
+							</motion.span>
 								<span aria-hidden="true" className="text-xs leading-none text-passive">
 									·
 								</span>
@@ -166,11 +175,18 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 							{session ? <SessionStatusPill session={session} /> : null}
 						</div>
 					) : (isProjectBoardRoute && boardActionsInPanel) ||
-					  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
-						<div className="inline-flex min-w-0 items-center gap-1.5">
-							<span className={topbarProjectLabelClass}>{projectLabel}</span>
-						</div>
-					)}
+				  (isMac && isRootBoardRoute && boardActionsInPanel) ? null : (
+					<div className="inline-flex min-w-0 items-center gap-1.5">
+						<motion.span
+							layoutId="topbar-project-label"
+							layout="position"
+							className={topbarProjectLabelClass}
+							transition={{ type: "spring", stiffness: 400, damping: 40 }}
+						>
+							{projectLabel}
+						</motion.span>
+					</div>
+				)}
 				</div>
 			) : null}
 
@@ -296,6 +312,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 				<NotificationCenter style={noDragStyle} />
 			</div>
 		</header>
+	</LayoutGroup>
 	);
 }
 
