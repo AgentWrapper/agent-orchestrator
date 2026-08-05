@@ -858,9 +858,6 @@ it("shares a project from its three-dot menu with the selected role", async () =
   expect(
     screen.getByRole("heading", { name: "Share project" }),
   ).toBeVisible();
-  fireEvent.change(screen.getByLabelText("Share scope"), {
-    target: { value: worker.id },
-  });
   fireEvent.click(screen.getByRole("radio", { name: /Editor/ }));
   fireEvent.click(screen.getByRole("button", { name: /Restricted/ }));
   fireEvent.change(screen.getByLabelText("People"), {
@@ -874,7 +871,6 @@ it("shares a project from its three-dot menu with the selected role", async () =
       "org-one",
       project.id,
       {
-        sessionId: worker.id,
         role: "editor",
         accessScope: "restricted",
         recipientEmails: ["reader@example.com"],

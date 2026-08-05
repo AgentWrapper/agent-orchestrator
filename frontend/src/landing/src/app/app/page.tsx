@@ -2438,30 +2438,6 @@ export default function CloudAppPage() {
               </div>
             </div>
 
-            <label className="block text-xs text-white/45">
-              Share scope
-              <select
-                className={`${field} mt-1.5`}
-                value={shareSessionId}
-                disabled={loading}
-                onChange={(event) => {
-                  setShareSessionId(event.target.value);
-                  setShareLink("");
-                  setShareCopied(false);
-                }}
-              >
-                <option value="">Entire project and all agents</option>
-                {shareProjectSessions.map((cloudSession) => (
-                  <option key={cloudSession.id} value={cloudSession.id}>
-                    {cloudSession.displayName}
-                    {cloudSession.kind === "orchestrator"
-                      ? " · orchestrator"
-                      : " · agent"}
-                  </option>
-                ))}
-              </select>
-            </label>
-
             <div>
               <div className="mb-3 text-xs font-medium text-white/50">
                 Permission
@@ -2654,61 +2630,74 @@ export default function CloudAppPage() {
                     return (
                       <div
                         key={grant.id}
-                        className="grid gap-2 rounded-lg bg-white/[0.025] p-2 sm:grid-cols-[minmax(0,1fr)_112px_minmax(150px,190px)_auto] sm:items-center"
+                        className="rounded-lg border border-white/[0.06] bg-white/[0.025] p-3"
                       >
-                        <div className="min-w-0">
-                          <div className="truncate text-xs text-white/80">
-                            {grant.user.displayName || grant.user.email}
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-white/80">
+                              {grant.user.displayName || grant.user.email}
+                            </div>
+                            <div className="mt-0.5 truncate text-xs text-white/35">
+                              {grant.user.email}
+                            </div>
                           </div>
-                          <div className="truncate text-[11px] text-white/30">
-                            {grant.user.email}
-                          </div>
+                          <button
+                            type="button"
+                            className="h-8 shrink-0 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
+                            onClick={() => void revokeShareGrant(grant.id)}
+                          >
+                            Remove
+                          </button>
                         </div>
-                        <select
-                          className="h-8 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
-                          value={grant.role}
-                          disabled={loading}
-                          onChange={(event) =>
-                            void updateShareGrantAccess(grant.id, {
-                              role: event.target.value as "viewer" | "editor",
-                              ...(scopedSessionId
-                                ? { sessionId: scopedSessionId }
-                                : {}),
-                            })
-                          }
-                          aria-label={`Permission for ${grant.user.email}`}
-                        >
-                          <option value="viewer">Viewer</option>
-                          <option value="editor">Editor</option>
-                        </select>
-                        <select
-                          className="h-8 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
-                          value={scopedSessionId}
-                          disabled={loading}
-                          onChange={(event) =>
-                            void updateShareGrantAccess(grant.id, {
-                              role: grant.role,
-                              ...(event.target.value
-                                ? { sessionId: event.target.value }
-                                : {}),
-                            })
-                          }
-                          aria-label={`Agent scope for ${grant.user.email}`}
-                        >
-                          <option value="">Entire project</option>
-                          {shareProjectSessions.map((cloudSession) => (
-                            <option key={cloudSession.id} value={cloudSession.id}>
-                              {cloudSession.displayName}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          className="h-8 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
-                          onClick={() => void revokeShareGrant(grant.id)}
-                        >
-                          Remove
-                        </button>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          <label className="block text-[11px] font-medium text-white/35">
+                            Permission
+                            <select
+                              className="mt-1 h-8 w-full rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
+                              value={grant.role}
+                              disabled={loading}
+                              onChange={(event) =>
+                                void updateShareGrantAccess(grant.id, {
+                                  role: event.target.value as "viewer" | "editor",
+                                  ...(scopedSessionId
+                                    ? { sessionId: scopedSessionId }
+                                    : {}),
+                                })
+                              }
+                              aria-label={`Permission for ${grant.user.email}`}
+                            >
+                              <option value="viewer">Viewer</option>
+                              <option value="editor">Editor</option>
+                            </select>
+                          </label>
+                          <label className="block text-[11px] font-medium text-white/35">
+                            Agent access
+                            <select
+                              className="mt-1 h-8 w-full rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
+                              value={scopedSessionId}
+                              disabled={loading}
+                              onChange={(event) =>
+                                void updateShareGrantAccess(grant.id, {
+                                  role: grant.role,
+                                  ...(event.target.value
+                                    ? { sessionId: event.target.value }
+                                    : {}),
+                                })
+                              }
+                              aria-label={`Agent scope for ${grant.user.email}`}
+                            >
+                              <option value="">All agents</option>
+                              {shareProjectSessions.map((cloudSession) => (
+                                <option
+                                  key={cloudSession.id}
+                                  value={cloudSession.id}
+                                >
+                                  {cloudSession.displayName}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
                       </div>
                     );
                   })}
