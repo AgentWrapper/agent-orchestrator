@@ -215,7 +215,7 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({
 			session: worker,
 			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
-			terminalTarget: { kind: "reviewer", handleId: "review-sess-1", harness: "codex" },
+			terminalTarget: { kind: "reviewer", handleId: "review-sess-1", harness: "codex", sessionId: worker.id },
 		});
 
 		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-current", "true");

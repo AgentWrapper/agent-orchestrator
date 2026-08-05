@@ -145,7 +145,6 @@ vi.mock("./chat/SessionChatSurface", () => ({
 }));
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
-		terminalTarget,
 		session,
 		shellTerminals = [],
 		onCloseShellTerminal,
@@ -157,7 +156,6 @@ vi.mock("./CenterPane", () => ({
 		reviewerTerminal,
 		terminalTarget,
 	}: {
-		terminalTarget?: { kind: string; handleId?: string };
 		session?: WorkspaceSession;
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		onCloseShellTerminal?: (handleId: string) => void;
@@ -167,16 +165,15 @@ vi.mock("./CenterPane", () => ({
 		onNewShellTerminal?: () => void;
 		topbarActions?: ReactNode;
 		reviewerTerminal?: { handleId: string; harness: string };
-		terminalTarget?: { kind: string };
+		terminalTarget?: { kind: string; handleId?: string };
 	}) => (
 		<div>
 			terminal center
 			{topbarActions}
 			<div data-testid="terminal-target">
-				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : "worker"}
+				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
 			</div>
 			<div data-testid="session-tab">{session?.title ?? ""}</div>
-			<div data-testid="terminal-target">{terminalTarget?.kind ?? "worker"}</div>
 			<div data-testid="reviewer-harness">{reviewerTerminal?.harness ?? ""}</div>
 			{reviewerTerminal ? (
 				<button type="button" onClick={() => onSelectReviewerTerminal?.(reviewerTerminal)}>
