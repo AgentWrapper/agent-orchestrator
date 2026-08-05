@@ -1139,7 +1139,7 @@ function ReplayCover() {
 		// rather than being swallowed for the length of the gate.
 		<div
 			className="terminal-surface pointer-events-none absolute inset-0 grid place-items-center"
-      data-testid="terminal-replay-cover"
+			data-testid="terminal-replay-cover"
 		>
 			{showLabel && <div className="font-mono text-caption text-terminal-dim">{t("terminal.loadingOutput")}</div>}
 		</div>
