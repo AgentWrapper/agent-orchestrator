@@ -67,6 +67,9 @@
 	--color-bg-tertiary: var(--muted);
 	--color-bg-elevated: var(--popover);
 	--color-bg-sidebar: var(--sidebar);
+	/* Token keeps the historical #101317e7 value; painted surfaces use the
+	   opaque plate so the p-2 gutter cannot composite into #111316. */
+	--color-bg-terminal-opaque: #101317;
 	--color-bg-terminal: #101317e7;
 
 	/* Text */
@@ -650,6 +653,7 @@
 	--color-bg-tertiary: var(--muted);
 	--color-bg-elevated: var(--popover);
 	--color-bg-sidebar: var(--sidebar);
+	--color-bg-terminal-opaque: #f5f5f4;
 	--color-bg-terminal: #f5f5f4;
 
 	--color-text-primary: var(--foreground);
