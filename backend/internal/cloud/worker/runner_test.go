@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -517,6 +518,166 @@ func TestClaudePromptPrecedesBrowserCommandsDuringStartup(t *testing.T) {
 		t.Fatalf("process startup commands: %v", err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("browser input was not restored after startup prompt")
+	}
+}
+
+func TestFollowUpPromptRunsAfterCommandDeliveredStartupPrompt(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	terminal, agentSide, err := pty.Open()
+	if err != nil {
+		t.Fatalf("pty.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = terminal.Close()
+		_ = agentSide.Close()
+	})
+
+	const startupSequence = int64(2)
+	const followUpSequence = int64(4)
+	promptAccepted := make(chan int64, 1)
+	commandsSent := make(chan struct{})
+	serverErrors := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/cloud/v1/worker/connect":
+			if got := r.URL.Query().Get("after"); got != "2" {
+				serverErrors <- fmt.Errorf("after = %q, want 2", got)
+				http.Error(w, "invalid after", http.StatusBadRequest)
+				return
+			}
+			if got := r.URL.Query().Get("commandPrompt"); got != "2" {
+				serverErrors <- fmt.Errorf("commandPrompt = %q, want 2", got)
+				http.Error(w, "invalid command prompt", http.StatusBadRequest)
+				return
+			}
+			socket, acceptErr := websocket.Accept(w, r, nil)
+			if acceptErr != nil {
+				serverErrors <- acceptErr
+				return
+			}
+			defer socket.Close(websocket.StatusNormalClosure, "test complete")
+			for _, command := range []cloudworkerhub.Command{
+				{Type: "agent_ready"},
+				{
+					Type:     "prompt",
+					Sequence: startupSequence,
+					Data: base64.StdEncoding.EncodeToString(
+						[]byte("duplicated startup prompt"),
+					),
+				},
+				{
+					Type:     "prompt",
+					Sequence: followUpSequence,
+					Data: base64.StdEncoding.EncodeToString(
+						[]byte("orchestrator follow-up"),
+					),
+				},
+			} {
+				encoded, marshalErr := json.Marshal(command)
+				if marshalErr != nil {
+					serverErrors <- marshalErr
+					return
+				}
+				if writeErr := socket.Write(
+					r.Context(),
+					websocket.MessageText,
+					encoded,
+				); writeErr != nil {
+					serverErrors <- writeErr
+					return
+				}
+			}
+			close(commandsSent)
+			<-r.Context().Done()
+		case "/api/cloud/v1/worker/events":
+			var event struct {
+				Type    string `json:"type"`
+				Payload struct {
+					Sequence int64 `json:"sequence"`
+				} `json:"payload"`
+			}
+			if decodeErr := json.NewDecoder(r.Body).Decode(&event); decodeErr != nil {
+				serverErrors <- decodeErr
+				http.Error(w, decodeErr.Error(), http.StatusBadRequest)
+				return
+			}
+			if event.Type == "worker.prompt_accepted" {
+				promptAccepted <- event.Payload.Sequence
+			}
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewClient(server.URL, server.Client())
+	client.acceptToken("worker-token")
+	runner := &Runner{client: client}
+	terminalReady := newAgentTerminalReady("claude-code")
+	var writeMu sync.Mutex
+	var workspaceWriteMu sync.Mutex
+	go runner.commandLoop(
+		ctx,
+		terminal,
+		terminalReady,
+		terminal,
+		&writeMu,
+		&workspaceWriteMu,
+		startupSequence,
+	)
+
+	select {
+	case <-commandsSent:
+	case err := <-serverErrors:
+		t.Fatalf("send follow-up commands: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("follow-up commands were not sent")
+	}
+	select {
+	case sequence := <-promptAccepted:
+		t.Fatalf("prompt sequence %d accepted before Claude was ready", sequence)
+	case err := <-serverErrors:
+		t.Fatalf("follow-up command stream error: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	for _, chunk := range readClaudeComposerFixture(t).Chunks {
+		terminalReady.observe([]byte(chunk))
+	}
+
+	select {
+	case sequence := <-promptAccepted:
+		if sequence != followUpSequence {
+			t.Fatalf("accepted prompt sequence = %d, want %d", sequence, followUpSequence)
+		}
+	case err := <-serverErrors:
+		t.Fatalf("accept follow-up prompt: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("follow-up prompt was not acknowledged")
+	}
+
+	terminalInput := make(chan string, 1)
+	go func() {
+		buffer := make([]byte, 256)
+		count, readErr := agentSide.Read(buffer)
+		if readErr == nil {
+			terminalInput <- string(buffer[:count])
+		}
+	}()
+	select {
+	case received := <-terminalInput:
+		if !strings.Contains(received, "orchestrator follow-up") {
+			t.Fatalf("terminal input %q does not contain follow-up prompt", received)
+		}
+		if strings.Contains(received, "duplicated startup prompt") {
+			t.Fatalf("terminal input duplicated startup prompt: %q", received)
+		}
+	case err := <-serverErrors:
+		t.Fatalf("read follow-up terminal input: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("follow-up prompt was not written to the terminal")
 	}
 }
 
