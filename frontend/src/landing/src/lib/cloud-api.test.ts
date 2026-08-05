@@ -363,6 +363,66 @@ it("uses the fixed GitHub App connection routes and payloads", async () => {
   );
 });
 
+it("uses versioned routes for account-wide GitHub authorization", async () => {
+  const connection = {
+    connected: true,
+    login: "amoreX",
+    installations: [],
+  };
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify(connection), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify({ authorizeUrl: "https://github.com/login/oauth/authorize" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(
+      new Response(JSON.stringify(connection), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.githubUserConnection();
+  await api.startGitHubUserAuthorization();
+  await api.syncGitHubUserConnection();
+  await api.disconnectGitHubUser();
+
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    1,
+    "https://cloud.example.com/api/cloud/v1/github/user",
+    expect.any(Object),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    2,
+    "https://cloud.example.com/api/cloud/v1/github/user/authorize",
+    expect.objectContaining({ method: "POST" }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    3,
+    "https://cloud.example.com/api/cloud/v1/github/user/sync",
+    expect.objectContaining({ method: "POST" }),
+  );
+  expect(fetchMock).toHaveBeenNthCalledWith(
+    4,
+    "https://cloud.example.com/api/cloud/v1/github/user",
+    expect.objectContaining({ method: "DELETE" }),
+  );
+});
+
 it("links project creation to the selected GitHub repository grant", async () => {
   const fetchMock = vi.fn().mockResolvedValue(
     new Response(JSON.stringify({ project: {} }), {

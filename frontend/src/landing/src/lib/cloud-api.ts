@@ -500,25 +500,35 @@ export class CloudAPI {
   }
 
   async githubUserConnection() {
-    return this.request<CloudGitHubUserConnection>("/github/user");
+    return this.request<CloudGitHubUserConnection>(
+      "/api/cloud/v1/github/user",
+    );
   }
 
   async startGitHubUserAuthorization() {
-    return this.request<{ authorizeUrl: string }>("/github/user/authorize", {
-      method: "POST",
-      body: {},
-    });
+    return this.request<{ authorizeUrl: string }>(
+      "/api/cloud/v1/github/user/authorize",
+      {
+        method: "POST",
+        body: {},
+      },
+    );
   }
 
   async syncGitHubUserConnection() {
-    return this.request<CloudGitHubUserConnection>("/github/user/sync", {
-      method: "POST",
-      body: {},
-    });
+    return this.request<CloudGitHubUserConnection>(
+      "/api/cloud/v1/github/user/sync",
+      {
+        method: "POST",
+        body: {},
+      },
+    );
   }
 
   async disconnectGitHubUser() {
-    return this.request<void>("/github/user", { method: "DELETE" });
+    return this.request<void>("/api/cloud/v1/github/user", {
+      method: "DELETE",
+    });
   }
 
   async startGitHubInstall(orgId: string) {
