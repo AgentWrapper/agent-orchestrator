@@ -955,6 +955,11 @@ export default function CloudAppPage() {
   const standaloneAgentProjectItems = projects.filter((project) =>
     isTopLevelStandaloneAgentProject(project),
   );
+  const standaloneAgentRows = standaloneAgentProjectItems.flatMap((project) =>
+    sessions
+      .filter(({ projectId }) => projectId === project.id)
+      .map((cloudSession) => ({ project, cloudSession })),
+  );
   const selectedShareTrustedStandalone =
     Boolean(selectedShare) &&
     selectedProjectStandalone &&
@@ -2216,7 +2221,7 @@ export default function CloudAppPage() {
                 </div>
               );
             })}
-            {standaloneAgentProjectItems.length > 0 ? (
+            {standaloneAgentRows.length > 0 ? (
               <div className="mt-4 border-t border-white/[0.06] pt-3">
                 <div
                   className={`mb-1 flex items-center ${
@@ -2230,11 +2235,8 @@ export default function CloudAppPage() {
                   ) : null}
                 </div>
                 <div className="space-y-1">
-                  {standaloneAgentProjectItems.flatMap((project) =>
-                  sessions
-                    .filter(({ projectId }) => projectId === project.id)
-                    .map((cloudSession) => (
-                      <div
+                  {standaloneAgentRows.map(({ project, cloudSession }) => (
+                    <div
                         key={cloudSession.id}
                         className="group/session relative flex items-center"
                       >
@@ -2337,9 +2339,8 @@ export default function CloudAppPage() {
                             </button>
                           </div>
                         ) : null}
-                      </div>
-                    )),
-                  )}
+                    </div>
+                  ))}
                 </div>
               </div>
             ) : null}

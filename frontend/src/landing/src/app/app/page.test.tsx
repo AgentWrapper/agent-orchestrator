@@ -593,7 +593,7 @@ it("offers new standalone agent from the main create flow", async () => {
     id: "standalone-project",
     displayName: "Standalone chat",
     repositoryUrl: "ao-standalone://org-one/session",
-    config: { source: "standalone" },
+    config: { source: "standalone-agent" },
   };
   apiMocks.projects.mockResolvedValue({ projects: [standaloneProject] });
   apiMocks.sessions.mockResolvedValue({ sessions: [] });
