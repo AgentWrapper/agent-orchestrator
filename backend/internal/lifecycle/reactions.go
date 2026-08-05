@@ -56,6 +56,11 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 	if err != nil || !ok {
 		return ReviewDeliveryNoop, err
 	}
+
+	if !rec.AutoInjectReviewFeedback {
+		return ReviewDeliveryNoop, nil
+	}
+
 	if cannotNudge(rec) {
 		return ReviewDeliveryNoop, nil
 	}
@@ -195,7 +200,9 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 			nudges = append(nudges, pendingNudge{key: "ci:" + o.URL, sig: ciFailureSignature(checks), msg: msg, maxAttempts: 0})
 		}
 	}
-	if o.Review == domain.ReviewChangesRequest || hasUnresolvedComments(o.Comments) {
+
+	if rec.AutoInjectReviewFeedback &&
+		(o.Review == domain.ReviewChangesRequest || hasUnresolvedComments(o.Comments)) {
 		comments := unresolvedReviewComments(o.Comments)
 		msg := formatReviewCommentsMessage(comments)
 		if ident != "your PR" {

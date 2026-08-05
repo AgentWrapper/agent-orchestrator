@@ -85,7 +85,9 @@ type SessionRecord struct {
 	IsTerminated  bool      `json:"isTerminated"`
 	// TerminateOnPRMerge is a user-controlled lifecycle policy. When enabled,
 	// completing the session's PR set through a merge tears down the session.
-	TerminateOnPRMerge       bool            `json:"terminateOnPrMerge"`
+	TerminateOnPRMerge bool `json:"terminateOnPrMerge"`
+	// AutoInjectReviewFeedback controls whether AO sends reviewer and SCM review
+	// feedback into the worker session automatically.
 	AutoInjectReviewFeedback bool            `json:"autoInjectReviewFeedback"`
 	Metadata                 SessionMetadata `json:"-"`
 	// CleanupGeneration is a monotonic counter bumped each time the session is

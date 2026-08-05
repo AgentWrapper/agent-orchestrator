@@ -116,6 +116,10 @@ func (f *fakeSessionService) Unpin(context.Context, domain.SessionID) (domain.Se
 	return domain.Session{}, nil
 }
 
+func (f *fakeSessionService) SetAutoInjectReviewFeedback(context.Context, domain.SessionID, bool) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
 func (f *fakeSessionService) SetReviewerHarness(context.Context, domain.SessionID, domain.ReviewerHarness) (domain.Session, error) {
 	return domain.Session{}, nil
 }

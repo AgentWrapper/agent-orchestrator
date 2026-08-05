@@ -137,7 +137,12 @@ func newManager() (*Manager, *fakeStore, *fakeMessenger) {
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
-	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}}
+	return domain.SessionRecord{
+		ID:                       id,
+		ProjectID:                "mer",
+		AutoInjectReviewFeedback: true,
+		Activity:                 domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()},
+	}
 }
 
 func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
@@ -1194,6 +1199,33 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	}
 }
 
+func TestPRObservation_AutoInjectDisabledSuppressesOnlyReviewComments(t *testing.T) {
+	m, st, msg := newManager()
+	rec := working("mer-1")
+	rec.AutoInjectReviewFeedback = false
+	st.sessions["mer-1"] = rec
+	o := ports.PRObservation{
+		Fetched: true,
+		URL:     "pr1",
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:  domain.ReviewChangesRequest,
+		Comments: []ports.PRCommentObservation{
+			{ID: "1", Author: "alice", Body: "fix this"},
+		},
+	}
+
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") {
+		t.Fatalf("CI nudge should still be injected, got %v", msg.msgs)
+	}
+	if strings.Contains(msg.msgs[0], "fix this") {
+		t.Fatalf("review feedback should not be injected, got %q", msg.msgs[0])
+	}
+}
+
 func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -1752,6 +1784,28 @@ func TestApplyReviewBatchSendsCombinedAndDedups(t *testing.T) {
 	}
 	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
 		t.Fatalf("repeat should suppress duplicate send, outcome=%q msgs=%v", outcome, msg.msgs)
+	}
+}
+
+func TestApplyReviewBatchAutoInjectDisabledNoops(t *testing.T) {
+	st := newFakeStore()
+	rec := working("mer-1")
+	rec.AutoInjectReviewFeedback = false
+	st.sessions["mer-1"] = rec
+	msg := &fakeMessenger{}
+	m := New(st, msg)
+	results := []ReviewResult{{
+		RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1",
+		PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1",
+		Verdict: domain.VerdictChangesRequested, Body: "fix auth",
+	}}
+
+	outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", results)
+	if err != nil {
+		t.Fatalf("ApplyReviewBatch: %v", err)
+	}
+	if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
+		t.Fatalf("disabled auto-inject should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
 	}
 }
 

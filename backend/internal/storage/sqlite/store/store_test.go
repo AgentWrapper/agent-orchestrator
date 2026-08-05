@@ -430,6 +430,48 @@ func TestSessionTerminateOnPRMergePolicyRoundTripAndCDC(t *testing.T) {
 	}
 }
 
+func TestSessionAutoInjectReviewFeedbackPolicyRoundTripAndCDC(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.AutoInjectReviewFeedback = true
+	r, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	base, err := s.LatestSeq(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatedAt := r.UpdatedAt.Add(time.Minute)
+	ok, err := s.SetSessionAutoInjectReviewFeedback(ctx, r.ID, false, updatedAt)
+	if err != nil || !ok {
+		t.Fatalf("disable auto-inject review feedback: ok=%v err=%v", ok, err)
+	}
+	got, found, err := s.GetSession(ctx, r.ID)
+	if err != nil || !found {
+		t.Fatalf("get session: found=%v err=%v", found, err)
+	}
+	if got.AutoInjectReviewFeedback || !got.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("policy not persisted: %+v", got)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 1 || string(evs[0].Type) != "session_updated" {
+		t.Fatalf("policy change events = %+v, want one session_updated", evs)
+	}
+
+	ok, err = s.SetSessionAutoInjectReviewFeedback(ctx, "mer-missing", false, updatedAt)
+	if err != nil || ok {
+		t.Fatalf("missing policy update: ok=%v err=%v", ok, err)
+	}
+}
+
 func TestSessionRuntimeLaunchIDRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -1177,6 +1177,31 @@ describe("SessionInspector summary reviews", () => {
 		}
 	};
 
+	it("persists the auto-inject review feedback preference", async () => {
+		mockCommonGets();
+		renderWithQuery(
+			<SessionInspector
+				session={session([pr(3, "open")], { autoInjectReviewFeedback: true })}
+			/>,
+		);
+
+		await userEvent.click(
+			await screen.findByRole("switch", {
+				name: "Automatically send review feedback to the worker",
+			}),
+		);
+
+		await waitFor(() =>
+			expect(patchMock).toHaveBeenCalledWith(
+				"/api/v1/sessions/{sessionId}/auto-inject-review-feedback",
+				{
+					params: { path: { sessionId: "sess-1" } },
+					body: { autoInjectReviewFeedback: false },
+				},
+			),
+		);
+	});
+
 	it("triggers a review and opens the returned reviewer terminal", async () => {
 		mockCommonGets([], "", [reviewState(3, "needs_review")]);
 		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };

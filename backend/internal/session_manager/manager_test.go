@@ -1577,6 +1577,13 @@ func TestSpawn_StampsUTCTimestamps(t *testing.T) {
 	}
 }
 
+func TestSeedRecordEnablesAutoInjectReviewFeedback(t *testing.T) {
+	rec := seedRecord(ports.SpawnConfig{ProjectID: "mer"}, time.Now())
+	if !rec.AutoInjectReviewFeedback {
+		t.Fatal("new sessions must default to auto-injecting review feedback")
+	}
+}
+
 func TestSpawn_RollsBackOnRuntimeFailure(t *testing.T) {
 	m, st, _, ws := newManager()
 	m.runtime = &fakeRuntime{createErr: errors.New("boom")}
