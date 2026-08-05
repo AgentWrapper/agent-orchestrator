@@ -58,7 +58,7 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 		OrchestratorOnly: true,
 	})
 	if err != nil {
-		return out, nil
+		return out, err
 	}
 	if len(orchestrators) == 0 {
 		return out, nil
@@ -67,7 +67,7 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 	orchestrator := newestSession(orchestrators)
 	out.OrchestratorID = orchestrator.ID
 	if err := s.manager.Send(ctx, orchestrator.ID, taskTitleDelegationMessage(worker.ID, in)); err != nil {
-		return out, nil
+		return out, err
 	}
 	return out, nil
 }
