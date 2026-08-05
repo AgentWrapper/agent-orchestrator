@@ -13,6 +13,7 @@ import {
   Copy,
   Eye,
   ExternalLink,
+  File,
   FolderGit2,
   GitBranch,
   Github,
@@ -148,8 +149,7 @@ function StandaloneProjectIcon({ className = "" }: { className?: string }) {
     <span
       className={`relative inline-grid shrink-0 place-items-center rounded-md border border-[#4d8dff]/25 bg-[#4d8dff]/10 text-[#8eb6ff] ${className}`}
     >
-      <Bot className="size-[13px]" />
-      <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-[#75a5ff] ring-2 ring-[#111317]" />
+      <File className="size-[13px]" />
     </span>
   );
 }
