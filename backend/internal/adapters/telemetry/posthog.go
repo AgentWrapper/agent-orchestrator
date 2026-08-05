@@ -191,9 +191,11 @@ type postHogClient interface {
 
 // PostHogSink exports allowlisted telemetry events to PostHog.
 type PostHogSink struct {
-	apiKey     string
-	host       string
-	distinctID string
+	apiKey       string
+	host         string
+	distinctID   string
+	defaultAgent string
+	tenure       *tenureTracker
 	// appVersion stamps app_version/ao_version on every exported event. Empty
 	// leaves the properties off entirely rather than reporting a misleading
 	// "unknown" that would show up as a real version in release breakdowns.
@@ -206,7 +208,7 @@ type PostHogSink struct {
 }
 
 // NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
-func NewPostHogSink(dataDir, apiKey, host, appVersion string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
+func NewPostHogSink(dataDir, apiKey, host, appVersion, defaultAgent string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("posthog api key is required")
 	}
@@ -221,13 +223,15 @@ func NewPostHogSink(dataDir, apiKey, host, appVersion string, client postHogClie
 		return nil, err
 	}
 	s := &PostHogSink{
-		apiKey:     apiKey,
-		host:       strings.TrimRight(host, "/"),
-		distinctID: distinctID,
-		client:     client,
-		log:        telemetryLogger(log),
-		appVersion: strings.TrimSpace(appVersion),
-		ch:         make(chan ports.TelemetryEvent, postHogBufferSize),
+		apiKey:       apiKey,
+		host:         strings.TrimRight(host, "/"),
+		distinctID:   distinctID,
+		defaultAgent: strings.TrimSpace(defaultAgent),
+		tenure:       newTenureTracker(dataDir, time.Now),
+		client:       client,
+		log:          telemetryLogger(log),
+		appVersion:   strings.TrimSpace(appVersion),
+		ch:           make(chan ports.TelemetryEvent, postHogBufferSize),
 	}
 	s.wg.Add(1)
 	go s.loop()
@@ -318,6 +322,20 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	if s.appVersion != "" {
 		props["app_version"] = s.appVersion
 		props["ao_version"] = s.appVersion
+	}
+	// Which agent this install actually defaults to. Without it, "how many people
+	// use Claude versus Codex" is only answerable for sessions that were spawned,
+	// which silently excludes everyone who installed and never ran one.
+	if s.defaultAgent != "" {
+		props["default_agent"] = s.defaultAgent
+	}
+	// Tenure turns retention into a property rather than a cohort query, so the
+	// spread of first-day versus long-standing installs is one breakdown.
+	if s.tenure != nil {
+		ageDays, activeDays, bucket := s.tenure.observe()
+		props["install_age_days"] = ageDays
+		props["active_days"] = activeDays
+		props["tenure"] = string(bucket)
 	}
 	if ev.RequestID != "" {
 		props["request_id"] = ev.RequestID
