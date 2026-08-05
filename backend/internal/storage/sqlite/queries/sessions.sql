@@ -32,6 +32,23 @@ UPDATE sessions
 SET controller_generation = ?, updated_at = ?
 WHERE id = ? AND session_mode = 'chat';
 
+-- name: CommitSessionControllerEpoch :execrows
+-- Lifecycle Manager owns this controller-epoch fact. The source-mode CAS keeps
+-- a stale transition from replacing a newer controller, while clearing every
+-- process-specific handle prevents either interface from inheriting the
+-- other's writer identity.
+UPDATE sessions
+SET session_mode = ?,
+    runtime_handle_id = '',
+    runtime_launch_id = '',
+    agent_session_id = ?,
+    provider_conversation_id = ?,
+    controller_generation = '',
+    activity_state = 'idle',
+    activity_last_at = ?,
+    updated_at = ?
+WHERE id = ? AND session_mode = ? AND is_terminated = 0;
+
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,

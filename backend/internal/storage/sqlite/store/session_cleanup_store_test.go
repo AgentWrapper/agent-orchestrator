@@ -214,11 +214,10 @@ func requireCleanupEqual(t *testing.T, got, want domain.SessionCleanupRecord) {
 	}
 }
 
-// The mode is written once, at insert. There is no session_mode column in the
-// UPDATE statement, so no code path can change it — this asserts that structural
-// guarantee rather than a runtime check, because a runtime check could be
-// bypassed by a future caller and the missing column cannot.
-func TestSessionModeIsImmutableAcrossUpdates(t *testing.T) {
+// Ordinary UpdateSession writes cannot change controller ownership. Only
+// Lifecycle Manager's dedicated compare-and-swap may do that, so unrelated
+// metadata updates cannot accidentally switch the interface.
+func TestOrdinarySessionUpdatesCannotChangeControllerMode(t *testing.T) {
 	s := newTestStore(t)
 	seedProject(t, s, "cm")
 	ctx := context.Background()
@@ -247,7 +246,7 @@ func TestSessionModeIsImmutableAcrossUpdates(t *testing.T) {
 		t.Fatalf("GetSession: err=%v found=%v", err, found)
 	}
 	if after.Mode != domain.SessionModeChat {
-		t.Fatalf("mode became %q; it must be immutable after creation", after.Mode)
+		t.Fatalf("ordinary update changed controller mode to %q", after.Mode)
 	}
 	// The controller handle, by contrast, is meant to be updatable: a resume
 	// rebinds it.

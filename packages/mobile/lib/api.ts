@@ -39,7 +39,7 @@ export type DashboardSession = {
 	// Which agent CLI drives this session (claude-code, codex, …). Parsed off the
 	// wire but discarded until the orchestrator tab needed it for brand marks.
 	harness?: string | null;
-	/** Immutable controller selected when the AO session was created. */
+	/** Controller currently committed for this AO session. */
 	mode: SessionMode;
 	branch: string | null;
 	issueId: string | null;
@@ -245,6 +245,9 @@ export class ApiError extends Error {
 		// Carried separately from `message` so callers can branch on the exact
 		// condition instead of pattern-matching human-facing prose.
 		readonly code?: string,
+		// Correlates a client-visible failure with daemon logs. The daemon's error
+		// envelope guarantees this field, so mobile must not discard it.
+		readonly requestId?: string,
 	) {
 		super(message);
 		this.name = "ApiError";
@@ -276,14 +279,21 @@ async function req(cfg: ServerConfig, path: string, init?: RequestInit, timeoutM
 		// The daemon returns a locked JSON envelope: { error, code, message, requestId }.
 		let detail = "";
 		let code: string | undefined;
+		let requestId: string | undefined;
 		try {
 			const body = await res.json();
 			detail = body?.message ?? body?.error ?? "";
 			code = typeof body?.code === "string" ? body.code : undefined;
+			requestId = typeof body?.requestId === "string" ? body.requestId : undefined;
 		} catch {
 			/* ignore */
 		}
-		throw new ApiError(res.status, `${res.status} ${res.statusText}${detail ? ` - ${detail}` : ""}`, code);
+		throw new ApiError(
+			res.status,
+			`${res.status} ${res.statusText}${detail ? ` - ${detail}` : ""}`,
+			code,
+			requestId,
+		);
 	}
 	return res;
 }

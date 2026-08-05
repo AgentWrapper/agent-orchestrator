@@ -168,6 +168,9 @@ func newTestDriver(t *testing.T) (*Driver, *scriptedServer) {
 	d := &Driver{
 		plugin: fakePlugin{bin: "codex", authStatus: ports.AgentAuthStatusAuthorized},
 		log:    slog.New(slog.DiscardHandler),
+		versionProbe: func(context.Context, string) (string, error) {
+			return "codex-cli 0.146.0", nil
+		},
 		spawn: func(context.Context, string, string, []string) (*process, error) {
 			return &process{
 				stdin:  clientWrites,
@@ -575,6 +578,39 @@ func TestProbeRejectsIncompatibleProtocolBeforeCreation(t *testing.T) {
 	delete(srv.responses, "model/list")
 	srv.failures["model/list"] = `{"code":-32601,"message":"method not found"}`
 	srv.mu.Unlock()
+
+	if _, err := d.Probe(context.Background()); !errors.Is(err, ports.ErrChatDriverIncompatible) {
+		t.Fatalf("err = %v, want ErrChatDriverIncompatible", err)
+	}
+}
+
+func TestProbeRejectsCodexOlderThanTheTestedProtocolFloor(t *testing.T) {
+	d, _ := newTestDriver(t)
+	d.versionProbe = func(context.Context, string) (string, error) {
+		return "codex-cli 0.145.9", nil
+	}
+
+	if _, err := d.Probe(context.Background()); !errors.Is(err, ports.ErrChatDriverIncompatible) {
+		t.Fatalf("err = %v, want ErrChatDriverIncompatible", err)
+	}
+}
+
+func TestProbeAcceptsNewerCodexVersion(t *testing.T) {
+	d, _ := newTestDriver(t)
+	d.versionProbe = func(context.Context, string) (string, error) {
+		return "codex-cli 1.2.3", nil
+	}
+
+	if _, err := d.Probe(context.Background()); err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+}
+
+func TestProbeRejectsUnparseableCodexVersion(t *testing.T) {
+	d, _ := newTestDriver(t)
+	d.versionProbe = func(context.Context, string) (string, error) {
+		return "codex development build", nil
+	}
 
 	if _, err := d.Probe(context.Background()); !errors.Is(err, ports.ErrChatDriverIncompatible) {
 		t.Fatalf("err = %v, want ErrChatDriverIncompatible", err)

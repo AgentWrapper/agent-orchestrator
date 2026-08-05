@@ -162,9 +162,10 @@ type SpawnSessionRequest struct {
 	// Mode picks the conversation controller: chat talks to the agent over a
 	// structured connection, tui opens the agent's native terminal interface.
 	// Omitted resolves to the daemon default (tui), which is why an upgrade
-	// changes nothing. It is fixed for the session's lifetime, so there is no
-	// endpoint to change it afterwards. An unsupported explicit request fails
-	// rather than quietly producing the other kind of session.
+	// changes nothing. Compatible sessions may later switch through the durable
+	// interface-transition endpoint; the default never mutates existing sessions
+	// automatically. An unsupported explicit request fails rather than quietly
+	// producing the other kind of session.
 	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.

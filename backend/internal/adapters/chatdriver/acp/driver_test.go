@@ -35,6 +35,10 @@ type fakeAgent struct {
 	elicitation         *acpsdk.UnstableCreateElicitationRequest
 	elicitationResponse acpsdk.UnstableCreateElicitationResponse
 	promptErr           error
+	promptBlock         bool
+	promptStarted       chan struct{}
+	cancelErr           error
+	cancelCalls         int
 	mode                string
 	options             map[string]string
 	newConfig           []acpsdk.SessionConfigOption
@@ -105,7 +109,13 @@ func (a *fakeAgent) HandleExtensionMethod(_ context.Context, method string, raw 
 func (a *fakeAgent) Logout(context.Context, acpsdk.LogoutRequest) (acpsdk.LogoutResponse, error) {
 	return acpsdk.LogoutResponse{}, nil
 }
-func (a *fakeAgent) Cancel(context.Context, acpsdk.CancelNotification) error { return nil }
+func (a *fakeAgent) Cancel(context.Context, acpsdk.CancelNotification) error {
+	a.mu.Lock()
+	a.cancelCalls++
+	err := a.cancelErr
+	a.mu.Unlock()
+	return err
+}
 func (a *fakeAgent) CloseSession(context.Context, acpsdk.CloseSessionRequest) (acpsdk.CloseSessionResponse, error) {
 	return acpsdk.CloseSessionResponse{}, nil
 }
@@ -169,9 +179,21 @@ func (a *fakeAgent) Prompt(ctx context.Context, params acpsdk.PromptRequest) (ac
 	promptNoPermission := a.promptNoPermission
 	elicitation := a.elicitation
 	promptErr := a.promptErr
+	promptBlock := a.promptBlock
+	promptStarted := a.promptStarted
 	a.mu.Unlock()
 	if promptErr != nil {
 		return acpsdk.PromptResponse{}, promptErr
+	}
+	if promptBlock {
+		if promptStarted != nil {
+			select {
+			case promptStarted <- struct{}{}:
+			default:
+			}
+		}
+		<-ctx.Done()
+		return acpsdk.PromptResponse{}, ctx.Err()
 	}
 	if elicitation != nil {
 		response, err := a.conn.UnstableCreateElicitation(ctx, *elicitation)
@@ -312,6 +334,72 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestACPInterruptCancelsTheLocalPromptAfterNotifyingTheAgent(t *testing.T) {
+	agent := &fakeAgent{promptBlock: true, promptStarted: make(chan struct{}, 1)}
+	driver := New(Config{
+		Harness: domain.HarnessOpenCode,
+		Capabilities: ports.ChatCapabilities{
+			ports.ChatCapabilityStreaming: true,
+			ports.ChatCapabilityInterrupt: true,
+		},
+		Probe: func(context.Context) error { return nil },
+		Launch: func(context.Context, LaunchConfig) (Launch, error) {
+			return Launch{Command: "fake"}, nil
+		},
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	driver.spawn = fakeSpawn(agent)
+
+	conversation, err := driver.Start(context.Background(), ports.ChatStartConfig{
+		WorkspacePath: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer conversation.Close()
+	_ = nextEvent(t, conversation.Events()) // controller.ready
+	ref, err := conversation.SendTurn(context.Background(), ports.ChatUserMessage{Text: "wait"})
+	if err != nil {
+		t.Fatalf("SendTurn: %v", err)
+	}
+	if err := conversation.(ports.ChatDeferredTurnStarter).StartDeferredTurn(ref.ProviderTurnID); err != nil {
+		t.Fatalf("StartDeferredTurn: %v", err)
+	}
+	select {
+	case <-agent.promptStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Prompt did not start")
+	}
+	if err := conversation.Interrupt(context.Background(), ref.ProviderTurnID); err != nil {
+		t.Fatalf("Interrupt: %v", err)
+	}
+
+	for {
+		event := nextEvent(t, conversation.Events())
+		if event.Kind == ports.ChatEventTurnCompleted {
+			if event.TurnState != domain.TurnStateInterrupted {
+				t.Fatalf("turn state = %q, want interrupted", event.TurnState)
+			}
+			break
+		}
+	}
+	// The SDK may emit a second idempotent session/cancel while unwinding the
+	// locally cancelled Prompt request. What matters is that the explicit
+	// notification was sent and the local request settled. Notification handling
+	// is asynchronous, so observe it rather than assuming it ran before the turn
+	// completion event.
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		agent.mu.Lock()
+		cancelCalls := agent.cancelCalls
+		agent.mu.Unlock()
+		if cancelCalls >= 1 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("ACP cancel notification was not handled")
 }
 
 func TestACPDriverNegotiatesRichClientCapabilitiesAndNativePromptContent(t *testing.T) {

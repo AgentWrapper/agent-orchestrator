@@ -873,13 +873,26 @@ func (s *Service) SetTurnSettings(
 // Delivery follows the same rules as any other send: a message arriving mid-turn
 // queues instead of racing the running turn.
 func (s *Service) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
+	return s.RelayChatTurnWithID(ctx, id, text, "")
+}
+
+// RelayChatTurnWithID is RelayChatTurn with a durable caller-supplied
+// idempotency key. Interface-transition outbox retries use it so a crash after
+// provider acceptance but before the outbox acknowledgement cannot create a
+// duplicate Chat turn.
+func (s *Service) RelayChatTurnWithID(
+	ctx context.Context,
+	id domain.SessionID,
+	text, clientMessageID string,
+) (string, error) {
 	controller, err := s.Controller(id)
 	if err != nil {
 		return "", err
 	}
 	turn, err := controller.Send(ctx, ports.ChatUserMessage{
-		Text:   text,
-		Origin: domain.MessageOriginAutomation,
+		Text:            text,
+		ClientMessageID: clientMessageID,
+		Origin:          domain.MessageOriginAutomation,
 	})
 	if err != nil {
 		return "", err

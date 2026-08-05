@@ -121,7 +121,9 @@ func TestTerminalInputStaysOutOfCommandOutput(t *testing.T) {
 	)
 
 	snapshot := h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
-		return activityByItem(s, "exec-1").StreamedText == "print(6*7)\n"
+		activity := activityByItem(s, "exec-1")
+		return activity.StreamedText == "print(6*7)\n" &&
+			activity.CommandOutput == "Python 3.13.0\n42\n"
 	})
 	activity := activityByItem(snapshot, "exec-1")
 	if activity.CommandOutput != "Python 3.13.0\n42\n" {

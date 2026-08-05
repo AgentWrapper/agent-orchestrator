@@ -42,31 +42,33 @@ FROM session_interface_transitions
 WHERE phase NOT IN ('completed', 'failed', 'cancelled', 'recovery_required')
 ORDER BY created_at;
 
+-- name: ListDeliverableSessionInterfaceTransitions :many
+SELECT t.id, t.session_id, t.source_mode, t.target_mode, t.policy, t.phase,
+       t.native_conversation_id, t.error_code, t.error_detail,
+       t.created_at, t.updated_at, t.completed_at
+FROM session_interface_transitions AS t
+WHERE t.phase IN ('completed', 'failed', 'cancelled', 'recovery_required')
+  AND EXISTS (
+      SELECT 1
+      FROM session_interface_transition_messages AS m
+      WHERE m.transition_id = t.id AND m.delivered_at IS NULL
+  )
+ORDER BY t.updated_at, t.id;
+
 -- name: AdvanceSessionInterfaceTransition :execrows
 UPDATE session_interface_transitions
 SET phase = ?, native_conversation_id = ?, error_code = ?, error_detail = ?,
     updated_at = ?, completed_at = ?
 WHERE id = ? AND phase = ?;
 
--- name: SwitchSessionControllerMode :execrows
-UPDATE sessions
-SET session_mode = ?,
-    runtime_handle_id = '',
-    runtime_launch_id = '',
-    agent_session_id = ?,
-    provider_conversation_id = ?,
-    controller_generation = '',
-    activity_state = 'idle',
-    activity_last_at = ?,
-    updated_at = ?
-WHERE id = ? AND session_mode = ? AND is_terminated = 0;
-
 -- name: EnqueueSessionInterfaceTransitionMessage :exec
-INSERT INTO session_interface_transition_messages (transition_id, message, created_at)
-VALUES (?, ?, ?);
+INSERT INTO session_interface_transition_messages (
+    transition_id, client_message_id, message, created_at
+)
+VALUES (?, ?, ?, ?);
 
 -- name: ListPendingSessionInterfaceTransitionMessages :many
-SELECT id, transition_id, message, created_at, delivered_at
+SELECT id, transition_id, client_message_id, message, created_at, delivered_at
 FROM session_interface_transition_messages
 WHERE transition_id = ? AND delivered_at IS NULL
 ORDER BY id;

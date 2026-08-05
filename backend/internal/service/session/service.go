@@ -360,11 +360,12 @@ func (s *Service) SpawnOrchestrator(
 		if err != nil {
 			return domain.Session{}, err
 		}
-		if len(existing) > 0 {
+		if len(existing) > 0 && requestedMode == "" {
 			// Clean replacement preserves the controller contract of the
-			// orchestrator being replaced. The global default only applies when a
-			// project has no prior active orchestrator; changing that preference
-			// must never silently flip an existing project's coordinator.
+			// orchestrator being replaced only when the caller did not make an
+			// explicit choice. The global default still must not silently flip an
+			// existing project's coordinator, but an explicit replacement mode is
+			// authoritative.
 			mode = newestSession(existing).Mode
 		}
 		for _, orch := range existing {

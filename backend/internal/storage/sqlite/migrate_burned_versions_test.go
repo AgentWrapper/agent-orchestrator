@@ -74,6 +74,7 @@ var shippedMigrations = map[int64]string{
 	62: "0062_conversation_delivery_content_and_cost.sql",
 	63: "0063_cancelled_conversation_activities.sql",
 	64: "0064_session_interface_transitions.sql",
+	65: "0065_session_interface_transition_delivery.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

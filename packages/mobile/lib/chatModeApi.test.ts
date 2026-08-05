@@ -4,7 +4,7 @@ vi.mock("@react-native-async-storage/async-storage", () => ({ default: { getItem
 vi.mock("expo-secure-store", () => ({ getItemAsync: vi.fn(), setItemAsync: vi.fn(), deleteItemAsync: vi.fn() }));
 vi.mock("expo/fetch", () => ({ fetch: vi.fn() }));
 
-import { getPreview, getSettings, launchOrchestrator, mobileReachablePreviewURL, restoreSession, resumeSessionAgent, spawnSession } from "./api";
+import { ApiError, apiRequest, getPreview, getSettings, launchOrchestrator, mobileReachablePreviewURL, restoreSession, resumeSessionAgent, spawnSession } from "./api";
 import { getConversationPage, getWorkspacePaths } from "./chat/api";
 import type { ServerConfig } from "./config";
 
@@ -45,6 +45,27 @@ describe("mobile Chat API boundaries", () => {
 		const [url, init] = vi.mocked(fetch).mock.calls[0];
 		expect(url).toBe("http://ao.test:3011/api/v1/sessions/chat-terminated/restore");
 		expect(init?.method).toBe("POST");
+	});
+
+	it("preserves daemon request IDs on API errors", async () => {
+		vi.mocked(fetch).mockResolvedValue(response({
+			error: "conflict",
+			code: "SWITCH_IN_PROGRESS",
+			message: "A controller switch is already running.",
+			requestId: "request-mobile-1",
+		}, 409));
+		let thrown: unknown;
+		try {
+			await apiRequest(cfg, "/api/v1/sessions/w-1/interface-transition", { method: "POST" });
+		} catch (error) {
+			thrown = error;
+		}
+		expect(thrown).toBeInstanceOf(ApiError);
+		expect(thrown).toMatchObject({
+			status: 409,
+			code: "SWITCH_IN_PROGRESS",
+			requestId: "request-mobile-1",
+		});
 	});
 
 	it("uses daemon-advertised Chat harnesses and preserves workspace truncation", async () => {

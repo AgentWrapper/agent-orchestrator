@@ -14,11 +14,13 @@ import (
 
 type transitionStore struct {
 	*fakeStore
-	mu            sync.Mutex
-	transitions   map[string]domain.SessionInterfaceTransition
-	messages      map[string][]domain.SessionInterfaceTransitionMessage
-	nextMessage   int64
-	loseCancelCAS bool
+	mu             sync.Mutex
+	transitions    map[string]domain.SessionInterfaceTransition
+	messages       map[string][]domain.SessionInterfaceTransitionMessage
+	nextMessage    int64
+	loseCancelCAS  bool
+	messenger      *fakeMessenger
+	markMessageErr error
 }
 
 func newTransitionStore() *transitionStore {
@@ -84,6 +86,24 @@ func (s *transitionStore) ListActiveSessionInterfaceTransitions(context.Context)
 	return out, nil
 }
 
+func (s *transitionStore) ListDeliverableSessionInterfaceTransitions(context.Context) ([]domain.SessionInterfaceTransition, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []domain.SessionInterfaceTransition
+	for _, rec := range s.transitions {
+		if !rec.Phase.Terminal() {
+			continue
+		}
+		for _, message := range s.messages[rec.ID] {
+			if message.DeliveredAt.IsZero() {
+				out = append(out, rec)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 func (s *transitionStore) AdvanceSessionInterfaceTransition(_ context.Context, id string, expected, next domain.SessionInterfaceTransitionPhase, nativeID, errorCode, errorDetail string, now time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -108,28 +128,13 @@ func (s *transitionStore) AdvanceSessionInterfaceTransition(_ context.Context, i
 	return true, nil
 }
 
-func (s *transitionStore) SwitchSessionControllerMode(_ context.Context, id domain.SessionID, source, target domain.SessionMode, nativeID string, now time.Time) (bool, error) {
-	rec, ok := s.sessions[id]
-	if !ok || rec.IsTerminated || domain.NormalizeSessionMode(rec.Mode) != source {
-		return false, nil
-	}
-	rec.Mode = target
-	rec.Metadata.RuntimeHandleID = ""
-	rec.Metadata.RuntimeLaunchID = ""
-	rec.Metadata.AgentSessionID = nativeID
-	rec.Metadata.ProviderConversationID = nativeID
-	rec.Metadata.ControllerGeneration = ""
-	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
-	s.sessions[id] = rec
-	return true, nil
-}
-
-func (s *transitionStore) EnqueueSessionInterfaceTransitionMessage(_ context.Context, transitionID, message string, now time.Time) error {
+func (s *transitionStore) EnqueueSessionInterfaceTransitionMessage(_ context.Context, transitionID, clientMessageID, message string, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.nextMessage++
 	s.messages[transitionID] = append(s.messages[transitionID], domain.SessionInterfaceTransitionMessage{
-		ID: s.nextMessage, TransitionID: transitionID, Message: message, CreatedAt: now,
+		ID: s.nextMessage, TransitionID: transitionID, ClientMessageID: clientMessageID,
+		Message: message, CreatedAt: now,
 	})
 	return nil
 }
@@ -149,6 +154,9 @@ func (s *transitionStore) ListPendingSessionInterfaceTransitionMessages(_ contex
 func (s *transitionStore) MarkSessionInterfaceTransitionMessageDelivered(_ context.Context, id int64, now time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.markMessageErr != nil {
+		return s.markMessageErr
+	}
 	for transitionID, messages := range s.messages {
 		for i := range messages {
 			if messages[i].ID == id {
@@ -200,12 +208,32 @@ func (r *transitionRuntime) Create(ctx context.Context, cfg ports.RuntimeConfig)
 }
 
 type transitionChat struct {
-	log            *[]string
-	preparedPolicy domain.SessionInterfaceTransitionPolicy
-	start          ChatStart
+	log              *[]string
+	preparedPolicy   domain.SessionInterfaceTransitionPolicy
+	start            ChatStart
+	preflightErr     error
+	preflightStarted chan struct{}
+	preflightRelease chan struct{}
+	relayMessages    []string
+	relayIDs         []string
 }
 
-func (c *transitionChat) PreflightChat(context.Context, domain.AgentHarness) error { return nil }
+func (c *transitionChat) PreflightChat(ctx context.Context, _ domain.AgentHarness) error {
+	if c.preflightStarted != nil {
+		select {
+		case c.preflightStarted <- struct{}{}:
+		default:
+		}
+	}
+	if c.preflightRelease != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-c.preflightRelease:
+		}
+	}
+	return c.preflightErr
+}
 func (c *transitionChat) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
 	c.start = cfg
 	*c.log = append(*c.log, "start:chat")
@@ -214,7 +242,14 @@ func (c *transitionChat) StartChat(_ context.Context, cfg ChatStart) (ChatStarte
 func (*transitionChat) StartChatTurn(context.Context, domain.SessionID, string) (string, error) {
 	return "", nil
 }
-func (*transitionChat) RelayChatTurn(context.Context, domain.SessionID, string) (string, error) {
+func (c *transitionChat) RelayChatTurn(_ context.Context, _ domain.SessionID, text string) (string, error) {
+	c.relayMessages = append(c.relayMessages, text)
+	c.relayIDs = append(c.relayIDs, "")
+	return "", nil
+}
+func (c *transitionChat) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, clientMessageID string) (string, error) {
+	c.relayMessages = append(c.relayMessages, text)
+	c.relayIDs = append(c.relayIDs, clientMessageID)
 	return "", nil
 }
 func (c *transitionChat) StopChat(_ context.Context, _ domain.SessionID) error {
@@ -251,10 +286,12 @@ func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *tra
 	log := &[]string{}
 	runtime := &transitionRuntime{fakeRuntime: &fakeRuntime{}, log: log}
 	chat := &transitionChat{log: log}
+	messenger := &fakeMessenger{}
+	store.messenger = messenger
 	counter := 0
 	manager := New(Deps{
 		Runtime: runtime, Agents: singleAgent{agent: transitionAgent{}}, Workspace: &fakeWorkspace{},
-		Store: store, Messenger: &fakeMessenger{}, Chat: chat,
+		Store: store, Messenger: messenger, Chat: chat,
 		Lifecycle: &fakeLCM{store: store.fakeStore}, LookPath: func(string) (string, error) { return "/bin/true", nil },
 		NewLaunchID: func() string { counter++; return fmt.Sprintf("generation-%d", counter) },
 	})
@@ -348,6 +385,84 @@ func TestSendQueuesDuringInterfaceTransition(t *testing.T) {
 	}
 	if len(messages) != 1 || messages[0].Message != "CI failed on linux" {
 		t.Fatalf("queued messages = %+v", messages)
+	}
+	if messages[0].ClientMessageID == "" {
+		t.Fatal("queued message has no durable idempotency key")
+	}
+}
+
+func TestTransitionMessagesReturnToSourceAfterPreflightFailure(t *testing.T) {
+	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	chat.preflightErr = ports.ErrChatDriverUnavailable
+	chat.preflightStarted = make(chan struct{}, 1)
+	chat.preflightRelease = make(chan struct{})
+
+	transition, err := manager.StartInterfaceTransition(
+		context.Background(), "session-1", domain.SessionModeChat,
+		domain.SessionInterfaceTransitionDrain,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-chat.preflightStarted:
+	case <-time.After(time.Second):
+		t.Fatal("preflight did not start")
+	}
+	if err := manager.Send(context.Background(), "session-1", "CI failed on linux"); err != nil {
+		t.Fatal(err)
+	}
+	close(chat.preflightRelease)
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed {
+		t.Fatalf("phase = %q, want failed", settled.Phase)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		pending, listErr := store.ListPendingSessionInterfaceTransitionMessages(context.Background(), transition.ID)
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if len(pending) == 0 && len(store.messenger.msgs) == 1 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("queued message was not returned to source: pending=%+v delivered=%+v",
+		store.messages[transition.ID], store.messenger.msgs)
+}
+
+func TestTransitionMessageRetryUsesStableChatIdempotencyKey(t *testing.T) {
+	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeChat)
+	now := time.Now()
+	transition := domain.SessionInterfaceTransition{
+		ID: "transition-completed", SessionID: "session-1",
+		SourceMode: domain.SessionModeTUI, TargetMode: domain.SessionModeChat,
+		Policy:    domain.SessionInterfaceTransitionDrain,
+		Phase:     domain.SessionInterfaceTransitionCompleted,
+		CreatedAt: now, UpdatedAt: now, CompletedAt: now,
+	}
+	store.transitions[transition.ID] = transition
+	if err := store.EnqueueSessionInterfaceTransitionMessage(
+		context.Background(), transition.ID, "handoff-message-1", "review is ready", now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	store.markMessageErr = errors.New("temporary acknowledgement failure")
+	if err := manager.deliverAllTransitionMessages(context.Background()); err == nil {
+		t.Fatal("first delivery unexpectedly succeeded")
+	}
+	store.markMessageErr = nil
+	if err := manager.deliverAllTransitionMessages(context.Background()); err != nil {
+		t.Fatalf("retry delivery: %v", err)
+	}
+	if fmt.Sprint(chat.relayIDs) != "[handoff-message-1 handoff-message-1]" {
+		t.Fatalf("relay ids = %v", chat.relayIDs)
+	}
+	pending, err := store.ListPendingSessionInterfaceTransitionMessages(context.Background(), transition.ID)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending after retry = %+v err=%v", pending, err)
 	}
 }
 

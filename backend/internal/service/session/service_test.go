@@ -1275,6 +1275,26 @@ func TestSpawnOrchestratorCleanPreservesPersistedMode(t *testing.T) {
 	}
 }
 
+func TestSpawnOrchestratorCleanHonorsExplicitReplacementMode(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Mode: domain.SessionModeChat, CreatedAt: time.Unix(100, 0).UTC(),
+	}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(
+		context.Background(), "mer", true, domain.SessionModeTUI,
+	); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if fc.spawnedCfg.RequestedMode != domain.SessionModeTUI {
+		t.Fatalf("replacement mode = %q, want explicit tui", fc.spawnedCfg.RequestedMode)
+	}
+}
+
 func TestSpawnOrchestratorUsesExplicitModeForNewProjectOrchestrator(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}

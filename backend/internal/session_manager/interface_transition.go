@@ -16,6 +16,8 @@ const (
 	interfaceInterruptSettle     = 2 * time.Second
 	interfaceTransitionStopLimit = 15 * time.Second
 	interfaceTransitionStepLimit = 45 * time.Second
+	interfaceDeliveryRetry       = 2 * time.Second
+	interfaceDeliveryIdlePoll    = 30 * time.Second
 )
 
 // interfaceTransitionStore is optional so the existing narrow Manager Store
@@ -27,9 +29,9 @@ type interfaceTransitionStore interface {
 	GetActiveSessionInterfaceTransition(context.Context, domain.SessionID) (domain.SessionInterfaceTransition, bool, error)
 	GetLatestSessionInterfaceTransition(context.Context, domain.SessionID) (domain.SessionInterfaceTransition, bool, error)
 	ListActiveSessionInterfaceTransitions(context.Context) ([]domain.SessionInterfaceTransition, error)
+	ListDeliverableSessionInterfaceTransitions(context.Context) ([]domain.SessionInterfaceTransition, error)
 	AdvanceSessionInterfaceTransition(context.Context, string, domain.SessionInterfaceTransitionPhase, domain.SessionInterfaceTransitionPhase, string, string, string, time.Time) (bool, error)
-	SwitchSessionControllerMode(context.Context, domain.SessionID, domain.SessionMode, domain.SessionMode, string, time.Time) (bool, error)
-	EnqueueSessionInterfaceTransitionMessage(context.Context, string, string, time.Time) error
+	EnqueueSessionInterfaceTransitionMessage(context.Context, string, string, string, time.Time) error
 	ListPendingSessionInterfaceTransitionMessages(context.Context, string) ([]domain.SessionInterfaceTransitionMessage, error)
 	MarkSessionInterfaceTransitionMessageDelivered(context.Context, int64, time.Time) error
 }
@@ -209,6 +211,7 @@ func (m *Manager) CancelInterfaceTransition(ctx context.Context, id domain.Sessi
 	if run != nil {
 		run.cancel()
 	}
+	m.wakeTransitionMessageDispatcher()
 	return nil
 }
 
@@ -217,6 +220,7 @@ func (m *Manager) runInterfaceTransition(
 	transition domain.SessionInterfaceTransition,
 	run *interfaceTransitionRun,
 ) {
+	defer m.settleTransitionMessages(transition)
 	defer close(run.done)
 	defer func() {
 		m.transitionMu.Lock()
@@ -295,9 +299,12 @@ func (m *Manager) runInterfaceTransition(
 		fail("TRANSITION_STATE_FAILED", err)
 		return
 	}
-	store := m.store.(interfaceTransitionStore)
-	changed, err := store.SwitchSessionControllerMode(ctx, rec.ID, transition.SourceMode,
-		transition.TargetMode, transition.NativeConversationID, m.clock())
+	if m.lcm == nil {
+		fail("LIFECYCLE_UNAVAILABLE", fmt.Errorf("lifecycle manager is unavailable"))
+		return
+	}
+	changed, err := m.lcm.CommitControllerEpoch(ctx, rec.ID, transition.SourceMode,
+		transition.TargetMode, transition.NativeConversationID)
 	if err != nil || !changed {
 		if err == nil {
 			err = fmt.Errorf("session mode compare-and-swap failed")
@@ -326,7 +333,6 @@ func (m *Manager) runInterfaceTransition(
 			"sessionID", rec.ID, "transitionID", transition.ID, "error", err)
 		return
 	}
-	m.deliverTransitionMessages(transition)
 }
 
 func (m *Manager) nativeConversationID(
@@ -559,15 +565,19 @@ func (m *Manager) rollbackInterfaceTransition(
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), interfaceTransitionStepLimit)
 	defer cancel()
-	store := m.store.(interfaceTransitionStore)
 	if modeChanged {
 		// A target may have partially started. Stop whatever its committed mode can
 		// identify before restoring the old writer.
 		if current, ok, _ := m.store.GetSession(ctx, transition.SessionID); ok {
 			_ = m.stopSourceController(ctx, current)
 		}
-		changed, err := store.SwitchSessionControllerMode(ctx, transition.SessionID,
-			transition.TargetMode, transition.SourceMode, transition.NativeConversationID, m.clock())
+		if m.lcm == nil {
+			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
+				"RECOVERY_REQUIRED", cause.Error()+"; rollback mode: lifecycle manager is unavailable")
+			return
+		}
+		changed, err := m.lcm.CommitControllerEpoch(ctx, transition.SessionID,
+			transition.TargetMode, transition.SourceMode, transition.NativeConversationID)
 		if err != nil || !changed {
 			detail := cause.Error()
 			if err != nil {
@@ -625,31 +635,34 @@ func (m *Manager) finishInterfaceTransition(
 	return m.moveInterfaceTransition(id, phase, errorCode, errorDetail)
 }
 
-func (m *Manager) deliverTransitionMessages(transition domain.SessionInterfaceTransition) {
+func (m *Manager) deliverTransitionMessages(
+	ctx context.Context,
+	transition domain.SessionInterfaceTransition,
+) error {
+	m.transitionDeliveryAttemptMu.Lock()
+	defer m.transitionDeliveryAttemptMu.Unlock()
 	store := m.store.(interfaceTransitionStore)
-	ctx, cancel := context.WithTimeout(context.Background(), interfaceTransitionStepLimit)
+	ctx, cancel := context.WithTimeout(ctx, interfaceTransitionStepLimit)
 	defer cancel()
 	messages, err := store.ListPendingSessionInterfaceTransitionMessages(ctx, transition.ID)
 	if err != nil {
-		m.logger.Error("interface transition: read queued messages", "transitionID", transition.ID, "error", err)
-		return
+		return fmt.Errorf("read transition %s messages: %w", transition.ID, err)
 	}
 	for _, message := range messages {
-		if err := m.Send(ctx, transition.SessionID, message.Message); err != nil {
-			m.logger.Error("interface transition: deliver queued message", "transitionID", transition.ID, "error", err)
-			return
+		if err := m.send(ctx, transition.SessionID, message.Message, message.ClientMessageID); err != nil {
+			return fmt.Errorf("deliver transition %s message %d: %w", transition.ID, message.ID, err)
 		}
 		if err := store.MarkSessionInterfaceTransitionMessageDelivered(ctx, message.ID, m.clock()); err != nil {
-			m.logger.Error("interface transition: mark queued message delivered", "transitionID", transition.ID, "error", err)
-			return
+			return fmt.Errorf("acknowledge transition %s message %d: %w", transition.ID, message.ID, err)
 		}
 	}
+	return nil
 }
 
 func (m *Manager) queueDuringInterfaceTransition(
 	ctx context.Context,
 	id domain.SessionID,
-	message string,
+	message, clientMessageID string,
 ) (bool, error) {
 	store, ok := m.store.(interfaceTransitionStore)
 	if !ok {
@@ -659,10 +672,118 @@ func (m *Manager) queueDuringInterfaceTransition(
 	if err != nil || !active {
 		return false, err
 	}
-	if err := store.EnqueueSessionInterfaceTransitionMessage(ctx, transition.ID, message, m.clock()); err != nil {
+	if strings.TrimSpace(clientMessageID) == "" {
+		clientMessageID = "interface-transition:" + m.newLaunchID()
+	}
+	if err := store.EnqueueSessionInterfaceTransitionMessage(
+		ctx, transition.ID, clientMessageID, message, m.clock(),
+	); err != nil {
 		return true, err
 	}
 	return true, nil
+}
+
+// settleTransitionMessages runs after every transition outcome, not only the
+// happy path. The immediate attempt makes rollback/cancellation responsive;
+// the daemon-lifetime worker retains responsibility after any transient error.
+func (m *Manager) settleTransitionMessages(transition domain.SessionInterfaceTransition) {
+	store := m.store.(interfaceTransitionStore)
+	ctx, cancel := context.WithTimeout(context.Background(), interfaceTransitionStepLimit)
+	current, ok, err := store.GetSessionInterfaceTransition(ctx, transition.ID)
+	cancel()
+	if err != nil {
+		m.logger.Error("interface transition: read terminal state for queued messages",
+			"transitionID", transition.ID, "error", err)
+		m.wakeTransitionMessageDispatcher()
+		return
+	}
+	if !ok || !current.Phase.Terminal() {
+		m.wakeTransitionMessageDispatcher()
+		return
+	}
+	if err := m.deliverTransitionMessages(context.Background(), current); err != nil {
+		m.logger.Error("interface transition: queued-message delivery deferred",
+			"transitionID", transition.ID, "error", err)
+	}
+	m.wakeTransitionMessageDispatcher()
+}
+
+func (m *Manager) deliverAllTransitionMessages(ctx context.Context) error {
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return nil
+	}
+	transitions, err := store.ListDeliverableSessionInterfaceTransitions(ctx)
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, transition := range transitions {
+		if err := m.deliverTransitionMessages(ctx, transition); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (m *Manager) wakeTransitionMessageDispatcher() {
+	select {
+	case m.transitionDeliveryWake <- struct{}{}:
+	default:
+	}
+}
+
+// startTransitionMessageDispatcher starts one daemon-lifetime durable outbox
+// worker. Reconcile supplies the daemon context, so shutdown bounds the worker;
+// a periodic scan repairs crashes that happened after a transition became
+// terminal but before its in-memory wake-up.
+func (m *Manager) startTransitionMessageDispatcher(ctx context.Context) {
+	if _, ok := m.store.(interfaceTransitionStore); !ok {
+		return
+	}
+	m.transitionDeliveryMu.Lock()
+	if m.transitionDeliveryRunning {
+		m.transitionDeliveryMu.Unlock()
+		return
+	}
+	m.transitionDeliveryRunning = true
+	m.transitionDeliveryMu.Unlock()
+
+	go func() {
+		defer func() {
+			m.transitionDeliveryMu.Lock()
+			m.transitionDeliveryRunning = false
+			m.transitionDeliveryMu.Unlock()
+		}()
+		delay := time.Duration(0)
+		for {
+			timer := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				return
+			case <-m.transitionDeliveryWake:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+			case <-timer.C:
+			}
+			if err := m.deliverAllTransitionMessages(ctx); err != nil {
+				m.logger.Error("interface transition: retry queued-message delivery", "error", err)
+				delay = interfaceDeliveryRetry
+			} else {
+				delay = interfaceDeliveryIdlePoll
+			}
+		}
+	}()
 }
 
 func (m *Manager) hasActiveInterfaceTransition(ctx context.Context, id domain.SessionID) (bool, error) {

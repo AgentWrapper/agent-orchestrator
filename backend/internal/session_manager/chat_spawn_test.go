@@ -76,6 +76,11 @@ func (l *recordingLauncher) RelayChatTurn(_ context.Context, _ domain.SessionID,
 	return "turn-relay", l.turnErr
 }
 
+func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.SessionID, text, _ string) (string, error) {
+	l.relayed = append(l.relayed, text)
+	return "turn-relay", l.turnErr
+}
+
 func (l *recordingLauncher) StopChat(_ context.Context, id domain.SessionID) error { //nolint:unparam
 
 	l.stopped = append(l.stopped, id)

@@ -36,6 +36,50 @@ func (q *Queries) ClaimChatControllerGeneration(ctx context.Context, arg ClaimCh
 	return result.RowsAffected()
 }
 
+const commitSessionControllerEpoch = `-- name: CommitSessionControllerEpoch :execrows
+UPDATE sessions
+SET session_mode = ?,
+    runtime_handle_id = '',
+    runtime_launch_id = '',
+    agent_session_id = ?,
+    provider_conversation_id = ?,
+    controller_generation = '',
+    activity_state = 'idle',
+    activity_last_at = ?,
+    updated_at = ?
+WHERE id = ? AND session_mode = ? AND is_terminated = 0
+`
+
+type CommitSessionControllerEpochParams struct {
+	SessionMode            domain.SessionMode
+	AgentSessionID         string
+	ProviderConversationID string
+	ActivityLastAt         time.Time
+	UpdatedAt              time.Time
+	ID                     domain.SessionID
+	SessionMode_2          domain.SessionMode
+}
+
+// Lifecycle Manager owns this controller-epoch fact. The source-mode CAS keeps
+// a stale transition from replacing a newer controller, while clearing every
+// process-specific handle prevents either interface from inheriting the
+// other's writer identity.
+func (q *Queries) CommitSessionControllerEpoch(ctx context.Context, arg CommitSessionControllerEpochParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, commitSessionControllerEpoch,
+		arg.SessionMode,
+		arg.AgentSessionID,
+		arg.ProviderConversationID,
+		arg.ActivityLastAt,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.SessionMode_2,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getSession = `-- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
     activity_state, activity_last_at, is_terminated, branch, workspace_path,

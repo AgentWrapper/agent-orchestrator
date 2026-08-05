@@ -34,6 +34,21 @@ type sessionStore interface {
 	UpdatePRLastNudgeSignature(ctx context.Context, prURL, payload string) error
 }
 
+// controllerEpochStore is the atomic persistence primitive used by
+// CommitControllerEpoch. It stays optional on the broad lifecycle store so
+// focused reducer fakes do not need controller-transition methods; production
+// SQLite implements it.
+type controllerEpochStore interface {
+	CommitSessionControllerEpoch(
+		context.Context,
+		domain.SessionID,
+		domain.SessionMode,
+		domain.SessionMode,
+		string,
+		time.Time,
+	) (bool, error)
+}
+
 // notificationSink is the optional lifecycle-to-notification-producer boundary.
 type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
@@ -694,6 +709,77 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	rec.Metadata = mergeMetadata(rec.Metadata, metadata)
 	rec.UpdatedAt = now
 	return m.store.UpdateSession(ctx, rec)
+}
+
+// CommitControllerEpoch atomically changes which controller owns a live
+// session. Session Manager coordinates the external-process saga, but only
+// Lifecycle Manager is allowed to write the durable controller/activity facts.
+// A false result means the expected source controller no longer owns the row.
+func (m *Manager) CommitControllerEpoch(
+	ctx context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+) (bool, error) {
+	if !source.Valid() || !target.Valid() || source == target {
+		return false, fmt.Errorf("lifecycle: invalid controller epoch %q -> %q", source, target)
+	}
+	nativeConversationID = strings.TrimSpace(nativeConversationID)
+	if nativeConversationID == "" {
+		return false, fmt.Errorf("lifecycle: controller epoch for %q has no native conversation id", id)
+	}
+	writer, ok := m.store.(controllerEpochStore)
+	if !ok {
+		return false, fmt.Errorf("lifecycle: controller epoch persistence is unavailable")
+	}
+
+	m.mu.Lock()
+	previous, found, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		m.mu.Unlock()
+		return false, err
+	}
+	if !found {
+		m.mu.Unlock()
+		return false, fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
+	}
+	if previous.IsTerminated || domain.NormalizeSessionMode(previous.Mode) != source {
+		m.mu.Unlock()
+		return false, nil
+	}
+	now := m.clock()
+	changed, err := writer.CommitSessionControllerEpoch(
+		ctx, id, source, target, nativeConversationID, now,
+	)
+	if err != nil || !changed {
+		m.mu.Unlock()
+		return changed, err
+	}
+
+	// Mirror the atomic store write for lifecycle side effects. MarkSpawned will
+	// clear FirstSignalAt and attach the target's process generation once the new
+	// controller is actually live.
+	next := previous
+	next.Mode = target
+	next.Metadata.RuntimeHandleID = ""
+	next.Metadata.RuntimeLaunchID = ""
+	next.Metadata.AgentSessionID = nativeConversationID
+	next.Metadata.ProviderConversationID = nativeConversationID
+	next.Metadata.ControllerGeneration = ""
+	next.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	next.UpdatedAt = now
+	delete(m.flights, id)
+	resolutions := needsInputResolutions(previous, next, now)
+	waitingEvents := m.waitingInputEvents(
+		next, previous.Activity.State, previous.Activity.LastActivityAt, now,
+	)
+	m.mu.Unlock()
+
+	for _, ev := range waitingEvents {
+		m.emitTelemetry(ctx, ev)
+	}
+	m.resolveNotifications(ctx, resolutions...)
+	return true, nil
 }
 
 // MarkTerminated marks a session terminated. Runtime/workspace teardown is the

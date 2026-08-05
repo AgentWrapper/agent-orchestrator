@@ -241,6 +241,14 @@ sequenceDiagram
     HTTP->>Svc: Spawn(config)
     Svc->>Mgr: Spawn(config)
 
+    Mgr->>Mgr: Resolve initial mode
+    alt initial mode = chat
+        Mgr->>ChatSvc: Preflight binary/auth/protocol
+        ChatSvc->>ChatDriver: Probe installed provider
+    else initial mode = tui
+        Mgr->>Runtime: Validate runtime prerequisites
+    end
+
     Note over Mgr: 1. Create session row
     Mgr->>DB: Insert session
     DB->>CDC: trigger change_log
@@ -264,7 +272,7 @@ sequenceDiagram
         Note over Runtime: No agent runtime handle is created
     end
 
-    Note over Mgr: 5. Mark spawned
+    Note over Mgr: 4. Mark spawned
     Mgr->>LCM: MarkSpawned(handle)
     LCM->>DB: Update activity_state
     DB->>CDC: trigger change_log
@@ -284,19 +292,23 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     Start([User spawns session]) --> Validate[Validate project config and explicit mode]
-    Validate --> CreateRow[Create session row in SQLite]
+    Validate --> InitialMode{Resolved initial mode}
+    InitialMode -->|chat| Preflight[Probe native Chat driver]
+    InitialMode -->|tui| RuntimePreflight[Validate runtime prerequisites]
+    Preflight --> CreateRow[Create session row in SQLite]
+    RuntimePreflight --> CreateRow
+    CreateRow --> Trigger1[CDC: session.created]
     CreateRow --> CreateWS[Create git worktree]
-    CreateWS --> Mode{Persisted mode}
-    Mode -->|tui| CreateRT[Launch runtime tmux/conpty]
+    CreateWS --> LaunchMode{Persisted mode}
+    LaunchMode -->|tui| CreateRT[Launch runtime tmux/conpty]
     CreateRT --> GetCmd[Get agent launch command]
     GetCmd --> ExecAgent[Execute agent in runtime]
-    Mode -->|chat| Preflight[Probe native Chat driver]
-    Preflight --> ChatController[Start or resume provider controller]
+    LaunchMode -->|chat| ChatController[Start or resume provider controller]
     ChatController --> Fence[Claim controller generation]
     ExecAgent --> MarkSpawned[MarkSpawned in LCM]
     Fence --> MarkSpawned
-    MarkSpawned --> Trigger1[CDC: session.created]
-    Trigger1 --> Trigger2[CDC: session.updated]
+    MarkSpawned --> Trigger2[CDC: session.updated]
+    Trigger1 --> Done
     Trigger2 --> Done([Session running])
 
 ```
@@ -318,6 +330,7 @@ enough to enable switching for another harness.
 sequenceDiagram
     participant Client
     participant Manager as Session Manager
+    participant Lifecycle as Lifecycle Manager
     participant DB as SQLite
     participant Source as Current Controller
     participant Target as Target Controller
@@ -331,7 +344,8 @@ sequenceDiagram
         Manager->>Source: Cancel active and queued work
     end
     Manager->>Source: Stop and wait for shutdown
-    Manager->>DB: CAS session_mode + clear old generation/handles
+    Manager->>Lifecycle: CommitControllerEpoch(source, target, native id)
+    Lifecycle->>DB: CAS mode + clear old generation/handles + idle fact
     Manager->>Target: Native resume(same conversation id)
     Manager->>DB: Persist new handle/generation; complete transition
     DB-->>Client: session_updated CDC invalidation
@@ -342,8 +356,11 @@ CASes the row back and resumes the source. If the daemon dies mid-handoff, boot
 reconciliation marks the interrupted transition for recovery and restores the
 controller named by the last committed `session_mode`. Lifecycle/automation
 messages received during the no-controller gap are held in a durable outbox and
-delivered after activation. Old Chat events are fenced by controller generation;
-old TUI hooks are fenced by runtime launch id.
+delivered through whichever controller ultimately owns the session. Terminal
+transition paths, transient delivery failures, and daemon restarts all retain
+the message for retry; Chat retries carry a stable idempotency key. Old Chat
+events are fenced by controller generation; old TUI hooks are fenced by runtime
+launch id.
 
 `drain` is loss-minimizing and may wait on an approval or user-input request;
 `interrupt` sends the provider's cancellation first, allows a short transcript
@@ -858,12 +875,17 @@ sequenceDiagram
     Controller->>Controller: decode JSON
     Controller->>Service: Spawn(config)
     Service->>Manager: Spawn(config)
+    Manager->>Manager: Resolve mode and preflight its controller
     Manager->>Store: Create session
     Store->>DB: INSERT INTO sessions
     DB->>Store: session record
     Store->>Manager: session record
-    Manager->>Manager: Create workspace
-    Manager->>Manager: Launch runtime
+    Manager->>Manager: Create and provision workspace
+    alt mode = tui
+        Manager->>Manager: Launch terminal runtime/controller
+    else mode = chat
+        Manager->>Manager: Launch runtime-less Chat controller
+    end
     Manager->>Service: Session response
     Service->>Controller: enriched session
     Controller->>Controller: encode JSON

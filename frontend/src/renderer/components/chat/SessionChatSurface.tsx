@@ -73,8 +73,9 @@ export function SessionChatSurface({
 	}
 
 	// A chat session whose controller has not started yet, or whose agent cannot
-	// run chat, is a state to explain rather than an error to retry — the mode is
-	// immutable, so retrying can never change the answer.
+	// run Chat is a state to explain rather than an error to spin on. A compatible
+	// session may switch interfaces, but retrying this failed controller by itself
+	// cannot change the answer.
 	if (unavailable) {
 		return (
 			<Centered>

@@ -10,6 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/processenv"
@@ -23,6 +26,11 @@ const (
 	clientName    = "agent-orchestrator"
 	clientTitle   = "Agent Orchestrator"
 	clientVersion = "0.1.0"
+	// This is the oldest Codex build whose complete Chat surface AO exercised:
+	// thread start/resume, turn start/interrupt, approvals, and every advertised
+	// extension. initialize plus model/list alone cannot prove those mutating
+	// methods without creating provider state during preflight.
+	minimumCodexVersion = "0.146.0"
 )
 
 // handshakeTimeout bounds initialize and thread open. These are local IPC calls
@@ -49,11 +57,14 @@ type process struct {
 // spawnFunc launches an app-server. Injected so tests never exec anything.
 type spawnFunc func(ctx context.Context, bin, workdir string, env []string) (*process, error)
 
+type versionProbeFunc func(context.Context, string) (string, error)
+
 // Driver opens Codex conversations over `codex app-server`.
 type Driver struct {
-	plugin codexPlugin
-	log    *slog.Logger
-	spawn  spawnFunc
+	plugin       codexPlugin
+	log          *slog.Logger
+	spawn        spawnFunc
+	versionProbe versionProbeFunc
 }
 
 // New builds a Chat driver over the existing Codex agent plugin.
@@ -61,7 +72,10 @@ func New(plugin codexPlugin, log *slog.Logger) *Driver {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Driver{plugin: plugin, log: log, spawn: spawnAppServer}
+	return &Driver{
+		plugin: plugin, log: log, spawn: spawnAppServer,
+		versionProbe: installedCodexVersion,
+	}
 }
 
 var _ ports.ChatDriver = (*Driver)(nil)
@@ -117,7 +131,8 @@ func capabilities() ports.ChatCapabilities {
 // Probe reports what this install can do without creating a conversation, so an
 // unsupported request can be refused before AO commits a session or worktree.
 func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
-	if _, err := d.plugin.ResolveBinary(ctx); err != nil {
+	bin, err := d.plugin.ResolveBinary(ctx)
+	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ports.ErrChatDriverUnavailable, err)
 	}
 
@@ -129,6 +144,26 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 	}
 	if err != nil {
 		d.log.Debug("codex auth probe inconclusive; continuing", "error", err)
+	}
+	versionProbe := d.versionProbe
+	if versionProbe == nil {
+		versionProbe = installedCodexVersion
+	}
+	versionCtx, versionCancel := context.WithTimeout(ctx, 5*time.Second)
+	versionOutput, versionErr := versionProbe(versionCtx, bin)
+	versionCancel()
+	if versionErr != nil {
+		return nil, fmt.Errorf("%w: read Codex version: %v", ports.ErrChatDriverIncompatible, versionErr)
+	}
+	installed, ok := parseCodexVersion(versionOutput)
+	if !ok {
+		return nil, fmt.Errorf("%w: unrecognized Codex version %q (AO requires %s or newer)",
+			ports.ErrChatDriverIncompatible, strings.TrimSpace(versionOutput), minimumCodexVersion)
+	}
+	minimum, _ := parseCodexVersion(minimumCodexVersion)
+	if installed.less(minimum) {
+		return nil, fmt.Errorf("%w: Codex %s is older than AO's tested minimum %s",
+			ports.ErrChatDriverIncompatible, installed, minimumCodexVersion)
 	}
 
 	// Binary presence is not protocol compatibility. Complete the same initialize
@@ -154,6 +189,47 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 	}
 
 	return capabilities(), nil
+}
+
+type codexVersion [3]int
+
+var codexVersionPattern = regexp.MustCompile(`\b([0-9]+)\.([0-9]+)\.([0-9]+)\b`)
+
+func parseCodexVersion(output string) (codexVersion, bool) {
+	match := codexVersionPattern.FindStringSubmatch(output)
+	if len(match) != 4 {
+		return codexVersion{}, false
+	}
+	var version codexVersion
+	for i := range version {
+		value, err := strconv.Atoi(match[i+1])
+		if err != nil {
+			return codexVersion{}, false
+		}
+		version[i] = value
+	}
+	return version, true
+}
+
+func (v codexVersion) less(other codexVersion) bool {
+	for i := range v {
+		if v[i] != other[i] {
+			return v[i] < other[i]
+		}
+	}
+	return false
+}
+
+func (v codexVersion) String() string {
+	return fmt.Sprintf("%d.%d.%d", v[0], v[1], v[2])
+}
+
+func installedCodexVersion(ctx context.Context, bin string) (string, error) {
+	output, err := exec.CommandContext(ctx, bin, "--version").CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+	return string(output), nil
 }
 
 // Start opens a new Codex thread in the session worktree.

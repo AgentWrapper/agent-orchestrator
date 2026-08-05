@@ -60,12 +60,12 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 		t.Fatalf("stale phase CAS: moved=%v err=%v", staleMove, err)
 	}
 
-	changed, err := st.SwitchSessionControllerMode(ctx, createdSession.ID,
+	changed, err := st.CommitSessionControllerEpoch(ctx, createdSession.ID,
 		domain.SessionModeTUI, domain.SessionModeChat, transition.NativeConversationID, now.Add(4*time.Second))
 	if err != nil || !changed {
 		t.Fatalf("switch mode: changed=%v err=%v", changed, err)
 	}
-	changedAgain, err := st.SwitchSessionControllerMode(ctx, createdSession.ID,
+	changedAgain, err := st.CommitSessionControllerEpoch(ctx, createdSession.ID,
 		domain.SessionModeTUI, domain.SessionModeChat, transition.NativeConversationID, now.Add(5*time.Second))
 	if err != nil || changedAgain {
 		t.Fatalf("stale mode CAS: changed=%v err=%v", changedAgain, err)
@@ -88,12 +88,17 @@ func TestSessionInterfaceTransitionClaimModeCASAndOutbox(t *testing.T) {
 		t.Fatalf("switched activity = %q, want idle", after.Activity.State)
 	}
 
-	if err := st.EnqueueSessionInterfaceTransitionMessage(ctx, transition.ID, "CI finished", now.Add(6*time.Second)); err != nil {
+	if err := st.EnqueueSessionInterfaceTransitionMessage(
+		ctx, transition.ID, "transition-message-1", "CI finished", now.Add(6*time.Second),
+	); err != nil {
 		t.Fatalf("enqueue transition message: %v", err)
 	}
 	messages, err := st.ListPendingSessionInterfaceTransitionMessages(ctx, transition.ID)
 	if err != nil || len(messages) != 1 || messages[0].Message != "CI finished" {
 		t.Fatalf("pending messages = %+v err=%v", messages, err)
+	}
+	if messages[0].ClientMessageID != "transition-message-1" {
+		t.Fatalf("client message id = %q", messages[0].ClientMessageID)
 	}
 	if err := st.MarkSessionInterfaceTransitionMessageDelivered(ctx, messages[0].ID, now.Add(7*time.Second)); err != nil {
 		t.Fatalf("mark message delivered: %v", err)

@@ -115,6 +115,7 @@ type lifecycleRecorder interface {
 	PrepareLaunch(id domain.SessionID, launchID string) error
 	CancelLaunch(id domain.SessionID, launchID string)
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
+	CommitControllerEpoch(ctx context.Context, id domain.SessionID, source, target domain.SessionMode, nativeConversationID string) (bool, error)
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
@@ -242,6 +243,14 @@ type Manager struct {
 	resuming     map[domain.SessionID]struct{}
 	transitionMu sync.Mutex
 	transitions  map[domain.SessionID]*interfaceTransitionRun
+	// transitionDeliveryWake drives the durable transition-message outbox. A
+	// daemon-lifetime worker is started by Reconcile; terminal transition paths
+	// also make one immediate delivery attempt so tests and in-process callers do
+	// not depend on the boot worker.
+	transitionDeliveryMu        sync.Mutex
+	transitionDeliveryRunning   bool
+	transitionDeliveryWake      chan struct{}
+	transitionDeliveryAttemptMu sync.Mutex
 	// sendConfirm bounds the best-effort post-send confirmation that the session
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
@@ -367,23 +376,24 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:             d.Runtime,
-		agents:              d.Agents,
-		workspace:           d.Workspace,
-		store:               d.Store,
-		defaults:            d.Defaults,
-		chat:                d.Chat,
-		lcm:                 d.Lifecycle,
-		preview:             d.Preview,
-		browser:             d.Browser,
-		browserCapabilities: d.BrowserCapabilities,
-		dataDir:             d.DataDir,
-		clock:               d.Clock,
-		lookPath:            d.LookPath,
-		executable:          d.Executable,
-		newLaunchID:         d.NewLaunchID,
-		resuming:            make(map[domain.SessionID]struct{}),
-		transitions:         make(map[domain.SessionID]*interfaceTransitionRun),
+		runtime:                d.Runtime,
+		agents:                 d.Agents,
+		workspace:              d.Workspace,
+		store:                  d.Store,
+		defaults:               d.Defaults,
+		chat:                   d.Chat,
+		lcm:                    d.Lifecycle,
+		preview:                d.Preview,
+		browser:                d.Browser,
+		browserCapabilities:    d.BrowserCapabilities,
+		dataDir:                d.DataDir,
+		clock:                  d.Clock,
+		lookPath:               d.LookPath,
+		executable:             d.Executable,
+		newLaunchID:            d.NewLaunchID,
+		resuming:               make(map[domain.SessionID]struct{}),
+		transitions:            make(map[domain.SessionID]*interfaceTransitionRun),
+		transitionDeliveryWake: make(chan struct{}, 1),
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -1663,7 +1673,8 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 // Best-effort throughout: a per-session failure is logged and never aborts the
 // pass or blocks boot.
 func (m *Manager) Reconcile(ctx context.Context) error {
-	interrupted, err := m.recoverInterruptedInterfaceTransitions(ctx)
+	m.startTransitionMessageDispatcher(ctx)
+	_, err := m.recoverInterruptedInterfaceTransitions(ctx)
 	if err != nil {
 		return fmt.Errorf("reconcile: interface transitions: %w", err)
 	}
@@ -1690,9 +1701,10 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	if err := m.RestoreAll(ctx); err != nil {
 		return err
 	}
-	for _, transition := range interrupted {
-		m.deliverTransitionMessages(transition)
+	if err := m.deliverAllTransitionMessages(ctx); err != nil {
+		m.logger.Error("reconcile: transition-message delivery deferred for retry", "error", err)
 	}
+	m.wakeTransitionMessageDispatcher()
 	return nil
 }
 
@@ -2135,11 +2147,18 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // the session is active or the budget is exhausted. Confirmation never fails
 // the send: it only decides whether to nudge again.
 func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string) error {
+	return m.send(ctx, id, message, "")
+}
+
+// send carries an optional idempotency key used by durable transition-message
+// retries. Ordinary callers leave it empty; the outbox preserves the key across
+// restart, rollback, and even a second overlapping handoff.
+func (m *Manager) send(ctx context.Context, id domain.SessionID, message, clientMessageID string) error {
 	// A controller transition deliberately has a short interval with no writer.
 	// Queue internal/lifecycle sends durably instead of racing either controller
 	// or dropping coordination work; the transition worker drains this outbox
 	// only after the target controller is active.
-	if queued, err := m.queueDuringInterfaceTransition(ctx, id, message); err != nil {
+	if queued, err := m.queueDuringInterfaceTransition(ctx, id, message, clientMessageID); err != nil {
 		return fmt.Errorf("send %s: interface transition: %w", id, err)
 	} else if queued {
 		return nil
@@ -2149,7 +2168,7 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 	// refused as "missing runtime handles" — true of the handles, wrong about the
 	// session, and it left `ao send` and orchestrator-to-worker relay unable to
 	// reach a chat worker.
-	if handled, err := m.sendChat(ctx, id, message); handled {
+	if handled, err := m.sendChat(ctx, id, message, clientMessageID); handled {
 		return err
 	}
 

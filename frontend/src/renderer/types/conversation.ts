@@ -11,7 +11,7 @@
  * lifecycle decisions all belong to the daemon. Nothing here recomputes them.
  */
 
-/** Which controller a session was created with. Immutable for its lifetime. */
+/** Which controller currently owns the AO session. */
 export type SessionMode = "chat" | "tui";
 
 /** One request and the agent work that followed it. */

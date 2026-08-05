@@ -77,9 +77,10 @@ func (t SessionInterfaceTransition) Active() bool { return !t.Phase.Terminal() }
 // SessionInterfaceTransitionMessage is an automation/lifecycle message held
 // while neither controller is allowed to accept work.
 type SessionInterfaceTransitionMessage struct {
-	ID           int64     `json:"id"`
-	TransitionID string    `json:"transitionId"`
-	Message      string    `json:"message"`
-	CreatedAt    time.Time `json:"createdAt"`
-	DeliveredAt  time.Time `json:"deliveredAt,omitempty"`
+	ID              int64     `json:"id"`
+	TransitionID    string    `json:"transitionId"`
+	ClientMessageID string    `json:"clientMessageId"`
+	Message         string    `json:"message"`
+	CreatedAt       time.Time `json:"createdAt"`
+	DeliveredAt     time.Time `json:"deliveredAt,omitempty"`
 }

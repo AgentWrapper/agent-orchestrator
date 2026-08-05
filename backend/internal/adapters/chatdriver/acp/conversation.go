@@ -35,6 +35,12 @@ type preparedTurn struct {
 	prompt          []acpsdk.ContentBlock
 }
 
+type interruptAttempt struct {
+	turnID string
+	done   chan struct{}
+	err    error
+}
+
 type parkedPermission struct {
 	options map[string]acpsdk.PermissionOption
 	result  chan string
@@ -73,7 +79,9 @@ type conversation struct {
 	capabilities   ports.ChatCapabilities
 	prepared       *preparedTurn
 	activeTurn     string
+	settlingTurn   string
 	turnCancel     context.CancelFunc
+	interrupt      *interruptAttempt
 	pending        map[string]*parkedPermission
 	pendingInputs  map[string]*parkedInput
 	messages       map[string]string
@@ -253,6 +261,7 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 	turn := *c.prepared
 	c.prepared = nil
 	c.activeTurn = turn.id
+	c.settlingTurn = ""
 	turnCtx, cancel := context.WithCancel(context.Background())
 	c.turnCancel = cancel
 	sessionID := c.sessionID
@@ -284,10 +293,22 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 		Prompt:    turn.prompt,
 	})
 
+	c.mu.Lock()
+	c.settlingTurn = turn.id
+	interrupt := c.interrupt
+	c.mu.Unlock()
 	c.settleOpenItems(turn.id)
+	interruptedLocally := false
+	if interrupt != nil && interrupt.turnID == turn.id {
+		// ACP cancellation and Prompt completion can race. Wait for the sender's
+		// definitive result before classifying the turn so a failed notification
+		// cannot look interrupted and an accepted one cannot look failed.
+		<-interrupt.done
+		interruptedLocally = interrupt.err == nil
+	}
 	var state domain.TurnState
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		if interruptedLocally || errors.Is(err, context.Canceled) {
 			state = domain.TurnStateInterrupted
 		} else {
 			state = domain.TurnStateFailed
@@ -322,7 +343,11 @@ func (c *conversation) runTurn(ctx context.Context, sessionID string, turn prepa
 	c.mu.Lock()
 	if c.activeTurn == turn.id {
 		c.activeTurn = ""
+		c.settlingTurn = ""
 		c.turnCancel = nil
+		if c.interrupt == interrupt {
+			c.interrupt = nil
+		}
 	}
 	c.mu.Unlock()
 }
@@ -342,12 +367,39 @@ func (c *conversation) Interrupt(ctx context.Context, providerTurnID string) err
 	c.mu.Lock()
 	active := c.activeTurn
 	sessionID := c.sessionID
-	c.mu.Unlock()
-	if active == "" || (providerTurnID != "" && providerTurnID != active) {
+	turnCancel := c.turnCancel
+	if active == "" || c.settlingTurn == active || (providerTurnID != "" && providerTurnID != active) {
+		c.mu.Unlock()
 		return ports.ErrChatNoActiveTurn
 	}
-	if err := c.conn.Cancel(ctx, acpsdk.CancelNotification{SessionId: acpsdk.SessionId(sessionID)}); err != nil {
+	if c.interrupt != nil {
+		c.mu.Unlock()
+		return fmt.Errorf("ACP session/cancel is already in progress")
+	}
+	attempt := &interruptAttempt{turnID: active, done: make(chan struct{})}
+	c.interrupt = attempt
+	c.mu.Unlock()
+
+	err := c.conn.Cancel(ctx, acpsdk.CancelNotification{SessionId: acpsdk.SessionId(sessionID)})
+	c.mu.Lock()
+	attempt.err = err
+	close(attempt.done)
+	if err != nil && c.interrupt == attempt {
+		// The notification never crossed the connection, so keep the local
+		// Prompt alive and allow a later retry to make a fresh attempt.
+		c.interrupt = nil
+	}
+	c.mu.Unlock()
+	if err != nil {
 		return fmt.Errorf("ACP session/cancel: %w", err)
+	}
+	// session/cancel is a notification: a conforming agent may accept it without
+	// completing the outstanding Prompt RPC. Once the notification is accepted,
+	// cancel AO's local request too so Stop cannot report success while the
+	// controller remains busy forever. Do this only after a successful write;
+	// otherwise the caller must see that cancellation was not delivered.
+	if turnCancel != nil {
+		turnCancel()
 	}
 	return nil
 }

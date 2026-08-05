@@ -98,6 +98,21 @@ func (s *Store) ListActiveSessionInterfaceTransitions(ctx context.Context) ([]do
 	return out, nil
 }
 
+// ListDeliverableSessionInterfaceTransitions returns terminal handoffs whose
+// outbox still owns at least one message. Terminal rows are deliberately kept:
+// they are the durable retry anchor after rollback, cancellation, or restart.
+func (s *Store) ListDeliverableSessionInterfaceTransitions(ctx context.Context) ([]domain.SessionInterfaceTransition, error) {
+	rows, err := s.qr.ListDeliverableSessionInterfaceTransitions(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list deliverable interface transitions: %w", err)
+	}
+	out := make([]domain.SessionInterfaceTransition, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, interfaceTransitionToDomain(row))
+	}
+	return out, nil
+}
+
 // AdvanceSessionInterfaceTransition compare-and-swaps one phase. A false result
 // means another request (usually cancellation) won the race.
 func (s *Store) AdvanceSessionInterfaceTransition(
@@ -129,11 +144,11 @@ func (s *Store) AdvanceSessionInterfaceTransition(
 	return rows > 0, nil
 }
 
-// SwitchSessionControllerMode is the only store operation allowed to change a
-// live session's dispatcher. It clears the old process handles and copies the
-// proven cross-interface native id into both resume slots. The expected source
-// mode is a CAS that prevents a stale transition from taking over.
-func (s *Store) SwitchSessionControllerMode(
+// CommitSessionControllerEpoch is the atomic persistence primitive used only by
+// Lifecycle Manager. Keeping the CAS here prevents stale controller handoffs;
+// keeping the decision in Lifecycle Manager preserves its ownership of session
+// activity and controller facts.
+func (s *Store) CommitSessionControllerEpoch(
 	ctx context.Context,
 	id domain.SessionID,
 	source, target domain.SessionMode,
@@ -142,7 +157,7 @@ func (s *Store) SwitchSessionControllerMode(
 ) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	rows, err := s.qw.SwitchSessionControllerMode(ctx, gen.SwitchSessionControllerModeParams{
+	rows, err := s.qw.CommitSessionControllerEpoch(ctx, gen.CommitSessionControllerEpochParams{
 		SessionMode:            target,
 		AgentSessionID:         nativeID,
 		ProviderConversationID: nativeID,
@@ -152,22 +167,23 @@ func (s *Store) SwitchSessionControllerMode(
 		SessionMode_2:          source,
 	})
 	if err != nil {
-		return false, fmt.Errorf("switch controller mode for %s: %w", id, err)
+		return false, fmt.Errorf("commit controller epoch for %s: %w", id, err)
 	}
 	return rows > 0, nil
 }
 
 func (s *Store) EnqueueSessionInterfaceTransitionMessage(
 	ctx context.Context,
-	transitionID, message string,
+	transitionID, clientMessageID, message string,
 	now time.Time,
 ) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	if err := s.qw.EnqueueSessionInterfaceTransitionMessage(ctx, gen.EnqueueSessionInterfaceTransitionMessageParams{
-		TransitionID: transitionID,
-		Message:      message,
-		CreatedAt:    now,
+		TransitionID:    transitionID,
+		ClientMessageID: clientMessageID,
+		Message:         message,
+		CreatedAt:       now,
 	}); err != nil {
 		return fmt.Errorf("queue interface transition message: %w", err)
 	}
@@ -185,7 +201,8 @@ func (s *Store) ListPendingSessionInterfaceTransitionMessages(
 	out := make([]domain.SessionInterfaceTransitionMessage, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, domain.SessionInterfaceTransitionMessage{
-			ID: row.ID, TransitionID: row.TransitionID, Message: row.Message,
+			ID: row.ID, TransitionID: row.TransitionID,
+			ClientMessageID: row.ClientMessageID, Message: row.Message,
 			CreatedAt: row.CreatedAt, DeliveredAt: nullTimeToTime(row.DeliveredAt),
 		})
 	}

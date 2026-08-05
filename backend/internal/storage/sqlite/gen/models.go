@@ -328,11 +328,12 @@ type SessionInterfaceTransition struct {
 }
 
 type SessionInterfaceTransitionMessage struct {
-	ID           int64
-	TransitionID string
-	Message      string
-	CreatedAt    time.Time
-	DeliveredAt  sql.NullTime
+	ID              int64
+	TransitionID    string
+	Message         string
+	CreatedAt       time.Time
+	DeliveredAt     sql.NullTime
+	ClientMessageID string
 }
 
 type SessionWorktree struct {

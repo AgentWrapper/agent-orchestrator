@@ -38,6 +38,10 @@ type ChatLauncher interface {
 	// `ao send`, an orchestrator writing to a worker, an automation — as a turn
 	// attributed to automation rather than to the human at the keyboard.
 	RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error)
+	// RelayChatTurnWithID is the durable-retry form. Implementations must pass
+	// the key through to ChatUserMessage so retry after an uncertain outbox
+	// acknowledgement cannot create a second provider turn.
+	RelayChatTurnWithID(ctx context.Context, id domain.SessionID, text, clientMessageID string) (string, error)
 	// StopChat releases a session's controller.
 	StopChat(ctx context.Context, id domain.SessionID) error
 }
@@ -178,7 +182,7 @@ func (m *Manager) stopChatBestEffort(ctx context.Context, id domain.SessionID) {
 // receive a message, and one whose controller is gone cannot either. Busy is not
 // a refusal — the controller queues a mid-turn message, which is strictly better
 // than the terminal path's habit of dropping a nudge it cannot safely deliver.
-func (m *Manager) sendChat(ctx context.Context, id domain.SessionID, message string) (bool, error) {
+func (m *Manager) sendChat(ctx context.Context, id domain.SessionID, message, clientMessageID string) (bool, error) {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("send %s: session: %w", id, err)
@@ -193,8 +197,14 @@ func (m *Manager) sendChat(ctx context.Context, id domain.SessionID, message str
 	if rec.IsTerminated {
 		return true, fmt.Errorf("send %s: %w", id, ErrTerminated)
 	}
-	if _, err := m.chat.RelayChatTurn(ctx, id, message); err != nil {
-		return true, fmt.Errorf("send %s: %w", id, err)
+	var relayErr error
+	if clientMessageID != "" {
+		_, relayErr = m.chat.RelayChatTurnWithID(ctx, id, message, clientMessageID)
+	} else {
+		_, relayErr = m.chat.RelayChatTurn(ctx, id, message)
+	}
+	if relayErr != nil {
+		return true, fmt.Errorf("send %s: %w", id, relayErr)
 	}
 	return true, nil
 }
@@ -211,8 +221,8 @@ type SessionModeDefaults interface {
 //  3. the compatibility default, TUI.
 //
 // The default is read here, at spawn time, so changing the preference affects only
-// sessions created afterwards. An existing session's mode is already persisted and
-// nothing re-resolves it.
+// sessions created afterwards. An existing session changes only through an explicit,
+// capability-gated interface transition; it is never re-resolved from the default.
 func (m *Manager) resolveSessionMode(ctx context.Context, requested domain.SessionMode) domain.SessionMode {
 	if requested.Valid() {
 		return requested

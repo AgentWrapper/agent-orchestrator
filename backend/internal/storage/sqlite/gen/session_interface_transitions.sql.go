@@ -49,18 +49,26 @@ func (q *Queries) AdvanceSessionInterfaceTransition(ctx context.Context, arg Adv
 }
 
 const enqueueSessionInterfaceTransitionMessage = `-- name: EnqueueSessionInterfaceTransitionMessage :exec
-INSERT INTO session_interface_transition_messages (transition_id, message, created_at)
-VALUES (?, ?, ?)
+INSERT INTO session_interface_transition_messages (
+    transition_id, client_message_id, message, created_at
+)
+VALUES (?, ?, ?, ?)
 `
 
 type EnqueueSessionInterfaceTransitionMessageParams struct {
-	TransitionID string
-	Message      string
-	CreatedAt    time.Time
+	TransitionID    string
+	ClientMessageID string
+	Message         string
+	CreatedAt       time.Time
 }
 
 func (q *Queries) EnqueueSessionInterfaceTransitionMessage(ctx context.Context, arg EnqueueSessionInterfaceTransitionMessageParams) error {
-	_, err := q.db.ExecContext(ctx, enqueueSessionInterfaceTransitionMessage, arg.TransitionID, arg.Message, arg.CreatedAt)
+	_, err := q.db.ExecContext(ctx, enqueueSessionInterfaceTransitionMessage,
+		arg.TransitionID,
+		arg.ClientMessageID,
+		arg.Message,
+		arg.CreatedAt,
+	)
 	return err
 }
 
@@ -251,25 +259,85 @@ func (q *Queries) ListActiveSessionInterfaceTransitions(ctx context.Context) ([]
 	return items, nil
 }
 
+const listDeliverableSessionInterfaceTransitions = `-- name: ListDeliverableSessionInterfaceTransitions :many
+SELECT t.id, t.session_id, t.source_mode, t.target_mode, t.policy, t.phase,
+       t.native_conversation_id, t.error_code, t.error_detail,
+       t.created_at, t.updated_at, t.completed_at
+FROM session_interface_transitions AS t
+WHERE t.phase IN ('completed', 'failed', 'cancelled', 'recovery_required')
+  AND EXISTS (
+      SELECT 1
+      FROM session_interface_transition_messages AS m
+      WHERE m.transition_id = t.id AND m.delivered_at IS NULL
+  )
+ORDER BY t.updated_at, t.id
+`
+
+func (q *Queries) ListDeliverableSessionInterfaceTransitions(ctx context.Context) ([]SessionInterfaceTransition, error) {
+	rows, err := q.db.QueryContext(ctx, listDeliverableSessionInterfaceTransitions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SessionInterfaceTransition{}
+	for rows.Next() {
+		var i SessionInterfaceTransition
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.SourceMode,
+			&i.TargetMode,
+			&i.Policy,
+			&i.Phase,
+			&i.NativeConversationID,
+			&i.ErrorCode,
+			&i.ErrorDetail,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPendingSessionInterfaceTransitionMessages = `-- name: ListPendingSessionInterfaceTransitionMessages :many
-SELECT id, transition_id, message, created_at, delivered_at
+SELECT id, transition_id, client_message_id, message, created_at, delivered_at
 FROM session_interface_transition_messages
 WHERE transition_id = ? AND delivered_at IS NULL
 ORDER BY id
 `
 
-func (q *Queries) ListPendingSessionInterfaceTransitionMessages(ctx context.Context, transitionID string) ([]SessionInterfaceTransitionMessage, error) {
+type ListPendingSessionInterfaceTransitionMessagesRow struct {
+	ID              int64
+	TransitionID    string
+	ClientMessageID string
+	Message         string
+	CreatedAt       time.Time
+	DeliveredAt     sql.NullTime
+}
+
+func (q *Queries) ListPendingSessionInterfaceTransitionMessages(ctx context.Context, transitionID string) ([]ListPendingSessionInterfaceTransitionMessagesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listPendingSessionInterfaceTransitionMessages, transitionID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []SessionInterfaceTransitionMessage{}
+	items := []ListPendingSessionInterfaceTransitionMessagesRow{}
 	for rows.Next() {
-		var i SessionInterfaceTransitionMessage
+		var i ListPendingSessionInterfaceTransitionMessagesRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.TransitionID,
+			&i.ClientMessageID,
 			&i.Message,
 			&i.CreatedAt,
 			&i.DeliveredAt,
@@ -300,46 +368,6 @@ type MarkSessionInterfaceTransitionMessageDeliveredParams struct {
 
 func (q *Queries) MarkSessionInterfaceTransitionMessageDelivered(ctx context.Context, arg MarkSessionInterfaceTransitionMessageDeliveredParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, markSessionInterfaceTransitionMessageDelivered, arg.DeliveredAt, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-const switchSessionControllerMode = `-- name: SwitchSessionControllerMode :execrows
-UPDATE sessions
-SET session_mode = ?,
-    runtime_handle_id = '',
-    runtime_launch_id = '',
-    agent_session_id = ?,
-    provider_conversation_id = ?,
-    controller_generation = '',
-    activity_state = 'idle',
-    activity_last_at = ?,
-    updated_at = ?
-WHERE id = ? AND session_mode = ? AND is_terminated = 0
-`
-
-type SwitchSessionControllerModeParams struct {
-	SessionMode            domain.SessionMode
-	AgentSessionID         string
-	ProviderConversationID string
-	ActivityLastAt         time.Time
-	UpdatedAt              time.Time
-	ID                     domain.SessionID
-	SessionMode_2          domain.SessionMode
-}
-
-func (q *Queries) SwitchSessionControllerMode(ctx context.Context, arg SwitchSessionControllerModeParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, switchSessionControllerMode,
-		arg.SessionMode,
-		arg.AgentSessionID,
-		arg.ProviderConversationID,
-		arg.ActivityLastAt,
-		arg.UpdatedAt,
-		arg.ID,
-		arg.SessionMode_2,
-	)
 	if err != nil {
 		return 0, err
 	}

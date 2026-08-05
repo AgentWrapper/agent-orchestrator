@@ -429,6 +429,14 @@ func (c chatLauncher) RelayChatTurn(ctx context.Context, id domain.SessionID, te
 	return c.svc.RelayChatTurn(ctx, id, text)
 }
 
+func (c chatLauncher) RelayChatTurnWithID(
+	ctx context.Context,
+	id domain.SessionID,
+	text, clientMessageID string,
+) (string, error) {
+	return c.svc.RelayChatTurnWithID(ctx, id, text, clientMessageID)
+}
+
 // PrepareChatHandoff closes Chat intake and waits for the controller to become
 // quiescent before Session Manager stops it. These methods intentionally live
 // on the wiring adapter: Session Manager's handoff capability is optional, but
