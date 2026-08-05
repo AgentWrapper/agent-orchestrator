@@ -3,11 +3,14 @@ package session
 import (
 	"context"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+const delegatedTaskTitleLimit = 20
 
 // DelegateTaskInput describes a task AO should spawn as a worker session. Empty
 // RequestedAgent means the spawn uses the project's worker-agent default.
@@ -25,9 +28,9 @@ type DelegateTaskOutcome struct {
 	WorkerID       domain.SessionID
 }
 
-// DelegateTask spawns the worker directly, matching `ao spawn`, and leaves the
-// display name empty so the read model temporarily uses the worker id. If an
-// orchestrator is active, AO asks it to rename the worker from the task brief.
+// DelegateTask spawns the worker directly, matching `ao spawn`, with a
+// provisional display name derived from the task brief. If a running
+// orchestrator is available, AO best-effort asks it to refine that title.
 func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (DelegateTaskOutcome, error) {
 	if _, err := s.requireProject(ctx, in.ProjectID); err != nil {
 		return DelegateTaskOutcome{}, err
@@ -44,6 +47,7 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 		Kind:        domain.KindWorker,
 		Harness:     in.RequestedAgent,
 		Prompt:      in.Brief,
+		DisplayName: delegatedTaskDisplayName(in.Brief),
 		AgentConfig: ports.AgentConfig{Model: strings.TrimSpace(in.Model)},
 	})
 	if err != nil {
@@ -52,24 +56,37 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 
 	out := DelegateTaskOutcome{WorkerID: worker.ID}
 	active := true
-	orchestrators, err := s.List(ctx, ListFilter{
+	// The worker spawn is the commit point. Discovering a title-refinement
+	// recipient after that point is deliberately best effort.
+	orchestrators, _ := s.List(ctx, ListFilter{
 		ProjectID:        in.ProjectID,
 		Active:           &active,
 		OrchestratorOnly: true,
 	})
-	if err != nil {
-		return out, err
+
+	running := orchestrators[:0]
+	for _, orchestrator := range orchestrators {
+		if orchestrator.Activity.State != domain.ActivityExited {
+			running = append(running, orchestrator)
+		}
 	}
-	if len(orchestrators) == 0 {
+	if len(running) == 0 {
 		return out, nil
 	}
 
-	orchestrator := newestSession(orchestrators)
-	out.OrchestratorID = orchestrator.ID
-	if err := s.manager.Send(ctx, orchestrator.ID, taskTitleDelegationMessage(worker.ID, in)); err != nil {
-		return out, err
+	orchestrator := newestSession(running)
+	if s.manager.Send(ctx, orchestrator.ID, taskTitleDelegationMessage(worker.ID, in)) == nil {
+		out.OrchestratorID = orchestrator.ID
 	}
 	return out, nil
+}
+
+func delegatedTaskDisplayName(brief string) string {
+	title := strings.Join(strings.Fields(brief), " ")
+	if utf8.RuneCountInString(title) <= delegatedTaskTitleLimit {
+		return title
+	}
+	return strings.TrimSpace(string([]rune(title)[:delegatedTaskTitleLimit]))
 }
 
 func taskTitleDelegationMessage(workerID domain.SessionID, in DelegateTaskInput) string {
