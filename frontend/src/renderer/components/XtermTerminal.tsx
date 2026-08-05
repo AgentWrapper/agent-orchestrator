@@ -83,6 +83,7 @@ function loadRenderer(term: Terminal): void {
 		fallbackLoaded = true;
 		try {
 			term.loadAddon(new CanvasAddon());
+			forceTerminalRepaint(term);
 		} catch (error) {
 			console.warn("xterm: WebGL and canvas renderers unavailable; box-drawing may drift", error);
 		}
@@ -183,12 +184,29 @@ function terminalHasFocus(host: HTMLElement): boolean {
 type XtermInternal = Terminal & {
 	_core?: {
 		element?: HTMLElement;
+		_renderService?: {
+			_renderRows: (start: number, end: number) => void;
+		};
 		_selectionService?: {
 			enable: () => void;
 			shouldForceSelection: (event: MouseEvent) => boolean;
 		};
 	};
 };
+
+// After fit()/resize, xterm clears the canvas then queues redraw via a
+// RenderDebouncer (next animation frame). That gap can flash blank. Calling
+// _renderRows fills the surface in this turn. Private RenderService API —
+// coupled to @xterm/xterm; if an upgrade removes it this becomes a silent no-op.
+function forceTerminalRepaint(term: Terminal): void {
+	const rows = term.rows;
+	if (rows <= 0) return;
+	try {
+		(term as XtermInternal)._core?._renderService?._renderRows(0, rows - 1);
+	} catch {
+		// Internal render API — ignore if unavailable or mid-teardown.
+	}
+}
 
 type DevXtermHost = HTMLDivElement & {
 	__aoXtermForTest?: Terminal;
@@ -561,6 +579,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (callbacksRef.current.isVisible === false) return;
 			try {
 				fit.fit();
+				forceTerminalRepaint(term);
 			} catch {
 				// Container momentarily has no size (hidden/unmounting) — a later
 				// trigger retries.
@@ -571,7 +590,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// callback repeatedly reallocates xterm's WebGL surface. Keep only the
 		// latest proposal and commit once the box has been quiet, with a cap so a
 		// continuously moving window cannot postpone the terminal forever.
-		const FIT_QUIET_MS = 120;
+		// Quiet window is slightly under the session PTY resize debounce (~100ms)
+		// so the grid catches up promptly after a drag without thrashing mid-gesture.
+		const FIT_QUIET_MS = 80;
 		const FIT_CAP_MS = 500;
 		let fitQuietTimer: ReturnType<typeof setTimeout> | null = null;
 		let fitCapTimer: ReturnType<typeof setTimeout> | null = null;
@@ -591,6 +612,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (fitAllowsHidden || callbacksRef.current.isVisible !== false) {
 				try {
 					fit.fit();
+					forceTerminalRepaint(term);
 				} catch {
 					// The next observer/window event retries if the host is transiently
 					// unmeasurable (for example while entering fullscreen).
