@@ -1430,7 +1430,10 @@ function LiveTurnBar({
 			{blocked ? (
 				<TriangleAlert aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
 			) : (
-				<Loader2 aria-hidden="true" className="size-3.5 shrink-0 animate-spin text-accent" />
+				<Loader2
+					aria-hidden="true"
+					className="size-3.5 shrink-0 animate-spin text-status-working opacity-100"
+				/>
 			)}
 			<strong className={cn("text-xs font-medium", blocked ? "text-warning" : "text-foreground")}>
 				{blocked ? "Waiting for your decision" : "Working"}

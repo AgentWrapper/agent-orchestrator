@@ -40,6 +40,15 @@ describe("ChatMarkdown", () => {
 		expect(scroller?.className).toContain("overflow-x-auto");
 	});
 
+	it("compacts emoji status markers inside markdown tables", () => {
+		render(<ChatMarkdown text={"| status |\n| --- |\n| 🟡 idle |\n| ✅ merged |"} />);
+		const idle = screen.getByRole("cell", { name: "🟡 idle" });
+		const merged = screen.getByRole("cell", { name: "✅ merged" });
+
+		expect(idle.querySelector(".chat-md-emoji")).toHaveTextContent("🟡");
+		expect(merged.querySelector(".chat-md-emoji")).toHaveTextContent("✅");
+	});
+
 	it("renders a fenced code block with its language and a copy control, and no stray backticks", () => {
 		render(<ChatMarkdown text={"```go\nfunc main() {}\n```"} />);
 		expect(screen.getByText("go")).toBeInTheDocument();

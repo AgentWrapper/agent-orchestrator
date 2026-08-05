@@ -360,7 +360,7 @@ func (s *Service) SpawnOrchestrator(
 		if err != nil {
 			return domain.Session{}, err
 		}
-		if len(existing) > 0 && requestedMode == "" {
+		if len(existing) > 0 && mode == "" {
 			// Clean replacement preserves the controller contract of the
 			// orchestrator being replaced only when the caller did not make an
 			// explicit choice. The global default still must not silently flip an

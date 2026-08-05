@@ -13,14 +13,8 @@
 
 import { Fragment } from "react";
 import {
-	Bot,
-	Brain,
 	ChevronUp,
-	Cpu,
-	Shield,
 	Shuffle,
-	SlidersHorizontal,
-	Zap,
 } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -107,7 +101,6 @@ export function TurnSettingsBar({
 			<div className="flex flex-wrap items-center gap-0.5">
 				{onChange && models.length > 0 ? (
 				<Picker
-					icon={Cpu}
 					// What is answering, not what was asked for. The substitution stays
 					// visible beside it rather than replacing the choice, because the choice
 					// is still the user's and still applies to the next turn.
@@ -189,7 +182,6 @@ export function TurnSettingsBar({
 
 				{onChange && efforts.length > 0 ? (
 					<Picker
-						icon={Brain}
 						label={effortLabel ? capitalize(effortLabel) : "Effort"}
 						title="Reasoning effort for the next turn"
 						disabled={disabled}
@@ -221,7 +213,6 @@ export function TurnSettingsBar({
 
 				{onChange ? (
 					<Picker
-						icon={Shield}
 						label={approvalLabel}
 						title="What the agent may do without asking"
 						disabled={disabled}
@@ -292,7 +283,6 @@ function ConfigOptionPicker({
 	onChange: (value: ChatConfigOptionValue) => void;
 	disabled?: boolean;
 }) {
-	const Icon = configOptionIcon(option);
 	const currentChoice = option.choices.find((choice) => choice.value === option.currentValue);
 	const label =
 		option.type === "boolean"
@@ -303,7 +293,6 @@ function ConfigOptionPicker({
 
 	return (
 		<Picker
-			icon={Icon}
 			label={label}
 			title={option.description || option.name}
 			disabled={disabled}
@@ -381,23 +370,7 @@ function ConfigOptionPicker({
 	);
 }
 
-function configOptionIcon(option: ChatConfigOption): typeof Cpu {
-	if (option.id === "fast") return Zap;
-	if (option.id === "agent") return Bot;
-	switch (option.category) {
-		case "model":
-			return Cpu;
-		case "thought_level":
-			return Brain;
-		case "mode":
-			return Shield;
-		default:
-			return SlidersHorizontal;
-	}
-}
-
 function Picker({
-	icon: Icon,
 	label,
 	title,
 	disabled,
@@ -405,7 +378,6 @@ function Picker({
 	badge,
 	children,
 }: {
-	icon: typeof Cpu;
 	label: string;
 	title: string;
 	disabled?: boolean;
@@ -426,7 +398,6 @@ function Picker({
 					title={title}
 					className="h-8 gap-1.5 px-2"
 				>
-					<Icon aria-hidden="true" className="size-4 text-muted-foreground" />
 					<span className="max-w-[13ch] truncate text-[11px]">{label}</span>
 					{badge}
 					<ChevronUp aria-hidden="true" className="size-3 text-muted-foreground" />

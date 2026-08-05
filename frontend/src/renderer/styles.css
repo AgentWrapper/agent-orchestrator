@@ -1317,6 +1317,58 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: color-mix(in srgb, var(--color-bg-secondary) 62%, transparent);
 }
 
+:root[data-theme="light"] .cursor-chat-surface {
+	background:
+		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-logo-accent) 5%, transparent), transparent 34rem),
+		var(--color-bg-primary);
+}
+
+:root[data-theme="light"] .cursor-chat-surface .text-foreground,
+:root[data-theme="light"] .cursor-chat-surface .chat-md {
+	color: var(--color-text-primary);
+}
+
+:root[data-theme="light"] .cursor-chat-surface .text-muted-foreground,
+:root[data-theme="light"] .cursor-chat-surface [class*="text-muted-foreground/"],
+:root[data-theme="light"] .cursor-chat-role-label,
+:root[data-theme="light"] .cursor-chat-role-icon {
+	color: color-mix(in oklch, var(--color-text-primary) 64%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-surface .text-passive,
+:root[data-theme="light"] .cursor-chat-composer textarea::placeholder,
+:root[data-theme="light"] .cursor-chat-mode-badge {
+	color: color-mix(in oklch, var(--color-text-primary) 48%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-header {
+	background: color-mix(in srgb, var(--color-bg-sidebar) 86%, var(--color-bg-primary));
+}
+
+:root[data-theme="light"] .cursor-chat-composer {
+	background: color-mix(in srgb, var(--color-bg-secondary) 98%, var(--color-bg-tertiary));
+	border-color: color-mix(in oklch, var(--color-text-primary) 18%, transparent);
+	box-shadow:
+		0 1px 0 color-mix(in oklch, var(--color-text-primary) 4%, transparent),
+		0 10px 28px color-mix(in oklch, var(--color-text-primary) 8%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-composer:focus-within {
+	border-color: color-mix(in srgb, var(--color-logo-accent) 48%, var(--color-border-strong));
+	background: var(--color-bg-secondary);
+}
+
+:root[data-theme="light"] .cursor-chat-human-message {
+	background: color-mix(in srgb, var(--color-bg-secondary) 78%, var(--color-bg-tertiary));
+	border-color: color-mix(in oklch, var(--color-text-primary) 14%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-origin-message,
+:root[data-theme="light"] .cursor-chat-activity-panel {
+	background: color-mix(in srgb, var(--color-bg-tertiary) 66%, transparent);
+	border-color: color-mix(in oklch, var(--color-text-primary) 12%, transparent);
+}
+
 /* The live caret belongs to the text being written. A separate block after the
    markdown looked like an empty automation row, especially between tool calls. */
 .chat-assistant-streaming .chat-md > :last-child::after {
@@ -1328,6 +1380,13 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	background: var(--color-text-muted);
 	content: "";
 	animation: pulse 1.5s ease-in-out infinite;
+}
+
+.chat-md-emoji {
+	display: inline-block;
+	font-size: 0.86em;
+	line-height: 1;
+	vertical-align: -0.06em;
 }
 
 .chat-scroll-viewport {

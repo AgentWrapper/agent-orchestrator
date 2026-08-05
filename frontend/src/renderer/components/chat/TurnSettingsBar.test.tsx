@@ -62,6 +62,9 @@ describe("ACP session config options", () => {
 		for (const label of ["Opus 5", "High", "Ask before edits", "Off", "Code reviewer"]) {
 			expect(screen.getByText(label)).toBeInTheDocument();
 		}
+		for (const name of ["Model", "Effort", "Permission mode", "Fast mode", "Agent"]) {
+			expect(screen.getByRole("button", { name }).querySelectorAll("svg")).toHaveLength(1);
+		}
 		// The generic permission option owns this choice; AO's separate approval
 		// picker must not be duplicated beside it.
 		expect(screen.queryByText("Provider default")).not.toBeInTheDocument();

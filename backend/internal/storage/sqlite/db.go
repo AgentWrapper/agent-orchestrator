@@ -228,6 +228,16 @@ BEGIN
         NEW.updated_at);
 END`,
 		}},
+	// A pre-renumbered chat-mode branch created conversations before the
+	// current_session_id controller binding existed, then later builds recorded
+	// 0052 as applied. Generated chat queries require the column on startup.
+	{table: "conversations", column: "current_session_id",
+		addDDL: `ALTER TABLE conversations ADD COLUMN current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
+		postAdd: []string{
+			`UPDATE conversations SET current_session_id = session_id WHERE current_session_id IS NULL AND session_id IS NOT NULL`,
+			`CREATE INDEX IF NOT EXISTS idx_conversations_current_session ON conversations(current_session_id)
+    WHERE current_session_id IS NOT NULL`,
+		}},
 }
 
 // reconcileSchema verifies that the columns in schemaRepairs physically exist

@@ -9,6 +9,11 @@ import { captureRendererEvent } from "./telemetry";
 // each call site remembering to instrument itself.
 export type { OrchestratorSpawnSource };
 
+async function defaultSessionMode() {
+	const { data } = await apiClient.GET("/api/v1/settings");
+	return data?.defaultSessionMode === "chat" || data?.defaultSessionMode === "tui" ? data.defaultSessionMode : undefined;
+}
+
 /** Spawn the project's orchestrator session via the daemon API. When clean is
  *  true the daemon first tears down any active orchestrator for the project, then
  *  re-spawns one on the canonical branch (reattaching the existing branch). */
@@ -19,8 +24,9 @@ export async function spawnOrchestrator(
 ): Promise<string> {
 	void captureRendererEvent("ao.renderer.orchestrator_spawn_requested", { project_id: projectId, source });
 	try {
+		const mode = await defaultSessionMode();
 		const { data, error, response } = await apiClient.POST("/api/v1/orchestrators", {
-			body: { projectId, clean },
+			body: { projectId, clean, ...(mode ? { mode } : {}) },
 		});
 
 		if (error || !data?.orchestrator?.id) {

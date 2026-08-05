@@ -96,6 +96,42 @@ func TestMigration0052FreshDatabaseDefaultsToTUI(t *testing.T) {
 	}
 }
 
+func TestReconcileSchemaRepairsMissingConversationCurrentSessionID(t *testing.T) {
+	db := openTestDB(t)
+	upTo(t, db, 43)
+
+	mustExec(t, db, `INSERT INTO projects (id, path, display_name, registered_at)
+		VALUES ('p1', '/tmp/p1', 'proj', '2026-08-05T00:00:00Z')`)
+	mustExec(t, db, `INSERT INTO sessions (id, project_id, num, kind, activity_state, activity_last_at, is_terminated, created_at, updated_at)
+		VALUES ('ao-1', 'p1', 1, 'worker', 'idle', '2026-08-05T00:00:00Z', 0, '2026-08-05T00:00:00Z', '2026-08-05T00:00:00Z')`)
+	mustExec(t, db, `CREATE TABLE conversations (
+		id TEXT PRIMARY KEY,
+		scope TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		session_id TEXT,
+		latest_sequence INTEGER NOT NULL DEFAULT 0,
+		created_at TIMESTAMP NOT NULL,
+		updated_at TIMESTAMP NOT NULL
+	)`)
+	mustExec(t, db, `INSERT INTO conversations (id, scope, project_id, session_id, latest_sequence, created_at, updated_at)
+		VALUES ('conv-1', 'session', 'p1', 'ao-1', 0, '2026-08-05T00:00:00Z', '2026-08-05T00:00:00Z')`)
+
+	if err := reconcileSchema(db); err != nil {
+		t.Fatalf("reconcile schema: %v", err)
+	}
+
+	var currentSessionID string
+	if err := db.QueryRow(`SELECT current_session_id FROM conversations WHERE id = 'conv-1'`).Scan(&currentSessionID); err != nil {
+		t.Fatalf("read current_session_id: %v", err)
+	}
+	if currentSessionID != "ao-1" {
+		t.Fatalf("current_session_id = %q, want session_id backfill", currentSessionID)
+	}
+	if err := reconcileSchema(db); err != nil {
+		t.Fatalf("repeat reconcile schema: %v", err)
+	}
+}
+
 func TestMigration0052ConversationSchemaConstraints(t *testing.T) {
 	db := openTestDB(t)
 	upTo(t, db, 52)

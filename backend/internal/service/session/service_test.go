@@ -1280,18 +1280,16 @@ func TestSpawnOrchestratorCleanHonorsExplicitReplacementMode(t *testing.T) {
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
 	st.sessions["mer-1"] = domain.SessionRecord{
 		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
-		Mode: domain.SessionModeChat, CreatedAt: time.Unix(100, 0).UTC(),
+		Mode: domain.SessionModeTUI, CreatedAt: time.Unix(100, 0).UTC(),
 	}
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	if _, err := svc.SpawnOrchestrator(
-		context.Background(), "mer", true, domain.SessionModeTUI,
-	); err != nil {
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true, domain.SessionModeChat); err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
-	if fc.spawnedCfg.RequestedMode != domain.SessionModeTUI {
-		t.Fatalf("replacement mode = %q, want explicit tui", fc.spawnedCfg.RequestedMode)
+	if fc.spawnedCfg.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("replacement mode = %q, want explicit chat", fc.spawnedCfg.RequestedMode)
 	}
 }
 

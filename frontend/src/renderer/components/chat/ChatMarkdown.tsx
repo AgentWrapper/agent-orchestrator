@@ -25,6 +25,7 @@
 
 import {
 	createContext,
+	Fragment,
 	isValidElement,
 	memo,
 	useContext,
@@ -159,6 +160,8 @@ function textOf(children: ReactNode): string {
 }
 
 const LANGUAGE_CLASS = /language-([\w+#-]+)/;
+const INLINE_EMOJI =
+	/([\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3|[\u{2600}-\u{27BF}\u{1F300}-\u{1FAFF}]\uFE0F?)/gu;
 
 /** The fence inside a `pre`, or undefined if this is not a fenced block. */
 function fenceOf(children: ReactNode): { code: string; language?: string } | undefined {
@@ -167,6 +170,30 @@ function fenceOf(children: ReactNode): { code: string; language?: string } | und
 		code: textOf(children.props.children).replace(/\n$/, ""),
 		language: LANGUAGE_CLASS.exec(children.props.className ?? "")?.[1],
 	};
+}
+
+function compactEmoji(children: ReactNode): ReactNode {
+	if (typeof children === "string") {
+		let last = 0;
+		const parts: ReactNode[] = [];
+		for (const match of children.matchAll(INLINE_EMOJI)) {
+			const index = match.index ?? 0;
+			if (index > last) parts.push(children.slice(last, index));
+			parts.push(
+				<span key={`${index}-${match[0]}`} className="chat-md-emoji">
+					{match[0]}
+				</span>,
+			);
+			last = index + match[0].length;
+		}
+		if (last === 0) return children;
+		if (last < children.length) parts.push(children.slice(last));
+		return parts;
+	}
+	if (Array.isArray(children)) {
+		return children.map((child, index) => <Fragment key={index}>{compactEmoji(child)}</Fragment>);
+	}
+	return children;
 }
 
 const COMPONENTS: Components = {
@@ -193,7 +220,7 @@ const COMPONENTS: Components = {
 		</h6>
 	),
 
-	p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
+	p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{compactEmoji(children)}</p>,
 
 	ul: ({ children }) => <ul className="my-2 ml-4 list-disc space-y-1 first:mt-0">{children}</ul>,
 	ol: ({ children }) => (
@@ -202,7 +229,7 @@ const COMPONENTS: Components = {
 	li: ({ children, className }) => (
 		// A task-list item drops its bullet: the checkbox is the marker.
 		<li className={cn("marker:text-muted-foreground", className?.includes("task-list-item") && "list-none")}>
-			{children}
+			{compactEmoji(children)}
 		</li>
 	),
 	// Read-only on purpose. The checkbox reflects what the agent wrote; clicking it
@@ -243,11 +270,11 @@ const COMPONENTS: Components = {
 	thead: ({ children }) => <thead className="bg-raised/40">{children}</thead>,
 	th: ({ children }) => (
 		<th className="border-b border-border px-2.5 py-1.5 text-left font-medium text-muted-foreground">
-			{children}
+			{compactEmoji(children)}
 		</th>
 	),
 	td: ({ children }) => (
-		<td className="border-b border-border/60 px-2.5 py-1.5 align-top">{children}</td>
+		<td className="border-b border-border/60 px-2.5 py-1.5 align-top">{compactEmoji(children)}</td>
 	),
 
 	blockquote: ({ children }) => (
