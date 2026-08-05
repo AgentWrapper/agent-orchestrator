@@ -49,6 +49,13 @@ func TestGitHubWrapperUsesHeartbeatRefreshedWorkerToken(t *testing.T) {
 	if string(githubArguments) != "pr\ncreate\n--title\nworker change\n" {
 		t.Fatalf("gh arguments = %q", githubArguments)
 	}
+	githubRepository, err := os.ReadFile(fixture.githubRepositoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(githubRepository) != "amoreX/flowlens\n" {
+		t.Fatalf("GH_REPO = %q, want amoreX/flowlens", githubRepository)
+	}
 }
 
 func TestGitHubWrapperRefusesUnauthenticatedFallbackAfterBrokerFailure(t *testing.T) {
@@ -74,13 +81,15 @@ func TestGitHubWrapperRefusesUnauthenticatedFallbackAfterBrokerFailure(t *testin
 }
 
 type githubWrapperFixture struct {
-	wrapperPath         string
-	binDir              string
-	dataDir             string
-	realGitHubPath      string
-	curlArgumentsPath   string
-	githubArgumentsPath string
-	githubTokenPath     string
+	wrapperPath          string
+	binDir               string
+	dataDir              string
+	workspaceDir         string
+	realGitHubPath       string
+	curlArgumentsPath    string
+	githubArgumentsPath  string
+	githubRepositoryPath string
+	githubTokenPath      string
 }
 
 func newGitHubWrapperFixture(t *testing.T) githubWrapperFixture {
@@ -92,20 +101,36 @@ func newGitHubWrapperFixture(t *testing.T) githubWrapperFixture {
 	fixtureRoot := t.TempDir()
 	binDir := filepath.Join(fixtureRoot, "bin")
 	dataDir := filepath.Join(fixtureRoot, "data")
+	workspaceDir := filepath.Join(fixtureRoot, "workspace")
 	if err := os.MkdirAll(binDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.MkdirAll(workspaceDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	runGitTestCommand(t, workspaceDir, nil, "init", "-q")
+	runGitTestCommand(
+		t,
+		workspaceDir,
+		nil,
+		"remote",
+		"add",
+		"origin",
+		"https://cloud.example/api/cloud/v1/git/amoreX/flowlens.git",
+	)
 	fixture := githubWrapperFixture{
-		wrapperPath:         filepath.Join(root, "ao-cloud", "docker", "worker-gh-wrapper.sh"),
-		binDir:              binDir,
-		dataDir:             dataDir,
-		realGitHubPath:      filepath.Join(binDir, "real-gh"),
-		curlArgumentsPath:   filepath.Join(fixtureRoot, "curl-arguments"),
-		githubArgumentsPath: filepath.Join(fixtureRoot, "gh-arguments"),
-		githubTokenPath:     filepath.Join(fixtureRoot, "gh-token"),
+		wrapperPath:          filepath.Join(root, "ao-cloud", "docker", "worker-gh-wrapper.sh"),
+		binDir:               binDir,
+		dataDir:              dataDir,
+		workspaceDir:         workspaceDir,
+		realGitHubPath:       filepath.Join(binDir, "real-gh"),
+		curlArgumentsPath:    filepath.Join(fixtureRoot, "curl-arguments"),
+		githubArgumentsPath:  filepath.Join(fixtureRoot, "gh-arguments"),
+		githubRepositoryPath: filepath.Join(fixtureRoot, "gh-repository"),
+		githubTokenPath:      filepath.Join(fixtureRoot, "gh-token"),
 	}
 	writeExecutable(t, filepath.Join(binDir, "curl"), `#!/bin/sh
 printf '%s\n' "$@" > "$MOCK_CURL_ARGUMENTS"
@@ -121,6 +146,7 @@ printf 'installation-token\n'
 `)
 	writeExecutable(t, fixture.realGitHubPath, `#!/bin/sh
 printf '%s\n' "${GH_TOKEN:-}" > "$MOCK_GH_TOKEN"
+printf '%s\n' "${GH_REPO:-}" > "$MOCK_GH_REPOSITORY"
 printf '%s\n' "$@" > "$MOCK_GH_ARGUMENTS"
 `)
 	return fixture
@@ -136,6 +162,7 @@ func (f githubWrapperFixture) command(t *testing.T, brokerFailure bool) *exec.Cm
 		"--title",
 		"worker change",
 	)
+	command.Dir = f.workspaceDir
 	command.Env = append(os.Environ(),
 		"PATH="+f.binDir+":/usr/bin:/bin",
 		"AO_GH_REAL_BINARY="+f.realGitHubPath,
@@ -145,6 +172,7 @@ func (f githubWrapperFixture) command(t *testing.T, brokerFailure bool) *exec.Cm
 		"AO_DATA_DIR="+f.dataDir,
 		"MOCK_CURL_ARGUMENTS="+f.curlArgumentsPath,
 		"MOCK_GH_ARGUMENTS="+f.githubArgumentsPath,
+		"MOCK_GH_REPOSITORY="+f.githubRepositoryPath,
 		"MOCK_GH_TOKEN="+f.githubTokenPath,
 	)
 	if brokerFailure {

@@ -273,7 +273,10 @@ func (r *Runner) Run(ctx context.Context) error {
 			return fmt.Errorf("prepare agent launch: %w", err)
 		}
 	}
-	hookEnvironment := workerEnvironment(r.client.getToken())
+	hookEnvironment := workerEnvironment(
+		r.client.getToken(),
+		r.bootstrap.Launch.RepositoryURL,
+	)
 	hookEnvironment["AO_SESSION_BRANCH"] = r.bootstrap.Launch.Session.Branch
 	if augmenter, ok := agent.(interface {
 		AugmentRuntimeEnv(map[string]string, string)
@@ -330,7 +333,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
 	workspaceEnvironment := append(
 		sanitizedProcessEnvironment(),
-		envList(workspaceShellEnvironment(r.bootstrap.Launch.Session.Branch))...,
+		envList(workspaceShellEnvironment(
+			r.bootstrap.Launch.Session.Branch,
+			r.bootstrap.Launch.RepositoryURL,
+		))...,
 	)
 	return r.runInteractiveAgent(
 		ctx,
@@ -1346,21 +1352,33 @@ func updateJSONFile(path string, update func(map[string]any)) error {
 	return nil
 }
 
-func workerEnvironment(token string) map[string]string {
-	return map[string]string{
+func workerEnvironment(token, repositoryURL string) map[string]string {
+	environment := map[string]string{
 		"AO_CLOUD_PUBLIC_URL": os.Getenv("AO_CLOUD_PUBLIC_URL"),
 		"AO_WORKER_TOKEN":     token,
 		"AO_SESSION_ID":       os.Getenv("AO_CLOUD_SESSION_ID"),
 		"AO_DATA_DIR":         os.Getenv("AO_DATA_DIR"),
 	}
+	addGitHubRepositoryEnvironment(environment, repositoryURL)
+	return environment
 }
 
-func workspaceShellEnvironment(branch string) map[string]string {
-	return map[string]string{
+func workspaceShellEnvironment(branch, repositoryURL string) map[string]string {
+	environment := map[string]string{
 		"AO_CLOUD_PUBLIC_URL": os.Getenv("AO_CLOUD_PUBLIC_URL"),
 		"AO_SESSION_ID":       os.Getenv("AO_CLOUD_SESSION_ID"),
 		"AO_SESSION_BRANCH":   branch,
 	}
+	addGitHubRepositoryEnvironment(environment, repositoryURL)
+	return environment
+}
+
+func addGitHubRepositoryEnvironment(environment map[string]string, repositoryURL string) {
+	owner, repository, ok := cloudlocalgh.ParseRepositoryURL(repositoryURL)
+	if !ok {
+		return
+	}
+	environment["GH_REPO"] = owner + "/" + repository
 }
 
 func sanitizedProcessEnvironment() []string {

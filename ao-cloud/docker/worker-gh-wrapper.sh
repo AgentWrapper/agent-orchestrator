@@ -13,6 +13,27 @@ if [ "${1:-}" = "pr" ]; then
     exit 1
   fi
 
+  github_repository="${GH_REPO:-}"
+  if [ -z "$github_repository" ]; then
+    origin="$(git config --get remote.origin.url 2>/dev/null || true)"
+    proxy_path="${origin#*/api/cloud/v1/git/}"
+    if [ "$proxy_path" != "$origin" ]; then
+      proxy_path="${proxy_path%.git}"
+      owner="${proxy_path%%/*}"
+      repository="${proxy_path#*/}"
+      if [ -n "$owner" ] &&
+        [ -n "$repository" ] &&
+        [ "$repository" != "$proxy_path" ] &&
+        [ "${repository#*/}" = "$repository" ]; then
+        github_repository="${owner}/${repository}"
+      fi
+    fi
+  fi
+  if [ -z "$github_repository" ]; then
+    echo "AO GitHub credential broker is unavailable: canonical repository context is missing." >&2
+    exit 1
+  fi
+
   worker_token="${AO_WORKER_TOKEN:-}"
   worker_token_path="${AO_DATA_DIR:-}/worker-token"
   if [ -n "${AO_DATA_DIR:-}" ] && [ -f "$worker_token_path" ] && [ -r "$worker_token_path" ]; then
@@ -38,7 +59,7 @@ if [ "${1:-}" = "pr" ]; then
     exit 1
   fi
 
-  GH_TOKEN="$token" exec "$real_gh" "$@"
+  GH_REPO="$github_repository" GH_TOKEN="$token" exec "$real_gh" "$@"
 fi
 
 exec "$real_gh" "$@"

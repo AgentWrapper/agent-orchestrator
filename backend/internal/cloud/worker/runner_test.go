@@ -1213,6 +1213,33 @@ func readJSONObject(t *testing.T, path string) map[string]any {
 	return object
 }
 
+func TestCloudWorkerEnvironmentsTargetCanonicalGitHubRepository(t *testing.T) {
+	const repositoryURL = "https://github.com/amoreX/flowlens.git"
+	agentEnvironment := workerEnvironment("worker-token", repositoryURL)
+	workspaceEnvironment := workspaceShellEnvironment("ao/readme-tweak", repositoryURL)
+	for name, environment := range map[string]map[string]string{
+		"agent":     agentEnvironment,
+		"workspace": workspaceEnvironment,
+	} {
+		if got := environment["GH_REPO"]; got != "amoreX/flowlens" {
+			t.Fatalf("%s GH_REPO = %q, want amoreX/flowlens", name, got)
+		}
+	}
+	if got := agentEnvironment["AO_WORKER_TOKEN"]; got != "worker-token" {
+		t.Fatalf("agent worker token = %q", got)
+	}
+	if got := workspaceEnvironment["AO_SESSION_BRANCH"]; got != "ao/readme-tweak" {
+		t.Fatalf("workspace branch = %q", got)
+	}
+}
+
+func TestCloudWorkerEnvironmentOmitsInvalidGitHubRepository(t *testing.T) {
+	environment := workerEnvironment("worker-token", "https://example.com/repository")
+	if _, ok := environment["GH_REPO"]; ok {
+		t.Fatalf("invalid repository produced GH_REPO = %q", environment["GH_REPO"])
+	}
+}
+
 func TestPrepareAgentCredentialEnvironment(t *testing.T) {
 	tests := []struct {
 		name           string
