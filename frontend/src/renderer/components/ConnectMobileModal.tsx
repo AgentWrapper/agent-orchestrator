@@ -8,6 +8,7 @@ import { cn } from "../lib/utils";
 import { ConnectMobileGetApp } from "./settings/ConnectMobileGetApp";
 import { ConnectMobileSetup } from "./settings/ConnectMobileSetup";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
 
 export const mobileStatusQueryKey = ["mobile-status"] as const;
@@ -155,7 +156,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 				</DialogClose>
 				{/* The get-app QR and setup steps can push this past a short window,
 				    so the body scrolls rather than clipping under the screen edges. */}
-				<div className="scrollbar-none flex max-h-[80vh] flex-col overflow-y-auto px-(--size-settings-mobile-dialog-pad-x) pb-6 pt-8">
+				<div className="scrollbar-none flex max-h-[80vh] flex-col overflow-y-auto p-(--size-modal-padding)">
 					<DialogHeader className="items-center gap-1.5 text-center">
 						<DialogTitle className="settings-dialog-title text-center">{t("mobile.title")}</DialogTitle>
 						<DialogDescription className="max-w-(--size-settings-mobile-desc) text-center text-control font-normal leading-4 text-settings-muted">
@@ -269,19 +270,20 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											</div>
 										</div>
 
-										<button
+										<Button
 											type="button"
+											variant="footer"
+											className="mt-5 w-(--size-settings-mobile-regen-width)"
 											onClick={() => {
 												clearActionErrors();
 												regenerate.mutate();
 											}}
 											disabled={busy || !enabled}
 											tabIndex={enabled ? 0 : -1}
-											className="settings-footer-button mt-5 w-(--size-settings-mobile-regen-width) disabled:cursor-not-allowed disabled:opacity-50"
 										>
 											{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
 											{t("mobile.regenerate")}
-										</button>
+										</Button>
 									</div>
 								</div>
 							</div>

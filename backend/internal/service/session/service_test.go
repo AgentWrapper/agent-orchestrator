@@ -756,8 +756,8 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != childBase {
 		t.Fatalf("child detail compare = mode:%q sha:%q, want base %s", detail.CompareMode, detail.CompareBaseSHA, childBase)
 	}
-	if detail.CompareBaseRef != "" {
-		t.Fatalf("child detail compare ref = %q, want empty because worktree rows store only a SHA", detail.CompareBaseRef)
+	if detail.CompareBaseRef != "main" {
+		t.Fatalf("child detail compare ref = %q, want main", detail.CompareBaseRef)
 	}
 }
 
@@ -885,6 +885,11 @@ func TestWorkspaceBaseRefCandidatesPreferRemoteDefault(t *testing.T) {
 	want := []string{"origin/main", "refs/remotes/origin/main", "main"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("workspace base candidates = %#v, want %#v", got, want)
+	}
+
+	got = workspaceBaseRefCandidates("")
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("empty workspace base candidates = %#v, want %#v", got, want)
 	}
 }
 

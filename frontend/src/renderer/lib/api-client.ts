@@ -59,6 +59,11 @@ export function setApiDaemonStatus(nextStatus: DaemonStatus): void {
 // still normalizes IDs for every resource, including ones a segment heuristic
 // would miss (orchestrators/{id}). Keep in sync with schema.ts.
 const ROUTE_TEMPLATES = [
+	"/api/v1/agents",
+	"/api/v1/agents/refresh",
+	"/api/v1/agents/{agent}/models",
+	"/api/v1/agents/{agent}/models/refresh",
+	"/api/v1/agents/{agent}/probe",
 	"/api/v1/events",
 	"/api/v1/import",
 	"/api/v1/notifications",
@@ -98,7 +103,15 @@ const ROUTE_TEMPLATES = [
 // Resource collections whose next path segment is an identifier. Only used as a
 // defensive fallback for paths not covered by ROUTE_TEMPLATES; keeps IDs out of
 // telemetry for known collections even if a route is ever missed above.
-const RESOURCE_SEGMENTS = new Set(["projects", "sessions", "notifications", "workspaces", "prs", "orchestrators"]);
+const RESOURCE_SEGMENTS = new Set([
+	"agents",
+	"projects",
+	"sessions",
+	"notifications",
+	"workspaces",
+	"prs",
+	"orchestrators",
+]);
 
 // Match a path against one template. `{param}` matches any single segment
 // (reported as `:id`), a trailing `*` matches the remaining path, and every

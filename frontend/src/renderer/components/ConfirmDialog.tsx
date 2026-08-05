@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
+import { Button } from "./ui/button";
 import {
 	Dialog,
 	DialogClose,
@@ -73,21 +74,19 @@ export function ConfirmDialog({
 
 				<div className={settingsDialogFooterClass}>
 					<DialogClose asChild>
-						<button type="button" className="settings-footer-button" disabled={busy}>
+						<Button type="button" variant="footer" disabled={busy}>
 							{t("confirm.cancel")}
-						</button>
+						</Button>
 					</DialogClose>
-					<button
+					<Button
 						type="button"
-						className={cn(
-							"settings-footer-button border-transparent text-white disabled:cursor-not-allowed disabled:opacity-50",
-							destructive ? "bg-danger-strong" : "bg-settings-accent",
-						)}
+						variant="footer-primary"
+						className={cn(destructive && "bg-danger-strong hover:bg-danger-strong")}
 						disabled={busy}
 						onClick={onConfirm}
 					>
 						{confirmLabel}
-					</button>
+					</Button>
 				</div>
 			</DialogContent>
 		</Dialog>
