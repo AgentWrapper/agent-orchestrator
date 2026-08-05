@@ -2552,14 +2552,10 @@ export default function CloudAppPage() {
               ) : null}
             </div>
 
-            <p className="flex items-start gap-2.5 rounded-lg bg-white/[0.025] px-3.5 py-3 text-xs leading-5 text-white/40">
-              <ExternalLink className="mt-0.5 size-3.5 shrink-0 text-white/30" />
-              The recipient must sign in before AO grants access.
-            </p>
-            <div className="space-y-3 rounded-xl border border-white/[0.07] bg-white/[0.015] p-3">
+            <div className="space-y-3 border-t border-white/[0.06] pt-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-xs font-medium text-white/60">
+                  <div className="text-xs font-medium text-white/55">
                     Manage access
                   </div>
                   <div className="mt-0.5 text-[11px] text-white/30">
@@ -2620,28 +2616,39 @@ export default function CloudAppPage() {
                       void updateShareGrantAccess(grant.id, { role });
                     };
                     return (
-                      <div
+                      <details
                         key={grant.id}
-                        className="rounded-lg border border-white/[0.06] bg-white/[0.025] p-3"
+                        className="group rounded-lg border border-white/[0.06] bg-white/[0.018]"
                       >
-                        <div className="flex min-w-0 items-start justify-between gap-3">
-                          <div className="min-w-0">
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 [&::-webkit-details-marker]:hidden">
+                          <div className="min-w-0 flex-1">
                             <div className="truncate text-sm font-medium text-white/80">
                               {grant.user.displayName || grant.user.email}
                             </div>
-                            <div className="mt-0.5 truncate text-xs text-white/35">
-                              {grant.user.email}
-                            </div>
+                            {grant.user.displayName ? (
+                              <div className="mt-0.5 truncate text-xs text-white/35">
+                                {grant.user.email}
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="hidden shrink-0 text-xs text-white/30 sm:block">
+                            {projectWide
+                              ? `All agents · ${grant.role === "editor" ? "edit" : "view"}`
+                              : `${customRoles.size} agent${customRoles.size === 1 ? "" : "s"}`}
                           </div>
                           <button
                             type="button"
                             className="h-8 shrink-0 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
-                            onClick={() => void revokeShareGrant(grant.id)}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void revokeShareGrant(grant.id);
+                            }}
                           >
                             Remove
                           </button>
-                        </div>
-                        <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/10 p-2">
+                        </summary>
+                        <div className="mx-3 mb-3 rounded-lg border border-white/[0.06] bg-black/10 p-2">
                           <div className="mb-2 flex items-center justify-between gap-2">
                             <div className="text-[11px] font-medium text-white/40">
                               Agent permissions
@@ -2703,7 +2710,7 @@ export default function CloudAppPage() {
                             )}
                           </div>
                         </div>
-                      </div>
+                      </details>
                     );
                   })}
                 </div>
