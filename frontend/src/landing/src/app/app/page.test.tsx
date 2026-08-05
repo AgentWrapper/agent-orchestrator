@@ -34,6 +34,9 @@ const apiMocks = vi.hoisted(() => ({
   disconnectGitHubInstallation: vi.fn(),
   createProject: vi.fn(),
   createScratchProject: vi.fn(),
+  createStandaloneProject: vi.fn(),
+  updateProject: vi.fn(),
+  updateSession: vi.fn(),
   createSession: vi.fn(),
   providerConnections: vi.fn(),
   updateProviderSettings: vi.fn(),
@@ -89,6 +92,9 @@ vi.mock("@/lib/cloud-api", () => ({
     disconnectGitHubInstallation = apiMocks.disconnectGitHubInstallation;
     createProject = apiMocks.createProject;
     createScratchProject = apiMocks.createScratchProject;
+    createStandaloneProject = apiMocks.createStandaloneProject;
+    updateProject = apiMocks.updateProject;
+    updateSession = apiMocks.updateSession;
     createSession = apiMocks.createSession;
     providerConnections = apiMocks.providerConnections;
     updateProviderSettings = apiMocks.updateProviderSettings;
@@ -282,6 +288,9 @@ beforeEach(() => {
   apiMocks.disconnectGitHubInstallation.mockResolvedValue(undefined);
   apiMocks.createProject.mockResolvedValue({ project });
   apiMocks.createScratchProject.mockResolvedValue({ project, repository: null });
+  apiMocks.createStandaloneProject.mockResolvedValue({ project, session: orchestrator });
+  apiMocks.updateProject.mockResolvedValue({ project });
+  apiMocks.updateSession.mockResolvedValue({ session: worker });
   apiMocks.createSession.mockResolvedValue({ session: orchestrator, created: true });
   apiMocks.updateProviderSettings.mockResolvedValue(undefined);
   apiMocks.createProjectShareLink.mockResolvedValue({
@@ -421,19 +430,141 @@ it("loads GitHub repositories only when the project form opens", async () => {
 
   fireEvent.click(addProject);
 
-  expect(await screen.findByText("Enable scratch projects")).toBeVisible();
+  expect(await screen.findByRole("button", { name: /From GitHub/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /Start from scratch/ })).toBeVisible();
+  expect(screen.queryByText("Enable scratch projects")).not.toBeInTheDocument();
+  expect(apiMocks.repositories).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(project.displayName)).toBeVisible();
+});
+
+it("creates a standalone project without GitHub authorization", async () => {
+  const standaloneProject: CloudProject = {
+    ...project,
+    id: "standalone-project",
+    displayName: "New chat",
+    repositoryUrl: "ao-standalone://org-one/session",
+    config: { source: "standalone" },
+  };
+  apiMocks.githubUserConnection.mockResolvedValue({
+    connected: false,
+    installations: [],
+  });
+  apiMocks.createStandaloneProject.mockResolvedValue({
+    project: standaloneProject,
+    session: {
+      ...worker,
+      id: "standalone-agent",
+      projectId: "standalone-project",
+      displayName: "New chat",
+    },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
+
+  expect(screen.queryByText("Enable scratch projects")).not.toBeInTheDocument();
+  expect(
+    screen.getByText(/empty cloud workspace with a local git repository/),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Start standalone" }));
+
+  await waitFor(() =>
+    expect(apiMocks.createStandaloneProject).toHaveBeenCalledWith("org-one", {
+      displayName: "New chat",
+      orchestrator: {
+        harness: "claude-code",
+        providerConnectionId: undefined,
+      },
+    }),
+  );
+  expect(apiMocks.createScratchProject).not.toHaveBeenCalled();
+});
+
+it("shows scratch GitHub authorization copy only when GitHub backing is selected", async () => {
+  apiMocks.githubUserConnection.mockResolvedValue({
+    connected: false,
+    installations: [],
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
+  expect(screen.queryByText("Enable scratch projects")).not.toBeInTheDocument();
+
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /Create a GitHub repository for this project/,
+    }),
+  );
+
+  expect(screen.getByText("Enable scratch projects")).toBeVisible();
   expect(
     screen.getByText(
       "Authorize AO with your GitHub account to create new repositories.",
     ),
   ).toBeVisible();
-  expect(apiMocks.repositories).toHaveBeenCalledTimes(1);
   expect(
-    screen.getByRole("button", {
-      name: "Authorize AO in Settings",
-    }),
+    screen.getByRole("button", { name: "Authorize AO in Settings" }),
   ).toBeVisible();
-  expect(screen.getByText(project.displayName)).toBeVisible();
+});
+
+it("creates additional standalone agents from a standalone project", async () => {
+  const standaloneProject: CloudProject = {
+    ...project,
+    id: "standalone-project",
+    displayName: "Standalone chat",
+    repositoryUrl: "ao-standalone://org-one/session",
+    config: { source: "standalone" },
+  };
+  const standaloneAgent: CloudSession = {
+    ...worker,
+    id: "standalone-agent-one",
+    projectId: standaloneProject.id,
+    displayName: "First agent",
+  };
+  apiMocks.projects.mockResolvedValue({ projects: [standaloneProject] });
+  apiMocks.sessions.mockResolvedValue({ sessions: [standaloneAgent] });
+  apiMocks.createSession.mockResolvedValue({
+    session: {
+      ...standaloneAgent,
+      id: "standalone-agent-two",
+      displayName: "Second agent",
+    },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Standalone chat" }),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "New agent" }));
+
+  expect(
+    screen.getByRole("dialog", { name: "New standalone agent" }),
+  ).toBeVisible();
+  fireEvent.change(screen.getByPlaceholderText("Agent name"), {
+    target: { value: "Second agent" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Start agent" }));
+
+  await waitFor(() =>
+    expect(apiMocks.createSession).toHaveBeenCalledWith(
+      "org-one",
+      {
+        projectId: standaloneProject.id,
+        kind: "worker",
+        harness: "claude-code",
+        displayName: "Second agent",
+        prompt: "",
+        providerConnectionId: undefined,
+      },
+      expect.any(String),
+    ),
+  );
+  expect(screen.queryByRole("button", { name: "Orchestrator" })).not.toBeInTheDocument();
 });
 
 it("prompts for a coding agent before opening provider settings", async () => {
@@ -518,6 +649,11 @@ it("creates a scratch project through the connected GitHub installation", async 
 
   fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
   fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /Create a GitHub repository for this project/,
+    }),
+  );
   expect(
     screen.queryByText(/Owners come from your account-wide GitHub connection/),
   ).not.toBeInTheDocument();
@@ -527,7 +663,7 @@ it("creates a scratch project through the connected GitHub installation", async 
   expect(
     screen.getByRole("button", { name: "Connect another" }),
   ).toBeVisible();
-  fireEvent.change(screen.getByPlaceholderText("my-new-app"), {
+  fireEvent.change(screen.getByPlaceholderText("New chat"), {
     target: { value: "Scratch App" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Create from scratch" }));
@@ -633,6 +769,11 @@ it("creates a scratch project in the selected connected organization", async () 
 
   fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
   fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: /Create a GitHub repository for this project/,
+    }),
+  );
 
   const ownerSelect = screen.getByRole("combobox", {
     name: "GitHub owner",
@@ -650,7 +791,7 @@ it("creates a scratch project in the selected connected organization", async () 
   ).toBeVisible();
 
   fireEvent.change(ownerSelect, { target: { value: "43" } });
-  fireEvent.change(screen.getByPlaceholderText("my-new-app"), {
+  fireEvent.change(screen.getByPlaceholderText("New chat"), {
     target: { value: "Scratch App" },
   });
   fireEvent.click(screen.getByRole("button", { name: "Create from scratch" }));
@@ -681,6 +822,7 @@ it("opens provider connections from the no-agent empty state", async () => {
 });
 
 it("shares a project from its three-dot menu with the selected role", async () => {
+  apiMocks.sessions.mockResolvedValue({ sessions: [worker] });
   render(<CloudAppPage />);
 
   fireEvent.click(
@@ -693,6 +835,9 @@ it("shares a project from its three-dot menu with the selected role", async () =
   expect(
     screen.getByRole("heading", { name: "Share project" }),
   ).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Share scope"), {
+    target: { value: worker.id },
+  });
   fireEvent.click(screen.getByRole("radio", { name: /Editor/ }));
   fireEvent.click(screen.getByRole("button", { name: /Restricted/ }));
   fireEvent.change(screen.getByLabelText("People"), {
@@ -706,6 +851,7 @@ it("shares a project from its three-dot menu with the selected role", async () =
       "org-one",
       project.id,
       {
+        sessionId: worker.id,
         role: "editor",
         accessScope: "restricted",
         recipientEmails: ["reader@example.com"],
@@ -1466,6 +1612,45 @@ it("deletes a worker session from the session header", async () => {
   confirmSpy.mockRestore();
 });
 
+it("renames a standalone agent from the session header", async () => {
+  const standaloneProject: CloudProject = {
+    ...project,
+    id: "standalone-project",
+    displayName: "Standalone chat",
+    repositoryUrl: "ao-standalone://org-one/session",
+    config: { source: "standalone" },
+  };
+  const standaloneAgent: CloudSession = {
+    ...worker,
+    id: "standalone-agent-one",
+    projectId: standaloneProject.id,
+    displayName: "First agent",
+  };
+  apiMocks.projects.mockResolvedValue({ projects: [standaloneProject] });
+  apiMocks.sessions.mockResolvedValue({ sessions: [standaloneAgent] });
+  apiMocks.updateSession.mockResolvedValue({
+    session: { ...standaloneAgent, displayName: "Renamed agent" },
+  });
+
+  render(<CloudAppPage />);
+
+  const agentEntries = await screen.findAllByText("First agent");
+  fireEvent.click(agentEntries[0]);
+  fireEvent.click(await screen.findByLabelText("Rename First agent"));
+  fireEvent.change(await screen.findByDisplayValue("First agent"), {
+    target: { value: "Renamed agent" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateSession).toHaveBeenCalledWith(
+      "org-one",
+      "standalone-agent-one",
+      { displayName: "Renamed agent" },
+    ),
+  );
+});
+
 it("polls a selected connecting worker until runtime capabilities arrive", async () => {
   apiMocks.sessions.mockResolvedValue({ sessions: [worker] });
   apiMocks.session.mockResolvedValue({ session: worker });
@@ -1494,4 +1679,27 @@ it("deletes a project from the project menu", async () => {
   );
   expect(confirmSpy).toHaveBeenCalled();
   confirmSpy.mockRestore();
+});
+
+it("renames a project from the project menu", async () => {
+  apiMocks.updateProject.mockResolvedValue({
+    project: { ...project, displayName: "Renamed chat" },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByLabelText("More actions for AO"));
+  fireEvent.click(await screen.findByText("Rename project"));
+
+  const nameInput = await screen.findByDisplayValue("AO");
+  fireEvent.change(nameInput, { target: { value: "Renamed chat" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateProject).toHaveBeenCalledWith(
+      "org-one",
+      "project-one",
+      { displayName: "Renamed chat" },
+    ),
+  );
 });

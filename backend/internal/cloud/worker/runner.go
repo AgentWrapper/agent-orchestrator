@@ -42,6 +42,8 @@ const (
 // GitProxyUsername is the fixed username paired with a worker token for Git.
 const GitProxyUsername = "ao-worker"
 
+const standaloneRepositoryURLPrefix = "ao-standalone://"
+
 var errTerminalOutputQueueFull = errors.New("terminal output delivery queue is full")
 
 // Runner prepares a cloud workspace and runs its configured agent.
@@ -710,6 +712,9 @@ func submitInteractivePrompt(
 }
 
 func (r *Runner) prepareRepository(ctx context.Context) error {
+	if r.standaloneProject() {
+		return r.prepareStandaloneRepository(ctx)
+	}
 	_ = r.client.Event(ctx, "repository.cloning", map[string]string{
 		"url": r.bootstrap.Launch.RepositoryURL,
 	})
@@ -806,6 +811,55 @@ func (r *Runner) prepareRepository(ctx context.Context) error {
 	}
 	_ = r.client.Event(ctx, "repository.ready", map[string]string{
 		"branch": r.bootstrap.Launch.Session.Branch,
+	})
+	return nil
+}
+
+func (r *Runner) standaloneProject() bool {
+	if strings.HasPrefix(strings.TrimSpace(r.bootstrap.Launch.RepositoryURL), standaloneRepositoryURLPrefix) {
+		return true
+	}
+	var config struct {
+		Source string `json:"source"`
+	}
+	if len(r.bootstrap.Launch.ProjectConfig) == 0 {
+		return false
+	}
+	if err := json.Unmarshal(r.bootstrap.Launch.ProjectConfig, &config); err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(config.Source), "standalone")
+}
+
+func (r *Runner) prepareStandaloneRepository(ctx context.Context) error {
+	_ = r.client.Event(ctx, "repository.initializing", map[string]string{
+		"source": "standalone",
+	})
+	if err := os.MkdirAll(r.workspaceDir, 0o750); err != nil {
+		return fmt.Errorf("create standalone workspace: %w", err)
+	}
+	if info, err := os.Stat(filepath.Join(r.workspaceDir, ".git")); err != nil || !info.IsDir() {
+		defaultBranch := strings.TrimSpace(r.bootstrap.Launch.DefaultBranch)
+		if defaultBranch == "" {
+			defaultBranch = "main"
+		}
+		command := exec.CommandContext(ctx, "git", "init", "-b", defaultBranch, r.workspaceDir)
+		if output, err := command.CombinedOutput(); err != nil {
+			return fmt.Errorf("initialize standalone repository: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+	}
+	if err := r.configureWorkerGitIdentity(ctx); err != nil {
+		return err
+	}
+	if err := r.checkoutBranch(ctx); err != nil {
+		return err
+	}
+	if err := r.installSessionBranchGuard(); err != nil {
+		return err
+	}
+	_ = r.client.Event(ctx, "repository.ready", map[string]string{
+		"branch": r.bootstrap.Launch.Session.Branch,
+		"source": "standalone",
 	})
 	return nil
 }
@@ -1578,6 +1632,9 @@ func promptRulesSection(title, rules string) string {
 
 func projectValue(value string) string {
 	if trimmed := strings.TrimSpace(value); trimmed != "" {
+		if strings.HasPrefix(trimmed, standaloneRepositoryURLPrefix) {
+			return "standalone AO workspace"
+		}
 		return trimmed
 	}
 	return "not configured"

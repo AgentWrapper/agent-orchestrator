@@ -457,6 +457,88 @@ it("links project creation to the selected GitHub repository grant", async () =>
   );
 });
 
+it("creates standalone projects through the organization route", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ project: {}, session: {} }), {
+      status: 201,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.createStandaloneProject("org one", {
+    displayName: "New chat",
+    orchestrator: { harness: "claude-code" },
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/standalone",
+    expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({
+        displayName: "New chat",
+        orchestrator: { harness: "claude-code" },
+      }),
+    }),
+  );
+});
+
+it("updates project display names through the organization route", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ project: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.updateProject("org one", "project one", {
+    displayName: "Renamed chat",
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/projects/project%20one",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ displayName: "Renamed chat" }),
+    }),
+  );
+});
+
+it("updates session display names through the organization route", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ session: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const api = Object.assign(Object.create(CloudAPI.prototype) as CloudAPI, {
+    baseURL: "https://cloud.example.com",
+    accessToken: "access-token",
+  });
+
+  await api.updateSession("org one", "session one", {
+    displayName: "Renamed agent",
+  });
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "https://cloud.example.com/api/cloud/v1/orgs/org%20one/sessions/session%20one",
+    expect.objectContaining({
+      method: "PATCH",
+      body: JSON.stringify({ displayName: "Renamed agent" }),
+    }),
+  );
+});
+
 it("updates org provider credential source", async () => {
   const fetchMock = vi.fn().mockResolvedValue(
     new Response(JSON.stringify({ agentCredentialsMode: "personal_default", providerConnections: [] }), {

@@ -53,6 +53,7 @@ type store interface {
 	DeclineOrgInvitation(context.Context, string, string, string) error
 	RevokeOrgInvitation(context.Context, clouddomain.OrgID, string) error
 	CreateProject(context.Context, clouddomain.AccountID, cloudpostgres.CreateProjectInput) (clouddomain.Project, error)
+	UpdateProject(context.Context, clouddomain.AccountID, clouddomain.ProjectID, cloudpostgres.UpdateProjectInput) (clouddomain.Project, error)
 	ListProjects(context.Context, clouddomain.AccountID) ([]clouddomain.Project, error)
 	GetProject(context.Context, clouddomain.AccountID, clouddomain.ProjectID) (clouddomain.Project, error)
 	DeleteProject(context.Context, clouddomain.AccountID, clouddomain.ProjectID) error
@@ -66,6 +67,7 @@ type store interface {
 	CreateSession(context.Context, clouddomain.AccountID, cloudpostgres.CreateSessionInput) (cloudpostgres.CreateSessionResult, error)
 	ListSessions(context.Context, clouddomain.AccountID) ([]clouddomain.Session, error)
 	GetSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) (clouddomain.Session, error)
+	UpdateSession(context.Context, clouddomain.AccountID, clouddomain.SessionID, cloudpostgres.UpdateSessionInput) (clouddomain.Session, error)
 	DeleteSession(context.Context, clouddomain.AccountID, clouddomain.SessionID) error
 	GetActiveTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID) (*clouddomain.Turn, error)
 	GetLatestTurn(context.Context, clouddomain.AccountID, clouddomain.SessionID) (*clouddomain.Turn, error)
@@ -311,6 +313,7 @@ func (s *Server) routes() http.Handler {
 			protected.Get("/sessions", s.listSessions)
 			protected.Post("/sessions", s.createSession)
 			protected.Get("/sessions/{sessionId}", s.getSession)
+			protected.Patch("/sessions/{sessionId}", s.updateSession)
 			protected.Delete("/sessions/{sessionId}", s.deleteSession)
 			protected.Get("/sessions/{sessionId}/active-turn", s.activeTurn)
 			protected.Post("/sessions/{sessionId}/desired-state", s.setDesiredState)
@@ -342,6 +345,8 @@ func (s *Server) routes() http.Handler {
 				org.Get("/projects", s.listProjects)
 				org.With(s.requireOrgRole("member")).Post("/projects", s.createProject)
 				org.With(s.requireOrgRole("member")).Post("/projects/scratch", s.createScratchProject)
+				org.With(s.requireOrgRole("member")).Post("/projects/standalone", s.createStandaloneProject)
+				org.With(s.requireOrgRole("member")).Patch("/projects/{projectId}", s.updateProject)
 				org.With(s.requireOrgRole("admin")).Delete("/projects/{projectId}", s.deleteProject)
 				org.With(s.requireOrgRole("member")).Get("/projects/{projectId}/shares", s.listProjectShareAccess)
 				org.With(s.requireOrgRole("member")).Post("/projects/{projectId}/shares", s.createProjectShareLink)
@@ -351,6 +356,7 @@ func (s *Server) routes() http.Handler {
 				org.Get("/sessions", s.listSessions)
 				org.With(s.requireOrgRole("member")).Post("/sessions", s.createSession)
 				org.Get("/sessions/{sessionId}", s.getSession)
+				org.With(s.requireOrgRole("member")).Patch("/sessions/{sessionId}", s.updateSession)
 				org.With(s.requireOrgRole("member")).Delete("/sessions/{sessionId}", s.deleteSession)
 				org.Get("/sessions/{sessionId}/active-turn", s.activeTurn)
 				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/desired-state", s.setDesiredState)
@@ -1202,6 +1208,127 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"project": project})
 }
 
+func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	if projectID == "" {
+		writeError(w, r, http.StatusBadRequest, "PROJECT_REQUIRED", "A project is required.")
+		return
+	}
+	if _, shared := sharedProjectAccessFromContext(r.Context()); shared {
+		writeError(w, r, http.StatusForbidden, "PROJECT_FORBIDDEN", "Shared project access cannot rename projects.")
+		return
+	}
+	var input struct {
+		DisplayName string `json:"displayName"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if input.DisplayName == "" || len(input.DisplayName) > 80 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROJECT", "A project name is required and must be at most 80 characters.")
+		return
+	}
+	project, err := s.store.UpdateProject(r.Context(), account.ID, projectID, cloudpostgres.UpdateProjectInput{
+		DisplayName: input.DisplayName,
+	})
+	if errors.Is(err, cloudpostgres.ErrProjectNotFound) {
+		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "update project", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"project": project})
+}
+
+func (s *Server) createStandaloneProject(w http.ResponseWriter, r *http.Request) {
+	if _, shared := sharedProjectAccessFromContext(r.Context()); shared {
+		writeError(w, r, http.StatusForbidden, "PROJECT_FORBIDDEN", "A project share does not grant permission to create other projects.")
+		return
+	}
+	account, _ := accountFromContext(r.Context())
+	var input struct {
+		DisplayName  string `json:"displayName"`
+		Orchestrator struct {
+			Harness              string `json:"harness"`
+			ProviderConnectionID string `json:"providerConnectionId"`
+		} `json:"orchestrator"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	displayName := strings.TrimSpace(input.DisplayName)
+	if displayName == "" {
+		displayName = "New chat"
+	}
+	if len(displayName) > 80 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROJECT", "A project name must be at most 80 characters.")
+		return
+	}
+	input.Orchestrator.Harness = strings.TrimSpace(input.Orchestrator.Harness)
+	if !cloudWorkerHarness(input.Orchestrator.Harness) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_AGENT", "harness must be claude-code, codex, or cursor.")
+		return
+	}
+	credential, err := s.loadAgentCredential(r.Context(), account.ID, input.Orchestrator.Harness)
+	if errors.Is(err, errAgentConnectionRequired) {
+		writeError(w, r, http.StatusBadRequest, "AGENT_CONNECTION_REQUIRED", "Connect "+input.Orchestrator.Harness+" before creating a standalone project.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "validate standalone project agent connection", err)
+		return
+	}
+	if credential != nil {
+		credential.Secret = ""
+	}
+	project, err := s.store.CreateProject(r.Context(), account.ID, cloudpostgres.CreateProjectInput{
+		DisplayName:   displayName,
+		RepositoryURL: standaloneRepositoryURL(account.ID, uuid.NewString()),
+		DefaultBranch: "main",
+		Config:        json.RawMessage(`{"source":"standalone"}`),
+	})
+	if errors.Is(err, cloudpostgres.ErrProjectExists) {
+		writeError(w, r, http.StatusConflict, "PROJECT_EXISTS", "A standalone project with this workspace ID already exists. Try again.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "create standalone project", err)
+		return
+	}
+	result, err := s.store.CreateSession(r.Context(), account.ID, cloudpostgres.CreateSessionInput{
+		IdempotencyKey:           uuid.NewString(),
+		ProjectID:                project.ID,
+		Kind:                     "worker",
+		Harness:                  input.Orchestrator.Harness,
+		DisplayName:              displayName,
+		Resource:                 clouddomain.StandaloneResourceProfile(),
+		Provider:                 s.sandboxProvider,
+		ProviderConnectionID:     providerConnectionID(s.sandboxProvider, input.Orchestrator.ProviderConnectionID),
+		MaxActiveSandboxesPerOrg: s.maxActiveSandboxesPerOrg,
+	})
+	if err != nil {
+		if deleteErr := s.store.DeleteProject(context.WithoutCancel(r.Context()), account.ID, project.ID); deleteErr != nil && s.log != nil {
+			s.log.Warn("standalone project rollback failed",
+				"project_id", project.ID,
+				"err", deleteErr,
+			)
+		}
+		if s.writeScratchSessionError(w, r, err) {
+			return
+		}
+		s.internalError(w, r, "create standalone project agent", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"project": project,
+		"session": result.Session,
+	})
+}
+
 func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) {
 	if _, shared := sharedProjectAccessFromContext(r.Context()); shared {
 		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_FORBIDDEN", "Shared project access cannot be reshared.")
@@ -1495,17 +1622,33 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	project, err := s.store.GetProject(r.Context(), account.ID, input.ProjectID)
+	if errors.Is(err, cloudpostgres.ErrProjectNotFound) {
+		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "load project for session", err)
+		return
+	}
 	defaultResource := clouddomain.DefaultResourceProfile()
+	if cloudProjectStandalone(project) {
+		defaultResource = clouddomain.StandaloneResourceProfile()
+	}
 	if input.Resource == (clouddomain.ResourceProfile{}) {
 		input.Resource = defaultResource
 	}
 	if input.Resource != defaultResource {
+		message := "Cloud V1 requires 4 CPU, 8 GiB memory, and 10 GiB disk."
+		if cloudProjectStandalone(project) {
+			message = "Standalone projects require 8 CPU, 16 GiB memory, and 20 GiB disk."
+		}
 		writeError(
 			w,
 			r,
 			http.StatusBadRequest,
 			"INVALID_RESOURCE_PROFILE",
-			"Cloud V1 requires 4 CPU, 8 GiB memory, and 10 GiB disk.",
+			message,
 		)
 		return
 	}
@@ -1626,6 +1769,57 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
 			return
 		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": session})
+}
+
+func (s *Server) updateSession(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	sessionID := clouddomain.SessionID(strings.TrimSpace(chi.URLParam(r, "sessionId")))
+	if sessionID == "" {
+		writeError(w, r, http.StatusBadRequest, "SESSION_REQUIRED", "A session is required.")
+		return
+	}
+	existing, err := s.store.GetSession(r.Context(), account.ID, sessionID)
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "get session for update", err)
+		return
+	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
+		if _, allowed := shared.ProjectIDs[existing.ProjectID]; !allowed {
+			writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+			return
+		}
+		if shared.Roles[existing.ProjectID] != "editor" {
+			writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Viewer access is read-only for this project.")
+			return
+		}
+	}
+	var input struct {
+		DisplayName string `json:"displayName"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	input.DisplayName = strings.TrimSpace(input.DisplayName)
+	if input.DisplayName == "" || len(input.DisplayName) > 80 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SESSION", "A session name is required and must be at most 80 characters.")
+		return
+	}
+	session, err := s.store.UpdateSession(r.Context(), account.ID, sessionID, cloudpostgres.UpdateSessionInput{
+		DisplayName: input.DisplayName,
+	})
+	if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
+		writeError(w, r, http.StatusNotFound, "SESSION_NOT_FOUND", "The cloud session does not exist.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "update session", err)
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": session})
 }
@@ -4687,6 +4881,26 @@ func (s *Server) cors(next http.Handler) http.Handler {
 func validGitHubRepositoryURL(value string) bool {
 	return strings.HasPrefix(value, "https://github.com/") &&
 		len(strings.TrimPrefix(value, "https://github.com/")) > 2
+}
+
+func standaloneRepositoryURL(accountID clouddomain.AccountID, id string) string {
+	return "ao-standalone://" + string(accountID) + "/" + id
+}
+
+func cloudProjectStandalone(project clouddomain.Project) bool {
+	if strings.HasPrefix(strings.TrimSpace(project.RepositoryURL), "ao-standalone://") {
+		return true
+	}
+	var config struct {
+		Source string `json:"source"`
+	}
+	if len(project.Config) == 0 {
+		return false
+	}
+	if err := json.Unmarshal(project.Config, &config); err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(config.Source), "standalone")
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, output any) bool {

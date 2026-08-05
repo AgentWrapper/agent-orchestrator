@@ -359,6 +359,16 @@ type CreateProjectInput struct {
 	Config             json.RawMessage
 }
 
+// UpdateProjectInput contains mutable project metadata.
+type UpdateProjectInput struct {
+	DisplayName string
+}
+
+// UpdateSessionInput contains mutable session metadata.
+type UpdateSessionInput struct {
+	DisplayName string
+}
+
 // CreateProject creates a repository-backed project in an account.
 func (s *Store) CreateProject(
 	ctx context.Context,
@@ -414,6 +424,82 @@ func (s *Store) CreateProject(
 		return clouddomain.Project{}, fmt.Errorf("create project: %w", err)
 	}
 	return project, nil
+}
+
+// UpdateProject updates mutable metadata for one account-owned project.
+func (s *Store) UpdateProject(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	projectID clouddomain.ProjectID,
+	input UpdateProjectInput,
+) (clouddomain.Project, error) {
+	var project clouddomain.Project
+	err := s.pool.QueryRow(ctx, `
+		UPDATE ao_projects
+		SET display_name = $3, updated_at = now()
+		WHERE org_id = $1 AND id = $2
+		RETURNING id, account_id, org_id, display_name, repository_url, default_branch,
+			github_repository_id, config, created_at, updated_at
+	`, accountID, projectID, input.DisplayName).Scan(
+		&project.ID,
+		&project.AccountID,
+		&project.OrgID,
+		&project.DisplayName,
+		&project.RepositoryURL,
+		&project.DefaultBranch,
+		&project.GitHubRepositoryID,
+		&project.Config,
+		&project.CreatedAt,
+		&project.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return clouddomain.Project{}, ErrProjectNotFound
+	}
+	if err != nil {
+		return clouddomain.Project{}, fmt.Errorf("update project: %w", err)
+	}
+	return project, nil
+}
+
+// UpdateSession updates mutable metadata for one account-owned session.
+func (s *Store) UpdateSession(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	input UpdateSessionInput,
+) (clouddomain.Session, error) {
+	var session clouddomain.Session
+	err := s.pool.QueryRow(ctx, `
+		UPDATE ao_sessions
+		SET display_name = $3, updated_at = now()
+		WHERE org_id = $1 AND id = $2
+		RETURNING id, account_id, org_id, project_id, kind, harness, display_name, branch,
+			prompt, activity_state, is_terminated, agent_session_id, created_at,
+			updated_at
+	`, accountID, sessionID, input.DisplayName).Scan(
+		&session.ID,
+		&session.AccountID,
+		&session.OrgID,
+		&session.ProjectID,
+		&session.Kind,
+		&session.Harness,
+		&session.DisplayName,
+		&session.Branch,
+		&session.Prompt,
+		&session.ActivityState,
+		&session.IsTerminated,
+		&session.AgentSessionID,
+		&session.CreatedAt,
+		&session.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return clouddomain.Session{}, ErrSessionNotFound
+	}
+	if err != nil {
+		return clouddomain.Session{}, fmt.Errorf("update session: %w", err)
+	}
+	session.Status = string(deriveCloudStatus(session, nil))
+	return session, nil
 }
 
 // ListProjects returns the projects in an account.

@@ -952,6 +952,61 @@ func TestPrepareRepositoryConfiguresWorkerCredentialForNewAndResumedWorkspace(t 
 	)
 }
 
+func TestPrepareRepositoryInitializesStandaloneWorkspace(t *testing.T) {
+	workspaceDir := filepath.Join(t.TempDir(), "workspace")
+	client := NewClient("http://127.0.0.1:1", nil)
+	client.SetToken("worker-token")
+	runner := &Runner{
+		client:       client,
+		workspaceDir: workspaceDir,
+		dataDir:      t.TempDir(),
+		bootstrap: BootstrapResponse{
+			Launch: cloudpostgres.WorkerLaunchSpec{
+				RepositoryURL: "ao-standalone://org-one/project-one",
+				DefaultBranch: "main",
+				ProjectConfig: []byte(`{"source":"standalone"}`),
+				Session: clouddomain.Session{
+					Branch: "ao/standalone-session",
+				},
+			},
+		},
+	}
+
+	if err := runner.prepareRepository(context.Background()); err != nil {
+		t.Fatalf("prepareRepository() error = %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(workspaceDir, ".git")); err != nil || !info.IsDir() {
+		t.Fatalf("standalone .git missing: info=%#v err=%v", info, err)
+	}
+	branch := strings.TrimSpace(string(runGitTestCommand(
+		t,
+		workspaceDir,
+		nil,
+		"branch",
+		"--show-current",
+	)))
+	if branch != "ao/standalone-session" {
+		t.Fatalf("branch = %q, want ao/standalone-session", branch)
+	}
+	authorName := strings.TrimSpace(string(runGitTestCommand(
+		t,
+		workspaceDir,
+		nil,
+		"config",
+		"--local",
+		"--get",
+		"user.name",
+	)))
+	if authorName != cloudGitAuthorName {
+		t.Fatalf("user.name = %q, want %q", authorName, cloudGitAuthorName)
+	}
+	if remoteOutput, err := exec.Command("git", "-C", workspaceDir, "remote").CombinedOutput(); err != nil {
+		t.Fatalf("git remote failed: %v: %s", err, remoteOutput)
+	} else if strings.TrimSpace(string(remoteOutput)) != "" {
+		t.Fatalf("standalone remotes = %q, want none", strings.TrimSpace(string(remoteOutput)))
+	}
+}
+
 func assertWorkerGitCredential(t *testing.T, helperPath, token string) {
 	t.Helper()
 	command := exec.Command(helperPath, "get")

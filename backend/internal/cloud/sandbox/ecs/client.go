@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -116,6 +117,12 @@ func (c *Client) Create(ctx context.Context, spec cloudsandbox.Spec) (cloudsandb
 			{Key: aws.String("ao.session_id"), Value: aws.String(string(spec.SessionID))},
 			{Key: aws.String("ao.managed"), Value: aws.String("true")},
 		},
+	}
+	if spec.ResourceProfile.CPU > 0 {
+		input.Overrides.Cpu = aws.String(strconv.Itoa(spec.ResourceProfile.CPU * 1024))
+	}
+	if spec.ResourceProfile.Memory > 0 {
+		input.Overrides.Memory = aws.String(strconv.Itoa(spec.ResourceProfile.Memory * 1024))
 	}
 	output, err := c.api.RunTask(ctx, input)
 	if err != nil {

@@ -113,6 +113,13 @@ const primaryButton =
 const field =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-[#4d8dff]";
 
+function isStandaloneProject(project?: CloudProject | null) {
+  return (
+    project?.config?.source === "standalone" ||
+    project?.repositoryUrl.startsWith("ao-standalone://") === true
+  );
+}
+
 function OrchestratorIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -284,7 +291,10 @@ export default function CloudAppPage() {
   const [showSessionForm, setShowSessionForm] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
+  const [renameProject, setRenameProject] = useState<CloudProject | null>(null);
+  const [renameSession, setRenameSession] = useState<CloudSession | null>(null);
   const [shareProject, setShareProject] = useState<CloudProject | null>(null);
+  const [shareSessionId, setShareSessionId] = useState("");
   const [shareRole, setShareRole] = useState<"viewer" | "editor">("viewer");
   const [shareAccessScope, setShareAccessScope] = useState<
     "anyone" | "restricted"
@@ -779,6 +789,7 @@ export default function CloudAppPage() {
   const selectedProject =
     selectedShare?.project ??
     projects.find(({ id }) => id === selectedProjectId);
+  const selectedProjectStandalone = isStandaloneProject(selectedProject);
   const selectedSession =
     selectedShare?.sessions?.find(({ id }) => id === selectedSessionId) ??
     sessions.find(({ id }) => id === selectedSessionId);
@@ -829,6 +840,7 @@ export default function CloudAppPage() {
   };
   const selectedProjectOrchestrator = activeSessions.find(
     ({ projectId, kind, isTerminated }) =>
+      !selectedProjectStandalone &&
       projectId === selectedProjectId &&
       kind === "orchestrator" &&
       !isTerminated,
@@ -837,6 +849,12 @@ export default function CloudAppPage() {
   const visibleSessions = selectedProjectId
     ? workerSessions.filter(({ projectId }) => projectId === selectedProjectId)
     : workerSessions;
+  const shareProjectSessions = shareProject
+    ? sessions.filter(
+        (cloudSession) =>
+          cloudSession.projectId === shareProject.id && !cloudSession.isTerminated,
+      )
+    : [];
   const visibleSessionSCMKey = visibleSessions
     .map(({ id, status }) => `${id}:${status}`)
     .sort()
@@ -1131,6 +1149,67 @@ export default function CloudAppPage() {
     }
   };
 
+  const createStandaloneProjectAndPrewarmOrchestrator = async (input: {
+    displayName: string;
+  }) => {
+    if (!defaultAgent) {
+      promptForAgentConnection();
+      return;
+    }
+    if (!api || !selectedOrgId || selectedShare || !canEditOrg) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const { project, session: orchestrator } =
+        await api.createStandaloneProject(selectedOrgId, {
+          displayName: input.displayName.trim() || "New chat",
+          orchestrator: {
+            harness: defaultAgent,
+            providerConnectionId: daytonaConnections[0]?.id,
+          },
+        });
+      await refresh();
+      setSelectedProjectId(project.id);
+      setSelectedSessionId(orchestrator.id);
+      setView("session");
+      setShowProjectForm(false);
+      setError(null);
+    } catch (operationError) {
+      setError(
+        operationError instanceof Error
+          ? operationError.message
+          : "Could not create the standalone project.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateProjectName = async (project: CloudProject, displayName: string) => {
+    if (!api || !selectedOrgId || selectedShare || !canEditOrg) return;
+    const nextName = displayName.trim();
+    if (!nextName) return;
+    const updated = await run(() =>
+      api.updateProject(selectedOrgId, project.id, { displayName: nextName }),
+    );
+    if (!updated) return;
+    setRenameProject(null);
+    await refresh();
+  };
+
+  const updateSessionName = async (session: CloudSession, displayName: string) => {
+    if (!api || !activeOrgId || selectedShare || !canEditOrg) return;
+    const nextName = displayName.trim();
+    if (!nextName) return;
+    const updated = await run(() =>
+      api.updateSession(activeOrgId, session.id, { displayName: nextName }),
+    );
+    if (!updated) return;
+    setRenameSession(null);
+    await refresh();
+  };
+
   const deleteSelectedWorkerMachine = async () => {
     if (!api || !activeOrgId || !selectedSession || selectedSession.kind !== "worker") return;
     const confirmed = window.confirm(
@@ -1199,6 +1278,7 @@ export default function CloudAppPage() {
         selectedOrgId,
         shareProject.id,
         {
+          ...(shareSessionId ? { sessionId: shareSessionId } : {}),
           role: shareRole,
           accessScope: shareAccessScope,
           recipientEmails,
@@ -1247,6 +1327,7 @@ export default function CloudAppPage() {
 
   const closeProjectShare = () => {
     setShareProject(null);
+    setShareSessionId("");
     setShareRole("viewer");
     setShareAccessScope("anyone");
     setShareRecipientEmails("");
@@ -1604,12 +1685,24 @@ export default function CloudAppPage() {
                           onClick={() => {
                             setProjectMenuOpenId(null);
                             setShareProject(project);
+                            setShareSessionId("");
                             setShareRole("viewer");
                             setShareLink("");
                           }}
                         >
                           <ExternalLink className="size-3.5" />
                           Share project
+                        </button>
+                        <button
+                          type="button"
+                          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-white/70 hover:bg-white/[0.06] hover:text-white"
+                          onClick={() => {
+                            setProjectMenuOpenId(null);
+                            setRenameProject(project);
+                          }}
+                        >
+                          <PencilLine className="size-3.5" />
+                          Rename project
                         </button>
                         {canAdminSelectedOrg ? (
                           <button
@@ -1961,10 +2054,12 @@ export default function CloudAppPage() {
                     className={button}
                     disabled={loading || !canEditOrg}
                     onClick={() => setShowSessionForm(true)}
-                    aria-label="New task"
+                    aria-label={selectedProjectStandalone ? "New agent" : "New task"}
                   >
                     <Plus className="size-3.5" />
-                    <span className="hidden xl:inline">New task</span>
+                    <span className="hidden xl:inline">
+                      {selectedProjectStandalone ? "New agent" : "New task"}
+                    </span>
                   </button>
                   <button
                     className={primaryButton}
@@ -2012,13 +2107,30 @@ export default function CloudAppPage() {
                   >
                     <PanelRightOpen className="size-3.5" />
                   </button>
+                  {selectedProjectStandalone &&
+                  selectedSession.kind === "worker" &&
+                  canEditOrg ? (
+                    <button
+                      className={button}
+                      disabled={loading}
+                      onClick={() => setRenameSession(selectedSession)}
+                      aria-label={`Rename ${selectedSession.displayName}`}
+                      title="Rename agent"
+                    >
+                      <PencilLine className="size-3.5" />
+                    </button>
+                  ) : null}
                   {selectedSession.kind === "worker" && canEditOrg ? (
                     <button
                       className={button}
                       disabled={loading}
                       onClick={() => void deleteSelectedWorkerMachine()}
                       aria-label={`Delete ${selectedSession.displayName} machine`}
-                      title="Delete worker machine"
+                      title={
+                        selectedProjectStandalone
+                          ? "Delete agent machine"
+                          : "Delete worker machine"
+                      }
                     >
                       <Trash2 className="size-3.5" />
                     </button>
@@ -2032,28 +2144,30 @@ export default function CloudAppPage() {
                     disabled={loading || !canEditOrg || Boolean(selectedShare)}
                   >
                     <Plus className="size-3.5" />
-                    New task
+                    {selectedProjectStandalone ? "New agent" : "New task"}
                   </button>
-                  <button
-                    className={button}
-                    disabled={
-                      loading ||
-                      !canEditOrg ||
-                      (!selectedProjectOrchestrator &&
-                        (!defaultAgent || Boolean(selectedShare)))
-                    }
-                    onClick={() => {
-                      if (selectedProjectOrchestrator) {
-                        setSelectedSessionId(selectedProjectOrchestrator.id);
-                        setView("session");
-                      } else {
-                        startOrchestrator();
+                  {!selectedProjectStandalone ? (
+                    <button
+                      className={button}
+                      disabled={
+                        loading ||
+                        !canEditOrg ||
+                        (!selectedProjectOrchestrator &&
+                          (!defaultAgent || Boolean(selectedShare)))
                       }
-                    }}
-                  >
-                    <OrchestratorIcon className="size-3.5" />
-                    Orchestrator
-                  </button>
+                      onClick={() => {
+                        if (selectedProjectOrchestrator) {
+                          setSelectedSessionId(selectedProjectOrchestrator.id);
+                          setView("session");
+                        } else {
+                          startOrchestrator();
+                        }
+                      }}
+                    >
+                      <OrchestratorIcon className="size-3.5" />
+                      Orchestrator
+                    </button>
+                  ) : null}
                 </>
               ) : null}
             </div>
@@ -2142,6 +2256,7 @@ export default function CloudAppPage() {
                 scmBySessionId={sessionSCM}
                 activeSessionIds={activeChatSessionIds}
                 orchestrator={selectedProjectOrchestrator}
+                standalone={selectedProjectStandalone}
                 onSelect={(cloudSession) => {
                   setSelectedProjectId(cloudSession.projectId);
                   setSelectedSessionId(cloudSession.id);
@@ -2152,8 +2267,10 @@ export default function CloudAppPage() {
                   defaultAgent &&
                   canEditOrg &&
                   !selectedShare &&
-                  !selectedProjectOrchestrator
-                    ? startOrchestrator
+                  (selectedProjectStandalone || !selectedProjectOrchestrator)
+                    ? selectedProjectStandalone
+                      ? () => setShowSessionForm(true)
+                      : startOrchestrator
                     : undefined
                 }
                 agentAvailable={Boolean(defaultAgent)}
@@ -2183,8 +2300,25 @@ export default function CloudAppPage() {
           onClose={() => setShowProjectForm(false)}
           onSubmit={createProjectAndPrewarmOrchestrator}
           onSubmitScratch={createScratchProjectAndPrewarmOrchestrator}
+          onSubmitStandalone={createStandaloneProjectAndPrewarmOrchestrator}
         />
       )}
+      {renameProject ? (
+        <RenameProjectDialog
+          project={renameProject}
+          loading={loading}
+          onClose={() => setRenameProject(null)}
+          onSubmit={updateProjectName}
+        />
+      ) : null}
+      {renameSession ? (
+        <RenameSessionDialog
+          session={renameSession}
+          loading={loading}
+          onClose={() => setRenameSession(null)}
+          onSubmit={updateSessionName}
+        />
+      ) : null}
       {showAgentConnectionPrompt ? (
         <AgentConnectionPrompt onClose={closeAgentConnectionPrompt} />
       ) : null}
@@ -2204,6 +2338,30 @@ export default function CloudAppPage() {
                 </div>
               </div>
             </div>
+
+            <label className="block text-xs text-white/45">
+              Share scope
+              <select
+                className={`${field} mt-1.5`}
+                value={shareSessionId}
+                disabled={loading}
+                onChange={(event) => {
+                  setShareSessionId(event.target.value);
+                  setShareLink("");
+                  setShareCopied(false);
+                }}
+              >
+                <option value="">Entire project and all agents</option>
+                {shareProjectSessions.map((cloudSession) => (
+                  <option key={cloudSession.id} value={cloudSession.id}>
+                    {cloudSession.displayName}
+                    {cloudSession.kind === "orchestrator"
+                      ? " · orchestrator"
+                      : " · agent"}
+                  </option>
+                ))}
+              </select>
+            </label>
 
             <div>
               <div className="mb-3 text-xs font-medium text-white/50">
@@ -2513,6 +2671,7 @@ export default function CloudAppPage() {
       {showSessionForm && selectedOrgId && !selectedShare && selectedProjectId && (
         <SessionForm
           projectId={selectedProjectId}
+          standalone={selectedProjectStandalone}
           providerConnectionId={daytonaConnections[0]?.id}
           connections={connections}
           loading={loading}
@@ -2637,6 +2796,7 @@ export function SessionBoard({
   scmBySessionId = {},
   activeSessionIds,
   orchestrator,
+  standalone = false,
   onSelect,
   onCreateOrchestrator,
   agentAvailable,
@@ -2648,6 +2808,7 @@ export function SessionBoard({
   scmBySessionId?: Record<string, CloudSessionSCM | null>;
   activeSessionIds: Set<string>;
   orchestrator?: CloudSession;
+  standalone?: boolean;
   onSelect: (session: CloudSession) => void;
   onCreateOrchestrator?: () => void;
   agentAvailable: boolean;
@@ -2697,10 +2858,13 @@ export function SessionBoard({
       <div className="grid h-full place-items-center px-6 text-center">
         <div className="max-w-sm">
           <OrchestratorIcon className="mx-auto size-5 text-[#4d8dff]" />
-          <h2 className="mt-4 text-base">No cloud sessions</h2>
+          <h2 className="mt-4 text-base">
+            {standalone ? "No standalone agents" : "No cloud sessions"}
+          </h2>
           <p className="mt-2 text-sm leading-6 text-white/45">
-            Start the project orchestrator. AO will provision its sandbox and
-            it can create isolated workers with normal AO commands.
+            {standalone
+              ? "Start a peer agent in this standalone workspace. You can add more agents later and switch between them from the sidebar or board."
+              : "Start the project orchestrator. AO will provision its sandbox and it can create isolated workers with normal AO commands."}
           </p>
           {onCreateOrchestrator ? (
             <button
@@ -2713,7 +2877,11 @@ export function SessionBoard({
               ) : (
                 <Play className="size-3.5" />
               )}
-              {loading ? "Starting…" : "Start orchestrator"}
+              {loading
+                ? "Starting…"
+                : standalone
+                  ? "Start agent"
+                  : "Start orchestrator"}
             </button>
           ) : !agentAvailable ? (
             <button className={`${button} mt-5`} onClick={onOpenSettings}>
@@ -4444,6 +4612,120 @@ function AgentConnectionPrompt({ onClose }: { onClose: () => void }) {
   );
 }
 
+function RenameProjectDialog({
+  project,
+  loading,
+  onClose,
+  onSubmit,
+}: {
+  project: CloudProject;
+  loading: boolean;
+  onClose: () => void;
+  onSubmit: (project: CloudProject, displayName: string) => Promise<void>;
+}) {
+  const [displayName, setDisplayName] = useState(project.displayName);
+  const trimmed = displayName.trim();
+
+  return (
+    <Overlay title="Rename project" onClose={onClose}>
+      <form
+        className="space-y-4 p-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!trimmed) return;
+          void onSubmit(project, trimmed);
+        }}
+      >
+        <label className="block text-xs text-white/45">
+          Project name
+          <input
+            className={`${field} mt-1.5`}
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            maxLength={80}
+            required
+            disabled={loading}
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            className={button}
+            onClick={onClose}
+            disabled={loading}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className={primaryButton}
+            disabled={!trimmed || loading}
+          >
+            {loading ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </form>
+    </Overlay>
+  );
+}
+
+function RenameSessionDialog({
+  session,
+  loading,
+  onClose,
+  onSubmit,
+}: {
+  session: CloudSession;
+  loading: boolean;
+  onClose: () => void;
+  onSubmit: (session: CloudSession, displayName: string) => Promise<void>;
+}) {
+  const [displayName, setDisplayName] = useState(session.displayName);
+  const trimmed = displayName.trim();
+
+  return (
+    <Overlay title="Rename agent" onClose={onClose}>
+      <form
+        className="space-y-4 p-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!trimmed) return;
+          void onSubmit(session, trimmed);
+        }}
+      >
+        <label className="block text-xs text-white/45">
+          Agent name
+          <input
+            className={`${field} mt-1.5`}
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            maxLength={80}
+            required
+            disabled={loading}
+          />
+        </label>
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            className={button}
+            onClick={onClose}
+            disabled={loading}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className={primaryButton}
+            disabled={!trimmed || loading}
+          >
+            {loading ? "Saving…" : "Save"}
+          </button>
+        </div>
+      </form>
+    </Overlay>
+  );
+}
+
 function ProjectForm({
   repositories,
   repositoriesLoading,
@@ -4456,6 +4738,7 @@ function ProjectForm({
   onClose,
   onSubmit,
   onSubmitScratch,
+  onSubmitStandalone,
 }: {
   repositories: CloudRepository[];
   repositoriesLoading: boolean;
@@ -4477,12 +4760,14 @@ function ProjectForm({
     githubInstallationId?: number;
     private?: boolean;
   }) => Promise<void>;
+  onSubmitStandalone: (input: { displayName: string }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<"choose" | "github" | "scratch">("choose");
   const [repositoryURL, setRepositoryURL] = useState(
     repositories[0]?.url ?? "",
   );
   const [scratchName, setScratchName] = useState("");
+  const [scratchUsesGitHub, setScratchUsesGitHub] = useState(false);
   const [scratchPrivate, setScratchPrivate] = useState(true);
   useEffect(() => {
     setRepositoryURL((current) =>
@@ -4543,7 +4828,7 @@ function ProjectForm({
             {error}
           </div>
         ) : null}
-        {scratchUnavailable ? (
+        {mode === "scratch" && scratchUsesGitHub && scratchUnavailable ? (
           <div className="rounded-lg border border-[#e8c14a]/20 bg-[#e8c14a]/[0.06] px-3 py-2.5">
             <p className="text-sm text-[#e8c14a]">Enable scratch projects</p>
             <p className="mt-1 text-xs leading-5 text-white/45">
@@ -4580,7 +4865,7 @@ function ProjectForm({
               <button
                 type="button"
                 className="group flex min-h-64 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
-                disabled={scratchUnavailable || loading}
+                disabled={loading}
                 onClick={() => setMode("scratch")}
               >
                 <span className="flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
@@ -4590,7 +4875,7 @@ function ProjectForm({
                   Start from scratch
                 </span>
                 <span className="mt-1 text-xs leading-5 text-white/42">
-                  Create a new GitHub repo, register it, then start AO normally.
+                  Start a standalone AO workspace, optionally backed by a new GitHub repo.
                 </span>
               </button>
             </div>
@@ -4667,97 +4952,129 @@ function ProjectForm({
             className="space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              if (!scratchName.trim() || !selectedScratchInstallation) return;
-              void onSubmitScratch({
-                displayName: scratchName.trim(),
-                githubInstallationId:
-                  selectedScratchInstallation.githubInstallationId,
-                private: scratchPrivate,
-              });
+              const displayName = scratchName.trim() || "New chat";
+              if (scratchUsesGitHub) {
+                if (!selectedScratchInstallation) return;
+                void onSubmitScratch({
+                  displayName,
+                  githubInstallationId:
+                    selectedScratchInstallation.githubInstallationId,
+                  private: scratchPrivate,
+                });
+                return;
+              }
+              void onSubmitStandalone({ displayName });
             }}
           >
             <label className="block text-xs text-white/45">
-              Project and repository name
+              Project name
               <input
                 className={`${field} mt-1.5`}
                 value={scratchName}
                 onChange={(event) => setScratchName(event.target.value)}
-                placeholder="my-new-app"
-                required
+                placeholder="New chat"
                 maxLength={80}
                 disabled={loading}
               />
             </label>
-            <div>
-              <div className="flex items-center justify-between gap-3">
-                <label
-                  className="text-xs text-white/45"
-                  htmlFor="scratch-github-owner"
-                >
-                  GitHub owner
-                </label>
-                <button
-                  type="button"
-                  className="text-xs text-[#8eb6ff] hover:underline"
-                  onClick={onOpenGitHubSettings}
-                  disabled={loading}
-                >
-                  Connect another
-                </button>
-              </div>
-              <select
-                id="scratch-github-owner"
-                className={`${field} mt-1.5`}
-                value={scratchInstallationId}
-                onChange={(event) =>
-                  setScratchInstallationId(event.target.value)
-                }
-                disabled={loading || scratchInstallations.length === 0}
-                required
-              >
-                <option value="">
-                  {scratchInstallations.length > 0
-                    ? "Choose personal account or organization"
-                    : "No available GitHub owners"}
-                </option>
-                {scratchInstallations.map((installation) => (
-                  <option
-                    key={installation.githubInstallationId}
-                    value={installation.githubInstallationId}
-                    disabled={!installation.canCreateRepository}
-                  >
-                    {installation.accountLogin}
-                    {installation.accountType.toLowerCase() === "user"
-                      ? " · personal"
-                      : " · organization"}
-                    {installation.canCreateRepository
-                      ? ""
-                      : " · configure all repositories"}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <label className="flex items-start gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/50">
+            <label className="flex items-start gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/55">
               <input
                 className="mt-1"
                 type="checkbox"
-                checked={scratchPrivate}
-                onChange={(event) => setScratchPrivate(event.target.checked)}
+                checked={scratchUsesGitHub}
+                onChange={(event) => setScratchUsesGitHub(event.target.checked)}
                 disabled={loading}
               />
-              <span>Create the GitHub repository as private.</span>
+              <span>
+                Create a GitHub repository for this project.
+                <span className="block text-white/35">
+                  Leave unchecked for a standalone AO workspace with no GitHub setup.
+                </span>
+              </span>
             </label>
-            <div className="rounded-lg border border-[#4d8dff]/20 bg-[#4d8dff]/[0.06] px-3 py-2 text-xs leading-5 text-[#9fc0ff]">
-              Setup order: initialize the GitHub repo, register the AO project,
-              then start the orchestrator. If orchestration fails, AO removes
-              the new repo so you can retry cleanly.
-            </div>
+            {scratchUsesGitHub ? (
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <label
+                    className="text-xs text-white/45"
+                    htmlFor="scratch-github-owner"
+                  >
+                    GitHub owner
+                  </label>
+                  <button
+                    type="button"
+                    className="text-xs text-[#8eb6ff] hover:underline"
+                    onClick={onOpenGitHubSettings}
+                    disabled={loading}
+                  >
+                    Connect another
+                  </button>
+                </div>
+                <select
+                  id="scratch-github-owner"
+                  className={`${field} mt-1.5`}
+                  value={scratchInstallationId}
+                  onChange={(event) =>
+                    setScratchInstallationId(event.target.value)
+                  }
+                  disabled={loading || scratchInstallations.length === 0}
+                  required
+                >
+                  <option value="">
+                    {scratchInstallations.length > 0
+                      ? "Choose personal account or organization"
+                      : "No available GitHub owners"}
+                  </option>
+                  {scratchInstallations.map((installation) => (
+                    <option
+                      key={installation.githubInstallationId}
+                      value={installation.githubInstallationId}
+                      disabled={!installation.canCreateRepository}
+                    >
+                      {installation.accountLogin}
+                      {installation.accountType.toLowerCase() === "user"
+                        ? " · personal"
+                        : " · organization"}
+                      {installation.canCreateRepository
+                        ? ""
+                        : " · configure all repositories"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+            {scratchUsesGitHub ? (
+              <label className="flex items-start gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/50">
+                <input
+                  className="mt-1"
+                  type="checkbox"
+                  checked={scratchPrivate}
+                  onChange={(event) => setScratchPrivate(event.target.checked)}
+                  disabled={loading}
+                />
+                <span>Create the GitHub repository as private.</span>
+              </label>
+            ) : null}
+            {scratchUsesGitHub ? (
+              <div className="rounded-lg border border-[#4d8dff]/20 bg-[#4d8dff]/[0.06] px-3 py-2 text-xs leading-5 text-[#9fc0ff]">
+                Setup order: initialize the GitHub repo, register the AO project,
+                then start the first agent. If startup fails, AO removes
+                the new repo so you can retry cleanly.
+              </div>
+            ) : (
+              <div className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/45">
+                AO will start an empty cloud workspace with a local git repository and no GitHub remote.
+              </div>
+            )}
             <ProjectFormActions
               loading={loading}
               primaryDisabled={
-                !scratchName.trim() || !selectedScratchInstallation || loading
+                loading ||
+                (scratchUsesGitHub && !selectedScratchInstallation)
               }
-              primaryLabel="Create from scratch"
+              primaryLabel={
+                scratchUsesGitHub ? "Create from scratch" : "Start standalone"
+              }
               loadingLabel="Creating…"
               onBack={() => setMode("choose")}
               onClose={onClose}
@@ -4811,6 +5128,7 @@ function ProjectFormActions({
 
 function SessionForm({
   projectId,
+  standalone = false,
   providerConnectionId,
   connections,
   loading,
@@ -4819,6 +5137,7 @@ function SessionForm({
   onSubmit,
 }: {
   projectId: string;
+  standalone?: boolean;
   providerConnectionId?: string;
   connections: ProviderConnection[];
   loading: boolean;
@@ -4840,7 +5159,10 @@ function SessionForm({
     defaultConnectedAgent(connections) ?? "",
   );
   return (
-    <Overlay title="New cloud worker" onClose={onClose}>
+    <Overlay
+      title={standalone ? "New standalone agent" : "New cloud worker"}
+      onClose={onClose}
+    >
       <form
         className="space-y-4 p-4"
         onSubmit={(event) => {
@@ -4850,7 +5172,7 @@ function SessionForm({
             projectId,
             kind: "worker",
             harness,
-            displayName,
+            displayName: displayName.trim() || (standalone ? "New chat" : ""),
             prompt,
             providerConnectionId,
           });
@@ -4860,8 +5182,8 @@ function SessionForm({
           className={field}
           value={displayName}
           onChange={(event) => setDisplayName(event.target.value)}
-          placeholder="Worker name"
-          required
+          placeholder={standalone ? "Agent name" : "Worker name"}
+          required={!standalone}
           maxLength={40}
         />
         <div className="relative">
@@ -4907,8 +5229,12 @@ function SessionForm({
           className="min-h-32 w-full resize-y rounded-md border border-border bg-background p-3 text-sm outline-none focus:border-[#4d8dff]"
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
-          placeholder="What should this worker do?"
-          required
+          placeholder={
+            standalone
+              ? "Optional first prompt for this agent"
+              : "What should this worker do?"
+          }
+          required={!standalone}
         />
         <div className="flex justify-end gap-2">
           <button type="button" className={button} onClick={onClose}>
@@ -4922,7 +5248,11 @@ function SessionForm({
             {loading ? (
               <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />
             ) : null}
-            {loading ? "Spawning…" : "Spawn worker"}
+            {loading
+              ? "Spawning…"
+              : standalone
+                ? "Start agent"
+                : "Spawn worker"}
           </button>
         </div>
       </form>

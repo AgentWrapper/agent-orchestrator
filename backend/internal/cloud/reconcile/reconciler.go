@@ -332,7 +332,7 @@ func (r *Reconciler) workerSpec(
 		SessionID:       sandbox.SessionID,
 		Snapshot:        r.workerSnapshot,
 		Image:           r.workerImage,
-		ResourceProfile: clouddomain.ResourceProfile{CPU: 4, Memory: 8, Disk: 10},
+		ResourceProfile: sandbox.ResourceProfile,
 		Environment: map[string]string{
 			"AO_CLOUD_PUBLIC_URL":       r.publicURL,
 			"AO_CLOUD_SESSION_ID":       string(sandbox.SessionID),

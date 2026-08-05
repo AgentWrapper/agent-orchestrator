@@ -74,7 +74,8 @@ func TestCreateRunsFargateTaskWithWorkerEnvironment(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 	environment, err := client.Create(context.Background(), cloudsandbox.Spec{
-		SessionID: "session-one",
+		SessionID:       "session-one",
+		ResourceProfile: clouddomain.ResourceProfile{CPU: 8, Memory: 16, Disk: 20},
 		Environment: map[string]string{
 			"AO_CLOUD_PUBLIC_URL":       "https://cloud.example",
 			"AO_WORKER_BOOTSTRAP_TOKEN": "ticket",
@@ -95,6 +96,9 @@ func TestCreateRunsFargateTaskWithWorkerEnvironment(t *testing.T) {
 	}
 	if aws.ToString(input.StartedBy) != "ao-session-one" {
 		t.Fatalf("StartedBy = %q", aws.ToString(input.StartedBy))
+	}
+	if aws.ToString(input.Overrides.Cpu) != "8192" || aws.ToString(input.Overrides.Memory) != "16384" {
+		t.Fatalf("resource overrides = cpu %q memory %q", aws.ToString(input.Overrides.Cpu), aws.ToString(input.Overrides.Memory))
 	}
 	if input.NetworkConfiguration == nil ||
 		input.NetworkConfiguration.AwsvpcConfiguration == nil ||

@@ -207,6 +207,12 @@ func DefaultResourceProfile() ResourceProfile {
 	return ResourceProfile{CPU: 4, Memory: 8, Disk: 10}
 }
 
+// StandaloneResourceProfile returns the larger sandbox profile used by
+// standalone projects where one VM may coordinate more freeform work.
+func StandaloneResourceProfile() ResourceProfile {
+	return ResourceProfile{CPU: 8, Memory: 16, Disk: 20}
+}
+
 // Sandbox records desired and observed state for a session environment.
 type Sandbox struct {
 	SessionID             SessionID       `json:"sessionId"`

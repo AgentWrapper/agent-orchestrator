@@ -609,6 +609,36 @@ export class CloudAPI {
     );
   }
 
+  async createStandaloneProject(orgId: string, input: {
+    displayName: string;
+    orchestrator: {
+      harness: string;
+      providerConnectionId?: string;
+    };
+  }) {
+    return this.request<{ project: CloudProject; session: CloudSession }>(
+      this.orgPath(orgId, "/projects/standalone"),
+      {
+        method: "POST",
+        body: input,
+      },
+    );
+  }
+
+  async updateProject(
+    orgId: string,
+    projectId: string,
+    input: { displayName: string },
+  ) {
+    return this.request<{ project: CloudProject }>(
+      this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}`),
+      {
+        method: "PATCH",
+        body: input,
+      },
+    );
+  }
+
   async deleteProject(orgId: string, projectId: string) {
     return this.request<void>(
       this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}`),
@@ -698,6 +728,20 @@ export class CloudAPI {
   async session(orgId: string, sessionId: string) {
     return this.request<{ session: CloudSession }>(
       this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}`),
+    );
+  }
+
+  async updateSession(
+    orgId: string,
+    sessionId: string,
+    input: { displayName: string },
+  ) {
+    return this.request<{ session: CloudSession }>(
+      this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}`),
+      {
+        method: "PATCH",
+        body: input,
+      },
     );
   }
 
