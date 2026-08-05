@@ -855,6 +855,8 @@
 	"settings.dev.activitySpreadAria": "Activity spread in minutes",
 	"settings.dev.resetDefaultsLabel": "Reset defaults",
 	"settings.dev.resetReload": "Reset & Reload",
+	"settings.dev.decreaseAria": "Decrease {{label}}",
+	"settings.dev.increaseAria": "Increase {{label}}",
 	"files.close": "Close files",
 	"files.closeSearch": "Close search",
 	"files.copyPath": "Copy path for {{path}}",
