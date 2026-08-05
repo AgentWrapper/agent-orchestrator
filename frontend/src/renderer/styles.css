@@ -584,10 +584,12 @@ button.settings-row-bar {
 
 .review-run-controls-container {
 	container-type: inline-size;
+	width: 100%;
 }
 
 .review-run-controls {
 	flex-wrap: nowrap;
+	width: 100%;
 }
 
 @container (max-width: 28rem) {
