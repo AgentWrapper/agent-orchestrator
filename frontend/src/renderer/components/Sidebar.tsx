@@ -32,7 +32,7 @@ import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
-import { killSession } from "../lib/kill-session";
+import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
@@ -101,7 +101,6 @@ const MAX_DISPLAY_NAME_LEN = 20;
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
-export const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
@@ -186,7 +185,7 @@ export function Sidebar({
 	const { t } = useTranslation();
 	const prefersReducedMotion = useReducedMotion();
 	const selection = useSelection();
-	const { state, setOpen, isReady } = useSidebar();
+	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
@@ -198,23 +197,12 @@ export function Sidebar({
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
 
 	useLayoutEffect(() => {
-		if (isCollapsed) {
-			setExpandedChromeVisible(false);
-			return;
-		}
-
-		// _shell mounts the sidebar closed during startup loading, then opens it
-		// programmatically once workspace data is ready. While the provider is still
-		// in its startup-snap phase (`isReady === false`), reveal expanded chrome
-		// before paint so reloads do not fade labels and controls in afterward.
-		if (prefersReducedMotion || !isReady) {
+		// Offcanvas: the panel slides off-screen on collapse — no need to hide content.
+		// Reveal immediately on expand so there's no fade-in delay.
+		if (!isCollapsed) {
 			setExpandedChromeVisible(true);
-			return;
 		}
-
-		const timer = window.setTimeout(() => setExpandedChromeVisible(true), 160);
-		return () => window.clearTimeout(timer);
-	}, [isCollapsed, isReady, prefersReducedMotion]);
+	}, [isCollapsed]);
 
 	// Disclosure state: projects are expanded by default; a project id present in
 	// this set is collapsed (sessions hidden).
@@ -611,7 +599,7 @@ function ProjectItem({
 		onToggle();
 	};
 
-	const onProjectKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+	const onProjectKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
 		if (event.key !== "Enter" && event.key !== " ") return;
 		event.preventDefault();
 		onProjectClick();
@@ -652,74 +640,68 @@ function ProjectItem({
 		{/* Scale wrapper — main button only; action cluster sits outside so clicking it doesn't trigger scale */}
 		<div className="transition-[transform] duration-[100ms] ease-out active:scale-[0.98]">
 		{/* project-sidebar__proj-row */}
-		<SidebarMenuButton
-			asChild
-			aria-current={dashboardActive ? "page" : undefined}
-			aria-expanded={expanded}
-			isActive={projectActive}
-			tooltip={workspace.name}
-			className={cn(
-				NAV_ROW_CLASS,
-				// Always reserve room for the action cluster (orchestrator, kebab) —
-				// icons are always visible, not hover-gated.
-				"pr-sidebar-project-actions [&_svg]:size-icon-md",
-				// Icon rail: the old 36px letter tile.
-				"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
-			)}
+	<SidebarMenuButton
+		aria-current={dashboardActive ? "page" : undefined}
+		aria-expanded={expanded}
+		isActive={projectActive}
+		tooltip={workspace.name}
+		onClick={onProjectClick}
+		onKeyDown={onProjectKeyDown}
+		className={cn(
+			NAV_ROW_CLASS,
+			"pr-sidebar-project-actions [&_svg]:size-icon-md",
+			"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
+		)}
+	>
+		{/* Expanded sidebar: visual folder/chevron icon (decorative — toggle button is a sibling) */}
+		<span
+			aria-hidden="true"
+			className="relative shrink-0 group-data-[collapsible=icon]:hidden inline-flex size-[18px] items-center justify-center text-muted-foreground"
 		>
-			<div
-				aria-current={dashboardActive ? "page" : undefined}
-				aria-expanded={expanded}
-				className="flex w-full items-center gap-2"
-				onClick={onProjectClick}
-				onKeyDown={onProjectKeyDown}
-				role="button"
-				tabIndex={0}
-			>
-				{/* Expanded sidebar: folder icon; on hover becomes chevron toggle */}
-				<button
-					aria-label={t("shell.toggleProject", { name: workspace.name })}
-					aria-expanded={expanded}
-					className="relative shrink-0 group-data-[collapsible=icon]:hidden focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm"
-					data-project-folder=""
-					onClick={onFolderClick}
-					type="button"
+			{rowHovered ? (
+				<motion.span
+					animate={{ rotate: expanded ? 90 : 0 }}
+					initial={false}
+					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
+					className="inline-flex size-[18px] items-center justify-center translate-y-px"
 				>
-					{rowHovered ? (
-						<motion.span
-							animate={{ rotate: expanded ? 90 : 0 }}
-							initial={false}
-							transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-							className="inline-flex size-[18px] items-center justify-center text-muted-foreground translate-y-px"
-						>
-							<ChevronRight className="size-3.5!" strokeWidth={1.75} />
-						</motion.span>
-					) : (
-						<span className="inline-flex size-[18px] items-center justify-center text-muted-foreground">
-							{expanded ? (
-								<FolderOpen className="size-4" strokeWidth={1.75} />
-							) : (
-								<Folder className="size-4" strokeWidth={1.75} />
-							)}
-						</span>
-					)}
-				</button>
-				{/* Collapsed icon rail: folder icon */}
-				<span
-					aria-hidden="true"
-					className="hidden group-data-[collapsible=icon]:inline-flex size-8 items-center justify-center text-muted-foreground"
-				>
+					<ChevronRight className="size-3.5!" strokeWidth={1.75} />
+				</motion.span>
+			) : (
+				<span className="inline-flex size-[18px] items-center justify-center">
 					{expanded ? (
-						<FolderOpen className="size-5" strokeWidth={1.75} />
+						<FolderOpen className="size-4" strokeWidth={1.75} />
 					) : (
-						<Folder className="size-5" strokeWidth={1.75} />
+						<Folder className="size-4" strokeWidth={1.75} />
 					)}
 				</span>
-				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
-					{workspace.name}
-				</span>
-			</div>
-		</SidebarMenuButton>
+			)}
+		</span>
+		{/* Collapsed icon rail: folder icon */}
+		<span
+			aria-hidden="true"
+			className="hidden group-data-[collapsible=icon]:inline-flex size-8 items-center justify-center text-muted-foreground"
+		>
+			{expanded ? (
+				<FolderOpen className="size-5" strokeWidth={1.75} />
+			) : (
+				<Folder className="size-5" strokeWidth={1.75} />
+			)}
+		</span>
+		<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+			{workspace.name}
+		</span>
+	</SidebarMenuButton>
+	{/* Folder disclosure toggle: sibling of the nav button, absolutely positioned over
+	    the icon area so it intercepts clicks there without nesting buttons. */}
+	<button
+		aria-label={t("shell.toggleProject", { name: workspace.name })}
+		aria-expanded={expanded}
+		className="absolute inset-y-0 left-0 z-10 w-9 group-data-[collapsible=icon]:hidden focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm"
+		data-project-folder=""
+		onClick={onFolderClick}
+		type="button"
+	/>
 		</div>{/* end scale wrapper */}
 		{/* Per-project actions: orchestrator and kebab menu. Outside scale wrapper
 		so clicking them doesn't trigger the press animation. Always visible
@@ -886,28 +868,16 @@ function SessionRow({
 	onOpen: () => void;
 }) {
 	const { t } = useTranslation();
-	const queryClient = useQueryClient();
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
-	const [isKilling, setIsKilling] = useState(false);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
 
+	const queryClient = useQueryClient();
 	const { mutate: pinSession } = usePinSession();
 	const { mutate: unpinSession } = useUnpinSession();
-
-	const handleKill = async () => {
-		setIsKilling(true);
-		try {
-			await killSession(session.id);
-			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		} catch (err) {
-			console.error("Failed to kill session:", err);
-		} finally {
-			setIsKilling(false);
-		}
-	};
+	const { mutate: terminateSession, isPending: isKilling } = useTerminateSession();
 
 	const startEditing = () => {
 		setDraft(session.title);
@@ -1035,11 +1005,11 @@ function SessionRow({
 						"group-hover/session-row:mr-1 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
 						"group-focus-within/session-row:mr-1 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
 					)}
-					disabled={isKilling}
-					onClick={(e) => {
-						e.stopPropagation();
-						void handleKill();
-					}}
+				disabled={isKilling}
+				onClick={(e) => {
+					e.stopPropagation();
+					terminateSession(session);
+				}}
 					type="button"
 				>
 					<Trash2 aria-hidden="true" />

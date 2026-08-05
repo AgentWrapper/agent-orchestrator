@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { LayoutGroup, motion, useMotionValue, useReducedMotion, useSpring } from "motion/react";
+import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
 import {
 	findProjectOrchestrator,
@@ -76,11 +76,17 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 				? PADDING_CLEARANCE_FULLSCREEN
 				: PADDING_CLEARANCE
 			: PADDING_DEFAULT;
-	const paddingMV = useMotionValue(targetPaddingLeft);
-	const paddingLeft = useSpring(paddingMV, prefersReducedMotion ? { duration: 0 } : { stiffness: 420, damping: 40, mass: 0.6 });
+	const paddingLeft = useMotionValue(targetPaddingLeft);
 	useEffect(() => {
-		paddingMV.set(targetPaddingLeft);
-	}, [targetPaddingLeft, paddingMV]);
+		const controls = animate(
+			paddingLeft,
+			targetPaddingLeft,
+			prefersReducedMotion
+				? { duration: 0 }
+				: { type: "spring", stiffness: 420, damping: 40, mass: 0.6 },
+		);
+		return controls.stop;
+	}, [targetPaddingLeft, paddingLeft, prefersReducedMotion]);
 	const [isSpawning, setIsSpawning] = useState(false);
 	// Board-scope spawn failures surface where the board actions render.
 	const [boardSpawnError, setBoardSpawnError] = useState<string | null>(null);
