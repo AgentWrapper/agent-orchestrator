@@ -3,7 +3,7 @@ CREATE TABLE ao_project_share_policies (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL REFERENCES ao_organizations(id) ON DELETE CASCADE,
     project_id UUID NOT NULL REFERENCES ao_projects(id) ON DELETE CASCADE,
-    created_by_user_id TEXT NOT NULL REFERENCES ao_users(id) ON DELETE CASCADE,
+    created_by_user_id UUID NOT NULL REFERENCES ao_users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
