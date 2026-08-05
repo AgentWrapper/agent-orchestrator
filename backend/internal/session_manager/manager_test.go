@@ -164,6 +164,7 @@ func (l *fakeLCM) CommitControllerEpoch(
 	id domain.SessionID,
 	source, target domain.SessionMode,
 	nativeConversationID string,
+	_ bool,
 ) (bool, error) {
 	rec, ok := l.store.sessions[id]
 	if !ok || rec.IsTerminated || domain.NormalizeSessionMode(rec.Mode) != source {

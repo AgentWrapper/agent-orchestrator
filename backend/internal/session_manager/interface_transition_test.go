@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -179,6 +180,12 @@ func (transitionAgent) NativeConversationID(_ context.Context, session ports.Ses
 	return id, id != "", nil
 }
 
+type emptyTransitionAgent struct{ transitionAgent }
+
+func (emptyTransitionAgent) NativeConversationExists(context.Context, ports.SessionRef, string, map[string]string) (bool, error) {
+	return false, nil
+}
+
 type transitionRuntime struct {
 	*fakeRuntime
 	log        *[]string
@@ -336,6 +343,80 @@ func TestInterfaceTransitionTUIToChatStopsBeforeStartingAndReusesNativeConversat
 		t.Fatalf("terminal runtime created %d times while switching to Chat", runtime.created)
 	}
 	if got := fmt.Sprint(*log); got != "[stop:tui:runtime-1 start:chat]" {
+		t.Fatalf("controller order = %s", got)
+	}
+}
+
+func TestInterfaceTransitionTUIToChatRebuildsOrchestratorStandingContext(t *testing.T) {
+	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	rec := store.sessions["session-1"]
+	rec.Kind = domain.KindOrchestrator
+	store.sessions["session-1"] = rec
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
+	}
+	if !strings.Contains(chat.start.SystemPrompt, "human-facing orchestrator") {
+		t.Fatalf("Chat target did not receive orchestrator standing context: %q", chat.start.SystemPrompt)
+	}
+}
+
+func TestInterfaceTransitionTUIToChatStartsFreshWhenReservedIDHasNoHistory(t *testing.T) {
+	manager, store, runtime, chat, log := newTransitionManager(t, domain.SessionModeTUI)
+	manager.agents = singleAgent{agent: emptyTransitionAgent{}}
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
+	}
+	if settled.NativeConversationID != "" {
+		t.Fatalf("native conversation = %q, want fresh sentinel", settled.NativeConversationID)
+	}
+	if chat.start.ProviderConversationID != "" {
+		t.Fatalf("Chat resumed %q, want a fresh conversation", chat.start.ProviderConversationID)
+	}
+	if runtime.created != 0 {
+		t.Fatalf("terminal runtime created %d times while switching to Chat", runtime.created)
+	}
+	if got := fmt.Sprint(*log); got != "[stop:tui:runtime-1 start:chat]" {
+		t.Fatalf("controller order = %s", got)
+	}
+}
+
+func TestInterfaceTransitionChatToTUIStartsFreshWhenReservedIDHasNoHistory(t *testing.T) {
+	manager, store, runtime, _, log := newTransitionManager(t, domain.SessionModeChat)
+	manager.agents = singleAgent{agent: emptyTransitionAgent{}}
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeTUI, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
+	}
+	if settled.NativeConversationID != "" {
+		t.Fatalf("native conversation = %q, want fresh sentinel", settled.NativeConversationID)
+	}
+	if runtime.created != 1 {
+		t.Fatalf("terminal runtime created %d times, want 1", runtime.created)
+	}
+	if got := runtime.lastCfg.Argv; len(got) != 1 || got[0] != "launch" {
+		t.Fatalf("terminal argv = %#v, want fresh launch", got)
+	}
+	if got := fmt.Sprint(*log); got != "[prepare:chat:drain stop:chat start:tui]" {
 		t.Fatalf("controller order = %s", got)
 	}
 }

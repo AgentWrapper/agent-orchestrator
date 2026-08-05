@@ -294,13 +294,21 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	}
 
 	policy, sandbox := approvalSettings(cfg.Permissions)
-	resumeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-	defer cancel()
-	err = conv.conn.request(resumeCtx, "thread/resume", map[string]any{
+	params := map[string]any{
 		"threadId":       cfg.ProviderConversationID,
+		"cwd":            cfg.WorkspacePath,
 		"approvalPolicy": policy,
 		"sandbox":        sandbox,
-	}, nil)
+	}
+	// Developer instructions are launch context, not durable conversation
+	// history. Reapply AO's current standing role when app-server reconstructs a
+	// native thread, just as the TUI adapter does with its resume command.
+	if cfg.SystemPrompt != "" {
+		params["developerInstructions"] = cfg.SystemPrompt
+	}
+	resumeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+	err = conv.conn.request(resumeCtx, "thread/resume", params, nil)
 	if err != nil {
 		_ = conv.Close()
 		// Deliberately not falling back to thread/start: silently opening a new

@@ -540,6 +540,36 @@ func TestResumeFailureDoesNotFallBackToStart(t *testing.T) {
 	}
 }
 
+func TestResumeReappliesWorkspaceAndStandingInstructions(t *testing.T) {
+	d, srv := newTestDriver(t)
+	conv, err := d.Resume(context.Background(), ports.ChatResumeConfig{
+		SessionID:              "ao-1",
+		ProviderConversationID: "thread-1",
+		WorkspacePath:          "/tmp/ws",
+		SystemPrompt:           "current AO standing instructions",
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer func() { _ = conv.Close() }()
+
+	resume := srv.awaitFrame(func(f frame) bool { return f.Method == "thread/resume" })
+	var params struct {
+		ThreadID              string `json:"threadId"`
+		Cwd                   string `json:"cwd"`
+		DeveloperInstructions string `json:"developerInstructions"`
+	}
+	if err := json.Unmarshal(resume.Params, &params); err != nil {
+		t.Fatalf("thread/resume params: %v", err)
+	}
+	if params.ThreadID != "thread-1" || params.Cwd != "/tmp/ws" {
+		t.Fatalf("thread resume identity = %#v", params)
+	}
+	if params.DeveloperInstructions != "current AO standing instructions" {
+		t.Fatalf("developerInstructions = %q", params.DeveloperInstructions)
+	}
+}
+
 func TestResumeRequiresStoredThreadID(t *testing.T) {
 	d, _ := newTestDriver(t)
 	_, err := d.Resume(context.Background(), ports.ChatResumeConfig{WorkspacePath: "/tmp/ws"})

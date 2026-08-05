@@ -715,18 +715,24 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 // session. Session Manager coordinates the external-process saga, but only
 // Lifecycle Manager is allowed to write the durable controller/activity facts.
 // A false result means the expected source controller no longer owns the row.
+// startFresh is accepted only with an empty native id; Session Manager sets it
+// after an adapter proved the reserved id has no persisted conversation.
 func (m *Manager) CommitControllerEpoch(
 	ctx context.Context,
 	id domain.SessionID,
 	source, target domain.SessionMode,
 	nativeConversationID string,
+	startFresh bool,
 ) (bool, error) {
 	if !source.Valid() || !target.Valid() || source == target {
 		return false, fmt.Errorf("lifecycle: invalid controller epoch %q -> %q", source, target)
 	}
 	nativeConversationID = strings.TrimSpace(nativeConversationID)
-	if nativeConversationID == "" {
+	if nativeConversationID == "" && !startFresh {
 		return false, fmt.Errorf("lifecycle: controller epoch for %q has no native conversation id", id)
+	}
+	if nativeConversationID != "" && startFresh {
+		return false, fmt.Errorf("lifecycle: fresh controller epoch for %q also supplied a native conversation id", id)
 	}
 	writer, ok := m.store.(controllerEpochStore)
 	if !ok {

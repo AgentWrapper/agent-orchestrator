@@ -588,7 +588,7 @@ func TestCommitControllerEpochOwnsModeAndActivityFacts(t *testing.T) {
 	}
 
 	changed, err := m.CommitControllerEpoch(
-		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "native-1",
+		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "native-1", false,
 	)
 	if err != nil || !changed {
 		t.Fatalf("CommitControllerEpoch: changed=%v err=%v", changed, err)
@@ -604,10 +604,40 @@ func TestCommitControllerEpochOwnsModeAndActivityFacts(t *testing.T) {
 		t.Fatalf("controller metadata = %+v", got.Metadata)
 	}
 	changed, err = m.CommitControllerEpoch(
-		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "native-1",
+		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "native-1", false,
 	)
 	if err != nil || changed {
 		t.Fatalf("stale controller epoch: changed=%v err=%v", changed, err)
+	}
+}
+
+func TestCommitControllerEpochAllowsExplicitFreshHandoff(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "runtime-1", RuntimeLaunchID: "launch-1",
+			AgentSessionID: "reserved-but-empty",
+		},
+	}
+
+	changed, err := m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "", true,
+	)
+	if err != nil || !changed {
+		t.Fatalf("CommitControllerEpoch fresh: changed=%v err=%v", changed, err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Mode != domain.SessionModeChat || got.Metadata.AgentSessionID != "" ||
+		got.Metadata.ProviderConversationID != "" {
+		t.Fatalf("fresh controller facts = %+v", got)
+	}
+
+	if _, err := m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeChat, domain.SessionModeTUI, "", false,
+	); err == nil {
+		t.Fatal("blank native id without explicit fresh handoff was accepted")
 	}
 }
 

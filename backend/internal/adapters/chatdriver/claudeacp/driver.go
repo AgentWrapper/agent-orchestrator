@@ -86,13 +86,13 @@ func New(plugin claudePlugin, log *slog.Logger) ports.ChatDriver {
 				Env:     env,
 			}, nil
 		},
-		NewSessionMeta: claudeSessionMeta,
+		SessionMeta:    claudeSessionMeta,
 		SessionMode:    claudeSessionMode,
 		SessionOptions: claudeSessionOptions,
 	}, log)
 }
 
-func claudeSessionMeta(cfg ports.ChatStartConfig) map[string]any {
+func claudeSessionMeta(cfg acpdriver.LaunchConfig) map[string]any {
 	if strings.TrimSpace(cfg.SystemPrompt) == "" {
 		return nil
 	}

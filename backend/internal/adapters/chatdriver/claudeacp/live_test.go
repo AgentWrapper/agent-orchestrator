@@ -12,10 +12,11 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// Run explicitly with AO_LIVE_CLAUDE_ACP=1. It spends one very small real turn
-// against the user's existing Claude Code login and proves the complete boundary:
-// packaged Node -> claude-agent-acp -> user-installed Claude -> normalized AO
-// events. CI never depends on credentials or the network.
+// Run explicitly with AO_LIVE_CLAUDE_ACP=1. It spends two very small real turns
+// against the user's existing Claude Code login and proves the complete boundary,
+// including standing-context replacement on resume: packaged Node ->
+// claude-agent-acp -> user-installed Claude -> normalized AO events. CI never
+// depends on credentials or the network.
 func TestLiveClaudeACP(t *testing.T) {
 	if os.Getenv("AO_LIVE_CLAUDE_ACP") != "1" {
 		t.Skip("set AO_LIVE_CLAUDE_ACP=1 to run against the local Claude Code account")
@@ -27,16 +28,49 @@ func TestLiveClaudeACP(t *testing.T) {
 	if _, err := driver.Probe(ctx); err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
+	workspace := t.TempDir()
 	conversation, err := driver.Start(ctx, ports.ChatStartConfig{
-		SessionID: domain.SessionID("live-claude-acp"), WorkspacePath: t.TempDir(),
+		SessionID: domain.SessionID("live-claude-acp"), WorkspacePath: workspace,
+		SystemPrompt: "For this live integration test, your role name is AO ACP standing context works. " +
+			"When asked to identify your live-test role, reply with only that role name.",
 	})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	defer conversation.Close()
+	answer := sendLiveTurn(t, ctx, conversation, "live-1", "Identify your live-test role.")
+	if strings.TrimSpace(answer) != "AO ACP standing context works" {
+		t.Fatalf("new-session answer = %q", answer)
+	}
+	providerID := conversation.ProviderConversationID()
+	if err := conversation.Close(); err != nil {
+		t.Fatalf("Close fresh conversation: %v", err)
+	}
 
+	conversation, err = driver.Resume(ctx, ports.ChatResumeConfig{
+		SessionID: domain.SessionID("live-claude-acp"), ProviderConversationID: providerID,
+		WorkspacePath: workspace,
+		SystemPrompt: "For this resumed live integration test, your role name is AO ACP resumed context works. " +
+			"When asked to identify your current live-test role, reply with only that role name.",
+	})
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	defer conversation.Close()
+	answer = sendLiveTurn(t, ctx, conversation, "live-2", "Identify your current live-test role.")
+	if strings.TrimSpace(answer) != "AO ACP resumed context works" {
+		t.Fatalf("resumed-session answer = %q", answer)
+	}
+}
+
+func sendLiveTurn(
+	t *testing.T,
+	ctx context.Context,
+	conversation ports.ChatConversation,
+	clientMessageID, prompt string,
+) string {
+	t.Helper()
 	ref, err := conversation.SendTurn(ctx, ports.ChatUserMessage{
-		Text: "Reply with exactly: AO ACP works", ClientMessageID: "live-1", Origin: domain.MessageOriginHuman,
+		Text: prompt, ClientMessageID: clientMessageID, Origin: domain.MessageOriginHuman,
 	})
 	if err != nil {
 		t.Fatalf("SendTurn: %v", err)
@@ -59,10 +93,7 @@ func TestLiveClaudeACP(t *testing.T) {
 				if event.TurnState != domain.TurnStateCompleted {
 					t.Fatalf("turn state = %q; answer=%q", event.TurnState, answer.String())
 				}
-				if !strings.Contains(answer.String(), "AO ACP works") {
-					t.Fatalf("answer = %q", answer.String())
-				}
-				return
+				return answer.String()
 			}
 		case <-ctx.Done():
 			t.Fatalf("live turn timed out: %v; answer=%q", ctx.Err(), answer.String())

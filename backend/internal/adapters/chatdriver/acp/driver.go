@@ -48,9 +48,12 @@ type Config struct {
 	Capabilities ports.ChatCapabilities
 	Probe        func(context.Context) error
 	Launch       func(context.Context, LaunchConfig) (Launch, error)
-	// NewSessionMeta carries adapter-defined ACP extensions. It is deliberately
-	// scoped to session/new; resume must recover the provider's existing state.
-	NewSessionMeta func(ports.ChatStartConfig) map[string]any
+	// SessionMeta carries adapter-defined ACP extensions whenever AO creates the
+	// provider-side session object: session/new, session/load, or
+	// session/resume. Standing context such as a system prompt is process input,
+	// not transcript history, so a resumed native conversation must receive it
+	// again even though the provider recovers the messages itself.
+	SessionMeta func(LaunchConfig) map[string]any
 	// SessionMode maps AO's approval vocabulary onto this ACP agent's mode ids.
 	// Empty means "leave the provider/user default unchanged".
 	SessionMode func(ports.PermissionMode) string
@@ -100,10 +103,11 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	if !filepath.IsAbs(cfg.WorkspacePath) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
-	conv, init, err := d.connect(ctx, LaunchConfig{
+	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env: cfg.Env, Model: cfg.Model, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
-	})
+	}
+	conv, init, err := d.connect(ctx, launchCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -124,8 +128,8 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	}
 
 	meta := map[string]any(nil)
-	if d.cfg.NewSessionMeta != nil {
-		meta = d.cfg.NewSessionMeta(cfg)
+	if d.cfg.SessionMeta != nil {
+		meta = d.cfg.SessionMeta(launchCfg)
 	}
 	openCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
@@ -164,10 +168,11 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 	if !filepath.IsAbs(cfg.WorkspacePath) {
 		return nil, fmt.Errorf("workspace path must be absolute, got %q", cfg.WorkspacePath)
 	}
-	conv, init, err := d.connect(ctx, LaunchConfig{
+	launchCfg := LaunchConfig{
 		SessionID: cfg.SessionID, DataDir: cfg.DataDir, WorkspacePath: cfg.WorkspacePath,
 		Env: cfg.Env, Permissions: cfg.Permissions, SystemPrompt: cfg.SystemPrompt,
-	})
+	}
+	conv, init, err := d.connect(ctx, launchCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -192,10 +197,15 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 
 	resumeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
+	meta := map[string]any(nil)
+	if d.cfg.SessionMeta != nil {
+		meta = d.cfg.SessionMeta(launchCfg)
+	}
 	var configOptions []acpsdk.SessionConfigOption
 	if init.AgentCapabilities.LoadSession {
 		conv.beginHistoryReplay(cfg.ProviderConversationID)
 		resp, err := conv.conn.LoadSession(resumeCtx, acpsdk.LoadSessionRequest{
+			Meta:                  meta,
 			SessionId:             acpsdk.SessionId(cfg.ProviderConversationID),
 			Cwd:                   cfg.WorkspacePath,
 			AdditionalDirectories: additional,
@@ -210,6 +220,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		configOptions = resp.ConfigOptions
 	} else {
 		resp, err := conv.conn.ResumeSession(resumeCtx, acpsdk.ResumeSessionRequest{
+			Meta:                  meta,
 			SessionId:             acpsdk.SessionId(cfg.ProviderConversationID),
 			Cwd:                   cfg.WorkspacePath,
 			AdditionalDirectories: additional,

@@ -137,7 +137,11 @@ func (m *Manager) StartInterfaceTransition(
 		return domain.SessionInterfaceTransition{}, fmt.Errorf("%w: session %s is already in %s mode",
 			ErrInterfaceAlreadySelected, id, source)
 	}
-	nativeID, _, err := m.nativeConversationID(ctx, rec)
+	nativeID, handoff, err := m.nativeConversationID(ctx, rec)
+	if err != nil {
+		return domain.SessionInterfaceTransition{}, err
+	}
+	nativeID, err = m.persistedNativeConversationID(ctx, rec, nativeID, handoff)
 	if err != nil {
 		return domain.SessionInterfaceTransition{}, err
 	}
@@ -304,7 +308,7 @@ func (m *Manager) runInterfaceTransition(
 		return
 	}
 	changed, err := m.lcm.CommitControllerEpoch(ctx, rec.ID, transition.SourceMode,
-		transition.TargetMode, transition.NativeConversationID)
+		transition.TargetMode, transition.NativeConversationID, transition.NativeConversationID == "")
 	if err != nil || !changed {
 		if err == nil {
 			err = fmt.Errorf("session mode compare-and-swap failed")
@@ -317,7 +321,7 @@ func (m *Manager) runInterfaceTransition(
 		fail("TRANSITION_STATE_FAILED", err)
 		return
 	}
-	if err := m.startTransitionTarget(ctx, rec.ID); err != nil {
+	if err := m.startTransitionTarget(ctx, rec.ID, transition.NativeConversationID == ""); err != nil {
 		fail("TARGET_RESUME_FAILED", err)
 		return
 	}
@@ -363,6 +367,40 @@ func (m *Manager) nativeConversationID(
 	return id, handoff, nil
 }
 
+// persistedNativeConversationID turns an adapter's reserved-but-empty native
+// id into the transition's explicit "start fresh" sentinel. Adapters that do
+// not expose the optional probe retain the conservative resume-only behavior.
+func (m *Manager) persistedNativeConversationID(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	id string,
+	handoff ports.AgentInterfaceHandoff,
+) (string, error) {
+	probe, ok := handoff.(ports.AgentInterfaceHandoffHistoryProbe)
+	if !ok {
+		return id, nil
+	}
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	exists, err := probe.NativeConversationExists(ctx, ports.SessionRef{
+		ID:            string(rec.ID),
+		WorkspacePath: rec.Metadata.WorkspacePath,
+		Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: rec.Metadata.AgentSessionID,
+		},
+	}, id, env)
+	if err != nil {
+		return "", fmt.Errorf("inspect native conversation %s: %w", id, err)
+	}
+	if !exists {
+		return "", nil
+	}
+	return id, nil
+}
+
 func (m *Manager) preflightInterfaceTarget(
 	ctx context.Context,
 	rec domain.SessionRecord,
@@ -387,19 +425,26 @@ func (m *Manager) preflightInterfaceTarget(
 		return err
 	}
 	config := effectiveAgentConfig(rec.Kind, project.Config)
-	cmd, resumable, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{
-		Session: ports.SessionRef{
-			ID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath,
-			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: transition.NativeConversationID},
-		},
-		Kind: rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt,
-		Config: config, Permissions: config.Permissions,
-	})
+	var cmd []string
+	if transition.NativeConversationID == "" {
+		cmd, _, _, err = freshLaunchArgv(ctx, agent, rec.ID, rec.Metadata.WorkspacePath,
+			rec.Metadata, systemPrompt, "", config, rec.Kind, m.dataDir, true)
+	} else {
+		var resumable bool
+		cmd, resumable, err = agent.GetRestoreCommand(ctx, ports.RestoreConfig{
+			Session: ports.SessionRef{
+				ID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath,
+				Metadata: map[string]string{ports.MetadataKeyAgentSessionID: transition.NativeConversationID},
+			},
+			Kind: rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt,
+			Config: config, Permissions: config.Permissions,
+		})
+		if err == nil && !resumable {
+			return ErrNativeConversationMissing
+		}
+	}
 	if err != nil {
 		return err
-	}
-	if !resumable {
-		return ErrNativeConversationMissing
 	}
 	return m.validateAgentBinary(cmd)
 }
@@ -540,7 +585,7 @@ func (m *Manager) stopSourceControllerConclusive(rec domain.SessionRecord) error
 	return fmt.Errorf("could not prove the source controller stopped after retry: %w", errors.Join(failures...))
 }
 
-func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID) error {
+func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID, fresh bool) error {
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return err
@@ -553,7 +598,11 @@ func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID
 		return err
 	}
 	ws := workspaceInfo(rec)
-	_, err = m.relaunchSession(ctx, "switch interface", rec, project, ws, nil)
+	if fresh {
+		_, err = m.relaunchSessionFresh(ctx, "switch interface", rec, project, ws, nil)
+	} else {
+		_, err = m.relaunchSession(ctx, "switch interface", rec, project, ws, nil)
+	}
 	return err
 }
 
@@ -577,7 +626,8 @@ func (m *Manager) rollbackInterfaceTransition(
 			return
 		}
 		changed, err := m.lcm.CommitControllerEpoch(ctx, transition.SessionID,
-			transition.TargetMode, transition.SourceMode, transition.NativeConversationID)
+			transition.TargetMode, transition.SourceMode, transition.NativeConversationID,
+			transition.NativeConversationID == "")
 		if err != nil || !changed {
 			detail := cause.Error()
 			if err != nil {
@@ -588,7 +638,7 @@ func (m *Manager) rollbackInterfaceTransition(
 			return
 		}
 	}
-	if err := m.startTransitionTarget(ctx, transition.SessionID); err != nil {
+	if err := m.startTransitionTarget(ctx, transition.SessionID, transition.NativeConversationID == ""); err != nil {
 		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
 			"RECOVERY_REQUIRED", cause.Error()+"; source restore: "+err.Error())
 		return

@@ -11,10 +11,10 @@ import (
 )
 
 func TestClaudeSessionMetaAppendsWithoutReplacingPreset(t *testing.T) {
-	if got := claudeSessionMeta(ports.ChatStartConfig{}); got != nil {
+	if got := claudeSessionMeta(acpdriver.LaunchConfig{}); got != nil {
 		t.Fatalf("empty prompt metadata = %#v", got)
 	}
-	meta := claudeSessionMeta(ports.ChatStartConfig{SystemPrompt: "AO standing instructions"})
+	meta := claudeSessionMeta(acpdriver.LaunchConfig{SystemPrompt: "AO standing instructions"})
 	prompt, ok := meta["systemPrompt"].(map[string]any)
 	if !ok {
 		t.Fatalf("systemPrompt = %#v", meta["systemPrompt"])

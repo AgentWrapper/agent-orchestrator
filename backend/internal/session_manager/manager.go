@@ -115,7 +115,7 @@ type lifecycleRecorder interface {
 	PrepareLaunch(id domain.SessionID, launchID string) error
 	CancelLaunch(id domain.SessionID, launchID string)
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
-	CommitControllerEpoch(ctx context.Context, id domain.SessionID, source, target domain.SessionMode, nativeConversationID string) (bool, error)
+	CommitControllerEpoch(ctx context.Context, id domain.SessionID, source, target domain.SessionMode, nativeConversationID string, startFresh bool) (bool, error)
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
@@ -1336,10 +1336,25 @@ func (m *Manager) endAgentResume(id domain.SessionID) {
 }
 
 func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
+	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, false)
+}
+
+// relaunchSessionFresh is reserved for an interface handoff whose adapter
+// proved that the reserved provider id has no persisted conversation behind it.
+// It bypasses native resume on both sides, so an empty Claude session cannot
+// fail target startup (or rollback) with "No conversation found".
+func (m *Manager) relaunchSessionFresh(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
+	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, true)
+}
+
+func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh bool) (RestoreResult, error) {
 	// Relaunch dispatches from the currently committed persisted mode, never from
 	// a caller hint. The interface-transition coordinator changes that fact only
 	// after stopping the old controller, then reuses this ordinary restore path.
 	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		if forceFresh {
+			rec.Metadata.ProviderConversationID = ""
+		}
 		return m.resumeChatController(ctx, operation, rec, project, ws)
 	}
 
@@ -1367,7 +1382,16 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
-	argv, delivery, mode, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
+	var argv []string
+	var delivery ports.PromptDeliveryStrategy
+	var mode RestoreMode
+	if forceFresh {
+		argv, delivery, mode, err = freshLaunchArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
+			systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir, true)
+	} else {
+		argv, delivery, mode, err = restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
+			systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
+	}
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
@@ -3225,10 +3249,18 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, RestoreModeNative, nil
 	}
+	return freshLaunchArgv(ctx, agent, id, workspacePath, meta, systemPrompt,
+		systemPromptFile, agentConfig, kind, dataDir, false)
+}
+
+// freshLaunchArgv builds the non-resume half of restoreArgv. Interface
+// transitions also use it when an adapter proves its reserved id has no
+// persisted history, both for preflight and for the actual target launch.
+func freshLaunchArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, dataDir string, allowPromptless bool) ([]string, ports.PromptDeliveryStrategy, RestoreMode, error) {
 	// A saved prompt is replayed fresh. An orchestrator is promptless by design
 	// and relaunches with the system prompt only. A promptless WORKER has no task
 	// and no session id to restore from: do not blank-relaunch it.
-	if meta.Prompt == "" && kind != domain.KindOrchestrator {
+	if meta.Prompt == "" && kind != domain.KindOrchestrator && !allowPromptless {
 		return nil, "", "", ErrNotResumable
 	}
 	// Fall through to a fresh launch. Command-delivered agents receive

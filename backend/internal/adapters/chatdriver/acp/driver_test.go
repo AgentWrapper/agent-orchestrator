@@ -246,8 +246,8 @@ func TestACPDriverDefersPromptUntilDurableTurnBinding(t *testing.T) {
 		Launch: func(context.Context, LaunchConfig) (Launch, error) {
 			return Launch{Command: "fake"}, nil
 		},
-		NewSessionMeta: func(ports.ChatStartConfig) map[string]any {
-			return map[string]any{"systemPrompt": map[string]any{"append": "AO instructions"}}
+		SessionMeta: func(cfg LaunchConfig) map[string]any {
+			return map[string]any{"systemPrompt": map[string]any{"append": cfg.SystemPrompt}}
 		},
 		SessionMode: func(permission ports.PermissionMode) string {
 			if permission == ports.PermissionModeAcceptEdits {
@@ -506,6 +506,9 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 			got = cfg
 			return Launch{Command: "fake"}, nil
 		},
+		SessionMeta: func(cfg LaunchConfig) map[string]any {
+			return map[string]any{"systemPrompt": map[string]any{"append": cfg.SystemPrompt}}
+		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	driver.spawn = fakeSpawn(agent)
 
@@ -527,9 +530,14 @@ func TestACPDriverReappliesLaunchContextWhenResuming(t *testing.T) {
 	}
 	agent.mu.Lock()
 	resumeCalls, loadCalls := agent.resumeCalls, agent.loadCalls
+	resumeMeta := agent.resumeParams.Meta
 	agent.mu.Unlock()
 	if resumeCalls != 1 || loadCalls != 0 {
 		t.Fatalf("resume calls = %d, load calls = %d; want resume fallback", resumeCalls, loadCalls)
+	}
+	prompt, ok := resumeMeta["systemPrompt"].(map[string]any)
+	if !ok || prompt["append"] != "Recomputed AO instructions" {
+		t.Fatalf("session/resume metadata = %#v, want recomputed system prompt", resumeMeta)
 	}
 }
 
@@ -563,12 +571,16 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 		Capabilities: ports.ChatCapabilities{ports.ChatCapabilityStreaming: true},
 		Probe:        func(context.Context) error { return nil },
 		Launch:       func(context.Context, LaunchConfig) (Launch, error) { return Launch{Command: "fake"}, nil },
+		SessionMeta: func(cfg LaunchConfig) map[string]any {
+			return map[string]any{"systemPrompt": map[string]any{"append": cfg.SystemPrompt}}
+		},
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	driver.spawn = fakeSpawn(agent)
 
 	conv, err := driver.Resume(context.Background(), ports.ChatResumeConfig{
 		ProviderConversationID: "provider-session-1",
 		WorkspacePath:          t.TempDir(),
+		SystemPrompt:           "AO load instructions",
 	})
 	if err != nil {
 		t.Fatalf("Resume: %v", err)
@@ -578,9 +590,14 @@ func TestACPDriverLoadsSettledHistoryWhenTheAgentCanReplayIt(t *testing.T) {
 	agent.mu.Lock()
 	loadCalls, resumeCalls := agent.loadCalls, agent.resumeCalls
 	loadedSession := string(agent.loadParams.SessionId)
+	loadMeta := agent.loadParams.Meta
 	agent.mu.Unlock()
 	if loadCalls != 1 || resumeCalls != 0 || loadedSession != "provider-session-1" {
 		t.Fatalf("load calls = %d, resume calls = %d, session = %q", loadCalls, resumeCalls, loadedSession)
+	}
+	prompt, ok := loadMeta["systemPrompt"].(map[string]any)
+	if !ok || prompt["append"] != "AO load instructions" {
+		t.Fatalf("session/load metadata = %#v, want recomputed system prompt", loadMeta)
 	}
 
 	history, err := conv.(ports.ChatHistoryReader).ReadHistory(context.Background())

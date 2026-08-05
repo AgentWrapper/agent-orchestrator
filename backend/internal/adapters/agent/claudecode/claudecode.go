@@ -79,6 +79,7 @@ var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -297,6 +298,68 @@ func (p *Plugin) NativeConversationID(
 		id = claudeSessionUUID(session.ID)
 	}
 	return id, id != "", nil
+}
+
+// NativeConversationExists distinguishes Claude's reserved session UUID from
+// a conversation that Claude has actually persisted. Claude Code accepts
+// --session-id before the first prompt, but does not create its JSONL transcript
+// until the conversation has content. Passing that reserved-but-empty UUID to
+// either `claude --resume` or ACP session/load returns "No conversation found".
+//
+// The Agent SDK documents local transcripts at
+// ~/.claude/projects/<project-key>/<session-id>.jsonl (or beneath
+// CLAUDE_CONFIG_DIR). We only test for a non-empty top-level transcript; AO does
+// not parse or project provider files here.
+func (p *Plugin) NativeConversationExists(
+	ctx context.Context,
+	_ ports.SessionRef,
+	nativeConversationID string,
+	env map[string]string,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	id := strings.TrimSpace(nativeConversationID)
+	if _, err := uuid.Parse(id); err != nil {
+		return false, nil
+	}
+	configDir := strings.TrimSpace(env["CLAUDE_CONFIG_DIR"])
+	if configDir == "" {
+		configDir = strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	}
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false, fmt.Errorf("claude-code: resolve transcript root: %w", err)
+		}
+		configDir = filepath.Join(home, ".claude")
+	}
+	projectsDir := filepath.Join(configDir, "projects")
+	projects, err := os.ReadDir(projectsDir)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claude-code: read transcript root %s: %w", projectsDir, err)
+	}
+	for _, project := range projects {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if !project.IsDir() {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(projectsDir, project.Name(), id+".jsonl"))
+		switch {
+		case err == nil && info.Mode().IsRegular() && info.Size() > 0:
+			return true, nil
+		case err == nil, os.IsNotExist(err):
+			continue
+		default:
+			return false, fmt.Errorf("claude-code: inspect transcript for %s: %w", id, err)
+		}
+	}
+	return false, nil
 }
 
 // AuthStatus checks Claude Code's local authentication state without starting a

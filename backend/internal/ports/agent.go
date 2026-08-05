@@ -84,6 +84,21 @@ type AgentInterfaceHandoff interface {
 	) (id string, ok bool, err error)
 }
 
+// AgentInterfaceHandoffHistoryProbe is an OPTIONAL refinement for adapters
+// that reserve a native conversation id before the provider has persisted any
+// history. A missing history record means an interface transition may safely
+// start the target fresh: there is no provider context to carry. Without this
+// capability, Session Manager conservatively treats every declared id as an
+// existing conversation and requires a native resume.
+type AgentInterfaceHandoffHistoryProbe interface {
+	NativeConversationExists(
+		ctx context.Context,
+		session SessionRef,
+		nativeConversationID string,
+		env map[string]string,
+	) (bool, error)
+}
+
 // AgentExitDetectionMode describes how AO learns that an agent CLI process
 // ended while its terminal runtime remains alive.
 type AgentExitDetectionMode string
