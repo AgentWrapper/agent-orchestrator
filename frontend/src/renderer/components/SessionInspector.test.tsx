@@ -932,6 +932,16 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
 	});
 
+	it("shows AO code reviews for verdict-only review states", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "changes_requested", "abc123")]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
+		expect(screen.getByText("Changes requested")).toBeInTheDocument();
+	});
+
 	it("shows eligible and up-to-date open PR review rows", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [
 			reviewState(3, "needs_review", "abc123"),

@@ -1267,7 +1267,9 @@ function ReviewPanel({
 		(reviewState) =>
 			Boolean(reviewState.latestRun) ||
 			Boolean(reviewState.previousRun) ||
-			runs.some((run) => run.prUrl === reviewState.prUrl),
+			runs.some((run) => run.prUrl === reviewState.prUrl) ||
+			reviewState.status === "up_to_date" ||
+			reviewState.status === "changes_requested",
 	);
 	const runDisabled =
 		isTriggering ||
