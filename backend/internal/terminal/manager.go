@@ -158,18 +158,23 @@ func (m *Manager) joinTerminal(id string, c *connState, att *attachment, cols, r
 		s = &sharedTerm{members: map[*connState]*termMember{}}
 		m.shared[id] = s
 	}
+	previousCols, previousRows := s.authCols, s.authRows
 	s.members[c] = &termMember{att: att, cols: cols, rows: rows, primary: primary}
-	m.reconcileLocked(id, s)
+	m.reconcileLocked(id, s, false)
 	// A follower joining a PTY that is already at its authoritative size wouldn't
-	// see a "changed" broadcast, so tell the joining client the current grid
-	// directly — it needs the size to render the shared grid rather than its own.
-	if s.authCols > 0 && s.authRows > 0 {
+	// be touched by reconciliation. Apply the grid only to its new attachment and
+	// tell that client directly, without re-signalling every existing viewer.
+	if s.authCols > 0 && s.authRows > 0 &&
+		previousCols == s.authCols && previousRows == s.authRows {
+		_ = att.resize(s.authRows, s.authCols)
 		c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgResize, Cols: s.authCols, Rows: s.authRows})
 	}
 }
 
 // updateTerminalSize records a client's newly requested grid and reconciles.
-func (m *Manager) updateTerminalSize(id string, c *connState, cols, rows uint16) {
+// Identical normal updates are no-ops; force is reserved for an explicit
+// recovery re-signal when an attach client may have missed the prior SIGWINCH.
+func (m *Manager) updateTerminalSize(id string, c *connState, cols, rows uint16, force bool) {
 	m.sharedMu.Lock()
 	defer m.sharedMu.Unlock()
 	s := m.shared[id]
@@ -180,8 +185,11 @@ func (m *Manager) updateTerminalSize(id string, c *connState, cols, rows uint16)
 	if mem == nil {
 		return
 	}
+	if !force && mem.cols == cols && mem.rows == rows {
+		return
+	}
 	mem.cols, mem.rows = cols, rows
-	m.reconcileLocked(id, s)
+	m.reconcileLocked(id, s, force)
 }
 
 // leaveTerminal drops a client from a shared terminal and reconciles so the grid
@@ -201,20 +209,22 @@ func (m *Manager) leaveTerminal(id string, c *connState) {
 		delete(m.shared, id)
 		return
 	}
-	m.reconcileLocked(id, s)
+	m.reconcileLocked(id, s, false)
 }
 
 // reconcileLocked picks the authoritative grid for a shared terminal and applies
-// it: it resizes EVERY member's attach Stream to that grid (so the underlying
-// single PTY converges on one size regardless of runtime), and — when the grid
-// changed — pushes a server "resize" frame to every client so followers render
-// the exact grid instead of their own fitted size. Caller holds m.sharedMu.
-func (m *Manager) reconcileLocked(id string, s *sharedTerm) {
+// it only when it changed (or explicit recovery forces a re-signal). This keeps
+// a non-authoritative viewer's local resize from repainting the shared TUI at an
+// unchanged grid. Caller holds m.sharedMu.
+func (m *Manager) reconcileLocked(id string, s *sharedTerm, force bool) {
 	cols, rows := largestGrid(s.members)
 	if cols == 0 || rows == 0 {
 		return // no client has reported a usable size yet
 	}
 	changed := cols != s.authCols || rows != s.authRows
+	if !changed && !force {
+		return
+	}
 	s.authCols, s.authRows = cols, rows
 	for conn, mem := range s.members {
 		_ = mem.att.resize(rows, cols)
@@ -325,7 +335,7 @@ func (c *connState) handleTerminal(msg clientMsg) {
 		// The client reports the grid it fits to; the manager arbitrates the shared
 		// PTY's size across all viewers and resizes the attach Stream itself (see
 		// reconcileLocked), so we do not resize this attachment directly here.
-		c.mgr.updateTerminalSize(msg.ID, c, msg.Cols, msg.Rows)
+		c.mgr.updateTerminalSize(msg.ID, c, msg.Cols, msg.Rows, msg.Force)
 	case msgClose:
 		c.closeTerminal(msg.ID)
 	}

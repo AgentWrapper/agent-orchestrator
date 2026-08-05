@@ -1,5 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AttachableTerminal } from "../hooks/useTerminalSession";
 import { XtermTerminal } from "./XtermTerminal";
 
 const state = vi.hoisted(() => ({
@@ -12,6 +13,8 @@ const state = vi.hoisted(() => ({
 		modes: { bracketedPasteMode: boolean; mouseTrackingMode: string };
 		buffer: { active: { type: string } };
 		scrollLines: ReturnType<typeof vi.fn>;
+		scrollToBottom: ReturnType<typeof vi.fn>;
+		refresh: ReturnType<typeof vi.fn>;
 		clear: ReturnType<typeof vi.fn>;
 		focus: ReturnType<typeof vi.fn>;
 		selectAll: ReturnType<typeof vi.fn>;
@@ -39,6 +42,8 @@ vi.mock("@xterm/xterm", () => ({
 		modes = { bracketedPasteMode: false, mouseTrackingMode: "vt200" };
 		buffer = { active: { type: "normal" } };
 		scrollLines = vi.fn();
+		scrollToBottom = vi.fn();
+		refresh = vi.fn();
 		clear = vi.fn();
 		focus = vi.fn();
 		selectAll = vi.fn();
@@ -150,6 +155,29 @@ describe("XtermTerminal", () => {
 		setNavigatorPlatform("Linux x86_64");
 		window.ao!.clipboard.writeText = vi.fn().mockResolvedValue(undefined);
 		window.ao!.clipboard.readText = vi.fn().mockResolvedValue("");
+	});
+
+	it("finishes retained activation when xterm emits no render event", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) =>
+			window.setTimeout(() => callback(performance.now()), 0),
+		);
+		vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+		try {
+			let terminal: AttachableTerminal | undefined;
+			render(<XtermTerminal theme="dark" onReady={(ready) => { terminal = ready; }} />);
+			const preparation = terminal!.prepareForActivation();
+			await act(async () => {
+				vi.advanceTimersByTime(250);
+				vi.runAllTimers();
+				await preparation;
+			});
+			expect(state.lastTerminal!.scrollToBottom).toHaveBeenCalled();
+			expect(state.lastTerminal!.refresh).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+			vi.unstubAllGlobals();
+		}
 	});
 
 	it("preserves the agent TUI palette without contrast remapping", () => {
