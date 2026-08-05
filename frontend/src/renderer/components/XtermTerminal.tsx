@@ -27,7 +27,6 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { WebglAddon } from "@xterm/addon-webgl";
 import type { AttachableTerminal, TerminalUserInputSource } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
@@ -66,22 +65,15 @@ export type XtermTerminalProps = {
 	onReady?: (terminal: AttachableTerminal) => void;
 };
 
-// Prefer the WebGL renderer, fall back to 2D canvas. Both rasterize box-drawing
-// glyphs themselves onto a fixed cell grid; the DOM renderer does not, so TUI
-// borders would drift. Loaded after open().
+// Use the 2D canvas renderer — not WebGL. Live pane resize must change the
+// backing store every animation frame for Cursor-style wrap; WebGL drops its
+// context under that thrash and goes black for ~1s. CanvasAddon still rasterizes
+// box-drawing onto a fixed cell grid (unlike the DOM renderer).
 function loadRenderer(term: Terminal): void {
-	try {
-		const webgl = new WebglAddon();
-		webgl.onContextLoss(() => webgl.dispose());
-		term.loadAddon(webgl);
-		return;
-	} catch {
-		// WebGL context unavailable — fall through to the canvas renderer.
-	}
 	try {
 		term.loadAddon(new CanvasAddon());
 	} catch (error) {
-		console.warn("xterm: WebGL and canvas renderers unavailable; box-drawing may drift", error);
+		console.warn("xterm: canvas renderer unavailable; box-drawing may drift", error);
 	}
 }
 
@@ -173,12 +165,127 @@ function terminalHasFocus(host: HTMLElement): boolean {
 type XtermInternal = Terminal & {
 	_core?: {
 		element?: HTMLElement;
+		_renderService?: {
+			_renderRows: (start: number, end: number) => void;
+		};
 		_selectionService?: {
 			enable: () => void;
 			shouldForceSelection: (event: MouseEvent) => boolean;
 		};
 	};
 };
+
+// After a grid resize the canvas backing store is cleared. xterm queues the
+// redraw through a RenderDebouncer (next animation frame), so the cleared buffer
+// can present as a blank flash. Calling _renderRows bypasses the debouncer and
+// fills the surface in this turn.
+function forceTerminalRepaint(term: Terminal): void {
+	const rows = term.rows;
+	if (rows <= 0) return;
+	try {
+		(term as XtermInternal)._core?._renderService?._renderRows(0, rows - 1);
+	} catch {
+		// Internal render API — ignore if unavailable or mid-teardown.
+	}
+}
+
+const RESIZE_FREEZE_CLASS = "ao-xterm-resize-freeze";
+
+function screenCanvases(term: Terminal): HTMLCanvasElement[] {
+	const screen = term.element?.querySelector(".xterm-screen");
+	if (!screen) return [];
+	return Array.from(screen.querySelectorAll("canvas"));
+}
+
+type LiveResizeCover = {
+	front: HTMLCanvasElement;
+	back: HTMLCanvasElement;
+};
+
+function createFreezeCanvas(host: HTMLElement): HTMLCanvasElement {
+	const canvas = document.createElement("canvas");
+	canvas.className = RESIZE_FREEZE_CLASS;
+	canvas.setAttribute("aria-hidden", "true");
+	// Keep both buffers in the layout; toggle opacity only. display:none/block
+	// swaps can flash on Electron even when the bitmap is valid.
+	canvas.style.cssText =
+		"left:0;opacity:0;pointer-events:none;position:absolute;top:0;z-index:2;";
+	host.appendChild(canvas);
+	return canvas;
+}
+
+function paintFreezeFromTerm(target: HTMLCanvasElement, term: Terminal): boolean {
+	const layers = screenCanvases(term);
+	const primary = layers[0];
+	if (!primary || primary.width <= 0 || primary.height <= 0) return false;
+	// Assigning width/height clears the bitmap — callers must only paint the
+	// hidden back buffer, then raise its opacity over the still-visible front.
+	target.width = primary.width;
+	target.height = primary.height;
+	target.style.width = `${primary.clientWidth}px`;
+	target.style.height = `${primary.clientHeight}px`;
+	const ctx = target.getContext("2d");
+	if (!ctx) return false;
+	try {
+		// CanvasAddon can stack multiple same-size layers (text/selection).
+		for (const layer of layers) {
+			if (layer.width > 0 && layer.height > 0) ctx.drawImage(layer, 0, 0);
+		}
+		return true;
+	} catch {
+		ctx.fillStyle = getComputedStyle(primary).backgroundColor || "#000";
+		ctx.fillRect(0, 0, target.width, target.height);
+		return true;
+	}
+}
+
+function setLiveScreenHidden(term: Terminal, hidden: boolean): void {
+	const screen = term.element?.querySelector(".xterm-screen") as HTMLElement | null;
+	if (screen) screen.style.visibility = hidden ? "hidden" : "";
+}
+
+function beginLiveResizeCover(term: Terminal, host: HTMLElement): LiveResizeCover | null {
+	if (getComputedStyle(host).position === "static") {
+		host.style.position = "relative";
+	}
+	for (const node of host.querySelectorAll(`canvas.${RESIZE_FREEZE_CLASS}`)) {
+		node.remove();
+	}
+
+	const front = createFreezeCanvas(host);
+	const back = createFreezeCanvas(host);
+	if (!paintFreezeFromTerm(front, term)) {
+		front.remove();
+		back.remove();
+		return null;
+	}
+	front.style.opacity = "1";
+	front.style.zIndex = "3";
+	back.style.opacity = "0";
+	back.style.zIndex = "2";
+	setLiveScreenHidden(term, true);
+	return { front, back };
+}
+
+function refreshLiveResizeCover(term: Terminal, cover: LiveResizeCover): void {
+	if (!paintFreezeFromTerm(cover.back, term)) return;
+	// Raise the freshly painted back over the still-visible front, then drop
+	// the old front. Visible pixels are never cleared in place.
+	cover.back.style.zIndex = "3";
+	cover.back.style.opacity = "1";
+	cover.front.style.zIndex = "2";
+	cover.front.style.opacity = "0";
+	const nextFront = cover.back;
+	cover.back = cover.front;
+	cover.front = nextFront;
+}
+
+function disposeLiveResizeCover(term: Terminal, cover: LiveResizeCover | null): void {
+	setLiveScreenHidden(term, false);
+	if (!cover) return;
+	cover.front.remove();
+	cover.back.remove();
+}
 
 type TerminalContextMenuState = {
 	canCopy: boolean;
@@ -537,19 +644,113 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			window.setTimeout(() => copySelection({ dedupe: true }), 0);
 		});
 
-		const fitTerminal = () => {
+		const fitTerminalNow = () => {
 			try {
 				fit.fit();
+				forceTerminalRepaint(term);
 			} catch {
 				// Container momentarily has no size (hidden/unmounting) — a later
 				// trigger retries.
 			}
 		};
-		fitRef.current = fitTerminal;
+		// Intentional fits (fontSize, mount) must not be blocked by a drag gate.
+		fitRef.current = fitTerminalNow;
+		const fitTerminal = () => {
+			if (performance.now() < resizeQuietUntil) return;
+			fitTerminalNow();
+		};
 
-		const raf = requestAnimationFrame(fitTerminal);
+		// Cursor-style live wrap without flicker/blackout:
+		//  - Canvas renderer (not WebGL) — no context-loss black screen
+		//  - During drag, hide live xterm and show a double-buffered freeze
+		//    overlay. Updating canvas.width clears the bitmap — we only ever
+		//    clear the hidden back buffer, then opacity-swap, so the visible
+		//    frame is never blanked.
+		//  - On settle, reveal live under the freeze for one frame, then drop
+		//    the overlay (avoids a release flash).
+		// PTY resize stays debounced in useTerminalSession.
+		const RESIZE_RELEASE_MS = 80;
+		let fitRaf: number | null = null;
+		let releaseTimer: number | null = null;
+		let releaseRaf: number | null = null;
+		let resizeQuietUntil = 0;
+		let activeCover: LiveResizeCover | null = null;
+		let pendingReleaseCover: LiveResizeCover | null = null;
+
+		const flushPendingReleaseCover = () => {
+			if (releaseRaf !== null) {
+				cancelAnimationFrame(releaseRaf);
+				releaseRaf = null;
+			}
+			if (pendingReleaseCover) {
+				pendingReleaseCover.front.remove();
+				pendingReleaseCover.back.remove();
+				pendingReleaseCover = null;
+			}
+		};
+
+		const applyLiveGrid = () => {
+			try {
+				const proposed = fit.proposeDimensions();
+				if (!proposed || !proposed.cols || !proposed.rows) return;
+				if (proposed.cols === term.cols && proposed.rows === term.rows) return;
+
+				if (!activeCover) {
+					flushPendingReleaseCover();
+					activeCover = beginLiveResizeCover(term, host);
+				}
+
+				term.resize(proposed.cols, proposed.rows);
+				forceTerminalRepaint(term);
+
+				if (activeCover) {
+					refreshLiveResizeCover(term, activeCover);
+				}
+			} catch {
+				// Container momentarily has no size — a later trigger retries.
+			}
+		};
+
+		const endLiveResize = () => {
+			flushPendingReleaseCover();
+			const cover = activeCover;
+			activeCover = null;
+			resizeQuietUntil = 0;
+			if (!cover) {
+				setLiveScreenHidden(term, false);
+				return;
+			}
+			// Reveal the real screen under the still-opaque freeze, then remove
+			// the freeze on the next frame once live pixels are composited.
+			setLiveScreenHidden(term, false);
+			forceTerminalRepaint(term);
+			pendingReleaseCover = cover;
+			releaseRaf = requestAnimationFrame(() => {
+				releaseRaf = null;
+				pendingReleaseCover = null;
+				cover.front.remove();
+				cover.back.remove();
+			});
+		};
+
+		const scheduleFit = () => {
+			resizeQuietUntil = performance.now() + RESIZE_RELEASE_MS + 50;
+			if (fitRaf !== null) cancelAnimationFrame(fitRaf);
+			fitRaf = requestAnimationFrame(() => {
+				fitRaf = null;
+				applyLiveGrid();
+			});
+			if (releaseTimer !== null) window.clearTimeout(releaseTimer);
+			releaseTimer = window.setTimeout(() => {
+				releaseTimer = null;
+				applyLiveGrid();
+				endLiveResize();
+			}, RESIZE_RELEASE_MS);
+		};
+
+		const raf = requestAnimationFrame(fitTerminalNow);
 		// 50/250ms catch the common settle; 600/1200ms are a session-bounded
-		// backstop. By 600ms the WebGL atlas and font metrics are unambiguously
+		// backstop. By 600ms the canvas renderer and font metrics are unambiguously
 		// warm, so even if the convergence loop below detached at a briefly-stable
 		// wrong measurement, this re-measures the real cell box and corrects,
 		// firing the PTY resize that makes the pane repaint cleanly (clearing
@@ -559,7 +760,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (document.fonts?.ready) {
 			void document.fonts.ready.then(fitTerminal);
 		}
-		const observer = new ResizeObserver(fitTerminal);
+		const observer = new ResizeObserver(scheduleFit);
 		observer.observe(host);
 
 		// Recovery re-fit that does NOT depend on the host box changing size.
@@ -592,6 +793,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		let refits = 0;
 		let pending: { cols: number; rows: number } | null = null;
 		const stabilizer = term.onRender(() => {
+			// Live drag path owns grid updates via scheduleFit. Re-fitting here
+			// would clear underneath the freeze cover and fight that path.
+			if (performance.now() < resizeQuietUntil) return;
 			const proposed = fit.proposeDimensions();
 			if (!proposed || !proposed.cols || !proposed.rows) return;
 			if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
@@ -617,7 +821,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// OS window resize and monitor/DPR changes also alter the true cell box
 		// without touching the host's height:100% box, so the ResizeObserver above
 		// misses them. Listen on window directly as a session-long recovery path.
-		window.addEventListener("resize", fitTerminal);
+		window.addEventListener("resize", scheduleFit);
 
 		// Do not replace this with term.onData. xterm's raw data stream can include
 		// terminal-generated control responses during attach/repaint; forwarding
@@ -755,10 +959,18 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			termRef.current = null;
 			fitRef.current = null;
 			cancelAnimationFrame(raf);
+			if (fitRaf !== null) cancelAnimationFrame(fitRaf);
+			if (releaseTimer !== null) window.clearTimeout(releaseTimer);
+			flushPendingReleaseCover();
+			disposeLiveResizeCover(term, activeCover);
+			activeCover = null;
+			for (const node of host.querySelectorAll(`canvas.${RESIZE_FREEZE_CLASS}`)) {
+				node.remove();
+			}
 			for (const timer of settleTimers) window.clearTimeout(timer);
 			observer.disconnect();
 			stabilizer.dispose();
-			window.removeEventListener("resize", fitTerminal);
+			window.removeEventListener("resize", scheduleFit);
 			host.removeEventListener("copy", copyInput);
 			window.removeEventListener("keydown", copyShortcut, true);
 			selectionChange.dispose();
