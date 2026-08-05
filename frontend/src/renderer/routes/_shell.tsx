@@ -672,22 +672,16 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{routeParams.sessionId ? (
-						<SessionTopbarHost
-							className="relative z-chrome flex h-session-topbar w-full shrink-0 overflow-hidden bg-sidebar"
-							data-testid="session-topbar-host"
-						/>
-					) : null}
-					<div className="flex min-h-0 w-full flex-1 overflow-x-hidden" data-testid="shell-content-row">
-					{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
+				<div className="flex min-h-0 w-full flex-1 overflow-x-hidden" data-testid="shell-content-row">
+				{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
               cluster above a full-height sidebar; Windows hangs the sidebar
               below its custom titlebar. */}
-					<Sidebar
-						hideEdgeBorder={isWelcomeBoard}
-						isOverlay={isSidebarPeekOpen && !isSidebarOpen}
-						onPreviewLeave={scheduleSidebarPeekClose}
-						underTopbar={isMac || isWindows || isLinux}
-						topbarOffset={routeParams.sessionId ? "session" : isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
+				<Sidebar
+					hideEdgeBorder={isWelcomeBoard}
+					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
+					onPreviewLeave={scheduleSidebarPeekClose}
+					underTopbar={isMac || isWindows || isLinux}
+					topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
@@ -701,23 +695,46 @@ function ShellLayout() {
 								selfFramedCenterPanel ? (
 									<Outlet />
 								) : (
-									// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
-									<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-										<Outlet />
-									</CenterPanelShell>
-								)
-							) : framedAppTopbar ? (
-								<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-									{!routeParams.sessionId ? <ShellTopbar /> : null}
-									<div className="flex min-h-0 flex-1 flex-col">
-										<Outlet />
-									</div>
-								</CenterPanelShell>
-							) : (
-								<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+							// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
+							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+								{routeParams.sessionId ? (
+									<SessionTopbarHost
+										className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+										data-testid="session-topbar-host"
+									/>
+								) : null}
+								<div className="flex min-h-0 flex-1 flex-col">
 									<Outlet />
-								</CenterPanelShell>
+								</div>
+							</CenterPanelShell>
+						)
+					) : framedAppTopbar ? (
+						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+							{routeParams.sessionId ? (
+								<SessionTopbarHost
+									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+									data-testid="session-topbar-host"
+								/>
+							) : (
+								<ShellTopbar />
 							)}
+							<div className="flex min-h-0 flex-1 flex-col">
+								<Outlet />
+							</div>
+						</CenterPanelShell>
+					) : (
+						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+							{routeParams.sessionId ? (
+								<SessionTopbarHost
+									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+									data-testid="session-topbar-host"
+								/>
+							) : null}
+							<div className="flex min-h-0 flex-1 flex-col">
+								<Outlet />
+							</div>
+						</CenterPanelShell>
+					)}
 						</div>
 					</main>
 					</div>
