@@ -388,6 +388,23 @@ it("loads GitHub repositories only when the project form opens", async () => {
   expect(screen.getByText(project.displayName)).toBeVisible();
 });
 
+it("opens the project dialog before provider settings when no agent is connected", async () => {
+  apiMocks.providerConnections.mockResolvedValue({ providerConnections: [] });
+  render(<CloudAppPage />);
+
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Add cloud project" }),
+  );
+
+  expect(
+    await screen.findByRole("dialog", { name: "Add cloud project" }),
+  ).toBeVisible();
+  expect(screen.getByText("GitHub not connected.")).toBeVisible();
+  expect(
+    screen.queryByRole("heading", { name: "Provider connections" }),
+  ).not.toBeInTheDocument();
+});
+
 it("creates a scratch project through the connected GitHub installation", async () => {
   const scratchProject: CloudProject = {
     ...project,

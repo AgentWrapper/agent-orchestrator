@@ -31,6 +31,7 @@ import {
   Square,
   Trash2,
   User,
+  X,
 } from "lucide-react";
 import {
   useCallback,
@@ -1449,7 +1450,7 @@ export default function CloudAppPage() {
             <button
               className="grid size-5 place-items-center rounded-md text-[#646a73] transition-colors hover:bg-white/[0.04] hover:text-white"
               onClick={() => {
-                if (defaultAgent && canEditOrg) setShowProjectForm(true);
+                if (canEditOrg) setShowProjectForm(true);
                 else {
                   setSettingsPanelTarget("agents");
                   setView("settings");
@@ -1458,12 +1459,12 @@ export default function CloudAppPage() {
               aria-label="Add cloud project"
               title={
                 sidebarCollapsed
-                  ? defaultAgent && canEditOrg
+                  ? canEditOrg
                     ? "Add project"
-                    : "Connect an agent and use an editable org"
-                  : defaultAgent && canEditOrg
+                    : "Use an editable organization to add projects"
+                  : canEditOrg
                     ? "Add project"
-                    : "Connect an agent and use an editable org"
+                    : "Use an editable organization to add projects"
               }
             >
               <Plus className="size-[15px]" />
@@ -4127,7 +4128,7 @@ function Overlay({
             onClick={onClose}
             aria-label="Close"
           >
-            <Square className="size-3" />
+            <X className="size-4" />
           </button>
         </header>
         {children}
@@ -4185,7 +4186,7 @@ function ProjectForm({
   const activeInstallations = useMemo(
     () =>
       githubConnection?.installations.filter(
-      (installation) => installation.status === "active",
+        (installation) => installation.status === "active",
       ) ?? [],
     [githubConnection?.installations],
   );
@@ -4238,40 +4239,59 @@ function ProjectForm({
           </div>
         ) : null}
         {mode === "choose" ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              className="group rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={githubUnavailable || loading}
-              onClick={() => setMode("github")}
-            >
-              <div className="mb-8 flex h-24 items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
-                <Github className="size-8 text-white/55 transition-colors group-hover:text-white" />
-              </div>
-              <p className="text-sm font-medium text-white">From GitHub</p>
-              <p className="mt-1 text-xs leading-5 text-white/42">
-                Choose a repository already granted to this AO organization.
-              </p>
-            </button>
-            <button
-              type="button"
-              className="group rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
-              disabled={githubUnavailable || loading}
-              onClick={() => setMode("scratch")}
-            >
-              <div className="mb-8 flex h-24 items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
-                <FolderGit2 className="size-8 text-white/55 transition-colors group-hover:text-white" />
-              </div>
-              <p className="text-sm font-medium text-white">Start from scratch</p>
-              <p className="mt-1 text-xs leading-5 text-white/42">
-                Create a new GitHub repo, register it, then start AO normally.
-              </p>
-              <div className="mt-3 flex items-center gap-2 rounded-lg border border-[#4d8dff]/20 bg-[#4d8dff]/[0.06] px-2.5 py-2 text-[11px] leading-4 text-[#9fc0ff]">
-                <span className="size-1.5 rounded-full bg-[#4d8dff]" />
-                Git repository is initialized before the orchestrator starts.
-              </div>
-            </button>
-          </div>
+          <>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                className="group flex min-h-64 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={githubUnavailable || loading}
+                onClick={() => setMode("github")}
+              >
+                <span className="flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
+                  <Github className="size-8 text-white/55 transition-colors group-hover:text-white" />
+                </span>
+                <span className="mt-5 text-sm font-medium text-white">
+                  From GitHub
+                </span>
+                <span className="mt-1 text-xs leading-5 text-white/42">
+                  Choose a repository already granted to this AO organization.
+                </span>
+              </button>
+              <button
+                type="button"
+                className="group flex min-h-64 flex-col rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 disabled:cursor-not-allowed disabled:opacity-45"
+                disabled={githubUnavailable || loading}
+                onClick={() => setMode("scratch")}
+              >
+                <span className="flex h-24 w-full items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
+                  <FolderGit2 className="size-8 text-white/55 transition-colors group-hover:text-white" />
+                </span>
+                <span className="mt-5 text-sm font-medium text-white">
+                  Start from scratch
+                </span>
+                <span className="mt-1 text-xs leading-5 text-white/42">
+                  Create a new GitHub repo, register it, then start AO normally.
+                </span>
+              </button>
+            </div>
+            <div className="flex items-start gap-2.5 border-t border-white/[0.08] pt-3 text-xs leading-5 text-white/45">
+              <span className="mt-2 size-1.5 shrink-0 rounded-full bg-[#4d8dff]" />
+              <span>
+                Scratch projects initialize a GitHub repository before the
+                orchestrator starts.
+              </span>
+            </div>
+            <div className="-mx-4 -mb-4 flex justify-end border-t border-white/[0.08] px-4 py-3">
+              <button
+                type="button"
+                className={button}
+                onClick={onClose}
+                disabled={loading}
+              >
+                Cancel
+              </button>
+            </div>
+          </>
         ) : null}
         {mode === "github" ? (
           <form
@@ -4415,18 +4435,6 @@ function ProjectForm({
               onClose={onClose}
             />
           </form>
-        ) : null}
-        {mode === "choose" ? (
-          <div className="flex justify-end">
-            <button
-              type="button"
-              className={button}
-              onClick={onClose}
-              disabled={loading}
-            >
-              Cancel
-            </button>
-          </div>
         ) : null}
       </div>
     </Overlay>
