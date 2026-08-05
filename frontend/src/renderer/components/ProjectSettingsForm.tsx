@@ -34,6 +34,7 @@ import { ReviewerSelect } from "./ReviewerSelect";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
+import { Button } from "./ui/button";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -420,13 +421,9 @@ function SaveChangesFooter({
 	const { t } = useTranslation();
 	return (
 		<div className="flex flex-col items-start">
-			<button
-				type="submit"
-				className="settings-footer-button settings-footer-button-primary"
-				disabled={isPending}
-			>
+			<Button type="submit" variant="footer-primary" disabled={isPending}>
 				{isPending ? t("settings.project.saving") : t("settings.project.saveChanges")}
-			</button>
+			</Button>
 			{validationError && (
 				<span className="inline-flex items-center gap-1.5 text-xs text-error">
 					<TriangleAlert className="size-3 shrink-0 text-error" aria-hidden="true" />

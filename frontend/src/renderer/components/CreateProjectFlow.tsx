@@ -344,11 +344,11 @@ function ImportModePicker({
 	const { t } = useTranslation();
 	return (
 		<div
-			className="relative isolate flex w-full max-w-(--size-import-modal-max) flex-col items-stretch gap-8 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-8 shadow-[var(--shadow-import-modal)]"
+			className="relative isolate flex w-full max-w-(--size-import-modal-max) flex-col items-stretch gap-8 rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-(--size-import-modal-padding) shadow-[var(--shadow-import-modal)]"
 			role={dialog ? undefined : "group"}
 			aria-label={dialog ? undefined : t("createProject.importTitle")}
 		>
-			<div className={cn("relative z-[1] flex flex-col items-start gap-1", onClose && "pr-8")}>
+			<div className={cn("relative z-[1] flex flex-col items-start gap-1", onClose && "pr-10")}>
 				{dialog ? (
 					<Dialog.Title className="import-title">{t("createProject.importTitle")}</Dialog.Title>
 				) : (
@@ -493,16 +493,17 @@ function CreateProjectFolderDialog({
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay flex max-h-[min(var(--size-import-folder-dialog),calc(100svh-24px))] w-[min(var(--size-import-folder-dialog),calc(100vw-24px))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-welcome-panel border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-modal)] p-0 text-[var(--color-text-import-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
-					<div className="flex shrink-0 items-start gap-3 border-b border-[var(--color-border-import-modal)] px-4 py-4 sm:gap-4 sm:px-6 sm:py-5">
-						<button
+					<div className="flex shrink-0 items-start gap-3 border-b border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding) sm:gap-4">
+						<Button
 							type="button"
-							className="grid size-8 shrink-0 place-items-center rounded-lg border border-[var(--color-border-import-modal)] text-[var(--color-text-import-muted)] transition hover:bg-[var(--color-bg-import-card-hover)] hover:text-[var(--color-text-import-title)] disabled:pointer-events-none disabled:opacity-50"
+							variant="outline"
+							size="icon"
 							aria-label={t("createProject.backToType")}
 							disabled={disabled}
 							onClick={onBack}
 						>
 							<ChevronRight className="size-4 rotate-180" aria-hidden="true" />
-						</button>
+						</Button>
 						<div className="min-w-0 flex-1">
 							<Dialog.Title className="text-[18px] font-semibold text-[var(--color-text-import-title)]">
 								{isWorkspace ? t("createProject.importWorkspace") : t("createProject.importProject")}
@@ -514,7 +515,7 @@ function CreateProjectFolderDialog({
 						<Dialog.Close asChild>
 							<button
 								type="button"
-								className="grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-import-muted)] transition hover:bg-[var(--color-bg-import-card-hover)] hover:text-[var(--color-text-import-title)] disabled:pointer-events-none disabled:opacity-50"
+								className="settings-close-button"
 								aria-label={t("createProject.closeImport")}
 								disabled={disabled}
 							>
@@ -522,10 +523,10 @@ function CreateProjectFolderDialog({
 							</button>
 						</Dialog.Close>
 					</div>
-					<div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
+					<div className="min-h-0 overflow-y-auto p-(--size-import-dialog-padding)">
 						{hasScan ? (
 							<div className="space-y-4">
-								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-3">
+								<div className="flex items-center gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4">
 									<Folder className="size-5 shrink-0 text-[var(--color-text-import-muted)]" aria-hidden="true" />
 									<div className="min-w-0 flex-1">
 										<div className="truncate font-mono text-[14px] font-semibold text-[var(--color-text-import-title)]">
@@ -535,7 +536,7 @@ function CreateProjectFolderDialog({
 											{isWorkspace ? t("createProject.workspaceRoot") : t("createProject.projectFolder")}
 										</div>
 									</div>
-									<Button type="button" variant="outline" disabled={disabled} onClick={onChooseFolder}>
+									<Button type="button" variant="footer" disabled={disabled} onClick={onChooseFolder}>
 										{t("createProject.change")}
 									</Button>
 								</div>
@@ -569,7 +570,7 @@ function CreateProjectFolderDialog({
 									))}
 
 								{scan.repos.length === 0 && (
-									<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-4 text-[12px] text-[var(--color-text-import-muted)]">
+									<div className="rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-4 text-[12px] text-[var(--color-text-import-muted)]">
 										{t("createProject.noRepos")}
 									</div>
 								)}
@@ -577,7 +578,7 @@ function CreateProjectFolderDialog({
 						) : (
 							<button
 								type="button"
-								className="flex min-h-[132px] w-full flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] px-4 py-5 text-center transition-colors hover:bg-[var(--color-bg-import-card-hover)] disabled:pointer-events-none disabled:opacity-50 sm:min-h-[160px] sm:px-5 sm:py-6"
+								className="flex min-h-[132px] w-full flex-col items-center justify-center rounded-lg border border-dashed border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-card)] p-6 text-center transition-colors hover:bg-[var(--color-bg-import-card-hover)] disabled:pointer-events-none disabled:opacity-50 sm:min-h-[160px]"
 								disabled={disabled}
 								onClick={onChooseFolder}
 							>
@@ -595,17 +596,17 @@ function CreateProjectFolderDialog({
 						{error && !hasScan && (
 							<div
 								className={cn(
-									"mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive",
+									"mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-3 text-[12px] leading-5 text-destructive",
 								)}
 							>
 								{error}
 							</div>
 						)}
 					</div>
-					<div className="flex shrink-0 flex-col gap-3 border-t border-[var(--color-border-import-modal)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+					<div className="flex shrink-0 flex-col gap-3 border-t border-[var(--color-border-import-modal)] p-(--size-import-dialog-padding) sm:flex-row sm:items-center sm:justify-between">
 						<p className="text-[12px] font-medium text-[var(--color-text-import-muted)]">{footerMessage}</p>
-						<div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-							<Button type="button" variant="outline" disabled={disabled} onClick={() => onOpenChange(false)}>
+						<div className="flex flex-wrap items-center justify-end gap-3">
+							<Button type="button" variant="footer" disabled={disabled} onClick={() => onOpenChange(false)}>
 								{t("createProject.cancel")}
 							</Button>
 						</div>
@@ -619,7 +620,7 @@ function CreateProjectFolderDialog({
 function ImportRepoRow({ failed = false, repo }: { failed?: boolean; repo: ImportFolderScan["repos"][number] }) {
 	const { t } = useTranslation();
 	return (
-		<div className="flex items-center gap-3 px-4 py-3">
+		<div className="flex items-center gap-3 p-4">
 			{failed ? (
 				<XCircle className="size-5 shrink-0 text-destructive" aria-hidden="true" />
 			) : (

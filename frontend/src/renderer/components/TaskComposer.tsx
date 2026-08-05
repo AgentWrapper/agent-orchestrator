@@ -184,7 +184,7 @@ export function TaskComposer({
 	};
 
 	return (
-		<form onSubmit={submit} className="space-y-4 px-5 py-4">
+		<form onSubmit={submit} className="space-y-4 p-(--size-modal-padding)">
 			<div className="space-y-1.5">
 				<label className="text-xs font-medium text-muted-foreground" htmlFor={titleId}>
 					{t("newTask.titleLabel")}
@@ -332,13 +332,13 @@ export function TaskComposer({
 				</div>
 			)}
 
-			<div className="flex items-center justify-end gap-2 pt-1">
+			<div className="flex items-center justify-end gap-3 pt-1">
 				{onCancel && (
-					<Button type="button" variant="ghost" disabled={isSubmitting} onClick={onCancel}>
+					<Button type="button" variant="footer" disabled={isSubmitting} onClick={onCancel}>
 						{t("newTask.cancel")}
 					</Button>
 				)}
-				<Button type="submit" disabled={isSubmitting || !projectId}>
+				<Button type="submit" variant="footer-primary" disabled={isSubmitting || !projectId}>
 					{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
 					{isSubmitting ? t("newTask.starting") : t("newTask.start")}
 				</Button>

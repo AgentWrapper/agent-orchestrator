@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUiStore } from "../../stores/ui-store";
 import { IS_DEV } from "../../lib/is-dev";
+import { Button } from "../ui/button";
 import { cn } from "../../lib/utils";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
@@ -38,16 +39,16 @@ export function DevSettingsSection({ titleHidden }: { titleHidden?: boolean }) {
 				/>
 			</SettingsRow>
 			<SettingsRow icon={Beaker} label={t("settings.dev.resetDefaultsLabel")}>
-				<button
+				<Button
 					type="button"
-					className="rounded-md border border-input bg-transparent px-3 py-1 text-xs font-medium text-foreground hover:bg-interactive-hover transition-colors"
+					variant="footer"
 					onClick={() => {
 						setDevSettings({ fixtureCount: 8, randomSpreadMinutes: 120 });
 						window.location.reload();
 					}}
 				>
 					{t("settings.dev.resetReload")}
-				</button>
+				</Button>
 			</SettingsRow>
 		</SettingsSection>
 	);
