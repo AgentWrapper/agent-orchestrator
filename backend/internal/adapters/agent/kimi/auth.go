@@ -47,10 +47,18 @@ func kimiLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, erro
 	if !ok {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
-	if status, ok, err := kimiConfigAuthStatus(filepath.Join(home, "config.toml")); err != nil || ok {
-		return status, ok, err
+	configStatus, configOK, err := kimiConfigAuthStatus(filepath.Join(home, "config.toml"))
+	if err != nil || configStatus == ports.AgentAuthStatusAuthorized {
+		return configStatus, configOK, err
 	}
-	return kimiCredentialsAuthStatus(filepath.Join(home, "credentials", "kimi-code.json"))
+	credentialsStatus, credentialsOK, err := kimiCredentialsAuthStatus(filepath.Join(home, "credentials", "kimi-code.json"))
+	if err != nil || credentialsOK {
+		return credentialsStatus, credentialsOK, err
+	}
+	if configOK {
+		return configStatus, configOK, nil
+	}
+	return ports.AgentAuthStatusUnknown, false, nil
 }
 
 func kimiCodeHome() (string, bool) {
