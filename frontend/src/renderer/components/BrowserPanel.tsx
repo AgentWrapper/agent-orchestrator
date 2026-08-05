@@ -96,7 +96,7 @@ export function useBrowserAnnotationQueue({
 				const message = formatBrowserAnnotationMessage(payload);
 				const { error } = await apiClient.POST("/api/v1/sessions/{sessionId}/send", {
 					params: { path: { sessionId: sendSessionId } },
-					body: { message },
+					body: { message, attachment: payload.snapshot },
 				});
 				if (error) {
 					failureMessage = apiErrorMessage(error, appI18n.t("browser.unableSendAnnotation"));

@@ -16,7 +16,7 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 	})
 
 	t.Run("decodes and maps extension", func(t *testing.T) {
-		out, err := decodeSpawnAttachments([]SpawnAttachmentInput{
+		out, err := decodeSpawnAttachments([]AttachmentInput{
 			{MimeType: "image/png", Data: b64([]byte("pngbytes"))},
 			{MimeType: "IMAGE/JPEG", Data: b64([]byte("jpgbytes"))},
 		})
@@ -35,9 +35,9 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 	})
 
 	t.Run("rejects too many", func(t *testing.T) {
-		in := make([]SpawnAttachmentInput, maxAttachments+1)
+		in := make([]AttachmentInput, maxAttachments+1)
 		for i := range in {
-			in[i] = SpawnAttachmentInput{MimeType: "image/png", Data: b64([]byte("x"))}
+			in[i] = AttachmentInput{MimeType: "image/png", Data: b64([]byte("x"))}
 		}
 		_, err := decodeSpawnAttachments(in)
 		if err == nil || err.code != "TOO_MANY_ATTACHMENTS" {
@@ -46,7 +46,7 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 	})
 
 	t.Run("rejects unsupported type", func(t *testing.T) {
-		_, err := decodeSpawnAttachments([]SpawnAttachmentInput{{MimeType: "application/pdf", Data: b64([]byte("x"))}})
+		_, err := decodeSpawnAttachments([]AttachmentInput{{MimeType: "application/pdf", Data: b64([]byte("x"))}})
 		if err == nil || err.code != "UNSUPPORTED_ATTACHMENT_TYPE" {
 			t.Fatalf("want UNSUPPORTED_ATTACHMENT_TYPE got %v", err)
 		}
@@ -54,21 +54,21 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 
 	// SVG is XML that can carry active content; the raster-only allowlist rejects it.
 	t.Run("rejects svg", func(t *testing.T) {
-		_, err := decodeSpawnAttachments([]SpawnAttachmentInput{{MimeType: "image/svg+xml", Data: b64([]byte("<svg/>"))}})
+		_, err := decodeSpawnAttachments([]AttachmentInput{{MimeType: "image/svg+xml", Data: b64([]byte("<svg/>"))}})
 		if err == nil || err.code != "UNSUPPORTED_ATTACHMENT_TYPE" {
 			t.Fatalf("want UNSUPPORTED_ATTACHMENT_TYPE got %v", err)
 		}
 	})
 
 	t.Run("rejects invalid base64", func(t *testing.T) {
-		_, err := decodeSpawnAttachments([]SpawnAttachmentInput{{MimeType: "image/png", Data: "!!!not base64!!!"}})
+		_, err := decodeSpawnAttachments([]AttachmentInput{{MimeType: "image/png", Data: "!!!not base64!!!"}})
 		if err == nil || err.code != "INVALID_ATTACHMENT_DATA" {
 			t.Fatalf("want INVALID_ATTACHMENT_DATA got %v", err)
 		}
 	})
 
 	t.Run("rejects empty payload", func(t *testing.T) {
-		_, err := decodeSpawnAttachments([]SpawnAttachmentInput{{MimeType: "image/png", Data: ""}})
+		_, err := decodeSpawnAttachments([]AttachmentInput{{MimeType: "image/png", Data: ""}})
 		if err == nil || err.code != "INVALID_ATTACHMENT_DATA" {
 			t.Fatalf("want INVALID_ATTACHMENT_DATA got %v", err)
 		}
@@ -76,7 +76,7 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 
 	t.Run("rejects oversized single attachment", func(t *testing.T) {
 		big := b64(make([]byte, maxAttachmentBytes+1))
-		_, err := decodeSpawnAttachments([]SpawnAttachmentInput{{MimeType: "image/png", Data: big}})
+		_, err := decodeSpawnAttachments([]AttachmentInput{{MimeType: "image/png", Data: big}})
 		if err == nil || err.code != "ATTACHMENT_TOO_LARGE" {
 			t.Fatalf("want ATTACHMENT_TOO_LARGE got %v", err)
 		}
@@ -84,7 +84,7 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 
 	t.Run("rejects oversized total", func(t *testing.T) {
 		half := b64(make([]byte, maxAttachmentBytes))
-		in := []SpawnAttachmentInput{
+		in := []AttachmentInput{
 			{MimeType: "image/png", Data: half},
 			{MimeType: "image/png", Data: half},
 			{MimeType: "image/png", Data: half},
@@ -97,7 +97,7 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 }
 
 func TestDecodeSpawnAttachmentsTrimsWhitespace(t *testing.T) {
-	out, err := decodeSpawnAttachments([]SpawnAttachmentInput{
+	out, err := decodeSpawnAttachments([]AttachmentInput{
 		{MimeType: "  image/png  ", Data: "  " + b64([]byte("hi")) + "  "},
 	})
 	if err != nil {

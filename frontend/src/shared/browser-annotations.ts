@@ -2,12 +2,12 @@ export const MAX_BROWSER_ANNOTATION_MESSAGE_LENGTH = 4096;
 
 const MAX_INSTRUCTION_LENGTH = 1400;
 const MAX_TEXT_FIELD_LENGTH = 700;
-const MAX_NEARBY_TEXT_LENGTH = 500;
 const MAX_SELECTOR_DEPTH = 6;
 
-export type BrowserAnnotationRect = {
-	x: number;
-	y: number;
+const CONSTRAINTS_LINE =
+	"Constraints: smallest diff that satisfies the request; no watch-mode or long-running commands; use finite verification commands or the existing preview watcher.";
+
+export type BrowserAnnotationSize = {
 	width: number;
 	height: number;
 };
@@ -30,12 +30,10 @@ export type BrowserAnnotationContext = {
 	id?: string;
 	classes: string[];
 	selector: string;
-	rect: BrowserAnnotationRect;
+	size: BrowserAnnotationSize;
 	visibleText?: string;
 	selectedText?: string;
-	ariaRole?: string;
 	ariaLabel?: string;
-	nearbyText: string[];
 	computedStyle: BrowserAnnotationComputedStyle;
 };
 
@@ -53,8 +51,14 @@ export type BrowserAnnotationPageSubmitPayload = {
 	selection: BrowserAnnotationSelection;
 };
 
+export type BrowserAnnotationSnapshot = {
+	mimeType: string;
+	data: string;
+};
+
 export type BrowserAnnotationSubmitPayload = BrowserAnnotationPageSubmitPayload & {
 	viewId: string;
+	snapshot?: BrowserAnnotationSnapshot;
 };
 
 export type BrowserAnnotationCancelReason = "escape" | "cancel" | "navigation" | "disabled";
@@ -83,17 +87,13 @@ export function createBrowserAnnotationContext(element: Element): BrowserAnnotat
 		id: element.id || undefined,
 		classes: classList,
 		selector: selectorFor(element),
-		rect: {
-			x: Math.round(rect.x),
-			y: Math.round(rect.y),
+		size: {
 			width: Math.round(rect.width),
 			height: Math.round(rect.height),
 		},
 		visibleText: visibleText || undefined,
 		selectedText: selectedText || undefined,
-		ariaRole: element.getAttribute("role") || undefined,
 		ariaLabel: ariaName(element) || undefined,
-		nearbyText: nearbyText(element),
 		computedStyle: style
 			? {
 					display: style.display,
@@ -111,57 +111,78 @@ export function createBrowserAnnotationContext(element: Element): BrowserAnnotat
 
 export function formatBrowserAnnotationMessage(payload: BrowserAnnotationSubmitPayload): string {
 	const selection = payload.selection;
-	const lines = [
+	const lines =
 		selection.kind === "element"
-			? "The user selected an element in the AO browser preview and asked for a change."
-			: `The user selected ${selection.contexts.length} element${selection.contexts.length === 1 ? "" : "s"} in the AO browser preview and asked for a change.`,
-		"",
-		"Change request:",
-		compactText(payload.instruction, MAX_INSTRUCTION_LENGTH) || "(empty)",
-		"",
-		...(selection.kind === "element"
-			? elementSelectionLines(selection.context)
-			: elementsSelectionLines(selection.contexts)),
-		"",
-		"Execution constraints:",
-		"- Make the smallest source change that satisfies the request.",
-		"- Do not start, restart, or background a dev server.",
-		"- Do not run watch-mode or long-running commands.",
-		"- If verification is needed, use a finite command only; otherwise rely on the existing preview watcher or dev-server refresh.",
-	];
-
+			? singleElementLines(payload.instruction, selection.context)
+			: multiElementLines(payload.instruction, selection.contexts);
 	return limitMessage(lines.join("\n"), MAX_BROWSER_ANNOTATION_MESSAGE_LENGTH);
 }
 
-function elementSelectionLines(context: BrowserAnnotationContext): string[] {
+function singleElementLines(instruction: string, context: BrowserAnnotationContext): string[] {
 	return [
-		"Selected element context:",
-		`- URL: ${context.url || "(unknown)"}`,
-		context.title ? `- Title: ${compactText(context.title, 160)}` : null,
-		`- Element: ${elementSummary(context)}`,
-		`- Selector: ${context.selector}`,
-		`- Bounds: x=${context.rect.x}, y=${context.rect.y}, width=${context.rect.width}, height=${context.rect.height}`,
-		context.visibleText ? `- Visible text: ${compactText(context.visibleText, MAX_TEXT_FIELD_LENGTH)}` : null,
-		context.selectedText ? `- Selected text: ${compactText(context.selectedText, MAX_TEXT_FIELD_LENGTH)}` : null,
-		context.ariaRole ? `- ARIA role: ${compactText(context.ariaRole, 120)}` : null,
-		context.ariaLabel ? `- ARIA/name: ${compactText(context.ariaLabel, 180)}` : null,
-		context.nearbyText.length > 0
-			? `- Nearby text: ${compactText(context.nearbyText.join(" | "), MAX_NEARBY_TEXT_LENGTH)}`
-			: null,
-		Object.keys(context.computedStyle).length > 0
-			? `- Computed style: ${compactText(JSON.stringify(context.computedStyle), 700)}`
-			: null,
-	].filter((line): line is string => line !== null);
+		"Browser annotation — apply this change",
+		"",
+		`Request: ${compactText(instruction, MAX_INSTRUCTION_LENGTH) || "(empty)"}`,
+		"",
+		`Target: ${elementSummary(context)} (${context.selector})`,
+		`Page: ${pageLine(context)}`,
+		`Size: ${context.size.width}×${context.size.height}`,
+		...textLine(context),
+		...ariaLine(context),
+		...styleLine(context),
+		"",
+		CONSTRAINTS_LINE,
+	];
 }
 
-function elementsSelectionLines(contexts: BrowserAnnotationContext[]): string[] {
+function multiElementLines(instruction: string, contexts: BrowserAnnotationContext[]): string[] {
 	const url = contexts.find((context) => context.url)?.url || "(unknown)";
-	const items = contexts.map((context, index) => {
-		const bounds = `x=${context.rect.x}, y=${context.rect.y}, width=${context.rect.width}, height=${context.rect.height}`;
-		const text = context.visibleText ? ` — ${compactText(context.visibleText, 160)}` : "";
-		return `${index + 1}. ${elementSummary(context)} (selector: ${context.selector}, bounds: ${bounds})${text}`;
-	});
-	return [`Selected element${contexts.length === 1 ? "" : "s"} (${contexts.length}) at ${url}:`, ...items];
+	const items = contexts.map(
+		(context, index) =>
+			`${index + 1}. ${elementSummary(context)} (selector: ${context.selector}) — ${context.size.width}×${context.size.height}`,
+	);
+	return [
+		`Browser annotation — apply this change to ${contexts.length} selected element${contexts.length === 1 ? "" : "s"}`,
+		"",
+		`Request: ${compactText(instruction, MAX_INSTRUCTION_LENGTH) || "(empty)"}`,
+		"",
+		`Targets @ ${url}:`,
+		...items,
+		"",
+		CONSTRAINTS_LINE,
+	];
+}
+
+function pageLine(context: BrowserAnnotationContext): string {
+	const url = context.url || "(unknown)";
+	return context.title ? `${url} — "${compactText(context.title, 160)}"` : url;
+}
+
+function textLine(context: BrowserAnnotationContext): string[] {
+	const text = context.visibleText || context.selectedText;
+	return text ? [`Text: "${compactText(text, MAX_TEXT_FIELD_LENGTH)}"`] : [];
+}
+
+function ariaLine(context: BrowserAnnotationContext): string[] {
+	return context.ariaLabel ? [`Aria-label: "${compactText(context.ariaLabel, 180)}"`] : [];
+}
+
+function styleLine(context: BrowserAnnotationContext): string[] {
+	const style = context.computedStyle;
+	const parts: string[] = [];
+	if (style.display) parts.push(`display:${style.display}`);
+	if (style.position) parts.push(`position:${style.position}`);
+	if (style.color) parts.push(`color:${compactCss(style.color)}`);
+	if (style.backgroundColor) parts.push(`background:${compactCss(style.backgroundColor)}`);
+	const font = [style.fontWeight, style.fontSize].filter(Boolean).join(" ");
+	if (font) parts.push(`font:${font}`);
+	if (style.padding) parts.push(`padding:${style.padding}`);
+	if (style.margin) parts.push(`margin:${style.margin}`);
+	return parts.length > 0 ? [`Style: ${parts.join("; ")}`] : [];
+}
+
+function compactCss(value: string): string {
+	return value.replace(/,\s+/g, ",");
 }
 
 function elementSummary(context: BrowserAnnotationContext): string {
@@ -227,42 +248,6 @@ function ariaName(element: Element): string {
 	);
 }
 
-function nearbyText(element: Element): string[] {
-	const values: string[] = [];
-	const add = (value: string | null | undefined) => {
-		const text = compactText(value ?? "", 180);
-		if (text && !values.includes(text)) values.push(text);
-	};
-
-	if (element.id) {
-		const label = element.ownerDocument.querySelector(`label[for="${cssAttributeEscape(element.id)}"]`);
-		add(label?.textContent);
-	}
-	for (const candidate of Array.from(element.querySelectorAll("label, legend, h1, h2, h3, h4")).slice(0, 4)) {
-		add(candidate.textContent);
-	}
-	const compactTarget = isCompactAnnotationTarget(element);
-	if (compactTarget) {
-		add(element.previousElementSibling?.textContent);
-		add(element.nextElementSibling?.textContent);
-	}
-	const parent = element.parentElement;
-	if (parent && compactTarget) {
-		for (const candidate of Array.from(
-			parent.querySelectorAll(
-				":scope > label, :scope > legend, :scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > p",
-			),
-		).slice(0, 6)) {
-			if (candidate !== element && !element.contains(candidate)) add(candidate.textContent);
-		}
-	}
-	return values.slice(0, 5);
-}
-
-function isCompactAnnotationTarget(element: Element): boolean {
-	return element.matches("button, a, input, textarea, select, [role]");
-}
-
 function elementText(element: Element, maxLength: number): string {
 	const htmlElement = element as HTMLElement;
 	return compactText(htmlElement.innerText ?? element.textContent ?? "", maxLength);
@@ -283,8 +268,4 @@ function limitMessage(message: string, maxLength: number): string {
 
 function cssEscape(value: string): string {
 	return globalThis.CSS?.escape ? globalThis.CSS.escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, "\\$&");
-}
-
-function cssAttributeEscape(value: string): string {
-	return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }

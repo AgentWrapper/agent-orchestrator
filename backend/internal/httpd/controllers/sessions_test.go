@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -30,6 +31,7 @@ import (
 type fakeSessionService struct {
 	sessions        map[domain.SessionID]domain.Session
 	sent            string
+	sentAttachment  *ports.SpawnAttachment
 	delegationInput sessionsvc.DelegateTaskInput
 	delegationErr   error
 	cleanupProjects []domain.ProjectID
@@ -266,8 +268,9 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 	return nil
 }
 
-func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
+func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
 	f.sent = message
+	f.sentAttachment = attachment
 	return nil
 }
 
@@ -1705,6 +1708,34 @@ func TestSessionsAPI_DelegateTaskRejectsOversizedBody(t *testing.T) {
 	if svc.delegationInput.ProjectID != "" {
 		t.Fatalf("delegate service called with oversized body: %#v", svc.delegationInput)
 	}
+}
+
+func TestSessionsAPI_SendWithAttachment(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	reqBody := `{"message":"Make the button blue.","attachment":{"mimeType":"image/png","data":"` + base64.StdEncoding.EncodeToString([]byte("snapshot")) + `"}}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", reqBody)
+	if status != http.StatusOK {
+		t.Fatalf("send = %d, want 200; body=%s", status, body)
+	}
+	if svc.sent != "Make the button blue." {
+		t.Fatalf("sent message = %q, want unchanged (attachment referencing happens in the manager)", svc.sent)
+	}
+	if svc.sentAttachment == nil {
+		t.Fatal("sentAttachment is nil, want the decoded attachment")
+	}
+	if svc.sentAttachment.Ext != ".png" || string(svc.sentAttachment.Data) != "snapshot" {
+		t.Fatalf("sentAttachment = %+v, want Ext=.png Data=snapshot", svc.sentAttachment)
+	}
+}
+
+func TestSessionsAPI_SendRejectsUnsupportedAttachmentType(t *testing.T) {
+	srv := newSessionTestServer(t, newFakeSessionService())
+
+	reqBody := `{"message":"Make the button blue.","attachment":{"mimeType":"image/svg+xml","data":"` + base64.StdEncoding.EncodeToString([]byte("<svg/>")) + `"}}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", reqBody)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "UNSUPPORTED_ATTACHMENT_TYPE")
 }
 
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {

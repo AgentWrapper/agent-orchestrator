@@ -66,7 +66,7 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 
 	orchestrator := newestSession(orchestrators)
 	out.OrchestratorID = orchestrator.ID
-	if err := s.manager.Send(ctx, orchestrator.ID, taskTitleDelegationMessage(worker.ID, in)); err != nil {
+	if err := s.manager.Send(ctx, orchestrator.ID, taskTitleDelegationMessage(worker.ID, in), nil); err != nil {
 		return out, err
 	}
 	return out, nil

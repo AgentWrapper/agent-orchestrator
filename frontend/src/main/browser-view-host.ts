@@ -16,6 +16,7 @@ import type {
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
 	BrowserAnnotationSelection,
+	BrowserAnnotationSnapshot,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
@@ -28,25 +29,16 @@ function isValidAnnotationContext(value: unknown): value is BrowserAnnotationCon
 		tag?: unknown;
 		classes?: unknown;
 		selector?: unknown;
-		rect?: unknown;
-		nearbyText?: unknown;
+		size?: unknown;
 		computedStyle?: unknown;
 	};
 	if (typeof context.url !== "string") return false;
 	if (typeof context.tag !== "string") return false;
 	if (!Array.isArray(context.classes)) return false;
 	if (typeof context.selector !== "string") return false;
-	if (typeof context.rect !== "object" || context.rect === null) return false;
-	const rect = context.rect as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
-	if (
-		typeof rect.x !== "number" ||
-		typeof rect.y !== "number" ||
-		typeof rect.width !== "number" ||
-		typeof rect.height !== "number"
-	) {
-		return false;
-	}
-	if (!Array.isArray(context.nearbyText)) return false;
+	if (typeof context.size !== "object" || context.size === null) return false;
+	const size = context.size as { width?: unknown; height?: unknown };
+	if (typeof size.width !== "number" || typeof size.height !== "number") return false;
 	if (typeof context.computedStyle !== "object" || context.computedStyle === null) return false;
 	return true;
 }
@@ -283,6 +275,12 @@ const MAX_BROWSER_TABS = 16;
 const MAX_EXTERNAL_TEXT_BYTES = 1 << 20;
 const MAX_SNAPSHOT_LINES = 1_000;
 const MAX_LOG_MESSAGE_CHARS = 16_384;
+// Annotation submit must never feel laggy: capture is best-effort and bounded
+// so a slow/hung capturePage() can't delay the send past this ceiling.
+const ANNOTATION_SNAPSHOT_TIMEOUT_MS = 200;
+// Caps the longest edge so the encoded image stays small and matches Claude
+// vision's effective resolution — larger just costs more tokens for no gain.
+const ANNOTATION_SNAPSHOT_MAX_DIMENSION = 1568;
 const UNTRUSTED_BEGIN = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>";
 const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
 // The human-facing address bar may open local preview files. Agent commands use
@@ -678,6 +676,37 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 	};
 
+	// Best-effort full-viewport capture for a browser-annotation submit. Bounded
+	// by ANNOTATION_SNAPSHOT_TIMEOUT_MS so a slow/hung capturePage() can never
+	// delay the send — on timeout, error, or an empty frame this resolves
+	// undefined and the caller proceeds with a text-only message, same as
+	// `capture` above.
+	const captureAnnotationSnapshot = async (entry: BrowserEntry): Promise<BrowserAnnotationSnapshot | undefined> => {
+		try {
+			const timedOut = Symbol("annotation-snapshot-timeout");
+			const image = await Promise.race([
+				entry.view.webContents.capturePage(),
+				new Promise<typeof timedOut>((resolve) => {
+					setTimeout(() => resolve(timedOut), ANNOTATION_SNAPSHOT_TIMEOUT_MS);
+				}),
+			]);
+			if (image === timedOut || image.isEmpty()) return undefined;
+			const { width, height } = image.getSize();
+			const longestEdge = Math.max(width, height);
+			const resized =
+				longestEdge > ANNOTATION_SNAPSHOT_MAX_DIMENSION
+					? image.resize(
+							width >= height
+								? { width: ANNOTATION_SNAPSHOT_MAX_DIMENSION }
+								: { height: ANNOTATION_SNAPSHOT_MAX_DIMENSION },
+						)
+					: image;
+			return { mimeType: "image/png", data: resized.toPNG().toString("base64") };
+		} catch {
+			return undefined;
+		}
+	};
+
 	const destroy = (viewId: string): void => {
 		const session = entries.get(viewId);
 		if (!session) return;
@@ -737,10 +766,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (input.enabled) entry.view.webContents.focus();
 	};
 
-	const forwardAnnotationSubmit = (
-		event: IpcMainEvent,
+	const forwardAnnotationSubmit = async (
+		event: IpcMainInvokeEvent,
 		payload: BrowserAnnotationPageSubmitPayload | undefined,
-	): void => {
+	): Promise<void> => {
 		const entry = tabsByWebContentsId.get(event.sender.id);
 		const viewId = entry?.state.viewId;
 		if (
@@ -753,10 +782,16 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			return;
 		}
 		entry.annotationEnabled = false;
+		// Captured now, before returning: the preload only tears down the
+		// highlight overlay after this handler resolves, so the frame we grab
+		// here still has the selection ring(s) on it and not the prompt box
+		// (the preload hides that synchronously before invoking).
+		const snapshot = await captureAnnotationSnapshot(entry);
 		const forwarded: BrowserAnnotationSubmitPayload = {
 			viewId,
 			instruction: payload.instruction,
 			selection: payload.selection,
+			...(snapshot ? { snapshot } : {}),
 		};
 		options.mainWindow.webContents.send("browser:annotation:submitted", forwarded);
 	};
@@ -842,7 +877,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	on("browser:destroy", (event, viewId: string) => {
 		if (isRendererOwned(event, viewId)) destroy(viewId);
 	});
-	on("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
+	handle("browser:annotation:submit", (event, payload: BrowserAnnotationPageSubmitPayload) =>
 		forwardAnnotationSubmit(event, payload),
 	);
 	on("browser:annotation:cancel", (event, payload: BrowserAnnotationPageCancelPayload) =>

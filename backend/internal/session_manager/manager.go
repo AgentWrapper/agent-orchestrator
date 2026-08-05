@@ -2029,7 +2029,41 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // (flipped to active by the user-prompt-submit hook) and re-sends Enter until
 // the session is active or the budget is exhausted. Confirmation never fails
 // the send: it only decides whether to nudge again.
-func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string) error {
+func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
+	var rec domain.SessionRecord
+	var haveRec bool
+	if attachment != nil {
+		// Unlike the best-effort lookup below, this one is load-bearing: without
+		// the workspace path there is nowhere to write the attachment, and
+		// silently dropping an image the caller explicitly attached would be a
+		// worse outcome than failing the send.
+		var err error
+		rec, haveRec, err = m.store.GetSession(ctx, id)
+		if err != nil {
+			return fmt.Errorf("send %s: attachment: session lookup: %w", id, err)
+		}
+		if !haveRec {
+			return fmt.Errorf("send %s: %w", id, ErrNotFound)
+		}
+		ref, err := writeSendAttachment(rec.Metadata.WorkspacePath, *attachment)
+		if err != nil {
+			return fmt.Errorf("send %s: attachment: %w", id, err)
+		}
+		info := ports.WorkspaceInfo{
+			Path:      rec.Metadata.WorkspacePath,
+			Branch:    rec.Metadata.Branch,
+			SessionID: rec.ID,
+			ProjectID: rec.ProjectID,
+			RepoPath:  rec.Metadata.WorkspaceRepoPath,
+		}
+		// Keep the attachments dir out of git status. Best-effort: the image is
+		// already written and usable, so an exclude failure must not fail the send.
+		if err := m.workspace.AddExclude(ctx, info, "/"+attachmentsDir+"/"); err != nil {
+			m.logger.Warn("send: exclude attachments dir", "sessionID", id, "error", err)
+		}
+		message = appendAttachmentReferences(message, []string{ref})
+	}
+
 	message, err := m.prepareOutboundMessage(ctx, id, message)
 	if err != nil {
 		return err
@@ -2055,15 +2089,18 @@ func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string)
 	// Only claude-code and its hook-delegators (grok/continueagent/devin)
 	// satisfy both; every other harness opts out via EmitsBlockedActivity —
 	// see ports.ActivitySignaler.
-	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil {
-		// Confirmation is best-effort and never fails the send (the message
-		// was already delivered above); log so a store error is not swallowed
-		// silently.
-		m.logger.Warn("send: confirm skipped, session lookup failed", "sessionID", id, "error", err)
-		return nil
+	if !haveRec {
+		var err error
+		rec, haveRec, err = m.store.GetSession(ctx, id)
+		if err != nil {
+			// Confirmation is best-effort and never fails the send (the message
+			// was already delivered above); log so a store error is not swallowed
+			// silently.
+			m.logger.Warn("send: confirm skipped, session lookup failed", "sessionID", id, "error", err)
+			return nil
+		}
 	}
-	if !ok {
+	if !haveRec {
 		return nil
 	}
 	if m.harnessNudgeSafe(rec.Harness) {
@@ -2476,6 +2513,27 @@ func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttach
 		refs = append(refs, attachmentsDir+"/"+name)
 	}
 	return refs, nil
+}
+
+// writeSendAttachment writes a single attachment delivered via Send (e.g. a
+// browser-annotation snapshot) into the worktree under attachmentsDir and
+// returns its worktree-relative path. Unlike writeSpawnAttachments' sequential
+// image-N naming (safe for a one-shot spawn call), Send can fire many times
+// over a session's life, so the name carries a uuid to stay collision-safe.
+func writeSendAttachment(workspacePath string, attachment ports.SpawnAttachment) (string, error) {
+	dir := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir))
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("create attachments dir: %w", err)
+	}
+	ext := attachment.Ext
+	if ext == "" {
+		ext = ".bin"
+	}
+	name := fmt.Sprintf("annotate-%s%s", uuid.NewString(), ext)
+	if err := os.WriteFile(filepath.Join(dir, name), attachment.Data, 0o600); err != nil {
+		return "", fmt.Errorf("write attachment: %w", err)
+	}
+	return attachmentsDir + "/" + name, nil
 }
 
 // appendAttachmentReferences appends a block listing the attached image paths so

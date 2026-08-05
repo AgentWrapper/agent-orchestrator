@@ -115,6 +115,12 @@ function setupHost() {
 	const rendererFrame = { processId: 5, routingId: 7 };
 	const invoke = (channel: string, ...args: unknown[]) =>
 		handlers.get(channel)!({ sender: { id: 1 }, senderFrame: rendererFrame }, ...args) as Promise<BrowserNavState>;
+	// browser:annotation:submit is a handle() (invoke/await), not an on() —
+	// unlike invoke() above it must impersonate the browser tab's own
+	// webContents (senderId), not the shell window's, so forwardAnnotationSubmit
+	// can resolve it via tabsByWebContentsId.
+	const invokeFromTab = (channel: string, senderId: number, ...args: unknown[]) =>
+		handlers.get(channel)!({ sender: { id: senderId } }, ...args);
 	const emit = (channel: string, zoomFactor: number, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => zoomFactor } }, ...args);
 	const send = (channel: string, senderId: number, ...args: unknown[]) =>
@@ -148,6 +154,7 @@ function setupHost() {
 		getDisplayHandler: () => displayHandler,
 		host,
 		invoke,
+		invokeFromTab,
 		rendererFrame,
 		send,
 		sent,
@@ -1315,10 +1322,10 @@ describe("browser annotation IPC", () => {
 	});
 
 	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
 			selection: {
 				kind: "element",
@@ -1327,8 +1334,7 @@ describe("browser annotation IPC", () => {
 					tag: "button",
 					classes: [],
 					selector: "button",
-					rect: { x: 0, y: 0, width: 80, height: 30 },
-					nearbyText: [],
+					size: { width: 80, height: 30 },
 					computedStyle: {},
 				},
 			},
@@ -1348,10 +1354,10 @@ describe("browser annotation IPC", () => {
 	});
 
 	it("forwards a multi-element preview annotation submission to the renderer-owned view", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Align these two.",
 			selection: {
 				kind: "elements",
@@ -1361,8 +1367,7 @@ describe("browser annotation IPC", () => {
 						tag: "button",
 						classes: [],
 						selector: "button#a",
-						rect: { x: 0, y: 0, width: 80, height: 30 },
-						nearbyText: [],
+						size: { width: 80, height: 30 },
 						computedStyle: {},
 					},
 					{
@@ -1370,8 +1375,7 @@ describe("browser annotation IPC", () => {
 						tag: "button",
 						classes: [],
 						selector: "button#b",
-						rect: { x: 100, y: 0, width: 80, height: 30 },
-						nearbyText: [],
+						size: { width: 80, height: 30 },
 						computedStyle: {},
 					},
 				],
@@ -1395,10 +1399,10 @@ describe("browser annotation IPC", () => {
 	});
 
 	it("ignores a malformed annotation selection instead of forwarding it", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
 			selection: { kind: "elements", contexts: [] },
 		});
@@ -1407,10 +1411,10 @@ describe("browser annotation IPC", () => {
 	});
 
 	it("ignores a single-element selection whose context is missing required fields", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
 			selection: {
 				kind: "element",
@@ -1422,10 +1426,10 @@ describe("browser annotation IPC", () => {
 	});
 
 	it("ignores a multi-element selection containing a malformed context entry", async () => {
-		const { invoke, send, sent } = setupHost();
+		const { invoke, invokeFromTab, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
-		send("browser:annotation:submit", 99, {
+		await invokeFromTab("browser:annotation:submit", 99, {
 			instruction: "Align these two.",
 			selection: {
 				kind: "elements",
@@ -1435,8 +1439,7 @@ describe("browser annotation IPC", () => {
 						tag: "button",
 						classes: [],
 						selector: "button",
-						rect: { x: 0, y: 0, width: 1, height: 1 },
-						nearbyText: [],
+						size: { width: 1, height: 1 },
 						computedStyle: {},
 					},
 					null,

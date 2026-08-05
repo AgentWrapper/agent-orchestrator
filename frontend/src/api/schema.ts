@@ -1056,6 +1056,10 @@ export interface components {
         ContainerReapConfig: {
             disabled?: boolean;
         };
+        ControllersAttachmentInput: {
+            data: string;
+            mimeType?: string;
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
@@ -1085,10 +1089,6 @@ export interface components {
             terminateOnPrMerge: boolean;
             /** Format: date-time */
             updatedAt: string;
-        };
-        ControllersSpawnAttachmentInput: {
-            data: string;
-            mimeType?: string;
         };
         DegradedProject: {
             id: string;
@@ -1446,6 +1446,7 @@ export interface components {
             sessionId: string;
         };
         SendSessionMessageRequest: {
+            attachment?: components["schemas"]["ControllersAttachmentInput"];
             message: string;
         };
         SendSessionMessageResponse: {
@@ -1623,7 +1624,7 @@ export interface components {
             orchestrator: components["schemas"]["OrchestratorResponse"];
         };
         SpawnSessionRequest: {
-            attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
+            attachments?: components["schemas"]["ControllersAttachmentInput"][];
             branch?: string;
             displayName?: string;
             /** @enum {string} */

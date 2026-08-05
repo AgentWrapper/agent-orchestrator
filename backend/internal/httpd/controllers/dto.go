@@ -166,11 +166,11 @@ type SpawnSessionRequest struct {
 	// Attachments are images pasted or dropped into the task brief. Each carries
 	// its bytes as standard base64 (no data: URL prefix). The daemon writes them
 	// into the session worktree and appends path references to the prompt.
-	Attachments []SpawnAttachmentInput `json:"attachments,omitempty"`
+	Attachments []AttachmentInput `json:"attachments,omitempty"`
 }
 
-// SpawnAttachmentInput is one image attached to a spawn request.
-type SpawnAttachmentInput struct {
+// AttachmentInput is one inline image attached to a spawn or send request.
+type AttachmentInput struct {
 	// MimeType is the browser-reported content type (e.g. "image/png"). Used to
 	// derive the on-disk file extension; only image/* types are accepted.
 	MimeType string `json:"mimeType,omitempty"`
@@ -388,6 +388,10 @@ type CleanupSessionsResponse struct {
 // SendSessionMessageRequest is the body of POST /api/v1/sessions/{sessionId}/send.
 type SendSessionMessageRequest struct {
 	Message string `json:"message" minLength:"1" maxLength:"4096"`
+	// Attachment is an optional inline image (e.g. a browser-annotation
+	// snapshot) delivered alongside the message. The daemon writes it into the
+	// session worktree and appends a path reference to the message.
+	Attachment *AttachmentInput `json:"attachment,omitempty"`
 }
 
 // SendSessionMessageResponse is the body of POST /api/v1/sessions/{sessionId}/send.

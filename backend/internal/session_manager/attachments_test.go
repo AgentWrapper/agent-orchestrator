@@ -38,6 +38,35 @@ func TestWriteSpawnAttachments(t *testing.T) {
 	}
 }
 
+func TestWriteSendAttachment(t *testing.T) {
+	dir := t.TempDir()
+
+	ref, err := writeSendAttachment(dir, ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot")})
+	if err != nil {
+		t.Fatalf("writeSendAttachment: %v", err)
+	}
+	if !strings.HasPrefix(ref, ".ao/attachments/annotate-") || !strings.HasSuffix(ref, ".png") {
+		t.Fatalf("ref = %q, want .ao/attachments/annotate-<uuid>.png", ref)
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, filepath.FromSlash(ref)))
+	if readErr != nil {
+		t.Fatalf("read %s: %v", ref, readErr)
+	}
+	if string(got) != "snapshot" {
+		t.Errorf("attachment content = %q, want %q", got, "snapshot")
+	}
+
+	// A second call must not collide with the first (unlike spawn's sequential
+	// image-N naming, send can fire many times over a session's life).
+	secondRef, err := writeSendAttachment(dir, ports.SpawnAttachment{Ext: ".png", Data: []byte("another")})
+	if err != nil {
+		t.Fatalf("writeSendAttachment (second): %v", err)
+	}
+	if secondRef == ref {
+		t.Fatalf("second attachment reused the first's name: %q", secondRef)
+	}
+}
+
 func TestAppendAttachmentReferences(t *testing.T) {
 	t.Run("appends after a brief", func(t *testing.T) {
 		got := appendAttachmentReferences("Fix the button", []string{".ao/attachments/image-1.png"})

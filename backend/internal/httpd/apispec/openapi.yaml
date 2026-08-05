@@ -3143,6 +3143,15 @@ components:
         disabled:
           type: boolean
       type: object
+    ControllersAttachmentInput:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - data
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -3235,15 +3244,6 @@ components:
       - isPinned
       - status
       - prs
-      type: object
-    ControllersSpawnAttachmentInput:
-      properties:
-        data:
-          type: string
-        mimeType:
-          type: string
-      required:
-      - data
       type: object
     DegradedProject:
       properties:
@@ -4169,6 +4169,8 @@ components:
       type: object
     SendSessionMessageRequest:
       properties:
+        attachment:
+          $ref: '#/components/schemas/ControllersAttachmentInput'
         message:
           maxLength: 4096
           minLength: 1
@@ -4622,7 +4624,7 @@ components:
       properties:
         attachments:
           items:
-            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+            $ref: '#/components/schemas/ControllersAttachmentInput'
           type: array
         branch:
           type: string
