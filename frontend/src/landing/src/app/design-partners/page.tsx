@@ -7,6 +7,7 @@ import {
   getGitHubRepoStats,
   monthsSince,
 } from "@/lib/github-stats";
+import { DesignPartnerReplay } from "./DesignPartnerReplay";
 import {
   RoadmapSlideshow,
   type RoadmapPhase,
@@ -214,6 +215,8 @@ export default async function DesignPartnersPage() {
 
   return (
     <main className="bg-background text-foreground">
+      {/* Recording is bounded by this route: unmounting on navigation stops it. */}
+      <DesignPartnerReplay />
       <section className="relative overflow-hidden px-4 pb-20 pt-24 sm:px-8 sm:pb-28 sm:pt-32 lg:px-[30px] lg:pt-36">
         <div className="relative mx-auto max-w-7xl">
           <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.82fr)] lg:gap-8">
