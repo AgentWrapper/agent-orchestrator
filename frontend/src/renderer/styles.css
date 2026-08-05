@@ -1225,9 +1225,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 /* Expanded-only sidebar chrome waits for the rail width transition to finish
  * before painting, so tap-to-expand does not flash labels inside the narrow
  * collapsed rail. */
-.sidebar-expanded-chrome {
-	transition: opacity 150ms ease-out;
-}
+.sidebar-expanded-chrome {}
 [data-slot="sidebar-container"][data-expanded-chrome="hidden"] .sidebar-expanded-chrome {
 	opacity: 0;
 	pointer-events: none;
@@ -1241,10 +1239,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	.ao-startup-status,
 	.ao-startup-dots span {
 		animation: none;
-	}
-
-	.sidebar-expanded-chrome {
-		transition: none;
 	}
 
 	[data-slot="command-dialog-overlay"],
