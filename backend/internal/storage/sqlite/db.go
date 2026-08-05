@@ -233,7 +233,7 @@ SELECT COALESCE((
 
 // schemaRepairs lists the column-level effects of migrations that real
 // installs are known to skip. Issue #3475/#3476: profiles exist whose
-// goose_db_version already records versions 40 through 46 (written by a
+// goose_db_version already records versions 40 through 51 (written by a
 // foreign build), so goose silently skips the real migrations carrying those
 // numbers and the generated queries then fail with "no such column" — every
 // session list 500s while /healthz stays green. A versioned repair migration
@@ -245,7 +245,7 @@ SELECT COALESCE((
 // column was just added, so healthy databases — where those statements would
 // clobber live data — are never touched.
 //
-// Any new migration numbered up to 0046 whose schema the generated queries
+// Any new migration numbered up to 0051 whose schema the generated queries
 // depend on MUST add an entry here, or the burned field profiles skip it and
 // regress to the 500s this exists to prevent.
 var schemaRepairs = []struct {
@@ -319,16 +319,52 @@ BEGIN
         NEW.updated_at);
 END`,
 		}},
-	// A pre-renumbered chat-mode branch created conversations before the
-	// current_session_id controller binding existed, then later builds recorded
-	// 0052 as applied. Generated chat queries require the column on startup.
+		// 0048_review_auto_inject_toggle.sql. Recreate the trigger so the repaired
+		// column participates in the same session invalidation stream as normal
+		// migration histories.
+		{table: "sessions", column: "auto_inject_review_feedback",
+			addDDL: `ALTER TABLE sessions ADD COLUMN auto_inject_review_feedback BOOLEAN NOT NULL DEFAULT TRUE`,
+			postAdd: []string{
+				`DROP TRIGGER IF EXISTS sessions_cdc_update`,
+				`CREATE TRIGGER sessions_cdc_update
+	AFTER UPDATE ON sessions
+	WHEN OLD.activity_state <> NEW.activity_state
+	    OR OLD.is_terminated <> NEW.is_terminated
+	    OR (OLD.first_signal_at IS NULL AND NEW.first_signal_at IS NOT NULL)
+	    OR OLD.preview_url <> NEW.preview_url
+	    OR OLD.preview_revision <> NEW.preview_revision
+	    OR OLD.display_name <> NEW.display_name
+	    OR OLD.terminate_on_pr_merge <> NEW.terminate_on_pr_merge
+	    OR OLD.is_pinned <> NEW.is_pinned
+	    OR OLD.pinned_at <> NEW.pinned_at
+	    OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
+	    OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
+	    OR OLD.auto_inject_review_feedback <> NEW.auto_inject_review_feedback
+	BEGIN
+	    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+	    VALUES (NEW.project_id, NEW.id, 'session_updated',
+	        json_object(
+	            'id', NEW.id,
+	            'activity', NEW.activity_state,
+	            'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END),
+	            'terminateOnPrMerge', json(CASE WHEN NEW.terminate_on_pr_merge THEN 'true' ELSE 'false' END),
+	            'previewUrl', NEW.preview_url,
+	            'previewRevision', NEW.preview_revision,
+	            'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
+	        ),
+	        NEW.updated_at);
+	END`,
+			}},
+		// A pre-renumbered chat-mode branch created conversations before the
+		// current_session_id controller binding existed, then later builds recorded
+		// 0052 as applied. Generated chat queries require the column on startup.
 	{table: "conversations", column: "current_session_id",
 		addDDL: `ALTER TABLE conversations ADD COLUMN current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
-		postAdd: []string{
-			`UPDATE conversations SET current_session_id = session_id WHERE current_session_id IS NULL AND session_id IS NOT NULL`,
-			`CREATE INDEX IF NOT EXISTS idx_conversations_current_session ON conversations(current_session_id)
-    WHERE current_session_id IS NOT NULL`,
-		}},
+			postAdd: []string{
+				`UPDATE conversations SET current_session_id = session_id WHERE current_session_id IS NULL AND session_id IS NOT NULL`,
+				`CREATE INDEX IF NOT EXISTS idx_conversations_current_session ON conversations(current_session_id)
+	    WHERE current_session_id IS NOT NULL`,
+			}},
 }
 
 // reconcileSchema verifies that the columns in schemaRepairs physically exist
