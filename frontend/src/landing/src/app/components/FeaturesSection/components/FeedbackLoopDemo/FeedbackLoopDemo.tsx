@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "motion/react";
+import { domAnimation, LazyMotion, m } from "motion/react";
 import { GeistMono } from "geist/font/mono";
 import {
 	ArrowUpDown,
@@ -136,14 +136,14 @@ const phases: Phase[] = [
 
 type LineTone = "fg" | "dim" | "error" | "success" | "working";
 
-type Line = { phase: number; marker?: string; indent?: number; tone: LineTone; text: string; blank?: boolean };
+type Line = { id: string; phase: number; marker?: string; indent?: number; tone: LineTone; text: string; blank?: boolean };
 
 /**
  * One accumulating transcript, the way a real pane behaves — the terminal keeps
  * its scrollback and tails the newest line, it does not swap screens between
  * states. Phase -1 is the scrollback this session had before CI spoke up.
  */
-const transcript: Line[] = [
+const transcriptLines: Omit<Line, "id">[] = [
 	{ phase: -1, marker: "❯", tone: "fg", text: "Add GitHub OAuth callback handling." },
 	{ phase: -1, blank: true, tone: "dim", text: "" },
 	{ phase: -1, marker: "⏺", tone: "fg", text: "Search(pattern: \"oauth\", path: \"src\")" },
@@ -188,6 +188,10 @@ const transcript: Line[] = [
 	{ phase: 3, indent: 1, tone: "success", text: "✓ test / web   ✓ typecheck   ✓ lint" },
 	{ phase: 3, marker: "·", tone: "working", text: "PR #2481 is approved and mergeable" },
 ];
+
+/** Stable per-line keys: the source array never reorders, so index-derived
+ *  ids are stamped once here rather than recomputed at render. */
+const transcript: Line[] = transcriptLines.map((line, index) => ({ ...line, id: `line-${index}` }));
 
 const lineToneColor: Record<LineTone, string> = {
 	fg: "var(--preview-terminal-fg)",
@@ -239,7 +243,7 @@ function SessionTopbar({ phase }: { phase: Phase }) {
 			<div className="flex min-w-0 flex-1 items-stretch">
 				<div className="flex min-w-0 flex-1 items-center">
 					{/* The tab list takes the free space, so "new terminal" trails it. */}
-					<div className="flex min-w-0 flex-1 self-stretch items-center" role="tablist">
+					<div aria-label="Terminal tabs" className="flex min-w-0 flex-1 self-stretch items-center" role="tablist">
 						{/* The permanent session tab — the only one branded by the harness. */}
 						<span className="relative inline-flex min-w-0 shrink-0 self-stretch items-center gap-1.5 border-r border-[var(--preview-border)] bg-[var(--preview-overlay)] px-2.5 after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-[var(--preview-terminal)]">
 							<img
@@ -366,34 +370,36 @@ function TerminalPane({ active }: { active: number }) {
 
 	return (
 		<main className="flex min-h-0 min-w-0 flex-1 flex-col justify-end overflow-hidden bg-[var(--preview-terminal)] px-3 py-2.5">
-			<div className={`${GeistMono.className} text-[10px] leading-[1.35] text-[var(--preview-terminal-fg)]`}>
-				{visible.map((line, index) => (
-					<motion.div
-						key={`${line.phase}-${index}`}
-						initial={line.phase === active ? { opacity: 0 } : false}
-						animate={{ opacity: 1 }}
-						transition={{ duration: 0.18 }}
-						className="flex min-w-0 items-start gap-1.5"
-						style={{ color: lineToneColor[line.tone] }}
-					>
-						{line.blank ? (
-							<span aria-hidden="true">&nbsp;</span>
-						) : (
-							<>
-								<span className="w-[7px] shrink-0" style={{ marginLeft: (line.indent ?? 0) * 7 }}>
-									{line.marker ?? ""}
-								</span>
-								<span className="min-w-0 whitespace-pre-wrap break-words">
-									{line.text}
-									{index === lastIndex && (active === 1 || active === 2) ? (
-										<span className="ml-0.5 inline-block h-[9px] w-[5px] translate-y-[1px] animate-pulse bg-[var(--preview-terminal-fg)]" />
-									) : null}
-								</span>
-							</>
-						)}
-					</motion.div>
-				))}
-			</div>
+			<LazyMotion features={domAnimation}>
+				<div className={`${GeistMono.className} text-[10px] leading-[1.35] text-[var(--preview-terminal-fg)]`}>
+					{visible.map((line, index) => (
+						<m.div
+							key={line.id}
+							initial={line.phase === active ? { opacity: 0 } : false}
+							animate={{ opacity: 1 }}
+							transition={{ duration: 0.18 }}
+							className="flex min-w-0 items-start gap-1.5"
+							style={{ color: lineToneColor[line.tone] }}
+						>
+							{line.blank ? (
+								<span aria-hidden="true">&nbsp;</span>
+							) : (
+								<>
+									<span className="w-[7px] shrink-0" style={{ marginLeft: (line.indent ?? 0) * 7 }}>
+										{line.marker ?? ""}
+									</span>
+									<span className="min-w-0 whitespace-pre-wrap break-words">
+										{line.text}
+										{index === lastIndex && (active === 1 || active === 2) ? (
+											<span className="ml-0.5 inline-block h-[9px] w-[5px] translate-y-[1px] animate-pulse bg-[var(--preview-terminal-fg)]" />
+										) : null}
+									</span>
+								</>
+							)}
+						</m.div>
+					))}
+				</div>
+			</LazyMotion>
 		</main>
 	);
 }
@@ -407,6 +413,7 @@ function Inspector({ phase }: { phase: Phase }) {
 			className="hidden w-[232px] shrink-0 flex-col overflow-hidden border-l border-[var(--preview-border)] sm:flex"
 		>
 			<div
+				aria-label="Inspector views"
 				className="flex h-[30px] shrink-0 items-center gap-1 border-b border-[var(--preview-border)] px-2.5"
 				role="tablist"
 			>
@@ -532,8 +539,9 @@ function PRSummaryCard({ phase }: { phase: Phase }) {
  * chronological order, each event stamped with formatTimeCompact().
  */
 function ActivityTimeline({ phase }: { phase: Phase }) {
-	const events: { tone: "now" | "neutral"; node: ReactNode; ts: string | null }[] = [
+	const events: { id: string; tone: "now" | "neutral"; node: ReactNode; ts: string | null }[] = [
 		{
+			id: "current",
 			tone: "now",
 			node: (
 				<span className="inline-flex flex-wrap items-center gap-1">
@@ -546,6 +554,7 @@ function ActivityTimeline({ phase }: { phase: Phase }) {
 			ts: null,
 		},
 		{
+			id: "opened",
 			tone: "neutral",
 			node: (
 				<span className="inline-flex min-w-0 items-center gap-0.5 text-[var(--preview-foreground)]">
@@ -560,7 +569,7 @@ function ActivityTimeline({ phase }: { phase: Phase }) {
 	return (
 		<div className="relative pl-4">
 			{events.map((event, index) => (
-				<div key={index} className="relative pb-2.5 last:pb-0">
+				<div key={event.id} className="relative pb-2.5 last:pb-0">
 					{index < events.length - 1 ? (
 						<span
 							aria-hidden="true"
