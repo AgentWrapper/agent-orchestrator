@@ -153,7 +153,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				const nextShell = shellTerminals[closingIndex - 1] ?? shellTerminals[closingIndex + 1];
 				if (nextShell) {
 					setActiveShellTerminal(nextShell.handleId);
-					setTerminalTarget({ kind: "shell", handleId: nextShell.handleId, title: nextShell.title });
+					setTerminalTarget({
+						generation: nextShell.createdAt,
+						kind: "shell",
+						handleId: nextShell.handleId,
+						sessionId,
+						title: nextShell.title,
+					});
 				} else {
 					setActiveShellTerminal(null);
 					setTerminalTarget({ kind: "worker" });
@@ -167,6 +173,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			activeShellTerminalHandleId,
 			closeShellTerminal,
 			setActiveShellTerminal,
+			sessionId,
 			shellTerminals,
 			terminalTarget,
 		],
