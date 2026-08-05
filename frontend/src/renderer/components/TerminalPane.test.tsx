@@ -222,6 +222,16 @@ function activeXterm(): HTMLElement {
 }
 
 describe("TerminalPane empty states", () => {
+	it("uses the full top and right extent for the terminal grid", () => {
+		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			expect(screen.getByTestId("xterm").parentElement).toHaveClass("pb-2", "pl-2");
+			expect(screen.getByTestId("xterm").parentElement).not.toHaveClass("pt-2", "pr-2", "p-2");
+		} finally {
+			view.restore();
+		}
+	});
+
 	it("shows a no-selection message when no session is selected", () => {
 		const view = renderPane();
 		try {

@@ -1076,10 +1076,11 @@ function AttachedTerminal({
 					}
 				/>
 			)}
-			{/* p-2 insets xterm from the pane edges. Surface + xterm chrome use
-			    the opaque #101317 plate so the gutter never fringes against app
-			    chrome. Overlays cover the full padding box. */}
-			<div className="relative min-h-0 flex-1 p-2">
+			{/* Keep a small gutter where terminal output starts and along the bottom,
+			    but let xterm use the full top/right extent. The host fills the remaining
+			    content box, so FitAddon still measures it correctly and the absolute
+			    overlays (empty state, banner) keep covering the full padding box. */}
+			<div className="relative min-h-0 flex-1 pb-2 pl-2">
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}
