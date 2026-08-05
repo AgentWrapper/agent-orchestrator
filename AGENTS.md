@@ -15,6 +15,10 @@ Operational guidance for coding agents working in this repository. Keep changes 
 From the repo root unless noted:
 
 ```bash
+npm run setup:worktree               # install desktop/test deps + Go modules
+npm run dev                          # real Electron app, isolated per worktree
+npm test                             # backend + frontend unit tests
+npm run verify                       # lint, typecheck, and frontend tests
 npm run lint                         # backend go test ./... + golangci-lint v2.12.2
 npm run frontend:typecheck           # frontend TypeScript check
 npm run sqlc                         # regenerate backend/internal/storage/sqlite/gen from queries/schema

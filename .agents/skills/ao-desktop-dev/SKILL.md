@@ -11,7 +11,7 @@ Run the Electron application from the current checkout and verify it in the nati
 
 Ask only when the request does not make the desired data source clear.
 
-- Use **isolated mode** by default for implementation and destructive testing. Electron uses port `3002`, `~/.ao/dev/running.json`, `~/.ao/dev/data`, and `~/.ao/dev/electron`.
+- Use **isolated mode** by default for implementation and destructive testing. From the repo root, `npm run dev` assigns the worktree a stable port and state under `~/.ao/dev/worktrees/<id>/`. Running `npm run dev` directly inside `frontend/` keeps the legacy port `3002` and `~/.ao/dev/` paths.
 - Use **real-data mode** only when the user explicitly asks to see this machine's actual AO projects or sessions. Start the checkout's dev daemon on the isolated dev port/run file while pointing `AO_DATA_DIR` at the real AO data directory. This is a separate daemon process using real data; do not describe it as the installed app's daemon.
 - Never try to attach an unpackaged Electron app directly to a packaged daemon from another checkout. The supervisor intentionally rejects daemon identity mismatches.
 - Warn before actions in real-data mode that create, terminate, rename, or otherwise mutate sessions. Merely opening and inspecting the UI is expected.
@@ -38,20 +38,15 @@ Run Electron Forge in a foreground interactive process so its output and restart
 
 ### Isolated mode
 
-On macOS/Linux:
+From the repo root on every platform:
 
 ```bash
-cd frontend
-env -u AO_DATA_DIR -u AO_RUN_FILE -u AO_PORT npm run dev
-```
-
-On PowerShell:
-
-```powershell
-Set-Location frontend
-Remove-Item Env:AO_DATA_DIR, Env:AO_RUN_FILE, Env:AO_PORT -ErrorAction SilentlyContinue
 npm run dev
 ```
+
+The root launcher removes inherited `AO_DATA_DIR`, `AO_RUN_FILE`, and `AO_PORT`
+values before starting Electron. It sets only the non-sensitive
+`AO_DEV_INSTANCE` identifier used to isolate this worktree.
 
 ### Real-data mode
 
@@ -127,7 +122,7 @@ Once one PR merges, prefer rebasing the remaining PR onto current `main`; the no
 - `ao preview` controls the AO Browser panel; it does not launch the desktop shell.
 - `npm run dev:web` is useful for browser-only renderer work but does not provide Electron APIs or native chrome.
 - Renderer URLs can move from `5173` when a port is occupied. Trust Forge's printed URL rather than assuming one.
-- Multiple dev instances share `~/.ao/dev/electron`; avoid running them concurrently because Chromium profile state can collide.
+- Direct launches from `frontend/` share `~/.ao/dev/electron`; use the root `npm run dev` launcher when worktrees may run concurrently.
 - An inherited `AO_DATA_DIR` changes dev mode from isolated data to real data. Always choose and report the mode instead of inheriting it accidentally.
 - Repeated `/healthz/` 404 entries from external probes can be noisy; readiness is determined by Electron's daemon status and successful API traffic, not by log volume.
 

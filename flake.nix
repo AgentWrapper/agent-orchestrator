@@ -26,6 +26,7 @@
             pkgs.nodejs_22
             pkgs.pnpm_10
             pkgs.just
+            pkgs.tmux
           ];
 
           shellHook = ''

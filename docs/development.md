@@ -14,6 +14,7 @@ How to set up, build, run, and test Agent Orchestrator locally.
 Additional runtime dependencies for the daemon:
 
 - **git** (for worktree creation and agent integration)
+- **tmux** on macOS/Linux (for agent terminal sessions; included by `nix develop`)
 - **A running agent CLI** (Claude Code, Codex, Aider, etc.) - see
   [the installation guide](https://ao-agents.com/docs/installation)
 
@@ -45,8 +46,13 @@ agent-orchestrator/
 ```bash
 git clone https://github.com/AgentWrapper/agent-orchestrator.git
 cd agent-orchestrator
-npm ci
+npm run setup:worktree
 ```
+
+The setup command checks the required tools, installs the npm lockfiles needed
+by desktop tests, and downloads the Go modules. Codex also runs it automatically
+when a new agent chat creates a worktree through the tracked local environment
+in `.codex/`.
 
 ### Branching
 
@@ -149,10 +155,14 @@ npm install
 ### Run in development mode
 
 ```bash
-cd frontend
-npm run dev            # Electron dev mode
-npm run dev:web        # Web-only (no Electron, for quick UI iteration)
+npm run dev             # Electron dev mode with per-worktree state
+npm run dev:web         # Web-only (no Electron, for quick UI iteration)
 ```
+
+`npm run dev` gives each worktree a stable port and private state below
+`~/.ao/dev/worktrees/`. This lets separate agent worktrees run the desktop app
+without sharing daemon data or an Electron profile. Running `npm run dev`
+directly inside `frontend/` keeps the legacy single-instance `~/.ao/dev` setup.
 
 ### Build
 

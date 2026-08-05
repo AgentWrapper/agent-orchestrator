@@ -39,6 +39,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { type DaemonLaunchSpec, resolveDaemonLaunch } from "./shared/daemon-launch";
 import { createListenPortScanner, defaultRunFilePath, parseRunFile } from "./shared/daemon-discovery";
+import { devDaemonPort, devStateSubdir } from "./shared/dev-instance";
 import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
@@ -108,11 +109,14 @@ if (process.platform === "win32") {
 // Must run before app ready.
 // Dev runs get their own profile under the same ~/.ao root: the packaged app
 // keeps this directory open, and two Chromium instances sharing one profile
-// corrupt its LevelDB stores. Mirrors how dev already isolates running.json and
-// the daemon data dir into ~/.ao/dev.
+// corrupt its LevelDB stores. The root dev launcher sets AO_DEV_INSTANCE so
+// separate worktrees also receive separate profiles and daemon state.
+const DEV_STATE_SUBDIR = devStateSubdir(process.env.AO_DEV_INSTANCE);
 app.setPath(
 	"userData",
-	app.isPackaged ? path.join(os.homedir(), ".ao", "electron") : path.join(os.homedir(), ".ao", "dev", "electron"),
+	app.isPackaged
+		? path.join(os.homedir(), ".ao", "electron")
+		: path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR, "electron"),
 );
 
 let mainWindow: BrowserWindow | null = null;
@@ -145,8 +149,7 @@ const isDev = !app.isPackaged;
 // a concurrently running installed-app daemon. The subdir also isolates supervise.sock
 // on Unix (backend derives it as dir(RunFilePath)/supervise.sock) and the named pipe
 // on Windows (supervisorPipeFromRunFile derives it from the same dir basename).
-const DEV_DAEMON_PORT = 3002;
-const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
+const DEV_DAEMON_PORT = devDaemonPort(process.env.AO_DEV_INSTANCE);
 
 // Height (px) of the custom Windows title bar. Must stay in sync with
 // --size-window-titlebar (tokens.css) and .window-titlebar, plus the Window

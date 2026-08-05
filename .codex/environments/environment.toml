@@ -1,0 +1,35 @@
+version = 1
+name = "agent-orchestrator"
+
+[setup]
+script = "npm run setup:worktree"
+
+[[actions]]
+name = "Setup worktree"
+icon = "tool"
+command = "npm run setup:worktree"
+
+[[actions]]
+name = "Run desktop"
+icon = "run"
+command = "npm run dev"
+
+[[actions]]
+name = "Run web"
+icon = "run"
+command = "npm run dev:web"
+
+[[actions]]
+name = "Test"
+icon = "tool"
+command = "npm test"
+
+[[actions]]
+name = "Typecheck"
+icon = "tool"
+command = "npm run frontend:typecheck"
+
+[[actions]]
+name = "Verify"
+icon = "tool"
+command = "npm run verify"
