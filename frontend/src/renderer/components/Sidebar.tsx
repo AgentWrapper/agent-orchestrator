@@ -9,6 +9,7 @@ import {
 	MoreVertical,
 	Pencil,
 	Pin,
+	PinOff,
 	Plus,
 	RefreshCw,
 	Search,
@@ -28,6 +29,7 @@ import { getAgentActivityView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
 import { useResizable } from "../hooks/useResizable";
@@ -227,6 +229,15 @@ export function Sidebar({
 		onExpand: () => setOpen(true),
 	});
 
+	const pinnedSessions = workspaces
+		.flatMap((w) => workerSessions(w.sessions))
+		.filter((s) => s.isPinned && s.isTerminated !== true)
+		.sort((a, b) => {
+			const aTime = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
+			const bTime = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
+			return bTime - aTime;
+		});
+
 	return (
 		// Pinned sidebars start below shell chrome. Hover previews paint a
 		// full-height surface behind the titlebar while their content keeps the
@@ -247,15 +258,16 @@ export function Sidebar({
 		>
 			<SidebarHeader
 				className={cn(
-					"gap-0 p-0 px-1 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
+					"gap-0 p-0 px-2 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
 					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
 				)}
 			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
             36px board button wrapping the 22px accent mark. */}
 				<div
+					data-slot="sidebar-brand-row"
 					className={cn(
-						"flex shrink-0 items-center gap-1.5 px-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
+						"flex shrink-0 items-center gap-2 px-2.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
 						commandPaletteEnabled ? "pb-2" : "pb-3",
 					)}
 				>
@@ -273,7 +285,12 @@ export function Sidebar({
 								onClick={selection.goHome}
 								type="button"
 							>
-								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 -translate-y-[3px] rounded-md object-cover" />
+								<img
+									src={aoLogo}
+									alt=""
+									aria-hidden="true"
+									className="h-5.5 w-5.5 -translate-y-[3px] rounded-md object-cover"
+								/>
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
@@ -303,17 +320,34 @@ export function Sidebar({
 					</SidebarGroup>
 				) : null}
 
-				{/* Pinned — collapsible; body empty until pin functionality lands. */}
-				<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
-					<SectionDisclosure
-						icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
-						label={t("shell.pinned")}
-						open={pinnedOpen}
-						onToggle={() => setPinnedOpen((v) => !v)}
-						className="mb-1"
-					/>
-					{pinnedOpen ? <div className="pb-2" /> : null}
-				</div>
+				{/* Pinned — collapsible; hidden when empty. */}
+				{pinnedSessions.length > 0 && (
+					<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
+						<SectionDisclosure
+							icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
+							label={t("shell.pinned")}
+							open={pinnedOpen}
+							onToggle={() => setPinnedOpen((v) => !v)}
+							className="mb-1"
+						/>
+						{pinnedOpen ? (
+							<SidebarMenuSub
+								className="sidebar-expanded-chrome mx-0 ml-0 translate-x-0 gap-0.5 border-l-0 px-0 py-0.5 mb-2"
+								data-testid="pinned-session-list"
+							>
+								{pinnedSessions.map((session) => (
+									<SessionRow
+										key={session.id}
+										session={session}
+										active={selection.activeSessionId === session.id}
+										indented={false}
+										onOpen={() => selection.goSession(session.workspaceId, session.id)}
+									/>
+								))}
+							</SidebarMenuSub>
+						) : null}
+					</div>
+				)}
 
 				{/* Projects — collapsible section; + sits inside the same hover pill. */}
 				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
@@ -715,7 +749,17 @@ function ProjectItem({
 // One worker-session row. Reads as a link by default; a hover-revealed pencil
 // flips the label into an inline input (Enter/blur saves, Escape cancels) that
 // persists through the daemon rename endpoint, so the new name survives reload.
-function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+function SessionRow({
+	session,
+	active,
+	indented = true,
+	onOpen,
+}: {
+	session: WorkspaceSession;
+	active: boolean;
+	indented?: boolean;
+	onOpen: () => void;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [isEditing, setIsEditing] = useState(false);
@@ -723,6 +767,9 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
+
+	const { mutate: pinSession } = usePinSession();
+	const { mutate: unpinSession } = useUnpinSession();
 
 	const startEditing = () => {
 		setDraft(session.title);
@@ -748,7 +795,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem className="pl-4.5">
+			<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
 				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0">
 					<SessionStatusDot session={session} />
 					<input
@@ -777,7 +824,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	}
 
 	return (
-		<SidebarMenuSubItem className="pl-4.5">
+		<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
 			<div
 				className={cn(
 					"group/session-row flex h-8 w-full items-center rounded-lg transition-[background-color,color]",
@@ -805,22 +852,42 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 						</span>
 					</span>
 				</button>
-				{/* Match terminal-tab close behavior: consume no width at rest, then
-				    expand beside the label on hover/focus so the text yields only when
-				    the action is useful. Keep it a sibling for valid interactive HTML. */}
-				<button
-					aria-label={t("shell.renameSession", { title: session.title })}
-					className={cn(
-						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
-						"transition-[width,margin,background-color,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
-						"group-hover/session-row:mr-1 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
-						"group-focus-within/session-row:mr-1 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
-					)}
-					onClick={startEditing}
-					type="button"
-				>
-					<Pencil aria-hidden="true" />
-				</button>
+			{/* Match terminal-tab close behavior: consume no width at rest, then
+			    expand beside the label on hover/focus so the text yields only when
+			    the action is useful. Keep it a sibling for valid interactive HTML. */}
+			<button
+				aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+				className={cn(
+					"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
+					"transition-[width,margin,background-color,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
+					"group-hover/session-row:w-5 group-hover/session-row:opacity-100",
+					"group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
+					session.isPinned && "text-foreground",
+				)}
+				onClick={(e) => {
+					e.stopPropagation();
+					session.isPinned ? unpinSession(session) : pinSession(session);
+				}}
+				type="button"
+			>
+				{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+			</button>
+			<button
+				aria-label={t("shell.renameSession", { title: session.title })}
+				className={cn(
+					"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
+					"transition-[width,margin,background-color,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
+					"group-hover/session-row:mr-1 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
+					"group-focus-within/session-row:mr-1 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
+				)}
+				onClick={(e) => {
+					e.stopPropagation();
+					startEditing();
+				}}
+				type="button"
+			>
+				<Pencil aria-hidden="true" />
+			</button>
 			</div>
 		</SidebarMenuSubItem>
 	);
@@ -986,9 +1053,11 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					"group-data-[collapsible=icon]:size-control-form! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:hover:bg-interactive-hover!",
 				)}
 			>
-				<Search strokeWidth={1.75} aria-hidden="true" />
+				<span className="grid size-5.5 shrink-0 place-items-center" data-slot="sidebar-search-icon">
+					<Search strokeWidth={1.75} aria-hidden="true" />
+				</span>
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
-						{t("shell.search")}
+					{t("shell.search")}
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>

@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
-import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { sessionScmSummaryQueryKey, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sessionWorkspaceFilesQueryKey } from "../hooks/useSessionWorkspaceFiles";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -19,6 +19,10 @@ const { getMock, navigateMock, patchMock, putMock, postMock } = vi.hoisted(() =>
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
+}));
+
+vi.mock("../lib/preview-mode", () => ({
+	usesPreviewWorkspaceData: false,
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -284,19 +288,74 @@ describe("SessionInspector PR section", () => {
 	});
 
 	it("uses the singular heading and shows enriched facts for a single PR", () => {
-		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />, undefined, (client) => {
+			client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [prSummary(7, "open")]);
+		});
 
 		expect(screen.getByText("Pull request")).toBeInTheDocument();
 		expect(screen.queryByText(/Pull requests \(/)).not.toBeInTheDocument();
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
 		expect(prSection("Pull request").getByText("Ready to merge")).toBeInTheDocument();
 		expect(prSection("Pull request").getByText("Checks passing")).toBeInTheDocument();
-		expect(prSection("Pull request").getByRole("link", { name: "do the thing" })).toHaveClass("text-sm");
-		expect(prSection("Pull request").getByRole("link", { name: "do the thing" })).toHaveAttribute(
+		expect(prSection("Pull request").getByRole("link", { name: "PR 7" })).toHaveClass("text-sm");
+		expect(prSection("Pull request").getByRole("link", { name: "PR 7" })).toHaveAttribute(
 			"href",
-			"https://example.com/pr/7",
+			"https://github.com/acme/repo/pull/7",
 		);
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
+		expect(prSection("Pull request").getByRole("button", { name: "Merge PR #7" })).toBeInTheDocument();
+	});
+
+	it("merges a ready pull request directly through the daemon", async () => {
+		const readyPR = prSummary(7, "open", {
+			url: "https://example.com/pr/7",
+			headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		});
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />, undefined, (client) => {
+			client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [readyPR]);
+		});
+
+		const mergeButton = screen.getByRole("button", { name: "Merge PR #7" });
+		expect(mergeButton).toBeEnabled();
+		fireEvent.click(mergeButton);
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", {
+				params: { path: { id: "7" } },
+				body: {
+					prUrl: "https://example.com/pr/7",
+					expectedHeadSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				},
+			}),
+		);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	});
+
+	it("does not offer Merge when the pull request is not ready", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([
+					pr(7, "open", {
+						ci: "failing",
+						mergeability: "blocked",
+					}),
+				])}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Merge PR #7" })).not.toBeInTheDocument();
+	});
+
+	it("uses the state chip as the single merged-state indicator", () => {
+		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+
+		const card = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
+		expect(within(card).getByText("merged", { exact: true })).toHaveClass(
+			"border-border-strong",
+			"bg-overlay",
+			"text-success",
+		);
+		expect(within(card).queryByText("Pull request merged")).not.toBeInTheDocument();
 	});
 
 	it("shows the empty state when there are no PRs", () => {

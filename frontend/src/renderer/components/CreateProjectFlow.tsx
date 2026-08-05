@@ -411,30 +411,38 @@ function ProjectModeButton({
 			disabled={disabled}
 			onClick={onClick}
 		>
-			<span className="flex min-h-(--size-import-mode-illustration) w-full flex-1 items-center justify-center">
-				{isWorkspace ? (
-					<span className="flex w-full max-w-[240px] flex-col items-start gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] p-4">
-						<span className="flex items-center gap-2 text-[14px] leading-5 text-[var(--color-text-import-muted)]">
-							<Folder className="size-[14px] shrink-0" aria-hidden="true" />
-							my-workspace/
-						</span>
-						<span className="flex w-full flex-col items-start gap-2">
-							{["web-app", "api-server", "shared-libs"].map((repo) => (
-								<span key={repo} className="flex w-full items-center gap-2 py-0.5">
-									<span className="size-2 shrink-0 rounded-full bg-accent-strong" aria-hidden="true" />
-									<span className="text-[12px] font-bold leading-4 text-[var(--color-text-import-title)]">
-										{repo}
+			<span className="flex w-full flex-col items-start">
+				<span
+					className={cn(
+						"flex h-(--size-import-mode-illustration) w-full justify-center",
+						isWorkspace ? "items-start" : "items-center",
+					)}
+				>
+					{isWorkspace ? (
+						<span className="flex h-(--size-import-mode-illustration) w-full max-w-[240px] flex-col items-start gap-3 rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-illustration)] p-4">
+							<span className="flex items-center gap-2 text-[14px] leading-5 text-[var(--color-text-import-muted)]">
+								<Folder className="size-[14px] shrink-0" aria-hidden="true" />
+								my-workspace/
+							</span>
+							<span className="flex w-full flex-col items-start gap-2">
+								{["web-app", "api-server", "shared-libs"].map((repo) => (
+									<span key={repo} className="flex w-full items-center px-3 py-2">
+										<span className="mr-2 size-2 shrink-0 rounded-full bg-accent-strong" aria-hidden="true" />
+										<span className="text-[12px] font-bold leading-4 text-[var(--color-text-import-title)]">
+											{repo}
+										</span>
 									</span>
 								</span>
 							))}
 						</span>
-					</span>
-				) : (
-					<span className="flex w-fit items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] p-3">
-						<span className="mr-2 size-2 shrink-0 rounded-full bg-accent-strong" aria-hidden="true" />
-						<span className="text-[14px] font-bold leading-5 text-[var(--color-text-import-title)]">web-app</span>
-						<span className="px-1 text-[16px] leading-6 text-[var(--color-text-import-muted)]" aria-hidden="true">
-							·
+					) : (
+						<span className="flex h-[50px] w-fit items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] px-4 py-3">
+							<span className="mr-2 size-2 shrink-0 rounded-full bg-accent-strong" aria-hidden="true" />
+							<span className="text-[14px] font-bold leading-5 text-[var(--color-text-import-title)]">web-app</span>
+							<span className="px-1 text-[16px] leading-6 text-[var(--color-text-import-muted)]" aria-hidden="true">
+								·
+							</span>
+							<span className="text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">main</span>
 						</span>
 						<span className="text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">main</span>
 					</span>

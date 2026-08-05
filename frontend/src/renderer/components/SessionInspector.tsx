@@ -9,6 +9,7 @@ import {
 	ChevronRight,
 	Files as FilesIcon,
 	GitPullRequest,
+	GitMerge,
 	Play,
 	Terminal,
 	Trash2,
@@ -20,10 +21,14 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
-import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import {
+	sessionScmSummaryQueryKey,
+	useSessionScmSummary,
+	type SessionPRSummary,
+} from "../hooks/useSessionScmSummary";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
-import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prBrowserUrl, prCardPresentation, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -41,6 +46,7 @@ import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
+import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -83,12 +89,10 @@ const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector
 	},
 ];
 
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
-
 const prStateTone: Record<SessionPRSummary["state"], string> = {
 	open: "border-border-strong bg-overlay text-muted-foreground",
 	draft: "border-status-in-review/35 bg-status-in-review/10 text-status-in-review",
-	merged: "border-accent/40 bg-accent-weak text-accent",
+	merged: "border-border-strong bg-overlay text-success",
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
@@ -305,7 +309,7 @@ function SummaryView({
 				<div className="flex flex-col gap-1.5">
 					{hasPRs ? (
 						prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
+							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} sessionId={session.id} />
 						))
 					) : (
 						<p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>
@@ -488,8 +492,32 @@ function updateSessionMergePolicy(
 	}));
 }
 
-function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const presentation = prCardPresentation(pr);
+	const canMerge =
+		pr.state === "open" &&
+		presentation.primary.key === "merge" &&
+		presentation.primary.tone === "success" &&
+		Boolean(pr.url && pr.headSha);
+	const mergePr = useMutation({
+		mutationFn: async () => {
+			if (usePreviewData) return;
+			const { error } = await apiClient.POST("/api/v1/prs/{id}/merge", {
+				params: { path: { id: String(pr.number) } },
+				body: { prUrl: pr.url, expectedHeadSha: pr.headSha },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("pr.merge.failed", { number: pr.number })));
+		},
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(sessionId) }),
+				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+			]);
+		},
+	});
+	const mergeError = mergePr.error instanceof Error ? mergePr.error.message : null;
 	return (
 		<article className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
 			{pr.title ? (
@@ -522,7 +550,38 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 				</Badge>
 			</div>
 			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRCardStatusSummary className="mt-2" pr={pr} />
+			{pr.state !== "merged" ? (
+				<>
+					<PRCardStatusSummary
+						action={
+							canMerge ? (
+								<Button
+									aria-label={t("pr.merge.actionFor", { number: pr.number })}
+									className="gap-1 px-2"
+									disabled={mergePr.isPending}
+									onClick={() => mergePr.mutate()}
+									size="sm"
+									type="button"
+								>
+									{mergePr.isPending ? (
+										<Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />
+									) : (
+										<GitMerge className="size-icon-sm" aria-hidden="true" />
+									)}
+									{mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
+								</Button>
+							) : undefined
+						}
+						className="mt-2"
+						pr={pr}
+					/>
+					{mergeError ? (
+						<p className="mt-2 text-2xs leading-normal text-error" role="status">
+							{mergeError}
+						</p>
+					) : null}
+				</>
+			) : null}
 		</article>
 	);
 }

@@ -1,7 +1,16 @@
 export type Theme = "light" | "dark";
 export type ThemePreference = Theme | "system";
 
-export type ThemeStyle = "orchestrate" | "github" | "catppuccin" | "dracula" | "tokyo-night" | "rose-pine";
+export type ThemeStyle =
+	| "orchestrate"
+	| "github"
+	| "catppuccin"
+	| "dracula"
+	| "tokyo-night"
+	| "rose-pine"
+	| "nord"
+	| "gruvbox"
+	| "solarized";
 
 export const themeStorageKey = "ao.theme";
 export const themeStyleStorageKey = "ao.theme-style";
@@ -41,7 +50,10 @@ export function readStoredThemeStyle(): ThemeStyle {
 			stored === "catppuccin" ||
 			stored === "dracula" ||
 			stored === "tokyo-night" ||
-			stored === "rose-pine"
+			stored === "rose-pine" ||
+			stored === "nord" ||
+			stored === "gruvbox" ||
+			stored === "solarized"
 		) {
 			return stored;
 		}
