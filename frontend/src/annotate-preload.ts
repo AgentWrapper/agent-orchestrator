@@ -560,6 +560,7 @@ function openPrompt(
 	});
 	textarea.addEventListener("input", updateSubmitState);
 	textarea.addEventListener("keydown", (event) => {
+		event.stopPropagation();
 		if (event.key === "Escape") {
 			event.preventDefault();
 			setEnabled(false, "escape");
