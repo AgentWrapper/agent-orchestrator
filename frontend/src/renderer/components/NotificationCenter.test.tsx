@@ -491,7 +491,7 @@ describe("NotificationCenter", () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		await userEvent.click(screen.getByRole("link", { name: "Open PR #67 in browser" }));
+		await userEvent.click(screen.getByRole("link", { name: "Open PR #67" }));
 
 		expect(openExternal).toHaveBeenCalledWith("https://github.com/acme/app/pull/67");
 		expect(navigateMock).not.toHaveBeenCalled();

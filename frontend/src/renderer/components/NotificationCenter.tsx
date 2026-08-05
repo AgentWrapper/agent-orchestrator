@@ -498,7 +498,7 @@ function NotificationItem({
 								<>
 									{titleLink.before}
 									<a
-										aria-label={`Open ${titleLink.label} in browser`}
+										aria-label={t("inspector.openPR", { number: titleLink.number })}
 										className="inline-flex items-center gap-0.5 underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
 										href={titleLink.url}
 										onClick={(event) => {
@@ -572,14 +572,15 @@ type NotificationCopy = Pick<NotificationDTO, "body" | "title">;
 function notificationPRTitleLink(
 	notification: NotificationDTO,
 	title: string,
-): { after: string; before: string; label: string; url: string } | null {
+): { after: string; before: string; label: string; number: string; url: string } | null {
 	const url = notification.target.kind === "pr" ? notification.target.prUrl : notification.prUrl;
 	if (!url) return null;
-	const match = /\bPR\s*#\d+\b/i.exec(title);
+	const match = /\bPR\s*#(\d+)\b/i.exec(title);
 	if (!match || match.index === undefined) return null;
 	return {
 		before: title.slice(0, match.index),
 		label: match[0],
+		number: match[1],
 		after: title.slice(match.index + match[0].length),
 		url,
 	};
