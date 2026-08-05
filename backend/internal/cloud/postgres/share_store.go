@@ -631,12 +631,14 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 				return nil, err
 			}
 			session.Status = status
-			capabilities, connected, err := s.sessionRuntime(ctx, clouddomain.AccountID(sessionOrgID), session.ID)
+			capabilities, connected, runtimeState, runtimeError, err := s.sessionRuntime(ctx, clouddomain.AccountID(sessionOrgID), session.ID)
 			if err != nil {
 				return nil, err
 			}
 			session.Capabilities = capabilities
 			session.RuntimeConnected = connected
+			session.RuntimeState = runtimeState
+			session.RuntimeError = runtimeError
 			grant.Session = &session
 		}
 		out = append(out, grant)

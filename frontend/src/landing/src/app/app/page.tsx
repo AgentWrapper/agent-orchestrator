@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlertTriangle,
   Bell,
   Bot,
   Building2,
@@ -182,6 +183,7 @@ function AgentAvatar({
 }
 
 function statusColor(session: CloudSession) {
+  if (session.runtimeState === "failed") return "bg-[#ef6b6b]";
   if (session.status === "terminated" || session.status === "exited")
     return "bg-white/25";
   if (
@@ -2294,7 +2296,10 @@ export default function CloudAppPage() {
                   />
                 </div>
               ) : (
-                <CloudRuntimeConnecting session={selectedSession} />
+                <CloudRuntimeConnecting
+                  session={selectedSession}
+                  standalone={selectedProjectStandalone}
+                />
               )
             ) : (
               <SessionBoard
@@ -2743,8 +2748,21 @@ export default function CloudAppPage() {
   );
 }
 
-function CloudRuntimeConnecting({ session }: { session: CloudSession }) {
-  const role = session.kind === "orchestrator" ? "orchestrator" : "worker";
+function CloudRuntimeConnecting({
+  session,
+  standalone,
+}: {
+  session: CloudSession;
+  standalone: boolean;
+}) {
+  const role =
+    session.kind === "orchestrator"
+      ? "orchestrator"
+      : standalone
+        ? "agent"
+        : "worker";
+  const failed = session.runtimeState === "failed";
+  const runtimeError = session.runtimeError?.trim();
   return (
     <div
       className="grid h-full min-h-0 place-items-center bg-[#0a0b0d] px-6"
@@ -2754,36 +2772,60 @@ function CloudRuntimeConnecting({ session }: { session: CloudSession }) {
       <div className="w-full max-w-md">
         <div className="flex items-center gap-4">
           <div className="relative grid size-12 shrink-0 place-items-center">
-            <span className="absolute inset-0 animate-ping rounded-full border border-[#4d8dff]/25 [animation-duration:2.4s] motion-reduce:animate-none" />
-            <span className="absolute inset-1.5 rounded-full border border-white/[0.08]" />
-            <AgentAvatar agent={session.harness} className="relative size-6" />
+            {failed ? (
+              <span className="grid size-10 place-items-center rounded-full border border-[#ef6b6b]/25 bg-[#ef6b6b]/10 text-[#ef9b9b]">
+                <AlertTriangle className="size-5" />
+              </span>
+            ) : (
+              <>
+                <span className="absolute inset-0 animate-ping rounded-full border border-[#4d8dff]/25 [animation-duration:2.4s] motion-reduce:animate-none" />
+                <span className="absolute inset-1.5 rounded-full border border-white/[0.08]" />
+                <AgentAvatar agent={session.harness} className="relative size-6" />
+              </>
+            )}
           </div>
           <div className="min-w-0">
             <h2 className="truncate text-sm font-medium text-[#f4f5f7]">
-              Connecting {role}
+              {failed ? `Could not start ${role}` : `Connecting ${role}`}
             </h2>
             <p className="mt-1 truncate text-xs text-[#646a73]">
               {session.displayName} · {session.branch}
             </p>
           </div>
-          <LoaderCircle className="ml-auto size-4 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none" />
+          {failed ? null : (
+            <LoaderCircle className="ml-auto size-4 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none" />
+          )}
         </div>
 
-        <div className="mt-7 grid grid-cols-[auto_1fr_auto_1fr_auto] items-center gap-2 text-[11px] text-[#646a73]">
-          <span className="text-[#9ba1aa]">Sandbox</span>
-          <span className="h-px overflow-hidden bg-white/[0.08]">
-            <span className="block h-full w-1/2 animate-[cloud-progress_1.5s_ease-in-out_infinite] bg-[#4d8dff]/60 motion-reduce:animate-none" />
-          </span>
-          <span className="text-[#9ba1aa]">Runtime</span>
-          <span className="h-px overflow-hidden bg-white/[0.08]">
-            <span className="block h-full w-1/2 animate-[cloud-progress_1.5s_ease-in-out_300ms_infinite] bg-[#4d8dff]/60 motion-reduce:animate-none" />
-          </span>
-          <span>Live chat</span>
-        </div>
-        <p className="mt-5 text-xs leading-5 text-[#646a73]">
-          AO will open the native chat as soon as the agent runtime is ready.
-          The task keeps starting even if you leave this view.
-        </p>
+        {failed ? (
+          <div className="mt-7 rounded-xl border border-[#ef6b6b]/20 bg-[#ef6b6b]/10 p-4">
+            <p className="text-xs font-medium text-[#efb0b0]">
+              Sandbox startup failed
+            </p>
+            <p className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-[#ef9b9b]">
+              {runtimeError ||
+                "AO could not start this agent runtime. Delete another machine and try again."}
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="mt-7 grid grid-cols-[auto_1fr_auto_1fr_auto] items-center gap-2 text-[11px] text-[#646a73]">
+              <span className="text-[#9ba1aa]">Sandbox</span>
+              <span className="h-px overflow-hidden bg-white/[0.08]">
+                <span className="block h-full w-1/2 animate-[cloud-progress_1.5s_ease-in-out_infinite] bg-[#4d8dff]/60 motion-reduce:animate-none" />
+              </span>
+              <span className="text-[#9ba1aa]">Runtime</span>
+              <span className="h-px overflow-hidden bg-white/[0.08]">
+                <span className="block h-full w-1/2 animate-[cloud-progress_1.5s_ease-in-out_300ms_infinite] bg-[#4d8dff]/60 motion-reduce:animate-none" />
+              </span>
+              <span>Live chat</span>
+            </div>
+            <p className="mt-5 text-xs leading-5 text-[#646a73]">
+              AO will open the native chat as soon as the agent runtime is
+              ready. The task keeps starting even if you leave this view.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );
@@ -3081,7 +3123,11 @@ function CloudBoardSessionCard({
             {project?.displayName ?? "Unknown project"}
           </span>
           <span className="shrink-0 uppercase tracking-[0.04em]">
-            {session.runtimeConnected ? "runtime live" : "runtime starting"}
+            {session.runtimeState === "failed"
+              ? "runtime failed"
+              : session.runtimeConnected
+                ? "runtime live"
+                : "runtime starting"}
           </span>
         </div>
         {unresolvedThreads > 0 ? (

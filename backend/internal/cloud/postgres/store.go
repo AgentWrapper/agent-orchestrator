@@ -993,12 +993,14 @@ func (s *Store) ListSessions(
 			return nil, err
 		}
 		sessions[index].Status = status
-		capabilities, connected, err := s.sessionRuntime(ctx, accountID, sessions[index].ID)
+		capabilities, connected, runtimeState, runtimeError, err := s.sessionRuntime(ctx, accountID, sessions[index].ID)
 		if err != nil {
 			return nil, err
 		}
 		sessions[index].Capabilities = capabilities
 		sessions[index].RuntimeConnected = connected
+		sessions[index].RuntimeState = runtimeState
+		sessions[index].RuntimeError = runtimeError
 	}
 	return sessions, nil
 }
@@ -1031,12 +1033,14 @@ func (s *Store) GetSession(
 		return clouddomain.Session{}, err
 	}
 	session.Status = status
-	capabilities, connected, err := s.sessionRuntime(ctx, accountID, session.ID)
+	capabilities, connected, runtimeState, runtimeError, err := s.sessionRuntime(ctx, accountID, session.ID)
 	if err != nil {
 		return clouddomain.Session{}, err
 	}
 	session.Capabilities = capabilities
 	session.RuntimeConnected = connected
+	session.RuntimeState = runtimeState
+	session.RuntimeError = runtimeError
 	return session, nil
 }
 
@@ -1063,28 +1067,37 @@ func (s *Store) sessionRuntime(
 	ctx context.Context,
 	accountID clouddomain.AccountID,
 	sessionID clouddomain.SessionID,
-) ([]string, bool, error) {
+) ([]string, bool, string, string, error) {
 	var raw []byte
 	var connected bool
+	var runtimeState string
+	var runtimeError string
 	err := s.pool.QueryRow(ctx, `
-		SELECT capabilities,
-			ready_at IS NOT NULL
-				AND disconnected_at IS NULL
-				AND last_seen_at > now() - interval '45 seconds'
-		FROM ao_worker_connections
-		WHERE org_id = $1 AND session_id = $2
-	`, accountID, sessionID).Scan(&raw, &connected)
+		SELECT COALESCE(wc.capabilities, '[]'::jsonb),
+			COALESCE(
+				wc.ready_at IS NOT NULL
+					AND wc.disconnected_at IS NULL
+					AND wc.last_seen_at > now() - interval '45 seconds',
+				false
+			),
+			COALESCE(sb.observed_state, ''),
+			COALESCE(sb.last_error, '')
+		FROM ao_sandboxes sb
+		LEFT JOIN ao_worker_connections wc ON wc.org_id = sb.org_id
+			AND wc.session_id = sb.session_id
+		WHERE sb.org_id = $1 AND sb.session_id = $2
+	`, accountID, sessionID).Scan(&raw, &connected, &runtimeState, &runtimeError)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return []string{}, false, nil
+		return []string{}, false, "", "", nil
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("load session runtime: %w", err)
+		return nil, false, "", "", fmt.Errorf("load session runtime: %w", err)
 	}
 	var capabilities []string
 	if err := json.Unmarshal(raw, &capabilities); err != nil {
-		return nil, false, fmt.Errorf("decode session capabilities: %w", err)
+		return nil, false, "", "", fmt.Errorf("decode session capabilities: %w", err)
 	}
-	return capabilities, connected, nil
+	return capabilities, connected, runtimeState, runtimeError, nil
 }
 
 func (s *Store) sessionStatus(

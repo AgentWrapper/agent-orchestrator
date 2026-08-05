@@ -144,6 +144,8 @@ export interface CloudSession {
     | "terminated";
   capabilities?: string[];
   runtimeConnected: boolean;
+  runtimeState?: string;
+  runtimeError?: string;
   activeTurn?: CloudTurn;
   isTerminated: boolean;
   createdAt: string;

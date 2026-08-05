@@ -172,6 +172,8 @@ type Session struct {
 	AgentSessionID   string    `json:"agentSessionId,omitempty"`
 	Capabilities     []string  `json:"capabilities,omitempty"`
 	RuntimeConnected bool      `json:"runtimeConnected"`
+	RuntimeState     string    `json:"runtimeState,omitempty"`
+	RuntimeError     string    `json:"runtimeError,omitempty"`
 	ActiveTurn       *Turn     `json:"activeTurn,omitempty"`
 	Status           string    `json:"status"`
 	CreatedAt        time.Time `json:"createdAt"`

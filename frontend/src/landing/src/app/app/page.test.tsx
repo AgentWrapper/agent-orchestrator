@@ -1689,6 +1689,40 @@ it("polls a selected connecting worker until runtime capabilities arrive", async
   );
 });
 
+it("shows sandbox startup failures instead of an endless connecting state", async () => {
+  const standaloneProject: CloudProject = {
+    ...project,
+    id: "standalone-project",
+    displayName: "Standalone chat",
+    repositoryUrl: "ao-standalone://org-one/session",
+    config: { source: "standalone" },
+  };
+  const failedAgent: CloudSession = {
+    ...worker,
+    id: "failed-agent",
+    projectId: standaloneProject.id,
+    displayName: "poet bot",
+    runtimeConnected: false,
+    runtimeState: "failed",
+    runtimeError: "You’ve reached the limit on the number of vCPUs you can run concurrently",
+  };
+  apiMocks.projects.mockResolvedValue({ projects: [standaloneProject] });
+  apiMocks.sessions.mockResolvedValue({ sessions: [failedAgent] });
+  apiMocks.session.mockResolvedValue({ session: failedAgent });
+
+  render(<CloudAppPage />);
+
+  const agentEntries = await screen.findAllByText("poet bot");
+  fireEvent.click(agentEntries[0]);
+
+  expect(await screen.findByText("Could not start agent")).toBeVisible();
+  expect(
+    screen.getByText(
+      "You’ve reached the limit on the number of vCPUs you can run concurrently",
+    ),
+  ).toBeVisible();
+});
+
 it("deletes a project from the project menu", async () => {
   const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
 
