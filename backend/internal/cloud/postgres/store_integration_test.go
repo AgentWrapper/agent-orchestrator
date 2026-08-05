@@ -77,6 +77,14 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	if err != nil || initialTurn == nil || initialTurn.State != "provisioning" {
 		t.Fatalf("initial turn = %#v, error = %v", initialTurn, err)
 	}
+	launchSpec, err := store.WorkerLaunchSpec(ctx, account.ID, first.Session.ID)
+	if err != nil {
+		t.Fatalf("WorkerLaunchSpec(initial prompt) error = %v", err)
+	}
+	if launchSpec.PendingPromptSequence != initialTurn.UserMessageSequence ||
+		launchSpec.PendingPrompt != input.Prompt {
+		t.Fatalf("initial worker launch prompt = %#v", launchSpec)
+	}
 	if _, err := store.TransitionActiveTurn(
 		ctx,
 		account.ID,
@@ -85,6 +93,13 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 		"",
 	); err != nil {
 		t.Fatal(err)
+	}
+	launchSpec, err = store.WorkerLaunchSpec(ctx, account.ID, first.Session.ID)
+	if err != nil {
+		t.Fatalf("WorkerLaunchSpec(completed prompt) error = %v", err)
+	}
+	if launchSpec.PendingPromptSequence != 0 || launchSpec.PendingPrompt != "" {
+		t.Fatalf("completed prompt remained in worker launch spec = %#v", launchSpec)
 	}
 	beforeHeartbeat, err := store.GetSession(ctx, account.ID, first.Session.ID)
 	if err != nil {

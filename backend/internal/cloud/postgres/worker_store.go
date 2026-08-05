@@ -12,11 +12,13 @@ import (
 
 // WorkerLaunchSpec contains the durable inputs needed to launch a session worker.
 type WorkerLaunchSpec struct {
-	AccountID     clouddomain.AccountID `json:"accountId"`
-	Session       clouddomain.Session   `json:"session"`
-	RepositoryURL string                `json:"repositoryUrl"`
-	DefaultBranch string                `json:"defaultBranch"`
-	ProjectConfig []byte                `json:"projectConfig"`
+	AccountID             clouddomain.AccountID `json:"accountId"`
+	Session               clouddomain.Session   `json:"session"`
+	RepositoryURL         string                `json:"repositoryUrl"`
+	DefaultBranch         string                `json:"defaultBranch"`
+	ProjectConfig         []byte                `json:"projectConfig"`
+	PendingPromptSequence int64                 `json:"pendingPromptSequence,omitempty"`
+	PendingPrompt         string                `json:"pendingPrompt,omitempty"`
 }
 
 // WorkerLaunchSpec returns launch data for an account-owned session.
@@ -45,9 +47,19 @@ func (s *Store) WorkerLaunchSpec(
 			session.updated_at,
 			project.repository_url,
 			project.default_branch,
-			project.config
+			project.config,
+			COALESCE(turn.user_message_sequence, 0),
+			COALESCE(prompt.payload->>'text', '')
 		FROM ao_sessions session
 		JOIN ao_projects project ON project.id = session.project_id
+		LEFT JOIN ao_turns turn
+			ON turn.session_id = session.id
+			AND turn.org_id = session.org_id
+			AND turn.state IN ('queued', 'provisioning', 'running', 'cancel_requested')
+		LEFT JOIN ao_events prompt
+			ON prompt.session_id = session.id
+			AND prompt.org_id = session.org_id
+			AND prompt.sequence = turn.user_message_sequence
 		WHERE session.org_id = $1 AND session.id = $2
 	`, accountID, sessionID).Scan(
 		&spec.AccountID,
@@ -68,6 +80,8 @@ func (s *Store) WorkerLaunchSpec(
 		&spec.RepositoryURL,
 		&spec.DefaultBranch,
 		&spec.ProjectConfig,
+		&spec.PendingPromptSequence,
+		&spec.PendingPrompt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkerLaunchSpec{}, ErrSessionNotFound

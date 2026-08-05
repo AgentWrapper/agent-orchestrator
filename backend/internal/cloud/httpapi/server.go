@@ -3228,6 +3228,13 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if activityStartsTurn(activity.Event, activity.State) {
+				if err := s.acknowledgeCommandPrompt(
+					r.Context(),
+					claims,
+				); err != nil {
+					s.internalError(w, r, "acknowledge command-delivered prompt", err)
+					return
+				}
 				if _, err := s.store.TransitionActiveTurn(
 					r.Context(),
 					claims.AccountID,
@@ -3383,6 +3390,60 @@ func (s *Server) workerEvent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"event": event})
 }
 
+func (s *Server) acknowledgeCommandPrompt(
+	ctx context.Context,
+	claims cloudworker.Claims,
+) error {
+	activeTurn, err := s.store.GetActiveTurn(ctx, claims.AccountID, claims.SessionID)
+	if err != nil || activeTurn == nil {
+		return err
+	}
+	if err := s.store.ClaimActiveTurn(
+		ctx,
+		claims.AccountID,
+		claims.SessionID,
+		activeTurn.UserMessageSequence,
+		claims.Epoch,
+	); err != nil {
+		return err
+	}
+	accepted, err := s.store.LatestPromptAcceptedSequence(
+		ctx,
+		claims.AccountID,
+		claims.SessionID,
+	)
+	if err != nil {
+		return err
+	}
+	if activeTurn.UserMessageSequence <= accepted {
+		return nil
+	}
+	payload, err := json.Marshal(map[string]int64{
+		"sequence": activeTurn.UserMessageSequence,
+	})
+	if err != nil {
+		return err
+	}
+	event, err := s.events.Append(
+		ctx,
+		claims.AccountID,
+		claims.SessionID,
+		"worker.prompt_accepted",
+		payload,
+	)
+	if err != nil {
+		return err
+	}
+	s.log.Info("cloud command-delivered prompt accepted",
+		"session_id", claims.SessionID,
+		"worker_id", claims.WorkerID,
+		"worker_epoch", claims.Epoch,
+		"prompt_sequence", activeTurn.UserMessageSequence,
+		"event_sequence", event.Sequence,
+	)
+	return nil
+}
+
 func activityStartsTurn(event, state string) bool {
 	return event == "user-prompt-submit" && state == "active"
 }
@@ -3514,6 +3575,17 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_AFTER", "after must be a non-negative integer.")
 		return
 	}
+	commandPromptSequence, err := parseCommandPromptSequence(r)
+	if err != nil || commandPromptSequence > after {
+		writeError(
+			w,
+			r,
+			http.StatusBadRequest,
+			"INVALID_COMMAND_PROMPT",
+			"commandPrompt must be a non-negative sequence at or before after.",
+		)
+		return
+	}
 	socket, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		CompressionMode: websocket.CompressionDisabled,
 	})
@@ -3560,7 +3632,9 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	if retrySequence > 0 && retrySequence <= replayedAfter {
+	if retrySequence > 0 &&
+		retrySequence <= replayedAfter &&
+		retrySequence != commandPromptSequence {
 		replayedAfter = retrySequence - 1
 	}
 	if err := s.writePromptReplay(r.Context(), socket, claims, &replayedAfter); err != nil {
@@ -4632,6 +4706,18 @@ func parseAfter(r *http.Request) (int64, error) {
 		return 0, errors.New("invalid after")
 	}
 	return after, nil
+}
+
+func parseCommandPromptSequence(r *http.Request) (int64, error) {
+	raw := r.URL.Query().Get("commandPrompt")
+	if raw == "" {
+		return 0, nil
+	}
+	sequence, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || sequence < 0 {
+		return 0, errors.New("invalid command prompt")
+	}
+	return sequence, nil
 }
 
 func parseLimit(r *http.Request, maximum int) (int, error) {

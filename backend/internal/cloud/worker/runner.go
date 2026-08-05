@@ -245,11 +245,8 @@ func (r *Runner) Run(ctx context.Context) error {
 		DataDir:     r.dataDir,
 		Kind:        shareddomain.SessionKind(r.bootstrap.Launch.Session.Kind),
 		Permissions: ports.PermissionModeBypassPermissions,
-		// Cloud prompts are delivered through the durable worker command stream
-		// after the interactive agent PTY has started. Passing one in argv makes
-		// some harnesses prefill their composer without submitting the task.
-		Prompt:    "",
-		SessionID: string(r.bootstrap.Launch.Session.ID),
+		Prompt:      r.bootstrap.Launch.PendingPrompt,
+		SessionID:   string(r.bootstrap.Launch.Session.ID),
 		SystemPrompt: systemPrompt(
 			r.bootstrap.Launch.Session.Kind,
 			string(r.bootstrap.Launch.Session.ProjectID),
@@ -292,6 +289,16 @@ func (r *Runner) Run(ctx context.Context) error {
 	}); err != nil {
 		return fmt.Errorf("install agent hooks: %w", err)
 	}
+	commandPromptSequence, err := prepareCloudPromptDelivery(
+		ctx,
+		agent,
+		&launchConfig,
+		r.bootstrap.Launch.PendingPromptSequence,
+		restoreAgent,
+	)
+	if err != nil {
+		return err
+	}
 	argv, err := cloudAgentCommand(
 		ctx,
 		agent,
@@ -325,7 +332,13 @@ func (r *Runner) Run(ctx context.Context) error {
 		sanitizedProcessEnvironment(),
 		envList(workspaceShellEnvironment(r.bootstrap.Launch.Session.Branch))...,
 	)
-	return r.runInteractiveAgent(ctx, argv, agentEnvironment, workspaceEnvironment)
+	return r.runInteractiveAgent(
+		ctx,
+		argv,
+		agentEnvironment,
+		workspaceEnvironment,
+		commandPromptSequence,
+	)
 }
 
 func prepareWorkerHome() error {
@@ -362,7 +375,33 @@ func shouldRestoreAgentSession(
 
 type cloudAgentLauncher interface {
 	GetLaunchCommand(context.Context, ports.LaunchConfig) ([]string, error)
+	GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error)
 	GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error)
+}
+
+func prepareCloudPromptDelivery(
+	ctx context.Context,
+	agent cloudAgentLauncher,
+	launchConfig *ports.LaunchConfig,
+	promptSequence int64,
+	restore bool,
+) (int64, error) {
+	if launchConfig == nil {
+		return 0, errors.New("cloud launch config is required")
+	}
+	if restore || promptSequence <= 0 || launchConfig.Prompt == "" {
+		launchConfig.Prompt = ""
+		return 0, nil
+	}
+	delivery, err := agent.GetPromptDeliveryStrategy(ctx, *launchConfig)
+	if err != nil {
+		return 0, fmt.Errorf("resolve cloud prompt delivery: %w", err)
+	}
+	if delivery == ports.PromptDeliveryAfterStart {
+		launchConfig.Prompt = ""
+		return 0, nil
+	}
+	return promptSequence, nil
 }
 
 func cloudAgentCommand(
@@ -408,6 +447,7 @@ func (r *Runner) runInteractiveAgent(
 	argv []string,
 	agentEnvironment []string,
 	workspaceEnvironment []string,
+	commandPromptSequence int64,
 ) error {
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	command.Dir = r.workspaceDir
@@ -469,6 +509,7 @@ func (r *Runner) runInteractiveAgent(
 			workspaceTerminal,
 			&terminalWriteMu,
 			&workspaceWriteMu,
+			commandPromptSequence,
 		)
 	}()
 
@@ -507,10 +548,12 @@ func (r *Runner) commandLoop(
 	workspaceTerminal *os.File,
 	writeMu *sync.Mutex,
 	workspaceWriteMu *sync.Mutex,
+	commandPromptSequence int64,
 ) {
 	backoff := time.Second
 	var highestPrompt atomic.Int64
-	var acknowledgedPrompt int64
+	highestPrompt.Store(commandPromptSequence)
+	acknowledgedPrompt := commandPromptSequence
 	agentReady := false
 	pendingPrompts := make([]cloudworkerhub.Command, 0, 1)
 	deliverPrompt := func(command cloudworkerhub.Command) error {
@@ -550,68 +593,73 @@ func (r *Runner) commandLoop(
 			acknowledgedPrompt = highest
 		}
 		connectionStartedAt := time.Now()
-		err := r.client.RunCommandStream(ctx, highestPrompt.Load(), func(command cloudworkerhub.Command) error {
-			switch command.Type {
-			case "workspace_request":
-				r.dispatchWorkspaceCommand(ctx, command)
-				return nil
-			case "input":
-				if !terminalInputAllowed(agentReady) {
+		err := r.client.RunCommandStream(
+			ctx,
+			highestPrompt.Load(),
+			commandPromptSequence,
+			func(command cloudworkerhub.Command) error {
+				switch command.Type {
+				case "workspace_request":
+					r.dispatchWorkspaceCommand(ctx, command)
 					return nil
-				}
-				decoded, err := base64.StdEncoding.DecodeString(command.Data)
-				if err != nil {
-					return fmt.Errorf("decode terminal input: %w", err)
-				}
-				writeMu.Lock()
-				_, err = terminal.Write(decoded)
-				writeMu.Unlock()
-				return err
-			case "workspace_terminal_input":
-				decoded, err := base64.StdEncoding.DecodeString(command.Data)
-				if err != nil {
-					return fmt.Errorf("decode workspace terminal input: %w", err)
-				}
-				workspaceWriteMu.Lock()
-				_, err = workspaceTerminal.Write(decoded)
-				workspaceWriteMu.Unlock()
-				return err
-			case "agent_ready":
-				agentReady = true
-				for _, prompt := range pendingPrompts {
-					if err := deliverPrompt(prompt); err != nil {
+				case "input":
+					if !terminalInputAllowed(agentReady) {
+						return nil
+					}
+					decoded, err := base64.StdEncoding.DecodeString(command.Data)
+					if err != nil {
+						return fmt.Errorf("decode terminal input: %w", err)
+					}
+					writeMu.Lock()
+					_, err = terminal.Write(decoded)
+					writeMu.Unlock()
+					return err
+				case "workspace_terminal_input":
+					decoded, err := base64.StdEncoding.DecodeString(command.Data)
+					if err != nil {
+						return fmt.Errorf("decode workspace terminal input: %w", err)
+					}
+					workspaceWriteMu.Lock()
+					_, err = workspaceTerminal.Write(decoded)
+					workspaceWriteMu.Unlock()
+					return err
+				case "agent_ready":
+					agentReady = true
+					for _, prompt := range pendingPrompts {
+						if err := deliverPrompt(prompt); err != nil {
+							return err
+						}
+					}
+					pendingPrompts = pendingPrompts[:0]
+					return nil
+				case "prompt":
+					if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
+						return nil
+					}
+					if !promptDeliveryCanWaitForTerminal(agentReady, agentTerminalReady) {
+						pendingPrompts = append(pendingPrompts, command)
+						return nil
+					}
+					return deliverPrompt(command)
+				case "resize":
+					return pty.Setsize(terminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
+				case "workspace_terminal_resize":
+					return pty.Setsize(workspaceTerminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
+				case "keepalive":
+					return nil
+				case "interrupt":
+					writeMu.Lock()
+					_, err := terminal.Write([]byte{3})
+					writeMu.Unlock()
+					if err != nil {
 						return err
 					}
+					return r.reportTurnInterrupted(ctx, command.Sequence)
+				default:
+					return fmt.Errorf("unsupported worker command %q", command.Type)
 				}
-				pendingPrompts = pendingPrompts[:0]
-				return nil
-			case "prompt":
-				if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
-					return nil
-				}
-				if !promptDeliveryCanWaitForTerminal(agentReady, agentTerminalReady) {
-					pendingPrompts = append(pendingPrompts, command)
-					return nil
-				}
-				return deliverPrompt(command)
-			case "resize":
-				return pty.Setsize(terminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
-			case "workspace_terminal_resize":
-				return pty.Setsize(workspaceTerminal, &pty.Winsize{Rows: command.Rows, Cols: command.Cols})
-			case "keepalive":
-				return nil
-			case "interrupt":
-				writeMu.Lock()
-				_, err := terminal.Write([]byte{3})
-				writeMu.Unlock()
-				if err != nil {
-					return err
-				}
-				return r.reportTurnInterrupted(ctx, command.Sequence)
-			default:
-				return fmt.Errorf("unsupported worker command %q", command.Type)
-			}
-		})
+			},
+		)
 		if ctx.Err() != nil {
 			return
 		}

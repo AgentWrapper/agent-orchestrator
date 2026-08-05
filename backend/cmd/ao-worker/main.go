@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
@@ -33,7 +34,7 @@ func run(log *slog.Logger) error {
 		if len(os.Args) != 4 {
 			return errors.New("usage: ao hooks <harness> <event>")
 		}
-		token := os.Getenv("AO_WORKER_TOKEN")
+		token := currentWorkerToken()
 		if token == "" {
 			return errors.New("AO_WORKER_TOKEN is required for hooks")
 		}
@@ -70,4 +71,17 @@ func run(log *slog.Logger) error {
 		"harness", bootstrap.Launch.Session.Harness,
 	)
 	return cloudworker.NewRunner(client, bootstrap, workspaceDir, dataDir).Run(ctx)
+}
+
+func currentWorkerToken() string {
+	token := strings.TrimSpace(os.Getenv("AO_WORKER_TOKEN"))
+	dataDir := strings.TrimSpace(os.Getenv("AO_DATA_DIR"))
+	if dataDir == "" {
+		return token
+	}
+	current, err := os.ReadFile(filepath.Join(dataDir, "worker-token"))
+	if err != nil || strings.TrimSpace(string(current)) == "" {
+		return token
+	}
+	return strings.TrimSpace(string(current))
 }

@@ -462,6 +462,7 @@ func TestClaudePromptPrecedesBrowserCommandsDuringStartup(t *testing.T) {
 		terminal,
 		&writeMu,
 		&workspaceWriteMu,
+		0,
 	)
 
 	select {
@@ -922,12 +923,86 @@ func TestRegressionRestartedClaudeSessionUsesRestoreCommand(t *testing.T) {
 	}
 }
 
+func TestPrepareCloudPromptDeliveryUsesHarnessCommand(t *testing.T) {
+	agent := &recordingCloudAgentLauncher{
+		strategy: ports.PromptDeliveryInCommand,
+	}
+	config := ports.LaunchConfig{Prompt: "Fix the flaky test"}
+	sequence, err := prepareCloudPromptDelivery(
+		context.Background(),
+		agent,
+		&config,
+		42,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("prepareCloudPromptDelivery() error = %v", err)
+	}
+	if sequence != 42 {
+		t.Fatalf("command prompt sequence = %d, want 42", sequence)
+	}
+	if config.Prompt != "Fix the flaky test" {
+		t.Fatalf("launch prompt = %q", config.Prompt)
+	}
+	if agent.strategyCalls != 1 || agent.strategyConfig.Prompt != config.Prompt {
+		t.Fatalf("strategy calls = %d, config = %#v", agent.strategyCalls, agent.strategyConfig)
+	}
+}
+
+func TestPrepareCloudPromptDeliveryKeepsAfterStartPromptsOutOfArgv(t *testing.T) {
+	agent := &recordingCloudAgentLauncher{
+		strategy: ports.PromptDeliveryAfterStart,
+	}
+	config := ports.LaunchConfig{Prompt: "Inject after startup"}
+	sequence, err := prepareCloudPromptDelivery(
+		context.Background(),
+		agent,
+		&config,
+		17,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("prepareCloudPromptDelivery() error = %v", err)
+	}
+	if sequence != 0 || config.Prompt != "" {
+		t.Fatalf("after-start result = (%d, %q), want (0, empty)", sequence, config.Prompt)
+	}
+}
+
+func TestPrepareCloudPromptDeliveryDoesNotReplayPromptInRestoreCommand(t *testing.T) {
+	agent := &recordingCloudAgentLauncher{
+		strategy: ports.PromptDeliveryInCommand,
+	}
+	config := ports.LaunchConfig{Prompt: "Do not duplicate me"}
+	sequence, err := prepareCloudPromptDelivery(
+		context.Background(),
+		agent,
+		&config,
+		29,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("prepareCloudPromptDelivery() error = %v", err)
+	}
+	if sequence != 0 || config.Prompt != "" || agent.strategyCalls != 0 {
+		t.Fatalf(
+			"restore result = (%d, %q), strategy calls = %d",
+			sequence,
+			config.Prompt,
+			agent.strategyCalls,
+		)
+	}
+}
+
 type recordingCloudAgentLauncher struct {
-	launch        []string
-	restore       []string
-	restoreOK     bool
-	launchCalls   int
-	restoreConfig ports.RestoreConfig
+	launch         []string
+	restore        []string
+	restoreOK      bool
+	launchCalls    int
+	restoreConfig  ports.RestoreConfig
+	strategy       ports.PromptDeliveryStrategy
+	strategyCalls  int
+	strategyConfig ports.LaunchConfig
 }
 
 func (a *recordingCloudAgentLauncher) GetLaunchCommand(
@@ -936,6 +1011,15 @@ func (a *recordingCloudAgentLauncher) GetLaunchCommand(
 ) ([]string, error) {
 	a.launchCalls++
 	return a.launch, nil
+}
+
+func (a *recordingCloudAgentLauncher) GetPromptDeliveryStrategy(
+	_ context.Context,
+	config ports.LaunchConfig,
+) (ports.PromptDeliveryStrategy, error) {
+	a.strategyCalls++
+	a.strategyConfig = config
+	return a.strategy, nil
 }
 
 func (a *recordingCloudAgentLauncher) GetRestoreCommand(

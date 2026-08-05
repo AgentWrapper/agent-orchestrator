@@ -9,6 +9,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -844,6 +845,158 @@ func TestPromptAcknowledgementStartsInitialDurableTurn(t *testing.T) {
 	repeatedTurn, err := store.GetActiveTurn(ctx, account.ID, created.Session.ID)
 	if err != nil || repeatedTurn == nil || repeatedTurn.AttemptCount != 1 {
 		t.Fatalf("repeated acknowledgement turn = %#v, error = %v", repeatedTurn, err)
+	}
+}
+
+func TestReplacementWorkerDoesNotReplayCommandDeliveredPrompt(t *testing.T) {
+	server, store, api := integrationAPIWithServer(t)
+	api.workerReplayWait = 25 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	account, err := store.EnsureAccount(ctx, tokenID("user-one"), "User One")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, account.ID, cloudpostgres.CreateProjectInput{
+		DisplayName:   "Command prompt replacement",
+		RepositoryURL: "https://github.com/example/" + uuid.NewString(),
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.CreateSession(ctx, account.ID, cloudpostgres.CreateSessionInput{
+		IdempotencyKey: uuid.NewString(),
+		ProjectID:      project.ID,
+		Kind:           "worker",
+		Harness:        "claude-code",
+		DisplayName:    "command-prompt",
+		Prompt:         "Run the task from argv",
+		Resource:       clouddomain.DefaultResourceProfile(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := store.ChatEventsAfter(ctx, account.ID, created.Session.ID, 0, 10)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("initial prompt events = %#v, error = %v", events, err)
+	}
+	promptSequence := events[0].Sequence
+	firstToken := bootstrapWorker(t, server, store, account.ID, created.Session.ID, []string{
+		"worker:connect",
+		"worker:event",
+		"worker:terminal",
+	})
+	acknowledgement := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/events",
+		"",
+		map[string]any{
+			"type": "worker.prompt_accepted",
+			"payload": map[string]int64{
+				"sequence": promptSequence,
+			},
+		},
+		map[string]string{"Authorization": "Worker " + firstToken},
+	)
+	acknowledgement.Body.Close()
+	if acknowledgement.StatusCode != http.StatusAccepted {
+		t.Fatalf("first worker acknowledgement status = %d", acknowledgement.StatusCode)
+	}
+
+	const replacementEpoch = int64(2)
+	const replacementWorkerID = "replacement-worker"
+	scopes := []string{"worker:connect", "worker:event", "worker:terminal"}
+	if err := store.RegisterWorkerBootstrap(
+		ctx,
+		account.ID,
+		created.Session.ID,
+		replacementWorkerID,
+		"test",
+		replacementEpoch,
+		scopes,
+	); err != nil {
+		t.Fatal(err)
+	}
+	replacementToken, err := api.workerTokens.Issue(cloudworker.Claims{
+		AccountID: account.ID,
+		SessionID: created.Session.ID,
+		WorkerID:  replacementWorkerID,
+		Epoch:     replacementEpoch,
+		Scopes:    scopes,
+	}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerURL := "ws" + strings.TrimPrefix(server.URL, "http") +
+		"/api/cloud/v1/worker/connect?after=" + strconv.FormatInt(promptSequence, 10) +
+		"&commandPrompt=" + strconv.FormatInt(promptSequence, 10)
+	headers := http.Header{}
+	headers.Set("Authorization", "Worker "+replacementToken)
+	socket, _, err := websocket.Dial(
+		ctx,
+		workerURL,
+		&websocket.DialOptions{HTTPHeader: headers},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer socket.Close(websocket.StatusNormalClosure, "test complete")
+	_, encodedCommand, err := socket.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var command cloudworkerhub.Command
+	if err := json.Unmarshal(encodedCommand, &command); err != nil {
+		t.Fatal(err)
+	}
+	if command.Type != "keepalive" {
+		t.Fatalf("replacement command = %#v, want keepalive without prompt replay", command)
+	}
+
+	submitted := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/events",
+		"",
+		map[string]any{
+			"type": "agent.activity",
+			"payload": map[string]any{
+				"event":       "user-prompt-submit",
+				"state":       "active",
+				"hasActivity": true,
+			},
+		},
+		map[string]string{"Authorization": "Worker " + replacementToken},
+	)
+	submitted.Body.Close()
+	if submitted.StatusCode != http.StatusAccepted {
+		t.Fatalf("replacement prompt-submit status = %d", submitted.StatusCode)
+	}
+	turn, err := store.GetActiveTurn(ctx, account.ID, created.Session.ID)
+	if err != nil ||
+		turn == nil ||
+		turn.State != "running" ||
+		turn.WorkerEpoch != replacementEpoch ||
+		turn.AttemptCount != 2 {
+		t.Fatalf("replacement turn = %#v, error = %v", turn, err)
+	}
+	allEvents, err := store.EventsAfter(ctx, account.ID, created.Session.ID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acceptanceCount := 0
+	for _, event := range allEvents {
+		if event.Type == "worker.prompt_accepted" {
+			acceptanceCount++
+		}
+	}
+	if acceptanceCount != 1 {
+		t.Fatalf("prompt acceptance event count = %d, want 1", acceptanceCount)
 	}
 }
 
@@ -1850,13 +2003,14 @@ func TestBrowserInterruptAndWorkerTurnActivity(t *testing.T) {
 		}
 	}
 
-	if _, _, err := store.AppendUserMessage(
+	hookPrompt, _, err := store.AppendUserMessage(
 		ctx,
 		account.ID,
 		session.Session.ID,
 		uuid.NewString(),
 		"hook-driven turn",
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
 	for _, event := range []struct {
@@ -1898,6 +2052,19 @@ func TestBrowserInterruptAndWorkerTurnActivity(t *testing.T) {
 		if event.wantActive {
 			if got.ActiveTurn == nil || got.ActiveTurn.State != event.wantTurn {
 				t.Fatalf("agent.activity %s turn = %#v, want %q", event.name, got.ActiveTurn, event.wantTurn)
+			}
+			accepted, err := store.LatestPromptAcceptedSequence(
+				ctx,
+				account.ID,
+				session.Session.ID,
+			)
+			if err != nil || accepted != hookPrompt.Sequence {
+				t.Fatalf(
+					"command prompt accepted sequence = %d, want %d, error = %v",
+					accepted,
+					hookPrompt.Sequence,
+					err,
+				)
 			}
 		} else if got.ActiveTurn != nil {
 			t.Fatalf("agent.activity %s left active turn %#v", event.name, got.ActiveTurn)
