@@ -986,6 +986,16 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open fix login").querySelector("[data-session-agent]")).not.toBeInTheDocument();
 	});
 
+	it("renders pinned sessions as top-level rows without project-child indentation", () => {
+		const pinnedSession = { ...session, isPinned: true, pinnedAt: "2026-06-30T01:00:00Z" };
+		renderSidebar({ workspaces: [{ ...workspace, sessions: [pinnedSession] }] });
+
+		const pinnedList = screen.getByTestId("pinned-session-list");
+		const pinnedItem = within(pinnedList).getByLabelText("Open fix login").closest("li");
+		expect(pinnedList).toHaveClass("mx-0", "ml-0", "px-0");
+		expect(pinnedItem).not.toHaveClass("pl-4.5");
+	});
+
 	it("gives session names the pencil width until the rename action is revealed", async () => {
 		const workspaceWithSession = { ...workspace, sessions: [session] };
 		renderSidebar({ workspaces: [workspaceWithSession] });

@@ -325,12 +325,16 @@ export function Sidebar({
 							className="mb-1"
 						/>
 						{pinnedOpen ? (
-							<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-2 translate-x-0 gap-0.5 border-l-0 px-0 py-0.5 mb-2">
+							<SidebarMenuSub
+								className="sidebar-expanded-chrome mx-0 ml-0 translate-x-0 gap-0.5 border-l-0 px-0 py-0.5 mb-2"
+								data-testid="pinned-session-list"
+							>
 								{pinnedSessions.map((session) => (
 									<SessionRow
 										key={session.id}
 										session={session}
 										active={selection.activeSessionId === session.id}
+										indented={false}
 										onOpen={() => selection.goSession(session.workspaceId, session.id)}
 									/>
 								))}
@@ -739,7 +743,17 @@ function ProjectItem({
 // One worker-session row. Reads as a link by default; a hover-revealed pencil
 // flips the label into an inline input (Enter/blur saves, Escape cancels) that
 // persists through the daemon rename endpoint, so the new name survives reload.
-function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
+function SessionRow({
+	session,
+	active,
+	indented = true,
+	onOpen,
+}: {
+	session: WorkspaceSession;
+	active: boolean;
+	indented?: boolean;
+	onOpen: () => void;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [isEditing, setIsEditing] = useState(false);
@@ -775,7 +789,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem className="pl-4.5">
+			<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
 				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0">
 					<SessionStatusDot session={session} />
 					<input
@@ -804,7 +818,7 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	}
 
 	return (
-		<SidebarMenuSubItem className="pl-4.5">
+		<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
 			<div
 				className={cn(
 					"group/session-row flex h-8 w-full items-center rounded-lg transition-[background-color,color]",
