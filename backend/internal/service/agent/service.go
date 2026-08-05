@@ -15,6 +15,7 @@ var (
 	agentInstallProbeTimeout = 2 * time.Second
 	agentAuthProbeTimeout    = 10 * time.Second
 	agentRefreshMinInterval  = 10 * time.Second
+	agentRefreshTimeout      = 30 * time.Second
 )
 
 type probeResult struct {
@@ -105,16 +106,19 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	}
 	s.mu.RUnlock()
 
+	probeCtx, probeCancel := context.WithTimeout(ctx, agentRefreshTimeout)
+	defer probeCancel()
+
 	results := make(chan probeResult, len(s.agents))
 	var wg sync.WaitGroup
 	for _, item := range s.agents {
-		if err := ctx.Err(); err != nil {
+		if err := probeCtx.Err(); err != nil {
 			return Inventory{}, err
 		}
 		wg.Add(1)
 		go func(item agentregistry.HarnessAgent) {
 			defer wg.Done()
-			results <- probeAgent(ctx, item)
+			results <- probeAgent(probeCtx, item)
 		}(item)
 	}
 	wg.Wait()

@@ -7,16 +7,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/authprobe"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
 // AuthStatus returns the plugin's local authentication status.
+// It checks environment variables and the Qwen settings file for API keys, but
+// does NOT invoke the qwen CLI — qwen auth status opens a browser to
+// chat.qwen.ai for login, which is inappropriate for a background probe.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
-	binary, err := p.ResolveBinary(ctx)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
 	if status, ok, err := qwenLocalAuthStatus(ctx); err != nil {
@@ -24,7 +25,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	} else if ok {
 		return status, nil
 	}
-	return authprobe.CLIStatus(ctx, binary, nil)
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 var qwenAPIKeyEnvVars = []string{
