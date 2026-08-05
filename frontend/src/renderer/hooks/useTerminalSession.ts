@@ -58,6 +58,8 @@ export type TerminalSessionState =
 export type UseTerminalSessionOptions = {
 	/** Gates auto-reattach: when false, a dropped socket waits instead of retrying. */
 	daemonReady: boolean;
+	/** Refuse user bytes without detaching while a controller handoff owns input. */
+	inputDisabled?: boolean;
 	/** Test seam: build the mux client. Defaults to a fresh socket against the current API base. */
 	createMux?: () => TerminalMux;
 	/**
@@ -463,7 +465,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			}),
 		);
 		const input = terminal.onUserInput((data) => {
-			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady) {
+			if (!isCurrentAttachment(generation, handle, mux) || !r.inputReady || optionsRef.current.inputDisabled) {
 				return;
 			}
 			// Input is accepted from `opened`, which lands before the replay — so a

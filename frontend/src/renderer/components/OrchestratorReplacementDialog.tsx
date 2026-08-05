@@ -3,14 +3,17 @@ import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, RotateCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { findProjectOrchestrator, type WorkspaceSummary } from "../types/workspace";
+import { isChatPreflightCode } from "../lib/spawn-orchestrator";
+import type { OrchestratorReplacementFailure } from "../stores/ui-store";
 import { TopbarButton } from "./TopbarButton";
 
 type OrchestratorReplacementDialogProps = {
 	projectId: string | null;
-	error?: string;
+	error?: OrchestratorReplacementFailure;
 	workspaces: WorkspaceSummary[];
 	onOpenChange: (open: boolean) => void;
 	onRetry: (projectId: string) => void;
+	onRetryAsTui: (projectId: string) => void;
 };
 
 export function OrchestratorReplacementDialog({
@@ -19,6 +22,7 @@ export function OrchestratorReplacementDialog({
 	workspaces,
 	onOpenChange,
 	onRetry,
+	onRetryAsTui,
 }: OrchestratorReplacementDialogProps) {
 	const { t } = useTranslation();
 	const navigate = useNavigate();
@@ -48,7 +52,7 @@ export function OrchestratorReplacementDialog({
 								{t("orchestratorReplacement.title")}
 							</Dialog.Title>
 							<Dialog.Description className="mt-2 text-[13px] leading-5 text-muted-foreground">
-								{error ?? t("orchestratorReplacement.fallback")}
+								{error?.message ?? t("orchestratorReplacement.fallback")}
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>
@@ -62,6 +66,11 @@ export function OrchestratorReplacementDialog({
 						</Dialog.Close>
 					</div>
 					<div className="mt-5 flex justify-end gap-2">
+						{error && isChatPreflightCode(error.code) ? (
+							<TopbarButton onClick={() => projectId && onRetryAsTui(projectId)} variant="primary">
+								{t("newTask.createAsTui")}
+							</TopbarButton>
+						) : null}
 						{orchestrator ? (
 							<TopbarButton onClick={openCurrent} variant="primary">
 								{t("orchestratorReplacement.openCurrent")}

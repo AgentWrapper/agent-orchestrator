@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -43,7 +44,24 @@ type Service struct {
 
 	mu          sync.RWMutex
 	controllers map[domain.SessionID]*Controller
+	gateMu      sync.Mutex
+	gates       map[domain.SessionID]controllerGate
 }
+
+// controllerGate serializes start/stop for one session without making provider
+// I/O for that session block lookups or commands for every other Chat session.
+type controllerGate chan struct{}
+
+func (g controllerGate) lock(ctx context.Context) error {
+	select {
+	case g <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (g controllerGate) unlock() { <-g }
 
 // Options configures a Service. The id factory and clock are injected so tests
 // are deterministic.
@@ -82,7 +100,19 @@ func New(opts Options) *Service {
 		newID:       opts.NewID,
 		now:         now,
 		controllers: make(map[domain.SessionID]*Controller),
+		gates:       make(map[domain.SessionID]controllerGate),
 	}
+}
+
+func (s *Service) controllerGate(id domain.SessionID) controllerGate {
+	s.gateMu.Lock()
+	defer s.gateMu.Unlock()
+	gate := s.gates[id]
+	if gate == nil {
+		gate = make(controllerGate, 1)
+		s.gates[id] = gate
+	}
+	return gate
 }
 
 // StartConfig opens a controller for a session.
@@ -129,12 +159,18 @@ func (s *Service) settleOrphanedWork(ctx context.Context, session domain.Session
 // conversation: presenting unrelated history as continuous is worse than an error
 // the user can act on.
 func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, error) {
-	s.mu.Lock()
+	gate := s.controllerGate(cfg.SessionID)
+	if err := gate.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer gate.unlock()
+
+	s.mu.RLock()
 	if existing, ok := s.controllers[cfg.SessionID]; ok {
-		s.mu.Unlock()
+		s.mu.RUnlock()
 		return existing, nil
 	}
-	s.mu.Unlock()
+	s.mu.RUnlock()
 
 	driver, err := s.drivers.Driver(cfg.Harness)
 	if err != nil {
@@ -189,23 +225,11 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, err
 	}
 
-	// Re-check under the registry lock after the provider launch. Two concurrent
-	// starts may both pass the fast-path lookup above; only the first may claim the
-	// generation and start an event projector. The redundant provider is closed
-	// before any AO controller consumes its stream.
-	s.mu.Lock()
-	if existing, ok := s.controllers[cfg.SessionID]; ok {
-		s.mu.Unlock()
-		_ = conv.Close()
-		return existing, nil
-	}
-
 	// Claim the durable fence before the controller starts consuming events. An
 	// older controller's projection transaction compares its generation with this
 	// session row and becomes a no-op after this point.
 	generation := s.newID()
 	if err := s.store.ClaimChatControllerGeneration(ctx, cfg.SessionID, generation, s.now()); err != nil {
-		s.mu.Unlock()
 		_ = conv.Close()
 		return nil, fmt.Errorf("claim chat controller: %w", err)
 	}
@@ -220,6 +244,28 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// it. Settling here covers every way a controller can come up, and is a no-op
 	// for a session that has none of it.
 	s.settleOrphanedWork(ctx, cfg.SessionID, conversation.ID)
+	if conversation.Scope == domain.ConversationScopeProject &&
+		conversation.LatestSequence > 0 && cfg.ProviderConversationID == "" {
+		detail, marshalErr := json.Marshal(map[string]string{
+			"event":  "context.reset",
+			"reason": "native conversation was unavailable",
+		})
+		if marshalErr != nil {
+			_ = conv.Close()
+			return nil, fmt.Errorf("encode fresh context boundary: %w", marshalErr)
+		}
+		if boundaryErr := s.store.UpsertActivity(ctx, conversation.ID, "", domain.ConversationActivity{
+			ID:             s.newID(),
+			Kind:           domain.ActivityKindSystem,
+			Status:         domain.ActivityStatusCompleted,
+			Summary:        "Started a fresh agent context. Earlier project history remains visible in AO but was not loaded into this agent.",
+			Detail:         detail,
+			ProviderItemID: "ao-context-reset:" + string(cfg.SessionID),
+		}, s.now()); boundaryErr != nil {
+			_ = conv.Close()
+			return nil, fmt.Errorf("record fresh context boundary: %w", boundaryErr)
+		}
+	}
 
 	// A fresh generation per launch, so events from the controller this one
 	// replaced can be told apart from the current one's.
@@ -239,7 +285,6 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		if s.reader != nil {
 			existing, err = s.reader.LoadConversationSnapshot(ctx, conversation.ID)
 			if err != nil {
-				s.mu.Unlock()
 				_ = conv.Close()
 				return nil, fmt.Errorf("load conversation before native history import: %w", err)
 			}
@@ -247,11 +292,11 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		if err := controller.importNativeHistory(
 			ctx, existing.Turns, existing.Messages, existing.Activities,
 		); err != nil {
-			s.mu.Unlock()
 			_ = conv.Close()
 			return nil, err
 		}
 	}
+	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
 	controller.start()
 	s.mu.Unlock()
@@ -393,9 +438,15 @@ func (s *Service) AbortChatHandoff(id domain.SessionID) {
 
 // Stop closes a session's controller. Safe to call for a session that has none.
 func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
-	s.mu.Lock()
+	gate := s.controllerGate(id)
+	if err := gate.lock(ctx); err != nil {
+		return err
+	}
+	defer gate.unlock()
+
+	s.mu.RLock()
 	controller, ok := s.controllers[id]
-	s.mu.Unlock()
+	s.mu.RUnlock()
 	if !ok {
 		return nil
 	}

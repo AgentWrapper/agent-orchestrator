@@ -251,6 +251,15 @@ export function apiErrorCode(error: unknown): string | undefined {
 	return undefined;
 }
 
+/** Correlation id from the daemon's stable error envelope. */
+export function apiErrorRequestId(error: unknown): string | undefined {
+	if (typeof error === "object" && error !== null) {
+		const body = error as { requestId?: unknown };
+		if (typeof body.requestId === "string" && body.requestId !== "") return body.requestId;
+	}
+	return undefined;
+}
+
 export function apiErrorMessage(error: unknown, fallback = "Request failed"): string {
 	if (error instanceof Error) return error.message;
 	if (typeof error === "string" && error !== "") return error;

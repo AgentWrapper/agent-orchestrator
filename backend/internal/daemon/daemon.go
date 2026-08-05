@@ -241,6 +241,7 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+	sessMgr.SetTerminalInputGate(termMgr)
 	lifecycleMessenger.Bind(sessMgr)
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)

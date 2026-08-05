@@ -143,6 +143,13 @@ type ShellTerminalCloser interface {
 	BeginSessionTeardown(ctx context.Context, id domain.SessionID) (release func(), err error)
 }
 
+// TerminalInputGate closes the raw terminal input path while an interface
+// transition drains and stops a TUI controller. It is separate from Messenger:
+// xterm keystrokes travel over the terminal mux and never pass through Send.
+type TerminalInputGate interface {
+	BeginInputDrain(terminalID string) (release func())
+}
+
 type runtimeController interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
@@ -262,6 +269,9 @@ type Manager struct {
 	// under lock rather than through the constructor.
 	shellTerminalsMu sync.Mutex
 	shellTerminals   ShellTerminalCloser
+
+	terminalInputGateMu sync.Mutex
+	terminalInputGate   TerminalInputGate
 }
 
 // SetShellTerminalCloser wires every worktree-releasing path to gate the
@@ -273,6 +283,31 @@ func (m *Manager) SetShellTerminalCloser(closer ShellTerminalCloser) {
 	m.shellTerminalsMu.Lock()
 	defer m.shellTerminalsMu.Unlock()
 	m.shellTerminals = closer
+}
+
+// SetTerminalInputGate late-binds the daemon's terminal mux after Session
+// Manager is constructed. Nil preserves the no-op behavior used by narrow tests.
+func (m *Manager) SetTerminalInputGate(gate TerminalInputGate) {
+	m.terminalInputGateMu.Lock()
+	defer m.terminalInputGateMu.Unlock()
+	m.terminalInputGate = gate
+}
+
+func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (release func()) {
+	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI {
+		return nil
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID == "" {
+		return nil
+	}
+	m.terminalInputGateMu.Lock()
+	gate := m.terminalInputGate
+	m.terminalInputGateMu.Unlock()
+	if gate == nil {
+		return nil
+	}
+	return gate.BeginInputDrain(handle.ID)
 }
 
 // beginShellTerminalTeardown starts the shell-terminal gate for id ahead of

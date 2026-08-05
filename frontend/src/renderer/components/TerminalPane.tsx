@@ -21,9 +21,10 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	inputDisabled?: boolean;
 };
 
-export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+export function TerminalPane({ session, theme, daemonReady, terminalTarget, fontSize, inputDisabled }: TerminalPaneProps) {
 	const terminalKey =
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
@@ -87,6 +88,7 @@ export function TerminalPane({ session, theme, daemonReady, terminalTarget, font
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			inputDisabled={inputDisabled}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -222,7 +224,7 @@ function bannerText(state: TerminalSessionState, t: TFunction, error?: string): 
 	return undefined;
 }
 
-function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize }: TerminalPaneProps) {
+function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSize, inputDisabled }: TerminalPaneProps) {
 	const { t } = useTranslation();
 	const attachSession =
 		session && terminalTarget?.kind === "reviewer"
@@ -264,6 +266,7 @@ function AttachedTerminal({ session, theme, daemonReady, terminalTarget, fontSiz
 	);
 	const { attach, state, error, replaySettled } = useTerminalSession(attachSession, {
 		daemonReady,
+		inputDisabled,
 		shellTerminalHandleId,
 		onOutput: watchLinks ? handleOutput : undefined,
 	});

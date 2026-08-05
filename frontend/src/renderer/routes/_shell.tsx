@@ -360,13 +360,14 @@ function ShellLayout() {
 	);
 
 	const restartOrchestrator = useCallback(
-		async (projectId: string) => {
+		async (projectId: string, mode?: "chat" | "tui") => {
 			await restartProjectOrchestrator({
 				projectId,
 				queryClient,
 				navigate,
 				setProjectRestarting,
 				setOrchestratorReplacementError,
+				mode,
 				onError: (error) => {
 					captureOrchestratorReplacementFailure(error, projectId);
 				},
@@ -743,6 +744,7 @@ function ShellLayout() {
 						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
 					}}
 					onRetry={(projectId) => void restartOrchestrator(projectId)}
+					onRetryAsTui={(projectId) => void restartOrchestrator(projectId, "tui")}
 					projectId={replacementErrorProjectId}
 					workspaces={workspaces}
 				/>

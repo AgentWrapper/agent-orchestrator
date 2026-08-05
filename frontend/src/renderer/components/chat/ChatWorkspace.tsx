@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
+import type { SessionKind } from "../../types/workspace";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import {
@@ -85,7 +86,7 @@ import {
 export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
 	/** The AO role using this shared conversation surface. */
-	sessionRole?: "worker" | "orchestrator";
+	sessionRole?: SessionKind;
 	/** Session-level actions owned above the conversation surface. */
 	interfaceAction?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
@@ -482,7 +483,7 @@ function ChatHeader({
 }: {
 	snapshot: ConversationSnapshot;
 	interfaceAction?: ReactNode;
-	sessionRole: "worker" | "orchestrator";
+	sessionRole: SessionKind;
 	onCompact?: () => void;
 	compacting?: boolean;
 	compactUnavailable?: string;

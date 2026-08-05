@@ -49,6 +49,12 @@ describe("ChatMarkdown", () => {
 		expect(merged.querySelector(".chat-md-emoji")).toHaveTextContent("✅");
 	});
 
+	it("keeps skin-tone and ZWJ emoji together as grapheme clusters", () => {
+		render(<ChatMarkdown text={"Ready 👍🏽 with family 👨‍👩‍👧‍👦 and flag 🏳️‍🌈."} />);
+		const emoji = [...document.querySelectorAll(".chat-md-emoji")];
+		expect(emoji.map((node) => node.textContent)).toEqual(["👍🏽", "👨‍👩‍👧‍👦", "🏳️‍🌈"]);
+	});
+
 	it("renders a fenced code block with its language and a copy control, and no stray backticks", () => {
 		render(<ChatMarkdown text={"```go\nfunc main() {}\n```"} />);
 		expect(screen.getByText("go")).toBeInTheDocument();

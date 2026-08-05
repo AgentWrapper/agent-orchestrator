@@ -270,6 +270,17 @@ func (c *transitionChat) PrepareChatHandoff(_ context.Context, _ domain.SessionI
 }
 func (*transitionChat) AbortChatHandoff(domain.SessionID) {}
 
+type transitionInputGate struct {
+	acquired chan string
+	released chan string
+}
+
+func (g *transitionInputGate) BeginInputDrain(terminalID string) func() {
+	g.acquired <- terminalID
+	var once sync.Once
+	return func() { once.Do(func() { g.released <- terminalID }) }
+}
+
 func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *transitionStore, *transitionRuntime, *transitionChat, *[]string) {
 	t.Helper()
 	store := newTransitionStore()
@@ -344,6 +355,77 @@ func TestInterfaceTransitionTUIToChatStopsBeforeStartingAndReusesNativeConversat
 	}
 	if got := fmt.Sprint(*log); got != "[stop:tui:runtime-1 start:chat]" {
 		t.Fatalf("controller order = %s", got)
+	}
+}
+
+func TestInterfaceTransitionGatesTUIInputBeforePreflightAndReleasesIt(t *testing.T) {
+	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	gate := &transitionInputGate{acquired: make(chan string, 1), released: make(chan string, 1)}
+	manager.SetTerminalInputGate(gate)
+	chat.preflightStarted = make(chan struct{}, 1)
+	chat.preflightRelease = make(chan struct{})
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case terminalID := <-gate.acquired:
+		if terminalID != "runtime-1" {
+			t.Fatalf("gated terminal = %q, want runtime-1", terminalID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal input was not gated")
+	}
+	select {
+	case <-chat.preflightStarted:
+	case <-time.After(time.Second):
+		t.Fatal("preflight did not start")
+	}
+	select {
+	case <-gate.released:
+		t.Fatal("terminal input gate released while transition was still preflighting")
+	default:
+	}
+
+	close(chat.preflightRelease)
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
+	}
+	select {
+	case terminalID := <-gate.released:
+		if terminalID != "runtime-1" {
+			t.Fatalf("released terminal = %q, want runtime-1", terminalID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal input gate was not released after transition")
+	}
+}
+
+func TestInterfaceTransitionReleasesTUIInputAfterPreflightFailure(t *testing.T) {
+	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	gate := &transitionInputGate{acquired: make(chan string, 1), released: make(chan string, 1)}
+	manager.SetTerminalInputGate(gate)
+	chat.preflightErr = errors.New("provider unavailable")
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionFailed {
+		t.Fatalf("phase = %s, want failed", settled.Phase)
+	}
+	select {
+	case terminalID := <-gate.released:
+		if terminalID != "runtime-1" {
+			t.Fatalf("released terminal = %q, want runtime-1", terminalID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal input gate remained closed after preflight failure")
 	}
 }
 

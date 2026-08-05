@@ -37,6 +37,8 @@ type CenterPaneProps = {
 	onNewShellTerminal?: () => void;
 	/** Session actions consolidated into the terminal bar by SessionView. */
 	topbarActions?: ReactNode;
+	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
+	agentInputDisabled?: boolean;
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
@@ -71,6 +73,7 @@ export function CenterPane({
 	onRenameShellTerminal,
 	onNewShellTerminal,
 	topbarActions,
+	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -361,6 +364,7 @@ export function CenterPane({
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					inputDisabled={agentInputDisabled && target.kind === "worker"}
 					session={session}
 					terminalTarget={target}
 					theme={theme}

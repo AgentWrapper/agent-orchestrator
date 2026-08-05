@@ -1,11 +1,10 @@
 /**
  * Chat conversation view model.
  *
- * These mirror `backend/internal/domain/conversation.go` field for field. They
- * are hand-written for now because the conversation endpoints are not in the
- * OpenAPI spec yet; once they are, this file is replaced by
- * `components["schemas"][...]` from the generated client and the shapes must not
- * drift in the meantime.
+ * These mirror `backend/internal/domain/conversation.go` field for field. The
+ * endpoint transport is generated from OpenAPI, while this file keeps the
+ * renderer's discriminated semantic view of timeline details. Keep the two in
+ * sync when the daemon adds a conversation shape.
  *
  * The renderer is thin on purpose: ordering, capability, permission, and
  * lifecycle decisions all belong to the daemon. Nothing here recomputes them.
@@ -320,7 +319,7 @@ export interface AutoReviewDetail {
  * from the presence of text. Read the discriminator, never the kind.
  */
 export interface SystemEventDetail {
-	event?: "compaction" | "model.rerouted" | "auth.reauth_required" | "steer" | "plan";
+	event?: "compaction" | "model.rerouted" | "auth.reauth_required" | "steer" | "plan" | "context.reset";
 	/** model.rerouted */
 	fromModel?: string;
 	toModel?: string;

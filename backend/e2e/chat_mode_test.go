@@ -8,15 +8,10 @@ import (
 	"time"
 )
 
-// Scenarios for "the interface you chose is the interface you get".
-//
-// Mode is decided once, at spawn, from an explicit request or the daemon default,
-// and then it is a fact about the session forever. Every other guarantee in chat
-// mode rests on that: a session that could change mode would need two controllers,
-// and a session whose stored mode disagreed with its controller would strand its
-// own history.
-
-func TestChatModeIsChosenAtSpawnAndNeverMoves(t *testing.T) {
+// Spawn chooses the initial interface from an explicit request or the daemon
+// default. Changing that default affects only later spawns; changing an existing
+// session requires the explicit, serialized interface-transition endpoint.
+func TestChatModeSpawnPrecedenceAndDefaultIsolation(t *testing.T) {
 	requireE2E(t)
 	d := startDaemon(t, t.TempDir())
 	project := seedProject(t, d, "modes")
@@ -42,9 +37,8 @@ func TestChatModeIsChosenAtSpawnAndNeverMoves(t *testing.T) {
 		t.Fatalf("explicit --mode tui produced %q", explicitTUI.Session.Mode)
 	}
 
-	// Flipping the default must not reach backwards. A session's interface is
-	// part of its identity; a preference change that rewrote existing sessions
-	// would hand a running agent a controller it was not started with.
+	// Flipping the default must not reach backwards. Existing sessions change only
+	// through the explicit handoff coordinator, never as a settings side effect.
 	d.mustCall("PATCH", "/settings/session-interface", http.StatusOK,
 		map[string]any{"defaultSessionMode": "tui"}, nil)
 

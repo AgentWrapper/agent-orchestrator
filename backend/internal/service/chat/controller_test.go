@@ -76,6 +76,22 @@ type nativeHistoryConversation struct {
 	err    error
 }
 
+type blockingHistoryConversation struct {
+	*fakeConversation
+	started chan struct{}
+	release chan struct{}
+}
+
+func (c *blockingHistoryConversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, error) {
+	close(c.started)
+	select {
+	case <-c.release:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
 func (c *nativeHistoryConversation) ReadHistory(context.Context) ([]ports.ChatEvent, error) {
 	return c.events, c.err
 }
@@ -352,6 +368,139 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 	}
 	if snapshot.Turns[0].ProviderTurnID != "native-turn-1" {
 		t.Fatalf("provider turn = %q, want durable native-turn-1", snapshot.Turns[0].ProviderTurnID)
+	}
+}
+
+func TestSlowNativeHistoryDoesNotBlockOtherControllerLookups(t *testing.T) {
+	st := openStore(t)
+	conv := &blockingHistoryConversation{
+		fakeConversation: newFakeConversation(),
+		started:          make(chan struct{}),
+		release:          make(chan struct{}),
+	}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := st.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns, Messages: rows.Messages, Activities: rows.Activities,
+			}, nil
+		}),
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return fmt.Sprintf("lock-id-%d", time.Now().UnixNano()) },
+	})
+	workspace := t.TempDir()
+	startDone := make(chan error, 1)
+	go func() {
+		_, err := svc.Start(context.Background(), chatsvc.StartConfig{
+			SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+			WorkspacePath: workspace, ProviderConversationID: "thread-1",
+		})
+		startDone <- err
+	}()
+	select {
+	case <-conv.started:
+	case <-time.After(time.Second):
+		t.Fatal("native history import did not start")
+	}
+
+	lookupDone := make(chan error, 1)
+	go func() {
+		_, err := svc.Controller(domain.SessionID("another-session"))
+		lookupDone <- err
+	}()
+	select {
+	case err := <-lookupDone:
+		if !errors.Is(err, chatsvc.ErrNoController) {
+			t.Fatalf("Controller error = %v, want ErrNoController", err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("a slow native history import blocked an unrelated controller lookup")
+	}
+
+	close(conv.release)
+	if err := <-startDone; err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+}
+
+func TestFreshProjectControllerRecordsNativeContextBoundary(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 8, 6, 9, 0, 0, 0, time.UTC)
+	conversation, err := st.CreateConversation(ctx, "project-conversation",
+		domain.ConversationScopeProject, testProject, testSession, now)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.UpsertActivity(ctx, conversation.ID, "", domain.ConversationActivity{
+		ID: "old-activity", Kind: domain.ActivityKindSystem, Status: domain.ActivityStatusCompleted,
+		Summary: "Earlier project history", ProviderItemID: "old-project-history",
+	}, now); err != nil {
+		t.Fatalf("seed project history: %v", err)
+	}
+
+	const replacement = domain.SessionID("p1-2")
+	if _, err := st.CreateSession(ctx, domain.SessionRecord{
+		ID: replacement, ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, Mode: domain.SessionModeChat,
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed replacement session: %v", err)
+	}
+
+	var idMu sync.Mutex
+	nextID := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: newFakeConversation()}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			idMu.Lock()
+			defer idMu.Unlock()
+			nextID++
+			return fmt.Sprintf("boundary-id-%d", nextID)
+		},
+		Now: func() time.Time { return now.Add(time.Minute) },
+	})
+	if _, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: replacement, ProjectID: testProject, Kind: domain.KindOrchestrator,
+		Harness: domain.HarnessCodex, WorkspacePath: t.TempDir(),
+	}); err != nil {
+		t.Fatalf("Start replacement: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), replacement) })
+
+	rebound, err := st.ConversationForSession(ctx, replacement)
+	if err != nil {
+		t.Fatalf("ConversationForSession: %v", err)
+	}
+	if rebound.ID != conversation.ID {
+		t.Fatalf("conversation = %q, want project narrative %q", rebound.ID, conversation.ID)
+	}
+	snapshot, err := st.LoadConversationSnapshot(ctx, rebound.ID)
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	if len(snapshot.Activities) != 2 {
+		t.Fatalf("activities = %#v, want old history plus context boundary", snapshot.Activities)
+	}
+	boundary := snapshot.Activities[1]
+	if boundary.Kind != domain.ActivityKindSystem || boundary.ProviderItemID != "ao-context-reset:p1-2" {
+		t.Fatalf("boundary = %#v", boundary)
+	}
+	var detail map[string]string
+	if err := json.Unmarshal(boundary.Detail, &detail); err != nil {
+		t.Fatalf("decode boundary detail: %v", err)
+	}
+	if detail["event"] != "context.reset" {
+		t.Fatalf("boundary event = %q", detail["event"])
 	}
 }
 

@@ -2,11 +2,11 @@
 -- +goose StatementBegin
 -- Chat/TUI session modes and the durable conversation model behind Chat.
 --
--- session_mode is decided before a controller launches and never changes: a live
--- session has exactly one conversation controller, and two writers on one
--- provider conversation race on turns, approvals, compaction, and reconnect
--- state. Every later spawn/send/restore/kill/reaper decision dispatches from
--- this column, not from whatever the current default setting happens to be.
+-- session_mode is decided before the initial controller launches. A durable,
+-- compare-and-swap interface transition may change it later, but a live session
+-- still has exactly one controller: two writers on one provider conversation race
+-- on turns, approvals, compaction, and reconnect state. Every send/restore/kill/
+-- reaper decision dispatches from this column, never from the current default.
 --
 -- The DEFAULT plus NOT NULL is what backfills every pre-existing session to
 -- 'tui', so an upgrade changes no existing workflow.

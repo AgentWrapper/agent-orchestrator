@@ -24,6 +24,14 @@ vi.mock("../lib/api-client", () => ({
 		PUT: putMock,
 		POST: postMock,
 	},
+	apiErrorCode: (error: unknown) =>
+		typeof error === "object" && error !== null && "code" in error
+			? String((error as { code: unknown }).code)
+			: undefined,
+	apiErrorRequestId: (error: unknown) =>
+		typeof error === "object" && error !== null && "requestId" in error
+			? String((error as { requestId: unknown }).requestId)
+			: undefined,
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error) {

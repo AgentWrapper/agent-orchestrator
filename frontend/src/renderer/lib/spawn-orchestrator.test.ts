@@ -1,10 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { spawnOrchestrator } from "./spawn-orchestrator";
+import { isChatPreflightError, OrchestratorSpawnError, spawnOrchestrator } from "./spawn-orchestrator";
 import { apiClient } from "./api-client";
 import { captureRendererEvent } from "./telemetry";
 
 vi.mock("./api-client", () => ({
-	apiClient: { GET: vi.fn(), POST: vi.fn() },
+	apiClient: { POST: vi.fn() },
+	apiErrorCode: (error: unknown) =>
+		typeof error === "object" && error !== null && "code" in error
+			? String((error as { code: unknown }).code)
+			: undefined,
+	apiErrorRequestId: (error: unknown) =>
+		typeof error === "object" && error !== null && "requestId" in error
+			? String((error as { requestId: unknown }).requestId)
+			: undefined,
 	apiErrorMessage: (error: unknown, fallback = "Request failed") => {
 		if (typeof error === "object" && error !== null && "message" in error) {
 			const body = error as { code?: unknown; message: unknown };
@@ -24,11 +32,6 @@ const captureMock = vi.mocked(captureRendererEvent);
 describe("spawnOrchestrator", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		(apiClient.GET as ReturnType<typeof vi.fn>).mockResolvedValue({
-			data: { defaultSessionMode: "chat" },
-			error: undefined,
-			response: { status: 200 },
-		});
 	});
 
 	it("sends clean:true through to the request body when asked", async () => {
@@ -39,9 +42,8 @@ describe("spawnOrchestrator", () => {
 		});
 		const id = await spawnOrchestrator("proj", "restore_dialog", true);
 		expect(id).toBe("proj-9");
-		expect(apiClient.GET).toHaveBeenCalledWith("/api/v1/settings");
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
-			body: { projectId: "proj", clean: true, mode: "chat" },
+			body: { projectId: "proj", clean: true },
 		});
 	});
 
@@ -53,24 +55,19 @@ describe("spawnOrchestrator", () => {
 		});
 		await spawnOrchestrator("proj", "board");
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
-			body: { projectId: "proj", clean: false, mode: "chat" },
+			body: { projectId: "proj", clean: false },
 		});
 	});
 
-	it("omits mode when settings cannot provide a valid preference", async () => {
-		(apiClient.GET as ReturnType<typeof vi.fn>).mockResolvedValue({
-			data: { defaultSessionMode: "unknown" },
-			error: undefined,
-			response: { status: 200 },
-		});
+	it("sends mode only when the user explicitly chooses it", async () => {
 		(apiClient.POST as ReturnType<typeof vi.fn>).mockResolvedValue({
 			data: { orchestrator: { id: "proj-2" } },
 			error: undefined,
 			response: { status: 201 },
 		});
-		await spawnOrchestrator("proj", "board");
+		await spawnOrchestrator("proj", "board", false, "tui");
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/orchestrators", {
-			body: { projectId: "proj", clean: false },
+			body: { projectId: "proj", clean: false, mode: "tui" },
 		});
 	});
 
@@ -108,12 +105,22 @@ describe("spawnOrchestrator", () => {
 	it("surfaces daemon spawn error messages and codes", async () => {
 		(apiClient.POST as ReturnType<typeof vi.fn>).mockResolvedValue({
 			data: undefined,
-			error: { code: "AGENT_BINARY_NOT_FOUND", message: "agent binary not found on PATH" },
+			error: {
+				code: "CHAT_DRIVER_UNAVAILABLE",
+				message: "chat driver is unavailable",
+				requestId: "request-42",
+			},
 			response: { status: 400 },
 		});
 
-		await expect(spawnOrchestrator("proj", "board")).rejects.toThrow(
-			"agent binary not found on PATH (AGENT_BINARY_NOT_FOUND)",
-		);
+		const error = await spawnOrchestrator("proj", "board").catch((caught: unknown) => caught);
+		expect(error).toBeInstanceOf(OrchestratorSpawnError);
+		expect(error).toMatchObject({
+			code: "CHAT_DRIVER_UNAVAILABLE",
+			requestId: "request-42",
+			status: 400,
+		});
+		expect((error as Error).message).toBe("chat driver is unavailable (CHAT_DRIVER_UNAVAILABLE)");
+		expect(isChatPreflightError(error)).toBe(true);
 	});
 });

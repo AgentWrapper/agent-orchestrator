@@ -24,8 +24,9 @@ type SpawnConfig struct {
 
 	// RequestedMode is the caller's explicit session mode, or empty to let the
 	// daemon resolve its default. It is validated and persisted before any
-	// controller launches, and never changes afterwards. An unsupported explicit
-	// request fails the spawn rather than falling back to the other mode.
+	// controller launches. A later explicit interface transition may replace that
+	// controller while preserving the AO session. An unsupported explicit request
+	// fails the spawn rather than falling back to the other mode.
 	RequestedMode domain.SessionMode
 
 	// DisplayName is the user-facing sidebar label. Empty falls back to the

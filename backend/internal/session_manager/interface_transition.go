@@ -269,6 +269,14 @@ func (m *Manager) runInterfaceTransition(
 		fail("SESSION_CHANGED", fmt.Errorf("session changed before the interface switch could start"))
 		return
 	}
+	// Claim the raw terminal input path before target preflight or the first idle
+	// observation. Without this gate a mux client can submit work after the TUI is
+	// observed idle but before Destroy, and that accepted work is then killed by
+	// the handoff. Chat intake has its equivalent gate in BeginHandoff below.
+	releaseTerminalInput := m.beginTerminalInputDrain(rec)
+	if releaseTerminalInput != nil {
+		defer releaseTerminalInput()
+	}
 	if err := m.preflightInterfaceTarget(ctx, rec, transition); err != nil {
 		fail(interfaceTransitionErrorCode(err), err)
 		return

@@ -129,6 +129,8 @@ type sessionLifecycle interface {
 	// is built after Session Manager during boot (see startShellTerminals), so
 	// this cannot be a constructor argument.
 	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
+	// SetTerminalInputGate prevents mux input from racing a TUI-to-Chat handoff.
+	SetTerminalInputGate(gate sessionmanager.TerminalInputGate)
 }
 
 // startSession builds the controller-facing session service: a session manager

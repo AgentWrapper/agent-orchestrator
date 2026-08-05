@@ -509,6 +509,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						/>
 					) : (
 						<CenterPane
+							agentInputDisabled={
+								(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
+							}
 							daemonReady={daemonStatus.state === "ready"}
 							onCloseShellTerminal={closeShellTerminalByHandle}
 							onNewShellTerminal={addShellTerminal}

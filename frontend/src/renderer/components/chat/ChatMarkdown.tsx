@@ -160,8 +160,8 @@ function textOf(children: ReactNode): string {
 }
 
 const LANGUAGE_CLASS = /language-([\w+#-]+)/;
-const INLINE_EMOJI =
-	/([\u{1F1E6}-\u{1F1FF}]{2}|[#*0-9]\uFE0F?\u20E3|[\u{2600}-\u{27BF}\u{1F300}-\u{1FAFF}]\uFE0F?)/gu;
+const EMOJI_GRAPHEME = /\p{Extended_Pictographic}|\p{Regional_Indicator}|[#*0-9]\uFE0F?\u20E3/u;
+const GRAPHEME_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** The fence inside a `pre`, or undefined if this is not a fenced block. */
 function fenceOf(children: ReactNode): { code: string; language?: string } | undefined {
@@ -176,15 +176,15 @@ function compactEmoji(children: ReactNode): ReactNode {
 	if (typeof children === "string") {
 		let last = 0;
 		const parts: ReactNode[] = [];
-		for (const match of children.matchAll(INLINE_EMOJI)) {
-			const index = match.index ?? 0;
+		for (const { segment, index } of GRAPHEME_SEGMENTER.segment(children)) {
+			if (!EMOJI_GRAPHEME.test(segment)) continue;
 			if (index > last) parts.push(children.slice(last, index));
 			parts.push(
-				<span key={`${index}-${match[0]}`} className="chat-md-emoji">
-					{match[0]}
+				<span key={`${index}-${segment}`} className="chat-md-emoji">
+					{segment}
 				</span>,
 			);
-			last = index + match[0].length;
+			last = index + segment.length;
 		}
 		if (last === 0) return children;
 		if (last < children.length) parts.push(children.slice(last));
