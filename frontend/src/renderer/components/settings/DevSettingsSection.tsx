@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import { useUiStore } from "../../stores/ui-store";
 import { IS_DEV } from "../../lib/is-dev";
 import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 import { cn } from "../../lib/utils";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";

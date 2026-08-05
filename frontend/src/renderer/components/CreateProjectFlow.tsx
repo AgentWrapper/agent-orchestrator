@@ -432,8 +432,8 @@ function ProjectModeButton({
 											{repo}
 										</span>
 									</span>
-								</span>
-							))}
+								))}
+							</span>
 						</span>
 					) : (
 						<span className="flex h-[50px] w-fit items-center rounded-lg border border-[var(--color-border-import-modal)] bg-[var(--color-bg-import-chip)] px-4 py-3">
@@ -444,9 +444,8 @@ function ProjectModeButton({
 							</span>
 							<span className="text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">main</span>
 						</span>
-						<span className="text-[14px] font-normal leading-5 text-[var(--color-text-import-muted)]">main</span>
-					</span>
-				)}
+					)}
+				</span>
 			</span>
 			<span className="mt-auto flex w-full flex-col items-start gap-2">
 				<span className="text-[16px] font-bold leading-6 text-[var(--color-text-import-title)]">
