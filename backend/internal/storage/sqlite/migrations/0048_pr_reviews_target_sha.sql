@@ -1,6 +1,4 @@
 -- Summary: persist the pull request head commit that a provider review reviewed.
--- This lets auto-review decide whether the current PR head already has review
--- coverage using the provider review summaries table.
 
 -- +goose Up
 -- +goose StatementBegin

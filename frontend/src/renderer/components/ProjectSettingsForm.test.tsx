@@ -90,6 +90,20 @@ const agentCatalogResponse = {
 function mockProject(project: Record<string, unknown>) {
 	getMock.mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") return agentCatalogResponse;
+		if (path === "/api/v1/agents/{agent}/models") {
+			return {
+				data: {
+					agentId: "test-agent",
+					selectionMode: "text",
+					models: [],
+					allowCustom: true,
+					source: "manual",
+					fetchedAt: "2026-07-31T00:00:00Z",
+					stale: false,
+				},
+				error: undefined,
+			};
+		}
 		return {
 			data: {
 				status: "ok",
@@ -218,7 +232,8 @@ describe("ProjectSettingsForm", () => {
 		renderSettings("proj-1", undefined, "agents");
 
 		expect(screen.queryByLabelText("Default branch")).not.toBeInTheDocument();
-		expect(await screen.findByLabelText("Model override")).toHaveValue("claude-opus-4-5");
+		expect(await screen.findByLabelText("Worker model")).toHaveValue("worker-model");
+		expect(screen.getByLabelText("Orchestrator model")).toHaveValue("claude-opus-4-5");
 
 		const workerAgent = screen.getByRole("button", { name: "Default worker agent" });
 		const orchestratorAgent = screen.getByRole("button", { name: "Default orchestrator agent" });
@@ -227,10 +242,10 @@ describe("ProjectSettingsForm", () => {
 		expect(orchestratorAgent).toHaveTextContent("claude-code");
 		expect(permissionMode).toHaveTextContent("Auto");
 
-		await userEvent.clear(screen.getByLabelText("Model override"));
-		await userEvent.type(screen.getByLabelText("Model override"), "gpt-5-codex");
 		await chooseOption(workerAgent, "OpenCode");
 		await chooseOption(orchestratorAgent, "Goose");
+		await userEvent.type(screen.getByLabelText("Worker model"), "openai/gpt-5.4");
+		await userEvent.type(screen.getByLabelText("Orchestrator model"), "anthropic/claude-sonnet");
 		await userEvent.click(permissionMode);
 		await userEvent.click(await screen.findByRole("menuitem", { name: "Bypass permissions" }));
 
@@ -250,11 +265,13 @@ describe("ProjectSettingsForm", () => {
 					// Agents changes applied
 					worker: {
 						agent: "opencode",
-						agentConfig: { model: "worker-model" },
+						agentConfig: { model: "openai/gpt-5.4" },
 					},
-					orchestrator: { agent: "goose" },
+					orchestrator: {
+						agent: "goose",
+						agentConfig: { model: "anthropic/claude-sonnet" },
+					},
 					agentConfig: {
-						model: "gpt-5-codex",
 						permissions: "bypass-permissions",
 					},
 				}),
@@ -287,6 +304,170 @@ describe("ProjectSettingsForm", () => {
 		expect(screen.getByLabelText("Session prefix")).toHaveValue("po");
 		const reviewerAgent = screen.getByRole("button", { name: "Default reviewer agent" });
 		expect(reviewerAgent).toHaveTextContent("claude-code");
+	});
+
+	it("shows the full model catalog again after selecting a model", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents/{agent}/models") {
+				return {
+					data: {
+						agentId: "codex",
+						selectionMode: "catalog",
+						models: [
+							{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", isDefault: true },
+							{ id: "gpt-5.5", label: "GPT-5.5" },
+							{ id: "gpt-5.4", label: "GPT-5.4" },
+						],
+						allowCustom: true,
+						source: "official-catalog",
+						fetchedAt: "2026-07-31T00:00:00Z",
+						stale: false,
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "codex" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		const workerModel = await screen.findByRole("button", { name: "Worker model" });
+		await userEvent.click(workerModel);
+		expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
+			"Agent default",
+			"GPT-5.6 SolDefaultgpt-5.6-sol",
+			"GPT-5.5gpt-5.5",
+			"GPT-5.4gpt-5.4",
+			"Custom model…",
+		]);
+		const search = screen.getByRole("searchbox", { name: "Search worker model" });
+		await userEvent.type(search, "5.5");
+		expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+		expect(screen.getByRole("menuitem", { name: /GPT-5\.5/ })).toBeInTheDocument();
+		expect(screen.queryByRole("menuitem", { name: /GPT-5\.4/ })).not.toBeInTheDocument();
+		await userEvent.clear(search);
+		await userEvent.click(screen.getByRole("menuitem", { name: /GPT-5\.4/ }));
+		expect(workerModel).toHaveTextContent("GPT-5.4");
+
+		await userEvent.click(workerModel);
+		expect(await screen.findByRole("menuitem", { name: /GPT-5\.6 Sol/ })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: /GPT-5\.5/ })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: /GPT-5\.4/ })).toBeInTheDocument();
+		expect(screen.getByRole("menuitem", { name: "Custom model…" })).toBeInTheDocument();
+	});
+
+	it("shows a warning when refreshing a cached model catalog fails", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents/{agent}/models") {
+				return {
+					data: {
+						agentId: "codex",
+						selectionMode: "catalog",
+						models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" }],
+						allowCustom: true,
+						source: "official-catalog",
+						fetchedAt: "2026-07-31T00:00:00Z",
+						stale: false,
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "codex" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+		postMock.mockResolvedValue({ data: undefined, error: { message: "model refresh unavailable" } });
+
+		renderSettings("proj-1", undefined, "agents");
+
+		await userEvent.click(await screen.findByRole("button", { name: "Refresh worker model list" }));
+		expect(await screen.findByText("model refresh unavailable")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Worker model" })).toHaveTextContent("Agent default");
+	});
+
+	it("shows cached models immediately and deduplicates background revalidation", async () => {
+		const cachedCatalog = {
+			agentId: "codex",
+			selectionMode: "catalog" as const,
+			models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" }],
+			allowCustom: true,
+			source: "official-catalog",
+			fetchedAt: "2026-07-31T00:00:00Z",
+			validatedAt: "2026-07-31T00:00:00Z",
+			refreshRecommended: true,
+			stale: false,
+		};
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") return agentCatalogResponse;
+			if (path === "/api/v1/agents/{agent}/models") return { data: cachedCatalog, error: undefined };
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "codex" },
+							orchestrator: { agent: "codex" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+		postMock.mockResolvedValue({
+			data: { ...cachedCatalog, refreshRecommended: false, validatedAt: "2026-08-03T00:00:00Z" },
+			error: undefined,
+		});
+
+		renderSettings("proj-1", undefined, "agents");
+
+		expect(await screen.findByRole("button", { name: "Worker model" })).toHaveTextContent("Agent default");
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		expect(postMock).toHaveBeenCalledWith("/api/v1/agents/{agent}/models/refresh", {
+			params: {
+				path: { agent: "codex" },
+				query: { projectId: "proj-1", revalidate: true },
+			},
+		});
 	});
 
 	it("shows the daemon validation message when the atomic settings save fails", async () => {
@@ -527,10 +708,9 @@ describe("ProjectSettingsForm", () => {
 					symlinks: [".env"],
 					postCreate: ["npm install"],
 					agentRules: "keep work small",
-					worker: { agent: "codex" },
-					orchestrator: { agent: "claude-code" },
+					worker: { agent: "codex", agentConfig: { model: "gpt-5-codex" } },
+					orchestrator: { agent: "claude-code", agentConfig: { model: "gpt-5-codex" } },
 					agentConfig: {
-						model: "gpt-5-codex",
 						permissions: "auto",
 					},
 				},

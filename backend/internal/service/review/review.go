@@ -54,7 +54,6 @@ type Store interface {
 // Reducer is the lifecycle reaction boundary used after a review result has
 // been persisted.
 type Reducer interface {
-	ApplyReviewResult(ctx context.Context, workerID domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 	ApplyReviewBatch(ctx context.Context, workerID domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 }
 
@@ -236,12 +235,7 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 		return nil, nil
 	}
 	results := reviewResults(workerID, deliverable)
-	var outcome lifecycle.ReviewDeliveryOutcome
-	if len(results) == 1 && results[0].BatchID == "" {
-		outcome, err = s.lifecycle.ApplyReviewResult(ctx, workerID, results[0])
-	} else {
-		outcome, err = s.lifecycle.ApplyReviewBatch(ctx, workerID, results[0].BatchID, results)
-	}
+	outcome, err := s.lifecycle.ApplyReviewBatch(ctx, workerID, results[0].BatchID, results)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +268,7 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
 			continue
 		}
-		if run.BatchID != "" && currentHeads[run.PRURL] != run.TargetSHA {
+		if currentHeads[run.PRURL] != run.TargetSHA {
 			continue
 		}
 		deliverable = append(deliverable, run)
