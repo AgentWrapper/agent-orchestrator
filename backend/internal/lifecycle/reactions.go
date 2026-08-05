@@ -201,21 +201,46 @@ func (m *Manager) ApplyPRObservation(ctx context.Context, id domain.SessionID, o
 		}
 	}
 
-	if rec.AutoInjectReviewFeedback &&
-		(o.Review == domain.ReviewChangesRequest || hasUnresolvedComments(o.Comments)) {
+	if o.Review == domain.ReviewChangesRequest || hasUnresolvedComments(o.Comments) {
 		comments := unresolvedReviewComments(o.Comments)
-		msg := formatReviewCommentsMessage(comments)
-		if ident != "your PR" {
-			msg = strings.Replace(msg, "your PR", ident, 1)
-		}
-		if o.URL != "" {
-			msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
-		}
 		sig := reviewCommentsSignature(comments)
 		if sig == "" {
 			sig = string(o.Review)
 		}
-		nudges = append(nudges, pendingNudge{key: "review:" + o.URL, sig: sig, msg: msg, maxAttempts: reviewMaxNudge})
+		key := "review:" + o.URL
+		if !rec.AutoInjectReviewFeedback {
+			if err := m.markSeenWithoutSending(ctx, o.URL, key, sig); err != nil {
+				return err
+			}
+		} else {
+			previousSig, err := m.previousSeenSignature(ctx, o.URL, key)
+			if err != nil {
+				return err
+			}
+			deliverComments := comments
+			switch {
+			case previousSig == sig:
+				deliverComments = nil
+			case previousSig != "" && len(comments) > 0:
+				deliverComments = reviewCommentsNotInSignature(comments, previousSig)
+			}
+
+			shouldSend := len(deliverComments) > 0 || (len(comments) == 0 && previousSig == "")
+			if shouldSend {
+				msg := formatReviewCommentsMessage(deliverComments)
+				if ident != "your PR" {
+					msg = strings.Replace(msg, "your PR", ident, 1)
+				}
+				if o.URL != "" {
+					msg += "\nPR: " + domain.SanitizeControlChars(o.URL)
+				}
+				nudges = append(nudges, pendingNudge{key: key, sig: sig, msg: msg, maxAttempts: reviewMaxNudge})
+			} else if previousSig != sig {
+				if err := m.markSeenWithoutSending(ctx, o.URL, key, sig); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	// Only the merge-conflict nudge needs a store read (the parent-stack check).
 	// A read error there must NOT discard the CI/review nudges already queued
@@ -674,15 +699,23 @@ func unresolvedReviewComments(comments []ports.PRCommentObservation) []ports.PRC
 func reviewCommentsSignature(comments []ports.PRCommentObservation) string {
 	parts := make([]string, 0, len(comments))
 	for _, c := range comments {
-		id := strings.TrimSpace(c.ID)
-		threadID := strings.TrimSpace(c.ThreadID)
-		if id == "" && threadID == "" {
+		token := reviewCommentSignatureToken(c)
+		if token == "" {
 			continue
 		}
-		parts = append(parts, threadID+"\x00"+id)
+		parts = append(parts, token)
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, "\x01")
+}
+
+func reviewCommentSignatureToken(c ports.PRCommentObservation) string {
+	id := strings.TrimSpace(c.ID)
+	threadID := strings.TrimSpace(c.ThreadID)
+	if id == "" && threadID == "" {
+		return ""
+	}
+	return threadID + "\x00" + id
 }
 
 func formatReviewCommentsMessage(comments []ports.PRCommentObservation) string {
@@ -739,6 +772,30 @@ func markdownCodeFence(s string) string {
 	return strings.Repeat("`", maxRun+1)
 }
 
+func reviewCommentsNotInSignature(comments []ports.PRCommentObservation, sig string) []ports.PRCommentObservation {
+	seen := reviewCommentSignatureSet(sig)
+	out := make([]ports.PRCommentObservation, 0, len(comments))
+	for _, c := range comments {
+		token := reviewCommentSignatureToken(c)
+		if token != "" && seen[token] {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func reviewCommentSignatureSet(sig string) map[string]bool {
+	out := map[string]bool{}
+	for _, part := range strings.Split(sig, "\x01") {
+		if part == "" {
+			continue
+		}
+		out[part] = true
+	}
+	return out
+}
+
 // sendOnceOutcome tells a caller whether a nudge is accounted for (actually
 // sent, or already covered by dedup state) versus suppressed by the just-in-time
 // session guard. It matters for review delivery: a suppressed nudge must NOT be
@@ -756,6 +813,37 @@ const (
 	// it re-fires on the next observation once the session is workable again.
 	sendOnceSuppressed
 )
+
+func (m *Manager) previousSeenSignature(ctx context.Context, prURL, key string) (string, error) {
+	m.react.mu.Lock()
+	defer m.react.mu.Unlock()
+	if prURL != "" && !m.react.loaded[prURL] {
+		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
+			return "", err
+		}
+		m.react.loaded[prURL] = true
+	}
+	return m.react.seen[key], nil
+}
+
+func (m *Manager) markSeenWithoutSending(ctx context.Context, prURL, key, sig string) error {
+	m.react.mu.Lock()
+	defer m.react.mu.Unlock()
+	if prURL != "" && !m.react.loaded[prURL] {
+		if err := m.loadPRSignaturesLocked(ctx, prURL); err != nil {
+			return err
+		}
+		m.react.loaded[prURL] = true
+	}
+	if m.react.seen[key] == sig {
+		return nil
+	}
+	m.react.seen[key] = sig
+	if prURL != "" {
+		return m.persistPRSignaturesLocked(ctx, prURL)
+	}
+	return nil
+}
 
 func (m *Manager) sendOnce(ctx context.Context, id domain.SessionID, prURL, key, sig, msg string, maxAttempts int) (sendOnceOutcome, error) {
 	if m.guard == nil {

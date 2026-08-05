@@ -1226,6 +1226,58 @@ func TestPRObservation_AutoInjectDisabledSuppressesOnlyReviewComments(t *testing
 	}
 }
 
+func TestPRObservation_AutoInjectEnableDeliversOnlyNewReviewComments(t *testing.T) {
+	m, st, msg := newManager()
+	rec := working("mer-1")
+	rec.AutoInjectReviewFeedback = false
+	st.sessions["mer-1"] = rec
+
+	first := ports.PRCommentObservation{
+		ID: "1", ThreadID: "T1", Author: "alice", File: "foo.go", Line: 12, Body: "old while disabled",
+	}
+	o := ports.PRObservation{
+		Fetched:  true,
+		URL:      "pr1",
+		Review:   domain.ReviewChangesRequest,
+		Comments: []ports.PRCommentObservation{first},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("disabled review feedback should not be injected, got %v", msg.msgs)
+	}
+	if st.signatureWrites != 1 {
+		t.Fatalf("disabled review feedback should record baseline signature, writes=%d", st.signatureWrites)
+	}
+
+	rec.AutoInjectReviewFeedback = true
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 0 {
+		t.Fatalf("old review feedback should stay put after enabling, got %v", msg.msgs)
+	}
+
+	second := ports.PRCommentObservation{
+		ID: "2", ThreadID: "T2", Author: "bob", File: "bar.go", Line: 34, Body: "new after enabled",
+	}
+	o.Comments = append(o.Comments, second)
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("new review feedback should be injected once, got %v", msg.msgs)
+	}
+	if strings.Contains(msg.msgs[0], "old while disabled") {
+		t.Fatalf("old disabled feedback must not be injected after enabling:\n%s", msg.msgs[0])
+	}
+	if !strings.Contains(msg.msgs[0], "new after enabled") {
+		t.Fatalf("new enabled feedback missing from nudge:\n%s", msg.msgs[0])
+	}
+}
+
 func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
