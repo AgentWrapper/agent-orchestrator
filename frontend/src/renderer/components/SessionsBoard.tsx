@@ -54,6 +54,7 @@ import { aoBridge } from "../lib/bridge";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import type { UpdateStatus } from "../../main/update-settings";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -109,6 +110,20 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const setOrchestratorStartupError = useUiStore((state) => state.setOrchestratorStartupError);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
+
+	const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
+	useEffect(() => {
+		if (!aoBridge.updates) return;
+		let live = true;
+		void aoBridge.updates.getStatus().then((s) => {
+			if (live) setUpdateStatus(s);
+		});
+		const off = aoBridge.updates.onStatus(setUpdateStatus);
+		return () => {
+			live = false;
+			off?.();
+		};
+	}, []);
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
 	// The board instance survives project-to-project navigation (same route,
@@ -325,6 +340,25 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									{t("shell.restart")}
 							</TopbarButton>
 						) : null}
+					</div>
+				) : null}
+				{updateStatus.state === "downloaded" && !showWelcome ? (
+					<div
+						role="status"
+						aria-live="polite"
+						className={cn(
+							"mx-3 my-3 flex items-center gap-3 rounded-md border bg-surface px-3 py-2 text-xs text-muted-foreground",
+							updateStatus.escalated ? "border-working/35 bg-working/12" : "border-border",
+						)}
+					>
+						<RotateCw className={cn("size-icon-base shrink-0", updateStatus.escalated ? "text-working" : "text-success")} aria-hidden="true" />
+						<span className="min-w-0 flex-1">
+							Update ready{updateStatus.version ? ` (v${updateStatus.version})` : ""}.
+						</span>
+						<TopbarButton variant="primary" onClick={() => void aoBridge.updates.install()}>
+							<RotateCw className="size-3.5" aria-hidden="true" />
+							Restart to update
+					</TopbarButton>
 					</div>
 				) : null}
 				{showStartup ? (
