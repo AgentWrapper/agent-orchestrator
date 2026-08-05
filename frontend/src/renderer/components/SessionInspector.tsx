@@ -92,7 +92,7 @@ const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector
 const prStateTone: Record<SessionPRSummary["state"], string> = {
 	open: "border-border-strong bg-overlay text-muted-foreground",
 	draft: "border-status-in-review/35 bg-status-in-review/10 text-status-in-review",
-	merged: "border-accent/40 bg-accent-weak text-accent",
+	merged: "border-border-strong bg-overlay text-success",
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
@@ -550,33 +550,37 @@ function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: str
 				</Badge>
 			</div>
 			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRCardStatusSummary
-				action={
-					canMerge ? (
-						<Button
-							aria-label={t("pr.merge.actionFor", { number: pr.number })}
-							className="gap-1 px-2"
-							disabled={mergePr.isPending}
-							onClick={() => mergePr.mutate()}
-							size="sm"
-							type="button"
-						>
-							{mergePr.isPending ? (
-								<Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />
-							) : (
-								<GitMerge className="size-icon-sm" aria-hidden="true" />
-							)}
-							{mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
-						</Button>
-					) : undefined
-				}
-				className="mt-2"
-				pr={pr}
-			/>
-			{mergeError ? (
-				<p className="mt-2 text-2xs leading-normal text-error" role="status">
-					{mergeError}
-				</p>
+			{pr.state !== "merged" ? (
+				<>
+					<PRCardStatusSummary
+						action={
+							canMerge ? (
+								<Button
+									aria-label={t("pr.merge.actionFor", { number: pr.number })}
+									className="gap-1 px-2"
+									disabled={mergePr.isPending}
+									onClick={() => mergePr.mutate()}
+									size="sm"
+									type="button"
+								>
+									{mergePr.isPending ? (
+										<Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />
+									) : (
+										<GitMerge className="size-icon-sm" aria-hidden="true" />
+									)}
+									{mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
+								</Button>
+							) : undefined
+						}
+						className="mt-2"
+						pr={pr}
+					/>
+					{mergeError ? (
+						<p className="mt-2 text-2xs leading-normal text-error" role="status">
+							{mergeError}
+						</p>
+					) : null}
+				</>
 			) : null}
 		</article>
 	);
