@@ -428,9 +428,9 @@ describe("Sidebar", () => {
 		expect(screen.getByText("fix login")).toBeInTheDocument();
 		expect(screen.getByText("other task")).toBeInTheDocument();
 
-		const folder = screen.getByText("Project Two").closest('[role="button"]')?.querySelector("[data-project-folder]");
+		const folder = screen.getByRole("button", { name: "Toggle Project Two sessions" });
 		expect(folder).toBeTruthy();
-		await user.click(folder!);
+		await user.click(folder);
 
 		expect(screen.queryByText("other task")).not.toBeInTheDocument();
 		expect(screen.getByText("fix login")).toBeInTheDocument();
@@ -981,7 +981,7 @@ describe("Sidebar", () => {
 	it("always shows action icons and reserves padding for them", () => {
 		renderSidebar();
 
-		const projectRow = screen.getByText("Project One").closest('[role="button"]');
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
 
 		if (!projectRow) throw new Error("Project row button not found");
 		// Padding is always reserved for the action cluster (not hover-gated)
@@ -1165,9 +1165,9 @@ describe("Sidebar", () => {
 		expect(screen.getByLabelText("Open second task")).toBeInTheDocument();
 
 		// Collapse via folder icon
-		const folder = screen.getByText("Project One").closest('[role="button"]')?.querySelector("[data-project-folder]");
+		const folder = screen.getByRole("button", { name: "Toggle Project One sessions" });
 		expect(folder).toBeTruthy();
-		await user.click(folder!);
+		await user.click(folder);
 
 		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
@@ -1186,16 +1186,16 @@ describe("Sidebar", () => {
 			],
 		});
 
-		const projectRow = screen.getByText("Project One").closest('[role="button"]')!;
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]')!;
 		// Project starts expanded — sessions visible
 		expect(screen.getByLabelText("Open second task")).toBeInTheDocument();
 		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
 		expect(projectRow).toHaveAttribute("aria-expanded", "true");
 
 		// Collapse via folder icon
-		const folder = projectRow.querySelector("[data-project-folder]");
+		const folder = screen.getByRole("button", { name: "Toggle Project One sessions" });
 		expect(folder).toBeTruthy();
-		await user.click(folder!);
+		await user.click(folder);
 
 		expect(projectRow).toHaveAttribute("aria-expanded", "false");
 		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
