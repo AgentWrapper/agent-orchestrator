@@ -285,7 +285,12 @@ export function Sidebar({
 								onClick={selection.goHome}
 								type="button"
 							>
-								<img src={aoLogo} alt="" aria-hidden="true" className="h-5.5 w-5.5 rounded-md object-cover" />
+								<img
+									src={aoLogo}
+									alt=""
+									aria-hidden="true"
+									className="h-5.5 w-5.5 -translate-y-[3px] rounded-md object-cover"
+								/>
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
