@@ -1,4 +1,7 @@
-# PostHog Cost Controls
+---
+title: "PostHog Cost Controls"
+---
+
 
 This page is the runbook for cutting AO PostHog spend while preserving active
 usage and reliability observability.
@@ -172,7 +175,7 @@ Use layered controls:
    `AO_TELEMETRY_DISABLED_EVENTS` silences named streams (with `*` prefix
    matching) on installs that already exist, without shipping a release. Local
    SQLite still records them, so the stream stays debuggable. See the kill-switch
-   section in [telemetry.md](telemetry.md). This is the in-app counterpart to a
+   section in [telemetry.md](telemetry). This is the in-app counterpart to a
    PostHog ingestion rule: the rule stops paying for events already sent, the
    switch stops sending them.
 

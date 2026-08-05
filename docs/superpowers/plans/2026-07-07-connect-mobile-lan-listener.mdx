@@ -1,4 +1,7 @@
-# Connect Mobile — LAN Listener Implementation Plan
+---
+title: "Connect Mobile — LAN Listener Implementation Plan"
+---
+
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1133,7 +1136,6 @@ Then a manual smoke:
 ```bash
 go run ./cmd/ao start &   # daemon up
 curl -s -XPOST localhost:3001/api/v1/mobile/enable | tee /tmp/enable.json   # returns password + port
-# NOTE: envelope.WriteJSON encodes the DTO directly (no "data" wrapper).
 PW=$(python3 -c "import json;print(json.load(open('/tmp/enable.json'))['password'])")
 PORT=$(python3 -c "import json;print(json.load(open('/tmp/enable.json'))['port'])")
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:$PORT/api/v1/sessions            # expect 401

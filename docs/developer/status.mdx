@@ -1,4 +1,7 @@
-# agent-orchestrator status
+---
+title: "agent-orchestrator status"
+---
+
 
 Current `main` ships a working single-user local loop: the Go daemon and the
 Electron/React frontend both drive a live daemon over HTTP/SSE/WebSocket. The
@@ -6,8 +9,8 @@ core GitHub flow works end-to-end: add project → spawn session/orchestrator �
 attach terminal → observe PR → merge.
 
 This file tracks progress. For what the product _is_ and how to run it, see the
-top-level [`README.md`](../README.md); for the backend mental model see
-[`architecture.md`](architecture.md).
+top-level [`README.md`](../README); for the backend mental model see
+[`architecture.md`](architecture).
 
 ## Build & test
 
@@ -19,7 +22,7 @@ cd backend && go build ./... && go test -race ./...
 
 `npm run lint` (from the repo root) runs `go test ./...` plus golangci-lint.
 Frontend checks live under `frontend/` (`npm run typecheck`, `npm run build`).
-See [`AGENTS.md`](../AGENTS.md) for the regen workflow when touching the API
+See [`AGENTS.md`](../AGENTS) for the regen workflow when touching the API
 surface (`npm run sqlc`, `npm run api`).
 
 ## Shipped
