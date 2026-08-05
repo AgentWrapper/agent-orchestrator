@@ -147,7 +147,7 @@ function OrchestratorIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
 function StandaloneProjectIcon({ className = "" }: { className?: string }) {
   return (
     <span
-      className={`relative inline-grid shrink-0 place-items-center rounded-md border border-[#4d8dff]/25 bg-[#4d8dff]/10 text-[#8eb6ff] ${className}`}
+      className={`relative inline-grid shrink-0 place-items-center rounded-md text-white/55 ${className}`}
     >
       <Folder className="size-[13px]" />
     </span>
