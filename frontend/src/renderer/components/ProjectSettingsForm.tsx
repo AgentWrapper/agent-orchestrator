@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
 	Bot,
 	Fingerprint,
@@ -21,6 +21,13 @@ import {
 	type LucideIcon,
 } from "lucide-react";
 import type { components } from "../../api/schema";
+import {
+	agentModelsQueryKey,
+	agentModelsQueryOptions,
+	refreshAgentModels,
+	revalidateAgentModels,
+	type AgentModelCatalog,
+} from "../hooks/useAgentModelsQuery";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
@@ -31,6 +38,7 @@ import { newestActiveOrchestrator } from "../types/workspace";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import { buildIntake, deriveGitHubRepo, IntakeFields, type IntakeForm, intakeNeedsRule } from "./IntakeFields";
 import { ReviewerSelect } from "./ReviewerSelect";
+import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
@@ -99,7 +107,10 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 		sessionPrefix: config.sessionPrefix ?? "",
 		workerAgent: config.worker?.agent ?? "",
 		orchestratorAgent: config.orchestrator?.agent ?? "",
-		model: config.agentConfig?.model ?? "",
+		workerModel: config.worker?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		orchestratorModel: config.orchestrator?.agentConfig?.model ?? config.agentConfig?.model ?? "",
+		workerMode: config.worker?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
+		orchestratorMode: config.orchestrator?.agentConfig?.mode ?? config.agentConfig?.mode ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
 		intakeEnabled: intake.enabled ?? false,
@@ -137,14 +148,30 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 		mutationFn: async () => {
 			void captureRendererEvent("ao.renderer.settings_save_requested", { project_id: projectId });
 			const displayName = form.displayName.trim();
+			const {
+				model: _legacyModel,
+				mode: _legacyMode,
+				...sharedAgentConfig
+			} = config.agentConfig ?? {};
 			const next: ProjectConfig = isScratchProject
 				? {
 						...scratchSupportedConfig(config),
-						worker: { ...config.worker, agent: form.workerAgent },
-						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
+						worker: {
+							...config.worker,
+							agent: form.workerAgent,
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+						},
+						orchestrator: {
+							...config.orchestrator,
+							agent: form.orchestratorAgent,
+							agentConfig: buildRoleAgentConfig(
+								config.orchestrator?.agentConfig,
+								form.orchestratorModel,
+								form.orchestratorMode,
+							),
+						},
 						agentConfig: blankToUndefined({
-							...config.agentConfig,
-							model: form.model || undefined,
+							...sharedAgentConfig,
 							permissions: form.permissions || undefined,
 						}),
 					}
@@ -152,11 +179,22 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 						...config,
 						defaultBranch: form.defaultBranch || undefined,
 						sessionPrefix: form.sessionPrefix || undefined,
-						worker: { ...config.worker, agent: form.workerAgent },
-						orchestrator: { ...config.orchestrator, agent: form.orchestratorAgent },
+						worker: {
+							...config.worker,
+							agent: form.workerAgent,
+							agentConfig: buildRoleAgentConfig(config.worker?.agentConfig, form.workerModel, form.workerMode),
+						},
+						orchestrator: {
+							...config.orchestrator,
+							agent: form.orchestratorAgent,
+							agentConfig: buildRoleAgentConfig(
+								config.orchestrator?.agentConfig,
+								form.orchestratorModel,
+								form.orchestratorMode,
+							),
+						},
 						agentConfig: blankToUndefined({
-							...config.agentConfig,
-							model: form.model || undefined,
+							...sharedAgentConfig,
 							permissions: form.permissions || undefined,
 						}),
 						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
@@ -280,7 +318,18 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
 							invalid={validationError !== null && form.workerAgent === ""}
-							onChange={(v) => setForm((f) => ({ ...f, workerAgent: v }))}
+							onChange={(v) =>
+								setForm((f) => ({ ...f, workerAgent: v, workerModel: "", workerMode: "" }))
+							}
+						/>
+						<AgentModelField
+							role="worker"
+							agentId={form.workerAgent}
+							projectId={projectId}
+							model={form.workerModel}
+							mode={form.workerMode}
+							onModelChange={(workerModel) => setForm((f) => ({ ...f, workerModel }))}
+							onModeChange={(workerMode) => setForm((f) => ({ ...f, workerMode }))}
 						/>
 						<RequiredAgentField
 							id="orchestratorAgent"
@@ -294,15 +343,18 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
 							invalid={validationError !== null && form.orchestratorAgent === ""}
-							onChange={(v) => setForm((f) => ({ ...f, orchestratorAgent: v }))}
+							onChange={(v) =>
+								setForm((f) => ({ ...f, orchestratorAgent: v, orchestratorModel: "", orchestratorMode: "" }))
+							}
 						/>
-						<SettingsInputRow
-							icon={Sparkles}
-							label={t("settings.project.modelOverride")}
-							id="model"
-							value={form.model}
-							placeholder={t("settings.project.agentDefault")}
-							onChange={(value) => setForm((f) => ({ ...f, model: value }))}
+						<AgentModelField
+							role="orchestrator"
+							agentId={form.orchestratorAgent}
+							projectId={projectId}
+							model={form.orchestratorModel}
+							mode={form.orchestratorMode}
+							onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
+							onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
 						/>
 						<SettingsRow icon={Shield} label={t("settings.project.permissionMode")}>
 							<PermissionModeSelect
@@ -445,6 +497,187 @@ function SaveChangesFooter({
 	);
 }
 
+function AgentModelField({
+	role,
+	agentId,
+	projectId,
+	model,
+	mode,
+	onModelChange,
+	onModeChange,
+}: {
+	role: "worker" | "orchestrator";
+	agentId: string;
+	projectId: string;
+	model: string;
+	mode: string;
+	onModelChange: (value: string) => void;
+	onModeChange: (value: string) => void;
+}) {
+	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const [customAgentId, setCustomAgentId] = useState<string | null>(null);
+	const query = useQuery(agentModelsQueryOptions(agentId, projectId));
+	const catalog: AgentModelCatalog | undefined = query.data;
+	const revalidationQuery = useQuery({
+		queryKey: ["agent-model-revalidation", agentId, projectId, catalog?.validatedAt ?? ""],
+		queryFn: () => revalidateAgentModels(agentId, projectId),
+		enabled: agentId !== "" && catalog?.refreshRecommended === true,
+		staleTime: Number.POSITIVE_INFINITY,
+		retry: false,
+	});
+	useEffect(() => {
+		if (revalidationQuery.data) {
+			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
+		}
+	}, [agentId, projectId, queryClient, revalidationQuery.data]);
+	const refreshMutation = useMutation({
+		mutationFn: () => refreshAgentModels(agentId, projectId),
+		onSuccess: (catalog) => queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), catalog),
+	});
+	const isMode = catalog?.selectionMode === "mode";
+	const label = t(`settings.models.${role}${isMode ? "Mode" : "Model"}`);
+	const datalistID = `${role}-model-options`;
+	const warning =
+		(refreshMutation.isError
+			? refreshMutation.error instanceof Error
+				? refreshMutation.error.message
+				: t("settings.models.refreshFailed")
+			: undefined) ??
+		(revalidationQuery.isError
+			? revalidationQuery.error instanceof Error
+				? revalidationQuery.error.message
+				: t("settings.models.validateFailed")
+			: undefined) ??
+		catalog?.warning ??
+		(query.isError ? (query.error instanceof Error ? query.error.message : t("settings.models.loadFailed")) : undefined);
+
+	if (isMode) {
+		const options = [
+			{ value: "__default__", label: t("settings.models.agentDefault") },
+			...(catalog.models ?? []).map((item) => ({ value: item.id, label: item.label })),
+		];
+		return (
+			<>
+				<SettingsRow icon={Sparkles} label={label}>
+					<div className="flex min-w-0 items-center gap-2">
+						<ModelRefreshButton
+							label={label}
+							pending={refreshMutation.isPending}
+							disabled={agentId === ""}
+							onClick={() => refreshMutation.mutate()}
+						/>
+						<SettingsOptionMenu
+							aria-label={label}
+							value={mode || "__default__"}
+							options={options}
+							triggerClassName="justify-end"
+							onChange={(value) => {
+								onModeChange(value === "__default__" ? "" : value);
+								onModelChange("");
+							}}
+						/>
+					</div>
+				</SettingsRow>
+				{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
+			</>
+		);
+	}
+
+	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
+	const modelIsInCatalog = catalog?.models?.some((item) => item.id === model) ?? false;
+	const showCustomInput = hasCatalog && (customAgentId === agentId || (model !== "" && !modelIsInCatalog));
+	const selectCatalogModel = (value: string) => {
+		setCustomAgentId(null);
+		onModelChange(value);
+		onModeChange("");
+	};
+	const selectCustomModel = (value: string) => {
+		setCustomAgentId(agentId);
+		onModelChange(value);
+		onModeChange("");
+	};
+	return (
+		<>
+			<SettingsRow icon={Sparkles} label={label}>
+				<div className="flex min-w-0 items-center gap-2">
+					<ModelRefreshButton
+						label={label}
+						pending={refreshMutation.isPending}
+						disabled={agentId === ""}
+						onClick={() => refreshMutation.mutate()}
+					/>
+					{hasCatalog && !showCustomInput ? (
+						<AgentModelCombobox
+							aria-label={label}
+							value={model}
+							models={catalog.models}
+							allowCustom={catalog.allowCustom}
+							onChange={selectCatalogModel}
+							onCustom={selectCustomModel}
+							triggerClassName="justify-end"
+						/>
+					) : (
+						<>
+							<input
+								id={datalistID}
+								aria-label={label}
+								className="settings-inline-input settings-model-control"
+								value={model}
+								disabled={agentId === ""}
+								onChange={(event) => {
+									onModelChange(event.target.value);
+									onModeChange("");
+								}}
+								placeholder={query.isFetching ? t("settings.models.loading") : t("settings.project.agentDefault")}
+							/>
+							{hasCatalog && (
+								<AgentModelCombobox
+									aria-label={t("settings.models.optionsAria", { label })}
+									value={model}
+									models={catalog.models}
+									allowCustom={catalog.allowCustom}
+									onChange={selectCatalogModel}
+									onCustom={selectCustomModel}
+									triggerLabel={t("settings.models.browse")}
+									triggerClassName="shrink-0"
+								/>
+							)}
+						</>
+					)}
+				</div>
+			</SettingsRow>
+			{warning && <p className="px-1 text-xs leading-row text-warning">{warning}</p>}
+		</>
+	);
+}
+
+function ModelRefreshButton({
+	label,
+	pending,
+	disabled,
+	onClick,
+}: {
+	label: string;
+	pending: boolean;
+	disabled: boolean;
+	onClick: () => void;
+}) {
+	const { t } = useTranslation();
+	return (
+		<button
+			type="button"
+			aria-label={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
+			title={t("settings.models.refreshAria", { label: label.toLocaleLowerCase() })}
+			className="settings-option-trigger shrink-0 disabled:pointer-events-none disabled:opacity-50"
+			disabled={disabled || pending}
+			onClick={onClick}
+		>
+			<RefreshCw className={cn("size-icon-sm", pending && "animate-spin")} aria-hidden="true" />
+		</button>
+	);
+}
+
 function SettingsInputRow({
 	icon,
 	label,
@@ -539,4 +772,17 @@ function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
 
 function blankToUndefined<T extends object>(obj: T): T | undefined {
 	return Object.values(obj).some((v) => v !== undefined) ? obj : undefined;
+}
+
+function buildRoleAgentConfig(
+	existing: components["schemas"]["AgentConfig"] | undefined,
+	model: string,
+	mode: string,
+): components["schemas"]["AgentConfig"] | undefined {
+	const next = { ...existing };
+	if (model) next.model = model;
+	else delete next.model;
+	if (mode) next.mode = mode;
+	else delete next.mode;
+	return Object.keys(next).length > 0 ? next : undefined;
 }
