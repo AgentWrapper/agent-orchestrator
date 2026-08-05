@@ -266,6 +266,16 @@ func (access sharedProjectAccess) canEditSession(session clouddomain.Session) bo
 	return access.roleForSession(session) == "editor"
 }
 
+func (access sharedProjectAccess) canManageProject(projectID clouddomain.ProjectID) bool {
+	return access.allowsProject(projectID) &&
+		access.allowsAllProjectSessions(projectID) &&
+		access.Roles[projectID] == "editor"
+}
+
+func (access sharedProjectAccess) requiresDangerousCommandGuard(session clouddomain.Session) bool {
+	return access.canEditSession(session) && !access.canManageProject(session.ProjectID)
+}
+
 func accountFromContext(ctx context.Context) (clouddomain.Account, bool) {
 	account, ok := ctx.Value(accountContextKey{}).(clouddomain.Account)
 	return account, ok
@@ -1002,6 +1012,9 @@ func sharedProjectRequestAllowed(r *http.Request, orgID clouddomain.OrgID) bool 
 	case "/sessions":
 		return r.Method == http.MethodGet || r.Method == http.MethodPost
 	default:
+		if strings.HasPrefix(path, "/projects/") && strings.Contains(path, "/shares") {
+			return true
+		}
 		return strings.HasPrefix(path, "/sessions/")
 	}
 }
@@ -1100,6 +1113,56 @@ func validOrgRole(role string) bool {
 
 func validProjectShareRole(role string) bool {
 	return role == "viewer" || role == "editor"
+}
+
+func containsDangerousShellCommand(text string) bool {
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r", "\n"), "\n") {
+		if dangerousShellCommandLine(line) {
+			return true
+		}
+	}
+	return false
+}
+
+func dangerousShellCommandLine(line string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(line))
+	if normalized == "" {
+		return false
+	}
+	normalized = strings.TrimLeft(normalized, ";&|() ")
+	fields := strings.Fields(normalized)
+	for len(fields) > 0 {
+		switch fields[0] {
+		case "sudo", "command", "builtin", "env":
+			fields = fields[1:]
+		default:
+			goto parsedPrefix
+		}
+	}
+parsedPrefix:
+	if len(fields) == 0 || fields[0] != "rm" {
+		return false
+	}
+	recursive := false
+	force := false
+	for _, field := range fields[1:] {
+		if field == "--" {
+			break
+		}
+		if !strings.HasPrefix(field, "-") {
+			continue
+		}
+		if field == "-rf" || field == "-fr" {
+			return true
+		}
+		if strings.Contains(field, "r") || strings.Contains(field, "R") {
+			recursive = true
+		}
+		if strings.Contains(field, "f") {
+			force = true
+		}
+	}
+	return recursive && force
 }
 
 func normalizedSharePolicySandboxType(value string) string {
@@ -1411,16 +1474,16 @@ func (s *Server) createStandaloneProject(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) {
-	if _, shared := sharedProjectAccessFromContext(r.Context()); shared {
-		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_FORBIDDEN", "Shared project access cannot be reshared.")
-		return
-	}
 	account, _ := accountFromContext(r.Context())
 	org, _ := orgFromContext(r.Context())
 	principal, _ := cloudauth.PrincipalFromContext(r.Context())
 	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
 	if projectID == "" {
 		writeError(w, r, http.StatusBadRequest, "PROJECT_REQUIRED", "A project is required.")
+		return
+	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(projectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can manage sharing.")
 		return
 	}
 	var input struct {
@@ -1528,6 +1591,10 @@ func (s *Server) listProjectShareAccess(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, http.StatusBadRequest, "PROJECT_REQUIRED", "A project is required.")
 		return
 	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(projectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can manage sharing.")
+		return
+	}
 	access, err := s.store.ListProjectShareAccess(r.Context(), org.Organization.ID, projectID)
 	if err != nil {
 		s.internalError(w, r, "list project share access", err)
@@ -1541,6 +1608,10 @@ func (s *Server) createProjectSharePolicy(w http.ResponseWriter, r *http.Request
 	org, _ := orgFromContext(r.Context())
 	principal, _ := cloudauth.PrincipalFromContext(r.Context())
 	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(projectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can manage sharing.")
+		return
+	}
 	var input struct {
 		Name         string                                       `json:"name"`
 		SandboxType  string                                       `json:"sandboxType"`
@@ -1585,6 +1656,10 @@ func (s *Server) updateProjectSharePolicy(w http.ResponseWriter, r *http.Request
 	org, _ := orgFromContext(r.Context())
 	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
 	policyID := strings.TrimSpace(chi.URLParam(r, "policyId"))
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(projectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can manage sharing.")
+		return
+	}
 	var input struct {
 		Name         string                                       `json:"name"`
 		SandboxType  string                                       `json:"sandboxType"`
@@ -1630,6 +1705,10 @@ func (s *Server) archiveProjectSharePolicy(w http.ResponseWriter, r *http.Reques
 	org, _ := orgFromContext(r.Context())
 	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
 	policyID := strings.TrimSpace(chi.URLParam(r, "policyId"))
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(projectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can manage sharing.")
+		return
+	}
 	if !s.validateStandaloneShareProject(w, r, account.ID, projectID) {
 		return
 	}
@@ -1702,6 +1781,10 @@ func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request)
 	org, _ := orgFromContext(r.Context())
 	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
 	grantID := strings.TrimSpace(chi.URLParam(r, "grantId"))
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(projectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can manage sharing.")
+		return
+	}
 	var input struct {
 		Role         string                                       `json:"role"`
 		SessionID    clouddomain.SessionID                        `json:"sessionId"`
@@ -1763,6 +1846,10 @@ func (s *Server) revokeProjectShareGrant(w http.ResponseWriter, r *http.Request)
 	org, _ := orgFromContext(r.Context())
 	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
 	grantID := strings.TrimSpace(chi.URLParam(r, "grantId"))
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(projectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can manage sharing.")
+		return
+	}
 	err := s.store.RevokeProjectShareGrant(r.Context(), org.Organization.ID, projectID, grantID)
 	if errors.Is(err, cloudpostgres.ErrProjectShareGrantNotFound) {
 		writeError(w, r, http.StatusNotFound, "SHARE_GRANT_NOT_FOUND", "That shared access no longer exists.")
@@ -1779,6 +1866,10 @@ func (s *Server) revokeProjectShareLink(w http.ResponseWriter, r *http.Request) 
 	org, _ := orgFromContext(r.Context())
 	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
 	linkID := strings.TrimSpace(chi.URLParam(r, "linkId"))
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(projectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can manage sharing.")
+		return
+	}
 	err := s.store.RevokeProjectShareLink(r.Context(), org.Organization.ID, projectID, linkID)
 	if errors.Is(err, cloudpostgres.ErrProjectShareLinkNotFound) {
 		writeError(w, r, http.StatusNotFound, "SHARE_LINK_NOT_FOUND", "That share link no longer exists.")
@@ -2155,6 +2246,12 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_MESSAGE", "text must be non-empty and at most 64 KiB.")
 		return
 	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && shared.requiresDangerousCommandGuard(session) {
+		if containsDangerousShellCommand(input.Text) {
+			writeError(w, r, http.StatusForbidden, "COMMAND_NOT_PERMITTED", "That command is not permitted for Standard policy collaborators.")
+			return
+		}
+	}
 	event, err := s.events.AppendUserMessage(
 		r.Context(),
 		account.ID,
@@ -2356,6 +2453,12 @@ func (s *Server) setDesiredState(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusConflict, "PROJECT_DELETE_REQUIRED", "Remove the project to delete its orchestrator.")
 		return
 	}
+	if input.State == "deleted" {
+		if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(session.ProjectID) {
+			writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can delete agents.")
+			return
+		}
+	}
 	sessionID := session.ID
 	if err := s.store.SetSandboxDesiredState(r.Context(), account.ID, sessionID, input.State); err != nil {
 		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
@@ -2396,6 +2499,10 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if session.Kind != "worker" {
 		writeError(w, r, http.StatusConflict, "PROJECT_DELETE_REQUIRED", "Remove the project to delete its orchestrator.")
+		return
+	}
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(session.ProjectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can delete agents.")
 		return
 	}
 	if err := s.deleteSessionSandbox(r.Context(), account.ID, session.ID); err != nil {
@@ -4250,13 +4357,18 @@ func (s *Server) issueTerminalTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	scopes := []string{"terminal:read"}
 	canOperate := false
+	restrictDangerousInput := false
 	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
 		canOperate = shared.canEditSession(session)
+		restrictDangerousInput = shared.requiresDangerousCommandGuard(session)
 	} else if org, ok := orgFromContext(r.Context()); !ok || orgRoleAtLeast(org.Membership.Role, "member") {
 		canOperate = true
 	}
 	if canOperate {
 		scopes = append(scopes, "terminal:operate")
+	}
+	if restrictDangerousInput {
+		scopes = append(scopes, "terminal:dangerous-input-block")
 	}
 	ticket, err := s.store.IssueAccessTicket(
 		r.Context(),
@@ -4345,6 +4457,7 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	canOperateTerminal := ticketHasScope(ticket.Scopes, "terminal:operate")
+	blockDangerousInput := ticketHasScope(ticket.Scopes, "terminal:dangerous-input-block")
 	after, err := parseAfter(r)
 	if err != nil {
 		writeError(w, r, http.StatusBadRequest, "INVALID_AFTER", "after must be a non-negative integer.")
@@ -4416,6 +4529,7 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		return
 	}
+	dangerousInputGuard := terminalDangerousInputGuard{}
 
 	clientCommands := make(chan terminalClientCommand, 64)
 	readErrors := make(chan error, 1)
@@ -4478,6 +4592,29 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 				})
 				continue
 			}
+			if blockDangerousInput && workerCommand.Type == "input" {
+				if dangerous, err := dangerousInputGuard.observeBase64Input(workerCommand.Data); err != nil {
+					_ = writeTerminalMessage(ctx, socket, terminalServerMessage{
+						Type:    "error",
+						Message: err.Error(),
+					})
+					continue
+				} else if dangerous {
+					clearCommand := cloudworkerhub.Command{
+						Type: "input",
+						Data: base64.StdEncoding.EncodeToString([]byte{0x15}),
+					}
+					if kind == "workspace" {
+						clearCommand.Type = "workspace_terminal_" + clearCommand.Type
+					}
+					_ = s.workerHub.Send(ticket.SessionID, clearCommand)
+					_ = writeTerminalMessage(ctx, socket, terminalServerMessage{
+						Type:    "error",
+						Message: "That command is not permitted for Standard policy collaborators.",
+					})
+					continue
+				}
+			}
 			if kind == "workspace" {
 				workerCommand.Type = "workspace_terminal_" + workerCommand.Type
 			}
@@ -4497,6 +4634,48 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 
 func terminalCommandAllowed(canOperate bool, command cloudworkerhub.Command) bool {
 	return canOperate || command.Type == "resize"
+}
+
+type terminalDangerousInputGuard struct {
+	line []rune
+}
+
+func (guard *terminalDangerousInputGuard) observeBase64Input(encoded string) (bool, error) {
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return false, errors.New("terminal input is invalid")
+	}
+	for _, r := range string(decoded) {
+		switch r {
+		case '\x03', '\x15':
+			guard.line = guard.line[:0]
+			continue
+		case '\b', '\x7f':
+			if len(guard.line) > 0 {
+				guard.line = guard.line[:len(guard.line)-1]
+			}
+			continue
+		case '\r', '\n':
+			if dangerousShellCommandLine(string(guard.line)) {
+				guard.line = guard.line[:0]
+				return true, nil
+			}
+			guard.line = guard.line[:0]
+			continue
+		default:
+			if r >= 0x20 {
+				guard.line = append(guard.line, r)
+			}
+		}
+		if dangerousShellCommandLine(string(guard.line)) {
+			guard.line = guard.line[:0]
+			return true, nil
+		}
+		if len(guard.line) > 4096 {
+			guard.line = guard.line[len(guard.line)-4096:]
+		}
+	}
+	return false, nil
 }
 
 func validateTerminalCommand(command terminalClientCommand) (cloudworkerhub.Command, error) {

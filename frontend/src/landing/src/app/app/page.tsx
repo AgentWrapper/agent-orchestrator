@@ -134,6 +134,70 @@ const sandboxTypeOptions = [
 ] as const;
 type SharePolicySandboxType = (typeof sandboxTypeOptions)[number]["value"];
 
+function SharePolicyTypePicker({
+  value,
+  disabled,
+  onChange,
+  label = "Policy type",
+}: {
+  value: SharePolicySandboxType;
+  disabled?: boolean;
+  onChange: (value: SharePolicySandboxType) => void;
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected =
+    sandboxTypeOptions.find((option) => option.value === value) ??
+    sandboxTypeOptions[1];
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="flex min-h-9 w-full items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2 text-left outline-none transition hover:border-white/[0.16] focus:border-[#4d8dff] disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        aria-label={label}
+        aria-expanded={open}
+      >
+        <span className="min-w-0">
+          <span className="block text-sm text-foreground">{selected.label}</span>
+          <span className="mt-0.5 block truncate text-[11px] text-white/35">
+            {selected.description}
+          </span>
+        </span>
+        <ChevronDown className="size-3.5 shrink-0 text-white/35" />
+      </button>
+      {open ? (
+        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[#101216] p-1 shadow-2xl shadow-black/40">
+          {sandboxTypeOptions.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left hover:bg-white/[0.05]"
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm text-white/75">
+                  {option.label}
+                </span>
+                <span className="mt-0.5 block text-[11px] leading-4 text-white/35">
+                  {option.description}
+                </span>
+              </span>
+              {option.value === value ? (
+                <Check className="mt-0.5 size-3.5 shrink-0 text-[#4d8dff]" />
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function isStandaloneProject(project?: CloudProject | null) {
   return (
     project?.config?.source === "standalone" ||
@@ -2687,7 +2751,7 @@ export default function CloudAppPage() {
                     <LoaderCircle className="size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
                   ) : null}
                 </div>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px_auto]">
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_260px_auto]">
                   <input
                     className={field}
                     value={newPolicyName}
@@ -2695,22 +2759,15 @@ export default function CloudAppPage() {
                     placeholder="New policy name"
                     aria-label="New security policy name"
                   />
-                  <select
-                    className={field}
+                  <SharePolicyTypePicker
                     value={newPolicySandboxType}
-                    onChange={(event) =>
+                    onChange={(value) =>
                       setNewPolicySandboxType(
-                        event.target.value as SharePolicySandboxType,
+                        value as SharePolicySandboxType,
                       )
                     }
-                    aria-label="New policy sandbox type"
-                  >
-                    {sandboxTypeOptions.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
+                    label="New policy type"
+                  />
                   <button
                     type="button"
                     className={button}
@@ -2780,30 +2837,21 @@ export default function CloudAppPage() {
                               aria-label={`Policy name for ${policy.name}`}
                             />
                           </label>
-                          <label className="block text-[11px] font-medium text-white/35">
-                            Sandbox type
-                            <select
-                              className={`${field} mt-1`}
+                          <div className="text-[11px] font-medium text-white/35">
+                            Policy type
+                            <div className="mt-1">
+                              <SharePolicyTypePicker
                               value={policy.sandboxType}
                               disabled={loading}
-                              onChange={(event) =>
+                              onChange={(value) =>
                                 updatePolicySandboxType(
-                                  event.target.value as SharePolicySandboxType,
+                                  value as SharePolicySandboxType,
                                 )
                               }
-                              aria-label={`Sandbox type for ${policy.name}`}
-                            >
-                              {sandboxTypeOptions.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                            <span className="mt-1 block text-[11px] font-normal text-white/30">
-                              {sandboxOption?.description ??
-                                "Can work with the selected agents, but cannot spawn new agents."}
-                            </span>
-                          </label>
+                              label={`Policy type for ${policy.name}`}
+                            />
+                            </div>
+                          </div>
                           <div className="rounded-lg border border-white/[0.06] bg-black/10 p-2">
                             <div className="mb-2 text-[11px] font-medium text-white/40">
                               Invite to policy

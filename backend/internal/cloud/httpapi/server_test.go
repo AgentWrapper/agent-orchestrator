@@ -45,6 +45,47 @@ func TestReadOnlyTerminalAllowsResizeButRejectsInput(t *testing.T) {
 	}
 }
 
+func TestDangerousShellCommandDetection(t *testing.T) {
+	for _, input := range []string{
+		"rm -rf /tmp/test",
+		"sudo rm -fr ./workspace",
+		"env rm -r -f node_modules",
+	} {
+		if !containsDangerousShellCommand(input) {
+			t.Fatalf("containsDangerousShellCommand(%q) = false, want true", input)
+		}
+	}
+	for _, input := range []string{
+		"rm file.txt",
+		"ripgrep -n rm -rf docs",
+		"npm run build",
+	} {
+		if containsDangerousShellCommand(input) {
+			t.Fatalf("containsDangerousShellCommand(%q) = true, want false", input)
+		}
+	}
+}
+
+func TestTerminalDangerousInputGuard(t *testing.T) {
+	guard := terminalDangerousInputGuard{}
+	for _, input := range []string{"r", "m", " ", "-r"} {
+		dangerous, err := guard.observeBase64Input(base64.StdEncoding.EncodeToString([]byte(input)))
+		if err != nil {
+			t.Fatalf("observeBase64Input(%q) error = %v", input, err)
+		}
+		if dangerous {
+			t.Fatalf("observeBase64Input(%q) flagged too early", input)
+		}
+	}
+	dangerous, err := guard.observeBase64Input(base64.StdEncoding.EncodeToString([]byte("f /tmp\n")))
+	if err != nil {
+		t.Fatalf("observeBase64Input(final) error = %v", err)
+	}
+	if !dangerous {
+		t.Fatal("observeBase64Input(final) = false, want true")
+	}
+}
+
 func TestSharedProjectRequestScope(t *testing.T) {
 	orgID := clouddomain.OrgID("org-one")
 	for _, test := range []struct {
@@ -57,6 +98,8 @@ func TestSharedProjectRequestScope(t *testing.T) {
 		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/sessions", allowed: true},
 		{method: http.MethodPost, path: "/api/cloud/v1/orgs/org-one/sessions", allowed: true},
 		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/sessions/session-one", allowed: true},
+		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/projects/project-one/shares", allowed: true},
+		{method: http.MethodPost, path: "/api/cloud/v1/orgs/org-one/projects/project-one/shares/policies", allowed: true},
 		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/members", allowed: false},
 		{method: http.MethodGet, path: "/api/cloud/v1/orgs/org-one/provider-connections", allowed: false},
 		{method: http.MethodGet, path: "/api/cloud/v1/orgs/other/sessions", allowed: false},
@@ -65,6 +108,38 @@ func TestSharedProjectRequestScope(t *testing.T) {
 		if got := sharedProjectRequestAllowed(request, orgID); got != test.allowed {
 			t.Fatalf("%s %s allowed = %t, want %t", test.method, test.path, got, test.allowed)
 		}
+	}
+}
+
+func TestSharedProjectPolicyCapabilities(t *testing.T) {
+	projectID := clouddomain.ProjectID("project-one")
+	session := clouddomain.Session{ID: "session-one", ProjectID: projectID}
+	standard := sharedProjectAccess{
+		ProjectIDs:   map[clouddomain.ProjectID]struct{}{projectID: {}},
+		Roles:        map[clouddomain.ProjectID]string{projectID: "editor"},
+		SessionRoles: map[clouddomain.ProjectID]map[clouddomain.SessionID]string{projectID: {session.ID: "editor"}},
+		AllSessions:  map[clouddomain.ProjectID]struct{}{},
+	}
+	if !standard.canEditSession(session) {
+		t.Fatal("standard policy should edit selected sessions")
+	}
+	if standard.canManageProject(projectID) {
+		t.Fatal("standard policy must not manage project-level sharing")
+	}
+	if !standard.requiresDangerousCommandGuard(session) {
+		t.Fatal("standard policy should require dangerous command guard")
+	}
+	trusted := sharedProjectAccess{
+		ProjectIDs:   map[clouddomain.ProjectID]struct{}{projectID: {}},
+		Roles:        map[clouddomain.ProjectID]string{projectID: "editor"},
+		SessionRoles: map[clouddomain.ProjectID]map[clouddomain.SessionID]string{},
+		AllSessions:  map[clouddomain.ProjectID]struct{}{projectID: {}},
+	}
+	if !trusted.canManageProject(projectID) {
+		t.Fatal("trusted policy should manage project-level sharing")
+	}
+	if trusted.requiresDangerousCommandGuard(session) {
+		t.Fatal("trusted policy should not require dangerous command guard")
 	}
 }
 
