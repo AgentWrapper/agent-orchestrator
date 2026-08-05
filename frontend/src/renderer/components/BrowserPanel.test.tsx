@@ -32,7 +32,6 @@ const hookState = vi.hoisted(() => ({
 	tabNotice: "",
 	agentBrowserActive: false,
 	agentBrowserActivity: null as { active: boolean; action?: string; phase?: "started" | "finished" } | null,
-	visualTransition: null as { kind: "tab-switch" | "popout"; snapshotUrl: string } | null,
 	previewUrl: undefined as string | undefined,
 	navState: {
 		viewId: "42:sess-1",
@@ -61,7 +60,6 @@ vi.mock("../hooks/useBrowserView", () => ({
 			tabNotice: hookState.tabNotice,
 			agentBrowserActive: hookState.agentBrowserActive,
 			agentBrowserActivity: hookState.agentBrowserActivity,
-			visualTransition: hookState.visualTransition,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
 			prepareForOverlay: hookState.prepareForOverlay,
@@ -170,7 +168,6 @@ describe("BrowserPanel", () => {
 		hookState.tabNotice = "";
 		hookState.agentBrowserActive = false;
 		hookState.agentBrowserActivity = null;
-		hookState.visualTransition = null;
 		hookState.navState = {
 			viewId: "42:sess-1",
 			url: "",
@@ -247,7 +244,7 @@ describe("BrowserPanel", () => {
 		await userEvent.click(tabsButton);
 		await userEvent.click(screen.getByText("First app"));
 		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
-		expect(hookState.finishOverlay).toHaveBeenCalled();
+		expect(hookState.finishOverlay).toHaveBeenCalledTimes(1);
 		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 
 		await userEvent.click(tabsButton);
@@ -379,16 +376,6 @@ describe("BrowserPanel", () => {
 
 		expect(screen.getByText("Agent clicking")).toBeInTheDocument();
 		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
-	});
-
-	it("renders a captured transition frame over the native browser slot", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.visualTransition = { kind: "tab-switch", snapshotUrl: "data:image/jpeg;base64,snapshot" };
-
-		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
-
-		const frame = screen.getByTestId("browser-transition-frame");
-		expect(frame).toHaveAttribute("src", "data:image/jpeg;base64,snapshot");
 	});
 
 	it("renders the premium browser shell hooks in the default view", () => {

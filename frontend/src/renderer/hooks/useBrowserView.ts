@@ -11,11 +11,6 @@ import { OPEN_DIALOG_OR_MENU_SELECTOR } from "../lib/dom-selectors";
 
 export type { BrowserNavState };
 
-export type BrowserVisualTransition = {
-	kind: "tab-switch" | "popout";
-	snapshotUrl: string;
-};
-
 type UseBrowserViewOptions = {
 	sessionId: string;
 	active: boolean;
@@ -60,7 +55,6 @@ export type BrowserViewModel = {
 	finishOverlay: () => void;
 	agentBrowserActive: boolean;
 	agentBrowserActivity: BrowserAgentActivityState | null;
-	visualTransition: BrowserVisualTransition | null;
 	destroy: () => void;
 	annotationMode: boolean;
 	setAnnotationMode: (enabled: boolean) => Promise<void>;
@@ -148,7 +142,6 @@ export function useBrowserView({
 	const [tabNotice, setTabNotice] = useState("");
 	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
 	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
-	const [visualTransition, setVisualTransition] = useState<BrowserVisualTransition | null>(null);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
 	const annotationModeRef = useRef(false);
@@ -163,7 +156,6 @@ export function useBrowserView({
 	const mirrorTokenRef = useRef(0);
 	const mirrorTimerRef = useRef<number | null>(null);
 	const tabNoticeTimerRef = useRef<number | null>(null);
-	const visualTransitionTimerRef = useRef<number | null>(null);
 	const mirrorStreamRef = useRef<MediaStream | null>(null);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
 
@@ -182,12 +174,6 @@ export function useBrowserView({
 	const sendHiddenBounds = useCallback((id = viewIdRef.current) => {
 		if (!id) return;
 		window.ao?.browser.setBounds({ viewId: id, rect: HIDDEN_RECT, visible: false });
-	}, []);
-
-	const clearVisualTransitionTimer = useCallback(() => {
-		if (visualTransitionTimerRef.current === null) return;
-		window.clearTimeout(visualTransitionTimerRef.current);
-		visualTransitionTimerRef.current = null;
 	}, []);
 
 	const clearMirrorTimer = useCallback(() => {
@@ -303,8 +289,6 @@ export function useBrowserView({
 		setTabNotice("");
 		setAgentBrowserActive(false);
 		setAgentBrowserActivity(null);
-		setVisualTransition(null);
-		clearVisualTransitionTimer();
 		if (tabNoticeTimerRef.current !== null) {
 			window.clearTimeout(tabNoticeTimerRef.current);
 			tabNoticeTimerRef.current = null;
@@ -349,7 +333,7 @@ export function useBrowserView({
 			}
 			viewIdRef.current = "";
 		};
-	}, [clearVisualTransitionTimer, hasNativeBrowser, scheduleSettleMeasure, sendHiddenBounds, sessionId]);
+	}, [hasNativeBrowser, scheduleSettleMeasure, sendHiddenBounds, sessionId]);
 
 	useEffect(() => {
 		return window.ao?.browser.onNavState((state) => {
@@ -383,9 +367,8 @@ export function useBrowserView({
 	useEffect(
 		() => () => {
 			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
-			clearVisualTransitionTimer();
 		},
-		[clearVisualTransitionTimer],
+		[],
 	);
 
 	useLayoutEffect(() => {
@@ -431,10 +414,8 @@ export function useBrowserView({
 		clearMirrorTimer();
 		stopMirrorStream();
 		setMirrorUrl("");
-		setVisualTransition(null);
-		clearVisualTransitionTimer();
 		scheduleSettleMeasure();
-	}, [clearMirrorTimer, clearVisualTransitionTimer, scheduleSettleMeasure, stopMirrorStream]);
+	}, [clearMirrorTimer, scheduleSettleMeasure, stopMirrorStream]);
 
 	const runMirror = useCallback(
 		(id: string, liveFrames = true) => {
@@ -672,15 +653,13 @@ export function useBrowserView({
 		clearMirrorTimer();
 		stopMirrorStream();
 		setMirrorUrl("");
-		setVisualTransition(null);
-		clearVisualTransitionTimer();
 		sendHiddenBounds(id);
 		window.ao?.browser.destroy(id);
 		viewIdRef.current = "";
 		setViewId("");
 		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
-	}, [clearMirrorTimer, clearVisualTransitionTimer, sendHiddenBounds, stopMirrorStream]);
+	}, [clearMirrorTimer, sendHiddenBounds, stopMirrorStream]);
 
 	// Termination invalidates the complete session-owned browser, including all
 	// tabs, captures, profile state, and target mappings. `clear` remains the
@@ -713,7 +692,6 @@ export function useBrowserView({
 		finishOverlay,
 		agentBrowserActive,
 		agentBrowserActivity,
-		visualTransition,
 		destroy,
 		annotationMode,
 		setAnnotationMode,

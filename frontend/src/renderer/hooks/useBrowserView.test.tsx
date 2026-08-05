@@ -215,7 +215,6 @@ describe("useBrowserView", () => {
 
 		expect(bridge.selectTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
 		expect(bridge.capture).not.toHaveBeenCalled();
-		expect(result.current.visualTransition).toBeNull();
 	});
 
 	it("remeasures the live native view while moving between panel and maximized browser slots", async () => {
@@ -259,7 +258,6 @@ describe("useBrowserView", () => {
 		);
 		expect(bridge.capture).not.toHaveBeenCalled();
 		expect(bridge.setBounds.mock.calls.some(([payload]) => payload.parked)).toBe(false);
-		expect(result.current.visualTransition).toBeNull();
 	});
 
 	it("primes a browser frame before opening renderer overlays above the native view", async () => {

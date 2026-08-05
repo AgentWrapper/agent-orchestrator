@@ -246,7 +246,6 @@ export function BrowserPanelView({
 		finishOverlay,
 		agentBrowserActive,
 		agentBrowserActivity,
-		visualTransition,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
@@ -316,6 +315,8 @@ export function BrowserPanelView({
 	const warmTabsMenuFrame = useCallback(() => {
 		void prepareTabsMenuFrame();
 	}, [prepareTabsMenuFrame]);
+	// Radix restores focus to the trigger when the menu closes. Preparing on
+	// focus would start a new capture after cleanup; keyboard opens prepare below.
 
 	const openTabsMenu = useCallback(async () => {
 		if (tabs.length === 0) return;
@@ -386,7 +387,6 @@ export function BrowserPanelView({
 				agentStatusLabel && "browser-panel--agent-active",
 			)}
 			data-testid="browser-panel"
-			data-transition={visualTransition?.kind}
 			role="tabpanel"
 		>
 			<form
@@ -559,14 +559,6 @@ export function BrowserPanelView({
 					<MirrorVideo stream={mirrorStream} />
 				) : mirrorUrl ? (
 					<img alt="" className="absolute inset-0 h-full w-full object-fill" src={mirrorUrl} />
-				) : null}
-				{visualTransition ? (
-					<img
-						alt=""
-						className="browser-panel__transition-frame"
-						data-testid="browser-transition-frame"
-						src={visualTransition.snapshotUrl}
-					/>
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
