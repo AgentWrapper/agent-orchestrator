@@ -101,14 +101,14 @@ func TestMigration0013DedupesExistingDuplicates(t *testing.T) {
 	}
 }
 
-func TestMigration0043BackfillsBatchlessReviewRuns(t *testing.T) {
+func TestMigration0044BackfillsBatchlessReviewRuns(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	upTo(t, db, 42)
+	upTo(t, db, 43)
 	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
 		t.Fatalf("disable foreign keys: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestMigration0043BackfillsBatchlessReviewRuns(t *testing.T) {
 		t.Fatalf("seed batchless review run: %v", err)
 	}
 
-	upTo(t, db, 43)
+	upTo(t, db, 44)
 	var batchID string
 	if err := db.QueryRow(`SELECT batch_id FROM review_run WHERE id = 'run-1'`).Scan(&batchID); err != nil {
 		t.Fatalf("query migrated batch id: %v", err)
