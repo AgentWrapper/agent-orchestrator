@@ -26,7 +26,6 @@ let initPromise: Promise<boolean> | null = null;
 let errorHandlersBound = false;
 let telemetryContext: TelemetryProperties = {};
 let fallbackActiveDate = "";
-let fallbackActiveSlots = new Set<number>();
 let fallbackRouteViewDate = "";
 let fallbackRouteViewSurfaces = new Set<string>();
 
@@ -80,15 +79,57 @@ export type DailyActiveHeartbeatOptions = {
 	document: DailyActiveEventTarget & Pick<Document, "visibilityState">;
 };
 
-export function buildTelemetryContext(appVersion: string, platform: string): TelemetryProperties {
+/**
+ * Release channel, read from the user's own Updates setting.
+ *
+ * Previously this had to be inferred by looking for "-nightly." inside the
+ * version string, which broke for anyone pinned to a feature build and told you
+ * nothing about someone who had switched channels but not yet updated. The
+ * setting is the truth; the version is a consequence of it.
+ */
+export type ReleaseChannel = "stable" | "nightly" | "feature" | "unknown";
+
+export function releaseChannelFrom(settings: { channel?: unknown; feature?: unknown } | null | undefined): ReleaseChannel {
+	if (!settings) return "unknown";
+	if (settings.feature != null) return "feature";
+	if (settings.channel === "nightly") return "nightly";
+	if (settings.channel === "latest") return "stable";
+	return "unknown";
+}
+
+export function buildTelemetryContext(
+	appVersion: string,
+	platform: string,
+	channel: ReleaseChannel = "unknown",
+): TelemetryProperties {
 	const version = appVersion.trim() || "unknown";
 	return {
 		app_version: version,
 		ao_version: version,
 		platform,
+		release_channel: channel,
 		build_mode: import.meta.env.DEV ? "dev" : "packaged",
 		telemetry_schema_version: TELEMETRY_SCHEMA_VERSION,
 	};
+}
+
+/** Refreshes the channel in context after the user changes it, without a restart. */
+export function setReleaseChannelContext(channel: ReleaseChannel): void {
+	telemetryContext = { ...telemetryContext, release_channel: channel };
+}
+
+/**
+ * Best-effort read of the Updates setting for the initial context.
+ *
+ * Never throws and never blocks startup: if the bridge is unavailable the
+ * channel reports "unknown" rather than delaying the first heartbeat.
+ */
+async function readUpdateSettingsForTelemetry(): Promise<{ channel?: unknown; feature?: unknown } | null> {
+	try {
+		return (await aoBridge.updateSettings.get()) as { channel?: unknown; feature?: unknown };
+	} catch {
+		return null;
+	}
 }
 
 export function withTelemetryContext(properties: TelemetryProperties): TelemetryProperties {
@@ -133,28 +174,22 @@ export function setDisabledEventsForTest(denied: string[]): void {
 
 export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): boolean {
 	const utcDate = now.toISOString().slice(0, 10);
-	const slot = activeCaptureSlot(now);
 	const reserveFallback = () => {
-		if (fallbackActiveDate !== utcDate) {
-			fallbackActiveDate = utcDate;
-			fallbackActiveSlots = new Set<number>();
-		}
-		if (fallbackActiveSlots.has(slot)) return false;
-		fallbackActiveSlots.add(slot);
+		if (fallbackActiveDate === utcDate) return false;
+		fallbackActiveDate = utcDate;
 		return true;
 	};
 
 	if (!storage) return reserveFallback();
 	try {
 		const raw = storage.getItem(ACTIVE_STORAGE_KEY);
-		const parsed = raw ? (JSON.parse(raw) as { date?: unknown; slots?: unknown }) : {};
-		const slots =
-			parsed.date === utcDate && Array.isArray(parsed.slots)
-				? parsed.slots.filter((value): value is number => Number.isInteger(value) && value >= 0 && value < 4)
-				: [];
-		if (slots.includes(slot)) return false;
-		slots.push(slot);
-		storage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify({ date: utcDate, slots }));
+		const parsed = raw ? (JSON.parse(raw) as { date?: unknown }) : {};
+		// Any record carrying today's date counts as reserved, which includes the
+		// older { date, slots } shape written by builds that emitted four times a
+		// day. That is what stops an install upgrading mid-day from emitting a
+		// second time on a day it has already reported.
+		if (parsed.date === utcDate) return false;
+		storage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify({ date: utcDate }));
 		return true;
 	} catch {
 		return reserveFallback();
@@ -163,25 +198,19 @@ export function reserveDailyActiveCapture(storage?: DailyActiveStorage, now = ne
 
 function releaseDailyActiveCapture(storage?: DailyActiveStorage, now = new Date()): void {
 	const utcDate = now.toISOString().slice(0, 10);
-	const slot = activeCaptureSlot(now);
-	if (fallbackActiveDate === utcDate) fallbackActiveSlots.delete(slot);
+	if (fallbackActiveDate === utcDate) fallbackActiveDate = "";
 	if (!storage) return;
 
 	try {
 		const raw = storage.getItem(ACTIVE_STORAGE_KEY);
-		const parsed = raw ? (JSON.parse(raw) as { date?: unknown; slots?: unknown }) : {};
-		if (parsed.date !== utcDate || !Array.isArray(parsed.slots)) return;
-		const slots = parsed.slots.filter(
-			(value): value is number => Number.isInteger(value) && value >= 0 && value < 4 && value !== slot,
-		);
-		storage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify({ date: utcDate, slots }));
+		const parsed = raw ? (JSON.parse(raw) as { date?: unknown }) : {};
+		if (parsed.date !== utcDate) return;
+		// DailyActiveStorage is deliberately narrow (getItem/setItem only), so the
+		// reservation is cleared by blanking the date rather than widening it.
+		storage.setItem(ACTIVE_STORAGE_KEY, JSON.stringify({ date: "" }));
 	} catch {
 		// The fallback reservation was already released above.
 	}
-}
-
-function activeCaptureSlot(now: Date): number {
-	return Math.floor(now.getUTCHours() / 6);
 }
 
 export function reserveRouteViewCapture(
@@ -485,6 +514,16 @@ export async function sanitizeRendererProperties(
 			// "came to set this up" from "came back to re-scan the QR".
 			if (typeof properties?.bridge_enabled === "boolean") safe.bridge_enabled = properties.bridge_enabled;
 			break;
+		case "ao.renderer.update_channel_changed":
+			// Closed vocabulary on both ends. A feature build's PR number or branch
+			// name is deliberately absent: it names unreleased work.
+			for (const key of ["from_channel", "to_channel"] as const) {
+				const value = properties?.[key];
+				if (value === "stable" || value === "nightly" || value === "feature" || value === "unknown") {
+					safe[key] = value;
+				}
+			}
+			break;
 		case "ao.renderer.support_opened":
 			break;
 		case "ao.renderer.support_submitted":
@@ -590,7 +629,11 @@ export async function initTelemetry(): Promise<boolean> {
 		// unpackaged build that has not opted in. The client is never created.
 		if (!bootstrap) return false;
 		disabledEventMatchers = bootstrap.disabledEvents ?? [];
-		telemetryContext = buildTelemetryContext(bootstrap.appVersion, bootstrap.platform);
+		telemetryContext = buildTelemetryContext(
+			bootstrap.appVersion,
+			bootstrap.platform,
+			releaseChannelFrom(await readUpdateSettingsForTelemetry()),
+		);
 		posthog.init(POSTHOG_KEY, buildPostHogConfig(bootstrap.distinctId));
 		posthog.register({
 			...telemetryContext,

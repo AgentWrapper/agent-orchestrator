@@ -14,6 +14,7 @@ import { SettingsOptionMenu } from "./SettingsOptionMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
 import type { MessageKey } from "../../i18n";
+import { captureRendererEvent, releaseChannelFrom, setReleaseChannelContext } from "../../lib/telemetry";
 
 export const updateSettingsQueryKey = ["update-settings"] as const;
 
@@ -131,8 +132,17 @@ export function UpdatesSection() {
 			nightlyAck: value === "nightly",
 			feature: null,
 		};
+		const from = releaseChannelFrom(formRef.current);
+		const to = releaseChannelFrom(next);
 		setForm(next);
 		save.mutate(next);
+		if (from !== to) {
+			// Reported on the switch rather than inferred later, because someone who
+			// moves to nightly and does not update yet is on nightly by intent while
+			// still running a stable build.
+			setReleaseChannelContext(to);
+			void captureRendererEvent("ao.renderer.update_channel_changed", { from_channel: from, to_channel: to });
+		}
 	};
 
 	const handlePinBuild = async (pr: number, title: string) => {

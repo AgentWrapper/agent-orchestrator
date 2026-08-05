@@ -15,6 +15,7 @@ import {
 	sanitizeRendererProperties,
 	startDailyActiveHeartbeat,
 	withTelemetryContext,
+	releaseChannelFrom,
 } from "./telemetry";
 import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 
@@ -508,19 +509,66 @@ describe("reserveCapture", () => {
 });
 
 describe("daily active heartbeat", () => {
-	it("reserves one active capture per six-hour UTC slot", () => {
-		const storage = memoryStorage();
+	it("maps the Updates setting to a release channel, not the version string", () => {
+		expect(releaseChannelFrom({ channel: "latest", feature: null })).toBe("stable");
+		expect(releaseChannelFrom({ channel: "nightly", feature: null })).toBe("nightly");
+		// A pinned feature build wins regardless of the underlying channel, which
+		// is what version-string parsing got wrong.
+		expect(releaseChannelFrom({ channel: "latest", feature: 1234 })).toBe("feature");
+		expect(releaseChannelFrom({ channel: "nightly", feature: 1234 })).toBe("feature");
+		expect(releaseChannelFrom(null)).toBe("unknown");
+		expect(releaseChannelFrom({})).toBe("unknown");
+	});
 
+	it("reports only the two channel names on a switch", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.update_channel_changed", {
+			from_channel: "stable",
+			to_channel: "nightly",
+			feature: 1234,
+			branch: "feat/secret-thing",
+		});
+		expect(safe).toEqual({ from_channel: "stable", to_channel: "nightly" });
+	});
+
+	it("drops an unrecognised channel value", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.update_channel_changed", {
+			from_channel: "canary",
+			to_channel: "nightly",
+		});
+		expect(safe).toEqual({ to_channel: "nightly" });
+	});
+
+	it("reserves one active capture per UTC day, not per six-hour slot", () => {
+		const storage = memoryStorage();
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T00:05:00.000Z"))).toBe(true);
+		// Every later hour of the same UTC day is refused. Under the old
+		// six-hour slotting, 06:00, 12:00 and 18:00 each reserved again, so one
+		// install could report four times a day.
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T05:59:59.000Z"))).toBe(false);
-		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T06:00:00.000Z"))).toBe(true);
-		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T12:00:00.000Z"))).toBe(true);
-		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T18:00:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T06:00:00.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T12:00:00.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T18:00:00.000Z"))).toBe(false);
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:59.000Z"))).toBe(false);
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
 	});
 
-	it("emits at startup and then only after a later UTC slot is observed on user activity", () => {
+	it("treats a slot record left by an older build as today already reported", () => {
+		// The upgrade path: a build that emitted per slot wrote { date, slots }.
+		// Reading it must not hand out a fresh reservation for the same day.
+		const storage = memoryStorage();
+		storage.setItem("ao.telemetry.activeSlotsByDate", JSON.stringify({ date: "2026-07-12", slots: [0] }));
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T14:00:00.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
+	});
+
+	it("reserves once per day without storage, so a private-mode window still reports once", () => {
+		expect(reserveDailyActiveCapture(undefined, new Date("2026-07-12T01:00:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(undefined, new Date("2026-07-12T19:00:00.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(undefined, new Date("2026-07-13T01:00:00.000Z"))).toBe(true);
+	});
+
+
+	it("emits once at startup and stays silent for the rest of the UTC day", () => {
 		const storage = memoryStorage();
 		const captured: string[] = [];
 		let now = new Date("2026-07-12T08:00:00.000Z");
@@ -541,21 +589,30 @@ describe("daily active heartbeat", () => {
 			document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
 			expect(captured).toHaveLength(1);
 
+			// Later the same day, focus no longer produces a second event. This is
+			// the four-per-day reduction, and it is the whole point of the change.
 			now = new Date("2026-07-12T12:00:00.000Z");
 			window.dispatchEvent(new Event("focus"));
-			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-12T12:00:00.000Z"]);
+			now = new Date("2026-07-12T20:00:00.000Z");
+			window.dispatchEvent(new Event("focus"));
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z"]);
+
+			// The next UTC day reports again.
+			now = new Date("2026-07-13T09:00:00.000Z");
+			window.dispatchEvent(new Event("focus"));
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-13T09:00:00.000Z"]);
 		} finally {
 			stop();
 		}
 	});
 
-	it("retries the same six-hour UTC slot when PostHog rejects the first capture", async () => {
+	it("retries the same UTC day when PostHog rejects the first capture", async () => {
 		const storage = memoryStorage();
 		let attempts = 0;
-		const slotTime = new Date("2026-07-23T08:00:00.000Z");
+		const dayTime = new Date("2026-07-23T08:00:00.000Z");
 		const stop = startDailyActiveHeartbeat({
 			storage,
-			now: () => slotTime,
+			now: () => dayTime,
 			capture: () => {
 				attempts += 1;
 				return attempts > 1;
