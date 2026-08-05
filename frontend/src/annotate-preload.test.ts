@@ -198,7 +198,8 @@ describe("annotate preload", () => {
 		expect(fontMocks.add).toHaveBeenCalledTimes(2);
 		expect(form).toHaveAttribute("aria-label", "Annotate selection");
 		expect(root.querySelector(".prompt__meta")).toBeNull();
-		expect(root.querySelector(".prompt__footer")).toBeNull();
+		expect(root.querySelector(".prompt__shortcuts")?.textContent).toContain("⌘/Ctrl+EnterSend");
+		expect(root.querySelector(".prompt__shortcuts")?.textContent).toContain("EscCancel");
 		expect(root.querySelector('[data-action="cancel"]')).toBeNull();
 		expect(primaryAction).toBeTruthy();
 		expect(primaryAction).toHaveAttribute("aria-label", "Send annotation");
@@ -238,8 +239,8 @@ describe("annotate preload", () => {
 		expect(textarea.style.overflowY).toBe("auto");
 		expect(form.style.getPropertyValue("--ao-prompt-textarea-max-height")).toBe("312px");
 		expect(root.querySelector("style")?.textContent).toContain("padding: 6px 9px");
-		expect(root.querySelector("style")?.textContent).toContain("padding-bottom: 43px");
-		expect(root.querySelector("style")?.textContent).toContain(".prompt--expanded::after");
+		expect(root.querySelector("style")?.textContent).toContain("padding: 5px 5px 43px");
+		expect(root.querySelector("style")?.textContent).toContain(".prompt::after");
 		expect(root.querySelector("style")?.textContent).toContain("scrollbar-width: none");
 		expect(root.querySelector("style")?.textContent).toContain("textarea::-webkit-scrollbar");
 	});
