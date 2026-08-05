@@ -62,8 +62,10 @@ type ReviewRun struct {
 type ReviewTriggerSource string
 
 const (
+	// ReviewTriggerManual marks a user-initiated review pass.
 	ReviewTriggerManual ReviewTriggerSource = "manual"
-	ReviewTriggerAuto   ReviewTriggerSource = "auto"
+	// ReviewTriggerAuto marks a daemon-initiated review pass.
+	ReviewTriggerAuto ReviewTriggerSource = "auto"
 )
 
 // ReviewRunStatus is the lifecycle state of a single review pass.
