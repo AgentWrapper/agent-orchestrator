@@ -225,8 +225,13 @@ function SharePolicyTypePicker({
 function isStandaloneProject(project?: CloudProject | null) {
   return (
     project?.config?.source === "standalone" ||
+    project?.config?.source === "standalone-agent" ||
     project?.repositoryUrl.startsWith("ao-standalone://") === true
   );
+}
+
+function isTopLevelStandaloneAgentProject(project?: CloudProject | null) {
+  return project?.config?.source === "standalone-agent";
 }
 
 function sharePolicyLabel(value?: SharePolicySandboxType | "") {
@@ -942,9 +947,13 @@ export default function CloudAppPage() {
     selectedShare?.project ??
     projects.find(({ id }) => id === selectedProjectId);
   const selectedProjectStandalone = isStandaloneProject(selectedProject);
-  const projectItems = projects.filter((project) => !isStandaloneProject(project));
-  const standaloneProjectItems = projects.filter((project) =>
-    isStandaloneProject(project),
+  const selectedProjectTopLevelStandaloneAgent =
+    isTopLevelStandaloneAgentProject(selectedProject);
+  const projectItems = projects.filter(
+    (project) => !isTopLevelStandaloneAgentProject(project),
+  );
+  const standaloneAgentProjectItems = projects.filter((project) =>
+    isTopLevelStandaloneAgentProject(project),
   );
   const selectedShareTrustedStandalone =
     Boolean(selectedShare) &&
@@ -1335,6 +1344,7 @@ export default function CloudAppPage() {
   const createStandaloneProjectAndPrewarmOrchestrator = async (input: {
     displayName: string;
     harness?: CloudAgent;
+    topLevelAgent?: boolean;
   }) => {
     const harness = input.harness ?? defaultAgent;
     if (!harness) {
@@ -1349,6 +1359,7 @@ export default function CloudAppPage() {
       const { project, session: orchestrator } =
         await api.createStandaloneProject(selectedOrgId, {
           displayName: input.displayName.trim() || "New chat",
+          standaloneAgent: input.topLevelAgent === true,
           orchestrator: {
             harness,
             providerConnectionId: daytonaConnections[0]?.id,
@@ -2230,7 +2241,7 @@ export default function CloudAppPage() {
                 </button>
               </div>
               <div className="space-y-1">
-                {standaloneProjectItems.flatMap((project) =>
+                {standaloneAgentProjectItems.flatMap((project) =>
                   sessions
                     .filter(({ projectId }) => projectId === project.id)
                     .map((cloudSession) => (
@@ -2326,7 +2337,7 @@ export default function CloudAppPage() {
                       </div>
                     )),
                 )}
-                {standaloneProjectItems.length === 0 && !sidebarCollapsed ? (
+                {standaloneAgentProjectItems.length === 0 && !sidebarCollapsed ? (
                   <div className="px-2 py-1 text-[10px] text-white/25">
                     No standalone agents
                   </div>
@@ -2615,7 +2626,7 @@ export default function CloudAppPage() {
                 {view === "settings"
                   ? "Cloud settings"
                   : selectedSession
-                    ? selectedProjectStandalone
+                    ? selectedProjectTopLevelStandaloneAgent
                       ? selectedSession.displayName
                       : `${selectedProject?.displayName ?? "Project"} / ${selectedSession.displayName}`
                     : (selectedProject?.displayName ?? "Board")}
@@ -2627,7 +2638,14 @@ export default function CloudAppPage() {
                   <button
                     className={button}
                     disabled={loading || !canCreateAgentInSelectedProject}
-                    onClick={() => setShowSessionForm(true)}
+                    onClick={() => {
+                      if (selectedProjectTopLevelStandaloneAgent) {
+                        setProjectFormInitialMode("standaloneAgent");
+                        setShowProjectForm(true);
+                        return;
+                      }
+                      setShowSessionForm(true);
+                    }}
                     aria-label={selectedProjectStandalone ? "New agent" : "New task"}
                   >
                     <Plus className="size-3.5" />
@@ -2635,17 +2653,19 @@ export default function CloudAppPage() {
                       {selectedProjectStandalone ? "New agent" : "New task"}
                     </span>
                   </button>
-                  <button
-                    className={primaryButton}
-                    onClick={() => {
-                      setSelectedSessionId(null);
-                      setView("board");
-                    }}
-                    aria-label="Open Kanban board"
-                  >
-                    <LayoutDashboard className="size-3.5" />
-                    <span className="hidden xl:inline">Kanban</span>
-                  </button>
+                  {!selectedProjectTopLevelStandaloneAgent ? (
+                    <button
+                      className={primaryButton}
+                      onClick={() => {
+                        setSelectedSessionId(null);
+                        setView("board");
+                      }}
+                      aria-label="Open Kanban board"
+                    >
+                      <LayoutDashboard className="size-3.5" />
+                      <span className="hidden xl:inline">Kanban</span>
+                    </button>
+                  ) : null}
                   <span className="mr-1 inline-flex h-7 items-center gap-1.5 rounded-md border border-white/10 px-2 font-mono text-[10px] uppercase tracking-[0.05em] text-[#9ba1aa]">
                     {activeChatSessionIds.has(selectedSession.id) ? (
                       <LoaderCircle
@@ -5771,6 +5791,7 @@ function ProjectForm({
   onSubmitStandalone: (input: {
     displayName: string;
     harness?: CloudAgent;
+    topLevelAgent?: boolean;
   }) => Promise<void>;
 }) {
   const [mode, setMode] = useState<ProjectFormMode>(initialMode);
@@ -5991,6 +6012,7 @@ function ProjectForm({
               void onSubmitStandalone({
                 displayName: standaloneName.trim() || "New agent",
                 harness: standaloneHarness,
+                topLevelAgent: true,
               });
             }}
           >

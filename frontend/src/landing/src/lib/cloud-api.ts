@@ -634,6 +634,7 @@ export class CloudAPI {
 
   async createStandaloneProject(orgId: string, input: {
     displayName: string;
+    standaloneAgent?: boolean;
     orchestrator: {
       harness: string;
       providerConnectionId?: string;

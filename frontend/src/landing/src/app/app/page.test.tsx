@@ -491,6 +491,7 @@ it("creates a standalone project without GitHub authorization", async () => {
   await waitFor(() =>
     expect(apiMocks.createStandaloneProject).toHaveBeenCalledWith("org-one", {
       displayName: "New chat",
+      standaloneAgent: false,
       orchestrator: {
         harness: "claude-code",
         providerConnectionId: undefined,
@@ -606,6 +607,23 @@ it("offers new standalone agent from the sidebar section", async () => {
   expect(
     screen.getByRole("dialog", { name: "Create standalone agent" }),
   ).toBeVisible();
+  fireEvent.change(screen.getByPlaceholderText("New agent"), {
+    target: { value: "Quick fix" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Create standalone agent" }),
+  );
+
+  await waitFor(() =>
+    expect(apiMocks.createStandaloneProject).toHaveBeenCalledWith("org-one", {
+      displayName: "Quick fix",
+      standaloneAgent: true,
+      orchestrator: {
+        harness: "claude-code",
+        providerConnectionId: undefined,
+      },
+    }),
+  );
 });
 
 it("prompts for a coding agent before opening provider settings", async () => {

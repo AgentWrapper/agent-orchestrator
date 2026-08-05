@@ -1396,8 +1396,9 @@ func (s *Server) createStandaloneProject(w http.ResponseWriter, r *http.Request)
 	}
 	account, _ := accountFromContext(r.Context())
 	var input struct {
-		DisplayName  string `json:"displayName"`
-		Orchestrator struct {
+		DisplayName     string `json:"displayName"`
+		StandaloneAgent bool   `json:"standaloneAgent"`
+		Orchestrator    struct {
 			Harness              string `json:"harness"`
 			ProviderConnectionID string `json:"providerConnectionId"`
 		} `json:"orchestrator"`
@@ -1430,11 +1431,15 @@ func (s *Server) createStandaloneProject(w http.ResponseWriter, r *http.Request)
 	if credential != nil {
 		credential.Secret = ""
 	}
+	config := json.RawMessage(`{"source":"standalone"}`)
+	if input.StandaloneAgent {
+		config = json.RawMessage(`{"source":"standalone-agent"}`)
+	}
 	project, err := s.store.CreateProject(r.Context(), account.ID, cloudpostgres.CreateProjectInput{
 		DisplayName:   displayName,
 		RepositoryURL: standaloneRepositoryURL(account.ID, uuid.NewString()),
 		DefaultBranch: "main",
-		Config:        json.RawMessage(`{"source":"standalone"}`),
+		Config:        config,
 	})
 	if errors.Is(err, cloudpostgres.ErrProjectExists) {
 		writeError(w, r, http.StatusConflict, "PROJECT_EXISTS", "A standalone project with this workspace ID already exists. Try again.")
