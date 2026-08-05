@@ -174,27 +174,39 @@ function SharePolicyTypePicker({
         <ChevronDown className="size-3.5 shrink-0 text-white/35" />
       </button>
       {open ? (
-        <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[#101216] p-1 shadow-2xl shadow-black/40">
+        <div
+          className={`absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[#101216] p-1 shadow-2xl shadow-black/40 ${
+            compact ? "min-w-[150px]" : ""
+          }`}
+        >
           {sandboxTypeOptions.map((option) => (
             <button
               key={option.value}
               type="button"
-              className="flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left hover:bg-white/[0.05]"
+              className={`flex w-full items-center gap-2 rounded-md px-2.5 text-left hover:bg-white/[0.05] ${
+                compact ? "h-8" : "items-start py-2"
+              }`}
               onClick={() => {
                 onChange(option.value);
                 setOpen(false);
               }}
             >
               <span className="min-w-0 flex-1">
-                <span className="block text-sm text-white/75">
+                <span className="block truncate text-sm text-white/75">
                   {option.label}
                 </span>
-                <span className="mt-0.5 block text-[11px] leading-4 text-white/35">
-                  {option.description}
-                </span>
+                {!compact ? (
+                  <span className="mt-0.5 block text-[11px] leading-4 text-white/35">
+                    {option.description}
+                  </span>
+                ) : null}
               </span>
               {option.value === value ? (
-                <Check className="mt-0.5 size-3.5 shrink-0 text-[#4d8dff]" />
+                <Check
+                  className={`size-3.5 shrink-0 text-[#4d8dff] ${
+                    compact ? "" : "mt-0.5"
+                  }`}
+                />
               ) : null}
             </button>
           ))}
