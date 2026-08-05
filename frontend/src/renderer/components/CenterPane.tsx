@@ -187,7 +187,7 @@ export function CenterPane({
 
 	const terminalTopbar = (
 		<div
-			className="flex h-session-topbar w-full shrink-0 items-stretch bg-sidebar"
+			className="flex h-session-topbar w-full shrink-0 items-stretch bg-sidebar pt-1"
 			style={{
 				paddingLeft: isFullscreen ? 0 : terminalBounds.leftInset,
 				paddingRight: isFullscreen ? 0 : terminalBounds.rightInset,
@@ -221,7 +221,7 @@ export function CenterPane({
 						<div
 							ref={tabsOverflow.ref}
 							aria-label={t("terminal.tabsAria")}
-							className="scrollbar-none flex h-inspector-tabs min-w-flex-min flex-1 self-end items-center overflow-x-auto"
+							className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
 							onKeyDown={handleTerminalTabListKeyDown}
 							role="tablist"
 						>
@@ -318,7 +318,7 @@ export function CenterPane({
 				</div>
 				{isFullscreen ? null : (
 					<div
-						className="ml-auto flex shrink-0 items-center border-l border-border/70 px-3"
+						className="ml-auto flex shrink-0 items-center px-3"
 						data-testid="session-action-region"
 					>
 						{topbarActions}

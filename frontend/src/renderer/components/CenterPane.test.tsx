@@ -206,15 +206,15 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByText("No session")).toBeInTheDocument();
 	});
 
-	it("bottom-aligns compact terminal tabs inside the taller session topbar", () => {
+	it("positions the framed terminal topbar below its outer breathing room", () => {
 		renderCenterPane({ session: worker });
 
 		const tablist = screen.getByRole("tablist", { name: "Open terminals" });
 		const header = tablist.closest(".h-session-topbar");
-		expect(header).toHaveClass("h-session-topbar");
+		expect(header).toHaveClass("h-session-topbar", "pt-1");
 		expect(screen.getByTestId("session-workspace-topbar")).not.toHaveClass("py-1");
-		expect(tablist).toHaveClass("h-inspector-tabs", "self-end");
-		expect(tablist).not.toHaveClass("self-stretch");
+		expect(tablist).toHaveClass("self-stretch");
+		expect(tablist).not.toHaveClass("mt-0.5", "h-inspector-tabs", "self-end");
 		expect(tablist.parentElement).toHaveClass("h-full");
 	});
 
@@ -233,7 +233,9 @@ describe("CenterPane toolbar session label", () => {
 		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "New terminal" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
 		expect(terminalRegion).not.toContainElement(screen.getByTestId("session-action-region"));
-		expect(screen.getByTestId("session-action-region")).toContainElement(
+		const actionRegion = screen.getByTestId("session-action-region");
+		expect(actionRegion).not.toHaveClass("border-l");
+		expect(actionRegion).toContainElement(
 			screen.getByRole("button", { name: "Session action" }),
 		);
 	});
