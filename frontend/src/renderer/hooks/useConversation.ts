@@ -61,7 +61,7 @@ const CONFIG_OPTIONS_POLL_INTERVAL_MS = 5_000;
 
 /**
  * Answers that will never change on a retry. SESSION_MODE_MISMATCH is permanent
- * because a session's mode is fixed at creation; the others describe a session or
+ * while the session's committed controller is TUI; the others describe a session or
  * controller state the client should explain rather than poll at.
  */
 const PERMANENT_CODES = new Set([
@@ -99,8 +99,8 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 		},
 		getNextPageParam: (page) => (page.hasMoreBefore ? page.oldestSequence : undefined),
 		select: (data) => mergeConversationPages(data.pages),
-		// A mode mismatch is permanent: the mode is immutable, so retrying cannot
-		// help and retrying would leave the surface stuck on a loading state
+		// A mode mismatch is authoritative for this committed controller epoch, so
+		// retrying the same request cannot help and would leave the surface loading
 		// instead of explaining why there is no conversation. Only genuinely
 		// transient failures are retried.
 		retry: (attempt, error) => {
@@ -112,8 +112,9 @@ export function useConversation(sessionId: string | undefined): ConversationQuer
 
 	if (query.error) {
 		const code = apiErrorCode(query.error);
-		// A session created in Terminal UI mode has no conversation, and never will:
-		// the mode is immutable. That is a state to explain, not an error to retry.
+		// The session is currently owned by Terminal UI (or its Chat controller is
+		// absent). A deliberate interface switch can change that later, but this
+		// request cannot, so explain it rather than retrying.
 		if (code === "SESSION_MODE_MISMATCH" || code === "CHAT_CONTROLLER_NOT_READY") {
 			return {
 				isLoading: false,

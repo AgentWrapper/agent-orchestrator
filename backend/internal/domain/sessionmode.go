@@ -2,11 +2,11 @@ package domain
 
 import "fmt"
 
-// SessionMode is the conversation controller a session was created with. It is
-// chosen before the controller launches, persisted with the session, and never
-// changed afterwards: a live session has exactly one controller, and two
-// concurrent writers on one provider conversation would race on turns,
-// approvals, compaction, and reconnect state.
+// SessionMode is the conversation controller currently committed for a session.
+// It is chosen before the first controller launches and can change only through
+// the durable interface-transition coordinator. At every controller epoch a live
+// session still has exactly one writer: two concurrent writers on one provider
+// conversation would race on turns, approvals, compaction, and reconnect state.
 //
 //   - SessionModeTUI: the provider's native CLI/TUI inside a terminal runtime is
 //     the only conversation controller. This is the historical behavior and the

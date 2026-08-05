@@ -18,6 +18,11 @@ import {
 import { restoreSession, resumeSessionAgent, type DashboardSession, type OrchestratorLink } from "../api";
 import { haptics } from "../haptics";
 import { useApp } from "../store";
+import {
+	mobileInterfaceTransitionIsActive,
+	mobileInterfaceTransitionIsCancellable,
+	useInterfaceTransition,
+} from "../session/useInterfaceTransition";
 import type { Theme } from "../theme";
 import { useTheme, useThemedStyles } from "../ThemeProvider";
 import { getWorkspacePaths, openSessionShell } from "./api";
@@ -39,6 +44,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const router = useRouter();
 	const { config, refresh: refreshBoard, setActiveProject } = useApp();
 	const conversation = useMobileConversation(config, session.id);
+	const interfaceSwitch = useInterfaceTransition(config, session.id, refreshBoard);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [mapOpen, setMapOpen] = useState(false);
@@ -48,6 +54,18 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 	const [openingShell, setOpeningShell] = useState(false);
 	const [resuming, setResuming] = useState(false);
 	const terminated = "projectName" in session ? Boolean(session.isTerminal) : Boolean(session.isTerminated);
+	const interfaceTransitionActive = mobileInterfaceTransitionIsActive(interfaceSwitch.transition);
+	const turnActive = Boolean(
+		conversation.snapshot?.turns.some((turn) => turn.state === "running" || turn.state === "queued"),
+	);
+	const turnWaiting = Boolean(
+		conversation.snapshot?.items.some(
+			(item) =>
+				item.kind === "activity" &&
+				(item.activityKind === "approval" || item.activityKind === "user_input") &&
+				item.status === "pending",
+		),
+	);
 
 	const title = conversation.snapshot?.title || sessionTitle(session);
 	useLayoutEffect(() => {
@@ -96,6 +114,40 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 		} finally { setResuming(false); }
 	}, [config, conversation.refresh, refreshBoard, resuming, session.id, terminated]);
 
+	const startInterfaceSwitch = useCallback(
+		async (policy: "drain" | "interrupt") => {
+			setMenuOpen(false);
+			try {
+				await interfaceSwitch.start("tui", policy);
+			} catch (cause) {
+				Alert.alert("Could not switch interface", cause instanceof Error ? cause.message : String(cause));
+			}
+		},
+		[interfaceSwitch],
+	);
+
+	const requestInterfaceSwitch = useCallback(() => {
+		if (!interfaceSwitch.status?.supported) {
+			Alert.alert("Terminal UI unavailable", interfaceSwitch.status?.reason || interfaceSwitch.error || "This agent cannot resume the same native conversation in Terminal UI.");
+			return;
+		}
+		if (!turnActive) {
+			void startInterfaceSwitch("drain");
+			return;
+		}
+		Alert.alert(
+			"Switch to Terminal UI?",
+			turnWaiting
+				? "This turn is waiting for your input. Finish waits for your answer; stop cancels it and switches now."
+				: "Keep the same AO session, worktree, and native agent conversation.",
+			[
+				{ text: "Keep Chat", style: "cancel" },
+				{ text: "Finish, then switch", onPress: () => void startInterfaceSwitch("drain") },
+				{ text: "Stop and switch", style: "destructive", onPress: () => void startInterfaceSwitch("interrupt") },
+			],
+		);
+	}, [interfaceSwitch, startInterfaceSwitch, turnActive, turnWaiting]);
+
 	if (conversation.loading && !conversation.snapshot) return <Centered icon="message-square" title="Loading conversation…" spinning />;
 	if (conversation.unavailable) return <Unavailable message={conversation.unavailable.message} onShell={() => void openShell()} openingShell={openingShell} />;
 	if (!conversation.snapshot) return <Centered icon="alert-triangle" title="Could not load conversation" message={conversation.error || "The daemon did not return a conversation."} action="Retry" onAction={() => void conversation.refresh()} />;
@@ -121,6 +173,17 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				onCompact={compactSupported ? () => void conversation.compact().catch(() => {}) : undefined}
 				compactDisabled={active || snapshot.controller.state === "stopped" || conversation.pendingActions.includes("compact")}
 			/>
+			{interfaceTransitionActive ? (
+				<InlineBanner
+					tone="warning"
+					icon="repeat"
+					text={`Switching to Terminal UI · ${interfacePhaseLabel(interfaceSwitch.transition?.phase)}`}
+					action={mobileInterfaceTransitionIsCancellable(interfaceSwitch.transition) ? (interfaceSwitch.cancelling ? "Cancelling…" : "Cancel") : undefined}
+					onPress={interfaceSwitch.cancelling ? undefined : () => void interfaceSwitch.cancel().catch(() => {})}
+				/>
+			) : interfaceSwitch.transition?.phase === "failed" || interfaceSwitch.transition?.phase === "recovery_required" ? (
+				<InlineBanner tone="danger" icon="alert-triangle" text={interfaceSwitch.transition.errorDetail || "The interface switch failed; the current interface remains available."} />
+			) : null}
 			<ConversationBanners
 				snapshot={snapshot}
 				brokenServers={brokenServers}
@@ -160,7 +223,7 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				filePathsTruncated={filePathsTruncated}
 				configOptions={conversation.configOptions}
 				steerUnavailable={steerUnsupported}
-				pending={conversation.pendingSends.some((item) => item.state === "sending")}
+				pending={interfaceTransitionActive || conversation.pendingSends.some((item) => item.state === "sending")}
 				error={conversation.actionError}
 				onSend={conversation.send}
 				onSteer={conversation.steer}
@@ -187,11 +250,15 @@ export function ChatSessionScreen({ session }: { session: MobileChatSession }) {
 				mcpReloading={conversation.pendingActions.includes("mcp")}
 				compactSupported={compactSupported}
 				mcpReloadSupported={mcpReloadSupported}
+				interfaceSupported={Boolean(interfaceSwitch.status?.supported)}
+				interfaceReason={interfaceSwitch.status?.reason || interfaceSwitch.error}
+				interfaceSwitching={interfaceTransitionActive || interfaceSwitch.starting}
 				onMap={() => { setMenuOpen(false); setMapOpen(true); }}
 				onOpenShell={() => void openShell()}
 				onPreview={() => { setMenuOpen(false); router.push({ pathname: "/preview/[id]", params: { id: session.id, title, previewUrl: "previewUrl" in session ? session.previewUrl ?? undefined : undefined } }); }}
 				onPullRequests={() => { setMenuOpen(false); setActiveProject(session.projectId); router.push("/(tabs)/prs"); }}
 				onSettings={() => { setMenuOpen(false); setSettingsOpen(true); }}
+				onSwitchInterface={requestInterfaceSwitch}
 				onCompact={() => { setMenuOpen(false); void conversation.compact().catch(() => {}); }}
 				onReload={() => { setMenuOpen(false); void conversation.reloadMcp().catch(() => {}); }}
 				onRename={(next) => { setMenuOpen(false); void conversation.rename(next).catch(() => {}); }}
@@ -249,7 +316,7 @@ function InlineBanner({ tone, icon, text, action, secondary, onPress, onSecondar
 	return <View style={[styles.banner, { backgroundColor: fill }]}><Feather name={icon} size={13} color={color} /><Text style={styles.bannerText}>{text}</Text>{secondary ? <Pressable hitSlop={7} onPress={onSecondary}><Text style={styles.bannerSecondary}>{secondary}</Text></Pressable> : null}{action ? <Pressable hitSlop={7} onPress={onPress}><Text style={[styles.bannerAction, { color }]}>{action}</Text></Pressable> : null}</View>;
 }
 
-function ConversationMenu({ visible, onClose, snapshot, openingShell, compacting, mcpReloading, compactSupported, mcpReloadSupported, onMap, onOpenShell, onPreview, onPullRequests, onSettings, onCompact, onReload, onRename }: { visible: boolean; onClose(): void; snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; openingShell: boolean; compacting: boolean; mcpReloading: boolean; compactSupported: boolean; mcpReloadSupported: boolean; onMap(): void; onOpenShell(): void; onPreview(): void; onPullRequests(): void; onSettings(): void; onCompact(): void; onReload(): void; onRename(title: string): void }) {
+function ConversationMenu({ visible, onClose, snapshot, openingShell, compacting, mcpReloading, compactSupported, mcpReloadSupported, interfaceSupported, interfaceReason, interfaceSwitching, onMap, onOpenShell, onPreview, onPullRequests, onSettings, onSwitchInterface, onCompact, onReload, onRename }: { visible: boolean; onClose(): void; snapshot: NonNullable<ReturnType<typeof useMobileConversation>["snapshot"]>; openingShell: boolean; compacting: boolean; mcpReloading: boolean; compactSupported: boolean; mcpReloadSupported: boolean; interfaceSupported: boolean; interfaceReason?: string; interfaceSwitching: boolean; onMap(): void; onOpenShell(): void; onPreview(): void; onPullRequests(): void; onSettings(): void; onSwitchInterface(): void; onCompact(): void; onReload(): void; onRename(title: string): void }) {
 	const t = useTheme();
 	const styles = useThemedStyles(makeStyles);
 	const [renaming, setRenaming] = useState(false);
@@ -259,6 +326,7 @@ function ConversationMenu({ visible, onClose, snapshot, openingShell, compacting
 	return <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}><Pressable style={styles.menuScrim} onPress={onClose} /><View style={styles.menu}>
 		{renaming ? <View style={styles.rename}><Text style={styles.menuHeading}>Rename conversation</Text><TextInput autoFocus value={title} onChangeText={setTitle} placeholder="Conversation title" placeholderTextColor={t.textFaint} style={styles.renameInput} /><View style={styles.menuButtons}><Pressable onPress={() => setRenaming(false)}><Text style={styles.menuCancel}>Cancel</Text></Pressable><Pressable disabled={!title.trim()} onPress={() => onRename(title.trim())}><Text style={styles.menuSave}>Save</Text></Pressable></View></View> : <ScrollView>
 			<Text style={styles.menuHeading}>Conversation</Text>
+			<MenuRow icon="repeat" label={interfaceSwitching ? "Switching interface…" : "Open Terminal UI"} hint={interfaceSupported ? "Resume this native conversation in the agent's terminal" : interfaceReason || "This agent has not declared a compatible handoff"} disabled={!interfaceSupported || interfaceSwitching} onPress={onSwitchInterface} />
 			<MenuRow icon="list" label="Conversation map" hint="Jump to any request and response" onPress={onMap} />
 			<MenuRow icon="terminal" label={openingShell ? "Opening shell…" : "Open worktree shell"} hint="A plain terminal in this session's worktree" disabled={openingShell} onPress={onOpenShell} />
 			<MenuRow icon="globe" label="Open preview" hint="View a page or document generated in this worktree" onPress={onPreview} />
@@ -299,6 +367,16 @@ function Centered({ icon, title, message, spinning, action, onAction }: { icon: 
 
 function sessionTitle(session: MobileChatSession): string { return "displayName" in session ? session.displayName || session.issueTitle || session.issueLabel || session.id : session.projectName || session.id; }
 function formatTokens(value: number): string { return value >= 1_000 ? `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k` : String(value); }
+function interfacePhaseLabel(phase?: string): string {
+	switch (phase) {
+		case "draining": return "finishing current work";
+		case "source_stopping": return "stopping Chat controller";
+		case "source_stopped": return "Chat controller stopped";
+		case "target_starting": return "resuming terminal controller";
+		case "activating": return "opening Terminal UI";
+		default: return "preparing native handoff";
+	}
+}
 function signInCommand(harness: string): string | undefined { return harness === "codex" ? "codex login" : harness === "claude-code" || harness === "claude" ? "claude auth login" : undefined; }
 function formatReset(seconds?: number): string { if (seconds === undefined || seconds < 0) return ""; if (seconds < 60) return ` · resets in ${Math.ceil(seconds)}s`; if (seconds < 3600) return ` · resets in ${Math.ceil(seconds / 60)}m`; return ` · resets in ${Math.ceil(seconds / 3600)}h`; }
 

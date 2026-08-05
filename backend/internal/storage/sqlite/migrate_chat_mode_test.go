@@ -20,10 +20,10 @@ func openTestDB(t *testing.T) *sql.DB {
 // The whole backward-compatibility promise of the Chat feature: a database that
 // already has sessions must come out of the migration with every one of them in
 // TUI mode, so an upgrade changes nobody's workflow.
-func TestMigration0043BackfillsExistingSessionsToTUI(t *testing.T) {
+func TestMigration0044BackfillsExistingSessionsToTUI(t *testing.T) {
 	db := openTestDB(t)
 
-	// Stop just before 0043: sessions exist, session_mode does not.
+	// Stop before the Chat migration: sessions exist, session_mode does not.
 	upTo(t, db, 42)
 
 	now := time.Now().UTC()
@@ -38,7 +38,7 @@ func TestMigration0043BackfillsExistingSessionsToTUI(t *testing.T) {
 		}
 	}
 
-	upTo(t, db, 43)
+	upTo(t, db, 44)
 
 	rows, err := db.Query(`SELECT id, session_mode, provider_conversation_id, controller_generation FROM sessions ORDER BY id`)
 	if err != nil {
@@ -73,9 +73,9 @@ func TestMigration0043BackfillsExistingSessionsToTUI(t *testing.T) {
 
 // A fresh install must also default to TUI: the mode is only ever Chat because
 // something explicitly asked for it.
-func TestMigration0043FreshDatabaseDefaultsToTUI(t *testing.T) {
+func TestMigration0044FreshDatabaseDefaultsToTUI(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 43)
+	upTo(t, db, 44)
 
 	now := time.Now().UTC()
 	if _, err := db.Exec(`INSERT INTO projects (id, path, display_name, registered_at)
@@ -96,9 +96,9 @@ func TestMigration0043FreshDatabaseDefaultsToTUI(t *testing.T) {
 	}
 }
 
-func TestMigration0043ConversationSchemaConstraints(t *testing.T) {
+func TestMigration0044ConversationSchemaConstraints(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 43)
+	upTo(t, db, 44)
 
 	now := time.Now().UTC()
 	mustExec(t, db, `INSERT INTO projects (id, path, display_name, registered_at) VALUES ('p1','/tmp/p1','proj',?)`, now)

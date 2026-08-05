@@ -58,6 +58,21 @@ var (
 	// session. The API maps it to a 409 so a double-submit does not race two
 	// teardown/relaunch cycles over one worktree.
 	ErrSwitchInProgress = errors.New("session: switch already in progress")
+	// ErrInterfaceHandoffUnsupported means the harness has not proven that its
+	// TUI resume identity and Chat protocol identity name the same conversation.
+	ErrInterfaceHandoffUnsupported = errors.New("session: interface handoff unsupported")
+	// ErrNativeConversationMissing means a supported harness has not yet exposed
+	// the native id required to resume it through the other controller.
+	ErrNativeConversationMissing = errors.New("session: native conversation id unavailable")
+	// ErrInterfaceAlreadySelected makes a stale/double switch request an explicit
+	// conflict instead of leaking a generic 500 after the first switch commits.
+	ErrInterfaceAlreadySelected = errors.New("session: requested interface is already selected")
+	// ErrInterfaceTransitionNotFound distinguishes a missing handoff from a
+	// missing session when DELETE is retried after the transition settled.
+	ErrInterfaceTransitionNotFound = errors.New("session: no active interface transition")
+	// ErrInterfaceTransitionNotCancellable protects the no-overlap invariant once
+	// the source controller is already stopping or stopped.
+	ErrInterfaceTransitionNotCancellable = errors.New("session: interface transition can no longer be cancelled")
 	// ErrResumeInProgress prevents concurrent resume requests from replacing the
 	// same runtime twice.
 	ErrResumeInProgress = errors.New("session: agent resume already in progress")
@@ -221,10 +236,12 @@ type Manager struct {
 	// executable resolves the daemon's own binary (os.Executable in
 	// production); its directory is prepended to spawned sessions' PATH so the
 	// workspace hook commands resolve back to this daemon. Tests inject a stub.
-	executable  func() (string, error)
-	newLaunchID func() string
-	resumeMu    sync.Mutex
-	resuming    map[domain.SessionID]struct{}
+	executable   func() (string, error)
+	newLaunchID  func() string
+	resumeMu     sync.Mutex
+	resuming     map[domain.SessionID]struct{}
+	transitionMu sync.Mutex
+	transitions  map[domain.SessionID]*interfaceTransitionRun
 	// sendConfirm bounds the best-effort post-send confirmation that the session
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
@@ -366,6 +383,7 @@ func New(d Deps) *Manager {
 		executable:          d.Executable,
 		newLaunchID:         d.NewLaunchID,
 		resuming:            make(map[domain.SessionID]struct{}),
+		transitions:         make(map[domain.SessionID]*interfaceTransitionRun),
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -945,6 +963,11 @@ func (m *Manager) RollbackSpawn(ctx context.Context, id domain.SessionID) (delet
 // available destroy steps are skipped so it can be cleaned up from the
 // dashboard.
 func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
+	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
+		return false, fmt.Errorf("kill %s: interface transition: %w", id, err)
+	} else if active {
+		return false, fmt.Errorf("kill %s: %w", id, ErrSwitchInProgress)
+	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
@@ -1195,6 +1218,11 @@ func (m *Manager) retireWorkspaceProjectForReplacement(ctx context.Context, rec 
 // runs before any durable session write, so a failure never resurrects the row
 // or destroys the worktree (it may hold the agent's prior work).
 func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
+		return RestoreResult{}, fmt.Errorf("restore %s: interface transition: %w", id, err)
+	} else if active {
+		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrSwitchInProgress)
+	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, err)
@@ -1239,6 +1267,11 @@ func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.Sessio
 // identity and never changes the durable terminated flag as an intermediate
 // step.
 func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (RestoreResult, error) {
+	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: interface transition: %w", id, err)
+	} else if active {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrSwitchInProgress)
+	}
 	if !m.beginAgentResume(id) {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrResumeInProgress)
 	}
@@ -1293,10 +1326,9 @@ func (m *Manager) endAgentResume(id domain.SessionID) {
 }
 
 func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
-	// Restore dispatches from the persisted mode, never across it: a chat session
-	// resumes its provider conversation and a terminal session relaunches its
-	// runtime. Crossing here would give a session a controller it was not created
-	// with, which is the one thing the immutable mode exists to prevent.
+	// Relaunch dispatches from the currently committed persisted mode, never from
+	// a caller hint. The interface-transition coordinator changes that fact only
+	// after stopping the old controller, then reuses this ordinary restore path.
 	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
 		return m.resumeChatController(ctx, operation, rec, project, ws)
 	}
@@ -1616,6 +1648,10 @@ func (m *Manager) reconcileReap(ctx context.Context, rec domain.SessionRecord) e
 // Best-effort throughout: a per-session failure is logged and never aborts the
 // pass or blocks boot.
 func (m *Manager) Reconcile(ctx context.Context) error {
+	interrupted, err := m.recoverInterruptedInterfaceTransitions(ctx)
+	if err != nil {
+		return fmt.Errorf("reconcile: interface transitions: %w", err)
+	}
 	recs, err := m.store.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("reconcile: list sessions: %w", err)
@@ -1636,7 +1672,13 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			m.logger.Error("reconcile: reap pass failed, skipping", "sessionID", rec.ID, "error", err)
 		}
 	}
-	return m.RestoreAll(ctx)
+	if err := m.RestoreAll(ctx); err != nil {
+		return err
+	}
+	for _, transition := range interrupted {
+		m.deliverTransitionMessages(transition)
+	}
+	return nil
 }
 
 // RestoreAll relaunches every terminated session that was saved by the last
@@ -2078,6 +2120,15 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // the session is active or the budget is exhausted. Confirmation never fails
 // the send: it only decides whether to nudge again.
 func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string) error {
+	// A controller transition deliberately has a short interval with no writer.
+	// Queue internal/lifecycle sends durably instead of racing either controller
+	// or dropping coordination work; the transition worker drains this outbox
+	// only after the target controller is active.
+	if queued, err := m.queueDuringInterfaceTransition(ctx, id, message); err != nil {
+		return fmt.Errorf("send %s: interface transition: %w", id, err)
+	} else if queued {
+		return nil
+	}
 	// Chat mode has no pane to type into, so it does not go through the messenger
 	// at all. Without this branch the send reached the runtime guard and was
 	// refused as "missing runtime handles" — true of the handles, wrong about the

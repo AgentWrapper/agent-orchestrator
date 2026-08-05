@@ -21,6 +21,7 @@ import {
 	useState,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type PointerEvent as ReactPointerEvent,
+	type ReactNode,
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
@@ -82,6 +83,8 @@ import {
 
 export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
+	/** Session-level actions owned above the conversation surface. */
+	interfaceAction?: ReactNode;
 	/** Older durable history is available but not loaded into the DOM yet. */
 	hasOlder?: boolean;
 	loadingOlder?: boolean;
@@ -162,6 +165,7 @@ export interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
 	snapshot,
+	interfaceAction,
 	hasOlder,
 	loadingOlder,
 	onLoadOlder,
@@ -227,6 +231,7 @@ export function ChatWorkspace({
 				onCompact={onCompact}
 				compacting={compacting}
 				compactUnavailable={compactUnavailable}
+				interfaceAction={interfaceAction}
 				// The daemon refuses a compaction mid-turn, because the provider would
 				// silently discard the running turn to make room. Said here too so the
 				// control explains itself before it is pressed.
@@ -458,12 +463,14 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 
 function ChatHeader({
 	snapshot,
+	interfaceAction,
 	onCompact,
 	compacting,
 	compactUnavailable,
 	turnInFlight,
 }: {
 	snapshot: ConversationSnapshot;
+	interfaceAction?: ReactNode;
 	onCompact?: () => void;
 	compacting?: boolean;
 	compactUnavailable?: string;
@@ -497,6 +504,7 @@ function ChatHeader({
 					turnInFlight={turnInFlight}
 					compactedAt={snapshot.compactedAt}
 				/>
+				{interfaceAction}
 				{/* The mode is a durable session fact, so it is stated rather than
 				    implied by which surface happens to be open. */}
 				<span className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">

@@ -35,10 +35,14 @@ surface (`npm run sqlc`, `npm run api`).
 - Full session lifecycle over HTTP: list, get, spawn, kill, restore, rename,
   rollback, cleanup, send, activity, PR claim/list. Orchestrator routes
   (list/spawn/get) are wired too.
-- Immutable per-session interface mode. TUI sessions retain the established
+- One daemon-committed interface per session. TUI sessions retain the established
   tmux/conpty agent runtime; Chat sessions use runtime-less native controllers,
   persist provider conversation identity, and dispatch lifecycle reactions
-  through the same mode-aware session manager.
+  through the same mode-aware session manager. A durable, capability-gated
+  drain/interrupt handoff can move the same Claude Code or Codex native
+  conversation between TUI and Chat without changing the AO session/worktree;
+  rollback, restart recovery, controller-generation fencing, and a transition
+  message outbox preserve the one-controller invariant.
 - Durable Chat conversations with project-scoped orchestrator continuity,
   session-scoped worker history, bounded history pages, transactional raw-event
   archive/projection, controller-generation fencing, turns, messages,
@@ -100,6 +104,10 @@ surface (`npm run sqlc`, `npm run api`).
 - SessionView renders from the session's persisted mode: the existing terminal
   surface for TUI, or the durable Chat timeline/composer for Chat. Chat retains
   access to session-scoped worktree shells without creating an agent tmux pane.
+- Compatible Claude Code and Codex sessions expose an in-session “Open Chat” /
+  “Open Terminal UI” action. Idle sessions switch directly; busy sessions offer
+  an explicit finish-and-drain or stop-and-interrupt policy and show durable
+  progress/recovery state.
 - Desktop status and SCM summary V1: session status comes from
   `GET /api/v1/sessions`; visible/active PR context comes from
   `GET /api/v1/sessions/{sessionId}/pr`; `GET /api/v1/events` is kept open as
@@ -125,9 +133,12 @@ surface (`npm run sqlc`, `npm run api`).
   creation filters to the daemon-advertised Chat harnesses, while Terminal UI
   remains an explicit compatibility choice and typed Chat preflight failures
   offer that fallback.
-- Session routing uses the same persisted immutable mode as desktop. TUI keeps
+- Session routing uses the same daemon-committed mode as desktop. TUI keeps
   the existing authenticated mux/xterm surface; Chat uses the same durable,
   paged conversation projection and CDC/SSE invalidation stream as desktop.
+- Mobile exposes the same capability-gated TUI↔Chat handoff, busy-turn policy,
+  cancellation window, progress overlay, and automatic renderer swap after the
+  daemon commits the new controller.
 - Native Chat includes prose/Markdown, provider activity, commands, plans,
   changed files, approvals, structured input, model/effort/provider controls,
   compaction, rollback, MCP recovery, skills and file references, staged/native
@@ -136,6 +147,15 @@ surface (`npm run sqlc`, `npm run api`).
   terminal mux.
 
 ## In flight / not yet a runtime feature
+
+- **Cross-interface visual history import**: provider-native context continues
+  across a compatible handoff, and Chat history already recorded by AO remains
+  durable. A first TUI→Chat switch does not reconstruct terminal screen output
+  as structured AO messages/tool cards; doing so requires a provider history
+  import contract with stable identities and deduplication.
+- **In-flight tool portability**: drain can finish accepted work and interrupt
+  can cancel it, but no common provider protocol serializes a currently executing
+  tool call or detached background process for adoption by another controller.
 
 - **Tracker lane**: GitHub tracker adapter exists, but there is no daemon
   observer loop or agent-lifecycle→issue mirroring yet, so the tracker does

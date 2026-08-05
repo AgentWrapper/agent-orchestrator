@@ -117,7 +117,7 @@ export type PullRequestFacts = {
 	updatedAt: string;
 };
 
-/** The conversation controller a session was created with. Immutable. */
+/** The daemon-committed controller currently responsible for the session. */
 export type SessionMode = "chat" | "tui";
 
 export type WorkspaceSession = {
@@ -133,10 +133,9 @@ export type WorkspaceSession = {
 	reviewerHarness?: "claude-code" | "codex" | "opencode";
 	kind?: SessionKind;
 	/**
-	 * Which conversation controller this session was created with. Fixed at
-	 * creation, so the session surface renders from THIS value and never from the
-	 * current default preference — a chat session stays chat even if the default
-	 * later changes, and vice versa.
+	 * Which controller is currently committed for this session. The session
+	 * surface renders from THIS value, never from the current creation default.
+	 * Only the daemon's durable interface-transition coordinator may change it.
 	 */
 	mode?: SessionMode;
 	branch?: string;

@@ -1,0 +1,726 @@
+package sessionmanager
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+)
+
+const (
+	interfaceTransitionPoll      = 150 * time.Millisecond
+	interfaceInterruptSettle     = 2 * time.Second
+	interfaceTransitionStopLimit = 15 * time.Second
+	interfaceTransitionStepLimit = 45 * time.Second
+)
+
+// interfaceTransitionStore is optional so the existing narrow Manager Store
+// port and its many focused fakes do not grow methods unrelated to their tests.
+// Production's SQLite store implements the full capability.
+type interfaceTransitionStore interface {
+	CreateSessionInterfaceTransition(context.Context, domain.SessionInterfaceTransition) (domain.SessionInterfaceTransition, bool, error)
+	GetSessionInterfaceTransition(context.Context, string) (domain.SessionInterfaceTransition, bool, error)
+	GetActiveSessionInterfaceTransition(context.Context, domain.SessionID) (domain.SessionInterfaceTransition, bool, error)
+	GetLatestSessionInterfaceTransition(context.Context, domain.SessionID) (domain.SessionInterfaceTransition, bool, error)
+	ListActiveSessionInterfaceTransitions(context.Context) ([]domain.SessionInterfaceTransition, error)
+	AdvanceSessionInterfaceTransition(context.Context, string, domain.SessionInterfaceTransitionPhase, domain.SessionInterfaceTransitionPhase, string, string, string, time.Time) (bool, error)
+	SwitchSessionControllerMode(context.Context, domain.SessionID, domain.SessionMode, domain.SessionMode, string, time.Time) (bool, error)
+	EnqueueSessionInterfaceTransitionMessage(context.Context, string, string, time.Time) error
+	ListPendingSessionInterfaceTransitionMessages(context.Context, string) ([]domain.SessionInterfaceTransitionMessage, error)
+	MarkSessionInterfaceTransitionMessageDelivered(context.Context, int64, time.Time) error
+}
+
+type chatHandoffLauncher interface {
+	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
+	AbortChatHandoff(domain.SessionID)
+}
+
+type runtimeInterrupter interface {
+	Interrupt(context.Context, ports.RuntimeHandle) error
+}
+
+type interfaceTransitionRun struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+// InterfaceTransitionStatus is the controller-facing view used by desktop and
+// mobile to decide whether to draw the switch and to render any durable attempt.
+type InterfaceTransitionStatus struct {
+	Supported  bool
+	TargetMode domain.SessionMode
+	ReasonCode string
+	Reason     string
+	Transition *domain.SessionInterfaceTransition
+}
+
+// InterfaceTransitionStatus reports static adapter support plus the latest
+// durable attempt. Read-only: target binary/auth checks happen on POST so a
+// status render never launches a provider process.
+func (m *Manager) InterfaceTransitionStatus(
+	ctx context.Context,
+	id domain.SessionID,
+) (InterfaceTransitionStatus, error) {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return InterfaceTransitionStatus{}, fmt.Errorf("interface transition status %s: %w", id, err)
+	}
+	if !ok {
+		return InterfaceTransitionStatus{}, ErrNotFound
+	}
+	target := oppositeSessionMode(rec.Mode)
+	status := InterfaceTransitionStatus{TargetMode: target}
+	if rec.IsTerminated {
+		status.ReasonCode = "SESSION_TERMINATED"
+		status.Reason = "Terminated sessions must be restored before switching interfaces."
+	} else if _, _, err := m.nativeConversationID(ctx, rec); err != nil {
+		if errors.Is(err, ErrInterfaceHandoffUnsupported) {
+			status.ReasonCode = "INTERFACE_HANDOFF_UNSUPPORTED"
+		} else if errors.Is(err, ErrNativeConversationMissing) {
+			status.ReasonCode = "NATIVE_SESSION_MISSING"
+		} else {
+			return InterfaceTransitionStatus{}, err
+		}
+		status.Reason = err.Error()
+	} else {
+		status.Supported = true
+	}
+	if store, ok := m.store.(interfaceTransitionStore); ok {
+		latest, found, err := store.GetLatestSessionInterfaceTransition(ctx, id)
+		if err != nil {
+			return InterfaceTransitionStatus{}, err
+		}
+		if found {
+			status.Transition = &latest
+		}
+	}
+	return status, nil
+}
+
+// StartInterfaceTransition durably claims the session and starts the handoff in
+// the background. The caller gets the transition immediately; long-running
+// drain mode therefore does not depend on an HTTP request timeout.
+func (m *Manager) StartInterfaceTransition(
+	ctx context.Context,
+	id domain.SessionID,
+	target domain.SessionMode,
+	policy domain.SessionInterfaceTransitionPolicy,
+) (domain.SessionInterfaceTransition, error) {
+	if !target.Valid() {
+		return domain.SessionInterfaceTransition{}, fmt.Errorf("target mode %q is invalid", target)
+	}
+	if !policy.Valid() {
+		return domain.SessionInterfaceTransition{}, fmt.Errorf("transition policy %q is invalid", policy)
+	}
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return domain.SessionInterfaceTransition{}, ErrInterfaceHandoffUnsupported
+	}
+	rec, found, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return domain.SessionInterfaceTransition{}, err
+	}
+	if !found {
+		return domain.SessionInterfaceTransition{}, ErrNotFound
+	}
+	if rec.IsTerminated {
+		return domain.SessionInterfaceTransition{}, ErrTerminated
+	}
+	source := domain.NormalizeSessionMode(rec.Mode)
+	if target == source {
+		return domain.SessionInterfaceTransition{}, fmt.Errorf("%w: session %s is already in %s mode",
+			ErrInterfaceAlreadySelected, id, source)
+	}
+	nativeID, _, err := m.nativeConversationID(ctx, rec)
+	if err != nil {
+		return domain.SessionInterfaceTransition{}, err
+	}
+	now := m.clock()
+	transition, created, err := store.CreateSessionInterfaceTransition(ctx, domain.SessionInterfaceTransition{
+		ID: m.newLaunchID(), SessionID: id, SourceMode: source, TargetMode: target,
+		Policy: policy, Phase: domain.SessionInterfaceTransitionRequested,
+		NativeConversationID: nativeID, CreatedAt: now, UpdatedAt: now,
+	})
+	if err != nil {
+		return domain.SessionInterfaceTransition{}, err
+	}
+	if !created {
+		return transition, ErrSwitchInProgress
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	run := &interfaceTransitionRun{cancel: cancel, done: make(chan struct{})}
+	m.transitionMu.Lock()
+	m.transitions[id] = run
+	m.transitionMu.Unlock()
+	go m.runInterfaceTransition(runCtx, transition, run)
+	return transition, nil
+}
+
+// CancelInterfaceTransition cancels only while the source controller is still
+// intact. Once source_stopping begins, finishing or rolling back is safer than
+// reopening a controller whose process state is ambiguous.
+func (m *Manager) CancelInterfaceTransition(ctx context.Context, id domain.SessionID) error {
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return ErrInterfaceHandoffUnsupported
+	}
+	transition, found, err := store.GetActiveSessionInterfaceTransition(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrInterfaceTransitionNotFound
+	}
+	switch transition.Phase {
+	case domain.SessionInterfaceTransitionRequested,
+		domain.SessionInterfaceTransitionPreflighting,
+		domain.SessionInterfaceTransitionDraining:
+	default:
+		return ErrInterfaceTransitionNotCancellable
+	}
+	m.transitionMu.Lock()
+	run := m.transitions[id]
+	m.transitionMu.Unlock()
+	if run != nil {
+		run.cancel()
+		return nil
+	}
+	_, err = store.AdvanceSessionInterfaceTransition(ctx, transition.ID, transition.Phase,
+		domain.SessionInterfaceTransitionCancelled, transition.NativeConversationID,
+		"TRANSITION_CANCELLED", "The interface switch was cancelled.", m.clock())
+	return err
+}
+
+func (m *Manager) runInterfaceTransition(
+	ctx context.Context,
+	transition domain.SessionInterfaceTransition,
+	run *interfaceTransitionRun,
+) {
+	defer close(run.done)
+	defer func() {
+		m.transitionMu.Lock()
+		if current := m.transitions[transition.SessionID]; current == run {
+			delete(m.transitions, transition.SessionID)
+		}
+		m.transitionMu.Unlock()
+	}()
+
+	sourcePrepared := false
+	sourceStopped := false
+	modeChanged := false
+	fail := func(code string, cause error) {
+		if sourcePrepared && !sourceStopped {
+			m.abortSourceHandoff(transition)
+		}
+		if errors.Is(cause, context.Canceled) && !sourceStopped {
+			m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionCancelled,
+				"TRANSITION_CANCELLED", "The interface switch was cancelled.")
+			return
+		}
+		if sourceStopped {
+			m.rollbackInterfaceTransition(transition, modeChanged, code, cause)
+			return
+		}
+		m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed, code, cause.Error())
+	}
+
+	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionPreflighting, "", ""); err != nil {
+		fail("TRANSITION_STATE_FAILED", err)
+		return
+	}
+	rec, ok, err := m.store.GetSession(ctx, transition.SessionID)
+	if err != nil || !ok {
+		if err == nil {
+			err = ErrNotFound
+		}
+		fail("SESSION_NOT_FOUND", err)
+		return
+	}
+	if rec.IsTerminated || domain.NormalizeSessionMode(rec.Mode) != transition.SourceMode {
+		fail("SESSION_CHANGED", fmt.Errorf("session changed before the interface switch could start"))
+		return
+	}
+	if err := m.preflightInterfaceTarget(ctx, rec, transition); err != nil {
+		fail(interfaceTransitionErrorCode(err), err)
+		return
+	}
+	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionDraining, "", ""); err != nil {
+		fail("TRANSITION_STATE_FAILED", err)
+		return
+	}
+	if err := m.prepareSourceHandoff(ctx, rec, transition.Policy); err != nil {
+		fail("SOURCE_QUIESCE_FAILED", err)
+		return
+	}
+	sourcePrepared = true
+	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionSourceStopping, "", ""); err != nil {
+		fail("TRANSITION_STATE_FAILED", err)
+		return
+	}
+	// Cancellation is deliberately no longer inherited after source_stopping was
+	// committed. At this boundary the old process may already have received its
+	// stop signal; abandoning the operation could leave its liveness ambiguous.
+	// Retry the idempotent stop under fresh bounded contexts. If it still cannot
+	// be proven stopped, do not launch either controller: recovery is safer than
+	// two writers racing on one native conversation.
+	if err := m.stopSourceControllerConclusive(rec); err != nil {
+		detail := "AO could not prove that the old controller stopped. Restart AO to reconcile this session before sending more work: " + err.Error()
+		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
+			"SOURCE_STOP_UNCERTAIN", detail)
+		return
+	}
+	sourceStopped = true
+	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionSourceStopped, "", ""); err != nil {
+		fail("TRANSITION_STATE_FAILED", err)
+		return
+	}
+	store := m.store.(interfaceTransitionStore)
+	changed, err := store.SwitchSessionControllerMode(ctx, rec.ID, transition.SourceMode,
+		transition.TargetMode, transition.NativeConversationID, m.clock())
+	if err != nil || !changed {
+		if err == nil {
+			err = fmt.Errorf("session mode compare-and-swap failed")
+		}
+		fail("SESSION_CHANGED", err)
+		return
+	}
+	modeChanged = true
+	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionTargetStarting, "", ""); err != nil {
+		fail("TRANSITION_STATE_FAILED", err)
+		return
+	}
+	if err := m.startTransitionTarget(ctx, rec.ID); err != nil {
+		fail("TARGET_RESUME_FAILED", err)
+		return
+	}
+	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionActivating, "", ""); err != nil {
+		// The target is live. Do not tear it down merely because diagnostics failed
+		// to advance; mark recovery so a user is never left with no controller.
+		m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
+			"TRANSITION_STATE_FAILED", err.Error())
+		return
+	}
+	if err := m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionCompleted, "", ""); err != nil {
+		m.logger.Error("interface transition completed but durable completion failed",
+			"sessionID", rec.ID, "transitionID", transition.ID, "error", err)
+		return
+	}
+	m.deliverTransitionMessages(transition)
+}
+
+func (m *Manager) nativeConversationID(
+	ctx context.Context,
+	rec domain.SessionRecord,
+) (string, ports.AgentInterfaceHandoff, error) {
+	agent, ok := m.agents.Agent(rec.Harness)
+	if !ok {
+		return "", nil, fmt.Errorf("%w: no adapter for %s", ErrInterfaceHandoffUnsupported, rec.Harness)
+	}
+	handoff, ok := agent.(ports.AgentInterfaceHandoff)
+	if !ok {
+		return "", nil, fmt.Errorf("%w: %s has not declared compatible TUI and Chat identities",
+			ErrInterfaceHandoffUnsupported, rec.Harness)
+	}
+	ref := ports.SessionRef{
+		ID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath,
+		Metadata: map[string]string{ports.MetadataKeyAgentSessionID: rec.Metadata.AgentSessionID},
+	}
+	id, ok, err := handoff.NativeConversationID(ctx, ref, domain.NormalizeSessionMode(rec.Mode), rec.Metadata.ProviderConversationID)
+	if err != nil {
+		return "", handoff, err
+	}
+	id = strings.TrimSpace(id)
+	if !ok || id == "" {
+		return "", handoff, fmt.Errorf("%w for %s", ErrNativeConversationMissing, rec.Harness)
+	}
+	return id, handoff, nil
+}
+
+func (m *Manager) preflightInterfaceTarget(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	transition domain.SessionInterfaceTransition,
+) error {
+	if transition.TargetMode == domain.SessionModeChat {
+		if m.chat == nil {
+			return ports.ErrChatUnsupported
+		}
+		return m.chat.PreflightChat(ctx, rec.Harness)
+	}
+	agent, ok := m.agents.Agent(rec.Harness)
+	if !ok {
+		return ErrUnknownHarness
+	}
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return err
+	}
+	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
+	if err != nil {
+		return err
+	}
+	config := effectiveAgentConfig(rec.Kind, project.Config)
+	cmd, resumable, err := agent.GetRestoreCommand(ctx, ports.RestoreConfig{
+		Session: ports.SessionRef{
+			ID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath,
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: transition.NativeConversationID},
+		},
+		Kind: rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt,
+		Config: config, Permissions: config.Permissions,
+	})
+	if err != nil {
+		return err
+	}
+	if !resumable {
+		return ErrNativeConversationMissing
+	}
+	return m.validateAgentBinary(cmd)
+}
+
+func (m *Manager) prepareSourceHandoff(
+	ctx context.Context,
+	rec domain.SessionRecord,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		handoff, ok := m.chat.(chatHandoffLauncher)
+		if !ok {
+			return ErrInterfaceHandoffUnsupported
+		}
+		return handoff.PrepareChatHandoff(ctx, rec.ID, policy)
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID == "" {
+		if rec.Activity.State == domain.ActivityExited {
+			return nil
+		}
+		return ErrIncompleteHandle
+	}
+	if policy == domain.SessionInterfaceTransitionInterrupt {
+		if rec.Activity.State == domain.ActivityIdle || rec.Activity.State == domain.ActivityExited {
+			return nil
+		}
+		interrupter, ok := m.runtime.(runtimeInterrupter)
+		if !ok {
+			return fmt.Errorf("runtime cannot interrupt a live terminal controller")
+		}
+		if err := interrupter.Interrupt(ctx, handle); err != nil {
+			return err
+		}
+		// Give the provider a short, bounded window to flush its native transcript
+		// after Ctrl-C. The subsequent Destroy is still authoritative, so a stale
+		// activity hook cannot turn "stop now" into an unbounded drain.
+		deadline := time.NewTimer(interfaceInterruptSettle)
+		defer deadline.Stop()
+		ticker := time.NewTicker(interfaceTransitionPoll)
+		defer ticker.Stop()
+		for {
+			current, found, readErr := m.store.GetSession(ctx, rec.ID)
+			if readErr != nil {
+				return readErr
+			}
+			if !found {
+				return ErrNotFound
+			}
+			if current.Activity.State == domain.ActivityIdle || current.Activity.State == domain.ActivityExited {
+				return nil
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-deadline.C:
+				return nil
+			case <-ticker.C:
+			}
+		}
+	}
+
+	ticker := time.NewTicker(interfaceTransitionPoll)
+	defer ticker.Stop()
+	for {
+		current, ok, err := m.store.GetSession(ctx, rec.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrNotFound
+		}
+		if current.Activity.State == domain.ActivityIdle || current.Activity.State == domain.ActivityExited {
+			return nil
+		}
+		alive, probeErr := m.runtime.IsAlive(ctx, handle)
+		if probeErr == nil && !alive {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (m *Manager) abortSourceHandoff(transition domain.SessionInterfaceTransition) {
+	if transition.SourceMode != domain.SessionModeChat {
+		return
+	}
+	if handoff, ok := m.chat.(chatHandoffLauncher); ok {
+		handoff.AbortChatHandoff(transition.SessionID)
+	}
+}
+
+func (m *Manager) stopSourceController(ctx context.Context, rec domain.SessionRecord) error {
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		if m.chat == nil {
+			return nil
+		}
+		return m.chat.StopChat(ctx, rec.ID)
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID == "" {
+		return nil
+	}
+	return m.runtime.Destroy(ctx, handle)
+}
+
+// stopSourceControllerConclusive makes one retry because both shipped runtime
+// teardown and Chat stop are idempotent. A TUI liveness probe can turn a failed
+// tmux command into a conclusive success when the process did in fact exit. Chat
+// Service retains a controller whose event stream has not stopped, so its retry
+// waits for the same process rather than losing the only handle to it.
+func (m *Manager) stopSourceControllerConclusive(rec domain.SessionRecord) error {
+	var failures []error
+	for attempt := 0; attempt < 2; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), interfaceTransitionStopLimit)
+		err := m.stopSourceController(ctx, rec)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		failures = append(failures, err)
+		if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat {
+			probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			alive, probeErr := m.runtime.IsAlive(probeCtx, runtimeHandle(rec.Metadata))
+			probeCancel()
+			if probeErr == nil && !alive {
+				return nil
+			}
+			if probeErr != nil {
+				failures = append(failures, fmt.Errorf("verify terminal controller stopped: %w", probeErr))
+			}
+		}
+	}
+	return fmt.Errorf("could not prove the source controller stopped after retry: %w", errors.Join(failures...))
+}
+
+func (m *Manager) startTransitionTarget(ctx context.Context, id domain.SessionID) error {
+	rec, ok, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	project, err := m.loadProject(ctx, rec.ProjectID)
+	if err != nil {
+		return err
+	}
+	ws := workspaceInfo(rec)
+	_, err = m.relaunchSession(ctx, "switch interface", rec, project, ws, nil)
+	return err
+}
+
+func (m *Manager) rollbackInterfaceTransition(
+	transition domain.SessionInterfaceTransition,
+	modeChanged bool,
+	code string,
+	cause error,
+) {
+	ctx, cancel := context.WithTimeout(context.Background(), interfaceTransitionStepLimit)
+	defer cancel()
+	store := m.store.(interfaceTransitionStore)
+	if modeChanged {
+		// A target may have partially started. Stop whatever its committed mode can
+		// identify before restoring the old writer.
+		if current, ok, _ := m.store.GetSession(ctx, transition.SessionID); ok {
+			_ = m.stopSourceController(ctx, current)
+		}
+		changed, err := store.SwitchSessionControllerMode(ctx, transition.SessionID,
+			transition.TargetMode, transition.SourceMode, transition.NativeConversationID, m.clock())
+		if err != nil || !changed {
+			detail := cause.Error()
+			if err != nil {
+				detail += "; rollback mode: " + err.Error()
+			}
+			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
+				"RECOVERY_REQUIRED", detail)
+			return
+		}
+	}
+	if err := m.startTransitionTarget(ctx, transition.SessionID); err != nil {
+		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
+			"RECOVERY_REQUIRED", cause.Error()+"; source restore: "+err.Error())
+		return
+	}
+	_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed, code, cause.Error())
+}
+
+func (m *Manager) moveInterfaceTransition(
+	id string,
+	next domain.SessionInterfaceTransitionPhase,
+	errorCode, errorDetail string,
+) error {
+	store := m.store.(interfaceTransitionStore)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for attempt := 0; attempt < 4; attempt++ {
+		current, ok, err := store.GetSessionInterfaceTransition(ctx, id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrNotFound
+		}
+		if current.Phase.Terminal() {
+			return fmt.Errorf("transition %s is already %s", id, current.Phase)
+		}
+		moved, err := store.AdvanceSessionInterfaceTransition(ctx, id, current.Phase, next,
+			current.NativeConversationID, errorCode, errorDetail, m.clock())
+		if err != nil {
+			return err
+		}
+		if moved {
+			return nil
+		}
+	}
+	return fmt.Errorf("transition %s changed concurrently", id)
+}
+
+func (m *Manager) finishInterfaceTransition(
+	id string,
+	phase domain.SessionInterfaceTransitionPhase,
+	errorCode, errorDetail string,
+) error {
+	return m.moveInterfaceTransition(id, phase, errorCode, errorDetail)
+}
+
+func (m *Manager) deliverTransitionMessages(transition domain.SessionInterfaceTransition) {
+	store := m.store.(interfaceTransitionStore)
+	ctx, cancel := context.WithTimeout(context.Background(), interfaceTransitionStepLimit)
+	defer cancel()
+	messages, err := store.ListPendingSessionInterfaceTransitionMessages(ctx, transition.ID)
+	if err != nil {
+		m.logger.Error("interface transition: read queued messages", "transitionID", transition.ID, "error", err)
+		return
+	}
+	for _, message := range messages {
+		if err := m.Send(ctx, transition.SessionID, message.Message); err != nil {
+			m.logger.Error("interface transition: deliver queued message", "transitionID", transition.ID, "error", err)
+			return
+		}
+		if err := store.MarkSessionInterfaceTransitionMessageDelivered(ctx, message.ID, m.clock()); err != nil {
+			m.logger.Error("interface transition: mark queued message delivered", "transitionID", transition.ID, "error", err)
+			return
+		}
+	}
+}
+
+func (m *Manager) queueDuringInterfaceTransition(
+	ctx context.Context,
+	id domain.SessionID,
+	message string,
+) (bool, error) {
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return false, nil
+	}
+	transition, active, err := store.GetActiveSessionInterfaceTransition(ctx, id)
+	if err != nil || !active {
+		return false, err
+	}
+	if err := store.EnqueueSessionInterfaceTransitionMessage(ctx, transition.ID, message, m.clock()); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func (m *Manager) hasActiveInterfaceTransition(ctx context.Context, id domain.SessionID) (bool, error) {
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return false, nil
+	}
+	_, active, err := store.GetActiveSessionInterfaceTransition(ctx, id)
+	return active, err
+}
+
+// recoverInterruptedInterfaceTransitions closes every durable handoff left
+// active by a daemon exit. The session row is the commit point, so normal
+// Reconcile can safely adopt or restore whichever mode that row names. Queued
+// coordination messages are returned for delivery after controller recovery.
+func (m *Manager) recoverInterruptedInterfaceTransitions(
+	ctx context.Context,
+) ([]domain.SessionInterfaceTransition, error) {
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return nil, nil
+	}
+	active, err := store.ListActiveSessionInterfaceTransitions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range active {
+		transition := &active[i]
+		detail := "The daemon restarted during the interface switch; AO recovered the session from its last committed mode."
+		moved, err := store.AdvanceSessionInterfaceTransition(
+			ctx,
+			transition.ID,
+			transition.Phase,
+			domain.SessionInterfaceTransitionRecovery,
+			transition.NativeConversationID,
+			"DAEMON_RESTARTED",
+			detail,
+			m.clock(),
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !moved {
+			return nil, fmt.Errorf("transition %s changed while recovering", transition.ID)
+		}
+		transition.Phase = domain.SessionInterfaceTransitionRecovery
+		transition.ErrorCode = "DAEMON_RESTARTED"
+		transition.ErrorDetail = detail
+		transition.UpdatedAt = m.clock()
+		transition.CompletedAt = transition.UpdatedAt
+	}
+	return active, nil
+}
+
+func oppositeSessionMode(mode domain.SessionMode) domain.SessionMode {
+	if domain.NormalizeSessionMode(mode) == domain.SessionModeChat {
+		return domain.SessionModeTUI
+	}
+	return domain.SessionModeChat
+}
+
+func interfaceTransitionErrorCode(err error) string {
+	switch {
+	case errors.Is(err, ports.ErrChatUnsupported), errors.Is(err, ErrInterfaceHandoffUnsupported):
+		return "INTERFACE_HANDOFF_UNSUPPORTED"
+	case errors.Is(err, ports.ErrChatDriverUnavailable), errors.Is(err, ports.ErrAgentBinaryNotFound):
+		return "TARGET_UNAVAILABLE"
+	case errors.Is(err, ports.ErrChatDriverIncompatible):
+		return "TARGET_INCOMPATIBLE"
+	case errors.Is(err, ports.ErrChatAuthRequired):
+		return "TARGET_AUTH_REQUIRED"
+	case errors.Is(err, ErrNativeConversationMissing):
+		return "NATIVE_SESSION_MISSING"
+	default:
+		return "TARGET_PREFLIGHT_FAILED"
+	}
+}

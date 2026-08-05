@@ -7,6 +7,13 @@ import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
+import {
+	SessionInterfaceActionGroup,
+	SessionInterfaceSwitchButton,
+	SessionInterfaceSwitchDialog,
+	SessionInterfaceTransitionNotice,
+	SessionInterfaceTransitionOverlay,
+} from "./SessionInterfaceSwitch";
 import { ShellTopbar } from "./ShellTopbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
 import { useBrowserView } from "../hooks/useBrowserView";
@@ -16,6 +23,10 @@ import {
 	useRenameShellTerminal,
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
+import {
+	interfaceTransitionIsActive,
+	useSessionInterfaceTransition,
+} from "../hooks/useSessionInterfaceTransition";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { apiErrorMessage } from "../lib/api-client";
@@ -84,9 +95,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
+	const [dismissedTransitionID, setDismissedTransitionID] = useState("");
 	const isNativeFullScreen = useWindowFullScreen();
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 
 	// Shell terminals opened inside a session live beside its pane as extra tabs,
 	// scoped to the session on screen so each session has its own shell set.
@@ -184,6 +198,61 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// structured flow's escape hatches, not terminal-only affordances.
 	const hasInspector = Boolean(session && (!isOrchestrator || session.mode === "chat"));
 	const showChatSurface = session?.mode === "chat" && terminalTarget.kind === "worker";
+	const activeInterfaceTransition = interfaceTransitionIsActive(interfaceSwitch.transition);
+	const interfaceTarget =
+		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
+		(session?.mode === "chat" ? "tui" : "chat");
+	const interfaceBusy = Boolean(
+		session &&
+		(session.status === "working" ||
+			session.status === "needs_input" ||
+			session.activity?.state === "active" ||
+			session.activity?.state === "waiting_input" ||
+			session.activity?.state === "blocked"),
+	);
+	const interfaceWaitingForInput = Boolean(
+		session &&
+		(session.status === "needs_input" ||
+			session.activity?.state === "waiting_input" ||
+			session.activity?.state === "blocked"),
+	);
+	const beginInterfaceSwitch = useCallback(
+		async (policy: "drain" | "interrupt") => {
+			try {
+				await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
+				setInterfaceSwitchDialogOpen(false);
+			} catch {
+				// The mutation owns the typed error. Keep the dialog open so it is
+				// visible instead of also producing an unhandled rejection.
+				setInterfaceSwitchDialogOpen(true);
+			}
+		},
+		[interfaceSwitch, interfaceTarget],
+	);
+	const requestInterfaceSwitch = useCallback(() => {
+		interfaceSwitch.resetStartError();
+		if (interfaceBusy) {
+			setInterfaceSwitchDialogOpen(true);
+			return;
+		}
+		void beginInterfaceSwitch("drain");
+	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
+	const showInterfaceSwitchAction = Boolean(
+		interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError,
+	);
+	const interfaceSwitchAction = session && showInterfaceSwitchAction ? (
+		<SessionInterfaceSwitchButton
+			target={interfaceTarget}
+			supported={Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition}
+			disabledReason={
+				interfaceSwitch.isLoading
+					? "Checking whether this agent can switch interfaces…"
+					: interfaceSwitch.status?.reason || interfaceSwitch.statusError
+			}
+			pending={interfaceSwitch.starting || activeInterfaceTransition}
+			onClick={requestInterfaceSwitch}
+		/>
+	) : null;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -397,14 +466,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
-					{/* The central surface comes from the session's OWN persisted mode, not
-					    from the current default preference: a session created in chat mode
-					    stays chat forever, and one created in terminal mode never grows a
-					    chat surface. Exactly one controller exists per session, so exactly
-					    one surface may render it. */}
+					<div className="relative h-full min-h-0">
+					{/* The central surface comes from the session's OWN committed mode, not
+					    from the current creation default. An explicit daemon-coordinated
+					    handoff may change it, but exactly one controller and surface own the
+					    session at a time. */}
 					{showChatSurface ? (
 						<SessionChatSurface
 							session={session}
+							interfaceAction={interfaceSwitchAction}
 							onOpenShell={addShellTerminal}
 							openingShell={openShellTerminal.isPending}
 							shellError={
@@ -424,9 +494,29 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							shellTerminals={shellTerminals}
 							terminalTarget={terminalTarget}
 							theme={theme}
-							topbarActions={<ShellTopbar embedded />}
+							topbarActions={
+								<SessionInterfaceActionGroup>
+									{interfaceSwitchAction}
+									<ShellTopbar embedded />
+								</SessionInterfaceActionGroup>
+							}
 						/>
 					)}
+						<SessionInterfaceTransitionOverlay
+							transition={interfaceSwitch.transition}
+							cancelling={interfaceSwitch.cancelling}
+							cancelError={interfaceSwitch.cancelError}
+							onCancel={() => {
+								void interfaceSwitch.cancel().catch(() => {});
+							}}
+						/>
+						{interfaceSwitch.transition?.id !== dismissedTransitionID ? (
+							<SessionInterfaceTransitionNotice
+								transition={interfaceSwitch.transition}
+								onDismiss={() => setDismissedTransitionID(interfaceSwitch.transition?.id ?? "")}
+							/>
+						) : null}
+					</div>
 				</ResizablePanel>
 				{hasInspector ? (
 					<>
@@ -473,6 +563,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</>
 				) : null}
 			</ResizablePanelGroup>
+			<SessionInterfaceSwitchDialog
+				open={interfaceSwitchDialogOpen}
+				target={interfaceTarget}
+				waitingForInput={interfaceWaitingForInput}
+				busy={interfaceSwitch.starting}
+				error={interfaceSwitch.startError}
+				onOpenChange={setInterfaceSwitchDialogOpen}
+				onChoose={(policy) => void beginInterfaceSwitch(policy)}
+			/>
 			{filesPoppedOut && session
 				? createPortal(
 						<div

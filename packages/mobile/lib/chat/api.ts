@@ -31,6 +31,70 @@ export type { ConversationPage } from "./snapshot";
 const API = "/api/v1";
 export const CHAT_PAGE_SIZE = 200;
 
+export type SessionInterfaceTransition = {
+	id: string;
+	sessionId: string;
+	sourceMode: "chat" | "tui";
+	targetMode: "chat" | "tui";
+	policy: "drain" | "interrupt";
+	phase:
+		| "requested"
+		| "preflighting"
+		| "draining"
+		| "source_stopping"
+		| "source_stopped"
+		| "target_starting"
+		| "activating"
+		| "completed"
+		| "failed"
+		| "cancelled"
+		| "recovery_required";
+	errorCode?: string;
+	errorDetail?: string;
+	createdAt: string;
+	updatedAt: string;
+	completedAt?: string;
+};
+
+export type SessionInterfaceTransitionStatus = {
+	supported: boolean;
+	targetMode: "chat" | "tui";
+	reasonCode?: string;
+	reason?: string;
+	transition?: SessionInterfaceTransition;
+};
+
+export async function getSessionInterfaceTransition(
+	cfg: ServerConfig,
+	sessionId: string,
+): Promise<SessionInterfaceTransitionStatus> {
+	const res = await apiRequest(cfg, `${API}/sessions/${encodeURIComponent(sessionId)}/interface-transition`);
+	return (await res.json()) as SessionInterfaceTransitionStatus;
+}
+
+export async function startSessionInterfaceTransition(
+	cfg: ServerConfig,
+	sessionId: string,
+	targetMode: "chat" | "tui",
+	policy: "drain" | "interrupt",
+): Promise<SessionInterfaceTransition> {
+	const res = await apiRequest(cfg, `${API}/sessions/${encodeURIComponent(sessionId)}/interface-transition`, {
+		method: "POST",
+		body: JSON.stringify({ targetMode, policy }),
+	});
+	const body = (await res.json()) as { transition: SessionInterfaceTransition };
+	return body.transition;
+}
+
+export async function cancelSessionInterfaceTransition(
+	cfg: ServerConfig,
+	sessionId: string,
+): Promise<void> {
+	await apiRequest(cfg, `${API}/sessions/${encodeURIComponent(sessionId)}/interface-transition`, {
+		method: "DELETE",
+	});
+}
+
 type WireSnapshot = Omit<ConversationSnapshot, "items" | "controller"> & {
 	controller: ControllerState;
 	messages?: ConversationMessage[];

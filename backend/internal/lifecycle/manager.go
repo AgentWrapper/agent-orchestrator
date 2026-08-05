@@ -301,6 +301,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
 	s.LaunchID = strings.TrimSpace(s.LaunchID)
+	s.ControllerGeneration = strings.TrimSpace(s.ControllerGeneration)
 	if !s.Valid && s.AgentSessionID == "" {
 		return nil
 	}
@@ -336,6 +337,12 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return nil
 	}
 	if s.LaunchID != "" && s.LaunchID != rec.Metadata.RuntimeLaunchID {
+		m.mu.Unlock()
+		return nil
+	}
+	if s.ControllerGeneration != "" &&
+		(domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
+			s.ControllerGeneration != rec.Metadata.ControllerGeneration) {
 		m.mu.Unlock()
 		return nil
 	}

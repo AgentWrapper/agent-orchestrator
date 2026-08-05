@@ -11,8 +11,25 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestNativeConversationIDUsesTheSameClaudeUUIDAcrossInterfaces(t *testing.T) {
+	p := &Plugin{}
+	tuiID, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{
+		ID: "ao-session-1", Metadata: map[string]string{},
+	}, domain.SessionModeTUI, "")
+	if err != nil || !ok || tuiID != claudeSessionUUID("ao-session-1") {
+		t.Fatalf("TUI native id = %q ok=%v err=%v", tuiID, ok, err)
+	}
+	chatID, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{
+		ID: "ao-session-1", Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "stale"},
+	}, domain.SessionModeChat, tuiID)
+	if err != nil || !ok || chatID != tuiID {
+		t.Fatalf("Chat native id = %q ok=%v err=%v", chatID, ok, err)
+	}
+}
 
 func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}

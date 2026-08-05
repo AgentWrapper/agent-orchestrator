@@ -8,9 +8,10 @@ import { useTheme, useThemedStyles } from "../../lib/ThemeProvider";
 import type { Theme } from "../../lib/theme";
 
 /**
- * Session modes are immutable and the daemon is authoritative. The board's
- * cached session supplies the fast path; a missing row waits for the next board
- * refresh rather than guessing Terminal and briefly attaching a nonexistent PTY.
+ * The committed session mode is daemon-authoritative, including after an
+ * explicit controller handoff. The board's cached session supplies the fast
+ * path; a missing row waits for the next refresh rather than guessing Terminal
+ * and briefly attaching a nonexistent PTY.
  */
 export default function MobileSessionRoute() {
 	const { id: rawId } = useLocalSearchParams<{ id: string }>();

@@ -139,6 +139,12 @@ type Controller struct {
 	// cancelQueuedAt is set when the user interrupts, and is the cutoff for the
 	// queue that interrupt cancels. Zero means nothing is being cancelled.
 	cancelQueuedAt time.Time
+	// handoff closes source-controller intake while Session Manager moves the AO
+	// session to its other interface. Drain keeps dispatching rows already queued;
+	// interrupt cancels them with the active turn. The target controller is not
+	// started until this controller reports quiescent and is closed.
+	handoff      bool
+	handoffDrain bool
 
 	// account, threadState and mcpServers are merged here before being written,
 	// because the provider reports each of them in pieces: account/updated carries
@@ -164,6 +170,11 @@ type Controller struct {
 
 // ErrNoActiveTurn reports an interrupt with nothing to cancel.
 var ErrNoActiveTurn = errors.New("no active turn")
+
+// ErrControllerHandoff reports a send attempted after a controller handoff has
+// closed source intake. The client should retain the draft and retry after the
+// session_updated event announces the target mode.
+var ErrControllerHandoff = errors.New("chat controller is switching interfaces")
 
 func newController(
 	sessionID domain.SessionID,
@@ -292,6 +303,12 @@ func (c *Controller) Capabilities() ports.ChatCapabilities {
 func (c *Controller) Send(ctx context.Context, msg ports.ChatUserMessage) (domain.ConversationTurn, error) {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
+	c.mu.Lock()
+	handoff := c.handoff
+	c.mu.Unlock()
+	if handoff {
+		return domain.ConversationTurn{}, ErrControllerHandoff
+	}
 
 	now := c.now()
 	turnID := c.newID()
@@ -491,6 +508,8 @@ func (c *Controller) drain(ctx context.Context) {
 	cutoff := c.cancelQueuedAt
 	c.cancelQueuedAt = time.Time{}
 	busy := c.pendingTurnID != ""
+	handoff := c.handoff
+	drainDuringHandoff := c.handoffDrain
 	c.mu.Unlock()
 
 	if busy {
@@ -506,6 +525,9 @@ func (c *Controller) drain(ctx context.Context) {
 			c.log.Error("failed to cancel queued turns", "session", c.sessionID, "error", err)
 			return
 		}
+	}
+	if handoff && !drainDuringHandoff {
+		return
 	}
 
 	queued, err := c.store.NextQueuedTurn(ctx, c.conversation.ID)
@@ -539,6 +561,90 @@ func (c *Controller) drain(ctx context.Context) {
 		// discard messages the user can otherwise still see waiting.
 		c.log.Error("failed to dispatch queued turn",
 			"session", c.sessionID, "turn", queued.TurnID, "error", err)
+	}
+}
+
+// BeginHandoff closes source intake and waits until the provider can be stopped
+// without overlapping the target controller. Drain preserves and finishes work
+// AO had already accepted. Interrupt is the explicit brake and cancels both the
+// active turn and the queue behind it.
+func (c *Controller) BeginHandoff(
+	ctx context.Context,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	c.sendMu.Lock()
+	c.mu.Lock()
+	if c.handoff {
+		c.mu.Unlock()
+		c.sendMu.Unlock()
+		return ErrControllerHandoff
+	}
+	c.handoff = true
+	c.handoffDrain = policy == domain.SessionInterfaceTransitionDrain
+	active := c.pendingTurnID != ""
+	if policy == domain.SessionInterfaceTransitionInterrupt {
+		// This cutoff is also needed when no turn is active: drain performs the
+		// durable queued-turn cancellation without dispatching another turn.
+		c.cancelQueuedAt = c.now()
+	}
+	c.mu.Unlock()
+	c.sendMu.Unlock()
+
+	if policy == domain.SessionInterfaceTransitionInterrupt {
+		if active {
+			if err := c.Interrupt(ctx); err != nil && !errors.Is(err, ErrNoActiveTurn) {
+				c.AbortHandoff()
+				return err
+			}
+		} else {
+			c.drain(ctx)
+		}
+	} else if !active {
+		// A queued row can exist in the narrow gap after a completion was
+		// projected and before its drain ran. Claim it now so drain mode cannot
+		// report quiescent while accepted work is still waiting.
+		c.drain(ctx)
+	}
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		c.mu.Lock()
+		busy := c.pendingTurnID != ""
+		c.mu.Unlock()
+		if !busy {
+			_, err := c.store.NextQueuedTurn(ctx, c.conversation.ID)
+			switch {
+			case errors.Is(err, domain.ErrNoQueuedTurn):
+				return nil
+			case err != nil:
+				c.AbortHandoff()
+				return fmt.Errorf("check queued turns before handoff: %w", err)
+			case policy == domain.SessionInterfaceTransitionDrain:
+				c.drain(ctx)
+			}
+		}
+		select {
+		case <-ctx.Done():
+			c.AbortHandoff()
+			return ctx.Err()
+		case <-c.stopped:
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// AbortHandoff reopens source intake when a drain is cancelled before the source
+// controller is stopped. Any queued work resumes through the ordinary drain.
+func (c *Controller) AbortHandoff() {
+	c.mu.Lock()
+	wasDraining := c.handoff && c.handoffDrain
+	c.handoff = false
+	c.handoffDrain = false
+	c.mu.Unlock()
+	if wasDraining {
+		go c.drain(context.WithoutCancel(context.Background()))
 	}
 }
 
@@ -622,6 +728,9 @@ func (c *Controller) Compact(ctx context.Context) (ports.ChatCompactionResult, e
 
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
+	if c.handoffActive() {
+		return ports.ChatCompactionResult{}, ErrControllerHandoff
+	}
 
 	if c.busy() {
 		return ports.ChatCompactionResult{}, ErrCompactionWhileBusy
@@ -721,6 +830,9 @@ func (c *Controller) Rollback(ctx context.Context, turnID string) (int, error) {
 
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
+	if c.handoffActive() {
+		return 0, ErrControllerHandoff
+	}
 
 	if c.busy() {
 		// Not a failure and not permanent: the agent is mid-thought, and the same
@@ -1445,6 +1557,9 @@ func (c *Controller) ReloadMCPServers(ctx context.Context) ([]domain.Conversatio
 
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
+	if c.handoffActive() {
+		return nil, ErrControllerHandoff
+	}
 
 	if c.busy() {
 		return nil, ErrTurnRunning
@@ -1482,6 +1597,12 @@ func (c *Controller) ReloadMCPServers(ctx context.Context) ([]domain.Conversatio
 	}
 	c.mu.Unlock()
 	return merged, nil
+}
+
+func (c *Controller) handoffActive() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.handoff
 }
 
 // planItemID keys a turn's plan activity. The provider sends no item id with a plan
@@ -1642,10 +1763,11 @@ func (c *Controller) reportActivity(
 		return
 	}
 	if err := c.activity.ApplyActivitySignal(ctx, c.sessionID, ports.ActivitySignal{
-		Valid:     true,
-		State:     state,
-		Timestamp: now,
-		Event:     event,
+		Valid:                true,
+		State:                state,
+		Timestamp:            now,
+		Event:                event,
+		ControllerGeneration: c.generation,
 	}); err != nil {
 		c.log.Debug("chat activity signal rejected",
 			"session", c.sessionID, "event", event, "error", err)

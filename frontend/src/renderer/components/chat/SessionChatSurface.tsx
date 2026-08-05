@@ -8,6 +8,7 @@
  */
 
 import { AlertTriangle, Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
 import { ChatWorkspace } from "./ChatWorkspace";
 import {
 	useConversation,
@@ -26,11 +27,13 @@ export function SessionChatSurface({
 	onOpenShell,
 	openingShell,
 	shellError,
+	interfaceAction,
 }: {
 	session: WorkspaceSession;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
+	interfaceAction?: ReactNode;
 }) {
 	const {
 		snapshot,
@@ -98,6 +101,7 @@ export function SessionChatSurface({
 	return (
 		<ChatWorkspace
 			snapshot={snapshot}
+			interfaceAction={interfaceAction}
 			hasOlder={hasOlder}
 			loadingOlder={isLoadingOlder}
 			onLoadOlder={loadOlder}

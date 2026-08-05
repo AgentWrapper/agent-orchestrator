@@ -310,6 +310,29 @@ type SessionCleanupFact struct {
 	FailureCode          string
 }
 
+type SessionInterfaceTransition struct {
+	ID                   string
+	SessionID            domain.SessionID
+	SourceMode           domain.SessionMode
+	TargetMode           domain.SessionMode
+	Policy               domain.SessionInterfaceTransitionPolicy
+	Phase                domain.SessionInterfaceTransitionPhase
+	NativeConversationID string
+	ErrorCode            string
+	ErrorDetail          string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	CompletedAt          sql.NullTime
+}
+
+type SessionInterfaceTransitionMessage struct {
+	ID           int64
+	TransitionID string
+	Message      string
+	CreatedAt    time.Time
+	DeliveredAt  sql.NullTime
+}
+
 type SessionWorktree struct {
 	SessionID    domain.SessionID
 	RepoName     string

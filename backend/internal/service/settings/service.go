@@ -66,9 +66,8 @@ func (s *Service) DefaultSessionMode(ctx context.Context) domain.SessionMode {
 
 // SetDefaultSessionMode changes the default for sessions created afterwards.
 //
-// It deliberately does not touch existing sessions or their controllers. A
-// session's mode is fixed at creation, so this is a preference for the future,
-// not a migration of the present.
+// It deliberately does not touch existing sessions or their controllers. This
+// is a preference for future sessions, not an implicit migration of the present.
 func (s *Service) SetDefaultSessionMode(ctx context.Context, mode domain.SessionMode) (Snapshot, error) {
 	if !mode.Valid() {
 		return Snapshot{}, fmt.Errorf("%w: %q", ports.ErrChatUnsupported, mode)

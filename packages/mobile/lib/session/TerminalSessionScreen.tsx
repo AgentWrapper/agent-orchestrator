@@ -25,6 +25,11 @@ import { useApp } from "../store";
 import { useVoiceInput } from "../voice/useVoiceInput";
 import { useTheme, useThemedStyles, useThemeState } from "../ThemeProvider";
 import { closeShellTerminal } from "../chat/api";
+import {
+	mobileInterfaceTransitionIsActive,
+	mobileInterfaceTransitionIsCancellable,
+	useInterfaceTransition,
+} from "./useInterfaceTransition";
 
 const FONT_SIZE = 12;
 
@@ -505,6 +510,23 @@ const statusColorFor = (t: Theme): Record<MuxStatus, string> => ({
 	error: t.red,
 });
 
+function terminalInterfacePhaseLabel(phase?: string): string {
+	switch (phase) {
+		case "draining":
+			return "Waiting for the current terminal turn to finish. New AO messages are queued safely.";
+		case "source_stopping":
+			return "Stopping the terminal controller before Chat starts.";
+		case "source_stopped":
+			return "Terminal controller stopped. The worktree and native conversation are unchanged.";
+		case "target_starting":
+			return "Resuming the same native conversation in Chat.";
+		case "activating":
+			return "Opening the Chat interface.";
+		default:
+			return "Checking that Chat can resume this agent's native conversation.";
+	}
+}
+
 export default function TerminalScreen() {
 	const t = useTheme();
 	const { scheme } = useThemeState();
@@ -542,6 +564,7 @@ export default function TerminalScreen() {
 	const [status, setStatus] = useState<MuxStatus>("connecting");
 	const [size, setSize] = useState<{ cols: number; rows: number } | null>(null);
 	const [banner, setBanner] = useState<string | null>(null);
+	const [dismissedInterfaceTransitionID, setDismissedInterfaceTransitionID] = useState("");
 	const [kbHeight, setKbHeight] = useState(0); // iOS: space to reserve for keyboard
 	const [kbVisible, setKbVisible] = useState(false); // both platforms
 	const [msg, setMsg] = useState("");
@@ -566,8 +589,18 @@ export default function TerminalScreen() {
 	const [preview, setPreview] = useState<{ entry: string; url: string } | null>(null);
 	const previewWebRef = useRef<WebView>(null);
 
-	const { sessions, orchestrators, restore } = useApp();
+	const { sessions, orchestrators, restore, refresh } = useApp();
 	const known = sessions.find((s) => s.id === sessionId) ?? orchestrators.find((o) => o.id === sessionId) ?? null;
+	const interfaceSwitch = useInterfaceTransition(cfg, shellOnly ? "" : sessionId, refresh);
+	const interfaceTransitionActive = mobileInterfaceTransitionIsActive(interfaceSwitch.transition);
+	const interfaceBusy = Boolean(
+		known &&
+		(known.status === "working" ||
+			known.status === "needs_input" ||
+			known.activity === "active" ||
+			known.activity === "waiting_input" ||
+			known.activity === "blocked"),
+	);
 	const dead = notFound || (!shellOnly && known ? isTerminalStatus(known.status) : false);
 	// What counts as a live preview: any file the daemon surfaces (an .html build, or
 	// a generated doc like plan.md / a report) EXCEPT a repo's README, which the
@@ -896,6 +929,45 @@ export default function TerminalScreen() {
 		setBrowserOpen(true);
 	}, [browserOpen, hasPreview]);
 
+	const startInterfaceSwitch = useCallback(
+		async (policy: "drain" | "interrupt") => {
+			try {
+				await interfaceSwitch.start("chat", policy);
+				setBanner(null);
+			} catch (cause) {
+				setBanner(`Switch failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+			}
+		},
+		[interfaceSwitch],
+	);
+
+	const requestInterfaceSwitch = useCallback(() => {
+		if (!interfaceSwitch.status?.supported) {
+			Alert.alert(
+				"Chat unavailable",
+				interfaceSwitch.status?.reason ||
+					interfaceSwitch.error ||
+					"This agent has not declared a compatible native conversation handoff.",
+			);
+			return;
+		}
+		if (!interfaceBusy) {
+			void startInterfaceSwitch("drain");
+			return;
+		}
+		Alert.alert(
+			"Switch to Chat?",
+			known?.activity === "waiting_input" || known?.activity === "blocked"
+				? "This turn is waiting for your input. Finish waits for your answer; stop cancels it and switches now."
+				: "Keep the same AO session, worktree, and native agent conversation.",
+			[
+				{ text: "Keep Terminal UI", style: "cancel" },
+				{ text: "Finish, then switch", onPress: () => void startInterfaceSwitch("drain") },
+				{ text: "Stop and switch", style: "destructive", onPress: () => void startInterfaceSwitch("interrupt") },
+			],
+		);
+	}, [interfaceBusy, interfaceSwitch, known?.activity, startInterfaceSwitch]);
+
 	// The browser toggle lives in the nav bar, beside the session name, to keep the
 	// status row uncluttered. Separate from the headerLeft effect above because
 	// `toggleBrowser` is declared here — referencing it in that effect's dep array
@@ -907,22 +979,37 @@ export default function TerminalScreen() {
 		}
 		navigation.setOptions({
 			headerRight: () => (
-				<Pressable
-					hitSlop={12}
-					accessibilityLabel={browserOpen ? "Close preview" : "Open preview"}
-					onPress={toggleBrowser}
-					style={({ pressed }) => [styles.headerBrowserBtn, pressed && { opacity: 0.6 }]}
-				>
-					<Feather
-						name="globe"
-						size={19}
-						color={browserOpen ? t.blue : hasPreview ? t.green : t.textSecondary}
-					/>
-					{hasPreview && !browserOpen && <View style={styles.browserReadyDot} />}
-				</Pressable>
+				<View style={styles.headerActions}>
+					<Pressable
+						hitSlop={10}
+						accessibilityLabel="Open Chat interface"
+						accessibilityState={{ busy: interfaceTransitionActive || interfaceSwitch.starting }}
+						onPress={requestInterfaceSwitch}
+						style={({ pressed }) => [styles.headerBrowserBtn, pressed && { opacity: 0.6 }]}
+					>
+						<Feather
+							name={interfaceTransitionActive ? "repeat" : "message-square"}
+							size={18}
+							color={interfaceSwitch.status?.supported ? t.blue : t.textFaint}
+						/>
+					</Pressable>
+					<Pressable
+						hitSlop={12}
+						accessibilityLabel={browserOpen ? "Close preview" : "Open preview"}
+						onPress={toggleBrowser}
+						style={({ pressed }) => [styles.headerBrowserBtn, pressed && { opacity: 0.6 }]}
+					>
+						<Feather
+							name="globe"
+							size={19}
+							color={browserOpen ? t.blue : hasPreview ? t.green : t.textSecondary}
+						/>
+						{hasPreview && !browserOpen && <View style={styles.browserReadyDot} />}
+					</Pressable>
+				</View>
 			),
 		});
-	}, [navigation, browserOpen, hasPreview, toggleBrowser, styles, t, shellOnly]);
+	}, [navigation, browserOpen, hasPreview, toggleBrowser, styles, t, shellOnly, interfaceTransitionActive, interfaceSwitch.starting, interfaceSwitch.status?.supported, requestInterfaceSwitch]);
 
 	const confirmKill = useCallback(() => {
 		const doKill = async () => {
@@ -1097,6 +1184,13 @@ export default function TerminalScreen() {
 					<Text style={styles.bannerText}>{banner} (tap to dismiss)</Text>
 				</Pressable>
 			)}
+			{!interfaceTransitionActive &&
+			interfaceSwitch.transition?.id !== dismissedInterfaceTransitionID &&
+			(interfaceSwitch.transition?.phase === "failed" || interfaceSwitch.transition?.phase === "recovery_required") ? (
+				<Pressable onPress={() => setDismissedInterfaceTransitionID(interfaceSwitch.transition?.id ?? "")} style={styles.banner}>
+					<Text style={styles.bannerText}>{interfaceSwitch.transition.errorDetail || "The interface switch failed; Terminal UI remains available."}</Text>
+				</Pressable>
+			) : null}
 
 			<View style={styles.termWrap}>
 				<XtermJsWebView
@@ -1113,6 +1207,25 @@ export default function TerminalScreen() {
 					onData={onData}
 					style={{ flex: 1, backgroundColor: t.bgBase }}
 				/>
+				{interfaceTransitionActive ? (
+					<View style={styles.interfaceOverlay}>
+						<View style={styles.interfaceCard}>
+							<Feather name="repeat" size={22} color={t.blue} />
+							<Text style={styles.interfaceTitle}>Switching to Chat</Text>
+							<Text style={styles.interfaceCopy}>{terminalInterfacePhaseLabel(interfaceSwitch.transition?.phase)}</Text>
+							{mobileInterfaceTransitionIsCancellable(interfaceSwitch.transition) ? (
+								<Pressable
+									disabled={interfaceSwitch.cancelling}
+									onPress={() => void interfaceSwitch.cancel().catch(() => {})}
+									style={styles.interfaceCancel}
+								>
+									<Text style={styles.interfaceCancelText}>{interfaceSwitch.cancelling ? "Cancelling…" : "Cancel switch"}</Text>
+								</Pressable>
+							) : null}
+							{interfaceSwitch.error ? <Text style={styles.interfaceError}>{interfaceSwitch.error}</Text> : null}
+						</View>
+					</View>
+				) : null}
 				{dead && (
 					<View style={styles.deadOverlay}>
 						<View style={styles.deadIcon}>
@@ -1192,7 +1305,7 @@ export default function TerminalScreen() {
 					value={msg}
 					onChangeText={setMsg}
 					onSend={sendPrompt}
-					sending={sending}
+					sending={sending || interfaceTransitionActive}
 					target={sendTarget}
 					onTargetChange={setSendTarget}
 					voice={voice}
@@ -1271,6 +1384,38 @@ const makeStyles = (t: Theme) =>
 		alignItems: "center",
 		justifyContent: "center",
 	},
+	headerActions: { flexDirection: "row", alignItems: "center" },
+	interfaceOverlay: {
+		...StyleSheet.absoluteFillObject,
+		alignItems: "center",
+		justifyContent: "center",
+		paddingHorizontal: 24,
+		backgroundColor: t.scrim,
+	},
+	interfaceCard: {
+		width: "100%",
+		maxWidth: 340,
+		alignItems: "center",
+		gap: 10,
+		paddingHorizontal: 22,
+		paddingVertical: 24,
+		borderRadius: 16,
+		borderWidth: 1,
+		borderColor: t.borderDefault,
+		backgroundColor: t.bgSurface,
+	},
+	interfaceTitle: { color: t.textPrimary, fontSize: 16, fontWeight: "700" },
+	interfaceCopy: { color: t.textSecondary, fontSize: 12, lineHeight: 18, textAlign: "center" },
+	interfaceCancel: {
+		marginTop: 4,
+		borderRadius: 9,
+		borderWidth: 1,
+		borderColor: t.borderDefault,
+		paddingHorizontal: 13,
+		paddingVertical: 8,
+	},
+	interfaceCancelText: { color: t.textPrimary, fontSize: 12, fontWeight: "600" },
+	interfaceError: { color: t.red, fontSize: 11, lineHeight: 16, textAlign: "center" },
 	// Small green badge on the globe when a real preview is available. Offsets are
 	// from the square's centre, so it rides the glyph rather than the button frame.
 	browserReadyDot: {

@@ -1,6 +1,6 @@
 # Agent Orchestrator Architecture
 
-Agent Orchestrator is a long-running Go daemon that supervises multiple parallel AI coding agent sessions. Every session owns an isolated git worktree and an immutable interface mode. A TUI session runs its agent inside a tmux/conpty runtime; a Chat session runs a native protocol controller without an agent terminal runtime. The daemon coordinates both through the same session, lifecycle, workspace, storage, and observation boundaries.
+Agent Orchestrator is a long-running Go daemon that supervises multiple parallel AI coding agent sessions. Every session owns an isolated git worktree and one committed interface mode at a time. A TUI session runs its agent inside a tmux/conpty runtime; a Chat session runs a native protocol controller without an agent terminal runtime. A durable handoff may move a compatible native conversation between them, but both controllers are never live at once. The daemon coordinates both through the same session, lifecycle, workspace, storage, and observation boundaries.
 
 ## Table of Contents
 
@@ -38,6 +38,8 @@ The only persistent session state is:
 
 - `activity_state` — What the agent last reported (`active`, `idle`, `waiting_input`, `blocked`, `exited`). `waiting_input` is an agent at an empty prompt awaiting its next instruction; `blocked` is an agent stopped on a pending permission/approval decision — automation must never inject input into a blocked session.
 - `is_terminated` — Whether the session should be treated as over
+- `session_mode` plus its runtime/provider handle and generation — The currently committed controller epoch
+- `session_interface_transitions` — Durable checkpoints for an in-progress or completed TUI↔Chat handoff
 - PR facts — `pr`, `pr_checks`, `pr_comment` tables
 
 ### What is NOT Durable
@@ -299,6 +301,57 @@ flowchart TD
 
 ```
 
+### Session Interface Handoff
+
+An interface switch is a controller replacement inside the existing AO session,
+not a new session. The session id, project, worktree, branch, lifecycle facts,
+PR ownership, and provider-native conversation id stay the same. Only the
+mode-owned controller changes.
+
+The generic coordinator lives in `session_manager`; providers opt in through the
+small `AgentInterfaceHandoff` capability only after their TUI resume id and Chat
+protocol id are proven to name the same native conversation. Claude Code and
+Codex currently satisfy that contract. Merely having a Chat/ACP driver is not
+enough to enable switching for another harness.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Session Manager
+    participant DB as SQLite
+    participant Source as Current Controller
+    participant Target as Target Controller
+
+    Client->>Manager: POST interface-transition(target, policy)
+    Manager->>DB: Claim one active transition
+    Manager->>Target: Preflight binary/auth/protocol
+    alt policy = drain
+        Manager->>Source: Close intake; finish accepted work
+    else policy = interrupt
+        Manager->>Source: Cancel active and queued work
+    end
+    Manager->>Source: Stop and wait for shutdown
+    Manager->>DB: CAS session_mode + clear old generation/handles
+    Manager->>Target: Native resume(same conversation id)
+    Manager->>DB: Persist new handle/generation; complete transition
+    DB-->>Client: session_updated CDC invalidation
+```
+
+The session row is the commit point. If target startup fails, the coordinator
+CASes the row back and resumes the source. If the daemon dies mid-handoff, boot
+reconciliation marks the interrupted transition for recovery and restores the
+controller named by the last committed `session_mode`. Lifecycle/automation
+messages received during the no-controller gap are held in a durable outbox and
+delivered after activation. Old Chat events are fenced by controller generation;
+old TUI hooks are fenced by runtime launch id.
+
+`drain` is loss-minimizing and may wait on an approval or user-input request;
+`interrupt` sends the provider's cancellation first, allows a short transcript
+flush, and then stops the source. Files and completed provider context survive.
+There is no provider-neutral way to migrate a currently executing tool call or a
+detached background process, and AO does not synthesize terminal screen output
+into structured Chat history.
+
 ### Observation Flow
 
 ```mermaid
@@ -373,6 +426,8 @@ erDiagram
     projects ||--o{ sessions : owns
     projects ||--o| conversations : owns_orchestrator_narrative
     sessions ||--o| conversations : owns_worker_narrative
+    sessions ||--o{ session_interface_transitions : records_controller_handoffs
+    session_interface_transitions ||--o{ session_interface_transition_messages : holds_messages_during_gap
     conversations ||--o{ conversation_turns : contains
     conversations ||--o{ conversation_messages : contains
     conversations ||--o{ conversation_activities : contains
@@ -940,7 +995,7 @@ Agent Orchestrator's architecture is designed around:
 - **Port-based design** — Core code depends on interfaces, not implementations
 - **Durable minimalism** — Store only facts, compute everything else
 - **Event-driven updates** — CDC broadcasts changes to all subscribers
-- **Isolation** — Each session owns a worktree and exactly one mode-specific controller
+- **Isolation** — Each session owns a worktree and exactly one live mode-specific controller, including across handoffs
 - **Safety** — Conservative termination, path validation, gitignored hooks
 
 This architecture enables parallel AI agents to work safely while maintaining complete visibility and control.

@@ -152,6 +152,26 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "SessionMode"
+          - column: "session_interface_transitions.session_id"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionID"
+          - column: "session_interface_transitions.source_mode"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionMode"
+          - column: "session_interface_transitions.target_mode"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionMode"
+          - column: "session_interface_transitions.policy"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionInterfaceTransitionPolicy"
+          - column: "session_interface_transitions.phase"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "SessionInterfaceTransitionPhase"
           - column: "conversations.project_id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

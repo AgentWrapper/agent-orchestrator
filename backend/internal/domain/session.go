@@ -36,8 +36,10 @@ type SessionMetadata struct {
 	Prompt            string `json:"prompt,omitempty"`
 	// ProviderConversationID is the opaque handle a Chat driver needs to resume
 	// this session's provider conversation after a restart (a Codex thread id
-	// today). Empty for TUI sessions. Deliberately distinct from AgentSessionID,
-	// which describes the native-TUI resume path and is not interchangeable.
+	// today). Normally empty for TUI sessions. It remains a distinct field from
+	// AgentSessionID because most harnesses do not prove those protocol identities
+	// interchangeable; the interface-transition coordinator copies one value into
+	// both only after the adapter explicitly declares that equivalence.
 	ProviderConversationID string `json:"providerConversationId,omitempty"`
 	// ControllerGeneration is rotated each time a Chat controller is started for
 	// this session. Events carrying an older generation are rejected, so a
@@ -67,10 +69,11 @@ type SessionRecord struct {
 	// the project configuration.
 	ReviewerHarness ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,opencode"`
 	DisplayName     string          `json:"displayName,omitempty"`
-	// Mode is the conversation controller this session was created with. It is
-	// immutable: every later spawn, send, restore, kill, and reaper decision
-	// dispatches from this field, not from the current default setting. Rows
-	// written before Chat mode existed read back as SessionModeTUI.
+	// Mode is the session's currently committed conversation controller. Every
+	// send, restore, kill, and reaper decision dispatches from it. Only the
+	// durable interface-transition coordinator may change it; the daemon default
+	// never changes an existing session. Rows written before Chat mode existed
+	// read back as SessionModeTUI.
 	Mode     SessionMode `json:"mode" enum:"chat,tui"`
 	Activity Activity    `json:"activity"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the

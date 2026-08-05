@@ -102,6 +102,11 @@ func (c *Controller) Steer(ctx context.Context, msg ports.ChatUserMessage) (Stee
 	if !ok {
 		return SteerResult{}, ErrSteerUnsupported
 	}
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
+	if c.handoffActive() {
+		return SteerResult{}, ErrControllerHandoff
+	}
 
 	turn, ok := c.awaitAcknowledgedTurn(ctx)
 	if !ok {

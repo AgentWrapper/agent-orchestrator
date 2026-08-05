@@ -2216,6 +2216,151 @@ paths:
       summary: Discard a turn and everything after it from the agent's memory
       tags:
       - conversations
+  /api/v1/sessions/{sessionId}/interface-transition:
+    delete:
+      operationId: cancelSessionInterfaceTransition
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelSessionInterfaceTransitionResponse'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Cancel an interface handoff before its source controller stops
+      tags:
+      - sessions
+    get:
+      operationId: getSessionInterfaceTransition
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInterfaceTransitionStatusResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Inspect TUI and Chat interface handoff support and progress
+      tags:
+      - sessions
+    post:
+      operationId: startSessionInterfaceTransition
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartSessionInterfaceTransitionRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartSessionInterfaceTransitionResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Switch a live session between its TUI and Chat controllers
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/kill:
     post:
       operationId: killSession
@@ -3681,6 +3826,16 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      type: object
+    CancelSessionInterfaceTransitionResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
       type: object
     ClaimPRRequest:
       properties:
@@ -5367,6 +5522,85 @@ components:
       - sessionId
       - message
       type: object
+    SessionInterfaceTransition:
+      properties:
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        createdAt:
+          format: date-time
+          type: string
+        errorCode:
+          type: string
+        errorDetail:
+          type: string
+        id:
+          type: string
+        phase:
+          enum:
+          - requested
+          - preflighting
+          - draining
+          - source_stopping
+          - source_stopped
+          - target_starting
+          - activating
+          - completed
+          - failed
+          - cancelled
+          - recovery_required
+          type: string
+        policy:
+          enum:
+          - drain
+          - interrupt
+          type: string
+        sessionId:
+          type: string
+        sourceMode:
+          enum:
+          - chat
+          - tui
+          type: string
+        targetMode:
+          enum:
+          - chat
+          - tui
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sessionId
+      - sourceMode
+      - targetMode
+      - policy
+      - phase
+      - createdAt
+      - updatedAt
+      type: object
+    SessionInterfaceTransitionStatusResponse:
+      properties:
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        supported:
+          type: boolean
+        targetMode:
+          enum:
+          - chat
+          - tui
+          type: string
+        transition:
+          $ref: '#/components/schemas/SessionInterfaceTransition'
+      required:
+      - supported
+      - targetMode
+      type: object
     SessionPRCISummary:
       properties:
         failingChecks:
@@ -5936,6 +6170,35 @@ components:
           description: Named preview configuration. Optional when exactly one configuration
             exists.
           type: string
+      type: object
+    StartSessionInterfaceTransitionRequest:
+      properties:
+        policy:
+          enum:
+          - drain
+          - interrupt
+          type: string
+        targetMode:
+          enum:
+          - chat
+          - tui
+          type: string
+      required:
+      - targetMode
+      - policy
+      type: object
+    StartSessionInterfaceTransitionResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+        transition:
+          $ref: '#/components/schemas/SessionInterfaceTransition'
+      required:
+      - ok
+      - sessionId
+      - transition
       type: object
     SteerConversationRequest:
       properties:

@@ -776,6 +776,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/interface-transition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect TUI and Chat interface handoff support and progress */
+        get: operations["getSessionInterfaceTransition"];
+        put?: never;
+        /** Switch a live session between its TUI and Chat controllers */
+        post: operations["startSessionInterfaceTransition"];
+        /** Cancel an interface handoff before its source controller stops */
+        delete: operations["cancelSessionInterfaceTransition"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/kill": {
         parameters: {
             query?: never;
@@ -1246,6 +1265,10 @@ export interface components {
         CancelReviewResponse: {
             reviewerHandleId: string;
             reviews: components["schemas"]["PRReviewState"][];
+        };
+        CancelSessionInterfaceTransitionResponse: {
+            ok: boolean;
+            sessionId: string;
         };
         ClaimPRRequest: {
             allowTakeover?: null | boolean;
@@ -1898,6 +1921,34 @@ export interface components {
             ok: boolean;
             sessionId: string;
         };
+        SessionInterfaceTransition: {
+            /** Format: date-time */
+            completedAt?: null | string;
+            /** Format: date-time */
+            createdAt: string;
+            errorCode?: string;
+            errorDetail?: string;
+            id: string;
+            /** @enum {string} */
+            phase: "requested" | "preflighting" | "draining" | "source_stopping" | "source_stopped" | "target_starting" | "activating" | "completed" | "failed" | "cancelled" | "recovery_required";
+            /** @enum {string} */
+            policy: "drain" | "interrupt";
+            sessionId: string;
+            /** @enum {string} */
+            sourceMode: "chat" | "tui";
+            /** @enum {string} */
+            targetMode: "chat" | "tui";
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        SessionInterfaceTransitionStatusResponse: {
+            reason?: string;
+            reasonCode?: string;
+            supported: boolean;
+            /** @enum {string} */
+            targetMode: "chat" | "tui";
+            transition?: components["schemas"]["SessionInterfaceTransition"];
+        };
         SessionPRCISummary: {
             failingChecks: components["schemas"]["SessionPRFailingCheck"][];
             /** @enum {string} */
@@ -2113,6 +2164,17 @@ export interface components {
         StartPreviewServerRequest: {
             /** @description Named preview configuration. Optional when exactly one configuration exists. */
             configuration?: string;
+        };
+        StartSessionInterfaceTransitionRequest: {
+            /** @enum {string} */
+            policy: "drain" | "interrupt";
+            /** @enum {string} */
+            targetMode: "chat" | "tui";
+        };
+        StartSessionInterfaceTransitionResponse: {
+            ok: boolean;
+            sessionId: string;
+            transition: components["schemas"]["SessionInterfaceTransition"];
         };
         SteerConversationRequest: {
             clientMessageId?: string;
@@ -4989,6 +5051,196 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RollbackConversationResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionInterfaceTransition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionInterfaceTransitionStatusResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    startSessionInterfaceTransition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartSessionInterfaceTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartSessionInterfaceTransitionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cancelSessionInterfaceTransition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CancelSessionInterfaceTransitionResponse"];
                 };
             };
             /** @description Not Found */

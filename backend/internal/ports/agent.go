@@ -71,6 +71,19 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentInterfaceHandoff is an OPTIONAL capability for a TUI adapter whose
+// native resume identity is also understood by its structured Chat driver.
+// Merely supporting GetRestoreCommand is not enough: some harnesses expose a
+// different identifier through their TUI and protocol surfaces.
+type AgentInterfaceHandoff interface {
+	NativeConversationID(
+		ctx context.Context,
+		session SessionRef,
+		currentMode domain.SessionMode,
+		providerConversationID string,
+	) (id string, ok bool, err error)
+}
+
 // AgentExitDetectionMode describes how AO learns that an agent CLI process
 // ended while its terminal runtime remains alive.
 type AgentExitDetectionMode string

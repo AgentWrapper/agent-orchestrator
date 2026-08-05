@@ -17,8 +17,9 @@ import (
 // or its controller may have stopped, and the client needs to tell those apart.
 var ErrNoController = errors.New("no live chat controller for session")
 
-// ErrNotChatMode reports a Chat command against a session created in TUI mode.
-// The mode is immutable, so this is a permanent answer, not a retryable one.
+// ErrNotChatMode reports a Chat command against a session whose committed
+// controller is currently TUI. An explicit interface transition may change that
+// fact later, but callers must route from the persisted mode they read now.
 var ErrNotChatMode = errors.New("session is not in chat mode")
 
 // SessionReader is the session-fact surface the service needs. It reads the
@@ -332,16 +333,60 @@ func (s *Service) Interrupt(ctx context.Context, id domain.SessionID) error {
 	return controller.Interrupt(ctx)
 }
 
+// PrepareChatHandoff closes source intake and makes the controller quiescent.
+// Session Manager remains responsible for stopping it and starting the target;
+// keeping that sequencing outside this package preserves the one-writer rule.
+func (s *Service) PrepareChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	controller, err := s.Controller(id)
+	if errors.Is(err, ErrNoController) {
+		// A dead/missing source controller is already quiescent. Session Manager
+		// can safely stop (a no-op) and resume the native conversation in TUI,
+		// which is also the useful recovery path for a broken Chat process.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return controller.BeginHandoff(ctx, policy)
+}
+
+// AbortChatHandoff reopens the existing controller when the user cancels before
+// Session Manager has stopped it.
+func (s *Service) AbortChatHandoff(id domain.SessionID) {
+	controller, err := s.Controller(id)
+	if err == nil {
+		controller.AbortHandoff()
+	}
+}
+
 // Stop closes a session's controller. Safe to call for a session that has none.
 func (s *Service) Stop(ctx context.Context, id domain.SessionID) error {
 	s.mu.Lock()
 	controller, ok := s.controllers[id]
-	delete(s.controllers, id)
 	s.mu.Unlock()
 	if !ok {
 		return nil
 	}
-	return controller.Close(ctx)
+	err := controller.Close(ctx)
+
+	// Keep the only handle to a controller whose event stream has not ended. A
+	// caller can then retry the idempotent close rather than assuming a timeout
+	// killed it and launching a second writer. Once stopped, remove only this
+	// generation so a concurrent replacement can never be deleted accidentally.
+	select {
+	case <-controller.stopped:
+		s.mu.Lock()
+		if current, found := s.controllers[id]; found && current == controller {
+			delete(s.controllers, id)
+		}
+		s.mu.Unlock()
+	default:
+	}
+	return err
 }
 
 // StopAll closes every controller, for daemon shutdown.

@@ -558,7 +558,7 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 			"SESSION_NOT_FOUND", "session not found", nil)
 
 	case errors.Is(err, chatsvc.ErrNotChatMode):
-		// Permanent: the mode is immutable, so retrying will never succeed.
+		// Permanent for this request: retry only after an explicit interface switch.
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"SESSION_MODE_MISMATCH",
 			"this session was created in Terminal UI mode and has no chat conversation", nil)
@@ -567,6 +567,11 @@ func writeConversationError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
 			"CHAT_CONTROLLER_NOT_READY",
 			"the agent controller for this session is not running", nil)
+
+	case errors.Is(err, chatsvc.ErrControllerHandoff):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict",
+			"CHAT_INTERFACE_TRANSITION",
+			"the session is switching interfaces; send again after the handoff completes", nil)
 
 	case errors.Is(err, chatsvc.ErrCompactionUnsupported):
 		// Permanent for this harness, and a 409 rather than a 500 because nothing

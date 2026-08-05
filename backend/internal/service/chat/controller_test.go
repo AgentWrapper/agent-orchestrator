@@ -788,6 +788,100 @@ func TestInterruptCancelsWhatIsQueuedBehindTheTurn(t *testing.T) {
 	}
 }
 
+func TestChatHandoffDrainFinishesAcceptedQueueAndClosesNewIntake(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "running", ClientMessageID: "handoff-1",
+	}); err != nil {
+		t.Fatalf("send running turn: %v", err)
+	}
+	h.conv.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: "provider-turn-1"})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return len(s.Turns) == 1 && s.Turns[0].State == domain.TurnStateRunning
+	})
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "already queued", ClientMessageID: "handoff-2",
+	}); err != nil {
+		t.Fatalf("queue second turn: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionDrain)
+	}()
+	// Completion of the first accepted turn must dispatch the accepted queue,
+	// rather than declaring the source quiescent early.
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-1",
+		TurnState: domain.TurnStateCompleted,
+	})
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool {
+		return turnStateByText(t, s)["already queued"] == domain.TurnStateRunning
+	})
+	h.conv.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnCompleted, ProviderTurnID: "provider-turn-2",
+		TurnState: domain.TurnStateCompleted,
+	})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("prepare handoff: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("handoff did not become quiescent after its accepted queue completed")
+	}
+
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "too late", ClientMessageID: "handoff-3",
+	}); !errors.Is(err, chatsvc.ErrControllerHandoff) {
+		t.Fatalf("send after handoff gate = %v, want ErrControllerHandoff", err)
+	}
+	h.svc.AbortChatHandoff(testSession)
+	if _, err := h.svc.Send(ctx, testSession, ports.ChatUserMessage{
+		Text: "source reopened", ClientMessageID: "handoff-4",
+	}); err != nil {
+		t.Fatalf("send after aborting handoff: %v", err)
+	}
+}
+
+func TestChatHandoffTreatsMissingControllerAsAlreadyQuiescent(t *testing.T) {
+	svc := chatsvc.New(chatsvc.Options{})
+	if err := svc.PrepareChatHandoff(
+		context.Background(), "missing-controller", domain.SessionInterfaceTransitionDrain,
+	); err != nil {
+		t.Fatalf("prepare missing controller: %v", err)
+	}
+}
+
+func TestServiceStopRetainsControllerUntilItsEventStreamActuallyEnds(t *testing.T) {
+	base := newFakeConversation()
+	h := newHarnessWithConversation(t, &stuckConversation{
+		fakeConversation: base,
+		closeErr:         errors.New("provider close failed"),
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := h.svc.Stop(ctx, testSession); err == nil {
+		t.Fatal("Stop error = nil, want provider close failure or deadline")
+	}
+	if _, err := h.svc.Controller(testSession); err != nil {
+		t.Fatalf("controller was forgotten while its stream was still live: %v", err)
+	}
+
+	base.closeOnce.Do(func() { close(base.events) })
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := h.svc.Controller(testSession); errors.Is(err, chatsvc.ErrNoController) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("controller registry did not release the stopped stream")
+}
+
 // The cancellation belongs to the moment stop was pressed. A message typed after
 // that is the user asking for new work, and must not be swept up by it.
 func TestMessageTypedAfterStopIsStillDelivered(t *testing.T) {

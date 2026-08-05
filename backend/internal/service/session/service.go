@@ -57,6 +57,15 @@ type commander interface {
 	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
 }
 
+// interfaceTransitionCommander is an optional command capability. Keeping it
+// separate avoids widening every focused session-service fake while production
+// can expose the feature through the concrete Session Manager.
+type interfaceTransitionCommander interface {
+	InterfaceTransitionStatus(context.Context, domain.SessionID) (sessionmanager.InterfaceTransitionStatus, error)
+	StartInterfaceTransition(context.Context, domain.SessionID, domain.SessionMode, domain.SessionInterfaceTransitionPolicy) (domain.SessionInterfaceTransition, error)
+	CancelInterfaceTransition(context.Context, domain.SessionID) error
+}
+
 // RollbackOutcome reports what happened in a rollback: either the seed row was
 // deleted, or the partially-spawned session was killed (runtime+workspace torn
 // down, row marked terminated).
@@ -100,6 +109,16 @@ type RestoreOutcome struct {
 type ResumeAgentOutcome struct {
 	Session domain.Session  `json:"session"`
 	Mode    RestoreModeView `json:"resumeMode"`
+}
+
+// InterfaceTransitionStatus describes whether this session can cross between
+// its TUI and Chat controllers and includes the latest durable handoff attempt.
+type InterfaceTransitionStatus struct {
+	Supported  bool
+	TargetMode domain.SessionMode
+	ReasonCode string
+	Reason     string
+	Transition *domain.SessionInterfaceTransition
 }
 
 type scmProvider interface {
@@ -481,6 +500,60 @@ func (s *Service) ResumeAgent(ctx context.Context, id domain.SessionID) (ResumeA
 	return ResumeAgentOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
 }
 
+// InterfaceTransitionStatus returns capability and progress without launching
+// a provider process or mutating the session.
+func (s *Service) InterfaceTransitionStatus(ctx context.Context, id domain.SessionID) (InterfaceTransitionStatus, error) {
+	manager, ok := s.manager.(interfaceTransitionCommander)
+	if !ok {
+		return InterfaceTransitionStatus{}, apierr.Conflict(
+			"INTERFACE_HANDOFF_UNSUPPORTED", "This build cannot switch session interfaces", nil)
+	}
+	status, err := manager.InterfaceTransitionStatus(ctx, id)
+	if err != nil {
+		return InterfaceTransitionStatus{}, toAPIError(err)
+	}
+	return InterfaceTransitionStatus{
+		Supported: status.Supported, TargetMode: status.TargetMode,
+		ReasonCode: status.ReasonCode, Reason: status.Reason,
+		Transition: status.Transition,
+	}, nil
+}
+
+// StartInterfaceTransition begins a durable, asynchronous controller handoff.
+func (s *Service) StartInterfaceTransition(
+	ctx context.Context,
+	id domain.SessionID,
+	target domain.SessionMode,
+	policy domain.SessionInterfaceTransitionPolicy,
+) (domain.SessionInterfaceTransition, error) {
+	if !target.Valid() {
+		return domain.SessionInterfaceTransition{}, apierr.Invalid(
+			"INVALID_SESSION_MODE", "Target mode must be chat or tui", nil)
+	}
+	if !policy.Valid() {
+		return domain.SessionInterfaceTransition{}, apierr.Invalid(
+			"INVALID_TRANSITION_POLICY", "Policy must be drain or interrupt", nil)
+	}
+	manager, ok := s.manager.(interfaceTransitionCommander)
+	if !ok {
+		return domain.SessionInterfaceTransition{}, apierr.Conflict(
+			"INTERFACE_HANDOFF_UNSUPPORTED", "This build cannot switch session interfaces", nil)
+	}
+	transition, err := manager.StartInterfaceTransition(ctx, id, target, policy)
+	return transition, toAPIError(err)
+}
+
+// CancelInterfaceTransition cancels a handoff while its source controller is
+// still safe to reopen.
+func (s *Service) CancelInterfaceTransition(ctx context.Context, id domain.SessionID) error {
+	manager, ok := s.manager.(interfaceTransitionCommander)
+	if !ok {
+		return apierr.Conflict(
+			"INTERFACE_HANDOFF_UNSUPPORTED", "This build cannot switch session interfaces", nil)
+	}
+	return toAPIError(manager.CancelInterfaceTransition(ctx, id))
+}
+
 func restoreModeView(mode sessionmanager.RestoreMode) RestoreModeView {
 	switch mode {
 	case sessionmanager.RestoreModeNative:
@@ -698,6 +771,22 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrResumeInProgress):
 		return apierr.Conflict("AGENT_RESUME_IN_PROGRESS",
 			"The agent is already being resumed", nil)
+	case errors.Is(err, sessionmanager.ErrSwitchInProgress):
+		return apierr.Conflict("INTERFACE_TRANSITION_IN_PROGRESS",
+			"This session is already switching interfaces", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceHandoffUnsupported):
+		return apierr.Conflict("INTERFACE_HANDOFF_UNSUPPORTED", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrNativeConversationMissing):
+		return apierr.Conflict("NATIVE_SESSION_MISSING",
+			"The agent has not exposed a native conversation that can resume in the other interface", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNotCancellable):
+		return apierr.Conflict("INTERFACE_TRANSITION_NOT_CANCELLABLE",
+			"The source controller has already stopped; AO must finish or recover the switch", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceAlreadySelected):
+		return apierr.Conflict("INTERFACE_ALREADY_SELECTED",
+			"The session is already using the requested interface", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNotFound):
+		return apierr.NotFound("INTERFACE_TRANSITION_NOT_FOUND", "No active interface switch exists")
 	case errors.Is(err, sessionmanager.ErrAwaitingDecision):
 		return apierr.Conflict("SESSION_AWAITING_DECISION",
 			"Session is paused on a permission decision; answer it in the session terminal first", nil)

@@ -2372,3 +2372,45 @@ func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
 		t.Fatalf("generation = %q after relaunch, want it rotated to gen-2", got.Metadata.ControllerGeneration)
 	}
 }
+
+func TestActivitySignalRejectsStaleChatControllerGenerationAcrossHandoff(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{ControllerGeneration: "chat-generation-2"},
+		Activity: domain.Activity{State: domain.ActivityIdle},
+	}
+	m := New(st, nil)
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, ControllerGeneration: "chat-generation-1",
+	}); err != nil {
+		t.Fatalf("stale signal: %v", err)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("stale generation changed activity to %q", got)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, ControllerGeneration: "chat-generation-2",
+	}); err != nil {
+		t.Fatalf("current signal: %v", err)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("current generation left activity at %q", got)
+	}
+
+	rec := st.sessions["mer-1"]
+	rec.Mode = domain.SessionModeTUI
+	rec.Activity.State = domain.ActivityIdle
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, ControllerGeneration: "chat-generation-2",
+	}); err != nil {
+		t.Fatalf("post-handoff stale signal: %v", err)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("old Chat controller changed TUI activity to %q", got)
+	}
+}
