@@ -731,6 +731,7 @@ function ShellLayout() {
               Rendered first, real clicks get swallowed by window-drag even
               though DOM hit-testing looks correct. */}
 					<TitlebarNav
+						hasSessionTopbar={Boolean(routeParams.sessionId)}
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
 						onSidebarPreviewEnter={previewSidebar}
