@@ -213,7 +213,6 @@ export interface CloudProjectSharePolicy {
   createdByUserId: string;
   name: string;
   sandboxType: "read_only" | "standard" | "trusted";
-  sandboxLifetimeMinutes: number;
   status: "active" | "archived";
   sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
   links?: CloudProjectShareLink[];

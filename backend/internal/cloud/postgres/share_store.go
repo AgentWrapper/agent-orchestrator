@@ -98,19 +98,18 @@ type ProjectShareGrantSessionRole struct {
 
 // ProjectSharePolicy is a named reusable access policy for standalone projects.
 type ProjectSharePolicy struct {
-	ID                     string                         `json:"id"`
-	OrgID                  clouddomain.OrgID              `json:"orgId"`
-	ProjectID              clouddomain.ProjectID          `json:"projectId"`
-	CreatedByUserID        clouddomain.UserID             `json:"createdByUserId"`
-	Name                   string                         `json:"name"`
-	SandboxType            string                         `json:"sandboxType"`
-	SandboxLifetimeMinutes int                            `json:"sandboxLifetimeMinutes"`
-	Status                 string                         `json:"status"`
-	SessionRoles           []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
-	Links                  []ProjectShareLink             `json:"links,omitempty"`
-	Grants                 []ProjectShareGrant            `json:"grants,omitempty"`
-	CreatedAt              time.Time                      `json:"createdAt"`
-	UpdatedAt              time.Time                      `json:"updatedAt"`
+	ID              string                         `json:"id"`
+	OrgID           clouddomain.OrgID              `json:"orgId"`
+	ProjectID       clouddomain.ProjectID          `json:"projectId"`
+	CreatedByUserID clouddomain.UserID             `json:"createdByUserId"`
+	Name            string                         `json:"name"`
+	SandboxType     string                         `json:"sandboxType"`
+	Status          string                         `json:"status"`
+	SessionRoles    []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
+	Links           []ProjectShareLink             `json:"links,omitempty"`
+	Grants          []ProjectShareGrant            `json:"grants,omitempty"`
+	CreatedAt       time.Time                      `json:"createdAt"`
+	UpdatedAt       time.Time                      `json:"updatedAt"`
 }
 
 // CreateProjectSharePolicyInput captures a named access policy.
@@ -128,17 +127,6 @@ type UpdateProjectSharePolicyInput struct {
 	Name         string
 	SandboxType  string
 	SessionRoles []ProjectShareGrantSessionRole
-}
-
-func sharePolicySandboxLifetimeMinutes(sandboxType string) int {
-	switch sandboxType {
-	case "read_only":
-		return 120
-	case "trusted":
-		return 480
-	default:
-		return 240
-	}
 }
 
 // CreateProjectShareLink stores a scoped share link.
@@ -574,7 +562,7 @@ func (s *Store) listProjectSharePolicies(
 ) ([]ProjectSharePolicy, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, org_id, project_id, created_by_user_id, name,
-			sandbox_type, sandbox_lifetime_minutes, status, created_at, updated_at
+			sandbox_type, status, created_at, updated_at
 		FROM ao_project_share_policies
 		WHERE org_id = $1 AND project_id = $2 AND status = 'active'
 		ORDER BY created_at DESC
@@ -593,7 +581,6 @@ func (s *Store) listProjectSharePolicies(
 			&policy.CreatedByUserID,
 			&policy.Name,
 			&policy.SandboxType,
-			&policy.SandboxLifetimeMinutes,
 			&policy.Status,
 			&policy.CreatedAt,
 			&policy.UpdatedAt,
@@ -804,23 +791,21 @@ func (s *Store) CreateProjectSharePolicy(
 	if sandboxType == "" {
 		sandboxType = "standard"
 	}
-	lifetimeMinutes := sharePolicySandboxLifetimeMinutes(sandboxType)
 	var policy ProjectSharePolicy
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO ao_project_share_policies (
-			org_id, project_id, created_by_user_id, name, sandbox_type, sandbox_lifetime_minutes
+			org_id, project_id, created_by_user_id, name, sandbox_type
 		)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, org_id, project_id, created_by_user_id, name,
-			sandbox_type, sandbox_lifetime_minutes, status, created_at, updated_at
-	`, input.OrgID, input.ProjectID, input.CreatedByUserID, strings.TrimSpace(input.Name), sandboxType, lifetimeMinutes).Scan(
+			sandbox_type, status, created_at, updated_at
+	`, input.OrgID, input.ProjectID, input.CreatedByUserID, strings.TrimSpace(input.Name), sandboxType).Scan(
 		&policy.ID,
 		&policy.OrgID,
 		&policy.ProjectID,
 		&policy.CreatedByUserID,
 		&policy.Name,
 		&policy.SandboxType,
-		&policy.SandboxLifetimeMinutes,
 		&policy.Status,
 		&policy.CreatedAt,
 		&policy.UpdatedAt,
@@ -854,25 +839,22 @@ func (s *Store) UpdateProjectSharePolicy(
 	if sandboxType == "" {
 		sandboxType = "standard"
 	}
-	lifetimeMinutes := sharePolicySandboxLifetimeMinutes(sandboxType)
 	var policy ProjectSharePolicy
 	if err := tx.QueryRow(ctx, `
 		UPDATE ao_project_share_policies
 		SET name = $4,
 			sandbox_type = $5,
-			sandbox_lifetime_minutes = $6,
 			updated_at = now()
 		WHERE org_id = $1 AND project_id = $2 AND id = $3 AND status = 'active'
 		RETURNING id, org_id, project_id, created_by_user_id, name,
-			sandbox_type, sandbox_lifetime_minutes, status, created_at, updated_at
-	`, orgID, projectID, policyID, strings.TrimSpace(input.Name), sandboxType, lifetimeMinutes).Scan(
+			sandbox_type, status, created_at, updated_at
+	`, orgID, projectID, policyID, strings.TrimSpace(input.Name), sandboxType).Scan(
 		&policy.ID,
 		&policy.OrgID,
 		&policy.ProjectID,
 		&policy.CreatedByUserID,
 		&policy.Name,
 		&policy.SandboxType,
-		&policy.SandboxLifetimeMinutes,
 		&policy.Status,
 		&policy.CreatedAt,
 		&policy.UpdatedAt,
@@ -884,6 +866,26 @@ func (s *Store) UpdateProjectSharePolicy(
 	}
 	if err := replaceProjectSharePolicySessions(ctx, tx, policy.ID, orgID, projectID, input.SessionRoles); err != nil {
 		return ProjectSharePolicy{}, err
+	}
+	policyRole := "editor"
+	if sandboxType == "read_only" {
+		policyRole = "viewer"
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE ao_project_share_links
+		SET role = $2, updated_at = now()
+		WHERE policy_id = $1 AND status = 'active'
+	`, policy.ID, policyRole); err != nil {
+		return ProjectSharePolicy{}, fmt.Errorf("update project share policy link roles: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE ao_project_share_grants
+		SET role = $2,
+			session_id = NULL,
+			updated_at = now()
+		WHERE policy_id = $1 AND status = 'active'
+	`, policy.ID, policyRole); err != nil {
+		return ProjectSharePolicy{}, fmt.Errorf("update project share policy grant roles: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM ao_project_share_grant_sessions

@@ -119,17 +119,17 @@ const sandboxTypeOptions = [
   {
     value: "read_only",
     label: "Read-only",
-    description: "2h lifetime · effective access is view-only",
+    description: "View-only collaboration. Members cannot edit or spawn agents.",
   },
   {
     value: "standard",
     label: "Standard",
-    description: "4h lifetime · normal collaborator sandbox",
+    description: "Can work with the selected agents, but cannot spawn new agents.",
   },
   {
     value: "trusted",
     label: "Trusted",
-    description: "8h lifetime · highest trust sandbox",
+    description: "Full collaborator mode. Members can spawn additional agents.",
   },
 ] as const;
 type SharePolicySandboxType = (typeof sandboxTypeOptions)[number]["value"];
@@ -1360,15 +1360,22 @@ export default function CloudAppPage() {
       await api.createProjectSharePolicy(selectedOrgId, shareProject.id, {
         name,
         sandboxType: newPolicySandboxType,
-        sessionRoles: shareProjectSessions.map((cloudSession) => ({
-          sessionId: cloudSession.id,
-          role: "viewer",
-        })),
+        sessionRoles: policySessionRolesForType(newPolicySandboxType),
       });
       setNewPolicyName("");
       await loadProjectShareAccess();
     });
   };
+
+  const policySessionRolesForType = (
+    sandboxType: SharePolicySandboxType,
+  ): Array<{ sessionId: string; role: "viewer" | "editor" }> =>
+    sandboxType === "trusted"
+      ? []
+      : shareProjectSessions.map((cloudSession) => ({
+          sessionId: cloudSession.id,
+          role: sandboxType === "read_only" ? "viewer" : "editor",
+        }));
 
   const updateSharePolicy = async (
     policyId: string,
@@ -1388,6 +1395,8 @@ export default function CloudAppPage() {
 
   const createSharePolicyLink = async (policyId: string, restricted: boolean) => {
     if (!api || !selectedOrgId || !shareProject) return;
+    const policy = shareAccess?.policies?.find(({ id }) => id === policyId);
+    const role = policy?.sandboxType === "read_only" ? "viewer" : "editor";
     const recipientEmails = (policyInviteEmails[policyId] ?? "")
       .split(/[\n,]/)
       .map((email) => email.trim())
@@ -1402,7 +1411,7 @@ export default function CloudAppPage() {
         shareProject.id,
         {
           policyId,
-          role: "viewer",
+          role,
           accessScope: restricted ? "restricted" : "anyone",
           recipientEmails,
           recipientOrgIds: [],
@@ -2711,67 +2720,23 @@ export default function CloudAppPage() {
                     Create
                   </button>
                 </div>
+                <p className="text-[11px] text-white/30">
+                  {
+                    sandboxTypeOptions.find(
+                      (option) => option.value === newPolicySandboxType,
+                    )?.description
+                  }
+                </p>
                 <div className="space-y-2">
                   {(shareAccess?.policies ?? []).map((policy) => {
-                    const policyRoles = new Map(
-                      (policy.sessionRoles ?? []).map((sessionRole) => [
-                        sessionRole.sessionId,
-                        sessionRole.role,
-                      ]),
-                    );
-                    const roleForAgent = (sessionId: string) =>
-                      policyRoles.get(sessionId) ?? "none";
-                    const effectiveRoleForAgent = (sessionId: string) => {
-                      const chosenRole = roleForAgent(sessionId);
-                      if (chosenRole === "none") return "none";
-                      return policy.sandboxType === "read_only"
-                        ? "viewer"
-                        : chosenRole;
-                    };
-                    const updatePolicyAgentRole = (
-                      sessionId: string,
-                      role: "none" | "viewer" | "editor",
-                    ) => {
-                      const nextRoles = new Map(policyRoles);
-                      if (role === "none") {
-                        nextRoles.delete(sessionId);
-                      } else {
-                        nextRoles.set(sessionId, role);
-                      }
-                      void updateSharePolicy(policy.id, {
-                        name: policy.name,
-                        sandboxType: policy.sandboxType,
-                        sessionRoles: Array.from(nextRoles.entries()).map(
-                          ([id, value]) => ({
-                            sessionId: id,
-                            role: value,
-                          }),
-                        ),
-                      });
-                    };
                     const updatePolicySandboxType = (
                       sandboxType: SharePolicySandboxType,
                     ) => {
                       void updateSharePolicy(policy.id, {
                         name: policy.name,
                         sandboxType,
-                        sessionRoles: policy.sessionRoles ?? [],
+                        sessionRoles: policySessionRolesForType(sandboxType),
                       });
-                    };
-                    const setPolicyAllAgents = (role: "viewer" | "editor") => {
-                      void updateSharePolicy(policy.id, {
-                        name: policy.name,
-                        sandboxType: policy.sandboxType,
-                        sessionRoles: shareProjectSessions.map((cloudSession) => ({
-                          sessionId: cloudSession.id,
-                          role,
-                        })),
-                      });
-                    };
-                    const resetPolicyToSandboxType = () => {
-                      setPolicyAllAgents(
-                        policy.sandboxType === "read_only" ? "viewer" : "editor",
-                      );
                     };
                     const sandboxOption = sandboxTypeOptions.find(
                       (option) => option.value === policy.sandboxType,
@@ -2790,8 +2755,6 @@ export default function CloudAppPage() {
                             <div className="mt-0.5 truncate text-xs text-white/30">
                               {(policy.grants?.length ?? 0)} member
                               {(policy.grants?.length ?? 0) === 1 ? "" : "s"} ·{" "}
-                              {policyRoles.size} agent
-                              {policyRoles.size === 1 ? "" : "s"} ·{" "}
                               {sandboxOption?.label ?? "Standard"}
                             </div>
                           </div>
@@ -2838,81 +2801,9 @@ export default function CloudAppPage() {
                             </select>
                             <span className="mt-1 block text-[11px] font-normal text-white/30">
                               {sandboxOption?.description ??
-                                "4h lifetime · normal collaborator sandbox"}
+                                "Can work with the selected agents, but cannot spawn new agents."}
                             </span>
                           </label>
-                          <div className="rounded-lg border border-white/[0.06] bg-black/10 p-2">
-                            <div className="mb-2 flex items-center justify-between gap-2">
-                              <div className="text-[11px] font-medium text-white/40">
-                                Agent permissions
-                              </div>
-                              <div className="flex gap-1">
-                                <button
-                                  type="button"
-                                  className="h-7 rounded-md px-2 text-[11px] text-white/40 hover:bg-white/[0.05] hover:text-white/70"
-                                  disabled={loading}
-                                  onClick={resetPolicyToSandboxType}
-                                >
-                                  Reset to type
-                                </button>
-                                <button
-                                  type="button"
-                                  className="h-7 rounded-md px-2 text-[11px] text-white/40 hover:bg-white/[0.05] hover:text-white/70"
-                                  disabled={loading}
-                                  onClick={() => setPolicyAllAgents("viewer")}
-                                >
-                                  All view
-                                </button>
-                                <button
-                                  type="button"
-                                  className="h-7 rounded-md px-2 text-[11px] text-white/40 hover:bg-white/[0.05] hover:text-white/70"
-                                  disabled={loading}
-                                  onClick={() => setPolicyAllAgents("editor")}
-                                >
-                                  All edit
-                                </button>
-                              </div>
-                            </div>
-                            <div className="space-y-1">
-                              {shareProjectSessions.map((cloudSession) => (
-                                <label
-                                  key={cloudSession.id}
-                                  className="grid grid-cols-[minmax(0,1fr)_112px] items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-white/[0.03]"
-                                >
-                                  <span className="min-w-0">
-                                    <span className="block truncate text-white/60">
-                                      {cloudSession.displayName}
-                                    </span>
-                                    {effectiveRoleForAgent(cloudSession.id) !==
-                                    roleForAgent(cloudSession.id) ? (
-                                      <span className="block truncate text-[10px] text-white/30">
-                                        Effective: view-only
-                                      </span>
-                                    ) : null}
-                                  </span>
-                                  <select
-                                    className="h-7 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
-                                    value={roleForAgent(cloudSession.id)}
-                                    disabled={loading}
-                                    onChange={(event) =>
-                                      updatePolicyAgentRole(
-                                        cloudSession.id,
-                                        event.target.value as
-                                          | "none"
-                                          | "viewer"
-                                          | "editor",
-                                      )
-                                    }
-                                    aria-label={`${policy.name} access to ${cloudSession.displayName}`}
-                                  >
-                                    <option value="none">No access</option>
-                                    <option value="viewer">View</option>
-                                    <option value="editor">Edit</option>
-                                  </select>
-                                </label>
-                              ))}
-                            </div>
-                          </div>
                           <div className="rounded-lg border border-white/[0.06] bg-black/10 p-2">
                             <div className="mb-2 text-[11px] font-medium text-white/40">
                               Invite to policy
