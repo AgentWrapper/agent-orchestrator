@@ -502,6 +502,15 @@ it("creates a scratch project through the connected GitHub installation", async 
 
   fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
   fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
+  expect(
+    screen.queryByText(/Owners come from your account-wide GitHub connection/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByText(/Owners configured for selected repositories/),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Connect another" }),
+  ).toBeVisible();
   fireEvent.change(screen.getByPlaceholderText("my-new-app"), {
     target: { value: "Scratch App" },
   });
@@ -999,11 +1008,18 @@ it("lets members manage their account-wide GitHub identity", async () => {
 });
 
 it("opens provider settings when returning from the GitHub callback", async () => {
-  window.history.replaceState({}, "", "/app?settings=github");
+  window.history.replaceState(
+    {},
+    "",
+    "/app?settings=github&github=account_already_connected",
+  );
 
   render(<CloudAppPage />);
 
   expect(await screen.findByText("GitHub account not connected")).toBeVisible();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "This GitHub account is already connected to another AO user.",
+  );
   expect(screen.getByText("Coding agents")).toBeVisible();
   expect(window.location.search).toBe("");
 });

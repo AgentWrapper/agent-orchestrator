@@ -302,6 +302,12 @@ export default function CloudAppPage() {
       ? "agents"
       : "org",
   );
+  const [githubCallbackResult, setGitHubCallbackResult] = useState<string | null>(
+    () =>
+      typeof window === "undefined"
+        ? null
+        : new URLSearchParams(window.location.search).get("github"),
+  );
   const [activeChatSessionIds, setActiveChatSessionIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -391,8 +397,9 @@ export default function CloudAppPage() {
       const url = new URL(window.location.href);
       const openSettings = url.searchParams.has("settings");
       setView(openSettings ? "settings" : "board");
-      if (openSettings) {
+      if (openSettings || url.searchParams.has("github")) {
         url.searchParams.delete("settings");
+        url.searchParams.delete("github");
         window.history.replaceState({}, "", url.pathname + url.search + url.hash);
       }
       if (Number.isFinite(savedWidth)) {
@@ -2073,6 +2080,8 @@ export default function CloudAppPage() {
                 connections={connections}
                 githubConnection={githubConnection}
                 githubUserConnection={githubUserConnection}
+                githubCallbackResult={githubCallbackResult}
+                onDismissGitHubCallback={() => setGitHubCallbackResult(null)}
                 agentCredentialsMode={agentCredentialsMode}
                 initialPanel={settingsPanelTarget}
                 run={run}
@@ -2956,6 +2965,8 @@ function CloudSettings({
   connections,
   githubConnection,
   githubUserConnection,
+  githubCallbackResult,
+  onDismissGitHubCallback,
   agentCredentialsMode,
   initialPanel,
   run,
@@ -2974,6 +2985,8 @@ function CloudSettings({
   connections: ProviderConnection[];
   githubConnection: CloudGitHubConnection | null;
   githubUserConnection: CloudGitHubUserConnection | null;
+  githubCallbackResult: string | null;
+  onDismissGitHubCallback: () => void;
   agentCredentialsMode: AgentCredentialsMode;
   initialPanel: SettingsPanelName;
   run: (operation: () => Promise<unknown>) => Promise<unknown>;
@@ -3033,10 +3046,6 @@ function CloudSettings({
         >
           {"<"} Back to app
         </button>
-        <div className="mb-4 flex h-8 items-center gap-2 rounded-md border border-white/[0.08] bg-[#0c0d10] px-2 text-sm text-white/45">
-          <span className="size-1.5 rounded-full bg-white/25" />
-          Search settings
-        </div>
         <div className="space-y-5">
           <div>
             <p className="px-2 font-mono text-[10px] uppercase tracking-[0.08em] text-white/35">
@@ -3560,6 +3569,8 @@ function CloudSettings({
               api={api}
               connection={githubConnection}
               userConnection={githubUserConnection}
+              callbackResult={githubCallbackResult}
+              onDismissCallback={onDismissGitHubCallback}
               orgId={selectedOrgId}
               canAdmin={canAdminOrg}
               loading={loading}
@@ -3676,10 +3687,51 @@ function gitHubInstallationSettingsURL(
   return `https://github.com/settings/installations/${id}`;
 }
 
+function gitHubCallbackNotice(result: string | null) {
+  switch (result) {
+    case "connected":
+      return {
+        message: "GitHub connected successfully.",
+        tone: "success" as const,
+      };
+    case "account_already_connected":
+      return {
+        message:
+          "This GitHub account is already connected to another AO user. Sign in to a different GitHub account, or disconnect it from the other AO user before trying again.",
+        tone: "error" as const,
+      };
+    case "authorization_rejected":
+      return {
+        message: "GitHub authorization was canceled.",
+        tone: "error" as const,
+      };
+    case "invalid_state":
+      return {
+        message: "The GitHub connection request expired. Try connecting again.",
+        tone: "error" as const,
+      };
+    case "configuration_error":
+      return {
+        message: "GitHub authorization is not configured for this deployment.",
+        tone: "error" as const,
+      };
+    case "invalid_callback":
+    case "authorization_failed":
+      return {
+        message: "GitHub could not be connected. Try again.",
+        tone: "error" as const,
+      };
+    default:
+      return null;
+  }
+}
+
 export function GitHubConnectionSettings({
   api,
   connection,
   userConnection,
+  callbackResult,
+  onDismissCallback,
   orgId,
   canAdmin,
   loading,
@@ -3688,6 +3740,8 @@ export function GitHubConnectionSettings({
   api: CloudAPI;
   connection: CloudGitHubConnection | null;
   userConnection: CloudGitHubUserConnection | null;
+  callbackResult: string | null;
+  onDismissCallback: () => void;
   orgId: string | null;
   canAdmin: boolean;
   loading: boolean;
@@ -3695,6 +3749,7 @@ export function GitHubConnectionSettings({
 }) {
   const repositoryCount = connection?.repositories.length ?? 0;
   const availableOwners = userConnection?.installations ?? [];
+  const callbackNotice = gitHubCallbackNotice(callbackResult);
 
   return (
     <SettingsPanel
@@ -3735,6 +3790,26 @@ export function GitHubConnectionSettings({
         </div>
       ) : (
         <div className="space-y-4">
+          {callbackNotice ? (
+            <div
+              className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 text-sm leading-5 ${
+                callbackNotice.tone === "success"
+                  ? "border-[#74b98a]/20 bg-[#74b98a]/[0.06] text-[#9dd8ae]"
+                  : "border-[#ef6b6b]/20 bg-[#ef6b6b]/[0.06] text-[#f3aaaa]"
+              }`}
+              role={callbackNotice.tone === "success" ? "status" : "alert"}
+            >
+              <p className="min-w-0 flex-1">{callbackNotice.message}</p>
+              <button
+                type="button"
+                className="shrink-0 rounded p-0.5 opacity-60 transition-opacity hover:opacity-100"
+                onClick={onDismissCallback}
+                aria-label="Dismiss GitHub connection message"
+              >
+                <X className="size-3.5" />
+              </button>
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.08] pb-4">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <Github className="size-4 shrink-0 text-white/70" />
@@ -4421,13 +4496,6 @@ function ProjectForm({
                 </span>
               </button>
             </div>
-            <div className="flex items-start gap-2.5 border-t border-white/[0.08] pt-3 text-xs leading-5 text-white/45">
-              <span className="mt-2 size-1.5 shrink-0 rounded-full bg-[#4d8dff]" />
-              <span>
-                Scratch projects initialize a GitHub repository before the
-                orchestrator starts.
-              </span>
-            </div>
             <div className="-mx-4 -mb-4 flex justify-end border-t border-white/[0.08] px-4 py-3">
               <button
                 type="button"
@@ -4522,9 +4590,25 @@ function ProjectForm({
                 disabled={loading}
               />
             </label>
-            <label className="block text-xs text-white/45">
-              GitHub owner
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <label
+                  className="text-xs text-white/45"
+                  htmlFor="scratch-github-owner"
+                >
+                  GitHub owner
+                </label>
+                <button
+                  type="button"
+                  className="text-xs text-[#8eb6ff] hover:underline"
+                  onClick={onOpenGitHubSettings}
+                  disabled={loading}
+                >
+                  Connect another
+                </button>
+              </div>
               <select
+                id="scratch-github-owner"
                 className={`${field} mt-1.5`}
                 value={scratchInstallationId}
                 onChange={(event) =>
@@ -4554,31 +4638,7 @@ function ProjectForm({
                   </option>
                 ))}
               </select>
-            </label>
-            <div className="flex items-start justify-between gap-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/45">
-              <span>
-                Owners come from your account-wide GitHub connection. The new
-                repository is granted only to this AO organization.
-              </span>
-              <button
-                type="button"
-                className="shrink-0 text-[#8eb6ff] hover:underline"
-                onClick={onOpenGitHubSettings}
-                disabled={loading}
-              >
-                Connect another
-              </button>
             </div>
-            {scratchInstallations.some(
-              (installation) => !installation.canCreateRepository,
-            ) ? (
-              <p className="rounded-lg border border-[#e8c14a]/20 bg-[#e8c14a]/[0.06] px-3 py-2 text-xs leading-5 text-white/50">
-                Owners configured for selected repositories are listed but
-                unavailable for scratch projects. GitHub requires all-repository
-                App access so the newly created repository is immediately usable
-                by its orchestrator and workers.
-              </p>
-            ) : null}
             <label className="flex items-start gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/50">
               <input
                 className="mt-1"
