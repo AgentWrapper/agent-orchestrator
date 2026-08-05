@@ -388,6 +388,10 @@ func (r projectRepoResolver) RepoPath(projectID domain.ProjectID) (string, error
 type chatLauncher struct{ svc *chatsvc.Service }
 
 var _ sessionmanager.ChatLauncher = chatLauncher{}
+var _ interface {
+	PrepareChatHandoff(context.Context, domain.SessionID, domain.SessionInterfaceTransitionPolicy) error
+	AbortChatHandoff(domain.SessionID)
+} = chatLauncher{}
 
 func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHarness) error {
 	return c.svc.PreflightChat(ctx, harness)
@@ -423,6 +427,22 @@ func (c chatLauncher) StartChatTurn(ctx context.Context, id domain.SessionID, te
 
 func (c chatLauncher) RelayChatTurn(ctx context.Context, id domain.SessionID, text string) (string, error) {
 	return c.svc.RelayChatTurn(ctx, id, text)
+}
+
+// PrepareChatHandoff closes Chat intake and waits for the controller to become
+// quiescent before Session Manager stops it. These methods intentionally live
+// on the wiring adapter: Session Manager's handoff capability is optional, but
+// wrapping the concrete Chat service must not erase it.
+func (c chatLauncher) PrepareChatHandoff(
+	ctx context.Context,
+	id domain.SessionID,
+	policy domain.SessionInterfaceTransitionPolicy,
+) error {
+	return c.svc.PrepareChatHandoff(ctx, id, policy)
+}
+
+func (c chatLauncher) AbortChatHandoff(id domain.SessionID) {
+	c.svc.AbortChatHandoff(id)
 }
 
 func (c chatLauncher) StopChat(ctx context.Context, id domain.SessionID) error {
