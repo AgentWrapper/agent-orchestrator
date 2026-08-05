@@ -68,6 +68,10 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 	return s, err
 }
 
+func (f *fakeSessionService) DelegateTask(context.Context, sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error) {
+	return sessionsvc.DelegateTaskOutcome{}, nil
+}
+
 func (f *fakeSessionService) Get(context.Context, domain.SessionID) (domain.Session, error) {
 	return domain.Session{}, nil
 }

@@ -312,6 +312,8 @@
 	"newTask.optional": "可选",
 	"newTask.projectDefault": "项目默认",
 	"newTask.refreshAgents": "刷新代理",
+	"newTask.refreshModels": "Refresh models",
+	"newTask.refreshingModels": "Refreshing models...",
 	"newTask.refreshFailed": "无法刷新代理目录。",
 	"newTask.refreshingAgents": "正在刷新代理...",
 	"newTask.removeImage": "移除图片 {{number}}",
@@ -947,5 +949,9 @@
 	"settings.dev.resetDefaultsLabel": "重置默认值",
 	"settings.dev.resetReload": "重置并重新加载",
 	"settings.dev.decreaseAria": "减少{{label}}",
-	"settings.dev.increaseAria": "增加{{label}}"
+	"settings.dev.increaseAria": "增加{{label}}",
+	"newTask.task": "Task",
+	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
+	"newTask.model": "Model",
+	"newTask.taskRequired": "Task is required."
 }

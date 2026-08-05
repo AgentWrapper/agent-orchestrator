@@ -843,6 +843,55 @@ paths:
       summary: Fetch one orchestrator session
       tags:
       - sessions
+  /api/v1/orchestrators/delegate:
+    post:
+      operationId: delegateTask
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DelegateTaskRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegateTaskResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start a worker task and ask the orchestrator to title it
+      tags:
+      - sessions
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -3218,6 +3267,59 @@ components:
       - kind
       - path
       - resolveError
+      type: object
+    DelegateTaskRequest:
+      properties:
+        agent:
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          - fake
+          type: string
+        brief:
+          maxLength: 4096
+          type: string
+        model:
+          maxLength: 256
+          type: string
+        projectId:
+          type: string
+      required:
+      - projectId
+      - brief
+      type: object
+    DelegateTaskResponse:
+      properties:
+        ok:
+          type: boolean
+        orchestratorId:
+          type: string
+        workerId:
+          type: string
+      required:
+      - ok
+      - workerId
       type: object
     DevImportProjectsConflict:
       properties:

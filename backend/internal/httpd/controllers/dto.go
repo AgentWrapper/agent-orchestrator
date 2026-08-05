@@ -397,6 +397,26 @@ type SendSessionMessageResponse struct {
 	Message   string           `json:"message"`
 }
 
+// DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
+// An omitted agent tells the orchestrator to use the project's worker default.
+// Attachments are intentionally absent from this MVP contract: delegation uses
+// the string-only guarded messenger and cannot safely hand image bytes to a
+// worker that does not exist yet without a durable attachment store.
+type DelegateTaskRequest struct {
+	ProjectID domain.ProjectID    `json:"projectId"`
+	Brief     string              `json:"brief" maxLength:"4096"`
+	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
+	Model     string              `json:"model,omitempty" maxLength:"256"`
+}
+
+// DelegateTaskResponse confirms which worker was spawned and, when available,
+// which orchestrator received the follow-up title request.
+type DelegateTaskResponse struct {
+	OK             bool             `json:"ok"`
+	WorkerID       domain.SessionID `json:"workerId"`
+	OrchestratorID domain.SessionID `json:"orchestratorId,omitempty"`
+}
+
 // SessionPRFacts is the pull-request read shape returned under session PR routes.
 type SessionPRFacts struct {
 	URL            string                `json:"url"`

@@ -314,6 +314,8 @@
 	"newTask.optional": "facultatif",
 	"newTask.projectDefault": "Valeur par défaut du projet",
 	"newTask.refreshAgents": "Actualiser les agents",
+	"newTask.refreshModels": "Refresh models",
+	"newTask.refreshingModels": "Refreshing models...",
 	"newTask.refreshFailed": "Impossible d'actualiser le catalogue d'agents.",
 	"newTask.refreshingAgents": "Actualisation des agents...",
 	"newTask.removeImage": "Supprimer l'image {{number}}",
@@ -980,5 +982,9 @@
 	"settings.dev.decreaseAria": "Decrease {{label}}",
 	"settings.dev.increaseAria": "Increase {{label}}",
 	"shell.pinSession": "Pin session",
-	"shell.unpinSession": "Unpin session"
+	"shell.unpinSession": "Unpin session",
+	"newTask.task": "Task",
+	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
+	"newTask.model": "Model",
+	"newTask.taskRequired": "Task is required."
 }
