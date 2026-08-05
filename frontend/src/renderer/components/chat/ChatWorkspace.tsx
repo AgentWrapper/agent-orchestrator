@@ -85,6 +85,8 @@ export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
 	/** Session-level actions owned above the conversation surface. */
 	interfaceAction?: ReactNode;
+	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
+	controllerTransitioning?: boolean;
 	/** Older durable history is available but not loaded into the DOM yet. */
 	hasOlder?: boolean;
 	loadingOlder?: boolean;
@@ -166,6 +168,7 @@ export interface ChatWorkspaceProps {
 export function ChatWorkspace({
 	snapshot,
 	interfaceAction,
+	controllerTransitioning,
 	hasOlder,
 	loadingOlder,
 	onLoadOlder,
@@ -245,6 +248,7 @@ export function ChatWorkspace({
 			) : null}
 			<ControllerBanner
 				controller={snapshot.controller}
+				transitioning={controllerTransitioning}
 				onResume={onResumeAgent}
 				resuming={resumingAgent}
 				resumeError={resumeError}
@@ -583,6 +587,7 @@ function CompactButton({
  */
 function ControllerBanner({
 	controller,
+	transitioning,
 	onResume,
 	resuming,
 	resumeError,
@@ -591,6 +596,7 @@ function ControllerBanner({
 	shellError,
 }: {
 	controller: { state: ControllerState; error?: string };
+	transitioning?: boolean;
 	onResume?: () => void;
 	resuming?: boolean;
 	resumeError?: string;
@@ -598,6 +604,10 @@ function ControllerBanner({
 	openingShell?: boolean;
 	shellError?: string;
 }) {
+	// The transition coordinator intentionally stops one controller before it
+	// starts the other. The top-bar handoff state already explains that interval;
+	// presenting its intermediate snapshot as a crash produces a red false alarm.
+	if (transitioning && controller.state === "stopped") return null;
 	if (controller.state === "ready" || controller.state === "busy") return null;
 
 	const copy: Partial<Record<ControllerState, { title: string; tone: string }>> = {

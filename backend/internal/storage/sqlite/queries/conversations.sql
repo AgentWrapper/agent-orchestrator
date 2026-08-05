@@ -369,6 +369,18 @@ SELECT * FROM conversation_messages
 WHERE conversation_id = ? AND client_message_id = ?
 LIMIT 1;
 
+-- A native history import has the provider turn identity but not AO's turn id.
+-- Looking through the turn also detects a message AO wrote before dispatch, which
+-- prevents a Chat -> TUI -> Chat cycle from rendering the same prompt twice.
+-- name: SelectConversationUserMessageByTurn :one
+SELECT conversation_messages.*
+FROM conversation_messages
+JOIN conversation_turns ON conversation_turns.id = conversation_messages.turn_id
+WHERE conversation_messages.conversation_id = ?
+  AND conversation_turns.provider_turn_id = ?
+  AND conversation_messages.role = 'user'
+LIMIT 1;
+
 -- Prose the agent still remembers. Rows belonging to a rolled-back turn are left
 -- out: rollback discarded them provider-side, and showing a person a message the
 -- agent has no memory of is the one way this feature can lie.

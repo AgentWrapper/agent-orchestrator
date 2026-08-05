@@ -154,8 +154,9 @@ func (d *Driver) Start(ctx context.Context, cfg ports.ChatStartConfig) (ports.Ch
 	return conv, nil
 }
 
-// Resume reconnects to the stored ACP session without replaying AO's rendered
-// transcript. The ACP agent remains authoritative for model context.
+// Resume reconnects to the stored ACP session. When the agent advertises
+// session/load, AO uses it to recover both provider context and the normalized
+// transcript; newer resume-only agents still recover context without a replay.
 func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.ChatConversation, error) {
 	if cfg.ProviderConversationID == "" {
 		return nil, fmt.Errorf("%w: no stored ACP session id", ports.ErrChatResumeFailed)
@@ -191,19 +192,38 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 
 	resumeCtx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
-	resp, err := conv.conn.ResumeSession(resumeCtx, acpsdk.ResumeSessionRequest{
-		SessionId:             acpsdk.SessionId(cfg.ProviderConversationID),
-		Cwd:                   cfg.WorkspacePath,
-		AdditionalDirectories: additional,
-		McpServers:            mcpServers,
-	})
-	if err != nil {
-		_ = conv.Close()
-		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
+	var configOptions []acpsdk.SessionConfigOption
+	if init.AgentCapabilities.LoadSession {
+		conv.beginHistoryReplay(cfg.ProviderConversationID)
+		resp, err := conv.conn.LoadSession(resumeCtx, acpsdk.LoadSessionRequest{
+			SessionId:             acpsdk.SessionId(cfg.ProviderConversationID),
+			Cwd:                   cfg.WorkspacePath,
+			AdditionalDirectories: additional,
+			McpServers:            mcpServers,
+		})
+		if err != nil {
+			conv.abortHistoryReplay()
+			_ = conv.Close()
+			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, normalizeACPError("ACP session/load", err))
+		}
+		conv.finishHistoryReplay()
+		configOptions = resp.ConfigOptions
+	} else {
+		resp, err := conv.conn.ResumeSession(resumeCtx, acpsdk.ResumeSessionRequest{
+			SessionId:             acpsdk.SessionId(cfg.ProviderConversationID),
+			Cwd:                   cfg.WorkspacePath,
+			AdditionalDirectories: additional,
+			McpServers:            mcpServers,
+		})
+		if err != nil {
+			_ = conv.Close()
+			return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
+		}
+		configOptions = resp.ConfigOptions
 	}
 	conv.start(
 		cfg.ProviderConversationID, conversationCapabilities(d.cfg.Capabilities, init),
-		d.cfg.SessionMode, d.cfg.SessionOptions, resp.ConfigOptions,
+		d.cfg.SessionMode, d.cfg.SessionOptions, configOptions,
 	)
 	if err := conv.applyTurnSettings(ctx, ports.ChatTurnSettings{Approval: cfg.Permissions}); err != nil {
 		_ = conv.Close()

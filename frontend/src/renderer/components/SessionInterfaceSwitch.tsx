@@ -5,7 +5,10 @@ import type {
 	SessionInterfaceTransition,
 	SessionInterfaceTransitionPolicy,
 } from "../hooks/useSessionInterfaceTransition";
-import { interfaceTransitionIsCancellable } from "../hooks/useSessionInterfaceTransition";
+import {
+	interfaceTransitionIsActive,
+	interfaceTransitionIsCancellable,
+} from "../hooks/useSessionInterfaceTransition";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import {
@@ -26,21 +29,83 @@ function TargetIcon({ target, className }: { target: SessionInterfaceMode; class
 	return <Icon aria-hidden="true" className={className} />;
 }
 
+const phaseCopy: Record<SessionInterfaceTransition["phase"], string> = {
+	requested: "Preparing switch…",
+	preflighting: "Checking interface…",
+	draining: "Waiting to switch…",
+	source_stopping: "Stopping controller…",
+	source_stopped: "Controller stopped…",
+	target_starting: "Resuming agent…",
+	activating: "Activating interface…",
+	completed: "Interface switched",
+	failed: "Interface switch failed",
+	cancelled: "Interface switch cancelled",
+	recovery_required: "Interface switch needs recovery",
+};
+
 export function SessionInterfaceSwitchButton({
 	target,
 	supported,
 	disabledReason,
 	pending,
+	transition,
+	cancelling,
+	cancelError,
 	onClick,
+	onCancel,
 	className,
 }: {
 	target: SessionInterfaceMode;
 	supported: boolean;
 	disabledReason?: string;
 	pending?: boolean;
+	transition?: SessionInterfaceTransition;
+	cancelling?: boolean;
+	cancelError?: string;
 	onClick: () => void;
+	onCancel?: () => void;
 	className?: string;
 }) {
+	if (transition && interfaceTransitionIsActive(transition)) {
+		const cancellable = interfaceTransitionIsCancellable(transition) && Boolean(onCancel);
+		return (
+			<div
+				role="status"
+				aria-live="polite"
+				className={cn(
+					"flex h-7 items-center gap-1 rounded-md bg-muted/55 pl-2 text-xs text-muted-foreground",
+					cancellable ? "pr-0.5" : "pr-2",
+					className,
+				)}
+				title={cancelError || `${phaseCopy[transition.phase]} Switching to ${targetLabel(transition.targetMode)}.`}
+			>
+				<Loader2 aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
+				<span className="whitespace-nowrap">
+					{phaseCopy[transition.phase]} <span className="text-foreground">{targetLabel(transition.targetMode)}</span>
+				</span>
+				{cancellable ? (
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="ml-1 h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
+						disabled={cancelling}
+						onClick={onCancel}
+						aria-label={`Cancel switch to ${targetLabel(transition.targetMode)}`}
+					>
+						{cancelling ? <Loader2 aria-hidden="true" className="size-3 animate-spin" /> : <X aria-hidden="true" className="size-3" />}
+						{cancelling ? "Cancelling" : "Cancel"}
+					</Button>
+				) : null}
+				{cancelError ? (
+					<span role="alert" className="ml-1 whitespace-nowrap pr-1.5 text-[11px] text-destructive">
+						Cancel failed
+					</span>
+				) : null}
+			</div>
+		);
+	}
+
 	const label = `Open ${targetLabel(target)}`;
 	return (
 		<Button
@@ -139,73 +204,6 @@ export function SessionInterfaceSwitchDialog({
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
-	);
-}
-
-const phaseCopy: Record<SessionInterfaceTransition["phase"], string> = {
-	requested: "Preparing the switch…",
-	preflighting: "Checking the other interface…",
-	draining: "Waiting for the current work to finish…",
-	source_stopping: "Stopping the current controller…",
-	source_stopped: "Current controller stopped…",
-	target_starting: "Resuming the agent in the other interface…",
-	activating: "Activating the new interface…",
-	completed: "Interface switched",
-	failed: "Interface switch failed",
-	cancelled: "Interface switch cancelled",
-	recovery_required: "Interface switch needs recovery",
-};
-
-export function SessionInterfaceTransitionOverlay({
-	transition,
-	cancelling,
-	cancelError,
-	onCancel,
-}: {
-	transition?: SessionInterfaceTransition;
-	cancelling?: boolean;
-	cancelError?: string;
-	onCancel: () => void;
-}) {
-	if (!transition || ![
-		"requested",
-		"preflighting",
-		"draining",
-		"source_stopping",
-		"source_stopped",
-		"target_starting",
-		"activating",
-	].includes(transition.phase)) {
-		return null;
-	}
-	const cancellable = interfaceTransitionIsCancellable(transition);
-	return (
-		<div className="absolute inset-0 z-30 grid place-items-center bg-background/80 px-5 backdrop-blur-[2px]">
-			<div
-				role="status"
-				aria-live="polite"
-				className="flex w-full max-w-sm flex-col items-center rounded-xl border border-border bg-popover px-5 py-6 text-center shadow-lg"
-			>
-				<div className="mb-3 grid size-9 place-items-center rounded-full bg-muted">
-					<Loader2 aria-hidden="true" className="size-4 animate-spin text-foreground" />
-				</div>
-				<strong className="text-sm font-medium text-foreground">{phaseCopy[transition.phase]}</strong>
-				<p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-					Switching to {targetLabel(transition.targetMode)} with the same native conversation. AO will
-					never run both controllers at once.
-				</p>
-				{cancellable ? (
-					<Button className="mt-4" size="sm" variant="outline" disabled={cancelling} onClick={onCancel}>
-						{cancelling ? "Cancelling…" : "Cancel switch"}
-					</Button>
-				) : null}
-				{cancelError ? (
-					<p role="alert" className="mt-3 text-xs text-destructive">
-						{cancelError}
-					</p>
-				) : null}
-			</div>
-		</div>
 	);
 }
 

@@ -35,6 +35,7 @@ type Store interface {
 	ClaimChatControllerGeneration(ctx context.Context, session domain.SessionID, generation string, now time.Time) error
 
 	AdoptProviderTurn(ctx context.Context, conversationID string, session domain.SessionID, generation, turnID, providerTurnID string, now time.Time) error
+	AppendImportedUserMessage(ctx context.Context, conversationID, providerTurnID string, msg domain.ConversationMessage, now time.Time) error
 
 	AppendUserMessage(ctx context.Context, conversationID string, session domain.SessionID, generation string, msg domain.ConversationMessage, turnID string, now time.Time) (bool, error)
 	BindTurnToProvider(ctx context.Context, turnID, providerTurnID string, now time.Time) error
@@ -220,9 +221,210 @@ func newController(
 		}
 		c.mcpServers[server.Name] = server
 	}
+	return c
+}
+
+// start begins live provider consumption after any durable native history has
+// been imported. Keeping construction and consumption separate prevents a resume
+// notification from racing ahead of the older turns it follows.
+func (c *Controller) start() {
 	go c.project()
 	go c.readRateLimits()
-	return c
+}
+
+// importNativeHistory projects the settled provider thread before live event
+// consumption starts. Re-running it is safe because history events carry stable
+// identities and ProjectProviderEvent deduplicates archive+projection together.
+func (c *Controller) importNativeHistory(
+	ctx context.Context,
+	existingTurns []domain.ConversationTurn,
+	existingMessages []domain.ConversationMessage,
+	existingActivities []domain.ConversationActivity,
+) error {
+	reader, ok := c.conv.(ports.ChatHistoryReader)
+	if !ok {
+		return nil
+	}
+	events, err := reader.ReadHistory(ctx)
+	if err != nil {
+		return fmt.Errorf("read native conversation history: %w", err)
+	}
+	events = reconcileNativeHistory(
+		events, existingTurns, existingMessages, existingActivities,
+	)
+	for _, event := range events {
+		if event.ProviderEventID == "" {
+			return fmt.Errorf("native history event %s has no stable identity", event.Kind)
+		}
+		if _, err := c.projectEvent(ctx, event); err != nil {
+			return fmt.Errorf("import native history event %s: %w", event.Kind, err)
+		}
+	}
+	return nil
+}
+
+// nativeHistoryTurn is the durable identity AO already assigned to one native
+// turn. ProviderTurnID is the value every replay event must use before it reaches
+// the projector; the other fields are progressively stronger ways to recognize
+// it when an ACP agent assigned a different replay turn id.
+type nativeHistoryTurn struct {
+	providerTurnID string
+	state          domain.TurnState
+	clientMessage  string
+	providerItem   string
+	text           string
+	used           bool
+}
+
+// reconcileNativeHistory maps a provider replay onto AO's existing durable
+// turns before any event is projected.
+//
+// ACP intentionally treats message ids as opaque. Well-behaved agents may echo
+// the client's id, while others persist their own user uuid. Assistant/tool item
+// ids are usually replay-stable, so they are the strongest cross-restart signal;
+// the original client id is next, and exact prompt text in conversation order is
+// the compatibility fallback. This belongs above every driver: Codex history is
+// already identity-stable, while all ACP bindings need the same reconciliation.
+func reconcileNativeHistory(
+	events []ports.ChatEvent,
+	existingTurns []domain.ConversationTurn,
+	existingMessages []domain.ConversationMessage,
+	existingActivities []domain.ConversationActivity,
+) []ports.ChatEvent {
+	if len(events) == 0 || len(existingTurns) == 0 {
+		return events
+	}
+
+	byAOTurnID := make(map[string]*nativeHistoryTurn, len(existingTurns))
+	byProviderTurnID := make(map[string]*nativeHistoryTurn, len(existingTurns))
+	ordered := make([]*nativeHistoryTurn, 0, len(existingTurns))
+	for _, turn := range existingTurns {
+		if turn.ProviderTurnID == "" || turn.RolledBackAt != nil {
+			continue
+		}
+		candidate := &nativeHistoryTurn{
+			providerTurnID: turn.ProviderTurnID,
+			state:          turn.State,
+		}
+		byAOTurnID[turn.ID] = candidate
+		byProviderTurnID[turn.ProviderTurnID] = candidate
+		ordered = append(ordered, candidate)
+	}
+	if len(ordered) == 0 {
+		return events
+	}
+
+	// A provider item is useful only when it identifies exactly one durable turn.
+	// Treat collisions as ambiguous rather than guessing across turns.
+	providerItems := make(map[string]*nativeHistoryTurn)
+	ambiguousItems := make(map[string]bool)
+	rememberProviderItem := func(itemID string, candidate *nativeHistoryTurn) {
+		if itemID == "" || candidate == nil || ambiguousItems[itemID] {
+			return
+		}
+		if previous, exists := providerItems[itemID]; exists && previous != candidate {
+			delete(providerItems, itemID)
+			ambiguousItems[itemID] = true
+			return
+		}
+		providerItems[itemID] = candidate
+	}
+	for _, message := range existingMessages {
+		candidate := byAOTurnID[message.TurnID]
+		if candidate == nil {
+			continue
+		}
+		rememberProviderItem(message.ProviderItemID, candidate)
+		if message.Role == domain.MessageRoleUser && candidate.text == "" {
+			candidate.text = message.Text
+			candidate.clientMessage = message.ClientMessageID
+			candidate.providerItem = message.ProviderItemID
+		}
+	}
+	for _, activity := range existingActivities {
+		rememberProviderItem(activity.ProviderItemID, byAOTurnID[activity.TurnID])
+	}
+
+	mapped := make(map[string]*nativeHistoryTurn)
+	bind := func(replayTurnID string, candidate *nativeHistoryTurn) {
+		if replayTurnID == "" || candidate == nil {
+			return
+		}
+		if previous, exists := mapped[replayTurnID]; exists && previous != candidate {
+			// One replay turn claiming stable items from two durable turns is
+			// malformed/ambiguous. Preserve the first strong observation rather than
+			// moving already-associated events between turns.
+			return
+		}
+		mapped[replayTurnID] = candidate
+		candidate.used = true
+	}
+
+	// Gather mappings from the complete replay before rewriting TurnStarted, which
+	// necessarily arrives before the assistant/tool item that can identify it.
+	for _, event := range events {
+		if candidate := byProviderTurnID[event.ProviderTurnID]; candidate != nil {
+			bind(event.ProviderTurnID, candidate)
+		}
+		if candidate := providerItems[event.ProviderItemID]; candidate != nil {
+			bind(event.ProviderTurnID, candidate)
+		}
+	}
+	for _, event := range events {
+		if event.Kind != ports.ChatEventUserMessageCompleted || event.ProviderTurnID == "" {
+			continue
+		}
+		if mapped[event.ProviderTurnID] != nil {
+			continue
+		}
+		var match *nativeHistoryTurn
+		if event.ClientMessageID != "" {
+			for _, candidate := range ordered {
+				if !candidate.used && candidate.clientMessage == event.ClientMessageID {
+					match = candidate
+					break
+				}
+			}
+		}
+		if match == nil && event.ProviderItemID != "" {
+			for _, candidate := range ordered {
+				if !candidate.used && candidate.providerItem == event.ProviderItemID {
+					match = candidate
+					break
+				}
+			}
+		}
+		if match == nil && event.Text != "" {
+			for _, candidate := range ordered {
+				if !candidate.used && candidate.text == event.Text {
+					match = candidate
+					break
+				}
+			}
+		}
+		bind(event.ProviderTurnID, match)
+	}
+
+	var reconciled []ports.ChatEvent
+	for i, event := range events {
+		candidate := mapped[event.ProviderTurnID]
+		if candidate == nil {
+			continue
+		}
+		if reconciled == nil {
+			reconciled = append([]ports.ChatEvent(nil), events...)
+		}
+		reconciled[i].ProviderTurnID = candidate.providerTurnID
+		// A replay has no portable ACP turn-outcome field. Do not overwrite AO's
+		// known interrupted/failed result with the adapter's synthetic "completed".
+		if event.Kind == ports.ChatEventTurnCompleted && candidate.state.Terminal() {
+			reconciled[i].TurnState = candidate.state
+		}
+	}
+	if reconciled == nil {
+		return events
+	}
+	return reconciled
 }
 
 // rateLimitReadTimeout bounds the startup quota read. It is a local IPC call, and
@@ -947,6 +1149,7 @@ func (c *Controller) projectEvent(ctx context.Context, event ports.ChatEvent) (b
 		"providerEventId": event.ProviderEventID,
 		"providerTurnId":  event.ProviderTurnID,
 		"providerItemId":  event.ProviderItemID,
+		"clientMessageId": event.ClientMessageID,
 		"turnState":       event.TurnState,
 		"delta":           event.Delta,
 		"text":            event.Text,
@@ -1006,6 +1209,20 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 			}
 		}
 		return nil
+
+	case ports.ChatEventUserMessageCompleted:
+		if event.ProviderTurnID == "" || event.Text == "" {
+			return nil
+		}
+		return c.store.AppendImportedUserMessage(ctx, c.conversation.ID, event.ProviderTurnID,
+			domain.ConversationMessage{
+				ID:              c.newID(),
+				Role:            domain.MessageRoleUser,
+				Origin:          domain.MessageOriginHuman,
+				Text:            event.Text,
+				ProviderItemID:  event.ProviderItemID,
+				ClientMessageID: event.ClientMessageID,
+			}, now)
 
 	case ports.ChatEventTurnCompleted:
 		c.mu.Lock()

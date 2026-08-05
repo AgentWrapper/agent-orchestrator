@@ -608,18 +608,23 @@ type ChatEventKind string
 
 // The event kinds a driver emits.
 const (
-	ChatEventTurnStarted       ChatEventKind = "turn.started"
-	ChatEventTurnCompleted     ChatEventKind = "turn.completed"
-	ChatEventMessageDelta      ChatEventKind = "message.delta"
-	ChatEventMessageCompleted  ChatEventKind = "message.completed"
-	ChatEventActivityStarted   ChatEventKind = "activity.started"
-	ChatEventActivityCompleted ChatEventKind = "activity.completed"
-	ChatEventApprovalRequested ChatEventKind = "approval.requested"
-	ChatEventApprovalResolved  ChatEventKind = "approval.resolved"
-	ChatEventInputRequested    ChatEventKind = "input.requested"
-	ChatEventInputResolved     ChatEventKind = "input.resolved"
-	ChatEventControllerState   ChatEventKind = "controller.state"
-	ChatEventError             ChatEventKind = "error"
+	ChatEventTurnStarted   ChatEventKind = "turn.started"
+	ChatEventTurnCompleted ChatEventKind = "turn.completed"
+	// ChatEventUserMessageCompleted is a settled user message recovered from the
+	// provider's native history. Live sends are already durable before dispatch and
+	// therefore never emit this event; history readers use it to reconstruct turns
+	// AO did not originally render (for example, work completed in the TUI).
+	ChatEventUserMessageCompleted ChatEventKind = "message.user.completed"
+	ChatEventMessageDelta         ChatEventKind = "message.delta"
+	ChatEventMessageCompleted     ChatEventKind = "message.completed"
+	ChatEventActivityStarted      ChatEventKind = "activity.started"
+	ChatEventActivityCompleted    ChatEventKind = "activity.completed"
+	ChatEventApprovalRequested    ChatEventKind = "approval.requested"
+	ChatEventApprovalResolved     ChatEventKind = "approval.resolved"
+	ChatEventInputRequested       ChatEventKind = "input.requested"
+	ChatEventInputResolved        ChatEventKind = "input.resolved"
+	ChatEventControllerState      ChatEventKind = "controller.state"
+	ChatEventError                ChatEventKind = "error"
 
 	// Kinds below carry provider signal AO previously discarded. Each is modelled
 	// rather than folded into an activity so a reader can tell "the agent produced
@@ -703,6 +708,10 @@ type ChatEvent struct {
 	ProviderTurnID string
 	// ProviderItemID identifies the message or activity being reported.
 	ProviderItemID string
+	// ClientMessageID is the provider-carried idempotency key for a recovered user
+	// message, when one exists. History adapters synthesize a stable value when the
+	// native protocol has no client identity.
+	ClientMessageID string
 
 	// TurnState is set on turn.completed.
 	TurnState domain.TurnState
@@ -801,6 +810,18 @@ type ChatConversation interface {
 	Events() <-chan ChatEvent
 	// Close releases the controller. It does not delete provider-side history.
 	Close() error
+}
+
+// ChatHistoryReader is optionally implemented by a conversation whose native
+// protocol can read the durable thread it resumed. Events are returned oldest
+// first, settled, and with stable ProviderEventID values so importing the same
+// native history after every interface switch is idempotent.
+//
+// This is deliberately provider-neutral. Codex implements it with thread/read;
+// ACP implements it with session/load replay. Neither leaks provider wire formats
+// into the Chat service.
+type ChatHistoryReader interface {
+	ReadHistory(ctx context.Context) ([]ChatEvent, error)
 }
 
 // ChatDriverRegistry resolves the driver for a harness.

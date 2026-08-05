@@ -1320,6 +1320,46 @@ func (q *Queries) SelectConversationTurnsPage(ctx context.Context, arg SelectCon
 	return items, nil
 }
 
+const selectConversationUserMessageByTurn = `-- name: SelectConversationUserMessageByTurn :one
+SELECT conversation_messages.id, conversation_messages.conversation_id, conversation_messages.turn_id, conversation_messages.sequence, conversation_messages.revision, conversation_messages.role, conversation_messages.origin, conversation_messages.text, conversation_messages.streaming, conversation_messages.provider_item_id, conversation_messages.client_message_id, conversation_messages.created_at, conversation_messages.updated_at, conversation_messages.delivery_content_json
+FROM conversation_messages
+JOIN conversation_turns ON conversation_turns.id = conversation_messages.turn_id
+WHERE conversation_messages.conversation_id = ?
+  AND conversation_turns.provider_turn_id = ?
+  AND conversation_messages.role = 'user'
+LIMIT 1
+`
+
+type SelectConversationUserMessageByTurnParams struct {
+	ConversationID string
+	ProviderTurnID string
+}
+
+// A native history import has the provider turn identity but not AO's turn id.
+// Looking through the turn also detects a message AO wrote before dispatch, which
+// prevents a Chat -> TUI -> Chat cycle from rendering the same prompt twice.
+func (q *Queries) SelectConversationUserMessageByTurn(ctx context.Context, arg SelectConversationUserMessageByTurnParams) (ConversationMessage, error) {
+	row := q.db.QueryRowContext(ctx, selectConversationUserMessageByTurn, arg.ConversationID, arg.ProviderTurnID)
+	var i ConversationMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ConversationID,
+		&i.TurnID,
+		&i.Sequence,
+		&i.Revision,
+		&i.Role,
+		&i.Origin,
+		&i.Text,
+		&i.Streaming,
+		&i.ProviderItemID,
+		&i.ClientMessageID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeliveryContentJson,
+	)
+	return i, err
+}
+
 const selectNextQueuedConversationTurn = `-- name: SelectNextQueuedConversationTurn :one
 SELECT conversation_turns.id,
        conversation_messages.text,

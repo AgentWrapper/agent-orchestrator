@@ -2,10 +2,13 @@ package codexappserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/codexappserver/codexproto"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -42,9 +45,10 @@ import (
 // feature-detects each interface, and a missing method would read as "the provider
 // cannot do this" with nothing anywhere to notice.
 var (
-	_ ports.ChatRollbacker = (*conversation)(nil)
-	_ ports.ChatForker     = (*conversation)(nil)
-	_ ports.ChatRenamer    = (*conversation)(nil)
+	_ ports.ChatRollbacker    = (*conversation)(nil)
+	_ ports.ChatForker        = (*conversation)(nil)
+	_ ports.ChatRenamer       = (*conversation)(nil)
+	_ ports.ChatHistoryReader = (*conversation)(nil)
 )
 
 // providerRefusal marks a request the provider rejected on its own terms, as
@@ -93,6 +97,142 @@ func asRefusal(err error) error {
 type providerTurn struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
+}
+
+// ReadHistory returns a settled, provider-neutral replay of the native Codex
+// thread. It is how a TUI -> Chat handoff makes the work already visible in the
+// terminal visible in AO's structured timeline as well; resuming the thread alone
+// preserves model context but does not make app-server re-emit old notifications.
+func (c *conversation) ReadHistory(ctx context.Context) ([]ports.ChatEvent, error) {
+	var resp codexproto.ThreadReadResponse
+	includeTurns := true
+	if err := c.conn.request(ctx, codexproto.MethodThreadRead, codexproto.ThreadReadParams{
+		ThreadID:     c.threadID,
+		IncludeTurns: &includeTurns,
+	}, &resp); err != nil {
+		return nil, asRefusal(fmt.Errorf("thread/read history: %w", err))
+	}
+
+	events := make([]ports.ChatEvent, 0, len(resp.Thread.Turns)*4)
+	for _, turn := range resp.Thread.Turns {
+		state := turnStateFrom(string(turn.Status))
+		// A history replay is a set of settled facts. If another native client still
+		// has a turn in progress, its partial items must not be projected as a
+		// completed transcript; live notifications remain the authority for it.
+		if state == domain.TurnStateRunning || state == domain.TurnStateQueued {
+			continue
+		}
+
+		events = append(events, ports.ChatEvent{
+			Kind:            ports.ChatEventTurnStarted,
+			ProviderEventID: historyEventID(c.threadID, turn.ID, "started"),
+			ProviderTurnID:  turn.ID,
+		})
+
+		for itemIndex, nativeItem := range turn.Items {
+			item := nativeItem
+			itemID := deref(item.ID)
+			eventItemID := itemID
+			if itemID == "" {
+				// Current persisted Codex history can omit item ids. The projection's
+				// provider-item key is conversation-wide, so an index alone would make
+				// item 1 in every turn overwrite item 1 from the first turn. Include the
+				// turn in that key while keeping the event identity position-based.
+				eventItemID = fmt.Sprintf("item-%d", itemIndex)
+				itemID = fmt.Sprintf("%s-%s", turn.ID, eventItemID)
+				item.ID = &itemID
+			}
+
+			if item.Type == codexproto.ThreadItemTypeUserMessage {
+				text := historicalUserText(item)
+				if text == "" {
+					continue
+				}
+				clientID := deref(item.ClientID)
+				if clientID == "" {
+					clientID = historyEventID(c.threadID, turn.ID, "user", eventItemID)
+				}
+				events = append(events, ports.ChatEvent{
+					Kind:            ports.ChatEventUserMessageCompleted,
+					ProviderEventID: historyEventID(c.threadID, turn.ID, "user", eventItemID),
+					ProviderTurnID:  turn.ID,
+					ProviderItemID:  itemID,
+					ClientMessageID: clientID,
+					Text:            text,
+				})
+				continue
+			}
+
+			params, err := json.Marshal(map[string]any{
+				"threadId": c.threadID,
+				"turnId":   turn.ID,
+				"item":     item,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("encode history item %s: %w", itemID, err)
+			}
+			for eventIndex, event := range normalizeItem(params, true) {
+				event.ProviderEventID = historyEventID(
+					c.threadID, turn.ID, "item", eventItemID, string(event.Kind), fmt.Sprint(eventIndex))
+				events = append(events, event)
+			}
+		}
+
+		completed := ports.ChatEvent{
+			Kind:            ports.ChatEventTurnCompleted,
+			ProviderEventID: historyEventID(c.threadID, turn.ID, "completed"),
+			ProviderTurnID:  turn.ID,
+			TurnState:       state,
+		}
+		if turn.Error != nil && turn.Error.Message != "" {
+			completed.Err = errors.New(turn.Error.Message)
+		}
+		events = append(events, completed)
+	}
+	return events, nil
+}
+
+func historyEventID(parts ...string) string {
+	return "codex-history:" + strings.Join(parts, ":")
+}
+
+// historicalUserText renders the provider's structured prompt blocks without
+// leaking Codex DTOs above the adapter. Text is preserved verbatim; non-text
+// blocks get a compact readable marker so an attachment-only prompt is not lost.
+func historicalUserText(item codexproto.ThreadItem) string {
+	var inputs []codexproto.UserInput
+	if len(item.Content) > 0 && json.Unmarshal(item.Content, &inputs) == nil {
+		parts := make([]string, 0, len(inputs))
+		for _, input := range inputs {
+			if text := strings.TrimSpace(deref(input.Text)); text != "" {
+				parts = append(parts, text)
+				continue
+			}
+			switch input.Type {
+			case codexproto.UserInputTypeSkill:
+				if name := strings.TrimSpace(deref(input.Name)); name != "" {
+					parts = append(parts, "/"+name)
+				} else {
+					parts = append(parts, "[Skill]")
+				}
+			case codexproto.UserInputTypeMention:
+				mention := firstNonEmpty(deref(input.Name), deref(input.Path))
+				if mention == "" {
+					parts = append(parts, "[Mention]")
+				} else {
+					parts = append(parts, "@"+mention)
+				}
+			case codexproto.UserInputTypeImage, codexproto.UserInputTypeLocalImage:
+				parts = append(parts, "[Image]")
+			case codexproto.UserInputTypeAudio, codexproto.UserInputTypeLocalAudio:
+				parts = append(parts, "[Audio]")
+			}
+		}
+		if text := strings.TrimSpace(strings.Join(parts, "\n")); text != "" {
+			return text
+		}
+	}
+	return strings.TrimSpace(deref(item.Text))
 }
 
 // Rollback discards the named turn and every turn after it, provider-side.

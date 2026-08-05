@@ -217,6 +217,69 @@ func (s *Store) AdoptProviderTurn(
 	return nil
 }
 
+// AppendImportedUserMessage records a user prompt recovered from the provider's
+// native thread. The enclosing turn must already have been adopted from the
+// history's turn.started event.
+//
+// Idempotency is by provider turn rather than only by clientMessageID. A prompt AO
+// originally sent in Chat mode already belongs to that turn but may carry a
+// different client id from the history adapter; checking the turn is what keeps a
+// Chat -> TUI -> Chat round trip from duplicating it.
+func (s *Store) AppendImportedUserMessage(
+	ctx context.Context,
+	conversationID, providerTurnID string,
+	msg domain.ConversationMessage,
+	now time.Time,
+) error {
+	q, unlock := s.conversationWriter(ctx)
+	defer unlock()
+
+	_, err := q.SelectConversationUserMessageByTurn(ctx,
+		gen.SelectConversationUserMessageByTurnParams{
+			ConversationID: conversationID,
+			ProviderTurnID: providerTurnID,
+		})
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("lookup imported user message for turn %s: %w", providerTurnID, err)
+	}
+
+	turn, err := q.SelectConversationTurnByProviderID(ctx,
+		gen.SelectConversationTurnByProviderIDParams{
+			ConversationID: conversationID,
+			ProviderTurnID: providerTurnID,
+		})
+	if err != nil {
+		return fmt.Errorf("lookup imported provider turn %s: %w", providerTurnID, err)
+	}
+	sequence, err := q.NextConversationSequence(ctx, gen.NextConversationSequenceParams{
+		UpdatedAt: now,
+		ID:        conversationID,
+	})
+	if err != nil {
+		return fmt.Errorf("allocate imported user message sequence: %w", err)
+	}
+	if err := q.InsertConversationMessage(ctx, gen.InsertConversationMessageParams{
+		ID:                  msg.ID,
+		ConversationID:      conversationID,
+		TurnID:              sql.NullString{String: turn.ID, Valid: true},
+		Sequence:            sequence,
+		Role:                domain.MessageRoleUser,
+		Origin:              domain.MessageOriginHuman,
+		Text:                msg.Text,
+		ProviderItemID:      msg.ProviderItemID,
+		ClientMessageID:     msg.ClientMessageID,
+		DeliveryContentJson: msg.DeliveryContentJSON,
+		CreatedAt:           now,
+		UpdatedAt:           now,
+	}); err != nil {
+		return fmt.Errorf("insert imported user message for turn %s: %w", providerTurnID, err)
+	}
+	return nil
+}
+
 // BindTurnToProvider records the provider's turn id once a send is accepted and
 // marks the turn running.
 func (s *Store) BindTurnToProvider(ctx context.Context, turnID, providerTurnID string, now time.Time) error {

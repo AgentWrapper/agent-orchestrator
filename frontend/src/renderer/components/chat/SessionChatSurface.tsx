@@ -28,12 +28,15 @@ export function SessionChatSurface({
 	openingShell,
 	shellError,
 	interfaceAction,
+	controllerTransitioning,
 }: {
 	session: WorkspaceSession;
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
 	interfaceAction?: ReactNode;
+	/** The target controller is being installed by an interface handoff. */
+	controllerTransitioning?: boolean;
 }) {
 	const {
 		snapshot,
@@ -102,6 +105,7 @@ export function SessionChatSurface({
 		<ChatWorkspace
 			snapshot={snapshot}
 			interfaceAction={interfaceAction}
+			controllerTransitioning={controllerTransitioning}
 			hasOlder={hasOlder}
 			loadingOlder={isLoadingOlder}
 			onLoadOlder={loadOlder}

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { conversationQueryKey } from "./useConversation";
@@ -48,6 +48,7 @@ export function sessionInterfaceTransitionQueryKey(sessionId: string) {
 export function useSessionInterfaceTransition(sessionId: string | undefined) {
 	const queryClient = useQueryClient();
 	const settledRef = useRef<string>("");
+	const [refreshingTransitionID, setRefreshingTransitionID] = useState("");
 	const query = useQuery({
 		queryKey: sessionInterfaceTransitionQueryKey(sessionId ?? ""),
 		enabled: Boolean(sessionId && hasTrustedApiBaseUrl()),
@@ -106,17 +107,43 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 	});
 
 	const transition = query.data?.transition;
+	const transitionActive = interfaceTransitionIsActive(transition);
+	const transitionID = transition?.id;
+	// A completed handoff is not visually settled until the queries invalidated by
+	// it have returned. In particular, switching TUI -> Chat necessarily has a
+	// small interval after mode=chat commits and before the Chat controller is in
+	// the registry. A snapshot fetched in that interval truthfully says "stopped",
+	// but rendering it as a controller failure is a lie: the transition worker is
+	// still starting the target. Keep that state distinct through the final refetch.
+	const settling = Boolean(
+		transitionID &&
+			!transitionActive &&
+			(settledRef.current !== transitionID || refreshingTransitionID === transitionID),
+	);
 	useEffect(() => {
-		if (!sessionId || !transition || interfaceTransitionIsActive(transition)) return;
-		if (settledRef.current === transition.id) return;
-		settledRef.current = transition.id;
-		void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-		void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
-	}, [queryClient, sessionId, transition]);
+		if (!sessionId || !transitionID || transitionActive) return;
+		if (settledRef.current === transitionID) return;
+		settledRef.current = transitionID;
+		setRefreshingTransitionID(transitionID);
+		let current = true;
+		void Promise.all([
+			queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+			queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) }),
+		]).finally(() => {
+			if (!current) return;
+			setRefreshingTransitionID((refreshing) =>
+				refreshing === transitionID ? "" : refreshing,
+			);
+		});
+		return () => {
+			current = false;
+		};
+	}, [queryClient, sessionId, transitionActive, transitionID]);
 
 	return {
 		status: query.data,
 		transition,
+		settling,
 		isLoading: query.isLoading,
 		statusError: query.error ? apiErrorMessage(query.error) : undefined,
 		start: start.mutateAsync,

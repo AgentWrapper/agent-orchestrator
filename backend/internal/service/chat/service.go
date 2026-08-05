@@ -225,7 +225,35 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	// replaced can be told apart from the current one's.
 	controller := newController(
 		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+	if cfg.ProviderConversationID != "" {
+		// The provider's native thread is the continuity authority across TUI and
+		// Chat. Import it before the live projector starts so the first notification
+		// cannot appear ahead of the older prompt, tool work, and answer it follows.
+		//
+		// Read AO's existing projection too. ACP message/turn ids are opaque, and an
+		// agent may assign a different persisted user id from the id AO supplied at
+		// prompt time. Reconciliation must therefore happen before projection; doing
+		// it in a Claude binding would leave every other ACP harness with the same
+		// restart duplication race.
+		var existing ConversationRows
+		if s.reader != nil {
+			existing, err = s.reader.LoadConversationSnapshot(ctx, conversation.ID)
+			if err != nil {
+				s.mu.Unlock()
+				_ = conv.Close()
+				return nil, fmt.Errorf("load conversation before native history import: %w", err)
+			}
+		}
+		if err := controller.importNativeHistory(
+			ctx, existing.Turns, existing.Messages, existing.Activities,
+		); err != nil {
+			s.mu.Unlock()
+			_ = conv.Close()
+			return nil, err
+		}
+	}
 	s.controllers[cfg.SessionID] = controller
+	controller.start()
 	s.mu.Unlock()
 
 	// Drop the registry entry when the provider stream ends, so a later command

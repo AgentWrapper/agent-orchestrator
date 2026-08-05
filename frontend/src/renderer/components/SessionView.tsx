@@ -12,7 +12,6 @@ import {
 	SessionInterfaceSwitchButton,
 	SessionInterfaceSwitchDialog,
 	SessionInterfaceTransitionNotice,
-	SessionInterfaceTransitionOverlay,
 } from "./SessionInterfaceSwitch";
 import { ShellTopbar } from "./ShellTopbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
@@ -215,6 +214,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const hasInspector = Boolean(session && (!isOrchestrator || session.mode === "chat"));
 	const showChatSurface = session?.mode === "chat" && terminalTarget.kind === "worker";
 	const activeInterfaceTransition = interfaceTransitionIsActive(interfaceSwitch.transition);
+	const chatControllerTransitioning = Boolean(
+		interfaceSwitch.transition?.targetMode === "chat" &&
+			(activeInterfaceTransition || interfaceSwitch.settling),
+	);
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
 		(session?.mode === "chat" ? "tui" : "chat");
@@ -266,7 +269,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					: interfaceSwitch.status?.reason || interfaceSwitch.statusError
 			}
 			pending={interfaceSwitch.starting || activeInterfaceTransition}
+			transition={interfaceSwitch.transition}
+			cancelling={interfaceSwitch.cancelling}
+			cancelError={interfaceSwitch.cancelError}
 			onClick={requestInterfaceSwitch}
+			onCancel={() => {
+				void interfaceSwitch.cancel().catch(() => {});
+			}}
 		/>
 	) : null;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
@@ -491,6 +500,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						<SessionChatSurface
 							session={session}
 							interfaceAction={interfaceSwitchAction}
+							controllerTransitioning={chatControllerTransitioning}
 							onOpenShell={addShellTerminal}
 							openingShell={openShellTerminal.isPending}
 							shellError={
@@ -518,14 +528,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							}
 						/>
 					)}
-						<SessionInterfaceTransitionOverlay
-							transition={interfaceSwitch.transition}
-							cancelling={interfaceSwitch.cancelling}
-							cancelError={interfaceSwitch.cancelError}
-							onCancel={() => {
-								void interfaceSwitch.cancel().catch(() => {});
-							}}
-						/>
 						{interfaceSwitch.transition?.id !== dismissedTransitionID ? (
 							<SessionInterfaceTransitionNotice
 								transition={interfaceSwitch.transition}

@@ -30,8 +30,9 @@ var (
 )
 
 type preparedTurn struct {
-	id     string
-	prompt []acpsdk.ContentBlock
+	id              string
+	clientMessageID string
+	prompt          []acpsdk.ContentBlock
 }
 
 type parkedPermission struct {
@@ -90,9 +91,14 @@ type conversation struct {
 	events       chan ports.ChatEvent
 	eventsClosed bool
 	closeOnce    sync.Once
+
+	historyMu     sync.Mutex
+	history       *historyCapture
+	historyEvents []ports.ChatEvent
 }
 
 var _ ports.ChatConversation = (*conversation)(nil)
+var _ ports.ChatHistoryReader = (*conversation)(nil)
 var _ ports.ChatDeferredTurnStarter = (*conversation)(nil)
 var _ ports.ChatConfigOptionController = (*conversation)(nil)
 var _ ports.ChatSkillLister = (*conversation)(nil)
@@ -184,7 +190,7 @@ func (c *conversation) SendTurn(ctx context.Context, msg ports.ChatUserMessage) 
 		return ports.ChatTurnRef{}, errors.New("ACP conversation already has a turn in flight")
 	}
 	id := uuid.NewString()
-	c.prepared = &preparedTurn{id: id, prompt: prompt}
+	c.prepared = &preparedTurn{id: id, clientMessageID: msg.ClientMessageID, prompt: prompt}
 	return ports.ChatTurnRef{ProviderTurnID: id}, nil
 }
 
@@ -263,7 +269,15 @@ func (c *conversation) StartDeferredTurn(providerTurnID string) error {
 func (c *conversation) runTurn(ctx context.Context, sessionID string, turn preparedTurn) {
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventTurnStarted, ProviderTurnID: turn.id})
 	c.emit(ports.ChatEvent{Kind: ports.ChatEventControllerState, ControllerState: ports.ChatControllerBusy})
-	messageID := uuid.NewString()
+	// ACP message ids are opaque idempotency/correlation keys. Preserve AO's
+	// durable client id when possible so an agent that echoes it from session/load
+	// can be reconciled without provider-specific knowledge. Some agents (notably
+	// claude-agent-acp) assign their own persisted user uuid; the service's history
+	// reconciliation is the fallback for those conforming-but-different agents.
+	messageID := strings.TrimSpace(turn.clientMessageID)
+	if messageID == "" {
+		messageID = uuid.NewString()
+	}
 	resp, err := c.conn.Prompt(ctx, acpsdk.PromptRequest{
 		SessionId: acpsdk.SessionId(sessionID),
 		MessageId: &messageID,
@@ -413,6 +427,9 @@ func (c *conversation) watchConnection() {
 }
 
 func (c *conversation) emit(event ports.ChatEvent) {
+	if c.captureHistoryEvent(event) {
+		return
+	}
 	c.eventMu.RLock()
 	defer c.eventMu.RUnlock()
 	if c.eventsClosed {

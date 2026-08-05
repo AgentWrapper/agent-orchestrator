@@ -19,6 +19,13 @@ const threadWithTurns = `{"thread":{"id":"thread-1","turns":[` +
 	`{"id":"turn-b","status":"completed"},` +
 	`{"id":"turn-c","status":"completed"}]}}`
 
+const threadWithRenderedHistory = `{"thread":{"id":"thread-1","turns":[` +
+	`{"id":"turn-a","status":"completed","items":[` +
+	`{"type":"userMessage","id":"user-1","clientId":"client-1","content":[{"type":"text","text":"Inspect the repository"}]},` +
+	`{"type":"commandExecution","id":"cmd-1","command":"/bin/zsh -lc 'pwd'","cwd":"/tmp/ws","aggregatedOutput":"/tmp/ws\n","exitCode":0,"durationMs":12,"status":"completed"},` +
+	`{"type":"agentMessage","id":"answer-1","text":"The repository is ready."}` +
+	`]}]}}`
+
 func openConversation(t *testing.T) (*conversation, *scriptedServer) {
 	t.Helper()
 	d, srv := newTestDriver(t)
@@ -28,6 +35,73 @@ func openConversation(t *testing.T) (*conversation, *scriptedServer) {
 	}
 	t.Cleanup(func() { _ = conv.Close() })
 	return conv.(*conversation), srv
+}
+
+func TestReadHistoryReconstructsNativeTurnsForTheChatTimeline(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.reply("thread/read", threadWithRenderedHistory)
+
+	events, err := conv.ReadHistory(context.Background())
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	if len(events) != 5 {
+		t.Fatalf("events = %d, want start + user + command + assistant + completion: %#v", len(events), events)
+	}
+	wantKinds := []ports.ChatEventKind{
+		ports.ChatEventTurnStarted,
+		ports.ChatEventUserMessageCompleted,
+		ports.ChatEventActivityCompleted,
+		ports.ChatEventMessageCompleted,
+		ports.ChatEventTurnCompleted,
+	}
+	seenIDs := map[string]bool{}
+	for i, event := range events {
+		if event.Kind != wantKinds[i] {
+			t.Errorf("event %d kind = %q, want %q", i, event.Kind, wantKinds[i])
+		}
+		if event.ProviderEventID == "" || seenIDs[event.ProviderEventID] {
+			t.Errorf("event %d has missing or duplicate identity %q", i, event.ProviderEventID)
+		}
+		seenIDs[event.ProviderEventID] = true
+		if event.ProviderTurnID != "turn-a" {
+			t.Errorf("event %d turn = %q, want turn-a", i, event.ProviderTurnID)
+		}
+	}
+	if events[1].Text != "Inspect the repository" || events[1].ClientMessageID != "client-1" {
+		t.Errorf("recovered user message = %#v", events[1])
+	}
+	if events[2].ActivityKind != "command" || !strings.Contains(string(events[2].Detail), `/tmp/ws\n`) {
+		t.Errorf("recovered command = %#v", events[2])
+	}
+	if events[3].Text != "The repository is ready." {
+		t.Errorf("recovered answer = %q", events[3].Text)
+	}
+	if events[4].TurnState != "completed" {
+		t.Errorf("recovered turn state = %q", events[4].TurnState)
+	}
+}
+
+func TestReadHistoryMakesMissingItemIDsUniqueAcrossTurns(t *testing.T) {
+	conv, srv := openConversation(t)
+	srv.reply("thread/read", `{"thread":{"id":"thread-1","turns":[`+
+		`{"id":"turn-a","status":"completed","items":[{"type":"agentMessage","text":"first"}]},`+
+		`{"id":"turn-b","status":"completed","items":[{"type":"agentMessage","text":"second"}]}`+
+		`]}}`)
+
+	events, err := conv.ReadHistory(context.Background())
+	if err != nil {
+		t.Fatalf("ReadHistory: %v", err)
+	}
+	var itemIDs []string
+	for _, event := range events {
+		if event.Kind == ports.ChatEventMessageCompleted {
+			itemIDs = append(itemIDs, event.ProviderItemID)
+		}
+	}
+	if len(itemIDs) != 2 || itemIDs[0] == "" || itemIDs[0] == itemIDs[1] {
+		t.Fatalf("provider item ids = %#v, want two conversation-wide identities", itemIDs)
+	}
 }
 
 // The provider takes a COUNT from the end of the thread, not a turn id, so the whole

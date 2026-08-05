@@ -70,6 +70,16 @@ type fakeConversation struct {
 	closeOnce sync.Once
 }
 
+type nativeHistoryConversation struct {
+	*fakeConversation
+	events []ports.ChatEvent
+	err    error
+}
+
+func (c *nativeHistoryConversation) ReadHistory(context.Context) ([]ports.ChatEvent, error) {
+	return c.events, c.err
+}
+
 type deferredConversation struct {
 	*fakeConversation
 	start func(string) error
@@ -214,6 +224,119 @@ func TestServicePassesRecomputedSystemPromptToResume(t *testing.T) {
 	if resumed.ProviderConversationID != "thread-1" || resumed.DataDir != dataDir || resumed.WorkspacePath != workspace ||
 		resumed.SystemPrompt != "Recomputed AO orchestrator instructions" {
 		t.Fatalf("resume config = %#v", resumed)
+	}
+}
+
+func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
+	st := openStore(t)
+	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
+	existing, err := st.CreateConversation(context.Background(), "existing-conversation",
+		domain.ConversationScopeSession, testProject, testSession, now)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	if err := st.ClaimChatControllerGeneration(context.Background(), testSession, "old-generation", now); err != nil {
+		t.Fatalf("ClaimChatControllerGeneration: %v", err)
+	}
+	created, err := st.AppendUserMessage(context.Background(), existing.ID, testSession, "old-generation",
+		domain.ConversationMessage{
+			ID: "existing-user", Text: "What changed?", Origin: domain.MessageOriginHuman,
+			ClientMessageID: "original-chat-client-id",
+		}, "existing-turn", now)
+	if err != nil || !created {
+		t.Fatalf("AppendUserMessage: created=%v err=%v", created, err)
+	}
+	if err := st.BindTurnToProvider(context.Background(), "existing-turn", "native-turn-1", now); err != nil {
+		t.Fatalf("BindTurnToProvider: %v", err)
+	}
+	if err := st.SettleAssistantMessage(context.Background(), existing.ID,
+		"native-answer-1", "native-turn-1", "Nothing is dirty.", "existing-answer", now); err != nil {
+		t.Fatalf("SettleAssistantMessage: %v", err)
+	}
+	if err := st.SettleTurn(context.Background(), existing.ID, "native-turn-1", domain.TurnStateCompleted, "", now); err != nil {
+		t.Fatalf("SettleTurn: %v", err)
+	}
+
+	base := newFakeConversation()
+	conv := &nativeHistoryConversation{
+		fakeConversation: base,
+		events: []ports.ChatEvent{
+			{Kind: ports.ChatEventTurnStarted, ProviderEventID: "history-start", ProviderTurnID: "replayed-native-turn-1"},
+			{
+				Kind: ports.ChatEventUserMessageCompleted, ProviderEventID: "history-user",
+				ProviderTurnID: "replayed-native-turn-1", ProviderItemID: "native-user-1",
+				ClientMessageID: "native-client-1", Text: "What changed?\n[Image]",
+			},
+			{
+				Kind: ports.ChatEventActivityCompleted, ProviderEventID: "history-command",
+				ProviderTurnID: "replayed-native-turn-1", ProviderItemID: "native-command-1",
+				ActivityKind: domain.ActivityKindCommand, ActivityStatus: domain.ActivityStatusCompleted,
+				Summary: "Ran git status", Detail: json.RawMessage(`{"command":"git status"}`),
+			},
+			{
+				Kind: ports.ChatEventMessageCompleted, ProviderEventID: "history-answer",
+				ProviderTurnID: "replayed-native-turn-1", ProviderItemID: "native-answer-1", Text: "Nothing is dirty.",
+			},
+			{
+				Kind: ports.ChatEventTurnCompleted, ProviderEventID: "history-complete",
+				ProviderTurnID: "replayed-native-turn-1", TurnState: domain.TurnStateCompleted,
+			},
+		},
+	}
+
+	var idMu sync.Mutex
+	nextID := 0
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := st.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns,
+				Messages:     rows.Messages,
+				Activities:   rows.Activities,
+			}, nil
+		}),
+		Drivers: fakeRegistry{driver: fakeDriver{conv: conv}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID: func() string {
+			idMu.Lock()
+			defer idMu.Unlock()
+			nextID++
+			return fmt.Sprintf("history-id-%d", nextID)
+		},
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+
+	ctrl, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(), ProviderConversationID: "thread-1",
+	})
+	if err != nil {
+		t.Fatalf("Start resume: %v", err)
+	}
+	snapshot, err := st.LoadConversationSnapshot(context.Background(), ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("LoadConversationSnapshot: %v", err)
+	}
+	// The turn already existed from an earlier Chat interval. Native history uses
+	// a different turn id, client id, and rendered prompt (the provider included an
+	// image marker), but its stable assistant item still reconciles the complete
+	// replay onto the durable turn instead of duplicating either message.
+	if len(snapshot.Messages) != 2 || snapshot.Messages[0].Text != "What changed?" || snapshot.Messages[1].Text != "Nothing is dirty." {
+		t.Fatalf("imported messages = %#v", snapshot.Messages)
+	}
+	if len(snapshot.Activities) != 1 || snapshot.Activities[0].Summary != "Ran git status" {
+		t.Fatalf("imported activities = %#v", snapshot.Activities)
+	}
+	if len(snapshot.Turns) != 1 || snapshot.Turns[0].State != domain.TurnStateCompleted {
+		t.Fatalf("imported turns = %#v", snapshot.Turns)
+	}
+	if snapshot.Turns[0].ProviderTurnID != "native-turn-1" {
+		t.Fatalf("provider turn = %q, want durable native-turn-1", snapshot.Turns[0].ProviderTurnID)
 	}
 }
 

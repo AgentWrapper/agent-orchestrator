@@ -393,6 +393,9 @@ func (c *conversation) discardPermission(requestID string) {
 }
 
 func (c *conversation) SessionUpdate(_ context.Context, params acpsdk.SessionNotification) error {
+	if c.prepareHistoryUpdate(params.Update) {
+		return nil
+	}
 	c.mu.Lock()
 	sessionID := c.sessionID
 	turnID := c.activeTurn
