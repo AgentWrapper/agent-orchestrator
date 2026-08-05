@@ -107,6 +107,7 @@
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-terminal: var(--color-bg-terminal);
+	--color-terminal-opaque: var(--color-bg-terminal-opaque);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
 
@@ -175,8 +176,8 @@
 	--spacing-window-titlebar: var(--size-window-titlebar);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
-	/* Fullscreen has no traffic lights — park the cluster at the panel inset. */
-	--spacing-titlebar-cluster-left-fullscreen: var(--size-center-panel-inset);
+	/* Fullscreen has no traffic lights — align the cluster to sidebar content. */
+	--spacing-titlebar-cluster-left-fullscreen: var(--space-2);
 	--spacing-traffic-light-clearance: var(--size-traffic-light-clearance);
 	--spacing-traffic-light-clearance-fullscreen: var(--size-traffic-light-clearance-fullscreen);
 	--spacing-control-xs: var(--size-control-xs);
@@ -196,6 +197,7 @@
 	--spacing-content-max: var(--size-content-max);
 	--spacing-flex-min: var(--size-flex-min);
 	--spacing-shell-tab-min: var(--size-shell-tab-min);
+	--spacing-shell-tab-connected: var(--size-shell-tab-connected);
 	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
@@ -466,7 +468,7 @@
 
 .native-fullscreen .session-topbar-titlebar-clearance-mac {
 	padding-left: calc(
-		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+		var(--space-2) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
 }
 
@@ -504,6 +506,9 @@
 [data-topbar-offset="trafficLights"] {
 	--sidebar-chrome-offset: var(--size-traffic-light-clearance);
 }
+.native-fullscreen [data-topbar-offset="trafficLights"] {
+	--sidebar-chrome-offset: var(--size-traffic-light-clearance-fullscreen);
+}
 [data-topbar-offset="session"] {
 	--sidebar-chrome-offset: var(--size-session-topbar);
 }
@@ -521,7 +526,7 @@
 /* Fullscreen: the shell is flush, so measure from the cluster's own left edge. */
 .center-panel-shell--titlebar-clearance-fullscreen .center-panel-titlebar {
 	padding-left: calc(
-		var(--size-center-panel-inset) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
+		var(--space-2) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
 	);
 }
 
@@ -599,7 +604,8 @@ button.settings-row-bar {
 
 @utility settings-menu-surface {
 	display: flex;
-	width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
+	width: max-content;
+	max-width: min(var(--size-settings-menu-width), calc(100vw - 2rem));
 	min-width: var(--size-settings-menu-min-width);
 	max-height: var(--size-select-menu-max);
 	flex-direction: column;
@@ -615,6 +621,7 @@ button.settings-row-bar {
 }
 
 @utility settings-agent-menu-surface {
+	width: var(--size-settings-agent-menu-min-width);
 	min-width: var(--size-settings-agent-menu-min-width);
 	padding: var(--space-3);
 	gap: var(--space-2);
@@ -745,13 +752,12 @@ button.settings-row-bar {
 	transition-property: opacity;
 	transition-duration: var(--duration-normal);
 
-	&:hover {
+	&:hover:not(:disabled) {
 		opacity: 0.9;
 	}
 
 	&:disabled {
 		cursor: not-allowed;
-		opacity: 0.5;
 	}
 }
 
@@ -1082,6 +1088,20 @@ textarea,
 
 .terminal-pane-frame:fullscreen {
 	background: var(--color-bg-primary);
+}
+
+/* Paint the pane with the opaque RGB of --color-bg-terminal only. The e7 alpha
+   on the token composites against app chrome and left a #111316 fringe in the
+   p-2 gutter / FitAddon leftover strips. */
+.terminal-surface {
+	background-color: var(--color-bg-terminal-opaque);
+}
+
+.terminal-surface .xterm,
+.terminal-surface .xterm-viewport,
+.terminal-surface .xterm-screen,
+.terminal-surface .xterm-helpers {
+	background-color: var(--color-bg-terminal-opaque) !important;
 }
 
 @keyframes status-pulse {
@@ -1658,6 +1678,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .session-inspector__body--browser .browser-panel {
 	border: 0;
 	border-radius: 0;
+}
+
+.session-inspector__body--browser .browser-panel__viewport {
+	margin: 0;
+	border-radius: 0;
+	box-shadow: none;
 }
 
 /* Inspector resize handle (shadcn resizable separator, AO visual): a 7px
@@ -2665,6 +2691,31 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	.browser-panel__toolbar button:not(:disabled):hover,
 	.browser-panel__toolbar button:not(:disabled):active {
 		transform: none;
+	}
+}
+
+/* Notification rows: subtle entrance so new/unread items slide in when the
+   panel opens or a fresh notification arrives. `backwards` fill keeps the
+   run-time animation from pinning transform/opacity afterwards, so the row's
+   own hover/active transforms still apply once it settles. */
+@keyframes notification-row-in {
+	from {
+		opacity: 0;
+		transform: translateY(-6px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.notification-row-enter {
+	animation: notification-row-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.notification-row-enter {
+		animation: none;
 	}
 }
 

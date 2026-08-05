@@ -174,7 +174,13 @@ if (typeof window !== "undefined") {
 		},
 		notifications: {
 			show: async () => undefined,
+			setBadge: async () => undefined,
+			devBounce: async () => undefined,
 			onClick: () => () => undefined,
+		},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
 		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),

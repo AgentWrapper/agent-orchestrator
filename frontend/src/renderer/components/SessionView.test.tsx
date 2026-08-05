@@ -7,6 +7,7 @@ import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const openShellTerminalMock = vi.hoisted(() => vi.fn());
+const closeShellTerminalMock = vi.hoisted(() => vi.fn());
 const nativeFullScreenMock = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -98,25 +99,37 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
+		terminalTarget,
 		session,
 		shellTerminals = [],
+		onCloseShellTerminal,
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
 		onNewShellTerminal,
 	}: {
+		terminalTarget?: { kind: string; handleId?: string };
 		session?: WorkspaceSession;
 		shellTerminals?: Array<{ handleId: string; title: string }>;
+		onCloseShellTerminal?: (handleId: string) => void;
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
 		onNewShellTerminal?: () => void;
 	}) => (
 		<div>
 			terminal center
+			<div data-testid="terminal-target">
+				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : "worker"}
+			</div>
 			<div data-testid="session-tab">{session?.title ?? ""}</div>
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
 			{shellTerminals.map((s) => (
 				<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
 					select {s.title}
+				</button>
+			))}
+			{shellTerminals.map((s) => (
+				<button key={`close-${s.handleId}`} type="button" onClick={() => onCloseShellTerminal?.(s.handleId)}>
+					close {s.title}
 				</button>
 			))}
 			<button type="button" onClick={() => onSelectSessionTerminal?.()}>
@@ -236,7 +249,7 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 vi.mock("../hooks/useShellTerminals", () => ({
 	useShellTerminals: () => ({ data: shellTerminalsState.data, isLoading: false }),
 	useOpenShellTerminal: () => ({ mutate: openShellTerminalMock }),
-	useCloseShellTerminal: () => ({ mutate: vi.fn() }),
+	useCloseShellTerminal: () => ({ mutate: closeShellTerminalMock }),
 	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
 }));
 
@@ -342,13 +355,18 @@ describe("SessionView", () => {
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
-		useUiStore.setState({ inspectorSessions: {}, visibleTerminalKindBySession: {} });
+		useUiStore.setState({
+			activeShellTerminalHandleId: null,
+			inspectorSessions: {},
+			visibleTerminalKindBySession: {},
+		});
 		panels.clear();
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
 		shellTerminalsState.data = [];
 		navigateMock.mockReset();
 		openShellTerminalMock.mockReset();
+		closeShellTerminalMock.mockReset();
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -426,6 +444,41 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "new terminal" }));
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
+	});
+
+	it("walks backward through auxiliary terminals before returning to the permanent terminal", () => {
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				sessionId: "sess-1",
+				title: "first shell",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+			{
+				handleId: "sh-b",
+				sessionId: "sess-1",
+				title: "second shell",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:01:00Z",
+			},
+		];
+		const view = render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "select second shell" }));
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("sh-b");
+
+		fireEvent.click(screen.getByRole("button", { name: "close second shell" }));
+		expect(closeShellTerminalMock).toHaveBeenCalledWith("sh-b");
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("sh-a");
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("sh-a");
+
+		shellTerminalsState.data = shellTerminalsState.data.filter((shell) => shell.handleId !== "sh-b");
+		view.rerender(<SessionView sessionId="sess-1" />);
+		fireEvent.click(screen.getByRole("button", { name: "close first shell" }));
+		expect(closeShellTerminalMock).toHaveBeenCalledWith("sh-a");
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker");
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

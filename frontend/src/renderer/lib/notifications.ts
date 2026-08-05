@@ -327,6 +327,7 @@ export function createNotificationsTransport(
 								id: notification.id,
 								title: notification.title,
 								body: notification.body || undefined,
+								type: notification.type,
 							});
 						}
 					});

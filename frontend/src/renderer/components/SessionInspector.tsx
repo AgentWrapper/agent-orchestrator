@@ -9,6 +9,7 @@ import {
 	ChevronRight,
 	Files as FilesIcon,
 	GitPullRequest,
+	GitMerge,
 	Play,
 	Terminal,
 	Trash2,
@@ -20,10 +21,14 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
-import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import {
+	sessionScmSummaryQueryKey,
+	useSessionScmSummary,
+	type SessionPRSummary,
+} from "../hooks/useSessionScmSummary";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
-import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prBrowserUrl, prCardPresentation, sessionPRDisplaySummaries } from "../lib/pr-display";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -34,14 +39,14 @@ import { useUiStore } from "../stores/ui-store";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
-import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
-import { StatusPill } from "./StatusPill";
+import { PRCardStatusSummary, PRSummaryMeta } from "./PRSummaryDisplay";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
+import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
@@ -84,12 +89,10 @@ const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector
 	},
 ];
 
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
-
 const prStateTone: Record<SessionPRSummary["state"], string> = {
-	open: "border-success/40 bg-success/10 text-success",
-	draft: "border-border bg-raised text-muted-foreground",
-	merged: "border-accent/40 bg-accent-weak text-accent",
+	open: "border-border-strong bg-overlay text-muted-foreground",
+	draft: "border-status-in-review/35 bg-status-in-review/10 text-status-in-review",
+	merged: "border-border-strong bg-overlay text-success",
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
@@ -102,7 +105,9 @@ const prStateLabelKeys: Record<SessionPRSummary["state"], MessageKey> = {
 
 const inspectorShellClass = "@container/inspector flex h-full min-h-0 flex-col overflow-hidden";
 
-const inspectorBodyClass = "min-h-0 flex-1 overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
+const inspectorBodyBaseClass = "min-h-0 flex-1";
+
+const inspectorScrollableBodyClass = "overflow-y-auto p-3 pb-4 @max-[300px]/inspector:px-2.5";
 
 const inspectorEmptyClass = "text-xs text-settings-muted leading-normal";
 
@@ -175,7 +180,7 @@ export function SessionInspector({
 	if (!session) {
 		return (
 			<aside className={inspectorShellClass} aria-label={t("inspector.aria")}>
-				<div className={inspectorBodyClass}>
+				<div className={cn(inspectorBodyBaseClass, inspectorScrollableBodyClass)}>
 					<p className={inspectorEmptyClass}>{t("inspector.loadingSession")}</p>
 				</div>
 			</aside>
@@ -221,13 +226,14 @@ export function SessionInspector({
 
 			<div
 				className={cn(
-					inspectorBodyClass,
-					// The Browser tab renders its own bordered panel edge-to-edge, so
-					// drop the body padding for it (except when popped out, where the
-					// body only holds the "return to panel" empty state).
+					inspectorBodyBaseClass,
+					view !== "browser" && view !== "files" && inspectorScrollableBodyClass,
+					// Browser and Files own their viewport spacing. Keep their body
+					// padding out of the class list entirely so a shorthand `p-3`
+					// cannot win over `p-0` through generated utility ordering.
 					view === "browser" &&
 						!browserPoppedOut &&
-						"p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
+						"session-inspector__body--browser p-0 overflow-hidden [&>[role=tabpanel]]:border-0 [&>[role=tabpanel]]:rounded-none",
 					view === "files" && "p-0 overflow-hidden [&>[role=tabpanel]]:h-full",
 				)}
 			>
@@ -252,29 +258,33 @@ function Section({
 	action,
 	children,
 	className,
+	surface = true,
 	title,
 }: {
 	action?: ReactNode;
 	children: ReactNode;
 	className?: string;
-	/** Accepted for call-site compatibility; all sections use the settings-row box. */
 	surface?: boolean;
 	/** Omit where the surrounding tab already names the section. */
 	title?: string;
 }) {
-	// Boxed sections match the settings page row surface (bg + radius) with the
-	// uppercase muted kicker kept inside the card, as in the inspector refs.
-	return (
-		<section className={cn("mb-2.5 last:mb-0", className)} data-testid="inspector-section">
-			<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-3">
-				{title || action ? (
-					<div className="mb-2 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
-						{title ? <span>{title}</span> : <span />}
-						{action ?? null}
-					</div>
-				) : null}
-				{children}
+	const heading =
+		title || action ? (
+			<div className="mb-1 flex items-center justify-between gap-2 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+				{title ? <span>{title}</span> : <span />}
+				{action ?? null}
 			</div>
+		) : null;
+	return (
+		<section className={cn("mb-4 last:mb-0", className)} data-testid="inspector-section">
+			{heading}
+			{surface ? (
+				<div className="overflow-hidden rounded-settings-row bg-settings-row px-3.5 py-1.5">
+					{children}
+				</div>
+			) : (
+				children
+			)}
 		</section>
 	);
 }
@@ -295,11 +305,11 @@ function SummaryView({
 
 	return (
 		<div role="tabpanel">
-			<Section title={prSectionTitle}>
+			<Section surface={false} title={prSectionTitle}>
 				<div className="flex flex-col gap-1.5">
 					{hasPRs ? (
 						prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
+							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} sessionId={session.id} />
 						))
 					) : (
 						<p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>
@@ -482,33 +492,97 @@ function updateSessionMergePolicy(
 	}));
 }
 
-function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const presentation = prCardPresentation(pr);
+	const canMerge =
+		pr.state === "open" &&
+		presentation.primary.key === "merge" &&
+		presentation.primary.tone === "success" &&
+		Boolean(pr.url && pr.headSha);
+	const mergePr = useMutation({
+		mutationFn: async () => {
+			if (usePreviewData) return;
+			const { error } = await apiClient.POST("/api/v1/prs/{id}/merge", {
+				params: { path: { id: String(pr.number) } },
+				body: { prUrl: pr.url, expectedHeadSha: pr.headSha },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("pr.merge.failed", { number: pr.number })));
+		},
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(sessionId) }),
+				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+			]);
+		},
+	});
+	const mergeError = mergePr.error instanceof Error ? mergePr.error.message : null;
 	return (
-		<div className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-1.5">
-			<div className="flex items-center gap-2">
-				<GitPullRequest className="size-icon-md shrink-0 text-settings-muted" aria-hidden="true" />
-				<span className="text-md-sm font-medium text-settings-label">PR #{pr.number}</span>
+		<article className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
+			{pr.title ? (
+				<a
+					className="inline text-sm font-semibold leading-snug tracking-tight text-settings-label underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					href={prBrowserUrl(pr)}
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					{pr.title}
+				</a>
+			) : null}
+			<div className={cn("flex min-w-0 items-center gap-2", pr.title && "mt-1.5")}>
+				<a
+					aria-label={t("inspector.openPR", { number: pr.number })}
+					className="inline-flex min-w-0 items-center gap-1 font-mono text-xs font-medium text-settings-label decoration-muted-foreground underline-offset-2 hover:text-settings-label hover:underline focus-visible:rounded-sm focus-visible:text-settings-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					href={prBrowserUrl(pr)}
+					rel="noopener noreferrer"
+					target="_blank"
+				>
+					<GitPullRequest className="size-icon-sm shrink-0" aria-hidden="true" />
+					<span>PR #{pr.number}</span>
+					<ArrowUpRight aria-hidden="true" className="size-icon-2xs shrink-0" strokeWidth={2} />
+				</a>
 				<Badge
 					variant="outline"
 					className={cn("h-5 px-1.5 text-[9px] leading-none font-medium", prStateTone[pr.state])}
 				>
 					{t(prStateLabelKeys[pr.state])}
 				</Badge>
-				<a
-					href={prBrowserUrl(pr)}
-					target="_blank"
-					rel="noopener noreferrer"
-					className="ml-auto inline-flex items-center gap-0.5 text-caption font-medium text-accent hover:underline"
-				>
-					<span>{t("inspector.open")}</span>
-					<ArrowUpRight aria-hidden="true" className="size-icon-2xs" strokeWidth={2} />
-				</a>
 			</div>
-			{pr.title ? <div className="mt-1.5 text-xs font-medium leading-snug text-settings-label">{pr.title}</div> : null}
-			<PRSummaryMeta className="mt-1" pr={pr} />
-			<PRSummaryParts className="mt-1.5" pr={pr} variant="stacked" />
-		</div>
+			<PRSummaryMeta className="mt-1.5" pr={pr} />
+			{pr.state !== "merged" ? (
+				<>
+					<PRCardStatusSummary
+						action={
+							canMerge ? (
+								<Button
+									aria-label={t("pr.merge.actionFor", { number: pr.number })}
+									className="gap-1 px-2"
+									disabled={mergePr.isPending}
+									onClick={() => mergePr.mutate()}
+									size="sm"
+									type="button"
+								>
+									{mergePr.isPending ? (
+										<Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />
+									) : (
+										<GitMerge className="size-icon-sm" aria-hidden="true" />
+									)}
+									{mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
+								</Button>
+							) : undefined
+						}
+						className="mt-2"
+						pr={pr}
+					/>
+					{mergeError ? (
+						<p className="mt-2 text-2xs leading-normal text-error" role="status">
+							{mergeError}
+						</p>
+					) : null}
+				</>
+			) : null}
+		</article>
 	);
 }
 
@@ -522,7 +596,13 @@ const timelineNodeTone: Record<TimelineTone, string> = {
 };
 
 function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: WorkspaceSession }) {
-	const history: { tone: TimelineTone; node: ReactNode; ts: string | null }[] = [];
+	const history: {
+		tone: TimelineTone;
+		node: ReactNode;
+		ts: string | null;
+		markerTone?: string;
+		markerBreathe?: boolean;
+	}[] = [];
 
 	history.push({
 		tone: "neutral",
@@ -565,6 +645,7 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 	// Current activity is a live reading, not a historical event. Keep it above
 	// the optional reverse-chronological history and do not imply that its last
 	// hook time is when the state transition occurred.
+	const activityView = getAgentActivityView(session.activity);
 	const current = {
 		tone: "now",
 		node: (
@@ -585,7 +666,15 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 			</span>
 		),
 		ts: null,
-	} satisfies { tone: TimelineTone; node: ReactNode; ts: null };
+		markerTone: activityView.tone,
+		markerBreathe: activityView.breathe,
+	} satisfies {
+		tone: TimelineTone;
+		node: ReactNode;
+		ts: null;
+		markerTone: string;
+		markerBreathe: boolean;
+	};
 	const events = [current, ...history.reverse()];
 
 	return (
@@ -609,7 +698,9 @@ function ActivityTimeline({ prs, session }: { prs: SessionPRSummary[]; session: 
 								"absolute -left-4.5 size-icon-xs rounded-full",
 								event.tone === "now" ? "top-1/2 -translate-y-1/2" : "top-1.5",
 								timelineNodeTone[event.tone],
+								event.markerBreathe && "animate-status-pulse",
 							)}
+							style={event.markerTone ? { background: event.markerTone } : undefined}
 						/>
 						<div className="text-xs leading-normal text-foreground [&_b]:font-semibold">{event.node}</div>
 					</div>
@@ -672,8 +763,12 @@ function InspectorScmPill({ state }: { state: ScmTimelineState }) {
 	return <TimelinePill {...getSessionTimelinePillView(state)} />;
 }
 
-function TimelinePill({ label, tone, breathe }: { label: string; tone: string; breathe: boolean }) {
-	return <StatusPill label={label} tone={tone} breathe={breathe} />;
+function TimelinePill({ label, tone }: { label: string; tone: string; breathe: boolean }) {
+	return (
+		<span className="inline-flex shrink-0 whitespace-nowrap text-xs font-semibold" style={{ color: tone }}>
+			{label}
+		</span>
+	);
 }
 
 function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {

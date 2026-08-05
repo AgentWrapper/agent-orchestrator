@@ -18,7 +18,7 @@ const mergeabilityStates = new Set<SessionPRSummary["mergeability"]["state"]>([
 	"unstable",
 ]);
 
-export type PRDisplayTone = "neutral" | "passive" | "success" | "warning" | "error";
+export type PRDisplayTone = "neutral" | "passive" | "success" | "review" | "warning" | "error";
 
 export type PRStatusRow = {
 	key: "ci" | "review" | "merge";
@@ -58,12 +58,37 @@ export type PRSummaryPart = {
 	tone: PRDisplayTone;
 };
 
+export type PRCardStatus = {
+	key: "ci" | "merge" | "review" | "lifecycle";
+	label: string;
+	detail?: string;
+	href?: string;
+	breathe?: boolean;
+	links: PRSummaryLink[];
+	tone: PRDisplayTone;
+};
+
+export type PRCardPresentation = {
+	primary: PRCardStatus;
+	supporting: PRCardStatus[];
+};
+
 export function comparePRDisplaySummaries(a: SessionPRSummary, b: SessionPRSummary): number {
 	return prStateRank[a.state] - prStateRank[b.state] || a.number - b.number;
 }
 
 export function prBrowserUrl(pr: SessionPRSummary): string {
 	return prBaseUrl(pr) ?? pr.htmlUrl ?? pr.url;
+}
+
+export function prChecksUrl(pr: SessionPRSummary): string | undefined {
+	try {
+		const url = new URL(prBrowserUrl(pr));
+		if (url.hostname.toLowerCase() !== "github.com" || !/\/pull\/\d+\/?$/.test(url.pathname)) return undefined;
+		return `${url.origin}${url.pathname.replace(/\/$/, "")}/checks`;
+	} catch {
+		return undefined;
+	}
 }
 
 export function sessionPRDisplaySummaries(
@@ -259,6 +284,87 @@ export function prStatusRows(pr: SessionPRSummary): PRStatusRow[] {
 	}));
 }
 
+/**
+ * Reduces provider facts to one next-action headline for compact PR cards.
+ * The detailed three-row presentation remains available for dense reports,
+ * but cards should not repeat the same blocker under Merge and Review.
+ */
+export function prCardPresentation(pr: SessionPRSummary): PRCardPresentation {
+	let primary: PRCardStatus;
+	if (pr.state === "merged") {
+		primary = cardStatus("lifecycle", "pr.card.merged", "success");
+	} else if (pr.state === "closed") {
+		primary = cardStatus("lifecycle", "pr.card.closed", "passive");
+	} else if (pr.ci.state === "failing") {
+		primary = cardStatus("ci", "pr.card.checksFailing", "error", ciSummary(pr), ciLinks(pr));
+	} else if (pr.mergeability.state === "conflicting") {
+		primary = cardStatus("merge", "pr.card.mergeConflict", "error", mergeSummary(pr), mergeLinks(pr));
+	} else if (pr.review.decision === "changes_requested" || pr.review.hasUnresolvedHumanComments) {
+		primary = cardStatus("review", "pr.card.changesRequested", "warning", reviewSummary(pr), reviewLinks(pr));
+	} else if (pr.review.decision === "review_required") {
+		primary = cardStatus("review", "pr.card.reviewRequired", "review", appI18n.t("pr.card.reviewRequiredDetail"));
+	} else if (pr.ci.state === "pending") {
+		primary = cardStatus("ci", "pr.card.checksPending", "neutral", undefined, [], prChecksUrl(pr), true);
+	} else if (pr.ci.state === "unknown") {
+		primary = cardStatus("ci", "pr.card.checksLoading", "passive", undefined, [], prChecksUrl(pr), true);
+	} else if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
+		primary = cardStatus(
+			"merge",
+			visibleMergeReasons(pr).length === 0 ? "pr.card.mergeUnavailable" : "pr.card.mergeBlocked",
+			"warning",
+			mergeSummary(pr),
+			mergeLinks(pr),
+		);
+	} else if (pr.state === "draft") {
+		primary = cardStatus("lifecycle", "pr.card.draft", "neutral");
+	} else if (pr.mergeability.state === "mergeable") {
+		primary = cardStatus("merge", "pr.card.readyToMerge", "success");
+	} else if (pr.review.decision === "approved") {
+		primary = cardStatus("review", "pr.card.reviewApproved", "success");
+	} else {
+		primary = cardStatus("lifecycle", "pr.card.open", "neutral");
+	}
+
+	const supporting: PRCardStatus[] = [];
+	if (pr.state === "open" && primary.key !== "ci") {
+		if (pr.ci.state === "passing") {
+			supporting.push(cardStatus("ci", "pr.card.checksPassing", "success", undefined, [], prChecksUrl(pr)));
+		} else if (pr.ci.state === "pending") {
+			supporting.push(cardStatus("ci", "pr.card.checksPending", "neutral", undefined, [], prChecksUrl(pr), true));
+		} else if (pr.ci.state === "unknown") {
+			supporting.push(cardStatus("ci", "pr.card.checksLoading", "passive", undefined, [], prChecksUrl(pr), true));
+		}
+	}
+	return { primary, supporting };
+}
+
+function cardStatus(
+	key: PRCardStatus["key"],
+	labelKey:
+		| "pr.card.merged"
+		| "pr.card.closed"
+		| "pr.card.checksFailing"
+		| "pr.card.mergeConflict"
+		| "pr.card.changesRequested"
+		| "pr.card.reviewRequired"
+		| "pr.card.mergeBlocked"
+		| "pr.card.mergeUnavailable"
+		| "pr.card.checksPending"
+		| "pr.card.checksLoading"
+		| "pr.card.draft"
+		| "pr.card.readyToMerge"
+		| "pr.card.reviewApproved"
+		| "pr.card.open"
+		| "pr.card.checksPassing",
+	tone: PRDisplayTone,
+	detail?: string,
+	links: PRSummaryLink[] = [],
+	href?: string,
+	breathe = false,
+): PRCardStatus {
+	return { key, label: appI18n.t(labelKey), detail, href, breathe, links, tone };
+}
+
 export function prSummaryParts(pr: SessionPRSummary): PRSummaryPart[] {
 	return [
 		{
@@ -399,7 +505,7 @@ function mergeOverflowLabel(pr: SessionPRSummary): string | undefined {
 		return overflowLabel(pr.mergeability.conflictFiles?.length ?? 0, 3, "file");
 	}
 	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		return overflowLabel(pr.mergeability.reasons.length, 3, "reason");
+		return overflowLabel(visibleMergeReasons(pr).length, 3, "reason");
 	}
 	return undefined;
 }
@@ -413,7 +519,7 @@ function mergeLinkTotal(pr: SessionPRSummary): number {
 		return conflictFileCount > 0 ? conflictFileCount : mergeLinks(pr).length;
 	}
 	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		return pr.mergeability.reasons.length;
+		return visibleMergeReasons(pr).length;
 	}
 	return 0;
 }
@@ -499,7 +605,7 @@ function reviewTone(
 		case "changes_requested":
 			return "warning";
 		case "review_required":
-			return "neutral";
+			return "review";
 		case "none":
 			return hasUnresolvedHumanComments ? "warning" : "passive";
 	}
@@ -568,7 +674,7 @@ function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "mer
 	const reasonLinks =
 		fileLinks.length > 0 || kind === "merge_conflict"
 			? []
-			: pr.mergeability.reasons.slice(0, 3).map((reason) => ({
+			: visibleMergeReasons(pr).slice(0, 3).map((reason) => ({
 					label: mergeReasonLabel(reason),
 					href,
 				}));
@@ -577,6 +683,13 @@ function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "mer
 			? [{ label: appI18n.t("pr.merge.conflicts"), href, title: openConflicts }]
 			: [];
 	return fileLinks.length > 0 ? fileLinks : reasonLinks.length > 0 ? reasonLinks : fallbackLink;
+}
+
+// `blocked_by_provider` is an internal fallback for a host verdict AO cannot
+// explain more precisely. It is not an actionable reason, so cards summarize
+// it as merge availability instead of exposing implementation terminology.
+function visibleMergeReasons(pr: SessionPRSummary): string[] {
+	return pr.mergeability.reasons.filter((reason) => reason !== "blocked_by_provider");
 }
 
 function mergeConflictUrl(pr: SessionPRSummary): string | undefined {
