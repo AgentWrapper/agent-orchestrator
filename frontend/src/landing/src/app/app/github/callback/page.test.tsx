@@ -101,7 +101,9 @@ it("shows the server-recorded summary and waits for an explicit confirmation cli
   );
   expect(mocks.confirmGitHubInstall).toHaveBeenCalledTimes(1);
   await waitFor(() =>
-    expect(mocks.replace).toHaveBeenCalledWith("/app?settings=github"),
+    expect(mocks.replace).toHaveBeenCalledWith(
+      "/app?settings=github&github=organization_connected",
+    ),
   );
 });
 

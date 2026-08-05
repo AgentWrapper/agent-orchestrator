@@ -12,6 +12,8 @@ import { useAuth } from "../../../auth/AuthProvider";
 
 const cloudSelectionKey = "ao-cloud-selection";
 const githubSettingsPath = "/app?settings=github";
+const githubConnectedSettingsPath =
+  "/app?settings=github&github=organization_connected";
 
 export default function GitHubCallbackPage() {
   const router = useRouter();
@@ -96,7 +98,7 @@ export default function GitHubCallbackPage() {
     try {
       await api.confirmGitHubInstall(orgId, { state });
       setPhase("confirmed");
-      router.replace(githubSettingsPath);
+      router.replace(githubConnectedSettingsPath);
     } catch (confirmationError: unknown) {
       setError(
         confirmationError instanceof Error

@@ -3694,6 +3694,11 @@ function gitHubCallbackNotice(result: string | null) {
         message: "GitHub connected successfully.",
         tone: "success" as const,
       };
+    case "organization_connected":
+      return {
+        message: "GitHub repository access connected for this organization.",
+        tone: "success" as const,
+      };
     case "account_already_connected":
       return {
         message:
@@ -3750,6 +3755,53 @@ export function GitHubConnectionSettings({
   const repositoryCount = connection?.repositories.length ?? 0;
   const availableOwners = userConnection?.installations ?? [];
   const callbackNotice = gitHubCallbackNotice(callbackResult);
+  const activeOrganizationInstallations =
+    connection?.installations.filter(
+      (installation) => installation.status === "active",
+    ) ?? [];
+  const hasActiveOrganizationConnection =
+    activeOrganizationInstallations.length > 0;
+  const chainedInstallStarted = useRef(false);
+
+  const startUserAuthorization = useCallback(async () => {
+    const { authorizeUrl } = await api.startGitHubUserAuthorization();
+    window.location.assign(authorizeUrl);
+  }, [api]);
+  const startOrganizationInstall = useCallback(async () => {
+    if (!orgId) return;
+    const { installUrl } = await api.startGitHubInstall(orgId);
+    window.location.assign(installUrl);
+  }, [api, orgId]);
+
+  useEffect(() => {
+    if (callbackResult !== "connected") {
+      chainedInstallStarted.current = false;
+      return;
+    }
+    if (
+      chainedInstallStarted.current ||
+      loading ||
+      !userConnection?.connected ||
+      hasActiveOrganizationConnection ||
+      !canAdmin ||
+      !orgId
+    ) {
+      return;
+    }
+    chainedInstallStarted.current = true;
+    onDismissCallback();
+    void run(startOrganizationInstall);
+  }, [
+    callbackResult,
+    canAdmin,
+    hasActiveOrganizationConnection,
+    loading,
+    onDismissCallback,
+    orgId,
+    run,
+    startOrganizationInstall,
+    userConnection?.connected,
+  ]);
 
   return (
     <SettingsPanel
@@ -3810,68 +3862,71 @@ export function GitHubConnectionSettings({
               </button>
             </div>
           ) : null}
-          <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.08] pb-4">
-            <div className="flex min-w-0 flex-1 items-center gap-3">
-              <Github className="size-4 shrink-0 text-white/70" />
-              <div className="min-w-0">
-                <p className="truncate text-sm text-white/85">
-                  {userConnection?.connected
-                    ? userConnection.login
-                    : "GitHub account not connected"}
-                </p>
-                <p className="mt-0.5 text-xs text-white/40">
-                  {userConnection?.connected
-                    ? `${availableOwners.length} available owner${availableOwners.length === 1 ? "" : "s"}`
-                    : "Authorize once to discover personal and organization installations"}
-                </p>
+          <div className="space-y-2 border-b border-white/[0.08] pb-4">
+            <p className="text-xs font-medium text-white/55">
+              GitHub account
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                <Github className="size-4 shrink-0 text-white/70" />
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-white/85">
+                    {userConnection?.connected
+                      ? userConnection.login
+                      : "GitHub account not connected"}
+                  </p>
+                  <p className="mt-0.5 text-xs leading-5 text-white/40">
+                    {userConnection?.connected
+                      ? `${availableOwners.length} available owner${availableOwners.length === 1 ? "" : "s"}`
+                      : hasActiveOrganizationConnection
+                        ? "Connect your account for personal actions and scratch repositories."
+                        : "Connect your account first. AO will continue to organization repository access next."}
+                  </p>
+                </div>
               </div>
-            </div>
-            {userConnection?.connected ? (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className={button}
-                  disabled={loading}
-                  onClick={() =>
-                    void run(() => api.syncGitHubUserConnection())
-                  }
-                >
-                  <RefreshCw className="size-3" />
-                  Sync
-                </button>
-                <button
-                  type="button"
-                  className={`${button} text-[#ef9b9b] hover:bg-[#ef6b6b]/10`}
-                  disabled={loading}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        "Disconnect your GitHub account from AO? Existing organization grants remain, but personal actions will require reconnecting.",
-                      )
-                    ) {
-                      void run(() => api.disconnectGitHubUser());
+              {userConnection?.connected ? (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className={button}
+                    disabled={loading}
+                    onClick={() =>
+                      void run(() => api.syncGitHubUserConnection())
                     }
-                  }}
+                  >
+                    <RefreshCw className="size-3" />
+                    Sync
+                  </button>
+                  <button
+                    type="button"
+                    className={`${button} text-[#ef9b9b] hover:bg-[#ef6b6b]/10`}
+                    disabled={loading}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          "Disconnect your GitHub account from AO? Existing organization grants remain, but personal actions will require reconnecting.",
+                        )
+                      ) {
+                        void run(() => api.disconnectGitHubUser());
+                      }
+                    }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className={primaryButton}
+                  disabled={loading}
+                  onClick={() => void run(startUserAuthorization)}
                 >
-                  Disconnect
+                  {hasActiveOrganizationConnection
+                    ? "Connect account"
+                    : "Connect GitHub"}
                 </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className={primaryButton}
-                disabled={loading}
-                onClick={() =>
-                  void run(async () => {
-                    const { authorizeUrl } =
-                      await api.startGitHubUserAuthorization();
-                    window.location.assign(authorizeUrl);
-                  })
-                }
-              >
-                Connect GitHub
-              </button>
-            )}
+              )}
+            </div>
           </div>
 
           {userConnection?.connected ? (
@@ -4022,13 +4077,29 @@ export function GitHubConnectionSettings({
                 </div>
               ))}
             </div>
-          ) : (
-            <p className="text-sm leading-6 text-white/40">
-              {canAdmin
-                ? "Connect the GitHub App to grant this organization access to repositories."
-                : "An organization owner or admin must connect the GitHub App."}
-            </p>
-          )}
+          ) : null}
+
+          {!hasActiveOrganizationConnection ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2.5">
+              <p className="min-w-0 flex-1 text-sm leading-6 text-white/45">
+                {!userConnection?.connected
+                  ? "Connect your GitHub account above. AO will then continue here automatically."
+                  : canAdmin
+                    ? "Connect the GitHub App to grant this organization access to repositories."
+                    : "An organization owner or admin must connect the GitHub App."}
+              </p>
+              {userConnection?.connected && canAdmin && orgId ? (
+                <button
+                  type="button"
+                  className={primaryButton}
+                  disabled={loading}
+                  onClick={() => void run(startOrganizationInstall)}
+                >
+                  Connect organization
+                </button>
+              ) : null}
+            </div>
+          ) : null}
 
           <RepositoryGrants repositories={connection.repositories} />
         </div>

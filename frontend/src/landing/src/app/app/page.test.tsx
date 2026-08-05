@@ -1007,6 +1007,100 @@ it("lets members manage their account-wide GitHub identity", async () => {
   expect(screen.getByRole("button", { name: "Disconnect" })).toBeVisible();
 });
 
+it("guides a fully disconnected user through account authorization first", async () => {
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Provider connections" }),
+  );
+
+  expect(
+    await screen.findByRole("button", { name: "Connect GitHub" }),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Connect your account first. AO will continue to organization repository access next.",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByText(
+      "Connect your GitHub account above. AO will then continue here automatically.",
+    ),
+  ).toBeVisible();
+});
+
+it("prompts for organization access when the GitHub account is connected", async () => {
+  apiMocks.githubUserConnection.mockResolvedValue({
+    connected: true,
+    login: "aoagents",
+    installations: [],
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Provider connections" }),
+  );
+
+  expect(
+    await screen.findByRole("button", { name: "Connect organization" }),
+  ).toBeVisible();
+});
+
+it("prompts for account authorization when organization access is connected", async () => {
+  apiMocks.githubConnection.mockResolvedValue({
+    mode: "github-app",
+    appSlug: "ao-cloud",
+    installations: [
+      {
+        id: "installation-one",
+        githubInstallationId: 42,
+        accountLogin: "aoagents",
+        accountType: "Organization",
+        status: "active",
+        repositorySelection: "all",
+      },
+    ],
+    repositories: [],
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: /Settings/ }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Provider connections" }),
+  );
+
+  expect(
+    await screen.findByRole("button", { name: "Connect account" }),
+  ).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Connect organization" }),
+  ).not.toBeInTheDocument();
+});
+
+it("continues from GitHub account authorization to organization access", async () => {
+  apiMocks.githubUserConnection.mockResolvedValue({
+    connected: true,
+    login: "aoagents",
+    installations: [],
+  });
+  window.history.replaceState(
+    {},
+    "",
+    "/app?settings=github&github=connected",
+  );
+
+  render(<CloudAppPage />);
+
+  await waitFor(() =>
+    expect(apiMocks.startGitHubInstall).toHaveBeenCalledWith("org-one"),
+  );
+  expect(apiMocks.startGitHubInstall).toHaveBeenCalledTimes(1);
+});
+
 it("opens provider settings when returning from the GitHub callback", async () => {
   window.history.replaceState(
     {},
