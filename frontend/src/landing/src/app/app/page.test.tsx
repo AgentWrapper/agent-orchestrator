@@ -847,7 +847,7 @@ it("silently ignores a share link redeemed by its creator", async () => {
   ).not.toBeInTheDocument();
 });
 
-it("shows GitHub App accounts, grants, and owner controls", async () => {
+it("shows simplified GitHub organization access controls", async () => {
   apiMocks.githubConnection.mockResolvedValue({
     mode: "github-app",
     appSlug: "ao-cloud",
@@ -891,24 +891,19 @@ it("shows GitHub App accounts, grants, and owner controls", async () => {
     await screen.findByRole("button", { name: "Provider connections" }),
   );
 
-  const account = await screen.findByText("aoagents");
-  const gitHubSection = within(account.closest("section")!);
-  expect(account).toBeVisible();
-  expect(gitHubSection.getByText(/1 granted repositor/)).toBeVisible();
+  const organizationAccess = await screen.findByRole("button", {
+    name: "Organization repository access",
+  });
+  const gitHubSection = within(organizationAccess.closest("section")!);
+  expect(gitHubSection.queryByText(/granted repositor/)).not.toBeInTheDocument();
   expect(
     gitHubSection.queryByText("aoagents/agent-orchestrator"),
   ).not.toBeInTheDocument();
-  fireEvent.click(gitHubSection.getByRole("button", { name: /Repository grants/ }));
-  expect(gitHubSection.getByText("aoagents/agent-orchestrator")).toBeVisible();
-  expect(gitHubSection.getByRole("link", { name: /Configure/ })).toHaveAttribute(
-    "href",
-    "https://github.com/organizations/aoagents/settings/installations/42",
-  );
-
-  fireEvent.click(gitHubSection.getByRole("button", { name: /Sync/ }));
-  await waitFor(() =>
-    expect(apiMocks.syncGitHub).toHaveBeenCalledWith("org-one"),
-  );
+  fireEvent.click(organizationAccess);
+  expect(gitHubSection.getByText("aoagents")).toBeVisible();
+  expect(gitHubSection.getByText("Organization · selected repositories")).toBeVisible();
+  expect(gitHubSection.queryByRole("link", { name: /Configure/ })).not.toBeInTheDocument();
+  expect(gitHubSection.queryByRole("button", { name: /Sync/ })).not.toBeInTheDocument();
 
   fireEvent.click(gitHubSection.getByRole("button", { name: "Disconnect" }));
   expect(confirmDisconnect).toHaveBeenCalledWith(
@@ -1002,8 +997,16 @@ it("lets members manage their account-wide GitHub identity", async () => {
 
   expect((await screen.findAllByText("aoagents")).length).toBeGreaterThan(0);
   expect(
+    screen.getByRole("button", { name: "Repository creation access" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Organization repository access" }),
+  ).toBeVisible();
+  expect(
     screen.queryByRole("button", { name: "Install on another account" }),
   ).not.toBeInTheDocument();
+  expect(screen.queryByText("Scratch ready")).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: /Manage/ })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Disconnect" })).toBeVisible();
 });
 
@@ -1020,14 +1023,16 @@ it("guides a fully disconnected user through account authorization first", async
   ).toBeVisible();
   expect(
     screen.getByText(
-      "Connect your account first. AO will continue to organization repository access next.",
+      "AO will connect your GitHub account and organization repository access in two steps.",
     ),
   ).toBeVisible();
   expect(
-    screen.getByText(
-      "Connect your GitHub account above. AO will then continue here automatically.",
-    ),
-  ).toBeVisible();
+    screen.queryByRole("button", { name: "Repository creation access" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Organization repository access" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText(/granted repositor/)).not.toBeInTheDocument();
 });
 
 it("prompts for organization access when the GitHub account is connected", async () => {

@@ -51,7 +51,6 @@ import {
   type CloudAgent,
   type CloudGitHubConnection,
   type CloudGitHubGrantedRepository,
-  type CloudGitHubInstallation,
   type CloudGitHubUserConnection,
   type CloudOrgMember,
   type CloudOrgMembership,
@@ -3674,19 +3673,6 @@ function CloudSettings({
   );
 }
 
-function gitHubInstallationSettingsURL(
-  installation: Pick<
-    CloudGitHubInstallation,
-    "githubInstallationId" | "accountLogin" | "accountType"
-  >,
-) {
-  const id = encodeURIComponent(installation.githubInstallationId);
-  if (installation.accountType.toLowerCase() === "organization") {
-    return `https://github.com/organizations/${encodeURIComponent(installation.accountLogin)}/settings/installations/${id}`;
-  }
-  return `https://github.com/settings/installations/${id}`;
-}
-
 function gitHubCallbackNotice(result: string | null) {
   switch (result) {
     case "connected":
@@ -3752,8 +3738,10 @@ export function GitHubConnectionSettings({
   loading: boolean;
   run: (operation: () => Promise<unknown>) => Promise<unknown>;
 }) {
-  const repositoryCount = connection?.repositories.length ?? 0;
   const availableOwners = userConnection?.installations ?? [];
+  const repositoryCreationOwners = availableOwners.filter(
+    (installation) => installation.canCreateRepository,
+  );
   const callbackNotice = gitHubCallbackNotice(callbackResult);
   const activeOrganizationInstallations =
     connection?.installations.filter(
@@ -3761,6 +3749,9 @@ export function GitHubConnectionSettings({
     ) ?? [];
   const hasActiveOrganizationConnection =
     activeOrganizationInstallations.length > 0;
+  const hasGitHubAccountConnection = userConnection?.connected === true;
+  const hasAnyGitHubConnection =
+    hasGitHubAccountConnection || hasActiveOrganizationConnection;
   const chainedInstallStarted = useRef(false);
 
   const startUserAuthorization = useCallback(async () => {
@@ -3862,7 +3853,13 @@ export function GitHubConnectionSettings({
               </button>
             </div>
           ) : null}
-          <div className="space-y-2 border-b border-white/[0.08] pb-4">
+          <div
+            className={`space-y-2 ${
+              hasAnyGitHubConnection
+                ? "border-b border-white/[0.08] pb-4"
+                : ""
+            }`}
+          >
             <p className="text-xs font-medium text-white/55">
               GitHub account
             </p>
@@ -3876,15 +3873,15 @@ export function GitHubConnectionSettings({
                       : "GitHub account not connected"}
                   </p>
                   <p className="mt-0.5 text-xs leading-5 text-white/40">
-                    {userConnection?.connected
-                      ? `${availableOwners.length} available owner${availableOwners.length === 1 ? "" : "s"}`
+                    {hasGitHubAccountConnection
+                      ? "Account authorization connected."
                       : hasActiveOrganizationConnection
-                        ? "Connect your account for personal actions and scratch repositories."
-                        : "Connect your account first. AO will continue to organization repository access next."}
+                        ? "Connect your account to enable repository creation."
+                        : "AO will connect your GitHub account and organization repository access in two steps."}
                   </p>
                 </div>
               </div>
-              {userConnection?.connected ? (
+              {hasGitHubAccountConnection ? (
                 <div className="flex items-center gap-1">
                   <button
                     type="button"
@@ -3929,84 +3926,33 @@ export function GitHubConnectionSettings({
             </div>
           </div>
 
-          {userConnection?.connected ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-medium text-white/55">
-                  Available repository owners
-                </p>
-                {canAdmin && orgId ? (
-                  <button
-                    type="button"
-                    className="text-xs text-[#8eb6ff] hover:underline"
-                    disabled={loading}
-                    onClick={() =>
-                      void run(async () => {
-                        const { installUrl } = await api.startGitHubInstall(orgId);
-                        window.location.assign(installUrl);
-                      })
-                    }
-                  >
-                    Install on another account
-                  </button>
-                ) : null}
-              </div>
-              <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#111317]">
-                {availableOwners.map((installation) => (
+          {hasGitHubAccountConnection ? (
+            <GitHubAccessDisclosure title="Repository creation access">
+              {repositoryCreationOwners.length > 0 ? (
+                repositoryCreationOwners.map((installation) => (
                   <div
                     key={installation.githubInstallationId}
-                    className="flex items-center gap-3 px-3 py-2.5"
+                    className="px-3 py-2.5"
                   >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-white/80">
-                        {installation.accountLogin}
-                      </p>
-                      <p className="mt-0.5 text-xs text-white/35">
-                        {installation.accountType} ·{" "}
-                        {installation.repositorySelection} access
-                      </p>
-                    </div>
-                    <span
-                      className={`font-mono text-[10px] uppercase ${
-                        installation.canCreateRepository
-                          ? "text-[#74b98a]"
-                          : "text-[#e8c14a]"
-                      }`}
-                    >
-                      {installation.canCreateRepository
-                        ? "Scratch ready"
-                        : "Configure"}
-                    </span>
-                    <a
-                      className={button}
-                      href={gitHubInstallationSettingsURL(installation)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Manage
-                      <ExternalLink className="size-3" />
-                    </a>
+                    <p className="truncate text-sm text-white/80">
+                      {installation.accountLogin}
+                    </p>
+                    <p className="mt-0.5 text-xs capitalize text-white/35">
+                      {installation.accountType}
+                    </p>
                   </div>
-                ))}
-              </div>
-            </div>
+                ))
+              ) : (
+                <p className="px-3 py-3 text-sm text-white/40">
+                  No GitHub accounts currently allow repository creation.
+                </p>
+              )}
+            </GitHubAccessDisclosure>
           ) : null}
 
-          <div className="flex items-center justify-between gap-3 pt-2">
-            <div>
-              <p className="text-xs font-medium text-white/55">
-                Organization repository access
-              </p>
-              <p className="mt-0.5 text-xs text-white/35">
-                {repositoryCount} granted repositor{repositoryCount === 1 ? "y" : "ies"}
-                {connection.appSlug ? ` · ${connection.appSlug}` : ""}
-              </p>
-            </div>
-          </div>
-
-          {connection.installations.length > 0 ? (
-            <div className="divide-y divide-white/[0.06] rounded-lg border border-white/[0.08] bg-[#111317]">
-              {connection.installations.map((installation) => (
+          {hasActiveOrganizationConnection ? (
+            <GitHubAccessDisclosure title="Organization repository access">
+              {activeOrganizationInstallations.map((installation) => (
                 <div
                   key={installation.id}
                   className="flex flex-wrap items-center gap-3 px-3 py-2.5"
@@ -4016,79 +3962,54 @@ export function GitHubConnectionSettings({
                       {installation.accountLogin}
                     </p>
                     <p className="mt-0.5 text-xs text-white/35">
-                      {installation.accountType} · {installation.repositorySelection} access
+                      {installation.accountType} ·{" "}
+                      {installation.repositorySelection === "all"
+                        ? "all repositories"
+                        : "selected repositories"}
                     </p>
                   </div>
-                  <span
-                    className={`font-mono text-[10px] uppercase ${
-                      installation.status === "active"
-                        ? "text-[#74b98a]"
-                        : "text-white/35"
-                    }`}
-                  >
-                    {installation.status}
-                  </span>
-                  {canAdmin && orgId && installation.status === "active" ? (
-                    <div className="flex items-center gap-1">
-                      <a
-                        className={button}
-                        href={gitHubInstallationSettingsURL(installation)}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Configure
-                        <ExternalLink className="size-3" />
-                      </a>
-                      <button
-                        type="button"
-                        className={button}
-                        disabled={loading}
-                        onClick={() =>
-                          void run(() => api.syncGitHub(orgId))
+                  {canAdmin && orgId ? (
+                    <button
+                      type="button"
+                      className={`${button} text-[#ef9b9b] hover:bg-[#ef6b6b]/10`}
+                      disabled={loading}
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`,
+                          )
+                        ) {
+                          return;
                         }
-                      >
-                        <RefreshCw className="size-3" />
-                        Sync
-                      </button>
-                      <button
-                        type="button"
-                        className={`${button} text-[#ef9b9b] hover:bg-[#ef6b6b]/10`}
-                        disabled={loading}
-                        onClick={() => {
-                          if (
-                            !window.confirm(
-                              `Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`,
-                            )
-                          ) {
-                            return;
-                          }
-                          void run(() =>
-                            api.disconnectGitHubInstallation(
-                              orgId,
-                              installation.githubInstallationId,
-                            ),
-                          );
-                        }}
-                      >
-                        Disconnect
-                      </button>
-                    </div>
+                        void run(() =>
+                          api.disconnectGitHubInstallation(
+                            orgId,
+                            installation.githubInstallationId,
+                          ),
+                        );
+                      }}
+                    >
+                      Disconnect
+                    </button>
                   ) : null}
                 </div>
               ))}
-            </div>
+            </GitHubAccessDisclosure>
           ) : null}
 
-          {!hasActiveOrganizationConnection ? (
+          {hasGitHubAccountConnection && !hasActiveOrganizationConnection ? (
             <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2.5">
-              <p className="min-w-0 flex-1 text-sm leading-6 text-white/45">
-                {!userConnection?.connected
-                  ? "Connect your GitHub account above. AO will then continue here automatically."
-                  : canAdmin
-                    ? "Connect the GitHub App to grant this organization access to repositories."
-                    : "An organization owner or admin must connect the GitHub App."}
-              </p>
-              {userConnection?.connected && canAdmin && orgId ? (
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-white/70">
+                  Organization repository access
+                </p>
+                <p className="mt-0.5 text-xs leading-5 text-white/40">
+                  {canAdmin
+                    ? "Connect repository access for this AO organization."
+                    : "An organization owner or admin must connect repository access."}
+                </p>
+              </div>
+              {canAdmin && orgId ? (
                 <button
                   type="button"
                   className={primaryButton}
@@ -4100,11 +4021,42 @@ export function GitHubConnectionSettings({
               ) : null}
             </div>
           ) : null}
-
-          <RepositoryGrants repositories={connection.repositories} />
         </div>
       )}
     </SettingsPanel>
+  );
+}
+
+function GitHubAccessDisclosure({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-white/[0.08] bg-[#111317]">
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <ChevronDown
+          className={`size-3.5 shrink-0 text-white/35 transition-transform ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
+        <span className="min-w-0 flex-1 text-sm text-white/70">{title}</span>
+      </button>
+      {open ? (
+        <div className="divide-y divide-white/[0.06] border-t border-white/[0.08]">
+          {children}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
