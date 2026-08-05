@@ -5,7 +5,7 @@ import { aoBridge } from "../lib/bridge";
 import { workspaceQueryKey } from "./useWorkspaceQuery";
 
 export type RestoreSessionResult =
-	{ status: "success" } | { status: "not_resumable" } | { status: "error"; message: string };
+	{ status: "success" } | { status: "not_resumable"; message: string } | { status: "error"; message: string };
 
 export function useRestoreSession(): (sessionId: string) => Promise<RestoreSessionResult> {
 	const queryClient = useQueryClient();
@@ -18,10 +18,11 @@ export function useRestoreSession(): (sessionId: string) => Promise<RestoreSessi
 				});
 				if (error) {
 					const code = (error as { code?: string }).code;
+					const message = apiErrorMessage(error, "Unable to restore session");
 					if (code === "SESSION_NOT_RESUMABLE") {
-						return { status: "not_resumable" };
+						return { status: "not_resumable", message };
 					}
-					return { status: "error", message: apiErrorMessage(error, "Unable to restore session") };
+					return { status: "error", message };
 				}
 				await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 				if (data?.restoreMode === "saved_prompt") {

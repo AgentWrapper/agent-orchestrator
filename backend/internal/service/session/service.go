@@ -23,6 +23,8 @@ type Store interface {
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
 	SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error)
+	SetSessionPinned(ctx context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error)
+	SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
@@ -537,6 +539,48 @@ func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID
 	updated, err := s.store.SetSessionTerminateOnPRMerge(ctx, id, terminate, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set terminate-on-pr-merge %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// Pin marks a session as pinned and returns the refreshed read model.
+func (s *Service) Pin(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+	now := s.now()
+	updated, err := s.store.SetSessionPinned(ctx, id, true, &now, now)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("pin %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// Unpin marks a session as unpinned and returns the refreshed read model.
+func (s *Service) Unpin(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+	now := s.now()
+	updated, err := s.store.SetSessionPinned(ctx, id, false, nil, now)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("unpin %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// SetReviewerHarness persists the reviewer selected for this session. Empty
+// clears the preference and restores the project-level fallback.
+func (s *Service) SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
+	if harness != "" && !harness.IsKnown() {
+		return domain.Session{}, apierr.Invalid("UNKNOWN_REVIEWER_HARNESS", "Unknown reviewer harness", nil)
+	}
+	updated, err := s.store.SetSessionReviewerHarness(ctx, id, harness, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set reviewer harness %s: %w", id, err)
 	}
 	if !updated {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")

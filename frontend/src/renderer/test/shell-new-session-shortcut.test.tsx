@@ -108,6 +108,10 @@ vi.mock("../lib/bridge", () => ({
 			setRecording: shellMocks.setKeybindingRecording,
 		},
 		window: {},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
+		},
 	},
 }));
 
@@ -294,7 +298,7 @@ describe("shell workspace startup", () => {
 		const host = screen.getByTestId("session-topbar-host");
 		const sidebar = screen.getByTestId("sidebar");
 		expect(host.compareDocumentPosition(sidebar) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(host).toHaveClass("h-inspector-tabs");
+		expect(host).toHaveClass("h-session-topbar");
 		expect(sidebar).toHaveAttribute("data-topbar-offset", "session");
 		expect(document.querySelector(".center-panel-shell--session > .center-panel-surface")).toBeInTheDocument();
 	});

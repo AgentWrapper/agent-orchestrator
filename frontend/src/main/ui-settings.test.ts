@@ -36,12 +36,14 @@ describe("ui-settings", () => {
 		expect(await readUiSettings(dir)).toEqual(DEFAULT_UI_SETTINGS);
 	});
 
-	it("coerces unknown locale to en", () => {
-		expect(coerceUiSettings({ locale: "fr" })).toEqual({ locale: "en" });
+	it("coerces unknown locale to en and accepts supported locales", () => {
+		expect(coerceUiSettings({ locale: "xx" })).toEqual({ locale: "en" });
 		expect(coerceUiSettings({ locale: "zh" })).toEqual({ locale: "en" });
 		expect(coerceUiSettings({})).toEqual({ locale: "en" });
 		expect(coerceUiSettings(null)).toEqual({ locale: "en" });
 		expect(coerceUiSettings({ locale: "zh-CN" })).toEqual({ locale: "zh-CN" });
+		expect(coerceUiSettings({ locale: "fr" })).toEqual({ locale: "fr" });
+		expect(coerceUiSettings({ locale: "pt-BR" })).toEqual({ locale: "pt-BR" });
 	});
 
 	it("atomic write leaves no temp file behind", async () => {

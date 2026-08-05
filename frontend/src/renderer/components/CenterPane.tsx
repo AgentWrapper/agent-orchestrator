@@ -187,7 +187,7 @@ export function CenterPane({
 
 	const terminalTopbar = (
 		<div
-			className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar"
+			className="flex h-session-topbar w-full shrink-0 items-stretch bg-sidebar pt-1"
 			style={{
 				paddingLeft: isFullscreen ? 0 : terminalBounds.leftInset,
 				paddingRight: isFullscreen ? 0 : terminalBounds.rightInset,
@@ -318,7 +318,7 @@ export function CenterPane({
 				</div>
 				{isFullscreen ? null : (
 					<div
-						className="ml-auto flex shrink-0 items-center border-l border-border/70 px-3"
+						className="ml-auto flex shrink-0 items-center px-3"
 						data-testid="session-action-region"
 					>
 						{topbarActions}
@@ -389,7 +389,7 @@ function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabPr
 			className={cn(
 				"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border bg-surface px-3 text-foreground transition-colors",
 				isActive
-					? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-terminal"
+					? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 					: "text-muted-foreground hover:bg-raised hover:text-foreground",
 			)}
 		>

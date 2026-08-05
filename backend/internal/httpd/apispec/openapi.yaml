@@ -993,6 +993,12 @@ paths:
         schema:
           description: PR number.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MergePRRequest'
+        required: true
       responses:
         "200":
           content:
@@ -1000,6 +1006,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MergePRResponse'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "404":
           content:
             application/json:
@@ -1452,6 +1464,83 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Configure whether PR completion terminates the session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/pin:
+    delete:
+      operationId: unpinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Unpin a session
+      tags:
+      - sessions
+    post:
+      operationId: pinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Pin a session
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/pr:
@@ -2006,6 +2095,63 @@ paths:
       summary: Resume an exited agent in its existing session
       tags:
       - sessions
+  /api/v1/sessions/{sessionId}/reviewer:
+    put:
+      operationId: setSessionReviewer
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionReviewerRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Set the reviewer harness for a session
+      tags:
+      - sessions
   /api/v1/sessions/{sessionId}/reviews:
     get:
       operationId: listReviews
@@ -2140,6 +2286,11 @@ paths:
         schema:
           description: Session identifier, e.g. project-1.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerReviewRequest'
       responses:
         "200":
           content:
@@ -2788,12 +2939,19 @@ components:
           type: string
         id:
           type: string
+        isPinned:
+          type: boolean
         isTerminated:
           type: boolean
         issueId:
           type: string
         kind:
           type: string
+        pinnedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         previewRevision:
           format: int64
           type: integer
@@ -2805,6 +2963,12 @@ components:
           items:
             $ref: '#/components/schemas/SessionPRFacts'
           type: array
+        reviewerHarness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
+          type: string
         scmStatus:
           enum:
           - pr_open
@@ -2849,6 +3013,7 @@ components:
       - terminateOnPrMerge
       - createdAt
       - updatedAt
+      - isPinned
       - status
       - prs
       type: object
@@ -3082,9 +3247,14 @@ components:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
+        runs:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - reviewerHandleId
       - reviews
+      - runs
       type: object
     ListSessionPRsResponse:
       properties:
@@ -3175,6 +3345,18 @@ components:
           type: string
       required:
       - status
+      type: object
+    MergePRRequest:
+      properties:
+        expectedHeadSha:
+          minLength: 40
+          type: string
+        prUrl:
+          minLength: 1
+          type: string
+      required:
+      - prUrl
+      - expectedHeadSha
       type: object
     MergePRResponse:
       properties:
@@ -4111,6 +4293,15 @@ components:
             entry point in the session workspace.
           type: string
       type: object
+    SetSessionReviewerRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
+          type: string
+      type: object
     ShellTerminalEnvelope:
       properties:
         shellTerminal:
@@ -4191,7 +4382,6 @@ components:
           - vibe
           - pi
           - autohand
-          - fake
           type: string
         issueId:
           type: string
@@ -4277,6 +4467,15 @@ components:
           - github
           type: string
         repo:
+          type: string
+      type: object
+    TriggerReviewRequest:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          - opencode
           type: string
       type: object
     TriggerReviewResponse:
