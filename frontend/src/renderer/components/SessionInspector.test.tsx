@@ -1320,7 +1320,7 @@ describe("SessionInspector summary reviews", () => {
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
-		mockCommonGets([approvedReview], "reviewer-pane", [
+		mockCommonGets([], "reviewer-pane", [
 			reviewState(3, "needs_review", "abc123"),
 			reviewState(4, "up_to_date", "def456"),
 			reviewState(5, "ineligible", "ghi789"),
