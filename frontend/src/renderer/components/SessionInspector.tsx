@@ -409,7 +409,7 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 					{usage.harnesses.map((harness, index) => (
 						<UsageProviderRow
 							harness={harness}
-							key={`${harness.harness}:${harness.provider}:${index}`}
+							key={`${harness.harness}:${index}`}
 						/>
 					))}
 				</div>
@@ -501,10 +501,7 @@ function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][numb
 					onPointerLeave={peek.scheduleClose}
 					type="button"
 				>
-					<span className="min-w-0">
-						<span className="block truncate text-sm-md text-settings-label">{harnessName}</span>
-						<span className="block truncate text-2xs text-settings-muted">{formatProviderName(harness.provider)}</span>
-					</span>
+					<span className="min-w-0 truncate text-sm-md text-settings-label">{harnessName}</span>
 					<span
 						className="text-right font-mono text-2xs text-settings-label"
 						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
@@ -556,10 +553,7 @@ function ProviderUsagePeek({
 	return (
 		<div>
 			<div className="flex items-start justify-between gap-4">
-				<div className="min-w-0">
-					<p className="truncate text-sm-md font-semibold text-settings-label">{harnessName}</p>
-					<p className="truncate text-2xs text-settings-muted">{formatProviderName(harness.provider)}</p>
-				</div>
+				<p className="min-w-0 truncate text-sm-md font-semibold text-settings-label">{harnessName}</p>
 				<div className="shrink-0 text-right text-2xs">
 					<p className="font-mono text-settings-label">
 						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
@@ -580,7 +574,7 @@ function ProviderUsagePeek({
 				</div>
 				{harness.models.length > 0 ? (
 					harness.models.map((model, index) => {
-						const modelKey = `${model.provider}:${model.modelId}:${index}`;
+						const modelKey = `${model.modelId}:${index}`;
 						return (
 							<UsageModelRow
 								active={activeModelKey === modelKey}
@@ -611,7 +605,7 @@ function UsageModelRow({
 	onRequestClose: () => void;
 }) {
 	const { t } = useTranslation();
-	const modelName = model.modelId || formatProviderName(model.provider);
+	const modelName = model.modelId;
 	const totalTokens = usageTokenTotal(model.totals);
 	const detailID = useId();
 	const exactTotal = totalTokens?.toLocaleString("en-US");
@@ -656,10 +650,7 @@ function UsageModelRow({
 					role="region"
 				>
 					<div className="mb-3 flex items-start justify-between gap-4">
-						<div className="min-w-0">
-							<p className="truncate font-mono text-sm-md font-semibold text-settings-label">{modelName}</p>
-							<p className="truncate text-2xs text-settings-muted">{formatProviderName(model.provider)}</p>
-						</div>
+						<p className="min-w-0 truncate font-mono text-sm-md font-semibold text-settings-label">{modelName}</p>
 						<div className="shrink-0 text-right text-2xs">
 							<p className="font-mono text-settings-label">
 								{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
@@ -794,16 +785,6 @@ function formatHarnessName(harness: string): string {
 		.filter(Boolean)
 		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
 		.join(" ");
-}
-
-function formatProviderName(provider: string): string {
-	const knownNames: Record<string, string> = {
-		anthropic: "Anthropic",
-		openai: "OpenAI",
-	};
-	if (!provider) return "Unknown provider";
-	if (knownNames[provider]) return knownNames[provider];
-	return formatHarnessName(provider);
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {

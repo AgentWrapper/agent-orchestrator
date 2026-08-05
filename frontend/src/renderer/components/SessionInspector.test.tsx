@@ -946,7 +946,7 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(usageSection).not.toHaveTextContent("$2.50");
 	});
 
-	it("shows token telemetry and peeks provider and model details on hover", async () => {
+	it("shows token telemetry and peeks agent and model details on hover", async () => {
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		const usageTitle = await screen.findByText("Usage & cost");
@@ -969,7 +969,8 @@ describe("SessionInspector Usage & cost section", () => {
 			"bg-(--color-bg-settings-input)",
 		);
 		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
-		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();
+		expect(within(usageSection).queryByText("OpenAI")).not.toBeInTheDocument();
+		expect(within(usageSection).queryByText("Unknown provider")).not.toBeInTheDocument();
 		expect(within(usageSection).queryByText(/coverage|collecting/i)).not.toBeInTheDocument();
 		expect(within(usageSection).getByLabelText("Input tokens: 1,000 tokens")).toBeInTheDocument();
 		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
@@ -1153,8 +1154,9 @@ describe("SessionInspector Usage & cost section", () => {
 		const claudeRow = within(usageSection).getByLabelText(/Claude usage details/);
 		expect(within(usageSection).getByText("Codex")).toBeInTheDocument();
 		expect(within(usageSection).getByText("Claude")).toBeInTheDocument();
-		expect(within(usageSection).getByText("OpenAI")).toBeInTheDocument();
-		expect(within(usageSection).getByText("Anthropic")).toBeInTheDocument();
+		expect(within(usageSection).queryByText("OpenAI")).not.toBeInTheDocument();
+		expect(within(usageSection).queryByText("Anthropic")).not.toBeInTheDocument();
+		expect(within(usageSection).queryByText("Unknown provider")).not.toBeInTheDocument();
 		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
 		expect(within(usageSection).queryByText("claude-opus-4.1")).not.toBeInTheDocument();
 
