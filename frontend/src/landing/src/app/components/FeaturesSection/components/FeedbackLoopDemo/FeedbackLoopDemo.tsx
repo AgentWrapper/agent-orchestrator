@@ -39,10 +39,21 @@ const sessionPreviewTokens = {
 	"--preview-input": "oklch(1 0 0 / 4%)", // --color-bg-settings-input
 	"--preview-input-border": "oklch(1 0 0 / 3%)", // --color-border-settings-input
 	"--preview-interactive-active": "color-mix(in oklch, oklch(0.985 0 0) 7%, transparent)",
-	"--preview-terminal": "#101317e7", // --color-bg-terminal
+	// --color-bg-terminal is #101317e7 in the app, but it composites there over
+	// the panel, not over a card on a lit page. Flattened so the pane reads as
+	// the same near-black the app shows instead of picking up the card grey.
+	"--preview-terminal": "#101317",
 	"--preview-terminal-fg": "#d7d7d2", // --color-text-terminal
 	"--preview-terminal-dim": "#7c7c7c", // --color-text-terminal-dim
 } as CSSProperties;
+
+/**
+ * Rail width, shared by the inspector and by the topbar's action region so the
+ * split reads as one hairline from the card's top edge to its bottom. 244px is
+ * 297px at the 0.82x this preview runs at — inside the app's --size-inspector-min
+ * (280px) floor, and wide enough that Kill + Orchestrator keep the app's padding.
+ */
+const RAIL_WIDTH = 244;
 
 /** --color-status-* from tokens.css, plus the tones the PR parts map onto. */
 const status = {
@@ -216,7 +227,7 @@ export function FeedbackLoopDemo() {
 			className="mx-auto w-full min-w-0 max-w-[620px] overflow-hidden rounded-xl border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_28px_74px_-22px_rgba(0,0,0,0.86)]"
 			style={sessionPreviewTokens}
 		>
-			<div className="flex h-[330px] min-w-0 flex-col sm:h-[370px]">
+			<div className="flex h-[330px] min-w-0 flex-col sm:h-[408px]">
 				<SessionTopbar phase={phase} />
 				<div className="flex min-h-0 min-w-0 flex-1">
 					<TerminalPane active={active} />
@@ -270,7 +281,7 @@ function SessionTopbar({ phase }: { phase: Phase }) {
 						<Plus aria-hidden="true" className="size-3" />
 					</button>
 				</div>
-				<div className="ml-1.5 mr-1.5 flex shrink-0 items-center gap-0.5 border-l border-[var(--preview-border)] pl-1.5">
+				<div className="ml-1.5 mr-1.5 flex shrink-0 items-center gap-0.5 self-stretch border-l border-[var(--preview-border)] pl-1.5">
 					<TerminalControl label="Decrease font size">
 						<Minus aria-hidden="true" className="size-[11px]" />
 					</TerminalControl>
@@ -280,7 +291,8 @@ function SessionTopbar({ phase }: { phase: Phase }) {
 					<TerminalControl label="Increase font size">
 						<Plus aria-hidden="true" className="size-[11px]" />
 					</TerminalControl>
-					<span aria-hidden="true" className="mx-0.5 h-3 w-px bg-[var(--preview-border)]" />
+					{/* h-4 in the app's 44px topbar — the same fraction of this 36px one. */}
+					<span aria-hidden="true" className="mx-0.5 h-[13px] w-px bg-[var(--preview-border)]" />
 					<TerminalControl label="Fullscreen">
 						<Maximize2 aria-hidden="true" className="size-3" />
 					</TerminalControl>
@@ -288,40 +300,69 @@ function SessionTopbar({ phase }: { phase: Phase }) {
 			</div>
 			{/* Session action region (ShellTopbar embedded). Pinned to the rail's
 			    width so its left edge continues the split hairline below. */}
-			<div className="hidden w-[232px] shrink-0 items-center justify-end gap-1 border-l border-[var(--preview-border)] px-1.5 sm:flex">
-				<button
-					type="button"
-					aria-label="Kill session"
-					className="inline-flex h-[26px] shrink-0 items-center gap-1 rounded-[6px] border border-[var(--preview-border)] bg-transparent px-1.5 text-[10px] font-semibold leading-none"
+			<div
+				className="hidden shrink-0 items-center justify-end gap-1 border-l border-[var(--preview-border)] px-1.5 sm:flex"
+				style={{ width: RAIL_WIDTH }}
+			>
+				{/* Both actions carry TopbarButton's own metrics (h-control-lg, px-3.5,
+				    gap-1.5, text-sm) at 0.82x, so the label sits centred in the box
+				    instead of crowding its border. */}
+				<TopbarAction
+					label="Kill session"
+					className="border border-[var(--preview-border)] bg-transparent"
 					style={{ color: `color-mix(in srgb, ${status.exited} 80%, transparent)` }}
 				>
-					<Trash2 aria-hidden="true" className="size-3 shrink-0" />
+					<Trash2 aria-hidden="true" className="size-[12px] shrink-0" />
 					Kill
-				</button>
-				<button
-					type="button"
-					aria-label="Open orchestrator"
-					className="inline-flex h-[26px] min-w-0 shrink items-center gap-1 rounded-[6px] bg-[var(--preview-primary)] px-1.5 text-[10px] font-semibold leading-none text-[var(--preview-primary-foreground)]"
+				</TopbarAction>
+				<TopbarAction
+					label="Open orchestrator"
+					className="bg-[var(--preview-primary)] text-[var(--preview-primary-foreground)]"
 				>
 					<OrchestratorIcon />
-					<span className="truncate">Orchestrator</span>
-				</button>
+					Orchestrator
+				</TopbarAction>
 				<button
 					type="button"
 					aria-label="Close inspector panel"
 					title="Close inspector · ⌘⇧B"
-					className="grid size-[24px] shrink-0 place-items-center rounded-[6px] text-[var(--preview-muted-foreground)]"
+					className="grid size-[22px] shrink-0 place-items-center rounded-[7px] text-[var(--preview-muted-foreground)]"
 				>
-					<PanelRightClose aria-hidden="true" className="size-4" />
+					<PanelRightClose aria-hidden="true" className="size-[15px]" />
 				</button>
 				<span
 					aria-label="Notifications"
-					className="grid size-[24px] shrink-0 place-items-center rounded-[6px] text-[var(--preview-muted-foreground)]"
+					className="grid size-[22px] shrink-0 place-items-center rounded-[7px] text-[var(--preview-muted-foreground)]"
 				>
-					<Bell aria-hidden="true" className="size-4" />
+					<Bell aria-hidden="true" className="size-[15px]" />
 				</span>
 			</div>
 		</div>
+	);
+}
+
+/** TopbarButton (TopbarButton.tsx) — the kill and primary variants share every
+ *  metric, so the two actions differ only in fill. */
+function TopbarAction({
+	children,
+	className,
+	label,
+	style,
+}: {
+	children: ReactNode;
+	className: string;
+	label: string;
+	style?: CSSProperties;
+}) {
+	return (
+		<button
+			type="button"
+			aria-label={label}
+			className={`inline-flex h-7 shrink-0 items-center justify-center gap-[5px] whitespace-nowrap rounded-[7px] px-[10px] text-[11px] font-semibold leading-none ${className}`}
+			style={style}
+		>
+			{children}
+		</button>
 	);
 }
 
@@ -410,7 +451,8 @@ function Inspector({ phase }: { phase: Phase }) {
 	return (
 		<aside
 			aria-label="Session inspector"
-			className="hidden w-[232px] shrink-0 flex-col overflow-hidden border-l border-[var(--preview-border)] sm:flex"
+			className="hidden shrink-0 flex-col overflow-hidden border-l border-[var(--preview-border)] sm:flex"
+			style={{ width: RAIL_WIDTH }}
 		>
 			<div
 				aria-label="Inspector views"
@@ -432,6 +474,9 @@ function Inspector({ phase }: { phase: Phase }) {
 			<div className="min-h-0 flex-1 overflow-hidden px-2 pb-3 pt-2">
 				<Section title="Pull request">
 					<PRSummaryCard phase={phase} />
+				</Section>
+				<Section title="Completion">
+					<CompletionControls />
 				</Section>
 				<Section title="Activity">
 					<ActivityTimeline phase={phase} />
@@ -474,18 +519,39 @@ function Section({ children, title }: { children: ReactNode; title: string }) {
 	);
 }
 
+/**
+ * CompletionControls (SessionInspector.tsx): the merge policy every non-orchestrator
+ * session carries. Off here, the way a session that is still working on its PR sits.
+ */
+function CompletionControls() {
+	return (
+		<div className="flex items-center justify-between gap-3 py-0.5">
+			<span className="min-w-0 text-[10px] font-medium text-[var(--preview-foreground)]">Terminate on merge</span>
+			<span
+				aria-hidden="true"
+				className="relative inline-flex h-[17px] w-[30px] shrink-0 items-center rounded-full border-[1.5px] border-transparent bg-[var(--preview-muted)]"
+			>
+				<span className="block h-[14px] w-[17px] rounded-full bg-[var(--preview-foreground)]" />
+			</span>
+		</div>
+	);
+}
+
 function PRSummaryCard({ phase }: { phase: Phase }) {
 	return (
 		<div className="rounded-lg border border-[var(--preview-input-border)] bg-[var(--preview-input)] px-2 py-1.5">
 			<div className="flex items-center gap-1.5">
 				<GitPullRequest aria-hidden="true" className="size-3 shrink-0 text-[var(--preview-muted-foreground)]" />
 				<span className="text-[10.5px] font-medium text-[var(--preview-foreground)]">PR #2481</span>
+				{/* Badge + prStateTone.open. Lowercase at 7.5px turned to mush, so the
+				    pill keeps the app's own h-5/text-[9px] instead of the 0.82x the rest
+				    of the rail runs at, and leans on tracking to stay legible. */}
 				<span
-					className="inline-flex h-[15px] shrink-0 items-center rounded-full border px-1.5 text-[7.5px] font-medium leading-none"
+					className="inline-flex h-[17px] shrink-0 items-center rounded-full border px-[7px] text-[9px] font-medium leading-none tracking-[0.01em]"
 					style={{
 						color: status.ready,
 						borderColor: `color-mix(in srgb, ${status.ready} 40%, transparent)`,
-						background: `color-mix(in srgb, ${status.ready} 10%, transparent)`,
+						background: `color-mix(in srgb, ${status.ready} 12%, transparent)`,
 					}}
 				>
 					open
