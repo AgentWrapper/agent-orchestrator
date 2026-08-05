@@ -35,6 +35,7 @@ import type {
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
 import { openLinkInSystemBrowser } from "../lib/external-link-policy";
+import { applyDocumentTheme } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
 import {
@@ -288,6 +289,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	useEffect(() => {
 		const term = termRef.current;
 		if (!term) return;
+		// buildTerminalThemes() reads live CSS vars from :root. Parent shell
+		// applies data-theme in its own effect, and child effects run first, so
+		// sync the document here before reading — otherwise the palette stays on
+		// the previous theme until remount.
+		applyDocumentTheme(props.theme);
 		const { dark, light } = buildTerminalThemes();
 		term.options.theme = props.theme === "dark" ? dark : light;
 	}, [props.theme]);
@@ -919,7 +925,12 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				ref={hostRef}
 				aria-label={props.ariaLabel}
 				className={props.className}
-				style={{ height: "100%", overflow: "hidden", width: "100%" }}
+				style={{
+					backgroundColor: "var(--color-bg-terminal-opaque)",
+					height: "100%",
+					overflow: "hidden",
+					width: "100%",
+				}}
 			/>
 			<DropdownMenu modal={false} open={contextMenu.open} onOpenChange={setContextMenuOpen}>
 				<DropdownMenuTrigger asChild>

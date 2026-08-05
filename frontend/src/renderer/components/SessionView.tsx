@@ -145,15 +145,31 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const closeShellTerminalByHandle = useCallback(
 		(handleId: string) => {
-			// Fall back to the session pane first: leaving the target pointed at a
-			// handle that is being destroyed would attach to a dead PTY.
-			setTerminalTarget((current) =>
-				current.kind === "shell" && current.handleId === handleId ? { kind: "worker" } : current,
-			);
-			if (activeShellTerminalHandleId === handleId) setActiveShellTerminal(null);
+			if (terminalTarget.kind === "shell" && terminalTarget.handleId === handleId) {
+				const closingIndex = shellTerminals.findIndex((shell) => shell.handleId === handleId);
+				// Match browser-tab ergonomics: closing the selected auxiliary terminal
+				// reveals its nearest predecessor, then the next tab when the first one
+				// closes. The permanent agent terminal is only the final fallback.
+				const nextShell = shellTerminals[closingIndex - 1] ?? shellTerminals[closingIndex + 1];
+				if (nextShell) {
+					setActiveShellTerminal(nextShell.handleId);
+					setTerminalTarget({ kind: "shell", handleId: nextShell.handleId, title: nextShell.title });
+				} else {
+					setActiveShellTerminal(null);
+					setTerminalTarget({ kind: "worker" });
+				}
+			} else if (activeShellTerminalHandleId === handleId) {
+				setActiveShellTerminal(null);
+			}
 			closeShellTerminal.mutate(handleId);
 		},
-		[closeShellTerminal, activeShellTerminalHandleId, setActiveShellTerminal],
+		[
+			activeShellTerminalHandleId,
+			closeShellTerminal,
+			setActiveShellTerminal,
+			shellTerminals,
+			terminalTarget,
+		],
 	);
 
 	// Selecting the session's own pane also drops the active shell, so the effect

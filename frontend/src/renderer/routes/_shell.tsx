@@ -5,6 +5,7 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
+import { TrayRuntime } from "../components/TrayRuntime";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
 import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
@@ -29,7 +30,7 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
-import { applyDocumentTheme } from "../lib/theme";
+import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { cn } from "../lib/utils";
@@ -95,7 +96,7 @@ function ShellLayout() {
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const { themePreference, resolvedTheme, themeStyle, isSidebarOpen, toggleSidebar } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
@@ -379,6 +380,10 @@ function ShellLayout() {
 		applyDocumentTheme(resolvedTheme);
 	}, [resolvedTheme]);
 
+	useEffect(() => {
+		applyDocumentThemeStyle(themeStyle);
+	}, [themeStyle]);
+
 	// A daemon port is not enough to render a trustworthy empty state: the
 	// route loader may have cached [] before Electron reported the port. Fetch
 	// once against each ready daemon before allowing the board to decide
@@ -610,26 +615,27 @@ function ShellLayout() {
 	return (
 		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
 			<SessionTopbarProvider>
-				<TerminalCacheProvider
-					daemonReady={daemonStatus.state === "ready"}
-					theme={resolvedTheme}
-				>
-					<NotificationRuntime />
-					<GlobalNewTaskDialog />
-					<SettingsDialog />
-					<KeyboardShortcutsDialog
-						open={isKeyboardShortcutsOpen}
-						onOpenChange={setIsKeyboardShortcutsOpen}
-						onCustomize={() => {
-							setIsKeyboardShortcutsOpen(false);
-							setIsKeyboardShortcutsSettingsOpen(true);
-						}}
-					/>
-					<KeyboardShortcutsSettingsDialog
-						open={isKeyboardShortcutsSettingsOpen}
-						onOpenChange={setIsKeyboardShortcutsSettingsOpen}
-					/>
-
+			<TerminalCacheProvider
+  daemonReady={daemonStatus.state === "ready"}
+  theme={resolvedTheme}
+>
+  <NotificationRuntime />
+  <TrayRuntime />
+  <GlobalNewTaskDialog />
+  <SettingsDialog />
+  <KeyboardShortcutsDialog
+    open={isKeyboardShortcutsOpen}
+    onOpenChange={setIsKeyboardShortcutsOpen}
+    onCustomize={() => {
+      setIsKeyboardShortcutsOpen(false);
+      setIsKeyboardShortcutsSettingsOpen(true);
+    }}
+  />
+  <KeyboardShortcutsSettingsDialog
+    open={isKeyboardShortcutsSettingsOpen}
+    onOpenChange={setIsKeyboardShortcutsSettingsOpen}
+  />
+</TerminalCacheProvider>
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
@@ -740,6 +746,7 @@ function ShellLayout() {
               Rendered first, real clicks get swallowed by window-drag even
               though DOM hit-testing looks correct. */}
 					<TitlebarNav
+						hasSessionTopbar={Boolean(routeParams.sessionId)}
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
 						onSidebarPreviewEnter={previewSidebar}

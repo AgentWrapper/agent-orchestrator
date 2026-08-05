@@ -1033,7 +1033,7 @@ function AttachedTerminal({
 
 	if (initFailed) {
 		return (
-			<div className="grid h-full place-items-center bg-terminal p-4 font-mono text-xs text-muted-foreground">
+			<div className="terminal-surface grid h-full place-items-center p-4 font-mono text-xs text-muted-foreground">
 				{t("terminal.initFailed")}
 			</div>
 		);
@@ -1064,7 +1064,7 @@ function AttachedTerminal({
 		: t("terminal.noSessionSelected");
 
 	return (
-		<div className="flex h-full min-h-0 flex-col bg-terminal" data-testid="session-terminal">
+		<div className="terminal-surface flex h-full min-h-0 flex-col" data-testid="session-terminal">
 			{showEndedState && (
 				<TerminalEndedStrip
 					canRestore={canRestoreSession}
@@ -1076,10 +1076,9 @@ function AttachedTerminal({
 					}
 				/>
 			)}
-			{/* p-2 keeps the xterm content off the pane edges; the host fills the
-			    remaining content box, so FitAddon still measures it correctly and
-			    the absolute overlays (empty state, banner) keep covering the
-			    full padding box. */}
+			{/* p-2 insets xterm from the pane edges. Surface + xterm chrome use
+			    the opaque #101317 plate so the gutter never fringes against app
+			    chrome. Overlays cover the full padding box. */}
 			<div className="relative min-h-0 flex-1 p-2">
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
@@ -1093,7 +1092,7 @@ function AttachedTerminal({
 					theme={theme}
 				/>
 				{showEmptyState && (
-					<div className="absolute inset-0 grid place-items-center bg-terminal font-mono text-control">
+					<div className="terminal-surface absolute inset-0 grid place-items-center font-mono text-control">
 						<div className="text-center">
 							<div className="text-terminal">{emptyStateTitle}</div>
 							<div className="mt-2 text-terminal-dim">{emptyStateMessage}</div>
@@ -1139,8 +1138,8 @@ function ReplayCover() {
 		// live the whole time, so clicks, selection and wheel must pass through
 		// rather than being swallowed for the length of the gate.
 		<div
-			className="pointer-events-none absolute inset-0 grid place-items-center bg-terminal-opaque opacity-100 transition-none"
-			data-testid="terminal-replay-cover"
+			className="terminal-surface pointer-events-none absolute inset-0 grid place-items-center"
+      data-testid="terminal-replay-cover"
 		>
 			{showLabel && <div className="font-mono text-caption text-terminal-dim">{t("terminal.loadingOutput")}</div>}
 		</div>

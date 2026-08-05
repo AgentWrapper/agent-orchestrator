@@ -243,11 +243,11 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 					</DialogClose>
 					<button
 						type="button"
-						className="settings-footer-button border-transparent bg-settings-accent text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+						className="settings-footer-button settings-footer-button-primary"
 						disabled={!canSubmit}
 						onClick={() => {
 							if (!canSubmit) return;
-							void copyDraft()
+							void copyDraft();
 						}}
 					>
 						{destination.action}

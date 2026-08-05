@@ -137,6 +137,87 @@ func TestTick_SkipsTerminatedSession(t *testing.T) {
 	}
 }
 
+// perHandleRuntime probes per-handle so one pass can mix alive and dead
+// sessions; handles absent from the map read as dead.
+type perHandleRuntime struct{ alive map[string]bool }
+
+func (r perHandleRuntime) IsAlive(_ context.Context, h ports.RuntimeHandle) (bool, error) {
+	return r.alive[h.ID], nil
+}
+
+func handledSession(id domain.SessionID) domain.SessionRecord {
+	rec := probableSession(id)
+	rec.Metadata.RuntimeHandleID = "h-" + string(id)
+	return rec
+}
+
+// A pass where (nearly) every session probes dead is one infrastructure
+// outage, not N independent exits (issue #3475: a killed tmux server read as
+// 28 session deaths archived the whole board). The breaker must downgrade
+// every dead conclusion of that pass to a failed probe.
+func TestTick_MassDeathPassIsReportedAsInconclusive(t *testing.T) {
+	lcm := &fakeLCM{}
+	var rows []domain.SessionRecord
+	for _, id := range []domain.SessionID{"mer-1", "mer-2", "mer-3", "mer-4", "mer-5", "mer-6"} {
+		rows = append(rows, handledSession(id))
+	}
+	r := New(lcm, fakeSessions{rows: rows}, perHandleRuntime{}, Config{Logger: quietLogger()})
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(lcm.observed) != len(rows) {
+		t.Fatalf("observed %d sessions, want %d", len(lcm.observed), len(rows))
+	}
+	for id, got := range lcm.observed {
+		if got.Runtime != ports.ProbeFailed {
+			t.Fatalf("session %s runtime = %q, want %q (mass death must not conclude)",
+				id, got.Runtime, ports.ProbeFailed)
+		}
+	}
+}
+
+// Below the breaker threshold the reaper keeps reporting genuine deaths: a
+// minority of dead sessions in a large pass passes through as ProbeDead.
+func TestTick_MinorityDeadPassesThroughBreaker(t *testing.T) {
+	lcm := &fakeLCM{}
+	alive := map[string]bool{}
+	var rows []domain.SessionRecord
+	for i, id := range []domain.SessionID{"mer-1", "mer-2", "mer-3", "mer-4", "mer-5", "mer-6"} {
+		rows = append(rows, handledSession(id))
+		alive["h-"+string(id)] = i >= 2 // mer-1, mer-2 dead; rest alive
+	}
+	r := New(lcm, fakeSessions{rows: rows}, perHandleRuntime{alive: alive}, Config{Logger: quietLogger()})
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []domain.SessionID{"mer-1", "mer-2"} {
+		if got := lcm.observed[id]; got.Runtime != ports.ProbeDead {
+			t.Fatalf("session %s runtime = %q, want %q", id, got.Runtime, ports.ProbeDead)
+		}
+	}
+	for _, id := range []domain.SessionID{"mer-3", "mer-4", "mer-5", "mer-6"} {
+		if got := lcm.observed[id]; got.Runtime != ports.ProbeAlive {
+			t.Fatalf("session %s runtime = %q, want %q", id, got.Runtime, ports.ProbeAlive)
+		}
+	}
+}
+
+// Small boards never trip the breaker: two agents finishing together is
+// normal, and both are genuinely dead.
+func TestTick_SmallBoardMassDeathStillConcludes(t *testing.T) {
+	lcm := &fakeLCM{}
+	rows := []domain.SessionRecord{handledSession("mer-1"), handledSession("mer-2")}
+	r := New(lcm, fakeSessions{rows: rows}, perHandleRuntime{}, Config{Logger: quietLogger()})
+	if err := r.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []domain.SessionID{"mer-1", "mer-2"} {
+		if got := lcm.observed[id]; got.Runtime != ports.ProbeDead {
+			t.Fatalf("session %s runtime = %q, want %q", id, got.Runtime, ports.ProbeDead)
+		}
+	}
+}
+
 func TestTick_SkipsSessionWithoutHandle(t *testing.T) {
 	lcm := &fakeLCM{}
 	noHandle := domain.SessionRecord{ID: "mer-1"} // no runtime metadata

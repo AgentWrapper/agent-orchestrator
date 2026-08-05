@@ -419,7 +419,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
-			(id) => id !== "close-shell-terminal" || Boolean(options.isCloseShellTerminalShortcutEnabled?.()),
 		);
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;

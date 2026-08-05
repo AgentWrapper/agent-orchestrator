@@ -111,6 +111,10 @@ vi.mock("../lib/bridge", () => ({
 			setRecording: shellMocks.setKeybindingRecording,
 		},
 		window: {},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
+		},
 	},
 }));
 

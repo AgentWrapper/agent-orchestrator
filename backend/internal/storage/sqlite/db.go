@@ -137,5 +137,127 @@ func migrate(db *sql.DB) error {
 	if err := goose.Up(db, "migrations", goose.WithAllowMissing()); err != nil {
 		return fmt.Errorf("run migrations: %w", err)
 	}
+	return reconcileSchema(db)
+}
+
+// schemaRepairs lists the column-level effects of migrations that real
+// installs are known to skip. Issue #3475/#3476: profiles exist whose
+// goose_db_version already records versions 40 through 46 (written by a
+// foreign build), so goose silently skips the real migrations carrying those
+// numbers and the generated queries then fail with "no such column" — every
+// session list 500s while /healthz stays green. A versioned repair migration
+// cannot fix this class, because a burned version number is exactly what
+// caused it; instead the physical schema is verified on every startup.
+//
+// Each entry keys on one column. postAdd statements replay the rest of the
+// skipped migration's effects (backfills, index swaps) and run ONLY when the
+// column was just added, so healthy databases — where those statements would
+// clobber live data — are never touched.
+//
+// Any new migration numbered up to 0046 whose schema the generated queries
+// depend on MUST add an entry here, or the burned field profiles skip it and
+// regress to the 500s this exists to prevent.
+var schemaRepairs = []struct {
+	table   string
+	column  string
+	addDDL  string
+	postAdd []string
+}{
+	// 0040_add_session_diff_base.sql
+	{table: "sessions", column: "diff_base_sha",
+		addDDL: `ALTER TABLE sessions ADD COLUMN diff_base_sha TEXT NOT NULL DEFAULT ''`},
+	{table: "sessions", column: "diff_base_ref",
+		addDDL: `ALTER TABLE sessions ADD COLUMN diff_base_ref TEXT NOT NULL DEFAULT ''`},
+	// 0041_notification_resolution.sql
+	{table: "notifications", column: "resolved_at",
+		addDDL: `ALTER TABLE notifications ADD COLUMN resolved_at TIMESTAMP`,
+		postAdd: []string{
+			`UPDATE notifications SET resolved_at = created_at WHERE status = 'read'`,
+			`DROP INDEX IF EXISTS idx_notifications_unread_dedupe`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_open_dedupe
+    ON notifications(session_id, type, pr_url)
+    WHERE status = 'unread' OR resolved_at IS NULL`,
+			`CREATE INDEX IF NOT EXISTS idx_notifications_unresolved
+    ON notifications(resolved_at, created_at DESC, id DESC)`,
+		}},
+	// 0042_review_run_unique_per_harness.sql
+	{table: "sessions", column: "reviewer_harness",
+		addDDL: `ALTER TABLE sessions ADD COLUMN reviewer_harness TEXT NOT NULL DEFAULT ''`,
+		postAdd: []string{
+			`DROP INDEX IF EXISTS idx_review_run_session_pr_sha`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_review_run_session_pr_sha_harness
+    ON review_run (session_id, pr_url, target_sha, harness)
+    WHERE target_sha != ''
+        AND status NOT IN ('failed', 'cancelled')
+        AND (status = 'running' OR verdict NOT IN ('', 'changes_requested'))`,
+		}},
+	// 0043_add_session_pinned.sql. The trigger replay hangs off pinned_at, the
+	// second of the two columns: it references both, and SQLite resolves a
+	// trigger body at CREATE time, so it cannot run until both exist.
+	{table: "sessions", column: "is_pinned",
+		addDDL: `ALTER TABLE sessions ADD COLUMN is_pinned BOOLEAN NOT NULL DEFAULT 0`},
+	{table: "sessions", column: "pinned_at",
+		addDDL: `ALTER TABLE sessions ADD COLUMN pinned_at DATETIME`,
+		postAdd: []string{
+			`DROP TRIGGER IF EXISTS sessions_cdc_update`,
+			`CREATE TRIGGER sessions_cdc_update
+AFTER UPDATE ON sessions
+WHEN OLD.activity_state <> NEW.activity_state
+    OR OLD.is_terminated <> NEW.is_terminated
+    OR (OLD.first_signal_at IS NULL AND NEW.first_signal_at IS NOT NULL)
+    OR OLD.preview_url <> NEW.preview_url
+    OR OLD.preview_revision <> NEW.preview_revision
+    OR OLD.display_name <> NEW.display_name
+    OR OLD.terminate_on_pr_merge <> NEW.terminate_on_pr_merge
+    OR OLD.is_pinned <> NEW.is_pinned
+    OR OLD.pinned_at <> NEW.pinned_at
+    OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
+    OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
+BEGIN
+    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
+    VALUES (NEW.project_id, NEW.id, 'session_updated',
+        json_object(
+            'id', NEW.id,
+            'activity', NEW.activity_state,
+            'isTerminated', json(CASE WHEN NEW.is_terminated THEN 'true' ELSE 'false' END),
+            'terminateOnPrMerge', json(CASE WHEN NEW.terminate_on_pr_merge THEN 'true' ELSE 'false' END),
+            'previewUrl', NEW.preview_url,
+            'previewRevision', NEW.preview_revision,
+            'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
+        ),
+        NEW.updated_at);
+END`,
+		}},
+}
+
+// reconcileSchema verifies that the columns in schemaRepairs physically exist
+// and replays the skipped migration's effects for any that are missing. It is
+// idempotent: a healthy database (migrations applied normally, or one already
+// repaired by hand or a previous startup) is left untouched. Failures surface
+// as a specific, actionable startup error instead of an opaque INTERNAL_ERROR
+// on the first session list.
+func reconcileSchema(db *sql.DB) error {
+	for _, rc := range schemaRepairs {
+		var count int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, rc.table, rc.column,
+		).Scan(&count); err != nil {
+			return fmt.Errorf("schema verification: inspect %s.%s: %w", rc.table, rc.column, err)
+		}
+		if count > 0 {
+			continue
+		}
+		if _, err := db.Exec(rc.addDDL); err != nil {
+			return fmt.Errorf(
+				"schema repair: %s.%s is missing (a burned goose version skipped the migration that adds it, see #3475) and could not be added: %w",
+				rc.table, rc.column, err,
+			)
+		}
+		for _, stmt := range rc.postAdd {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("schema repair: replay skipped migration effects for %s.%s: %w", rc.table, rc.column, err)
+			}
+		}
+	}
 	return nil
 }
