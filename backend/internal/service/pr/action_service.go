@@ -26,12 +26,14 @@ type actionReader interface {
 	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
 }
 
+// ActionDeps contains the storage and SCM boundaries used by ActionService.
 type ActionDeps struct {
 	Store  actionStore
 	Merger ports.SCMMerger
 	Reader actionReader
 }
 
+// ActionService validates current pull request state before applying mutations.
 type ActionService struct {
 	store  actionStore
 	merger ports.SCMMerger
@@ -40,6 +42,7 @@ type ActionService struct {
 
 var _ ActionManager = (*ActionService)(nil)
 
+// NewActionService builds the guarded pull request action service.
 func NewActionService(deps ActionDeps) *ActionService {
 	return &ActionService{store: deps.Store, merger: deps.Merger, reader: deps.Reader}
 }
@@ -185,6 +188,7 @@ func scmRepoForPR(pr domain.PullRequest) (ports.SCMRepo, bool) {
 	return ports.SCMRepo{Provider: provider, Host: host, Owner: parts[0], Name: parts[1], Repo: pr.Repo}, true
 }
 
+// ResolveComments is not implemented by the current provider action service.
 func (s *ActionService) ResolveComments(_ context.Context, _ string, _ []string) (ResolveResult, error) {
 	return ResolveResult{Resolved: 0}, nil
 }
