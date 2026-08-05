@@ -699,6 +699,7 @@ export class CloudAPI {
     input: {
       role: "viewer" | "editor";
       sessionId?: string;
+      policyId?: string;
       sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) {

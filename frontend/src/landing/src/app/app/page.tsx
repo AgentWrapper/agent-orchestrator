@@ -393,6 +393,8 @@ export default function CloudAppPage() {
   const [shareProject, setShareProject] = useState<CloudProject | null>(null);
   const [shareSessionId, setShareSessionId] = useState("");
   const [shareRole, setShareRole] = useState<"viewer" | "editor">("viewer");
+  const [sharePolicyType, setSharePolicyType] =
+    useState<SharePolicySandboxType>("standard");
   const [shareAccessScope, setShareAccessScope] = useState<
     "anyone" | "restricted"
   >("anyone");
@@ -405,9 +407,8 @@ export default function CloudAppPage() {
   const [shareLink, setShareLink] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
   const [newPolicyName, setNewPolicyName] = useState("");
-  const [newPolicySandboxType, setNewPolicySandboxType] = useState<
-    "read_only" | "standard" | "trusted"
-  >("standard");
+  const [newPolicySandboxType, setNewPolicySandboxType] =
+    useState<SharePolicySandboxType>("standard");
   const [policyInviteEmails, setPolicyInviteEmails] = useState<
     Record<string, string>
   >({});
@@ -1377,12 +1378,23 @@ export default function CloudAppPage() {
       return;
     }
     await run(async () => {
+      const standaloneShare = isStandaloneProject(shareProject);
+      const policy = standaloneShare
+        ? await ensureFixedSharePolicy(sharePolicyType)
+        : null;
+      if (standaloneShare && !policy) return;
       const result = await api.createProjectShareLink(
         selectedOrgId,
         shareProject.id,
         {
-          ...(shareSessionId ? { sessionId: shareSessionId } : {}),
-          role: shareRole,
+          ...(standaloneShare
+            ? { policyId: policy?.id }
+            : shareSessionId
+              ? { sessionId: shareSessionId }
+              : {}),
+          role: standaloneShare
+            ? fixedPolicyRoleForType(sharePolicyType)
+            : shareRole,
           accessScope: shareAccessScope,
           recipientEmails,
           recipientOrgIds: shareRecipientOrgIds,
@@ -1403,6 +1415,7 @@ export default function CloudAppPage() {
     input: {
       role: "viewer" | "editor";
       sessionId?: string;
+      policyId?: string;
       sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) => {
@@ -1440,6 +1453,52 @@ export default function CloudAppPage() {
           sessionId: cloudSession.id,
           role: sandboxType === "read_only" ? "viewer" : "editor",
         }));
+
+  const fixedPolicyNameForType = (sandboxType: SharePolicySandboxType) =>
+    sandboxTypeOptions.find((option) => option.value === sandboxType)?.label ??
+    "Standard";
+
+  const fixedPolicyRoleForType = (
+    sandboxType: SharePolicySandboxType,
+  ): "viewer" | "editor" =>
+    sandboxType === "read_only" ? "viewer" : "editor";
+
+  const ensureFixedSharePolicy = async (sandboxType: SharePolicySandboxType) => {
+    if (!api || !selectedOrgId || !shareProject) return null;
+    const name = fixedPolicyNameForType(sandboxType);
+    const existing =
+      shareAccess?.policies?.find(
+        (policy) => policy.sandboxType === sandboxType && policy.name === name,
+      ) ??
+      shareAccess?.policies?.find(
+        (policy) => policy.sandboxType === sandboxType,
+      );
+    if (existing) return existing;
+    const result = await api.createProjectSharePolicy(selectedOrgId, shareProject.id, {
+      name,
+      sandboxType,
+      sessionRoles: policySessionRolesForType(sandboxType),
+    });
+    return result.policy;
+  };
+
+  const updateShareGrantPolicy = async (
+    grantId: string,
+    sandboxType: SharePolicySandboxType,
+  ) => {
+    if (!api || !selectedOrgId || !shareProject) return;
+    await run(async () => {
+      const policy = await ensureFixedSharePolicy(sandboxType);
+      if (!policy) return;
+      await api.updateProjectShareGrant(selectedOrgId, shareProject.id, grantId, {
+        role: fixedPolicyRoleForType(sandboxType),
+        policyId: policy.id,
+        sessionRoles: policySessionRolesForType(sandboxType),
+      });
+      await loadProjectShareAccess();
+      await refresh();
+    });
+  };
 
   const updateSharePolicy = async (
     policyId: string,
@@ -2609,69 +2668,82 @@ export default function CloudAppPage() {
           <div className="space-y-6 p-5 sm:p-6">
             <div>
               <div className="mb-3 text-xs font-medium text-white/50">
-                Permission
+                {isStandaloneProject(shareProject) ? "Policy" : "Permission"}
               </div>
-              <div
-                className="grid grid-cols-1 gap-3 sm:grid-cols-2"
-                role="radiogroup"
-                aria-label="Permission"
-              >
-                {[
-                  {
-                    role: "viewer" as const,
-                    label: "Viewer",
-                    description: "View sessions and terminal output",
-                    icon: Eye,
-                  },
-                  {
-                    role: "editor" as const,
-                    label: "Editor",
-                    description: "Interact with existing sessions",
-                    icon: PencilLine,
-                  },
-                ].map((option) => {
-                  const selected = shareRole === option.role;
-                  const Icon = option.icon;
-                  return (
-                    <button
-                      key={option.role}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      disabled={loading}
-                      className={`relative min-h-[108px] rounded-xl border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 ${
-                        selected
-                          ? "border-[#4d8dff]/55 bg-[#4d8dff]/10"
-                          : "border-white/[0.07] bg-white/[0.02] hover:border-white/[0.13] hover:bg-white/[0.04]"
-                      }`}
-                      onClick={() => {
-                        setShareRole(option.role);
-                        setShareLink("");
-                        setShareCopied(false);
-                      }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Icon
-                          className={`size-4 ${
-                            selected ? "text-[#75a5ff]" : "text-white/40"
-                          }`}
-                        />
-                        <span className="text-sm font-medium text-white/85">
-                          {option.label}
-                        </span>
-                        {selected ? (
-                          <span className="ml-auto grid size-4 place-items-center rounded-full bg-[#4d8dff] text-white">
-                            <Check className="size-2.5" strokeWidth={3} />
+              {isStandaloneProject(shareProject) ? (
+                <SharePolicyTypePicker
+                  value={sharePolicyType}
+                  disabled={loading}
+                  onChange={(value) => {
+                    setSharePolicyType(value);
+                    setShareLink("");
+                    setShareCopied(false);
+                  }}
+                  label="Share policy"
+                />
+              ) : (
+                <div
+                  className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+                  role="radiogroup"
+                  aria-label="Permission"
+                >
+                  {[
+                    {
+                      role: "viewer" as const,
+                      label: "Viewer",
+                      description: "View sessions and terminal output",
+                      icon: Eye,
+                    },
+                    {
+                      role: "editor" as const,
+                      label: "Editor",
+                      description: "Interact with existing sessions",
+                      icon: PencilLine,
+                    },
+                  ].map((option) => {
+                    const selected = shareRole === option.role;
+                    const Icon = option.icon;
+                    return (
+                      <button
+                        key={option.role}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        disabled={loading}
+                        className={`relative min-h-[108px] rounded-xl border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4d8dff]/70 ${
+                          selected
+                            ? "border-[#4d8dff]/55 bg-[#4d8dff]/10"
+                            : "border-white/[0.07] bg-white/[0.02] hover:border-white/[0.13] hover:bg-white/[0.04]"
+                        }`}
+                        onClick={() => {
+                          setShareRole(option.role);
+                          setShareLink("");
+                          setShareCopied(false);
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Icon
+                            className={`size-4 ${
+                              selected ? "text-[#75a5ff]" : "text-white/40"
+                            }`}
+                          />
+                          <span className="text-sm font-medium text-white/85">
+                            {option.label}
                           </span>
-                        ) : null}
-                      </div>
-                      <div className="mt-3 text-xs leading-5 text-white/35">
-                        {option.description}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                          {selected ? (
+                            <span className="ml-auto grid size-4 place-items-center rounded-full bg-[#4d8dff] text-white">
+                              <Check className="size-2.5" strokeWidth={3} />
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="mt-3 text-xs leading-5 text-white/35">
+                          {option.description}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="space-y-3">
@@ -2738,6 +2810,88 @@ export default function CloudAppPage() {
 
             {isStandaloneProject(shareProject) ? (
               <div className="space-y-3 border-t border-white/[0.06] pt-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-medium text-white/55">
+                      Manage access
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-white/30">
+                      Change each person&apos;s policy.
+                    </div>
+                  </div>
+                  {shareAccessLoading ? (
+                    <LoaderCircle className="size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  {sandboxTypeOptions.map((option) => {
+                    const policy = shareAccess?.policies?.find(
+                      (item) => item.sandboxType === option.value,
+                    );
+                    const grants = policy?.grants ?? [];
+                    return (
+                      <details
+                        key={option.value}
+                        className="group rounded-lg border border-white/[0.06] bg-white/[0.018]"
+                        open={grants.length > 0}
+                      >
+                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 [&::-webkit-details-marker]:hidden">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-white/80">
+                              {option.label}
+                            </div>
+                            <div className="mt-0.5 truncate text-xs text-white/30">
+                              {grants.length} member{grants.length === 1 ? "" : "s"} ·{" "}
+                              {option.description}
+                            </div>
+                          </div>
+                          <ChevronRight className="size-3.5 shrink-0 text-white/30 transition-transform group-open:rotate-90" />
+                        </summary>
+                        <div className="space-y-1 px-3 pb-3">
+                          {grants.length > 0 ? (
+                            grants.map((grant) => (
+                              <div
+                                key={grant.id}
+                                className="grid gap-2 rounded-md px-2 py-2 text-xs text-white/55 hover:bg-white/[0.03] sm:grid-cols-[minmax(0,1fr)_220px_auto]"
+                              >
+                                <span className="min-w-0 truncate pt-2">
+                                  {grant.user.displayName || grant.user.email}
+                                </span>
+                                <SharePolicyTypePicker
+                                  value={option.value}
+                                  disabled={loading}
+                                  onChange={(value) =>
+                                    void updateShareGrantPolicy(grant.id, value)
+                                  }
+                                  label={`Policy for ${
+                                    grant.user.displayName || grant.user.email
+                                  }`}
+                                />
+                                <button
+                                  type="button"
+                                  className="h-9 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
+                                  disabled={loading}
+                                  onClick={() => void revokeShareGrant(grant.id)}
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="px-2 py-2 text-xs text-white/30">
+                              No members in this policy yet.
+                            </div>
+                          )}
+                        </div>
+                      </details>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+
+            {isStandaloneProject(shareProject) ? (
+              <div className="hidden">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-xs font-medium text-white/55">
@@ -2948,7 +3102,13 @@ export default function CloudAppPage() {
               </div>
             ) : null}
 
-            <div className="space-y-3 border-t border-white/[0.06] pt-4">
+            <div
+              className={
+                isStandaloneProject(shareProject)
+                  ? "hidden"
+                  : "space-y-3 border-t border-white/[0.06] pt-4"
+              }
+            >
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-xs font-medium text-white/55">

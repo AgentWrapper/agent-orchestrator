@@ -61,7 +61,7 @@ type store interface {
 	RedeemProjectShareLink(context.Context, string, string) (cloudpostgres.SharedProjectGrant, error)
 	ListSharedProjectGrants(context.Context, string) ([]cloudpostgres.SharedProjectGrant, error)
 	ListProjectShareAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID) (cloudpostgres.ProjectShareAccess, error)
-	UpdateProjectShareGrantAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, string, clouddomain.SessionID, []cloudpostgres.ProjectShareGrantSessionRole) (cloudpostgres.ProjectShareGrant, error)
+	UpdateProjectShareGrantAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, string, clouddomain.SessionID, string, []cloudpostgres.ProjectShareGrantSessionRole) (cloudpostgres.ProjectShareGrant, error)
 	CreateProjectSharePolicy(context.Context, cloudpostgres.CreateProjectSharePolicyInput) (cloudpostgres.ProjectSharePolicy, error)
 	UpdateProjectSharePolicy(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, cloudpostgres.UpdateProjectSharePolicyInput) (cloudpostgres.ProjectSharePolicy, error)
 	ArchiveProjectSharePolicy(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string) error
@@ -726,6 +726,7 @@ func (s *Server) updateOrgMemberRole(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Role         string                                       `json:"role"`
 		SessionID    clouddomain.SessionID                        `json:"sessionId"`
+		PolicyID     string                                       `json:"policyId"`
 		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
 	}
 	if !decodeJSON(w, r, &input) {
@@ -1788,6 +1789,7 @@ func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request)
 	var input struct {
 		Role         string                                       `json:"role"`
 		SessionID    clouddomain.SessionID                        `json:"sessionId"`
+		PolicyID     string                                       `json:"policyId"`
 		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
 	}
 	if !decodeJSON(w, r, &input) {
@@ -1806,6 +1808,24 @@ func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request)
 		}
 		if err != nil {
 			s.internalError(w, r, "validate project share session", err)
+			return
+		}
+	}
+	if strings.TrimSpace(input.PolicyID) != "" {
+		access, err := s.store.ListProjectShareAccess(r.Context(), org.Organization.ID, projectID)
+		if err != nil {
+			s.internalError(w, r, "validate project share policy", err)
+			return
+		}
+		foundPolicy := false
+		for _, policy := range access.Policies {
+			if policy.ID == strings.TrimSpace(input.PolicyID) {
+				foundPolicy = true
+				break
+			}
+		}
+		if !foundPolicy {
+			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_POLICY", "Share policy must belong to this project.")
 			return
 		}
 	}
@@ -1830,7 +1850,7 @@ func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	grant, err := s.store.UpdateProjectShareGrantAccess(r.Context(), org.Organization.ID, projectID, grantID, role, input.SessionID, input.SessionRoles)
+	grant, err := s.store.UpdateProjectShareGrantAccess(r.Context(), org.Organization.ID, projectID, grantID, role, input.SessionID, input.PolicyID, input.SessionRoles)
 	if errors.Is(err, cloudpostgres.ErrProjectShareGrantNotFound) {
 		writeError(w, r, http.StatusNotFound, "SHARE_GRANT_NOT_FOUND", "That shared access no longer exists.")
 		return

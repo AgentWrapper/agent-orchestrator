@@ -714,6 +714,7 @@ func (s *Store) UpdateProjectShareGrantAccess(
 	grantID string,
 	role string,
 	sessionID clouddomain.SessionID,
+	policyID string,
 	sessionRoles []ProjectShareGrantSessionRole,
 ) (ProjectShareGrant, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
@@ -730,9 +731,10 @@ func (s *Store) UpdateProjectShareGrantAccess(
 		UPDATE ao_project_share_grants
 		SET role = $4,
 			session_id = NULLIF($5, '')::uuid,
+			policy_id = NULLIF($6, '')::uuid,
 			updated_at = now()
 		WHERE org_id = $1 AND project_id = $2 AND id = $3 AND status = 'active'
-	`, orgID, projectID, grantID, role, string(nextSessionID))
+	`, orgID, projectID, grantID, role, string(nextSessionID), strings.TrimSpace(policyID))
 	if err != nil {
 		return ProjectShareGrant{}, fmt.Errorf("update project share grant: %w", err)
 	}
@@ -745,14 +747,20 @@ func (s *Store) UpdateProjectShareGrantAccess(
 	`, grantID); err != nil {
 		return ProjectShareGrant{}, fmt.Errorf("clear project share grant sessions: %w", err)
 	}
-	for _, sessionRole := range sessionRoles {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO ao_project_share_grant_sessions (
-				grant_id, org_id, project_id, session_id, role
-			)
-			VALUES ($1, $2, $3, $4, $5)
-		`, grantID, orgID, projectID, sessionRole.SessionID, sessionRole.Role); err != nil {
-			return ProjectShareGrant{}, fmt.Errorf("insert project share grant session: %w", err)
+	if strings.TrimSpace(policyID) != "" {
+		if err := syncGrantSessionsFromPolicy(ctx, tx, grantID, strings.TrimSpace(policyID)); err != nil {
+			return ProjectShareGrant{}, err
+		}
+	} else {
+		for _, sessionRole := range sessionRoles {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO ao_project_share_grant_sessions (
+					grant_id, org_id, project_id, session_id, role
+				)
+				VALUES ($1, $2, $3, $4, $5)
+			`, grantID, orgID, projectID, sessionRole.SessionID, sessionRole.Role); err != nil {
+				return ProjectShareGrant{}, fmt.Errorf("insert project share grant session: %w", err)
+			}
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
