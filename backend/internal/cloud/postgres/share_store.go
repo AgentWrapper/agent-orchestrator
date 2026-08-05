@@ -64,6 +64,7 @@ type SharedProjectGrant struct {
 	Session       *clouddomain.Session           `json:"session,omitempty"`
 	SessionRoles  []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
 	PolicyID      string                         `json:"policyId,omitempty"`
+	SandboxType   string                         `json:"sandboxType,omitempty"`
 	Role          string                         `json:"role"`
 	SharedByEmail string                         `json:"sharedByEmail"`
 	SharedByName  string                         `json:"sharedByName"`
@@ -1060,6 +1061,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			COALESCE(session.agent_session_id, ''), COALESCE(session.created_at, now()),
 			COALESCE(session.updated_at, now()),
 			COALESCE(share_grant.policy_id::text, ''),
+			COALESCE(policy.sandbox_type, ''),
 			share_grant.role,
 			shared_by.email,
 			shared_by.display_name,
@@ -1067,6 +1069,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 		FROM ao_project_share_grants share_grant
 		JOIN ao_projects project ON project.id = share_grant.project_id AND project.org_id = share_grant.org_id
 		LEFT JOIN ao_sessions session ON session.id = share_grant.session_id
+		LEFT JOIN ao_project_share_policies policy ON policy.id = share_grant.policy_id
 		JOIN ao_users shared_by ON shared_by.id = share_grant.shared_by_user_id
 		WHERE share_grant.user_id = $1
 			AND share_grant.status = 'active'
@@ -1112,6 +1115,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			&session.CreatedAt,
 			&session.UpdatedAt,
 			&grant.PolicyID,
+			&grant.SandboxType,
 			&grant.Role,
 			&grant.SharedByEmail,
 			&grant.SharedByName,

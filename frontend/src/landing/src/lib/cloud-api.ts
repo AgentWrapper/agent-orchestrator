@@ -158,6 +158,7 @@ export interface CloudSharedProject {
   session?: CloudSession;
   sessions?: CloudSession[];
   role: "viewer" | "editor";
+  sandboxType?: "read_only" | "standard" | "trusted";
   sharedByEmail: string;
   sharedByName: string;
   redeemedAt: string;

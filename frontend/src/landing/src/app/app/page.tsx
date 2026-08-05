@@ -139,11 +139,13 @@ function SharePolicyTypePicker({
   disabled,
   onChange,
   label = "Policy type",
+  compact = false,
 }: {
   value: SharePolicySandboxType;
   disabled?: boolean;
   onChange: (value: SharePolicySandboxType) => void;
   label?: string;
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const selected =
@@ -153,7 +155,9 @@ function SharePolicyTypePicker({
     <div className="relative">
       <button
         type="button"
-        className="flex min-h-9 w-full items-center justify-between gap-3 rounded-md border border-border bg-background px-3 py-2 text-left outline-none transition hover:border-white/[0.16] focus:border-[#4d8dff] disabled:cursor-not-allowed disabled:opacity-60"
+        className={`flex w-full items-center justify-between gap-3 rounded-md border border-border bg-background px-3 text-left outline-none transition hover:border-white/[0.16] focus:border-[#4d8dff] disabled:cursor-not-allowed disabled:opacity-60 ${
+          compact ? "h-8" : "min-h-9 py-2"
+        }`}
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
         aria-label={label}
@@ -161,9 +165,11 @@ function SharePolicyTypePicker({
       >
         <span className="min-w-0">
           <span className="block text-sm text-foreground">{selected.label}</span>
-          <span className="mt-0.5 block truncate text-[11px] text-white/35">
-            {selected.description}
-          </span>
+          {!compact ? (
+            <span className="mt-0.5 block truncate text-[11px] text-white/35">
+              {selected.description}
+            </span>
+          ) : null}
         </span>
         <ChevronDown className="size-3.5 shrink-0 text-white/35" />
       </button>
@@ -203,6 +209,20 @@ function isStandaloneProject(project?: CloudProject | null) {
     project?.config?.source === "standalone" ||
     project?.repositoryUrl.startsWith("ao-standalone://") === true
   );
+}
+
+function sharePolicyLabel(value?: SharePolicySandboxType | "") {
+  return (
+    sandboxTypeOptions.find((option) => option.value === value)?.label ??
+    "Standard"
+  );
+}
+
+function sharedProjectAccessLabel(share: CloudSharedProject) {
+  if (isStandaloneProject(share.project) && share.sandboxType) {
+    return sharePolicyLabel(share.sandboxType);
+  }
+  return share.role;
 }
 
 function OrchestratorIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -899,6 +919,10 @@ export default function CloudAppPage() {
     selectedShare?.project ??
     projects.find(({ id }) => id === selectedProjectId);
   const selectedProjectStandalone = isStandaloneProject(selectedProject);
+  const selectedShareTrustedStandalone =
+    Boolean(selectedShare) &&
+    selectedProjectStandalone &&
+    selectedShare?.sandboxType === "trusted";
   const selectedSession =
     selectedShare?.sessions?.find(({ id }) => id === selectedSessionId) ??
     sessions.find(({ id }) => id === selectedSessionId);
@@ -928,6 +952,12 @@ export default function CloudAppPage() {
     selectedOrgRole === "admin" ||
     selectedOrgRole === "member" ||
     selectedOrgRole === "editor";
+  const canCreateAgentInSelectedProject =
+    canEditOrg &&
+    (!selectedShare || selectedShareTrustedStandalone);
+  const canDeleteAgentInSelectedProject =
+    canEditOrg &&
+    (!selectedShare || selectedShareTrustedStandalone);
   const canAdminSelectedOrg =
     selectedOrgRole === "owner" || selectedOrgRole === "admin";
   const terminalRuntimeAvailable =
@@ -2206,10 +2236,32 @@ export default function CloudAppPage() {
                             </span>
                           ) : null}
                         </button>
+                        {!sidebarCollapsed &&
+                        standaloneProject &&
+                        share.sandboxType === "trusted" ? (
+                          <button
+                            type="button"
+                            className="mr-0.5 grid size-7 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-white/[0.06] hover:text-white"
+                            aria-label={`New agent in ${share.project.displayName}`}
+                            title="New agent"
+                            onClick={() => {
+                              if (!defaultAgent) {
+                                promptForAgentConnection();
+                                return;
+                              }
+                              setSelectedShareId(share.id);
+                              setSelectedProjectId(share.project.id);
+                              setSelectedSessionId(null);
+                              setShowSessionForm(true);
+                            }}
+                          >
+                            <Plus className="size-3.5" />
+                          </button>
+                        ) : null}
                       </div>
                       {!sidebarCollapsed ? (
                         <div className="ml-[42px] -mt-0.5 truncate pr-2 text-[10px] text-white/30">
-                          {sharedBy} · {share.role}
+                          {sharedBy} · {sharedProjectAccessLabel(share)}
                         </div>
                       ) : null}
                       {expanded ? (
@@ -2390,7 +2442,7 @@ export default function CloudAppPage() {
                 <>
                   <button
                     className={button}
-                    disabled={loading || !canEditOrg}
+                    disabled={loading || !canCreateAgentInSelectedProject}
                     onClick={() => setShowSessionForm(true)}
                     aria-label={selectedProjectStandalone ? "New agent" : "New task"}
                   >
@@ -2458,7 +2510,8 @@ export default function CloudAppPage() {
                       <PencilLine className="size-3.5" />
                     </button>
                   ) : null}
-                  {selectedSession.kind === "worker" && canEditOrg ? (
+                  {selectedSession.kind === "worker" &&
+                  canDeleteAgentInSelectedProject ? (
                     <button
                       className={button}
                       disabled={loading}
@@ -2479,7 +2532,7 @@ export default function CloudAppPage() {
                   <button
                     className={primaryButton}
                     onClick={() => setShowSessionForm(true)}
-                    disabled={loading || !canEditOrg || Boolean(selectedShare)}
+                    disabled={loading || !canCreateAgentInSelectedProject}
                   >
                     <Plus className="size-3.5" />
                     {selectedProjectStandalone ? "New agent" : "New task"}
@@ -2606,8 +2659,7 @@ export default function CloudAppPage() {
                 onCreateOrchestrator={
                   selectedProjectId &&
                   defaultAgent &&
-                  canEditOrg &&
-                  !selectedShare &&
+                  canCreateAgentInSelectedProject &&
                   (selectedProjectStandalone || !selectedProjectOrchestrator)
                     ? selectedProjectStandalone
                       ? () => setShowSessionForm(true)
@@ -2822,27 +2874,24 @@ export default function CloudAppPage() {
                       Change each person&apos;s policy.
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.02] p-1">
-                    {[
-                      { value: "all" as const, label: "All" },
-                      ...sandboxTypeOptions.map((option) => ({
-                        value: option.value,
-                        label: option.label,
-                      })),
-                    ].map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        className={`h-7 rounded-md px-2 text-[11px] transition ${
-                          sharePolicyFilter === option.value
-                            ? "bg-white/[0.08] text-white/75"
-                            : "text-white/35 hover:bg-white/[0.04] hover:text-white/60"
-                        }`}
-                        onClick={() => setSharePolicyFilter(option.value)}
-                      >
-                        {option.label}
-                      </button>
-                    ))}
+                  <div className="flex items-center gap-2">
+                    <select
+                      className="h-8 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70 outline-none focus:border-[#4d8dff]"
+                      value={sharePolicyFilter}
+                      onChange={(event) =>
+                        setSharePolicyFilter(
+                          event.target.value as "all" | SharePolicySandboxType,
+                        )
+                      }
+                      aria-label="Filter shared people by policy"
+                    >
+                      <option value="all">All</option>
+                      {sandboxTypeOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                     {shareAccessLoading ? (
                       <LoaderCircle className="ml-1 size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
                     ) : null}
@@ -2864,9 +2913,9 @@ export default function CloudAppPage() {
                     .map(({ grant, policyType }) => (
                       <div
                         key={grant.id}
-                        className="grid gap-2 rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-2 text-xs text-white/55 sm:grid-cols-[minmax(0,1fr)_220px_auto]"
+                        className="grid gap-2 rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-2 text-xs text-white/55 sm:grid-cols-[minmax(0,1fr)_150px_auto]"
                       >
-                        <div className="min-w-0 pt-2">
+                        <div className="min-w-0">
                           <div className="truncate text-white/70">
                             {grant.user.displayName || grant.user.email}
                           </div>
@@ -2877,6 +2926,7 @@ export default function CloudAppPage() {
                         <SharePolicyTypePicker
                           value={policyType}
                           disabled={loading}
+                          compact
                           onChange={(value) =>
                             void updateShareGrantPolicy(grant.id, value)
                           }
@@ -3402,8 +3452,9 @@ export default function CloudAppPage() {
           }}
           onClose={() => setShowSessionForm(false)}
           onSubmit={async (input) => {
+            if (!activeOrgId) return;
             const created = await createSessionAndOpen(() =>
-              api.createSession(selectedOrgId, input, crypto.randomUUID()),
+              api.createSession(activeOrgId, input, crypto.randomUUID()),
             );
             if (created) setShowSessionForm(false);
           }}
