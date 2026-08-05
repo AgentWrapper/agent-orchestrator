@@ -36,7 +36,14 @@ export function Header({ ctaButtons }: HeaderProps) {
   // an early return before useState/useEffect breaks the client component, and
   // its scroll listener never attaches — leaving the hero header stuck
   // transparent instead of turning solid on scroll.
-  if (pathname === "/download") return null;
+  if (
+    pathname === "/download" ||
+    pathname === "/auth" ||
+    pathname.startsWith("/auth/") ||
+    pathname === "/app" ||
+    pathname.startsWith("/app/")
+  )
+    return null;
 
   return (
     <header
@@ -62,7 +69,9 @@ export function Header({ ctaButtons }: HeaderProps) {
 
             <div className="hidden lg:flex items-center gap-4">
               <DesktopNav />
-              <div className="flex items-center gap-2 shrink-0">{ctaButtons}</div>
+              <div className="flex items-center gap-2 shrink-0">
+                {ctaButtons}
+              </div>
             </div>
 
             <MobileNav ctaButtons={ctaButtons} />

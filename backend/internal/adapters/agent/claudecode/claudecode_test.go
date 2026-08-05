@@ -214,9 +214,9 @@ func TestGetAgentHooksInstallsClaudeHooks(t *testing.T) {
 	if len(config.Permissions) == 0 {
 		t.Fatalf("unrelated settings clobbered: %s", data)
 	}
-	// SessionStart carries the required matcher; UserPromptSubmit omits it.
-	if m := matcherForCommand(config.Hooks["SessionStart"], "ao hooks claude-code session-start"); m == nil || *m != "startup" {
-		t.Fatalf("SessionStart matcher = %v, want startup", m)
+	// SessionStart covers fresh and restored sessions; UserPromptSubmit omits a matcher.
+	if m := matcherForCommand(config.Hooks["SessionStart"], "ao hooks claude-code session-start"); m == nil || *m != "startup|resume" {
+		t.Fatalf("SessionStart matcher = %v, want startup|resume", m)
 	}
 	if m := matcherForCommand(config.Hooks["UserPromptSubmit"], "ao hooks claude-code user-prompt-submit"); m != nil {
 		t.Fatalf("UserPromptSubmit matcher = %v, want none", m)
@@ -609,6 +609,26 @@ func TestClaudeAuthStatusFromOutputUnauthorized(t *testing.T) {
 	status, ok := claudeAuthStatusFromOutput([]byte(`{"loggedIn":false}`))
 	if !ok || status != ports.AgentAuthStatusUnauthorized {
 		t.Fatalf("status = (%q, %v), want (%q, true)", status, ok, ports.AgentAuthStatusUnauthorized)
+	}
+}
+
+func TestPreLaunchTrustsWorkspaceInConfiguredClaudeDirectory(t *testing.T) {
+	configDir := t.TempDir()
+	workspace := "/workspace/repository"
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+
+	p := &Plugin{}
+	if err := p.PreLaunch(context.Background(), ports.LaunchConfig{
+		WorkspacePath: workspace,
+	}); err != nil {
+		t.Fatalf("PreLaunch() error = %v", err)
+	}
+
+	root := readJSON(t, filepath.Join(configDir, ".claude.json"))
+	projects := root["projects"].(map[string]any)
+	entry := projects[workspace].(map[string]any)
+	if entry["hasTrustDialogAccepted"] != true {
+		t.Fatalf("workspace trust entry = %#v, want accepted", entry)
 	}
 }
 

@@ -3,6 +3,7 @@ package session
 import (
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/contract"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
@@ -25,151 +26,40 @@ const noSignalGrace = 90 * time.Second
 // parent is still open are exempt from the aggregation since they cannot merge
 // until the parent does. Merged/closed PRs only matter once no open PR remains.
 func deriveStatus(rec domain.SessionRecord, prs []domain.PRFacts, now time.Time, signalCapable bool) domain.SessionStatus {
-	if rec.IsTerminated {
-		if anyMerged(prs) {
-			return domain.StatusMerged
-		}
-		return domain.StatusTerminated
-	}
-
-	switch rec.Activity.State {
-	case domain.ActivityActive:
-		return domain.StatusWorking
-	case domain.ActivityExited:
-		return domain.StatusExited
-	case domain.ActivityWaitingInput, domain.ActivityBlocked:
-		return domain.StatusNeedsInput
-	}
-
-	if scmStatus := deriveSCMStatus(prs); scmStatus != "" {
-		return scmStatus
-	}
-
-	// No hook callback has ever arrived for this spawn/restore even though the
-	// harness has a hook pipeline. The seeded LastActivityAt marks the launch,
-	// so once the grace passes the honest status is "no signal", not "idle".
-	if signalCapable && rec.FirstSignalAt.IsZero() && now.Sub(rec.Activity.LastActivityAt) > noSignalGrace {
-		return domain.StatusNoSignal
-	}
-	return domain.StatusIdle
+	return contract.DeriveSessionStatus(contract.SessionFacts{
+		Terminated:      rec.IsTerminated,
+		Activity:        contract.ActivityState(rec.Activity.State),
+		SignalCapable:   signalCapable,
+		FirstSignalSeen: !rec.FirstSignalAt.IsZero(),
+		LastActivityAt:  rec.Activity.LastActivityAt,
+		Now:             now,
+		NoSignalGrace:   noSignalGrace,
+	}, contractPRFacts(prs))
 }
 
 // deriveSCMStatus returns the session's stack-aware PR context independently
 // of runtime activity. It is empty when the session has no open or merged PR.
 func deriveSCMStatus(prs []domain.PRFacts) domain.SessionStatus {
-	open := openPRs(prs)
-	if len(open) > 0 {
-		return aggregatePRStatus(open)
-	}
-	if anyMerged(prs) {
-		return domain.StatusMerged
-	}
-	return ""
+	return contract.DeriveSCMStatus(contractPRFacts(prs))
 }
 
-// openPRs returns the PRs that are neither merged nor closed, preserving order.
-func openPRs(prs []domain.PRFacts) []domain.PRFacts {
-	out := make([]domain.PRFacts, 0, len(prs))
-	for _, p := range prs {
-		if !p.Merged && !p.Closed {
-			out = append(out, p)
-		}
+func contractPRFacts(prs []domain.PRFacts) []contract.PRFacts {
+	out := make([]contract.PRFacts, 0, len(prs))
+	for _, pr := range prs {
+		out = append(out, contract.PRFacts{
+			URL:            pr.URL,
+			Number:         pr.Number,
+			Draft:          pr.Draft,
+			Merged:         pr.Merged,
+			Closed:         pr.Closed,
+			CI:             contract.CIState(pr.CI),
+			Review:         contract.ReviewState(pr.Review),
+			Mergeability:   contract.Mergeability(pr.Mergeability),
+			ReviewComments: pr.ReviewComments,
+			SourceBranch:   pr.SourceBranch,
+			TargetBranch:   pr.TargetBranch,
+			UpdatedAt:      pr.UpdatedAt,
+		})
 	}
 	return out
-}
-
-func anyMerged(prs []domain.PRFacts) bool {
-	for _, p := range prs {
-		if p.Merged {
-			return true
-		}
-	}
-	return false
-}
-
-// aggregatePRStatus is the worst-wins reduction over a session's open PRs.
-// A stacked child blocked by an open parent cannot merge yet, so its readiness
-// signals (mergeable/approved/review-pending/open) are not actionable for the
-// session and are suppressed. Its problem signals are still actionable: failing
-// CI, draft state, and requested-changes/unresolved-comments must stay visible
-// so a broken child is not hidden behind the stack. If no PR contributes any
-// signal (a degenerate stack with no visible root), it falls back to aggregating
-// the raw status across all open PRs so the session never goes dark.
-func aggregatePRStatus(open []domain.PRFacts) domain.SessionStatus {
-	stacks := buildStacks(open)
-	candidates := make([]domain.SessionStatus, 0, len(open))
-	for _, p := range open {
-		s := prPipelineStatus(p)
-		if stacks[p.URL].Blocked && !isActionableChildSignal(s) {
-			continue
-		}
-		candidates = append(candidates, s)
-	}
-	if len(candidates) == 0 {
-		for _, p := range open {
-			candidates = append(candidates, prPipelineStatus(p))
-		}
-	}
-	worst := candidates[0]
-	for _, s := range candidates[1:] {
-		if statusSeverity(s) < statusSeverity(worst) {
-			worst = s
-		}
-	}
-	return worst
-}
-
-// isActionableChildSignal reports whether a blocked stacked child's pipeline
-// status is a problem the user can act on now, independent of the child's
-// inability to merge until its parent does.
-func isActionableChildSignal(s domain.SessionStatus) bool {
-	switch s {
-	case domain.StatusCIFailed, domain.StatusDraft, domain.StatusChangesRequested:
-		return true
-	default:
-		return false
-	}
-}
-
-// statusSeverity ranks PR pipeline statuses from most to least urgent so the
-// aggregate surfaces the PR that most needs attention. mergeable is least urgent
-// so a session only reports mergeable when every aggregated PR is mergeable.
-func statusSeverity(s domain.SessionStatus) int {
-	switch s {
-	case domain.StatusCIFailed:
-		return 0
-	case domain.StatusChangesRequested:
-		return 1
-	case domain.StatusDraft:
-		return 2
-	case domain.StatusReviewPending:
-		return 3
-	case domain.StatusPROpen:
-		return 4
-	case domain.StatusApproved:
-		return 5
-	case domain.StatusMergeable:
-		return 6
-	default:
-		return 7
-	}
-}
-
-func prPipelineStatus(pr domain.PRFacts) domain.SessionStatus {
-	switch {
-	case pr.CI == domain.CIFailing:
-		return domain.StatusCIFailed
-	case pr.Draft:
-		return domain.StatusDraft
-	case pr.Review == domain.ReviewChangesRequest || pr.ReviewComments:
-		return domain.StatusChangesRequested
-	case pr.Mergeability == domain.MergeMergeable:
-		return domain.StatusMergeable
-	case pr.Review == domain.ReviewApproved:
-		return domain.StatusApproved
-	case pr.Review == domain.ReviewRequired:
-		return domain.StatusReviewPending
-	default:
-		return domain.StatusPROpen
-	}
 }
