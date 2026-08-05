@@ -89,7 +89,7 @@ function loadRenderer(term: Terminal): void {
 		}
 	};
 	try {
-		const webgl = new WebglAddon();
+		const webgl = new WebglAddon(true);
 		webgl.onContextLoss(() => {
 			webgl.dispose();
 			loadCanvasFallback();
@@ -205,6 +205,77 @@ function forceTerminalRepaint(term: Terminal): void {
 		(term as XtermInternal)._core?._renderService?._renderRows(0, rows - 1);
 	} catch {
 		// Internal render API — ignore if unavailable or mid-teardown.
+	}
+}
+
+const SETTLE_FIT_COVER_CLASS = "ao-xterm-settle-fit-cover";
+
+// Hide the live screen for the duration of a settled fit.fit(), showing the last
+// good frame on top so WebGL's clear is never presented. One-shot only — does not
+// change scheduleStableFit / isVisible behavior.
+function withSettledFitCover(term: Terminal, host: HTMLElement, apply: () => void): void {
+	const screen = term.element?.querySelector(".xterm-screen") as HTMLElement | null;
+	const primary = screen?.querySelector("canvas") as HTMLCanvasElement | null;
+	if (!screen || !primary || primary.width <= 0 || primary.height <= 0) {
+		apply();
+		return;
+	}
+
+	if (getComputedStyle(host).position === "static") {
+		host.style.position = "relative";
+	}
+
+	for (const node of host.querySelectorAll(`canvas.${SETTLE_FIT_COVER_CLASS}`)) {
+		node.remove();
+	}
+
+	const prevCssW = Math.max(1, primary.clientWidth);
+	const prevCssH = Math.max(1, primary.clientHeight);
+	const cover = document.createElement("canvas");
+	cover.className = SETTLE_FIT_COVER_CLASS;
+	cover.setAttribute("aria-hidden", "true");
+	cover.width = primary.width;
+	cover.height = primary.height;
+	const hostW = host.clientWidth;
+	const hostH = host.clientHeight;
+	// Stretch the last frame to the current host box for this one settle so empty
+	// margins from a grown pane are not visible under the cover.
+	const scaleX = hostW > 0 ? hostW / prevCssW : 1;
+	const scaleY = hostH > 0 ? hostH / prevCssH : 1;
+	cover.style.cssText = [
+		"left:0",
+		"pointer-events:none",
+		"position:absolute",
+		"top:0",
+		"transform-origin:0 0",
+		`transform:scale(${scaleX},${scaleY})`,
+		"z-index:2",
+		`width:${prevCssW}px`,
+		`height:${prevCssH}px`,
+	].join(";");
+	const ctx = cover.getContext("2d");
+	if (ctx) {
+		ctx.fillStyle = getComputedStyle(screen).backgroundColor || "#000";
+		ctx.fillRect(0, 0, cover.width, cover.height);
+		try {
+			ctx.drawImage(primary, 0, 0);
+		} catch {
+			// Background fill already painted.
+		}
+	}
+	host.appendChild(cover);
+	screen.style.visibility = "hidden";
+	try {
+		apply();
+	} finally {
+		screen.style.visibility = "";
+		// Two frames: let the live canvas composite after clear+repaint before
+		// dropping the cover (one frame is often still blank on WebGL).
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				cover.remove();
+			});
+		});
 	}
 }
 
@@ -577,9 +648,14 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Parked terminals keep their last measured box and continue parsing
 			// output, but must not refit or emit PTY resizes while hidden.
 			if (callbacksRef.current.isVisible === false) return;
+			// Mid-drag: host box is moving and quiet/cap timers are armed. Fitting
+			// here (e.g. from the stabilizer) bypasses settle scheduling and flashes.
+			if (fitQuietTimer !== null || fitCapTimer !== null) return;
 			try {
-				fit.fit();
-				forceTerminalRepaint(term);
+				withSettledFitCover(term, host, () => {
+					fit.fit();
+					forceTerminalRepaint(term);
+				});
 			} catch {
 				// Container momentarily has no size (hidden/unmounting) — a later
 				// trigger retries.
@@ -599,8 +675,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		let fitAllowsHidden = false;
 		let disposed = false;
 		const fitSettledListeners = new Set<() => void>();
-		const flushScheduledFit = () => {
+		const flushScheduledFit = (fromCap = false) => {
 			if (disposed) return;
+			// Never fit while resize events are still arriving. Mid-drag cap fits
+			// are the usual 1–2 flashes on a fast continuous drag; keep waiting
+			// for the quiet timer (release / pause) instead.
+			if (fromCap && fitQuietTimer !== null) {
+				fitCapTimer = setTimeout(() => flushScheduledFit(true), FIT_CAP_MS);
+				return;
+			}
 			if (fitQuietTimer !== null) {
 				clearTimeout(fitQuietTimer);
 				fitQuietTimer = null;
@@ -611,8 +694,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 			if (fitAllowsHidden || callbacksRef.current.isVisible !== false) {
 				try {
-					fit.fit();
-					forceTerminalRepaint(term);
+					withSettledFitCover(term, host, () => {
+						fit.fit();
+						forceTerminalRepaint(term);
+					});
 				} catch {
 					// The next observer/window event retries if the host is transiently
 					// unmeasurable (for example while entering fullscreen).
@@ -628,8 +713,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			fitAllowsHidden ||= allowHidden;
 			if (onSettled) fitSettledListeners.add(onSettled);
 			if (fitQuietTimer !== null) clearTimeout(fitQuietTimer);
-			fitQuietTimer = setTimeout(flushScheduledFit, FIT_QUIET_MS);
-			if (fitCapTimer === null) fitCapTimer = setTimeout(flushScheduledFit, FIT_CAP_MS);
+			fitQuietTimer = setTimeout(() => flushScheduledFit(false), FIT_QUIET_MS);
+			if (fitCapTimer === null) {
+				fitCapTimer = setTimeout(() => flushScheduledFit(true), FIT_CAP_MS);
+			}
 		};
 		// While activation preparation is pending, observer/window events must keep
 		// extending the same quiet window even though the container is intentionally
@@ -682,6 +769,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		let refits = 0;
 		let pending: { cols: number; rows: number } | null = null;
 		const stabilizer = term.onRender(() => {
+			// Host is mid-resize: scheduleStableFit owns the next fit. Acting here
+			// would fit on every differing proposeDimensions while the pane moves.
+			if (fitQuietTimer !== null || fitCapTimer !== null) return;
 			const proposed = fit.proposeDimensions();
 			if (!proposed || !proposed.cols || !proposed.rows) return;
 			if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
@@ -900,6 +990,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (fitQuietTimer !== null) clearTimeout(fitQuietTimer);
 			if (fitCapTimer !== null) clearTimeout(fitCapTimer);
 			fitSettledListeners.clear();
+			for (const node of host.querySelectorAll(`canvas.${SETTLE_FIT_COVER_CLASS}`)) {
+				node.remove();
+			}
 			observer.disconnect();
 			stabilizer.dispose();
 			window.removeEventListener("resize", scheduleVisibleFit);
