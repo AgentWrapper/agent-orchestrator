@@ -13,7 +13,7 @@ import {
   Copy,
   Eye,
   ExternalLink,
-  File,
+  Folder,
   FolderGit2,
   GitBranch,
   Github,
@@ -149,7 +149,7 @@ function StandaloneProjectIcon({ className = "" }: { className?: string }) {
     <span
       className={`relative inline-grid shrink-0 place-items-center rounded-md border border-[#4d8dff]/25 bg-[#4d8dff]/10 text-[#8eb6ff] ${className}`}
     >
-      <File className="size-[13px]" />
+      <Folder className="size-[13px]" />
     </span>
   );
 }
@@ -305,6 +305,7 @@ export default function CloudAppPage() {
   const [showSessionForm, setShowSessionForm] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [projectMenuOpenId, setProjectMenuOpenId] = useState<string | null>(null);
+  const [sessionMenuOpenId, setSessionMenuOpenId] = useState<string | null>(null);
   const [renameProject, setRenameProject] = useState<CloudProject | null>(null);
   const [renameSession, setRenameSession] = useState<CloudSession | null>(null);
   const [shareProject, setShareProject] = useState<CloudProject | null>(null);
@@ -1309,15 +1310,13 @@ export default function CloudAppPage() {
     });
   };
 
-  const updateShareGrantRole = async (
+  const updateShareGrantAccess = async (
     grantId: string,
-    role: "viewer" | "editor",
+    input: { role: "viewer" | "editor"; sessionId?: string },
   ) => {
     if (!api || !selectedOrgId || !shareProject) return;
     await run(async () => {
-      await api.updateProjectShareGrant(selectedOrgId, shareProject.id, grantId, {
-        role,
-      });
+      await api.updateProjectShareGrant(selectedOrgId, shareProject.id, grantId, input);
       await loadProjectShareAccess();
     });
   };
@@ -1770,59 +1769,103 @@ export default function CloudAppPage() {
                       }
                     >
                       {projectSessions.map((cloudSession) => (
-                        <button
+                        <div
                           key={cloudSession.id}
-                          className={`flex h-7 w-full items-center rounded-lg text-left text-[12px] ${
-                            sidebarCollapsed
-                              ? "justify-center px-0"
-                              : "gap-2 border-l-2 px-2"
-                          } ${
-                            selectedSessionId === cloudSession.id &&
-                            view === "session"
-                              ? "border-[#4d8dff] bg-white/[0.07] text-white"
-                              : "border-transparent text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
-                          }`}
-                          onClick={() => {
-                            setSelectedShareId(null);
-                            setSelectedProjectId(project.id);
-                            setSelectedSessionId(cloudSession.id);
-                            setView("session");
-                          }}
-                          aria-label={cloudSession.displayName}
-                          title={
-                            sidebarCollapsed
-                              ? cloudSession.displayName
-                              : undefined
-                          }
+                          className="group/session relative flex items-center"
                         >
-                          {cloudSession.kind === "orchestrator" ? (
-                            <OrchestratorIcon className="size-[14px] shrink-0" />
-                          ) : (
-                            <AgentAvatar
-                              agent={cloudSession.harness}
-                              className="size-[14px]"
-                            />
-                          )}
-                          {!sidebarCollapsed ? (
-                            <span className="truncate">
-                              {cloudSession.displayName}
-                            </span>
-                          ) : null}
+                          <button
+                            className={`flex h-7 min-w-0 flex-1 items-center rounded-lg text-left text-[12px] ${
+                              sidebarCollapsed
+                                ? "justify-center px-0"
+                                : "gap-2 border-l-2 px-2"
+                            } ${
+                              selectedSessionId === cloudSession.id &&
+                              view === "session"
+                                ? "border-[#4d8dff] bg-white/[0.07] text-white"
+                                : "border-transparent text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
+                            }`}
+                            onClick={() => {
+                              setSelectedShareId(null);
+                              setSelectedProjectId(project.id);
+                              setSelectedSessionId(cloudSession.id);
+                              setView("session");
+                            }}
+                            aria-label={cloudSession.displayName}
+                            title={
+                              sidebarCollapsed
+                                ? cloudSession.displayName
+                                : undefined
+                            }
+                          >
+                            {cloudSession.kind === "orchestrator" ? (
+                              <OrchestratorIcon className="size-[14px] shrink-0" />
+                            ) : (
+                              <AgentAvatar
+                                agent={cloudSession.harness}
+                                className="size-[14px]"
+                              />
+                            )}
+                            {!sidebarCollapsed ? (
+                              <span className="truncate">
+                                {cloudSession.displayName}
+                              </span>
+                            ) : null}
+                            {!sidebarCollapsed &&
+                            activeChatSessionIds.has(cloudSession.id) ? (
+                              <LoaderCircle
+                                className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
+                                aria-label="Working"
+                              />
+                            ) : !sidebarCollapsed ? (
+                              <span
+                                className={`ml-auto size-1.5 shrink-0 rounded-full ${statusColor(
+                                  cloudSession,
+                                )}`}
+                                aria-hidden="true"
+                              />
+                            ) : null}
+                          </button>
                           {!sidebarCollapsed &&
-                          activeChatSessionIds.has(cloudSession.id) ? (
-                            <LoaderCircle
-                              className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
-                              aria-label="Working"
-                            />
-                          ) : !sidebarCollapsed ? (
-                            <span
-                              className={`ml-auto size-1.5 shrink-0 rounded-full ${statusColor(
-                                cloudSession,
-                              )}`}
-                              aria-hidden="true"
-                            />
+                          standaloneProject &&
+                          canEditOrg ? (
+                            <button
+                              type="button"
+                              className={`mr-0.5 grid size-6 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-white/[0.06] hover:text-white ${
+                                sessionMenuOpenId === cloudSession.id
+                                  ? "bg-white/[0.06] text-white"
+                                  : "opacity-0 group-hover/session:opacity-100 focus:opacity-100"
+                              }`}
+                              aria-label={`More actions for ${cloudSession.displayName}`}
+                              aria-expanded={
+                                sessionMenuOpenId === cloudSession.id
+                              }
+                              onClick={() =>
+                                setSessionMenuOpenId((current) =>
+                                  current === cloudSession.id
+                                    ? null
+                                    : cloudSession.id,
+                                )
+                              }
+                            >
+                              <MoreHorizontal className="size-3.5" />
+                            </button>
                           ) : null}
-                        </button>
+                          {sessionMenuOpenId === cloudSession.id ? (
+                            <div className="absolute right-0 top-7 z-40 w-36 rounded-lg border border-white/[0.1] bg-[#15171b] p-1 shadow-xl shadow-black/30">
+                              <button
+                                type="button"
+                                className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-white/70 hover:bg-white/[0.06] hover:text-white"
+                                onClick={() => {
+                                  setSessionMenuOpenId(null);
+                                  setRenameSession(cloudSession);
+                                }}
+                              >
+                                <PencilLine className="size-3.5" />
+                                Rename agent
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
                   ) : null}
@@ -2592,52 +2635,83 @@ export default function CloudAppPage() {
             </p>
             <div className="space-y-3 rounded-xl border border-white/[0.07] bg-white/[0.015] p-3">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-medium text-white/50">
-                  Manage access
+                <div>
+                  <div className="text-xs font-medium text-white/60">
+                    Manage access
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-white/30">
+                    Adjust each person&apos;s permission and agent scope.
+                  </div>
                 </div>
                 {shareAccessLoading ? (
                   <LoaderCircle className="size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
                 ) : null}
               </div>
               {(shareAccess?.grants.length ?? 0) > 0 ? (
-                <div className="space-y-1">
-                  {shareAccess?.grants.map((grant) => (
-                    <div
-                      key={grant.id}
-                      className="flex items-center gap-2 rounded-lg bg-white/[0.025] px-2 py-2"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-xs text-white/75">
-                          {grant.user.displayName || grant.user.email}
+                <div className="space-y-2">
+                  {shareAccess?.grants.map((grant) => {
+                    const scopedSessionId = grant.sessionId ?? "";
+                    return (
+                      <div
+                        key={grant.id}
+                        className="grid gap-2 rounded-lg bg-white/[0.025] p-2 sm:grid-cols-[minmax(0,1fr)_112px_minmax(150px,190px)_auto] sm:items-center"
+                      >
+                        <div className="min-w-0">
+                          <div className="truncate text-xs text-white/80">
+                            {grant.user.displayName || grant.user.email}
+                          </div>
+                          <div className="truncate text-[11px] text-white/30">
+                            {grant.user.email}
+                          </div>
                         </div>
-                        <div className="truncate text-[11px] text-white/30">
-                          {grant.user.email}
-                        </div>
+                        <select
+                          className="h-8 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
+                          value={grant.role}
+                          disabled={loading}
+                          onChange={(event) =>
+                            void updateShareGrantAccess(grant.id, {
+                              role: event.target.value as "viewer" | "editor",
+                              ...(scopedSessionId
+                                ? { sessionId: scopedSessionId }
+                                : {}),
+                            })
+                          }
+                          aria-label={`Permission for ${grant.user.email}`}
+                        >
+                          <option value="viewer">Viewer</option>
+                          <option value="editor">Editor</option>
+                        </select>
+                        <select
+                          className="h-8 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
+                          value={scopedSessionId}
+                          disabled={loading}
+                          onChange={(event) =>
+                            void updateShareGrantAccess(grant.id, {
+                              role: grant.role,
+                              ...(event.target.value
+                                ? { sessionId: event.target.value }
+                                : {}),
+                            })
+                          }
+                          aria-label={`Agent scope for ${grant.user.email}`}
+                        >
+                          <option value="">Entire project</option>
+                          {shareProjectSessions.map((cloudSession) => (
+                            <option key={cloudSession.id} value={cloudSession.id}>
+                              {cloudSession.displayName}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          className="h-8 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
+                          onClick={() => void revokeShareGrant(grant.id)}
+                        >
+                          Remove
+                        </button>
                       </div>
-                      <select
-                        className="h-7 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"
-                        value={grant.role}
-                        disabled={loading}
-                        onChange={(event) =>
-                          void updateShareGrantRole(
-                            grant.id,
-                            event.target.value as "viewer" | "editor",
-                          )
-                        }
-                        aria-label={`Access for ${grant.user.email}`}
-                      >
-                        <option value="viewer">Viewer</option>
-                        <option value="editor">Editor</option>
-                      </select>
-                      <button
-                        type="button"
-                        className="h-7 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
-                        onClick={() => void revokeShareGrant(grant.id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-xs text-white/30">
@@ -2661,7 +2735,12 @@ export default function CloudAppPage() {
                                 link.recipients?.length ?? 0
                               } recipient${(link.recipients?.length ?? 0) === 1 ? "" : "s"}`
                             : "Anyone with the link"}{" "}
-                          · {link.role}
+                          · {link.role} ·{" "}
+                          {link.sessionId
+                            ? shareProjectSessions.find(
+                                (cloudSession) => cloudSession.id === link.sessionId,
+                              )?.displayName ?? "Selected agent"
+                            : "entire project"}
                         </span>
                         <button
                           type="button"

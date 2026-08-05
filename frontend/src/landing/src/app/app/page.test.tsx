@@ -886,6 +886,7 @@ it("shares a project from its three-dot menu with the selected role", async () =
 });
 
 it("manages redeemed project share access", async () => {
+  apiMocks.sessions.mockResolvedValue({ sessions: [worker] });
   apiMocks.projectShareAccess.mockResolvedValue({
     access: {
       links: [
@@ -919,7 +920,7 @@ it("manages redeemed project share access", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Share project" }));
 
   const accessSelect = await screen.findByLabelText(
-    "Access for reader@example.com",
+    "Permission for reader@example.com",
   );
   fireEvent.change(accessSelect, { target: { value: "editor" } });
   await waitFor(() =>
@@ -928,6 +929,19 @@ it("manages redeemed project share access", async () => {
       project.id,
       "grant-one",
       { role: "editor" },
+    ),
+  );
+
+  const scopeSelect = await screen.findByLabelText(
+    "Agent scope for reader@example.com",
+  );
+  fireEvent.change(scopeSelect, { target: { value: worker.id } });
+  await waitFor(() =>
+    expect(apiMocks.updateProjectShareGrant).toHaveBeenCalledWith(
+      "org-one",
+      project.id,
+      "grant-one",
+      { role: "viewer", sessionId: worker.id },
     ),
   );
 

@@ -74,12 +74,13 @@ type ProjectShareAccess struct {
 
 // ProjectShareGrant is an active redeemed share for one user.
 type ProjectShareGrant struct {
-	ID         string           `json:"id"`
-	User       clouddomain.User `json:"user"`
-	Role       string           `json:"role"`
-	Status     string           `json:"status"`
-	RedeemedAt time.Time        `json:"redeemedAt"`
-	UpdatedAt  time.Time        `json:"updatedAt"`
+	ID         string                `json:"id"`
+	User       clouddomain.User      `json:"user"`
+	SessionID  clouddomain.SessionID `json:"sessionId,omitempty"`
+	Role       string                `json:"role"`
+	Status     string                `json:"status"`
+	RedeemedAt time.Time             `json:"redeemedAt"`
+	UpdatedAt  time.Time             `json:"updatedAt"`
 }
 
 // CreateProjectShareLink stores a scoped share link.
@@ -386,6 +387,7 @@ func (s *Store) ListProjectShareAccess(
 	grantRows, err := s.pool.Query(ctx, `
 		SELECT
 			share_grant.id,
+			COALESCE(share_grant.session_id::text, ''),
 			user_row.id, user_row.auth_provider, user_row.external_user_id, user_row.email,
 			user_row.display_name, user_row.avatar_url, user_row.created_at, user_row.updated_at,
 			share_grant.role, share_grant.status, share_grant.redeemed_at, share_grant.updated_at
@@ -404,6 +406,7 @@ func (s *Store) ListProjectShareAccess(
 		var grant ProjectShareGrant
 		if err := grantRows.Scan(
 			&grant.ID,
+			&grant.SessionID,
 			&grant.User.ID,
 			&grant.User.AuthProvider,
 			&grant.User.ExternalUserID,
@@ -468,19 +471,22 @@ func (s *Store) projectShareRecipients(
 	return out, nil
 }
 
-// UpdateProjectShareGrantRole changes one redeemed user's project share role.
-func (s *Store) UpdateProjectShareGrantRole(
+// UpdateProjectShareGrantAccess changes one redeemed user's share role/scope.
+func (s *Store) UpdateProjectShareGrantAccess(
 	ctx context.Context,
 	orgID clouddomain.OrgID,
 	projectID clouddomain.ProjectID,
 	grantID string,
 	role string,
+	sessionID clouddomain.SessionID,
 ) (ProjectShareGrant, error) {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE ao_project_share_grants
-		SET role = $4, updated_at = now()
+		SET role = $4,
+			session_id = NULLIF($5, '')::uuid,
+			updated_at = now()
 		WHERE org_id = $1 AND project_id = $2 AND id = $3 AND status = 'active'
-	`, orgID, projectID, grantID, role)
+	`, orgID, projectID, grantID, role, string(sessionID))
 	if err != nil {
 		return ProjectShareGrant{}, fmt.Errorf("update project share grant: %w", err)
 	}
