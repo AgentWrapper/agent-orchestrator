@@ -88,7 +88,7 @@ const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 const prStateTone: Record<SessionPRSummary["state"], string> = {
 	open: "border-border-strong bg-overlay text-muted-foreground",
 	draft: "border-status-in-review/35 bg-status-in-review/10 text-status-in-review",
-	merged: "border-accent/40 bg-accent-weak text-accent",
+	merged: "border-border-strong bg-overlay text-success",
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
@@ -522,7 +522,7 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 				</Badge>
 			</div>
 			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRCardStatusSummary className="mt-2" pr={pr} />
+			{pr.state !== "merged" ? <PRCardStatusSummary className="mt-2" pr={pr} /> : null}
 		</article>
 	);
 }
