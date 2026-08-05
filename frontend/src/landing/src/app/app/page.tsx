@@ -2811,7 +2811,7 @@ export default function CloudAppPage() {
                             <div className="mb-2 text-[11px] font-medium text-white/40">
                               Invite to policy
                             </div>
-                            <div className="flex gap-2">
+                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
                               <input
                                 className={field}
                                 value={policyInviteEmails[policy.id] ?? ""}
@@ -2826,7 +2826,7 @@ export default function CloudAppPage() {
                               />
                               <button
                                 type="button"
-                                className={button}
+                                className={`${button} whitespace-nowrap px-3`}
                                 disabled={loading}
                                 onClick={() =>
                                   void createSharePolicyLink(policy.id, true)
@@ -2836,7 +2836,7 @@ export default function CloudAppPage() {
                               </button>
                               <button
                                 type="button"
-                                className={button}
+                                className={`${button} whitespace-nowrap px-3`}
                                 disabled={loading}
                                 onClick={() =>
                                   void createSharePolicyLink(policy.id, false)
@@ -2846,8 +2846,14 @@ export default function CloudAppPage() {
                               </button>
                             </div>
                             {policyLink ? (
-                              <div className="mt-2 truncate rounded-md bg-white/[0.025] px-2 py-1.5 text-[11px] text-white/35">
-                                Copied: {policyLink}
+                              <div className="mt-2 flex items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.025] px-2.5 py-2 text-[11px] text-white/35">
+                                <Check className="size-3 shrink-0 text-[#4d8dff]" />
+                                <span className="shrink-0 text-white/45">
+                                  Link copied
+                                </span>
+                                <span className="min-w-0 truncate">
+                                  {policyLink}
+                                </span>
                               </div>
                             ) : null}
                           </div>
