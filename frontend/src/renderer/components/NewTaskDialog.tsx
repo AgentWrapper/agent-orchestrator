@@ -16,18 +16,18 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
-					<div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-popover p-0 text-popover-foreground shadow-[var(--shadow-settings-dialog)] data-[state=open]:animate-modal-in">
+					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-settings-dialog-header)] p-(--size-modal-padding)">
 						<div className="min-w-0">
-							<Dialog.Title className="text-subtitle font-semibold text-foreground">{t("newTask.title")}</Dialog.Title>
-							<Dialog.Description className="mt-1 text-xs text-muted-foreground">
+							<Dialog.Title className="settings-dialog-title">{t("newTask.title")}</Dialog.Title>
+							<Dialog.Description className="mt-1 text-xs text-settings-muted">
 								{t("newTask.description")}
 							</Dialog.Description>
 						</div>
 						<Dialog.Close asChild>
 							<button
 								type="button"
-								className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground"
+								className="settings-close-button"
 								aria-label={t("newTask.close")}
 							>
 								<X className="size-icon-base" aria-hidden="true" />

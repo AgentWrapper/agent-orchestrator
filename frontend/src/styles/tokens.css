@@ -71,6 +71,8 @@
 	   opaque plate so the p-2 gutter cannot composite into #111316. */
 	--color-bg-terminal-opaque: #101317;
 	--color-bg-terminal: #101317e7;
+	/* Opaque backing for terminal swaps/covers; prevents retained frames leaking through. */
+	--color-bg-terminal-opaque: #101317;
 
 	/* Text */
 	--color-text-primary: var(--foreground);
@@ -407,6 +409,10 @@
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 	--size-import-modal-max: 896px;
 	--size-import-folder-dialog: 640px;
+	/* Shared equal edge inset for modal header/body/footer sections. */
+	--size-modal-padding: var(--space-6);
+	--size-import-modal-padding: var(--space-8);
+	--size-import-dialog-padding: var(--size-modal-padding);
 	--size-import-mode-card-min: 252px;
 	--size-import-mode-card-min-sm: 292px;
 	--size-import-mode-illustration: 178px;
@@ -655,6 +661,7 @@
 	--color-bg-sidebar: var(--sidebar);
 	--color-bg-terminal-opaque: #f5f5f4;
 	--color-bg-terminal: #f5f5f4;
+	--color-bg-terminal-opaque: #f5f5f4;
 
 	--color-text-primary: var(--foreground);
 	--color-text-muted: var(--muted-foreground);

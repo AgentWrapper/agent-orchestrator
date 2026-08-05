@@ -44,9 +44,13 @@ export type BrowserAnnotationModeInput = {
 	enabled: boolean;
 };
 
+export type BrowserAnnotationSelection =
+	| { kind: "element"; context: BrowserAnnotationContext }
+	| { kind: "elements"; contexts: BrowserAnnotationContext[] };
+
 export type BrowserAnnotationPageSubmitPayload = {
 	instruction: string;
-	context: BrowserAnnotationContext;
+	selection: BrowserAnnotationSelection;
 };
 
 export type BrowserAnnotationSubmitPayload = BrowserAnnotationPageSubmitPayload & {
@@ -106,13 +110,31 @@ export function createBrowserAnnotationContext(element: Element): BrowserAnnotat
 }
 
 export function formatBrowserAnnotationMessage(payload: BrowserAnnotationSubmitPayload): string {
-	const context = payload.context;
+	const selection = payload.selection;
 	const lines = [
-		"The user selected an element in the AO browser preview and asked for a change.",
+		selection.kind === "element"
+			? "The user selected an element in the AO browser preview and asked for a change."
+			: `The user selected ${selection.contexts.length} element${selection.contexts.length === 1 ? "" : "s"} in the AO browser preview and asked for a change.`,
 		"",
 		"Change request:",
 		compactText(payload.instruction, MAX_INSTRUCTION_LENGTH) || "(empty)",
 		"",
+		...(selection.kind === "element"
+			? elementSelectionLines(selection.context)
+			: elementsSelectionLines(selection.contexts)),
+		"",
+		"Execution constraints:",
+		"- Make the smallest source change that satisfies the request.",
+		"- Do not start, restart, or background a dev server.",
+		"- Do not run watch-mode or long-running commands.",
+		"- If verification is needed, use a finite command only; otherwise rely on the existing preview watcher or dev-server refresh.",
+	];
+
+	return limitMessage(lines.join("\n"), MAX_BROWSER_ANNOTATION_MESSAGE_LENGTH);
+}
+
+function elementSelectionLines(context: BrowserAnnotationContext): string[] {
+	return [
 		"Selected element context:",
 		`- URL: ${context.url || "(unknown)"}`,
 		context.title ? `- Title: ${compactText(context.title, 160)}` : null,
@@ -129,15 +151,17 @@ export function formatBrowserAnnotationMessage(payload: BrowserAnnotationSubmitP
 		Object.keys(context.computedStyle).length > 0
 			? `- Computed style: ${compactText(JSON.stringify(context.computedStyle), 700)}`
 			: null,
-		"",
-		"Execution constraints:",
-		"- Make the smallest source change that satisfies the request.",
-		"- Do not start, restart, or background a dev server.",
-		"- Do not run watch-mode or long-running commands.",
-		"- If verification is needed, use a finite command only; otherwise rely on the existing preview watcher or dev-server refresh.",
 	].filter((line): line is string => line !== null);
+}
 
-	return limitMessage(lines.join("\n"), MAX_BROWSER_ANNOTATION_MESSAGE_LENGTH);
+function elementsSelectionLines(contexts: BrowserAnnotationContext[]): string[] {
+	const url = contexts.find((context) => context.url)?.url || "(unknown)";
+	const items = contexts.map((context, index) => {
+		const bounds = `x=${context.rect.x}, y=${context.rect.y}, width=${context.rect.width}, height=${context.rect.height}`;
+		const text = context.visibleText ? ` — ${compactText(context.visibleText, 160)}` : "";
+		return `${index + 1}. ${elementSummary(context)} (selector: ${context.selector}, bounds: ${bounds})${text}`;
+	});
+	return [`Selected element${contexts.length === 1 ? "" : "s"} (${contexts.length}) at ${url}:`, ...items];
 }
 
 function elementSummary(context: BrowserAnnotationContext): string {

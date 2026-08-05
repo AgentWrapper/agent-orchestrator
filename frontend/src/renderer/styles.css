@@ -450,13 +450,22 @@
 	border-radius: 0;
 }
 
-/* Session chrome is portaled above the sidebar/content row. Join that topbar
- * to the center surface so the workspace reads as one continuous frame. */
+/* Session topbar now lives inside .center-panel-surface. When it's rendered
+ * there, drop the outer border and radius (the surface provides both) and keep
+ * only a bottom divider separating the tabs from the terminal below.
+ * When it's rendered in-place (native fullscreen), keep the legacy surface
+ * treatment so the topbar still looks like a standalone panel header. */
 .session-topbar-surface {
 	overflow: hidden;
 	border: 1px solid var(--color-border-strong);
 	border-radius: var(--radius-center-panel) var(--radius-center-panel) 0 0;
 	background-color: var(--color-bg-primary);
+}
+
+.center-panel-surface .session-topbar-surface {
+	border: none;
+	border-bottom: 1px solid var(--color-border-strong);
+	border-radius: 0;
 }
 
 /* When the sidebar is off-canvas, clear only the fixed navigation cluster.
@@ -477,13 +486,14 @@
 }
 
 .center-panel-shell.center-panel-shell--session {
-	padding-top: 0;
+	/* No padding override: session pages use the same inset as other pages now
+	 * that SessionTopbarHost lives inside the surface. Class is kept for
+	 * identification (e.g. tests). */
 }
 
 .center-panel-shell--session > .center-panel-surface {
-	border-top: 0;
-	border-top-left-radius: 0;
-	border-top-right-radius: 0;
+	/* Session surface uses standard border-radius; topbar clips to rounded corners
+	 * inside the surface. No override needed. */
 }
 
 .center-panel-titlebar {
@@ -585,20 +595,17 @@ button.settings-row-bar {
 
 .review-run-controls-container {
 	container-type: inline-size;
+	width: 100%;
 }
 
 .review-run-controls {
 	flex-wrap: nowrap;
+	width: 100%;
 }
 
-@container (max-width: 28rem) {
-	.review-run-controls {
-		align-items: flex-start;
-		flex-direction: column;
-	}
-
-	.review-run-agent-select {
-		width: 100%;
+@container (max-width: 20rem) {
+	.review-run-action-label {
+		display: none;
 	}
 }
 
@@ -695,6 +702,11 @@ button.settings-row-bar {
 		color: var(--color-text-settings-row);
 		outline: none;
 	}
+}
+
+@utility settings-model-control {
+	width: var(--size-settings-inline-input-max);
+	max-width: var(--size-settings-inline-input-max);
 }
 
 @utility settings-row-value {
@@ -860,18 +872,20 @@ button.settings-row-bar {
 
 @utility import-close-button {
 	position: absolute;
-	top: var(--space-3);
-	right: var(--space-3);
+	top: var(--size-import-modal-padding);
+	right: var(--size-import-modal-padding);
 	z-index: calc(var(--z-chrome) + 1);
 	display: grid;
-	width: calc(var(--spacing) * 5);
-	height: calc(var(--spacing) * 5);
+	width: var(--size-control-md);
+	height: var(--size-control-md);
 	place-items: center;
+	border-radius: var(--radius-md);
 	color: var(--color-text-import-muted);
-	transition-property: color;
+	transition-property: color, background-color;
 	transition-duration: var(--duration-normal);
 
 	&:hover {
+		background-color: var(--color-interactive-hover);
 		color: var(--color-text-import-title);
 	}
 
@@ -1780,14 +1794,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Collapse/expand animation for the inspector panel: rrp v4 drives panel
- * sizes via flex-grow, which is animatable. Suppress it while the separator
- * is actively dragged so resizing tracks the pointer 1:1. */
+/* Do not animate the inspector's flex-grow. The sibling is a live xterm WebGL
+ * surface: interpolating this value makes ResizeObserver fit the terminal at
+ * every intermediate width, reallocating the renderer and eventually causing
+ * a PTY/SIGWINCH repaint. The inspector still opens and closes atomically, and
+ * direct separator drags remain interactive. */
 .session-split #inspector[data-panel] {
-	transition: flex-grow 0.2s linear;
-}
-
-.session-split:has([data-separator="active"]) #inspector[data-panel] {
 	transition: none;
 }
 

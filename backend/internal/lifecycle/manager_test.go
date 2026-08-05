@@ -1195,62 +1195,8 @@ func TestPRObservation_DedupPersistsAcrossPRs(t *testing.T) {
 	}
 }
 
-func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = working("mer-1")
-	msg := &fakeMessenger{}
-	m := New(st, msg)
-	result := ReviewResult{
-		RunID:          "run-1",
-		WorkerID:       "mer-1",
-		PRURL:          "https://github.com/o/r/pull/1",
-		TargetSHA:      "sha1",
-		Verdict:        domain.VerdictChangesRequested,
-		Body:           "fix the bug",
-		GithubReviewID: "98\x1b[2J765",
-	}
-
-	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
-		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
-	}
-	got := msg.msgs[0]
-	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("AO review nudge missing %q: %q", want, got)
-		}
-	}
-	if strings.Contains(got, "\x1b") {
-		t.Fatalf("AO review nudge should sanitize control bytes: %q", got)
-	}
-	if st.signatures[result.PRURL] == "" {
-		t.Fatal("AO review nudge did not persist sendOnce signature")
-	}
-
-	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("repeat ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
-		t.Fatalf("repeat should report delivered outcome and suppress duplicate send, outcome=%q msgs=%v", outcome, msg.msgs)
-	}
-
-	result.RunID = "run-2"
-	result.TargetSHA = "sha2"
-	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("new pass ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 2 {
-		t.Fatalf("new review pass should send again, outcome=%q msgs=%v", outcome, msg.msgs)
-	}
-}
-
-func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
-	// The worker is working at ApplyReviewResult's entry guard (read #1) but a
+func TestApplyReviewBatchSuppressedByJITGuardIsNotDelivered(t *testing.T) {
+	// The worker is working at ApplyReviewBatch's entry guard (read #1) but a
 	// permission dialog stores blocked before sendOnce's just-in-time re-read
 	// (read #2). The nudge must be SUPPRESSED, and the outcome must be
 	// ReviewDeliveryNoop — NOT Sent — so the caller does not stamp the run
@@ -1261,13 +1207,13 @@ func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(bst, msg)
 	result := ReviewResult{
-		RunID: "run-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
+		RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
 		TargetSHA: "sha1", Verdict: domain.VerdictChangesRequested, Body: "fix the bug",
 	}
 
-	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
+	outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", []ReviewResult{result})
 	if err != nil {
-		t.Fatalf("ApplyReviewResult: %v", err)
+		t.Fatalf("ApplyReviewBatch: %v", err)
 	}
 	if outcome != ReviewDeliveryNoop {
 		t.Fatalf("outcome = %q, want no_op (suppressed nudge must not be stamped delivered)", outcome)
@@ -1339,23 +1285,12 @@ func TestApplyReviewBatchNoopsWithoutDeliverableResults(t *testing.T) {
 	}
 }
 
-func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
-	deliveredAt := time.Unix(100, 0).UTC()
+func TestApplyReviewBatchNoopsWhenWorkerCannotBeNudged(t *testing.T) {
 	tests := []struct {
 		name   string
 		result ReviewResult
 		rec    domain.SessionRecord
 	}{
-		{
-			name:   "approved",
-			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictApproved},
-			rec:    working("mer-1"),
-		},
-		{
-			name:   "already delivered",
-			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested, DeliveredAt: &deliveredAt},
-			rec:    working("mer-1"),
-		},
 		{
 			name:   "terminated worker",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
@@ -1376,12 +1311,12 @@ func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m, st, msg := newManager()
 			st.sessions["mer-1"] = tt.rec
-			outcome, err := m.ApplyReviewResult(ctx, "mer-1", tt.result)
+			outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", []ReviewResult{tt.result})
 			if err != nil {
-				t.Fatalf("ApplyReviewResult: %v", err)
+				t.Fatalf("ApplyReviewBatch: %v", err)
 			}
 			if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
-				t.Fatalf("irrelevant result should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
+				t.Fatalf("non-nudgeable worker should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
 			}
 		})
 	}

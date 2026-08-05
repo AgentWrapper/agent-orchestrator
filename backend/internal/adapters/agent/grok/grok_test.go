@@ -34,13 +34,13 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
+func TestGetConfigSpecReportsModel(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	if len(spec.Fields) != 1 || spec.Fields[0].Key != "model" {
+		t.Fatalf("unexpected fields: %#v", spec.Fields)
 	}
 }
 
@@ -85,6 +85,17 @@ func TestGetLaunchCommand(t *testing.T) {
 		t.Fatalf("cmd = %#v must append rules, not override Grok's system prompt", cmd)
 	}
 	assertNoPromptFlag(t, cmd)
+}
+
+func TestGetLaunchCommandForwardsModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "grok"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{Config: ports.AgentConfig{Model: "  grok-code-fast  "}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"grok", "--no-auto-update", "--model", "grok-code-fast"}; !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
 }
 
 func TestGetLaunchCommandDefaultPerms(t *testing.T) {
