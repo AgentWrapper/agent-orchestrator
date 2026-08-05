@@ -62,6 +62,7 @@ var shippedMigrations = map[int64]string{
 	42: "0042_review_run_unique_per_harness.sql",
 	43: "0043_add_session_pinned.sql",
 	44: "0044_pr_reviews_target_sha.sql",
+	45: "0045_review_run_trigger_source.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -208,6 +209,7 @@ INSERT INTO projects (
 		"sessions":      {"diff_base_sha", "diff_base_ref", "reviewer_harness"},
 		"notifications": {"resolved_at"},
 		"pr_reviews":    {"target_sha"},
+		"review_run":    {"trigger_source"},
 	} {
 		for _, column := range want {
 			var columns int

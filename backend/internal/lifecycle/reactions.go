@@ -356,9 +356,6 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	if err := m.ApplyPRObservation(ctx, id, scmToPRObservation(o)); err != nil {
 		return err
 	}
-	if err := m.applyReviewerAutoStartPolicy(ctx, id, o); err != nil {
-		return err
-	}
 	intent, err := m.notificationIntentForCurrentSCM(ctx, id, o)
 	if err != nil {
 		return err
@@ -366,64 +363,6 @@ func (m *Manager) ApplySCMObservation(ctx context.Context, id domain.SessionID, 
 	m.emitNotification(ctx, intent)
 	m.resolveNotifications(ctx, readyToMergeResolutions(id, o, m.clock())...)
 	return nil
-}
-
-// ApplyReviewerAutoStart evaluates only the reviewer auto-start policy. The SCM
-// observer uses this for unchanged open PR observations after the durable PR row
-// already exists, so enabling the project setting can start reviewers without
-// replaying unrelated CI/review/merge notification reactions.
-func (m *Manager) ApplyReviewerAutoStart(ctx context.Context, id domain.SessionID, o ports.SCMObservation) error {
-	if !o.Fetched {
-		return nil
-	}
-	return m.applyReviewerAutoStartPolicy(ctx, id, o)
-}
-
-func (m *Manager) applyReviewerAutoStartPolicy(ctx context.Context, id domain.SessionID, o ports.SCMObservation) error {
-	if o.PR.Merged || o.PR.Closed || o.PR.Draft {
-		return nil
-	}
-	m.mu.Lock()
-	trigger := m.reviewerAutoStart
-	m.mu.Unlock()
-	if trigger == nil {
-		return nil
-	}
-	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok {
-		return err
-	}
-	if rec.IsTerminated || rec.Kind != domain.KindWorker {
-		return nil
-	}
-	project, ok, err := m.store.GetProject(ctx, string(rec.ProjectID))
-	if err != nil || !ok || !project.Config.AutoReviewPullRequests {
-		return err
-	}
-	reviewed, err := m.prHeadAlreadyReviewed(ctx, o.PR.URL, o.PR.HeadSHA)
-	if err != nil || reviewed {
-		return err
-	}
-	return trigger(ctx, id)
-}
-
-func (m *Manager) prHeadAlreadyReviewed(ctx context.Context, prURL, headSHA string) (bool, error) {
-	if prURL == "" || headSHA == "" {
-		return false, nil
-	}
-	reviews, err := m.store.ListPRReviews(ctx, prURL)
-	if err != nil {
-		return false, err
-	}
-	for _, review := range reviews {
-		if review.TargetSHA != headSHA {
-			continue
-		}
-		if review.State == domain.ReviewApproved || review.State == domain.ReviewChangesRequest {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // readyToMergeResolutions reports the ready-to-merge notification this

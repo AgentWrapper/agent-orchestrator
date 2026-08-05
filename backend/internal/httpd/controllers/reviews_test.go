@@ -44,6 +44,10 @@ func (f *fakeReviewService) Trigger(
 	return reviewcore.TriggerResult{Run: domain.ReviewRun{ID: "run-1"}, Created: true}, nil
 }
 
+func (f *fakeReviewService) TriggerAuto(context.Context, domain.SessionID, domain.ReviewerHarness) (reviewcore.TriggerResult, error) {
+	return reviewcore.TriggerResult{}, nil
+}
+
 func (f *fakeReviewService) Submit(context.Context, domain.SessionID, string, domain.ReviewVerdict, string, string) (domain.ReviewRun, error) {
 	return domain.ReviewRun{}, nil
 }

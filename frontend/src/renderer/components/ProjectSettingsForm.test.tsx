@@ -341,7 +341,7 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
-		expect(putMock.mock.calls[0]?.[1]?.body.config.autoReviewPullRequests).toBe(true);
+			expect(putMock.mock.calls[0]?.[1]?.body.config.autoReview).toEqual({ enabled: true });
 	});
 
 	it("rejects a blank project name before sending the settings update", async () => {
@@ -499,7 +499,7 @@ describe("ProjectSettingsForm", () => {
 					permissions: "auto",
 				},
 				reviewers: [{ harness: "codex" }],
-				autoReviewPullRequests: true,
+				autoReview: { enabled: true },
 				trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
 			},
 		});

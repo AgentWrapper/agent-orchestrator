@@ -930,7 +930,7 @@ describe("SessionInspector summary reviews", () => {
 							path: "/repo",
 							repo: "my-app",
 							defaultBranch: "main",
-							config: { reviewers: [{ harness: "codex" }], autoReviewPullRequests: true },
+							config: { reviewers: [{ harness: "codex" }], autoReview: { enabled: true } },
 						},
 					},
 				};
@@ -969,7 +969,7 @@ describe("SessionInspector summary reviews", () => {
 							path: "/repo",
 							repo: "my-app",
 							defaultBranch: "main",
-							config: { reviewers: [{ harness: "codex" }], autoReviewPullRequests: true },
+							config: { reviewers: [{ harness: "codex" }], autoReview: { enabled: true } },
 						},
 					},
 				};

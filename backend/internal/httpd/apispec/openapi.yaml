@@ -3121,6 +3121,11 @@ components:
       - state
       - lastActivityAt
       type: object
+    DomainAutoReviewConfig:
+      properties:
+        enabled:
+          type: boolean
+      type: object
     DomainReviewerConfig:
       properties:
         harness:
@@ -3606,8 +3611,8 @@ components:
           type: string
         agentRulesFile:
           type: string
-        autoReviewPullRequests:
-          type: boolean
+        autoReview:
+          $ref: '#/components/schemas/DomainAutoReviewConfig'
         containerReap:
           $ref: '#/components/schemas/ContainerReapConfig'
         defaultBranch:
@@ -3845,6 +3850,11 @@ components:
           type: string
         targetSha:
           type: string
+        triggerSource:
+          enum:
+          - manual
+          - auto
+          type: string
         verdict:
           type: string
       required:
@@ -3853,6 +3863,7 @@ components:
       - sessionId
       - batchId
       - harness
+      - triggerSource
       - prUrl
       - targetSha
       - status

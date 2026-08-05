@@ -37,7 +37,10 @@ type ReviewRun struct {
 	// legacy/single-run delivery.
 	BatchID string          `json:"batchId"`
 	Harness ReviewerHarness `json:"harness"`
-	PRURL   string          `json:"prUrl"`
+	// TriggerSource records whether this pass was requested by a user or by the
+	// daemon auto-review coordinator.
+	TriggerSource ReviewTriggerSource `json:"triggerSource" enum:"manual,auto"`
+	PRURL         string              `json:"prUrl"`
 	// TargetSHA is the PR head commit this pass reviewed.
 	TargetSHA string          `json:"targetSha"`
 	Status    ReviewRunStatus `json:"status"`
@@ -54,6 +57,14 @@ type ReviewRun struct {
 	CreatedAt      time.Time  `json:"createdAt"`
 	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
 }
+
+// ReviewTriggerSource identifies who initiated a review pass.
+type ReviewTriggerSource string
+
+const (
+	ReviewTriggerManual ReviewTriggerSource = "manual"
+	ReviewTriggerAuto   ReviewTriggerSource = "auto"
+)
 
 // ReviewRunStatus is the lifecycle state of a single review pass.
 type ReviewRunStatus string

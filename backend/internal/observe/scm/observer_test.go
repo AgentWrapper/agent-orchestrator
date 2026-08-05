@@ -234,10 +234,9 @@ func (p *fakeProvider) FetchReviewThreads(_ context.Context, ref ports.SCMPRRef)
 }
 
 type fakeLifecycle struct {
-	observed             []ports.SCMObservation
-	reviewerAutoStarted  []ports.SCMObservation
-	err                  error
-	reviewerAutoStartErr error
+	observed          []ports.SCMObservation
+	autoReviewStarted []domain.SessionID
+	err               error
 }
 
 func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionID, obs ports.SCMObservation) error {
@@ -248,16 +247,15 @@ func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionI
 	return nil
 }
 
-func (l *fakeLifecycle) ApplyReviewerAutoStart(_ context.Context, _ domain.SessionID, obs ports.SCMObservation) error {
-	if l.reviewerAutoStartErr != nil {
-		return l.reviewerAutoStartErr
-	}
-	l.reviewerAutoStarted = append(l.reviewerAutoStarted, obs)
-	return nil
-}
-
 func newTestObserver(store *fakeStore, provider *fakeProvider, lc Lifecycle, now time.Time) *Observer {
-	return New(provider, store, lc, Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128, IdentityResolver: provider})
+	cfg := Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128, IdentityResolver: provider}
+	if f, ok := lc.(*fakeLifecycle); ok {
+		cfg.AutoReview = func(_ context.Context, id domain.SessionID) error {
+			f.autoReviewStarted = append(f.autoReviewStarted, id)
+			return nil
+		}
+	}
+	return New(provider, store, lc, cfg)
 }
 
 func TestDispatchOrderIsDeterministic(t *testing.T) {
@@ -1164,12 +1162,11 @@ func TestPoll_UnchangedHashesNotifyReviewerAutoStartWithPRHead(t *testing.T) {
 	if len(store.writes) != 0 || len(lc.observed) != 0 {
 		t.Fatalf("unchanged reviewer auto-start wrote/notified full lifecycle: writes=%d observed=%d", len(store.writes), len(lc.observed))
 	}
-	if len(lc.reviewerAutoStarted) != 1 {
-		t.Fatalf("reviewer auto-start evaluations = %d, want 1", len(lc.reviewerAutoStarted))
+	if len(lc.autoReviewStarted) != 1 {
+		t.Fatalf("auto-review evaluations = %d, want 1", len(lc.autoReviewStarted))
 	}
-	got := lc.reviewerAutoStarted[0]
-	if got.PR.URL != obsValue.PR.URL || got.PR.HeadSHA != obsValue.PR.HeadSHA {
-		t.Fatalf("reviewer auto-start observation PR/head = %s/%s, want %s/%s", got.PR.URL, got.PR.HeadSHA, obsValue.PR.URL, obsValue.PR.HeadSHA)
+	if got := lc.autoReviewStarted[0]; got != "p-1" {
+		t.Fatalf("auto-review session = %s, want p-1", got)
 	}
 }
 

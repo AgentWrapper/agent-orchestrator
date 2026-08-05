@@ -29,10 +29,6 @@ type sessionStore interface {
 	// when no open PR remains and at least one merged) and to suppress
 	// merge-conflict nudges on PRs stacked behind an open parent.
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
-	// ListPRReviews returns submitted provider review summaries for a PR. The
-	// reviewer auto-start policy reads this to avoid re-reviewing a PR head that
-	// already has review coverage.
-	ListPRReviews(ctx context.Context, prURL string) ([]domain.PullRequestReview, error)
 	// GetPRLastNudgeSignature / UpdatePRLastNudgeSignature persist the
 	// reaction-dedup map so nudges survive a daemon restart.
 	GetPRLastNudgeSignature(ctx context.Context, prURL string) (string, error)
@@ -110,7 +106,6 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
-	reviewerAutoStart    func(context.Context, domain.SessionID) error
 	containers           ports.ContainerReaper
 	projects             projectConfigLoader
 
@@ -166,15 +161,6 @@ func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.completionTerminator = terminator
-}
-
-// SetReviewerAutoStart late-binds the reviewer service after both lifecycle and
-// review services are constructed. SCM polling is only the trigger point; the
-// invoked behavior belongs to the reviewer flow and uses its normal idempotency.
-func (m *Manager) SetReviewerAutoStart(trigger func(context.Context, domain.SessionID) error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.reviewerAutoStart = trigger
 }
 
 // PrepareLaunch registers a supervised generation before the runtime starts.

@@ -900,7 +900,12 @@ function ReviewsSection({
 		},
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
-	const autoReviewEnabled = projectConfigQuery.data?.autoReviewPullRequests === true;
+	const autoReviewEnabled = projectConfigQuery.data?.autoReview?.enabled === true;
+	const autoReviewStatus = reviewStates.some((state) => state.status === "changes_requested")
+		? t("inspector.autoReviewNextCommit")
+		: session.activity?.state === "idle"
+			? t("inspector.autoReviewAfterIdle")
+			: t("inspector.autoReviewWaitingIdle");
 	const scmSummary = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
@@ -921,9 +926,11 @@ function ReviewsSection({
 			    behind the other when the point is to read them together. */}
 			<Section
 				action={
-					<span className={cn("normal-case tracking-normal", autoReviewEnabled ? "text-success" : "text-passive")}>
-						{autoReviewEnabled ? "Auto-review on" : "Auto-review off"}
-					</span>
+					autoReviewEnabled ? (
+						<span className="normal-case tracking-normal text-passive">
+							<span className="text-success">{t("inspector.autoReviewOn")}</span> · {autoReviewStatus}
+						</span>
+					) : undefined
 				}
 				surface
 				title={t("inspector.aoCodeReviews")}
@@ -1068,6 +1075,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 							sessionId: session.id,
 							status: "delivered",
 							targetSha,
+							triggerSource: "manual" as const,
 							verdict: pr.review === "approved" ? "approved" : "changes_requested",
 						}
 					: undefined;
@@ -1083,6 +1091,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 				sessionId: session.id,
 				status: "complete",
 				targetSha,
+				triggerSource: "manual" as const,
 				verdict: "",
 				...over,
 			});
@@ -1143,6 +1152,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 			sessionId: session.id,
 			status: "delivered",
 			targetSha: state.targetSha,
+			triggerSource: "manual" as const,
 		};
 		return [
 			{

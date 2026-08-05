@@ -102,7 +102,7 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 		model: config.agentConfig?.model ?? "",
 		permissions: config.agentConfig?.permissions ?? "",
 		reviewerHarness: config.reviewers?.[0]?.harness ?? "",
-		autoReviewPullRequests: config.autoReviewPullRequests ?? false,
+		autoReviewEnabled: config.autoReview?.enabled ?? false,
 		intakeEnabled: intake.enabled ?? false,
 		intakeRepo: intake.repo ?? "",
 		intakeAssignee: intake.assignee ?? "",
@@ -161,7 +161,7 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 							permissions: form.permissions || undefined,
 						}),
 						reviewers: form.reviewerHarness ? [{ harness: form.reviewerHarness }] : undefined,
-						autoReviewPullRequests: form.autoReviewPullRequests || undefined,
+						autoReview: form.autoReviewEnabled ? { enabled: true } : undefined,
 						trackerIntake: buildIntake(intakeForm),
 					};
 			const { error } = await apiClient.PUT("/api/v1/projects/{id}", {
@@ -379,8 +379,8 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 								<SettingsRow icon={Shield} label={t("settings.project.autoReviewPullRequests")}>
 									<Switch
 										aria-label={t("settings.project.autoReviewPullRequests")}
-										checked={form.autoReviewPullRequests}
-										onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReviewPullRequests: checked }))}
+										checked={form.autoReviewEnabled}
+										onCheckedChange={(checked) => setForm((f) => ({ ...f, autoReviewEnabled: checked }))}
 									/>
 								</SettingsRow>
 							</SettingsSection>
@@ -549,7 +549,7 @@ function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {
 	const {
 		defaultBranch: _defaultBranch,
 		reviewers: _reviewers,
-		autoReviewPullRequests: _autoReviewPullRequests,
+		autoReview: _autoReview,
 		trackerIntake: _trackerIntake,
 		...supported
 	} = config;

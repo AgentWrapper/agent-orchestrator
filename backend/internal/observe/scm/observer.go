@@ -71,10 +71,6 @@ type Lifecycle interface {
 	ApplySCMObservation(ctx context.Context, sessionID domain.SessionID, obs ports.SCMObservation) error
 }
 
-type reviewerAutoStartLifecycle interface {
-	ApplyReviewerAutoStart(ctx context.Context, sessionID domain.SessionID, obs ports.SCMObservation) error
-}
-
 type credentialChecker interface {
 	SCMCredentialsAvailable(ctx context.Context) (bool, error)
 }
@@ -93,6 +89,9 @@ type Config struct {
 	CacheMax int
 	// IdentityResolver resolves the active SCM account lazily. Nil preserves branch-based discovery.
 	IdentityResolver ports.SCMIdentityResolver
+	// AutoReview requests a best-effort eligibility evaluation after PR facts
+	// are persisted. The periodic coordinator sweep remains authoritative.
+	AutoReview func(context.Context, domain.SessionID) error
 }
 
 // ObserverCache stores provider ETags and review polling timestamps in memory.
@@ -160,6 +159,7 @@ type Observer struct {
 	disabled bool
 	// identityResolver is the explicitly wired source of the active SCM account.
 	identityResolver ports.SCMIdentityResolver
+	autoReview       func(context.Context, domain.SessionID) error
 	// Cache holds bounded in-memory provider ETags and review poll timestamps.
 	Cache ObserverCache
 }
@@ -167,7 +167,7 @@ type Observer struct {
 // New constructs an Observer with default cadence/cache settings for zero
 // values in cfg.
 func New(provider Provider, store Store, lifecycle Lifecycle, cfg Config) *Observer {
-	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, identityResolver: cfg.IdentityResolver, Cache: newCache(cfg.CacheMax)}
+	o := &Observer{provider: provider, store: store, lifecycle: lifecycle, tick: cfg.Tick, reviewInterval: cfg.ReviewInterval, clock: cfg.Clock, logger: cfg.Logger, identityResolver: cfg.IdentityResolver, autoReview: cfg.AutoReview, Cache: newCache(cfg.CacheMax)}
 	if o.tick <= 0 {
 		o.tick = DefaultTickInterval
 	}
@@ -371,13 +371,9 @@ func (o *Observer) Poll(ctx context.Context) error {
 		}
 		prepared := o.prepareForPersistence(obs, local, opts, now)
 		if !prepared.Changed.Metadata && !prepared.Changed.CI && !prepared.Changed.Review {
-			if o.lifecycle != nil && shouldNotifyReviewerAutoStart(prepared) {
-				if starter, ok := o.lifecycle.(reviewerAutoStartLifecycle); ok {
-					if err := starter.ApplyReviewerAutoStart(ctx, subj.session.ID, prepared); err != nil {
-						o.logger.Error("scm observer: reviewer auto-start failed", "session", subj.session.ID, "pr", firstNonEmpty(prepared.PR.URL, prepared.PR.HTMLURL, local.URL), "err", err)
-						markRepoRefreshFailed(subj.repo)
-						continue
-					}
+			if o.autoReview != nil && shouldNotifyReviewerAutoStart(prepared) {
+				if err := o.autoReview(ctx, subj.session.ID); err != nil {
+					o.logger.Error("scm observer: auto-review evaluation failed", "session", subj.session.ID, "pr", firstNonEmpty(prepared.PR.URL, prepared.PR.HTMLURL, local.URL), "err", err)
 				}
 			}
 			prRefreshOK[key] = true
@@ -418,6 +414,11 @@ func (o *Observer) Poll(ctx context.Context) error {
 				o.logger.Error("scm observer: DB lifecycle acknowledgement failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
 				markRepoRefreshFailed(subj.repo)
 				continue
+			}
+		}
+		if o.autoReview != nil && shouldNotifyReviewerAutoStart(prepared) {
+			if err := o.autoReview(ctx, subj.session.ID); err != nil {
+				o.logger.Error("scm observer: auto-review evaluation failed", "session", subj.session.ID, "pr", finalPR.URL, "err", err)
 			}
 		}
 		prRefreshOK[key] = true

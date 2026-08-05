@@ -26,6 +26,7 @@ var (
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {
 	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
+	TriggerAuto(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
@@ -93,6 +94,11 @@ func (s *Service) Trigger(
 	harness domain.ReviewerHarness,
 ) (reviewcore.TriggerResult, error) {
 	return s.engine.Trigger(ctx, workerID, harness)
+}
+
+// TriggerAuto starts a daemon-initiated review pass.
+func (s *Service) TriggerAuto(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error) {
+	return s.engine.TriggerWithSource(ctx, workerID, harness, domain.ReviewTriggerAuto)
 }
 
 // Cancel stops the live reviewer pane and marks running review passes as failed.
