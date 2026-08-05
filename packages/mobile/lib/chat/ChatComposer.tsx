@@ -168,7 +168,12 @@ export function ChatComposer({
 			setPicker(undefined);
 			setQuery("");
 		}
-	}, [cursor, filePaths.length, skills.length, text, trigger]);
+	// `trigger` is the result of this effect, not an input to it. Depending on it
+	// makes every detected token allocate a new trigger object, which recursively
+	// re-runs the effect until React reports "Maximum update depth exceeded". It
+	// also immediately reopens a picker the user just dismissed. Re-evaluate only
+	// when the composer text/caret or the available suggestion sources change.
+	}, [cursor, filePaths.length, skills.length, text]);
 	return (
 		<View style={styles.dock}>
 			{voice.state === "starting" || voice.state === "recording" ? <View style={styles.voice}><Feather name="mic" size={12} color={t.red} /><Text style={styles.voiceText}>{voice.partial || (voice.state === "starting" ? "Keep holding…" : "Listening…")}</Text></View> : null}
