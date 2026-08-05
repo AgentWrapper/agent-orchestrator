@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -13,187 +14,228 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// Store is the storage dependency ActionService needs to resolve a PR and
-// its unresolved-comment signal before acting on it.
-type Store interface {
-	GetPRByNumber(ctx context.Context, number int) (domain.PullRequest, bool, error)
-	GetPRByRepoAndNumber(ctx context.Context, repo string, number int) (domain.PullRequest, bool, error)
-	GetPRReviewCommentsUnresolved(ctx context.Context, url string) (bool, error)
-	ListChecks(ctx context.Context, prURL string) ([]domain.PullRequestCheck, error)
+var (
+	prNumberPattern = regexp.MustCompile(`^[1-9]\d*$`)
+	gitSHAPattern   = regexp.MustCompile(`^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$`)
+)
+
+type actionStore interface {
+	GetPR(ctx context.Context, url string) (domain.PullRequest, bool, error)
 	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
 }
 
-// SCMMerger is the SCM-provider dependency that performs the real merge.
-type SCMMerger interface {
-	MergePR(ctx context.Context, owner, repo string, number int, headSHA, method string) (string, error)
-	RepoMergeSettings(ctx context.Context, owner, repo string) (ports.SCMRepoMergeSettings, error)
+type actionReader interface {
+	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
+	FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (ports.SCMReviewObservation, error)
 }
 
-// ActionService implements ActionManager (declared in actions.go). It reuses
-// the lifecycle interface declared in manager.go (same package) so a direct
-// merge gets the same termination/cleanup reaction as an SCM-observer-driven
-// merge, instead of waiting for the next poll to notice the PR is merged.
+// ActionDeps contains the storage and SCM boundaries used by ActionService.
+type ActionDeps struct {
+	Store     actionStore
+	Merger    ports.SCMMerger
+	Reader    actionReader
+	Lifecycle lifecycle // may be nil; when nil the post-merge reaction is skipped
+}
+
+// ActionService validates current pull request state before applying mutations.
 type ActionService struct {
-	store     Store
-	scm       SCMMerger // may be nil if the daemon started without SCM credentials
-	lifecycle lifecycle // may be nil in tests that don't care about post-merge cleanup
+	store     actionStore
+	merger    ports.SCMMerger
+	reader    actionReader
+	lifecycle lifecycle
 }
 
 var _ ActionManager = (*ActionService)(nil)
 
-// NewActionService wires the real store/SCM/lifecycle dependencies. scm may be
-// nil (e.g. no GitHub token at startup); Merge reports ErrPRPreconditions in
-// that case rather than panicking. lifecycle may be nil, in which case Merge
-// skips the post-merge reaction and cleanup falls back to the next SCM
-// observer pass.
-func NewActionService(store Store, scm SCMMerger, lifecycle lifecycle) *ActionService {
-	return &ActionService{store: store, scm: scm, lifecycle: lifecycle}
+// NewActionService builds the guarded pull request action service.
+func NewActionService(deps ActionDeps) *ActionService {
+	return &ActionService{store: deps.Store, merger: deps.Merger, reader: deps.Reader, lifecycle: deps.Lifecycle}
 }
 
-// Merge merges the PR identified by id, the PR's provider number (matches the
-// documented OpenAPI contract and the `ao pr merge <pr-number>` CLI). Numbers
-// are only unique within one repo; GetPRByNumber reports ErrPRAmbiguous if
-// this AO instance tracks the same number across more than one repo.
-func (s *ActionService) Merge(ctx context.Context, id, repo string) (MergeResult, error) {
-	if s.scm == nil {
-		return MergeResult{}, fmt.Errorf("%w: SCM provider unavailable", ErrPRPreconditions)
+// Merge re-fetches authoritative SCM state and then squash-merges only the
+// exact head the user saw. The provider repeats the SHA guard atomically.
+func (s *ActionService) Merge(ctx context.Context, request MergeRequest) (MergeResult, error) {
+	prNumber, err := parsePRNumber(request.PRID)
+	if err != nil || strings.TrimSpace(request.PRURL) == "" {
+		return MergeResult{}, fmt.Errorf("%w: invalid pull request identity", ErrInvalidPR)
 	}
-	number, convErr := strconv.Atoi(strings.TrimSpace(id))
-	if convErr != nil || number <= 0 {
-		return MergeResult{}, fmt.Errorf("%w: invalid PR number %q", ErrPRNotFound, id)
+	if s.store == nil || s.merger == nil || s.reader == nil {
+		return MergeResult{}, errors.New("pr: merge action is not configured")
+	}
+	expectedHead := strings.ToLower(strings.TrimSpace(request.ExpectedHeadSHA))
+	if !gitSHAPattern.MatchString(expectedHead) {
+		return MergeResult{}, fmt.Errorf("%w: invalid expected head", ErrInvalidPR)
 	}
 
-	var pr domain.PullRequest
-	var ok bool
-	var err error
-	if repo = strings.TrimSpace(repo); repo != "" {
-		pr, ok, err = s.store.GetPRByRepoAndNumber(ctx, repo, number)
-	} else {
-		pr, ok, err = s.store.GetPRByNumber(ctx, number)
-	}
+	tracked, ok, err := s.store.GetPR(ctx, request.PRURL)
 	if err != nil {
-		if errors.Is(err, domain.ErrPRAmbiguous) {
-			return MergeResult{}, fmt.Errorf("%w: %w", ErrPRPreconditions, err)
-		}
-		return MergeResult{}, err
+		return MergeResult{}, fmt.Errorf("load pull request: %w", err)
 	}
-	if !ok {
+	if !ok || tracked.Number != prNumber {
 		return MergeResult{}, ErrPRNotFound
 	}
-	if pr.Merged || pr.Closed {
+	if tracked.Draft || tracked.Merged || tracked.Closed {
+		return MergeResult{}, ErrPRNotMergeable
+	}
+	if !gitSHAPattern.MatchString(strings.TrimSpace(tracked.HeadSHA)) {
+		return MergeResult{}, fmt.Errorf("%w: pull request head is unknown", ErrPRPreconditions)
+	}
+	if !strings.EqualFold(expectedHead, tracked.HeadSHA) {
+		return MergeResult{}, ErrPRHeadChanged
+	}
+
+	repo, ok := scmRepoForPR(tracked)
+	if !ok {
+		return MergeResult{}, fmt.Errorf("%w: pull request repository is unknown", ErrPRPreconditions)
+	}
+	ref := ports.SCMPRRef{Repo: repo, Number: tracked.Number, URL: tracked.URL}
+	fresh, review, err := s.fetchMergeReadiness(ctx, ref)
+	if err != nil {
+		return MergeResult{}, err
+	}
+	if !strings.EqualFold(fresh.PR.HeadSHA, expectedHead) {
+		return MergeResult{}, ErrPRHeadChanged
+	}
+	if !readyToMerge(fresh, review) {
 		return MergeResult{}, ErrPRPreconditions
 	}
 
-	unresolved, err := s.store.GetPRReviewCommentsUnresolved(ctx, pr.URL)
-	if err != nil {
-		return MergeResult{}, err
-	}
-	facts := domain.PRFacts{
-		CI:             pr.CI,
-		Draft:          pr.Draft,
-		Review:         pr.Review,
-		ReviewComments: unresolved,
-		Mergeability:   pr.Mergeability,
-	}
-	checks, err := s.store.ListChecks(ctx, pr.URL)
-	if err != nil {
-		return MergeResult{}, err
-	}
-	facts.CheckCount = len(checks)
-	if !domain.PRMergeReady(facts) {
-		return MergeResult{}, ErrPRNotMergeable
-	}
-
-	owner, repoName, ok := strings.Cut(pr.Repo, "/")
-	if !ok {
-		return MergeResult{}, fmt.Errorf("%w: malformed repo %q", ErrPRPreconditions, pr.Repo)
-	}
-
-	settings, err := s.scm.RepoMergeSettings(ctx, owner, repoName)
-	if err != nil {
-		return MergeResult{}, err
-	}
-	method, err := pickMergeMethod(settings)
-	if err != nil {
-		return MergeResult{}, err
-	}
-
-	mergeSHA, err := s.scm.MergePR(ctx, owner, repoName, pr.Number, pr.HeadSHA, method)
+	out, err := s.merger.MergePullRequest(ctx, ports.SCMMergeRequest{PR: ref, ExpectedHeadSHA: expectedHead, Method: ports.SCMMergeSquash})
 	if err != nil {
 		switch {
-		case errors.Is(err, ports.ErrSCMPRNotMergeable):
-			return MergeResult{}, ErrPRNotMergeable
-		case errors.Is(err, ports.ErrSCMPRPreconditions):
-			return MergeResult{}, ErrPRPreconditions
+		case errors.Is(err, ports.ErrSCMNotFound):
+			return MergeResult{}, fmt.Errorf("%w: %w", ErrPRNotFound, err)
+		case errors.Is(err, ports.ErrSCMHeadChanged):
+			return MergeResult{}, fmt.Errorf("%w: %w", ErrPRHeadChanged, err)
+		case errors.Is(err, ports.ErrSCMNotMergeable):
+			return MergeResult{}, fmt.Errorf("%w: %w", ErrPRNotMergeable, err)
 		default:
-			return MergeResult{}, err
+			return MergeResult{}, fmt.Errorf("merge pull request: %w", err)
 		}
 	}
+	// From here the provider merge is real and irreversible. Everything below is
+	// best-effort local reconciliation — none of it may become a returned error,
+	// or the API/UI would report "Merge failed" and offer a Retry that re-merges
+	// an already-merged PR. Failures are logged; the SCM observer's next poll
+	// reconciles any local state that didn't get written and re-runs cleanup.
 	now := time.Now().UTC()
-	pr.Merged = true
-	pr.Closed = false
-	pr.Draft = false
-	pr.MergeCommitSHA = mergeSHA
-	pr.Mergeability = domain.MergeUnknown
-	pr.ProviderState = "closed"
-	pr.ProviderMergeable = "MERGED"
-	pr.ProviderMergeStateStatus = "MERGED"
-	pr.UpdatedAt = now
-	pr.UpdatedAtProvider = now
-	pr.MergedAtProvider = now
-	pr.ObservedAt = now
-	// From this point on, the merge on GitHub has already happened and is
-	// irreversible. Everything below is best-effort local reconciliation —
-	// none of it may turn into a returned error, or the API/UI will report
-	// "Merge failed" and offer a Retry that would attempt to re-merge an
-	// already-merged PR. Failures here are logged; the SCM observer's next
-	// poll reconciles any local state that didn't get written.
-	if err := s.store.WriteSCMObservation(ctx, pr, checks, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
-		slog.Default().Error("failed to persist merged PR snapshot after a successful provider merge; will reconcile on next SCM observation", "pr_url", pr.URL, "err", err)
+	merged := tracked
+	merged.Merged = true
+	merged.Closed = false
+	merged.Draft = false
+	merged.MergeCommitSHA = out.MergeCommitSHA
+	merged.Mergeability = domain.MergeUnknown
+	merged.ProviderState = "closed"
+	merged.ProviderMergeable = "MERGED"
+	merged.ProviderMergeStateStatus = "MERGED"
+	merged.UpdatedAt = now
+	merged.UpdatedAtProvider = now
+	merged.MergedAtProvider = now
+	merged.ObservedAt = now
+	if err := s.store.WriteSCMObservation(ctx, merged, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		slog.Default().Error("failed to persist merged PR snapshot after a successful provider merge; will reconcile on next SCM observation", "pr_url", merged.URL, "err", err)
 	}
-	// The termination/worktree cleanup that normally follows an SCM
-	// observation should run now instead of waiting for the next observer
-	// poll, regardless of whether the local persistence write above
-	// succeeded — the merge itself is real and GitHub-confirmed either way.
+	// The termination/worktree cleanup that normally follows an SCM observation
+	// should run now instead of waiting for the next observer poll, regardless of
+	// whether the local persistence write above succeeded — the merge itself is
+	// real and GitHub-confirmed either way.
 	if s.lifecycle != nil {
 		obs := ports.PRObservation{
 			Fetched:      true,
-			URL:          pr.URL,
-			Number:       pr.Number,
-			Draft:        pr.Draft,
-			Merged:       pr.Merged,
-			Closed:       pr.Closed,
-			CI:           pr.CI,
-			Review:       pr.Review,
-			Mergeability: pr.Mergeability,
+			URL:          merged.URL,
+			Number:       merged.Number,
+			Draft:        false,
+			Merged:       true,
+			Closed:       false,
+			CI:           tracked.CI,
+			Review:       tracked.Review,
+			Mergeability: domain.MergeUnknown,
 		}
-		if err := s.lifecycle.ApplyPRObservation(ctx, pr.SessionID, obs); err != nil {
-			slog.Default().Error("post-merge lifecycle reaction failed; will retry on next SCM observation", "pr_url", pr.URL, "session_id", pr.SessionID, "err", err)
+		if err := s.lifecycle.ApplyPRObservation(ctx, tracked.SessionID, obs); err != nil {
+			slog.Default().Error("post-merge lifecycle reaction failed; will retry on next SCM observation", "pr_url", merged.URL, "session_id", tracked.SessionID, "err", err)
 		}
 	}
-	return MergeResult{PRNumber: pr.Number, Method: method}, nil
+	return MergeResult{PRNumber: tracked.Number, Method: string(ports.SCMMergeSquash), MergeCommitSHA: out.MergeCommitSHA}, nil
 }
 
-// pickMergeMethod prefers squash, then merge commit, then rebase — the first
-// one the repo actually allows. Returns ErrPRPreconditions if none are
-// enabled (all three can be disabled in branch/repo settings).
-func pickMergeMethod(s ports.SCMRepoMergeSettings) (string, error) {
-	switch {
-	case s.AllowSquash:
-		return "squash", nil
-	case s.AllowMergeCommit:
-		return "merge", nil
-	case s.AllowRebase:
-		return "rebase", nil
-	default:
-		return "", fmt.Errorf("%w: repository has no merge method enabled", ErrPRPreconditions)
+func (s *ActionService) fetchMergeReadiness(ctx context.Context, ref ports.SCMPRRef) (ports.SCMObservation, ports.SCMReviewObservation, error) {
+	observations, err := s.reader.FetchPullRequests(ctx, []ports.SCMPRRef{ref})
+	if err != nil {
+		if errors.Is(err, ports.ErrSCMNotFound) {
+			return ports.SCMObservation{}, ports.SCMReviewObservation{}, fmt.Errorf("%w: %w", ErrPRNotFound, err)
+		}
+		return ports.SCMObservation{}, ports.SCMReviewObservation{}, fmt.Errorf("refresh pull request before merge: %w", err)
 	}
+	if len(observations) != 1 || !observations[0].Fetched || observations[0].PR.Number != ref.Number {
+		return ports.SCMObservation{}, ports.SCMReviewObservation{}, ErrPRNotFound
+	}
+	review, err := s.reader.FetchReviewThreads(ctx, ref)
+	if err != nil {
+		if errors.Is(err, ports.ErrSCMNotFound) {
+			return ports.SCMObservation{}, ports.SCMReviewObservation{}, fmt.Errorf("%w: %w", ErrPRNotFound, err)
+		}
+		return ports.SCMObservation{}, ports.SCMReviewObservation{}, fmt.Errorf("refresh pull request reviews before merge: %w", err)
+	}
+	return observations[0], review, nil
 }
 
-// ResolveComments is intentionally NOT implemented yet — returning a fake
-// success here once PRs is wired would silently do nothing while reporting
-// 200 OK. Keeping ErrNotImplemented preserves the prior 501 behavior for
-// this specific operation until it's genuinely built.
+func readyToMerge(o ports.SCMObservation, review ports.SCMReviewObservation) bool {
+	if o.PR.HeadSHA == "" || o.CI.HeadSHA != o.PR.HeadSHA || review.Partial {
+		return false
+	}
+	return domain.MergeReadiness{
+		Draft:              o.PR.Draft,
+		Merged:             o.PR.Merged,
+		Closed:             o.PR.Closed,
+		CI:                 domain.CIState(o.CI.Summary),
+		Review:             domain.ReviewDecision(review.Decision),
+		Mergeability:       domain.Mergeability(o.Mergeability.State),
+		UnresolvedComments: hasUnresolvedHumanComments(review.Threads),
+	}.ReadyToMerge()
+}
+
+func hasUnresolvedHumanComments(threads []ports.SCMReviewThreadObservation) bool {
+	for _, thread := range threads {
+		if thread.Resolved {
+			continue
+		}
+		for _, comment := range thread.Comments {
+			if !comment.IsBot {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func parsePRNumber(value string) (int, error) {
+	if !prNumberPattern.MatchString(value) {
+		return 0, ErrInvalidPR
+	}
+	n, err := strconv.ParseInt(value, 10, 32)
+	if err != nil || n <= 0 {
+		return 0, ErrInvalidPR
+	}
+	return int(n), nil
+}
+
+func scmRepoForPR(pr domain.PullRequest) (ports.SCMRepo, bool) {
+	parts := strings.Split(pr.Repo, "/")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return ports.SCMRepo{}, false
+	}
+	provider := strings.ToLower(strings.TrimSpace(pr.Provider))
+	if provider == "" {
+		provider = "github"
+	}
+	host := strings.ToLower(strings.TrimSpace(pr.Host))
+	if host == "" && provider == "github" {
+		host = "github.com"
+	}
+	return ports.SCMRepo{Provider: provider, Host: host, Owner: parts[0], Name: parts[1], Repo: pr.Repo}, true
+}
+
+// ResolveComments is not implemented by the current provider action service.
 func (s *ActionService) ResolveComments(_ context.Context, _ string, _ []string) (ResolveResult, error) {
-	return ResolveResult{}, ErrNotImplemented
+	return ResolveResult{Resolved: 0}, nil
 }

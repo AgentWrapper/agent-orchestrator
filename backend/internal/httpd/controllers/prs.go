@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -11,6 +13,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 )
+
+var prIDPattern = regexp.MustCompile(`^[1-9]\d*$`)
 
 // PRsController owns the /prs action routes.
 type PRsController struct {
@@ -29,8 +33,20 @@ func (c *PRsController) merge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prID := chi.URLParam(r, "id")
-	repo := r.URL.Query().Get("repo")
-	res, err := c.Svc.Merge(r.Context(), prID, repo)
+	if !prIDPattern.MatchString(prID) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR", "Invalid PR number", nil)
+		return
+	}
+	var in MergePRRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	if strings.TrimSpace(in.PRURL) == "" || strings.TrimSpace(in.ExpectedHeadSHA) == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR", "PR URL and expected head SHA are required", nil)
+		return
+	}
+	res, err := c.Svc.Merge(r.Context(), prsvc.MergeRequest{PRID: prID, PRURL: in.PRURL, ExpectedHeadSHA: in.ExpectedHeadSHA})
 	if err != nil {
 		writePRError(w, r, err, "/api/v1/prs/{id}/merge")
 		return
@@ -65,10 +81,14 @@ func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) 
 // actually called instead of a hardcoded one shared across handlers.
 func writePRError(w http.ResponseWriter, r *http.Request, err error, notImplementedPath string) {
 	switch {
+	case errors.Is(err, prsvc.ErrInvalidPR):
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR", "Invalid PR", nil)
 	case errors.Is(err, prsvc.ErrPRNotFound):
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "PR_NOT_FOUND", "Unknown PR", nil)
 	case errors.Is(err, prsvc.ErrPRNotMergeable):
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "PR_NOT_MERGEABLE", "PR is not mergeable", nil)
+	case errors.Is(err, prsvc.ErrPRHeadChanged):
+		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "PR_HEAD_CHANGED", "PR head changed; refresh before merging", nil)
 	case errors.Is(err, prsvc.ErrPRPreconditions):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PRECONDITIONS_UNMET", "PR merge preconditions are not met", nil)
 	case errors.Is(err, prsvc.ErrNothingToResolve):

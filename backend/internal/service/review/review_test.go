@@ -94,17 +94,9 @@ func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domai
 type fakeReducer struct {
 	outcome    lifecycle.ReviewDeliveryOutcome
 	err        error
-	calls      int
 	batchCalls int
-	got        lifecycle.ReviewResult
 	gotBatchID string
 	gotBatch   []lifecycle.ReviewResult
-}
-
-func (f *fakeReducer) ApplyReviewResult(_ context.Context, _ domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
-	f.calls++
-	f.got = result
-	return f.outcome, f.err
 }
 
 func (f *fakeReducer) ApplyReviewBatch(_ context.Context, _ domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
@@ -116,7 +108,11 @@ func (f *fakeReducer) ApplyReviewBatch(_ context.Context, _ domain.SessionID, ba
 
 func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
-	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
+	}
 	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
 	svc := New(nil, st, WithLifecycleReducer(reducer), WithClock(func() time.Time { return now }))
 
@@ -124,11 +120,11 @@ func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	if st.updateCalls != 1 || reducer.calls != 1 || st.markCalls != 1 {
-		t.Fatalf("calls update/reducer/mark = %d/%d/%d", st.updateCalls, reducer.calls, st.markCalls)
+	if st.updateCalls != 1 || reducer.batchCalls != 1 || st.markCalls != 1 {
+		t.Fatalf("calls update/reducer/mark = %d/%d/%d", st.updateCalls, reducer.batchCalls, st.markCalls)
 	}
-	if reducer.got.Verdict != domain.VerdictChangesRequested || reducer.got.Body != "fix it" || reducer.got.GithubReviewID != "987" {
-		t.Fatalf("reducer saw wrong result: %+v", reducer.got)
+	if reducer.gotBatch[0].Verdict != domain.VerdictChangesRequested || reducer.gotBatch[0].Body != "fix it" || reducer.gotBatch[0].GithubReviewID != "987" {
+		t.Fatalf("reducer saw wrong result: %+v", reducer.gotBatch)
 	}
 	if run.Status != domain.ReviewRunDelivered || run.DeliveredAt == nil || !run.DeliveredAt.Equal(now) {
 		t.Fatalf("run not stamped delivered: %+v", run)
@@ -229,7 +225,11 @@ func TestSubmitBatchApprovedOnlySendsNothing(t *testing.T) {
 
 func TestSubmitDeliveryFailureLeavesCompletedUndeliveredForRetry(t *testing.T) {
 	sendErr := errors.New("dead pane")
-	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
+	}
 	reducer := &fakeReducer{err: sendErr}
 	svc := New(nil, st, WithLifecycleReducer(reducer))
 
@@ -245,8 +245,8 @@ func TestSubmitDeliveryFailureLeavesCompletedUndeliveredForRetry(t *testing.T) {
 	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "987"); err != nil {
 		t.Fatalf("retry Submit: %v", err)
 	}
-	if st.updateCalls != 1 || reducer.calls != 2 || st.run.Status != domain.ReviewRunDelivered || st.run.DeliveredAt == nil {
-		t.Fatalf("retry should not rewrite result and should stamp delivery: update=%d reducer=%d run=%+v", st.updateCalls, reducer.calls, st.run)
+	if st.updateCalls != 1 || reducer.batchCalls != 2 || st.run.Status != domain.ReviewRunDelivered || st.run.DeliveredAt == nil {
+		t.Fatalf("retry should not rewrite result and should stamp delivery: update=%d reducer=%d run=%+v", st.updateCalls, reducer.batchCalls, st.run)
 	}
 }
 
@@ -272,8 +272,8 @@ func TestSubmitCompletedRetryRejectsDifferentRecordedFields(t *testing.T) {
 			if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, tt.body, tt.githubReviewID); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("err = %v, want ErrInvalid", err)
 			}
-			if st.updateCalls != 0 || st.markCalls != 0 || reducer.calls != 0 {
-				t.Fatalf("mismatched retry should not rewrite or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.calls)
+			if st.updateCalls != 0 || st.markCalls != 0 || reducer.batchCalls != 0 {
+				t.Fatalf("mismatched retry should not rewrite or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.batchCalls)
 			}
 		})
 	}

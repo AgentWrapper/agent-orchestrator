@@ -109,6 +109,44 @@ func (q *Queries) GetReviewRunBySessionPRAndSHA(ctx context.Context, arg GetRevi
 	return i, err
 }
 
+const getReviewRunBySessionPRSHAAndHarness = `-- name: GetReviewRunBySessionPRSHAAndHarness :one
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id
+FROM review_run WHERE session_id = ? AND pr_url = ? AND target_sha = ? AND harness = ? ORDER BY created_at DESC LIMIT 1
+`
+
+type GetReviewRunBySessionPRSHAAndHarnessParams struct {
+	SessionID domain.SessionID
+	PRURL     string
+	TargetSha string
+	Harness   domain.ReviewerHarness
+}
+
+func (q *Queries) GetReviewRunBySessionPRSHAAndHarness(ctx context.Context, arg GetReviewRunBySessionPRSHAAndHarnessParams) (ReviewRun, error) {
+	row := q.db.QueryRowContext(ctx, getReviewRunBySessionPRSHAAndHarness,
+		arg.SessionID,
+		arg.PRURL,
+		arg.TargetSha,
+		arg.Harness,
+	)
+	var i ReviewRun
+	err := row.Scan(
+		&i.ID,
+		&i.ReviewID,
+		&i.SessionID,
+		&i.Harness,
+		&i.PRURL,
+		&i.TargetSha,
+		&i.Status,
+		&i.Verdict,
+		&i.Body,
+		&i.CreatedAt,
+		&i.GithubReviewID,
+		&i.DeliveredAt,
+		&i.BatchID,
+	)
+	return i, err
+}
+
 const insertReviewRun = `-- name: InsertReviewRun :exec
 INSERT INTO review_run (id, review_id, session_id, batch_id, harness, pr_url, target_sha, status, verdict, body, github_review_id, created_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

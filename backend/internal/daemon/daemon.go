@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -54,6 +55,7 @@ func Run() error {
 	if err := stabilizeWorkingDirectory(cfg.DataDir); err != nil {
 		return err
 	}
+	ignoreBrokenPipeSignal()
 
 	log := newLogger()
 	browserRuntimeToken := strings.TrimSpace(os.Getenv(browserruntime.RuntimeTokenEnv))
@@ -142,6 +144,13 @@ func Run() error {
 	notificationHub := notify.NewHub()
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
+	// Resolution transitions that happened while the daemon was down never
+	// reached lifecycle, so re-check open notifications against the durable
+	// session/PR facts before serving. Best-effort: a failure here only leaves
+	// stale rows in the unresolved list, never blocks startup.
+	if err := notificationWriter.Reconcile(ctx); err != nil {
+		log.Warn("notification resolution reconcile failed", "err", err)
+	}
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
@@ -167,7 +176,7 @@ func Run() error {
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, scmProvider, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
+	sessionSvc, reviewSvc, sessMgr, _, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -178,15 +187,6 @@ func Run() error {
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
-
-	// Typed-nil guard: scmProvider is (*scmgithub.Provider)(nil) when GitHub
-	// credentials are unavailable at startup (see lifecycle_wiring.go's tracker
-	// comment re: issue #2685). Only assign to the pr.SCMMerger interface when
-	// it's a real instance, or ActionService.Merge's nil check won't catch it.
-	var prMerger prsvc.SCMMerger
-	if scmProvider != nil {
-		prMerger = scmProvider
-	}
 
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
@@ -199,7 +199,7 @@ func Run() error {
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
 
-	agentSvc := agentsvc.New()
+	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store})
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
 			log.Warn("initial agent catalog refresh failed", "err", err)
@@ -228,6 +228,12 @@ func Run() error {
 	// worktree is torn down (shellTermSvc cannot exist before sessMgr does; see
 	// SetShellTerminalCloser).
 	sessMgr.SetShellTerminalCloser(shellTermSvc)
+	var prActions prsvc.ActionManager
+	if mergeProvider, mergeErr := newGitHubSCMProvider(log); mergeErr != nil {
+		logSCMProviderDisabled(log, mergeErr)
+	} else {
+		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: mergeProvider, Reader: mergeProvider, Lifecycle: lcStack.LCM})
+	}
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing
 	// to start the daemon. pushRegistry (interface) is assigned only when load
@@ -258,8 +264,8 @@ func Run() error {
 		Projects:           projectSvc,
 		Agents:             agentSvc,
 		Sessions:           sessionSvc,
+		PRs:                prActions,
 		Reviews:            reviewSvc,
-		PRs:                prsvc.NewActionService(store, prMerger, lcStack.LCM),
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Push:               pushRegistry,

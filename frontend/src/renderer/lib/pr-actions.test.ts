@@ -22,6 +22,7 @@ vi.mock("./api-client", () => ({
 }));
 
 const PR_URL = "https://github.com/acme/widgets/pull/42";
+const PR_HEAD_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 function ci(state: SessionPRSummary["ci"]["state"], checkCount = 0): SessionPRSummary["ci"] {
 	return {
@@ -57,6 +58,7 @@ function pr(overrides: Partial<SessionPRSummary> = {}): SessionPRSummary {
 		number: 42,
 		repo: "acme/widgets",
 		url: PR_URL,
+		headSha: PR_HEAD_SHA,
 		state: "open",
 		ci: ci("passing"),
 		review: review("approved"),
@@ -210,7 +212,7 @@ describe("useMergePR", () => {
 			createElement(QueryClientProvider, { client: queryClient }, children);
 	}
 
-	it("POSTs to the merge endpoint with the PR number and repo", async () => {
+	it("POSTs to the merge endpoint with the PR number, URL, and head SHA", async () => {
 		vi.mocked(apiClient.POST).mockResolvedValue({
 			error: undefined,
 			response: { status: 200 },
@@ -234,8 +236,8 @@ describe("useMergePR", () => {
 		expect(apiClient.POST).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", {
 			params: {
 				path: { id: "42" },
-				query: { repo: "acme/widgets" },
 			},
+			body: { prUrl: PR_URL, expectedHeadSha: PR_HEAD_SHA },
 		});
 	});
 

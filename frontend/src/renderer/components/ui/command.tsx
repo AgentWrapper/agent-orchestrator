@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Command as CommandPrimitive } from "cmdk";
 import * as Dialog from "@radix-ui/react-dialog";
+import { Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -25,12 +26,14 @@ function CommandDialog({
 	children,
 	className,
 	commandProps,
+	contentProps,
 	...props
 }: React.ComponentProps<typeof Dialog.Root> & {
 	title?: string;
 	description?: string;
 	className?: string;
 	commandProps?: React.ComponentProps<typeof CommandPrimitive>;
+	contentProps?: React.ComponentProps<typeof Dialog.Content>;
 }) {
 	const { className: commandClassName, ...restCommandProps } = commandProps ?? {};
 	return (
@@ -43,6 +46,7 @@ function CommandDialog({
 				<Dialog.Content
 					data-slot="command-dialog-content"
 					aria-label={title}
+					{...contentProps}
 					className={cn(
 						"fixed left-1/2 top-command-palette z-overlay w-command-palette -translate-x-1/2 overflow-hidden rounded-[var(--radius-command-palette)] border border-[var(--color-border-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] shadow-[var(--shadow-command-palette)] outline-none data-[state=open]:animate-modal-in",
 						className,
@@ -69,13 +73,14 @@ function CommandInput({ className, ...props }: React.ComponentProps<typeof Comma
 	return (
 		<div
 			data-slot="command-input-wrapper"
-			className="flex items-center border-b border-[var(--color-border-command-palette)] px-[var(--size-command-pad-x)] pt-5 pb-4"
+			className="flex items-center gap-2.5 border-b border-[var(--color-border-command-palette)] px-[var(--size-command-pad-x)] py-3"
 			cmdk-input-wrapper=""
 		>
+			<Search className="size-4 shrink-0 text-[var(--color-text-command-placeholder)]" aria-hidden="true" />
 			<CommandPrimitive.Input
 				data-slot="command-input"
 				className={cn(
-					"flex h-7 w-full bg-transparent text-[length:var(--font-size-command-input)] leading-7 text-[var(--color-text-command-item)] caret-[var(--color-text-command-item)] outline-none placeholder:text-[var(--color-text-command-placeholder)] disabled:cursor-not-allowed disabled:opacity-50",
+					"flex h-6 w-full bg-transparent text-[length:var(--font-size-command-input)] leading-6 text-[var(--color-text-command-item)] caret-[var(--color-text-command-item)] outline-none placeholder:text-[var(--color-text-command-placeholder)] disabled:cursor-not-allowed disabled:opacity-50",
 					className,
 				)}
 				{...props}

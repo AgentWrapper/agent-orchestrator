@@ -9,277 +9,178 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-type fakePRStore struct {
+type fakeActionStore struct {
 	pr         domain.PullRequest
 	ok         bool
-	err        error
-	unresolved bool
-	unresErr   error
-	checks     []domain.PullRequestCheck
-	written    *domain.PullRequest
 	writeErr   error
+	written    *domain.PullRequest
+	writeCalls int
 }
 
-func (f *fakePRStore) GetPRByNumber(_ context.Context, _ int) (domain.PullRequest, bool, error) {
-	return f.pr, f.ok, f.err
+func (f *fakeActionStore) GetPR(context.Context, string) (domain.PullRequest, bool, error) {
+	return f.pr, f.ok, nil
 }
 
-func (f *fakePRStore) GetPRByRepoAndNumber(_ context.Context, _ string, _ int) (domain.PullRequest, bool, error) {
-	return f.pr, f.ok, f.err
-}
-
-func (f *fakePRStore) GetPRReviewCommentsUnresolved(_ context.Context, _ string) (bool, error) {
-	return f.unresolved, f.unresErr
-}
-
-func (f *fakePRStore) ListChecks(_ context.Context, _ string) ([]domain.PullRequestCheck, error) {
-	return append([]domain.PullRequestCheck(nil), f.checks...), nil
-}
-
-func (f *fakePRStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, _ []domain.PullRequestReviewThread, _ []domain.PullRequestComment, _ ports.ReviewWriteMode) error {
-	f.written = &pr
+func (f *fakeActionStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, _ []domain.PullRequestReviewThread, _ []domain.PullRequestComment, _ ports.ReviewWriteMode) error {
+	f.writeCalls++
+	prCopy := pr
+	f.written = &prCopy
 	return f.writeErr
 }
 
-type fakeSCMMerger struct {
-	sha      string
+type observedPRObservation struct {
+	sessionID domain.SessionID
+	obs       ports.PRObservation
+}
+
+type fakeActionLifecycle struct {
+	observed []observedPRObservation
 	err      error
-	settings ports.SCMRepoMergeSettings
-	settErr  error
 }
 
-func (f *fakeSCMMerger) MergePR(_ context.Context, _, _ string, _ int, _, _ string) (string, error) {
-	return f.sha, f.err
+func (f *fakeActionLifecycle) ApplyPRObservation(_ context.Context, id domain.SessionID, o ports.PRObservation) error {
+	f.observed = append(f.observed, observedPRObservation{sessionID: id, obs: o})
+	return f.err
 }
 
-func (f *fakeSCMMerger) RepoMergeSettings(_ context.Context, _, _ string) (ports.SCMRepoMergeSettings, error) {
-	return f.settings, f.settErr
+type fakeSCMAction struct {
+	observation ports.SCMObservation
+	review      ports.SCMReviewObservation
+	mergeErr    error
+	request     ports.SCMMergeRequest
+	mergeCalls  int
 }
 
-func mergeablePR(number int, repo string) domain.PullRequest {
-	return domain.PullRequest{
-		URL:          "https://github.com/" + repo + "/pull/42",
-		Number:       number,
-		SessionID:    "sess-1",
-		Repo:         repo,
-		CI:           domain.CIPassing,
-		Review:       domain.ReviewApproved,
+func (f *fakeSCMAction) FetchPullRequests(context.Context, []ports.SCMPRRef) ([]ports.SCMObservation, error) {
+	return []ports.SCMObservation{f.observation}, nil
+}
+
+func (f *fakeSCMAction) FetchReviewThreads(context.Context, ports.SCMPRRef) (ports.SCMReviewObservation, error) {
+	return f.review, nil
+}
+
+func (f *fakeSCMAction) MergePullRequest(_ context.Context, request ports.SCMMergeRequest) (ports.SCMMergeResult, error) {
+	f.mergeCalls++
+	f.request = request
+	return ports.SCMMergeResult{MergeCommitSHA: "merge-sha"}, f.mergeErr
+}
+
+func mergeableActionFixture() (domain.PullRequest, *fakeSCMAction) {
+	pr := domain.PullRequest{
+		URL:          "https://github.com/acme/widgets/pull/42",
+		Number:       42,
+		SessionID:    "sess-42",
+		Provider:     "github",
+		Host:         "github.com",
+		Repo:         "acme/widgets",
+		HeadSHA:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Mergeability: domain.MergeMergeable,
-		HeadSHA:      "headsha123",
 	}
+	scm := &fakeSCMAction{observation: ports.SCMObservation{
+		Fetched:      true,
+		PR:           ports.SCMPRObservation{URL: pr.URL, Number: pr.Number, HeadSHA: pr.HeadSHA},
+		CI:           ports.SCMCIObservation{Summary: string(domain.CIPassing), HeadSHA: pr.HeadSHA},
+		Mergeability: ports.SCMMergeabilityObservation{State: string(domain.MergeMergeable), Mergeable: true},
+	}}
+	return pr, scm
 }
 
-func allowSquash() ports.SCMRepoMergeSettings {
-	return ports.SCMRepoMergeSettings{AllowSquash: true}
-}
-
-func TestMerge_Success(t *testing.T) {
-	store := &fakePRStore{ok: true, pr: mergeablePR(42, "acme/widgets")}
-	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
-	svc := NewActionService(store, scm, nil)
-
-	res, err := svc.Merge(context.Background(), "42", "")
+func TestActionServiceMerge_GuardsAndSquashMergesExactHead(t *testing.T) {
+	pr, scm := mergeableActionFixture()
+	svc := NewActionService(ActionDeps{Store: &fakeActionStore{pr: pr, ok: true}, Reader: scm, Merger: scm})
+	result, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.PRNumber != 42 || res.Method != "squash" {
-		t.Fatalf("res = %#v", res)
+	if result.PRNumber != 42 || result.Method != "squash" || result.MergeCommitSHA != "merge-sha" {
+		t.Fatalf("result = %#v", result)
 	}
-	if store.written == nil {
-		t.Fatal("expected merged PR snapshot to be persisted")
-	}
-	if !store.written.Merged || store.written.MergeCommitSHA != "abc123" {
-		t.Fatalf("persisted PR = %#v, want merged with merge SHA", *store.written)
+	if scm.mergeCalls != 1 || scm.request.ExpectedHeadSHA != pr.HeadSHA || scm.request.Method != ports.SCMMergeSquash {
+		t.Fatalf("request = %#v, calls = %d", scm.request, scm.mergeCalls)
 	}
 }
 
-func TestMerge_SuccessWithRepoScope(t *testing.T) {
-	store := &fakePRStore{ok: true, pr: mergeablePR(42, "acme/widgets")}
-	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
-	svc := NewActionService(store, scm, nil)
+func TestActionServiceMerge_FailsClosedForStaleHeadOrReadiness(t *testing.T) {
+	pr, scm := mergeableActionFixture()
+	svc := NewActionService(ActionDeps{Store: &fakeActionStore{pr: pr, ok: true}, Reader: scm, Merger: scm})
+	_, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"})
+	if !errors.Is(err, ErrPRHeadChanged) || scm.mergeCalls != 0 {
+		t.Fatalf("stale head error = %v, calls = %d", err, scm.mergeCalls)
+	}
 
-	res, err := svc.Merge(context.Background(), "42", "acme/widgets")
+	pr, scm = mergeableActionFixture()
+	scm.observation.CI.Summary = string(domain.CIPending)
+	svc = NewActionService(ActionDeps{Store: &fakeActionStore{pr: pr, ok: true}, Reader: scm, Merger: scm})
+	_, err = svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA})
+	if !errors.Is(err, ErrPRPreconditions) || scm.mergeCalls != 0 {
+		t.Fatalf("pending CI error = %v, calls = %d", err, scm.mergeCalls)
+	}
+}
+
+func TestActionServiceMerge_MapsProviderConflict(t *testing.T) {
+	pr, scm := mergeableActionFixture()
+	scm.mergeErr = ports.ErrSCMHeadChanged
+	svc := NewActionService(ActionDeps{Store: &fakeActionStore{pr: pr, ok: true}, Reader: scm, Merger: scm})
+	_, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA})
+	if !errors.Is(err, ErrPRHeadChanged) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestActionServiceMerge_AppliesLifecycleReactionWithMergedObservation(t *testing.T) {
+	pr, scm := mergeableActionFixture()
+	store := &fakeActionStore{pr: pr, ok: true}
+	lc := &fakeActionLifecycle{}
+	svc := NewActionService(ActionDeps{Store: store, Reader: scm, Merger: scm, Lifecycle: lc})
+
+	result, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.PRNumber != 42 || res.Method != "squash" {
-		t.Fatalf("res = %#v", res)
+	if result.MergeCommitSHA != "merge-sha" {
+		t.Fatalf("merge commit sha = %q, want merge-sha", result.MergeCommitSHA)
 	}
-}
-
-func TestMerge_NotFound(t *testing.T) {
-	store := &fakePRStore{ok: false}
-	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()}, nil)
-	_, err := svc.Merge(context.Background(), "99", "")
-	if !errors.Is(err, ErrPRNotFound) {
-		t.Fatalf("err = %v, want ErrPRNotFound", err)
-	}
-}
-
-func TestMerge_NotMergeable(t *testing.T) {
-	pr := mergeablePR(1, "acme/widgets")
-	pr.Mergeability = domain.MergeBlocked
-	store := &fakePRStore{ok: true, pr: pr}
-	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()}, nil)
-	_, err := svc.Merge(context.Background(), "1", "")
-	if !errors.Is(err, ErrPRNotMergeable) {
-		t.Fatalf("err = %v, want ErrPRNotMergeable", err)
-	}
-}
-
-func TestMerge_UnknownCIWithObservedChecksIsNotMergeable(t *testing.T) {
-	pr := mergeablePR(2, "acme/widgets")
-	pr.CI = domain.CIUnknown
-	store := &fakePRStore{
-		ok:     true,
-		pr:     pr,
-		checks: []domain.PullRequestCheck{{Name: "unit", Status: domain.PRCheckPassed}},
-	}
-	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()}, nil)
-	_, err := svc.Merge(context.Background(), "2", "")
-	if !errors.Is(err, ErrPRNotMergeable) {
-		t.Fatalf("err = %v, want ErrPRNotMergeable", err)
-	}
-	if store.written != nil {
-		t.Fatalf("unexpected merged snapshot persisted: %#v", *store.written)
-	}
-}
-
-func TestMerge_UnknownCIWithNoChecksIsMergeable(t *testing.T) {
-	pr := mergeablePR(3, "acme/widgets")
-	pr.CI = domain.CIUnknown
-	store := &fakePRStore{ok: true, pr: pr}
-	svc := NewActionService(store, &fakeSCMMerger{sha: "merge-sha", settings: allowSquash()}, nil)
-	res, err := svc.Merge(context.Background(), "3", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.PRNumber != 3 || store.written == nil || !store.written.Merged {
-		t.Fatalf("res = %#v written = %#v", res, store.written)
-	}
-}
-
-func TestMerge_AlreadyMerged(t *testing.T) {
-	store := &fakePRStore{ok: true, pr: domain.PullRequest{Merged: true}}
-	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()}, nil)
-	_, err := svc.Merge(context.Background(), "1", "")
-	if !errors.Is(err, ErrPRPreconditions) {
-		t.Fatalf("err = %v, want ErrPRPreconditions", err)
-	}
-}
-
-func TestMerge_NilSCM(t *testing.T) {
-	svc := NewActionService(&fakePRStore{}, nil, nil)
-	_, err := svc.Merge(context.Background(), "1", "")
-	if !errors.Is(err, ErrPRPreconditions) {
-		t.Fatalf("err = %v, want ErrPRPreconditions (SCM unavailable)", err)
-	}
-}
-
-func TestMerge_BadID(t *testing.T) {
-	svc := NewActionService(&fakePRStore{}, &fakeSCMMerger{}, nil)
-	_, err := svc.Merge(context.Background(), "not-a-number", "")
-	if !errors.Is(err, ErrPRNotFound) {
-		t.Fatalf("err = %v, want ErrPRNotFound", err)
-	}
-}
-
-func TestMerge_UnresolvedReviewCommentsBlocksMerge(t *testing.T) {
-	pr := mergeablePR(7, "acme/widgets")
-	store := &fakePRStore{ok: true, pr: pr, unresolved: true}
-	svc := NewActionService(store, &fakeSCMMerger{settings: allowSquash()}, nil)
-	_, err := svc.Merge(context.Background(), "7", "")
-	if !errors.Is(err, ErrPRNotMergeable) {
-		t.Fatalf("err = %v, want ErrPRNotMergeable (unresolved review comments)", err)
-	}
-}
-
-func TestMerge_NoAllowedMergeMethodReturnsPreconditions(t *testing.T) {
-	store := &fakePRStore{ok: true, pr: mergeablePR(9, "acme/widgets")}
-	svc := NewActionService(store, &fakeSCMMerger{settings: ports.SCMRepoMergeSettings{}}, nil)
-	_, err := svc.Merge(context.Background(), "9", "")
-	if !errors.Is(err, ErrPRPreconditions) {
-		t.Fatalf("err = %v, want ErrPRPreconditions (no merge method enabled)", err)
-	}
-}
-
-func TestMerge_PrefersSquashThenMergeThenRebase(t *testing.T) {
-	store := &fakePRStore{ok: true, pr: mergeablePR(10, "acme/widgets")}
-	scm := &fakeSCMMerger{sha: "abc", settings: ports.SCMRepoMergeSettings{AllowMergeCommit: true, AllowRebase: true}}
-	svc := NewActionService(store, scm, nil)
-	res, err := svc.Merge(context.Background(), "10", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Method != "merge" {
-		t.Fatalf("method = %q, want merge (squash disabled, merge commit allowed)", res.Method)
-	}
-}
-
-func TestMerge_Success_AppliesLifecycleReactionWithMergedObservation(t *testing.T) {
-	store := &fakePRStore{ok: true, pr: mergeablePR(42, "acme/widgets")}
-	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
-	lc := &fakeLifecycle{}
-	svc := NewActionService(store, scm, lc)
-
-	if _, err := svc.Merge(context.Background(), "42", ""); err != nil {
-		t.Fatal(err)
+	if store.writeCalls != 1 || store.written == nil || !store.written.Merged || store.written.MergeCommitSHA != "merge-sha" {
+		t.Fatalf("persisted snapshot = %+v, writeCalls = %d", store.written, store.writeCalls)
 	}
 	if len(lc.observed) != 1 {
 		t.Fatalf("lifecycle.ApplyPRObservation calls = %d, want 1", len(lc.observed))
 	}
-	if lc.ids[0] != "sess-1" {
-		t.Fatalf("session id = %q, want sess-1", lc.ids[0])
+	obs := lc.observed[0]
+	if obs.sessionID != pr.SessionID {
+		t.Fatalf("sessionID = %q, want %q", obs.sessionID, pr.SessionID)
 	}
-	o := lc.observed[0]
-	if !o.Fetched || !o.Merged || o.URL == "" || o.Number != 42 {
-		t.Fatalf("observation = %#v, want Fetched+Merged with URL/Number set", o)
+	if !obs.obs.Fetched || !obs.obs.Merged || obs.obs.Closed {
+		t.Fatalf("observation = %+v, want {Fetched:true Merged:true Closed:false}", obs.obs)
 	}
 }
 
-func TestMerge_Success_LifecycleFailureStaysBestEffort(t *testing.T) {
-	store := &fakePRStore{ok: true, pr: mergeablePR(42, "acme/widgets")}
-	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
-	lc := &fakeLifecycle{err: errors.New("boom")}
-	svc := NewActionService(store, scm, lc)
+func TestActionServiceMerge_LifecycleFailureStaysBestEffort(t *testing.T) {
+	pr, scm := mergeableActionFixture()
+	lc := &fakeActionLifecycle{err: errors.New("boom")}
+	svc := NewActionService(ActionDeps{Store: &fakeActionStore{pr: pr, ok: true}, Reader: scm, Merger: scm, Lifecycle: lc})
 
-	res, err := svc.Merge(context.Background(), "42", "")
-	if err != nil {
+	if _, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA}); err != nil {
 		t.Fatalf("merge should still succeed when the best-effort lifecycle reaction fails: %v", err)
-	}
-	if res.PRNumber != 42 {
-		t.Fatalf("res = %#v", res)
 	}
 	if len(lc.observed) != 1 {
 		t.Fatalf("lifecycle.ApplyPRObservation calls = %d, want 1 (must still be attempted)", len(lc.observed))
 	}
 }
 
-func TestMerge_ProviderSuccess_PersistenceFailureStillSucceedsAndAppliesLifecycle(t *testing.T) {
-	store := &fakePRStore{ok: true, pr: mergeablePR(42, "acme/widgets"), writeErr: errors.New("db write failed")}
-	scm := &fakeSCMMerger{sha: "abc123", settings: allowSquash()}
-	lc := &fakeLifecycle{}
-	svc := NewActionService(store, scm, lc)
+func TestActionServiceMerge_ProviderSuccess_PersistenceFailureStillSucceedsAndAppliesLifecycle(t *testing.T) {
+	pr, scm := mergeableActionFixture()
+	store := &fakeActionStore{pr: pr, ok: true, writeErr: errors.New("disk full")}
+	lc := &fakeActionLifecycle{}
+	svc := NewActionService(ActionDeps{Store: store, Reader: scm, Merger: scm, Lifecycle: lc})
 
-	res, err := svc.Merge(context.Background(), "42", "")
-	if err != nil {
-		t.Fatalf("local persistence failure after successful provider merge must not report as merge error (GitHub already merged): %v", err)
+	if _, err := svc.Merge(context.Background(), MergeRequest{PRID: "42", PRURL: pr.URL, ExpectedHeadSHA: pr.HeadSHA}); err != nil {
+		t.Fatalf("merge should still succeed once the provider merge is irreversible: %v", err)
 	}
-	if res.PRNumber != 42 || res.Method != "squash" {
-		t.Fatalf("res = %#v", res)
+	if store.writeCalls != 1 {
+		t.Fatalf("persistence write calls = %d, want 1", store.writeCalls)
 	}
 	if len(lc.observed) != 1 {
 		t.Fatalf("lifecycle calls = %d, want 1 (cleanup must proceed despite persistence failure)", len(lc.observed))
-	}
-	if !lc.observed[0].Merged {
-		t.Fatalf("observation.Merged = false, want true")
-	}
-}
-
-func TestResolveComments_ReturnsNotImplemented(t *testing.T) {
-	svc := NewActionService(&fakePRStore{}, &fakeSCMMerger{}, nil)
-	_, err := svc.ResolveComments(context.Background(), "1", nil)
-	if !errors.Is(err, ErrNotImplemented) {
-		t.Fatalf("err = %v, want ErrNotImplemented", err)
 	}
 }

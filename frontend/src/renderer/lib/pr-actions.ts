@@ -60,7 +60,8 @@ export function useMergePR() {
 	return useMutation({
 		mutationFn: async ({ pr }: MergePRInput) => {
 			const { error, response } = await apiClient.POST("/api/v1/prs/{id}/merge", {
-				params: { path: { id: String(pr.number) }, query: { repo: pr.repo } },
+				params: { path: { id: String(pr.number) } },
+				body: { prUrl: pr.url, expectedHeadSha: pr.headSha },
 			});
 			if (error) {
 				throw new Error(apiErrorMessage(error, `Failed to merge PR (${response?.status ?? "unknown"})`));

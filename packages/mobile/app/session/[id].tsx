@@ -22,6 +22,7 @@ import {
 	type SendTarget,
 } from "../../lib/session/sendRoute";
 import { useApp } from "../../lib/store";
+import { useVoiceInput } from "../../lib/voice/useVoiceInput";
 import { useTheme, useThemedStyles, useThemeState } from "../../lib/ThemeProvider";
 
 const FONT_SIZE = 12;
@@ -844,6 +845,37 @@ export default function TerminalScreen() {
 		}
 	}, [msg, sendTarget, cfg, id, projectId, status]);
 
+	// Push-to-talk dictation, captured on the PHONE rather than by the harness.
+	//
+	// Driving a harness's own voice mode from here (Claude Code's /voice) looks
+	// easy — the key row already sends arbitrary bytes to the PTY — but it records
+	// through the *daemon host's* microphone, which is a machine the user is not
+	// sitting at. It would also only ever work for the harnesses that ship a voice
+	// mode at all.
+	//
+	// Capturing here inverts both: the transcript is just text, so it leaves
+	// through sendPrompt like anything typed, and every harness gets it for free.
+	const voice = useVoiceInput({
+		onTranscript: useCallback((text: string) => {
+			// Land in the composer as an editable draft rather than sending. This
+			// text reaches an agent with tool access and speech-to-text mishears code
+			// vocabulary often enough that silent submission isn't acceptable.
+			//
+			// The composer is always mounted now, so there is nothing to open — and
+			// nothing focuses the field either, which would pop the keyboard over the
+			// terminal mid-phrase.
+			// Append, so several held phrases build one prompt (the same way holding
+			// the key again appends in Claude Code's own dictation).
+			setMsg((m) => (m ? `${m} ${text}` : text));
+			haptics.success();
+		}, []),
+	});
+
+	// Recognition failures surface in the existing banner rather than new UI.
+	useEffect(() => {
+		if (voice.error) setBanner(voice.error);
+	}, [voice.error]);
+
 	// Toggle the in-app browser. The poll above keeps `preview` current, so a tap
 	// just shows/hides the overlay. A bare README (the detector's markdown fallback)
 	// reports "no preview yet" instead of surfacing an unbuilt repo doc.
@@ -1124,6 +1156,27 @@ export default function TerminalScreen() {
 			{/* The input dock. One container, one bottom inset, fixed slots — every
 			    control sits in the same place in every state the screen can reach. */}
 			<View style={[styles.dock, { paddingBottom: bottomPad }]}>
+				{/* Live dictation readout. Deliberately not inside the field: the
+				    partial transcript changes on every syllable, and rewriting the
+				    input under the user's caret is hostile. */}
+				{(voice.state === "starting" || voice.state === "recording" || voice.state === "transcribing") && (
+					<View style={[styles.voiceStrip, voice.state === "starting" && styles.voiceStripWarmup]}>
+						<Feather name="mic" size={13} color={voice.state === "starting" ? t.textTertiary : t.blue} />
+						<Text style={styles.voiceText} numberOfLines={2}>
+							{voice.partial ||
+								(voice.state === "starting"
+									? // The mic is not capturing yet. Saying "Listening" here would
+										// invite speech that gets dropped during warm-up.
+										"Keep holding..."
+									: voice.state === "transcribing"
+										? "Transcribing..."
+										: voice.mode === "latched"
+											? "Recording hands-free - tap the mic to finish"
+											: "Speak now - release to insert")}
+						</Text>
+					</View>
+				)}
+
 				<KeyRow onKey={sendKey} />
 
 				<Composer
@@ -1133,6 +1186,7 @@ export default function TerminalScreen() {
 					sending={sending}
 					target={sendTarget}
 					onTargetChange={setSendTarget}
+					voice={voice}
 					keyboardVisible={kbVisible}
 					onDismissKeyboard={Keyboard.dismiss}
 				/>
@@ -1279,4 +1333,22 @@ const makeStyles = (t: Theme) =>
 		marginTop: 10,
 	},
 	restoreCtaText: { color: t.onAccent, fontSize: 15, fontWeight: "700" },
+	// Accent-blue like the rest of the chrome. Red is reserved for the mic button
+	// alone: one small saturated element reads as "recording", a whole red panel
+	// reads as an error. It sits at the top of the dock, so it divides itself from
+	// the keys below rather than redrawing the dock's own top border.
+	voiceStrip: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
+		paddingHorizontal: 12,
+		paddingVertical: 7,
+		backgroundColor: t.tintBlue,
+		borderBottomWidth: 1,
+		borderBottomColor: t.blue,
+	},
+	// Muted while the mic warms up, so "ready to speak" is a visible state change
+	// and not just a wording difference.
+	voiceStripWarmup: { backgroundColor: t.bgElevated, borderBottomColor: t.borderDefault },
+	voiceText: { flex: 1, color: t.textPrimary, fontSize: 13 },
 });
