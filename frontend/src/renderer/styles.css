@@ -530,19 +530,21 @@
 	);
 }
 
-/* Windows / Linux: a ShellTopbar already supplies the top chrome, so the
- * framed panel needs no additional top inset. Windows uses its custom
- * frameless titlebar; Linux uses the standard ShellTopbar. */
+/* Windows / Linux: rectangular frameless window. There is no rounded macOS
+ * window to inset into, so flush the framed panel on every side — top is
+ * already covered by the custom titlebar / ShellTopbar, and the left is flush
+ * to the sidebar globally (padding-left: 0). Zero the remaining right/bottom
+ * insets so the panel fills the full window width instead of floating with a
+ * gap on the right and bottom. */
 .platform-windows .center-panel-shell,
 .platform-linux .center-panel-shell {
 	padding-top: 0;
+	padding-right: 0;
+	padding-bottom: 0;
 }
 
-/* Windows/Linux: rectangular frameless window — the macOS nested-radius
- * formula (window_radius − inset) only makes sense inside a rounded macOS
- * window. Strip it so the framed panel has sharp corners, consistent with the
- * flush left edge (padding-left: 0). Without this the right/bottom corners
- * curve away from the window edge while the left stays square. */
+/* macOS nested-radius formula (window_radius − inset) only makes sense inside
+ * a rounded macOS window. Strip it so the framed panel has sharp corners. */
 .platform-windows .center-panel-surface,
 .platform-linux .center-panel-surface {
 	border-radius: 0;
