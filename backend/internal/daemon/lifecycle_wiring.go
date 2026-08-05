@@ -12,7 +12,6 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/container/dockerreap"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
-	scmgithub "github.com/aoagents/agent-orchestrator/backend/internal/adapters/scm/github"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/gitworktree"
 	workspacerouter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/router"
 	scratchworkspace "github.com/aoagents/agent-orchestrator/backend/internal/adapters/workspace/scratch"
@@ -136,7 +135,7 @@ type sessionLifecycle interface {
 // the caller can wire Reconcile into the boot sequence, and the GitHub SCM
 // provider (nil if credentials are unavailable at startup) so the caller can
 // wire it into the PR action service for merge support.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, *scmgithub.Provider, error) {
+func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -147,13 +146,13 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		RepoResolver: projectRepoResolver{store: store},
 	})
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("session workspace: %w", err)
+		return nil, nil, nil, fmt.Errorf("session workspace: %w", err)
 	}
 	scratchWS, err := scratchworkspace.New(scratchworkspace.Options{
 		ManagedRoot: filepath.Join(cfg.DataDir, "worktrees"),
 	})
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("scratch session workspace: %w", err)
+		return nil, nil, nil, fmt.Errorf("scratch session workspace: %w", err)
 	}
 	ws := workspacerouter.New(workspacerouter.Deps{
 		Git:      gitWS,
@@ -207,7 +206,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 	// writer.
 	reviewers, err := reviewer.NewResolver()
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
+		return nil, nil, nil, fmt.Errorf("reviewer resolver: %w", err)
 	}
 	reviewEngine := reviewcore.New(reviewcore.Deps{
 		Store:    store,
@@ -217,7 +216,7 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store, reviewsvc.WithLifecycleReducer(lcm))
-	return sessionSvc, reviewSvc, mgr, scmProvider, nil
+	return sessionSvc, reviewSvc, mgr, nil
 }
 
 // runtimeMessageSender is the narrow part of the concrete runtime needed by
