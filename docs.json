@@ -9,24 +9,50 @@
   "favicon": "/docs/logo/ao-logo.svg",
   "colors": {
     "primary": "#7bb1d9",
-    "light": "#30456d",
-    "dark": "#cdd9e6"
+    "light": "#a8ccec",
+    "dark": "#4a7fa5"
   },
-  "font": {
-    "headings": { "family": "Geist" },
+  "fonts": {
+    "heading": { "family": "Geist" },
     "body": { "family": "Geist" }
+  },
+  "search": {
+    "prompt": "Search Agent Orchestrator docs..."
   },
   "navbar": {
     "primary": {
       "type": "github",
       "href": "https://github.com/Untrivial-ai/agent-orchestrator"
-    }
+    },
+    "links": [
+      {
+        "label": "Discord",
+        "href": "https://discord.com/invite/UZv7JjxbwG"
+      }
+    ]
   },
   "footerSocials": {
     "github": "https://github.com/Untrivial-ai/agent-orchestrator",
     "x": "https://x.com/aoagents"
   },
   "navigation": {
+    "anchors": [
+      {
+        "anchor": "GitHub",
+        "icon": "github",
+        "href": "https://github.com/Untrivial-ai/agent-orchestrator"
+      },
+      {
+        "anchor": "Discord",
+        "icon": "discord",
+        "href": "https://discord.com/invite/UZv7JjxbwG"
+      },
+      {
+        "anchor": "Changelog",
+        "icon": "list",
+        "href": "/docs/changelog/overview"
+      }
+    ],
     "tabs": [
       {
         "tab": "Docs",

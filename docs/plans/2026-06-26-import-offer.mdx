@@ -254,7 +254,7 @@ type ImportRunResponse struct {
 - [ ] **Step 1:** In `build.go` add, PR-verbatim: the `import` tag (in `Tags`), the schemaName mappings (`ControllersImportStatusResponse`->`ImportStatusResponse`, `ControllersImportRunResponse`->`ImportRunResponse`, `LegacyimportReport`->`ImportReport`), the `importOperations()` func (2 ops), and `ops = append(ops, importOperations()...)`.
 - [ ] **Step 2:** Regenerate: `npm run api:spec` then `npm run api:ts`.
 - [ ] **Step 3:** Inspect the diff. The generated `ImportReport` schema must be the projects-only 4-field shape (`dryRun`, `projectsImported`, `projectsSkipped`, `notes`), matching the PR's `schema.ts` verbatim. If orchestrator fields appear, Task 1's `Report` trim was incomplete; fix it before continuing.
-- [ ] **Step 4:** `cd backend && go test ./internal/httpd/apispec/...` (route<->spec parity) → expect PASS.
+- [ ] **Step 4:** `cd backend && go test ./internal/httpd/apispec/...` (route&lt;-&gt;spec parity) → expect PASS.
 - [ ] **Step 5:** Commit: `feat(apispec): describe /api/v1/import; regenerate openapi + schema.ts`
 
 ---

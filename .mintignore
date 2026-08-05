@@ -1,0 +1,6 @@
+# Only documentation content is published from this monorepo.
+backend/
+frontend/
+packages/
+scripts/
+test/
