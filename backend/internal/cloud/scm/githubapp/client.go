@@ -271,6 +271,27 @@ func (c *Client) MintInstallationToken(
 	return token, nil
 }
 
+// MintInstallationAccountToken creates a short-lived token scoped to the
+// installation account rather than a single repository. Keep this control-plane
+// only; workers receive repository-scoped tokens.
+func (c *Client) MintInstallationAccountToken(
+	ctx context.Context,
+	installationID int64,
+	permissions Permissions,
+) (InstallationToken, error) {
+	if installationID <= 0 {
+		return InstallationToken{}, errors.New("GitHub installation ID must be positive")
+	}
+	if err := validatePermissions(permissions); err != nil {
+		return InstallationToken{}, err
+	}
+	token, err := c.mintInstallationToken(ctx, installationID, nil, permissions)
+	if err != nil {
+		return InstallationToken{}, fmt.Errorf("mint GitHub installation account token: %w", err)
+	}
+	return token, nil
+}
+
 func (c *Client) mintInstallationToken(
 	ctx context.Context,
 	installationID int64,
@@ -361,6 +382,85 @@ type Repository struct {
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`
 	PushedAt      time.Time       `json:"pushed_at"`
+}
+
+// CreateRepository creates a new repository under the installation account and
+// initializes it with GitHub's default first commit so workers can clone it.
+func (c *Client) CreateRepository(
+	ctx context.Context,
+	installationID int64,
+	accountLogin, accountType, name string,
+	private bool,
+) (Repository, error) {
+	accountLogin = strings.TrimSpace(accountLogin)
+	accountType = strings.ToLower(strings.TrimSpace(accountType))
+	name = strings.TrimSpace(name)
+	if installationID <= 0 {
+		return Repository{}, errors.New("GitHub installation ID must be positive")
+	}
+	if accountLogin == "" {
+		return Repository{}, errors.New("GitHub account login is required")
+	}
+	if name == "" {
+		return Repository{}, errors.New("GitHub repository name is required")
+	}
+	token, err := c.MintInstallationAccountToken(ctx, installationID, Permissions{
+		"administration": "write",
+		"contents":       "write",
+		"metadata":       "read",
+	})
+	if err != nil {
+		return Repository{}, err
+	}
+	path := "/user/repos"
+	if accountType == "organization" {
+		path = "/orgs/" + url.PathEscape(accountLogin) + "/repos"
+	}
+	var repository Repository
+	if err := c.DoInstallationREST(ctx, token, http.MethodPost, path, map[string]any{
+		"name":      name,
+		"private":   private,
+		"auto_init": true,
+	}, &repository); err != nil {
+		return Repository{}, fmt.Errorf("create GitHub repository: %w", err)
+	}
+	return repository, nil
+}
+
+// DeleteRepository removes a repository owned by an installation account. This
+// is used as compensation for failed scratch-project creation before the repo is
+// handed to users.
+func (c *Client) DeleteRepository(
+	ctx context.Context,
+	installationID int64,
+	owner, name string,
+) error {
+	owner = strings.TrimSpace(owner)
+	name = strings.TrimSpace(name)
+	if installationID <= 0 {
+		return errors.New("GitHub installation ID must be positive")
+	}
+	if owner == "" || name == "" {
+		return errors.New("GitHub repository owner and name are required")
+	}
+	token, err := c.MintInstallationAccountToken(ctx, installationID, Permissions{
+		"administration": "write",
+		"metadata":       "read",
+	})
+	if err != nil {
+		return err
+	}
+	if err := c.DoInstallationREST(
+		ctx,
+		token,
+		http.MethodDelete,
+		"/repos/"+url.PathEscape(owner)+"/"+url.PathEscape(name),
+		nil,
+		nil,
+	); err != nil {
+		return fmt.Errorf("delete GitHub repository: %w", err)
+	}
+	return nil
 }
 
 // ListInstallationRepositories mints an ephemeral metadata-only installation

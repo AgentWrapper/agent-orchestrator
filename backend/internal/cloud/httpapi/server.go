@@ -336,6 +336,7 @@ func (s *Server) routes() http.Handler {
 				org.Post("/invitations/{invitationId}/revoke", s.revokeInvitation)
 				org.Get("/projects", s.listProjects)
 				org.With(s.requireOrgRole("member")).Post("/projects", s.createProject)
+				org.With(s.requireOrgRole("member")).Post("/projects/scratch", s.createScratchProject)
 				org.With(s.requireOrgRole("admin")).Delete("/projects/{projectId}", s.deleteProject)
 				org.With(s.requireOrgRole("member")).Get("/projects/{projectId}/shares", s.listProjectShareAccess)
 				org.With(s.requireOrgRole("member")).Post("/projects/{projectId}/shares", s.createProjectShareLink)

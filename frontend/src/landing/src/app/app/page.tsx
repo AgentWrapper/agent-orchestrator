@@ -1048,6 +1048,46 @@ export default function CloudAppPage() {
     }
   };
 
+  const createScratchProjectAndPrewarmOrchestrator = async (input: {
+    displayName: string;
+    githubInstallationId?: number;
+    private?: boolean;
+  }) => {
+    if (!api || !selectedOrgId || selectedShare || !defaultAgent || !canEditOrg) {
+      setError("Connect GitHub and a coding agent before creating a cloud project.");
+      openProviderSettings();
+      return;
+    }
+    setLoading(true);
+    try {
+      const { project, session: orchestrator } = await api.createScratchProject(
+        selectedOrgId,
+        {
+          ...input,
+          orchestrator: {
+            harness: defaultAgent,
+            providerConnectionId: daytonaConnections[0]?.id,
+          },
+        },
+      );
+      repositoriesLoaded.current = false;
+      await Promise.all([refresh(), loadRepositories()]);
+      setSelectedProjectId(project.id);
+      setSelectedSessionId(orchestrator.id);
+      setView("session");
+      setShowProjectForm(false);
+      setError(null);
+    } catch (operationError) {
+      setError(
+        operationError instanceof Error
+          ? operationError.message
+          : "Could not create and start the scratch project.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const deleteSelectedWorkerMachine = async () => {
     if (!api || !activeOrgId || !selectedSession || selectedSession.kind !== "worker") return;
     const confirmed = window.confirm(
@@ -2080,6 +2120,7 @@ export default function CloudAppPage() {
           repositories={repositories}
           repositoriesLoading={repositoriesLoading}
           repositoriesError={repositoriesError}
+          error={error}
           githubConnection={githubConnection}
           loading={loading}
           onOpenGitHubSettings={() => {
@@ -2090,6 +2131,7 @@ export default function CloudAppPage() {
           }}
           onClose={() => setShowProjectForm(false)}
           onSubmit={createProjectAndPrewarmOrchestrator}
+          onSubmitScratch={createScratchProjectAndPrewarmOrchestrator}
         />
       )}
       {shareProject ? (
@@ -4098,15 +4140,18 @@ function ProjectForm({
   repositories,
   repositoriesLoading,
   repositoriesError,
+  error,
   githubConnection,
   loading,
   onOpenGitHubSettings,
   onClose,
   onSubmit,
+  onSubmitScratch,
 }: {
   repositories: CloudRepository[];
   repositoriesLoading: boolean;
   repositoriesError: string | null;
+  error: string | null;
   githubConnection: CloudGitHubConnection | null;
   loading: boolean;
   onOpenGitHubSettings: () => void;
@@ -4117,10 +4162,18 @@ function ProjectForm({
     defaultBranch: string;
     githubRepositoryId?: number;
   }) => Promise<void>;
+  onSubmitScratch: (input: {
+    displayName: string;
+    githubInstallationId?: number;
+    private?: boolean;
+  }) => Promise<void>;
 }) {
+  const [mode, setMode] = useState<"choose" | "github" | "scratch">("choose");
   const [repositoryURL, setRepositoryURL] = useState(
     repositories[0]?.url ?? "",
   );
+  const [scratchName, setScratchName] = useState("");
+  const [scratchPrivate, setScratchPrivate] = useState(true);
   useEffect(() => {
     setRepositoryURL((current) =>
       repositories.some(({ url }) => url === current)
@@ -4129,63 +4182,51 @@ function ProjectForm({
     );
   }, [repositories]);
   const selected = repositories.find(({ url }) => url === repositoryURL);
-  const hasActiveGitHubAppInstallation =
-    githubConnection?.mode === "github-app" &&
-    githubConnection.installations.some(
+  const activeInstallations = useMemo(
+    () =>
+      githubConnection?.installations.filter(
       (installation) => installation.status === "active",
+      ) ?? [],
+    [githubConnection?.installations],
+  );
+  const [scratchInstallationId, setScratchInstallationId] = useState("");
+  useEffect(() => {
+    setScratchInstallationId((current) =>
+      activeInstallations.some(
+        (installation) => String(installation.githubInstallationId) === current,
+      )
+        ? current
+        : activeInstallations.length === 1
+          ? String(activeInstallations[0].githubInstallationId)
+          : "",
     );
+  }, [activeInstallations]);
+  const hasActiveGitHubAppInstallation =
+    githubConnection?.mode === "github-app" && activeInstallations.length > 0;
   const showRepositorySelect = repositoriesLoading || repositories.length > 0;
+  const githubUnavailable = !hasActiveGitHubAppInstallation;
+  const selectedScratchInstallation =
+    activeInstallations.find(
+      (installation) =>
+        String(installation.githubInstallationId) === scratchInstallationId,
+    ) ?? activeInstallations[0];
   return (
     <Overlay title="Add cloud project" onClose={onClose}>
-      <form
-        className="space-y-4 p-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (!selected) return;
-          void onSubmit({
-            displayName:
-              selected.fullName.split("/").at(-1) ?? selected.fullName,
-            repositoryUrl: selected.url,
-            defaultBranch: selected.defaultBranch,
-            githubRepositoryId: selected.id,
-          });
-        }}
-      >
-        {showRepositorySelect ? (
-          <label className="block text-xs text-white/45">
-            GitHub repository
-            <select
-              className={`${field} mt-1.5`}
-              value={repositoryURL}
-              onChange={(event) => setRepositoryURL(event.target.value)}
-              disabled={loading || repositoriesLoading}
-            >
-              {repositories.map((repository) => (
-                <option value={repository.url} key={repository.url}>
-                  {repository.fullName}
-                  {repository.private ? " · private" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+      <div className="space-y-4 p-4">
+        {error ? (
+          <div
+            role="alert"
+            className="rounded-lg border border-[#ef6b6b]/30 bg-[#ef6b6b]/10 px-3 py-2 text-xs leading-5 text-[#ef9b9b]"
+          >
+            {error}
+          </div>
         ) : null}
-        {repositoriesLoading ? (
-          <p className="text-sm text-muted-foreground">
-            Loading GitHub repositories…
-          </p>
-        ) : repositoriesError ? (
-          <p className="text-sm text-destructive">{repositoriesError}</p>
-        ) : null}
-        {!repositoriesLoading && repositories.length === 0 ? (
+        {githubUnavailable ? (
           <div className="rounded-lg border border-[#e8c14a]/20 bg-[#e8c14a]/[0.06] px-3 py-2.5">
-            <p className="text-sm text-[#e8c14a]">
-              {hasActiveGitHubAppInstallation
-                ? "No repositories are granted to this organization."
-                : "GitHub not connected."}
-            </p>
+            <p className="text-sm text-[#e8c14a]">GitHub not connected.</p>
             <p className="mt-1 text-xs leading-5 text-white/45">
-              Connect GitHub from Provider connections to choose a repository for
-              this project.
+              Connect the GitHub App before adding a project. Scratch projects
+              also create a GitHub repository first.
             </p>
             <button
               type="button"
@@ -4196,25 +4237,239 @@ function ProjectForm({
             </button>
           </div>
         ) : null}
-        <div className="flex justify-end gap-2">
-          <button
-            type="button"
-            className={button}
-            onClick={onClose}
-            disabled={loading}
+        {mode === "choose" ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              className="group rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={githubUnavailable || loading}
+              onClick={() => setMode("github")}
+            >
+              <div className="mb-8 flex h-24 items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
+                <Github className="size-8 text-white/55 transition-colors group-hover:text-white" />
+              </div>
+              <p className="text-sm font-medium text-white">From GitHub</p>
+              <p className="mt-1 text-xs leading-5 text-white/42">
+                Choose a repository already granted to this AO organization.
+              </p>
+            </button>
+            <button
+              type="button"
+              className="group rounded-xl border border-white/[0.08] bg-white/[0.025] p-4 text-left transition-colors hover:border-white/[0.16] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
+              disabled={githubUnavailable || loading}
+              onClick={() => setMode("scratch")}
+            >
+              <div className="mb-8 flex h-24 items-center justify-center rounded-lg border border-dashed border-white/[0.10] bg-black/15">
+                <FolderGit2 className="size-8 text-white/55 transition-colors group-hover:text-white" />
+              </div>
+              <p className="text-sm font-medium text-white">Start from scratch</p>
+              <p className="mt-1 text-xs leading-5 text-white/42">
+                Create a new GitHub repo, register it, then start AO normally.
+              </p>
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-[#4d8dff]/20 bg-[#4d8dff]/[0.06] px-2.5 py-2 text-[11px] leading-4 text-[#9fc0ff]">
+                <span className="size-1.5 rounded-full bg-[#4d8dff]" />
+                Git repository is initialized before the orchestrator starts.
+              </div>
+            </button>
+          </div>
+        ) : null}
+        {mode === "github" ? (
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!selected) return;
+              void onSubmit({
+                displayName:
+                  selected.fullName.split("/").at(-1) ?? selected.fullName,
+                repositoryUrl: selected.url,
+                defaultBranch: selected.defaultBranch,
+                githubRepositoryId: selected.id,
+              });
+            }}
           >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className={primaryButton}
-            disabled={!selected || loading || repositoriesLoading}
+            {showRepositorySelect ? (
+              <label className="block text-xs text-white/45">
+                GitHub repository
+                <select
+                  className={`${field} mt-1.5`}
+                  value={repositoryURL}
+                  onChange={(event) => setRepositoryURL(event.target.value)}
+                  disabled={loading || repositoriesLoading}
+                >
+                  {repositories.map((repository) => (
+                    <option value={repository.url} key={repository.url}>
+                      {repository.fullName}
+                      {repository.private ? " · private" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {repositoriesLoading ? (
+              <p className="text-sm text-muted-foreground">
+                Loading GitHub repositories…
+              </p>
+            ) : repositoriesError ? (
+              <p className="text-sm text-destructive">{repositoriesError}</p>
+            ) : null}
+            {!repositoriesLoading && repositories.length === 0 ? (
+              <p className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-sm text-white/45">
+                No repositories are granted to this organization. Use scratch or
+                update the GitHub App installation.
+              </p>
+            ) : null}
+            <ProjectFormActions
+              loading={loading}
+              primaryDisabled={!selected || loading || repositoriesLoading}
+              primaryLabel="Add project"
+              loadingLabel="Starting…"
+              onBack={() => setMode("choose")}
+              onClose={onClose}
+            />
+          </form>
+        ) : null}
+        {mode === "scratch" ? (
+          <form
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!scratchName.trim() || !selectedScratchInstallation) return;
+              void onSubmitScratch({
+                displayName: scratchName.trim(),
+                githubInstallationId:
+                  selectedScratchInstallation.githubInstallationId,
+                private: scratchPrivate,
+              });
+            }}
           >
-            {loading ? "Starting…" : "Add project"}
-          </button>
-        </div>
-      </form>
+            <label className="block text-xs text-white/45">
+              Project and repository name
+              <input
+                className={`${field} mt-1.5`}
+                value={scratchName}
+                onChange={(event) => setScratchName(event.target.value)}
+                placeholder="my-new-app"
+                required
+                maxLength={80}
+                disabled={loading}
+              />
+            </label>
+            {activeInstallations.length > 1 ? (
+              <label className="block text-xs text-white/45">
+                GitHub owner
+                <select
+                  className={`${field} mt-1.5`}
+                  value={scratchInstallationId}
+                  onChange={(event) =>
+                    setScratchInstallationId(event.target.value)
+                  }
+                  disabled={loading}
+                  required
+                >
+                  <option value="" disabled>
+                    Choose owner
+                  </option>
+                  {activeInstallations.map((installation) => (
+                    <option
+                      key={installation.githubInstallationId}
+                      value={installation.githubInstallationId}
+                    >
+                      {installation.accountLogin} ·{" "}
+                      {installation.accountType.toLowerCase()}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <div className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/45">
+                Repository owner:{" "}
+                <span className="text-white/70">
+                  {selectedScratchInstallation?.accountLogin ?? "GitHub"}
+                </span>
+              </div>
+            )}
+            <label className="flex items-start gap-2 rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/50">
+              <input
+                className="mt-1"
+                type="checkbox"
+                checked={scratchPrivate}
+                onChange={(event) => setScratchPrivate(event.target.checked)}
+                disabled={loading}
+              />
+              <span>Create the GitHub repository as private.</span>
+            </label>
+            <div className="rounded-lg border border-[#4d8dff]/20 bg-[#4d8dff]/[0.06] px-3 py-2 text-xs leading-5 text-[#9fc0ff]">
+              Setup order: initialize the GitHub repo, register the AO project,
+              then start the orchestrator. If orchestration fails, AO removes
+              the new repo so you can retry cleanly.
+            </div>
+            <ProjectFormActions
+              loading={loading}
+              primaryDisabled={
+                !scratchName.trim() || !selectedScratchInstallation || loading
+              }
+              primaryLabel="Create from scratch"
+              loadingLabel="Creating…"
+              onBack={() => setMode("choose")}
+              onClose={onClose}
+            />
+          </form>
+        ) : null}
+        {mode === "choose" ? (
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className={button}
+              onClick={onClose}
+              disabled={loading}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : null}
+      </div>
     </Overlay>
+  );
+}
+
+function ProjectFormActions({
+  loading,
+  primaryDisabled,
+  primaryLabel,
+  loadingLabel,
+  onBack,
+  onClose,
+}: {
+  loading: boolean;
+  primaryDisabled: boolean;
+  primaryLabel: string;
+  loadingLabel: string;
+  onBack: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="flex justify-end gap-2">
+      <button
+        type="button"
+        className={button}
+        onClick={onBack}
+        disabled={loading}
+      >
+        Back
+      </button>
+      <button
+        type="button"
+        className={button}
+        onClick={onClose}
+        disabled={loading}
+      >
+        Cancel
+      </button>
+      <button type="submit" className={primaryButton} disabled={primaryDisabled}>
+        {loading ? loadingLabel : primaryLabel}
+      </button>
+    </div>
   );
 }
 

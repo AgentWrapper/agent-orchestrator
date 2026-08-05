@@ -42,6 +42,8 @@ var githubEventNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 type GitHubAppClient interface {
 	GetInstallation(context.Context, int64) (cloudgithubapp.Installation, error)
 	ListInstallationRepositories(context.Context, int64) ([]cloudgithubapp.Repository, error)
+	CreateRepository(context.Context, int64, string, string, string, bool) (cloudgithubapp.Repository, error)
+	DeleteRepository(context.Context, int64, string, string) error
 }
 
 // RepositoryRefresh performs a canonical provider refresh for active SCM
@@ -209,6 +211,315 @@ func (s *Server) getGitHub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+}
+
+func (s *Server) createScratchProject(w http.ResponseWriter, r *http.Request) {
+	if _, shared := sharedProjectAccessFromContext(r.Context()); shared {
+		writeError(w, r, http.StatusForbidden, "PROJECT_FORBIDDEN", "A project share does not grant permission to create other projects.")
+		return
+	}
+	if !s.requireGitHubApp(w, r) {
+		return
+	}
+	if s.githubStore == nil {
+		writeError(w, r, http.StatusNotImplemented, "GITHUB_CONNECTION_REQUIRED", "GitHub is not configured for this deployment.")
+		return
+	}
+	account, _ := accountFromContext(r.Context())
+	org, _ := orgFromContext(r.Context())
+	var input struct {
+		DisplayName          string `json:"displayName"`
+		GitHubInstallationID int64  `json:"githubInstallationId"`
+		Private              *bool  `json:"private"`
+		Orchestrator         struct {
+			Harness              string `json:"harness"`
+			ProviderConnectionID string `json:"providerConnectionId"`
+		} `json:"orchestrator"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	displayName := strings.TrimSpace(input.DisplayName)
+	if displayName == "" || len(displayName) > 80 {
+		writeError(w, r, http.StatusBadRequest, "INVALID_PROJECT", "A project name is required and must be at most 80 characters.")
+		return
+	}
+	input.Orchestrator.Harness = strings.TrimSpace(input.Orchestrator.Harness)
+	if !cloudWorkerHarness(input.Orchestrator.Harness) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_AGENT", "harness must be claude-code, codex, or cursor.")
+		return
+	}
+	credential, err := s.loadAgentCredential(r.Context(), account.ID, input.Orchestrator.Harness)
+	if errors.Is(err, errAgentConnectionRequired) {
+		writeError(w, r, http.StatusBadRequest, "AGENT_CONNECTION_REQUIRED", "Connect "+input.Orchestrator.Harness+" before creating a scratch project.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "validate scratch project agent connection", err)
+		return
+	}
+	if credential != nil {
+		credential.Secret = ""
+	}
+	installation, ok := s.selectScratchGitHubInstallation(w, r, org.Organization.ID, input.GitHubInstallationID)
+	if !ok {
+		return
+	}
+	private := true
+	if input.Private != nil {
+		private = *input.Private
+	}
+	repository, err := s.createScratchGitHubRepository(r.Context(), installation, displayName, private)
+	if err != nil {
+		var apiError *cloudgithubapp.APIError
+		if errors.As(err, &apiError) && apiError.StatusCode == http.StatusForbidden {
+			writeError(w, r, http.StatusForbidden, "GITHUB_REPOSITORY_CREATE_FORBIDDEN", "The GitHub App installation cannot create repositories for that account.")
+			return
+		}
+		s.internalError(w, r, "create scratch GitHub repository", err)
+		return
+	}
+	synced, err := s.syncScratchRepositoryGrant(r.Context(), org.Organization.ID, installation.GitHubInstallationID, repository)
+	if err != nil {
+		s.cleanupScratchGitHubRepository(r.Context(), installation, repository)
+		s.internalError(w, r, "sync scratch GitHub repository grant", err)
+		return
+	}
+	defaultBranch := synced.DefaultBranch
+	if strings.TrimSpace(defaultBranch) == "" {
+		defaultBranch = "main"
+	}
+	repositoryID := synced.ID
+	project, err := s.store.CreateProject(r.Context(), account.ID, cloudpostgres.CreateProjectInput{
+		DisplayName:        displayName,
+		RepositoryURL:      synced.HTMLURL,
+		DefaultBranch:      defaultBranch,
+		GitHubRepositoryID: &repositoryID,
+		Config:             json.RawMessage(`{"source":"scratch"}`),
+	})
+	if errors.Is(err, cloudpostgres.ErrProjectExists) {
+		s.cleanupScratchGitHubRepository(r.Context(), installation, repository)
+		writeError(w, r, http.StatusConflict, "PROJECT_EXISTS", "This repository is already registered.")
+		return
+	}
+	if err != nil {
+		s.cleanupScratchGitHubRepository(r.Context(), installation, repository)
+		s.internalError(w, r, "create scratch project", err)
+		return
+	}
+	result, err := s.store.CreateSession(r.Context(), account.ID, cloudpostgres.CreateSessionInput{
+		IdempotencyKey:           uuid.NewString(),
+		ProjectID:                project.ID,
+		Kind:                     "orchestrator",
+		Harness:                  input.Orchestrator.Harness,
+		DisplayName:              "Orchestrator",
+		Resource:                 clouddomain.DefaultResourceProfile(),
+		Provider:                 s.sandboxProvider,
+		ProviderConnectionID:     providerConnectionID(s.sandboxProvider, input.Orchestrator.ProviderConnectionID),
+		MaxActiveSandboxesPerOrg: s.maxActiveSandboxesPerOrg,
+	})
+	if err != nil {
+		if deleteErr := s.store.DeleteProject(context.WithoutCancel(r.Context()), account.ID, project.ID); deleteErr != nil {
+			if s.log != nil {
+				s.log.Warn("scratch project rollback failed",
+					"project_id", project.ID,
+					"err", deleteErr,
+				)
+			}
+		}
+		s.cleanupScratchGitHubRepository(context.WithoutCancel(r.Context()), installation, repository)
+		if s.writeScratchSessionError(w, r, err) {
+			return
+		}
+		s.internalError(w, r, "create scratch project orchestrator", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"project":    project,
+		"repository": synced,
+		"session":    result.Session,
+	})
+}
+
+func (s *Server) selectScratchGitHubInstallation(
+	w http.ResponseWriter,
+	r *http.Request,
+	orgID clouddomain.OrgID,
+	requestedInstallationID int64,
+) (clouddomain.GitHubInstallation, bool) {
+	installations, err := s.githubStore.ListGitHubInstallations(r.Context(), orgID)
+	if err != nil {
+		s.internalError(w, r, "list GitHub installations for scratch project", err)
+		return clouddomain.GitHubInstallation{}, false
+	}
+	active := make([]clouddomain.GitHubInstallation, 0, len(installations))
+	for _, installation := range installations {
+		if installation.Status == "active" {
+			active = append(active, installation)
+		}
+	}
+	if len(active) == 0 {
+		writeError(w, r, http.StatusConflict, "GITHUB_CONNECTION_REQUIRED", "Connect GitHub before creating a project.")
+		return clouddomain.GitHubInstallation{}, false
+	}
+	if requestedInstallationID > 0 {
+		for _, installation := range active {
+			if installation.GitHubInstallationID == requestedInstallationID {
+				return installation, true
+			}
+		}
+		writeError(w, r, http.StatusForbidden, "GITHUB_INSTALLATION_NOT_FOUND", "The selected GitHub installation is not connected to this organization.")
+		return clouddomain.GitHubInstallation{}, false
+	}
+	if len(active) > 1 {
+		writeError(w, r, http.StatusBadRequest, "GITHUB_INSTALLATION_REQUIRED", "Choose which connected GitHub account should own the new repository.")
+		return clouddomain.GitHubInstallation{}, false
+	}
+	return active[0], true
+}
+
+func (s *Server) createScratchGitHubRepository(
+	ctx context.Context,
+	installation clouddomain.GitHubInstallation,
+	displayName string,
+	private bool,
+) (cloudgithubapp.Repository, error) {
+	baseName := scratchRepositoryName(displayName)
+	if baseName == "" {
+		baseName = "ao-project"
+	}
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		name := baseName
+		if attempt > 0 {
+			name = baseName + "-" + strings.ToLower(uuid.NewString()[:4])
+		}
+		repository, err := s.githubApp.client.CreateRepository(
+			ctx,
+			installation.GitHubInstallationID,
+			installation.AccountLogin,
+			installation.AccountType,
+			name,
+			private,
+		)
+		if err == nil {
+			return repository, nil
+		}
+		lastErr = err
+		var apiError *cloudgithubapp.APIError
+		if !errors.As(err, &apiError) || apiError.StatusCode != http.StatusUnprocessableEntity {
+			return cloudgithubapp.Repository{}, err
+		}
+	}
+	return cloudgithubapp.Repository{}, lastErr
+}
+
+func scratchRepositoryName(displayName string) string {
+	value := strings.ToLower(strings.TrimSpace(displayName))
+	var builder strings.Builder
+	lastDash := false
+	for _, char := range value {
+		valid := char >= 'a' && char <= 'z' || char >= '0' && char <= '9'
+		switch {
+		case valid:
+			builder.WriteRune(char)
+			lastDash = false
+		case !lastDash:
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	result := strings.Trim(builder.String(), "-")
+	if len(result) > 80 {
+		result = strings.Trim(result[:80], "-")
+	}
+	return result
+}
+
+func (s *Server) syncScratchRepositoryGrant(
+	ctx context.Context,
+	orgID clouddomain.OrgID,
+	githubInstallationID int64,
+	created cloudgithubapp.Repository,
+) (clouddomain.GitHubRepository, error) {
+	repositories, err := s.githubApp.client.ListInstallationRepositories(ctx, githubInstallationID)
+	if err != nil {
+		return clouddomain.GitHubRepository{}, err
+	}
+	foundCreated := false
+	domainRepositories := make([]clouddomain.GitHubRepository, 0, len(repositories)+1)
+	for _, repository := range repositories {
+		converted, convertErr := githubRepository(repository)
+		if convertErr != nil {
+			return clouddomain.GitHubRepository{}, convertErr
+		}
+		if converted.ID == created.ID {
+			foundCreated = true
+		}
+		domainRepositories = append(domainRepositories, converted)
+	}
+	if !foundCreated {
+		converted, convertErr := githubRepository(created)
+		if convertErr != nil {
+			return clouddomain.GitHubRepository{}, convertErr
+		}
+		domainRepositories = append(domainRepositories, converted)
+	}
+	if _, err := s.githubStore.FullSyncGitHubRepositories(ctx, orgID, githubInstallationID, domainRepositories); err != nil {
+		return clouddomain.GitHubRepository{}, err
+	}
+	for _, repository := range domainRepositories {
+		if repository.ID == created.ID {
+			return repository, nil
+		}
+	}
+	return clouddomain.GitHubRepository{}, cloudpostgres.ErrGitHubRepositoryGrantNotFound
+}
+
+func (s *Server) cleanupScratchGitHubRepository(
+	ctx context.Context,
+	installation clouddomain.GitHubInstallation,
+	repository cloudgithubapp.Repository,
+) {
+	owner := strings.TrimSpace(repository.Owner.Login)
+	if owner == "" {
+		owner = installation.AccountLogin
+	}
+	name := strings.TrimSpace(repository.Name)
+	if owner == "" || name == "" {
+		return
+	}
+	if err := s.githubApp.client.DeleteRepository(ctx, installation.GitHubInstallationID, owner, name); err != nil {
+		if s.log != nil {
+			s.log.Warn("scratch GitHub repository cleanup failed",
+				"repository", owner+"/"+name,
+				"err", err,
+			)
+		}
+	}
+}
+
+func (s *Server) writeScratchSessionError(w http.ResponseWriter, r *http.Request, err error) bool {
+	switch {
+	case errors.Is(err, cloudpostgres.ErrProviderConnectionNotFound):
+		writeError(w, r, http.StatusBadRequest, "PROVIDER_CONNECTION_NOT_FOUND", "The selected sandbox provider connection does not exist. The scratch GitHub repository was removed so you can try again.")
+	case errors.Is(err, cloudpostgres.ErrActiveOrchestrator):
+		writeError(w, r, http.StatusConflict, "ORCHESTRATOR_EXISTS", "This project already has an active orchestrator. The scratch GitHub repository was removed so you can try again.")
+	case errors.Is(err, cloudpostgres.ErrSandboxQuotaExceeded):
+		writeError(
+			w,
+			r,
+			http.StatusConflict,
+			"SANDBOX_QUOTA_EXCEEDED",
+			fmt.Sprintf(
+				"This organization already has %d active sandboxes. The scratch GitHub repository was removed; delete a worker machine and try again.",
+				s.maxActiveSandboxesPerOrg,
+			),
+		)
+	default:
+		return false
+	}
+	return true
 }
 
 func (s *Server) createGitHubInstall(w http.ResponseWriter, r *http.Request) {

@@ -537,6 +537,24 @@ export class CloudAPI {
     });
   }
 
+  async createScratchProject(orgId: string, input: {
+    displayName: string;
+    githubInstallationId?: number;
+    private?: boolean;
+    orchestrator: {
+      harness: string;
+      providerConnectionId?: string;
+    };
+  }) {
+    return this.request<{ project: CloudProject; repository: CloudGitHubGrantedRepository["repository"]; session: CloudSession }>(
+      this.orgPath(orgId, "/projects/scratch"),
+      {
+        method: "POST",
+        body: input,
+      },
+    );
+  }
+
   async deleteProject(orgId: string, projectId: string) {
     return this.request<void>(
       this.orgPath(orgId, `/projects/${encodeURIComponent(projectId)}`),

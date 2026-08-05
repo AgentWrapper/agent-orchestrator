@@ -1093,12 +1093,18 @@ type fakeGitHubAppClient struct {
 	repositories               []cloudgithubapp.Repository
 	installations              map[int64]cloudgithubapp.Installation
 	repositoriesByInstallation map[int64][]cloudgithubapp.Repository
+	createdRepository          cloudgithubapp.Repository
+	deletedRepositories        []string
 	getErrors                  map[int64]error
 	listErrors                 map[int64]error
+	createErr                  error
+	deleteErr                  error
 	getErr                     error
 	listErr                    error
 	getCalls                   int
 	listCalls                  int
+	createCalls                int
+	deleteCalls                int
 }
 
 func (c *fakeGitHubAppClient) GetInstallation(_ context.Context, installationID int64) (cloudgithubapp.Installation, error) {
@@ -1121,6 +1127,33 @@ func (c *fakeGitHubAppClient) ListInstallationRepositories(_ context.Context, in
 		return repositories, nil
 	}
 	return c.repositories, c.listErr
+}
+
+func (c *fakeGitHubAppClient) CreateRepository(_ context.Context, _ int64, accountLogin, accountType, name string, private bool) (cloudgithubapp.Repository, error) {
+	c.createCalls++
+	if c.createErr != nil {
+		return cloudgithubapp.Repository{}, c.createErr
+	}
+	if c.createdRepository.ID != 0 {
+		return c.createdRepository, nil
+	}
+	return cloudgithubapp.Repository{
+		ID:            991,
+		Name:          name,
+		FullName:      accountLogin + "/" + name,
+		Private:       private,
+		Owner:         cloudgithubapp.Account{ID: 7, Login: accountLogin, Type: accountType},
+		HTMLURL:       "https://github.com/" + accountLogin + "/" + name,
+		CloneURL:      "https://github.com/" + accountLogin + "/" + name + ".git",
+		DefaultBranch: "main",
+		Visibility:    "private",
+	}, nil
+}
+
+func (c *fakeGitHubAppClient) DeleteRepository(_ context.Context, _ int64, owner, name string) error {
+	c.deleteCalls++
+	c.deletedRepositories = append(c.deletedRepositories, owner+"/"+name)
+	return c.deleteErr
 }
 
 type fakeGitHubStore struct {

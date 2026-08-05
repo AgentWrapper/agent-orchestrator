@@ -138,6 +138,138 @@ func TestMintInstallationTokenRequiresOneRepositoryAndPermissions(t *testing.T) 
 	}
 }
 
+func TestCreateRepositoryUsesInstallationAccountToken(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/app/installations/42/access_tokens":
+			assertJWTAuthorization(t, r)
+			var input struct {
+				RepositoryIDs []int64           `json:"repository_ids"`
+				Permissions   map[string]string `json:"permissions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Errorf("decode token request: %v", err)
+			}
+			if len(input.RepositoryIDs) != 0 {
+				t.Errorf("repository_ids = %#v, want empty account token", input.RepositoryIDs)
+			}
+			if input.Permissions["administration"] != "write" ||
+				input.Permissions["contents"] != "write" ||
+				input.Permissions["metadata"] != "read" ||
+				len(input.Permissions) != 3 {
+				t.Errorf("permissions = %#v", input.Permissions)
+			}
+			_, _ = w.Write([]byte(`{
+				"token":"ghs_installation",
+				"expires_at":"2026-08-03T22:00:00Z",
+				"permissions":{"administration":"write","contents":"write","metadata":"read"},
+				"repository_selection":"all"
+			}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/orgs/aoagents/repos":
+			if got := r.Header.Get("Authorization"); got != "Bearer ghs_installation" {
+				t.Errorf("Authorization = %q", got)
+			}
+			var input struct {
+				Name     string `json:"name"`
+				Private  bool   `json:"private"`
+				AutoInit bool   `json:"auto_init"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Errorf("decode create request: %v", err)
+			}
+			if input.Name != "scratch-app" || !input.Private || !input.AutoInit {
+				t.Errorf("create repository input = %#v", input)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{
+				"id":991,
+				"node_id":"R_991",
+				"name":"scratch-app",
+				"full_name":"aoagents/scratch-app",
+				"private":true,
+				"owner":{"id":7,"login":"aoagents","type":"Organization"},
+				"html_url":"https://github.com/aoagents/scratch-app",
+				"clone_url":"https://github.com/aoagents/scratch-app.git",
+				"default_branch":"main",
+				"visibility":"private"
+			}`))
+		default:
+			http.Error(w, "unexpected route", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL, Config{})
+	repository, err := client.CreateRepository(
+		context.Background(),
+		42,
+		"aoagents",
+		"Organization",
+		"scratch-app",
+		true,
+	)
+	if err != nil {
+		t.Fatalf("CreateRepository: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+	if repository.ID != 991 || repository.FullName != "aoagents/scratch-app" ||
+		repository.DefaultBranch != "main" {
+		t.Fatalf("unexpected repository: %#v", repository)
+	}
+}
+
+func TestDeleteRepositoryUsesInstallationAccountToken(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/app/installations/42/access_tokens":
+			assertJWTAuthorization(t, r)
+			var input struct {
+				RepositoryIDs []int64           `json:"repository_ids"`
+				Permissions   map[string]string `json:"permissions"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Errorf("decode token request: %v", err)
+			}
+			if len(input.RepositoryIDs) != 0 {
+				t.Errorf("repository_ids = %#v, want empty account token", input.RepositoryIDs)
+			}
+			if input.Permissions["administration"] != "write" ||
+				input.Permissions["metadata"] != "read" ||
+				len(input.Permissions) != 2 {
+				t.Errorf("permissions = %#v", input.Permissions)
+			}
+			_, _ = w.Write([]byte(`{
+				"token":"ghs_installation",
+				"expires_at":"2026-08-03T22:00:00Z",
+				"permissions":{"administration":"write","metadata":"read"},
+				"repository_selection":"all"
+			}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v3/repos/aoagents/scratch-app":
+			if got := r.Header.Get("Authorization"); got != "Bearer ghs_installation" {
+				t.Errorf("Authorization = %q", got)
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected route", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server.URL, Config{})
+	if err := client.DeleteRepository(context.Background(), 42, "aoagents", "scratch-app"); err != nil {
+		t.Fatalf("DeleteRepository: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d, want 2", requests)
+	}
+}
+
 func TestListInstallationRepositoriesPaginatesAndPreservesMetadata(t *testing.T) {
 	var requests int
 	var server *httptest.Server

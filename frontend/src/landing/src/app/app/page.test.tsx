@@ -27,6 +27,9 @@ const apiMocks = vi.hoisted(() => ({
   startGitHubInstall: vi.fn(),
   syncGitHub: vi.fn(),
   disconnectGitHubInstallation: vi.fn(),
+  createProject: vi.fn(),
+  createScratchProject: vi.fn(),
+  createSession: vi.fn(),
   providerConnections: vi.fn(),
   updateProviderSettings: vi.fn(),
   createProjectShareLink: vi.fn(),
@@ -75,6 +78,9 @@ vi.mock("@/lib/cloud-api", () => ({
     startGitHubInstall = apiMocks.startGitHubInstall;
     syncGitHub = apiMocks.syncGitHub;
     disconnectGitHubInstallation = apiMocks.disconnectGitHubInstallation;
+    createProject = apiMocks.createProject;
+    createScratchProject = apiMocks.createScratchProject;
+    createSession = apiMocks.createSession;
     providerConnections = apiMocks.providerConnections;
     updateProviderSettings = apiMocks.updateProviderSettings;
     createProjectShareLink = apiMocks.createProjectShareLink;
@@ -231,6 +237,9 @@ beforeEach(() => {
   });
   apiMocks.syncGitHub.mockResolvedValue(undefined);
   apiMocks.disconnectGitHubInstallation.mockResolvedValue(undefined);
+  apiMocks.createProject.mockResolvedValue({ project });
+  apiMocks.createScratchProject.mockResolvedValue({ project, repository: null });
+  apiMocks.createSession.mockResolvedValue({ session: orchestrator, created: true });
   apiMocks.updateProviderSettings.mockResolvedValue(undefined);
   apiMocks.createProjectShareLink.mockResolvedValue({
     token: "share-token",
@@ -369,7 +378,7 @@ it("loads GitHub repositories only when the project form opens", async () => {
 
   fireEvent.click(addProject);
 
-  expect(await screen.findByText("GitHub unavailable")).toBeVisible();
+  expect(await screen.findByText("GitHub not connected.")).toBeVisible();
   expect(apiMocks.repositories).toHaveBeenCalledTimes(1);
   expect(
     screen.getByRole("button", {
@@ -377,6 +386,66 @@ it("loads GitHub repositories only when the project form opens", async () => {
     }),
   ).toBeVisible();
   expect(screen.getByText(project.displayName)).toBeVisible();
+});
+
+it("creates a scratch project through the connected GitHub installation", async () => {
+  const scratchProject: CloudProject = {
+    ...project,
+    id: "scratch-project",
+    displayName: "Scratch App",
+    repositoryUrl: "https://github.com/aoagents/scratch-app",
+  };
+  apiMocks.repositories.mockResolvedValue({ repositories: [] });
+  apiMocks.githubConnection.mockResolvedValue({
+    mode: "github-app",
+    appSlug: "ao-cloud",
+    installations: [
+      {
+        id: "installation-one",
+        githubInstallationId: 42,
+        accountLogin: "aoagents",
+        accountType: "Organization",
+        status: "active",
+        repositorySelection: "all",
+      },
+    ],
+    repositories: [],
+  });
+  apiMocks.createScratchProject.mockResolvedValue({
+    project: scratchProject,
+    repository: {
+      id: 991,
+      fullName: "aoagents/scratch-app",
+      htmlUrl: "https://github.com/aoagents/scratch-app",
+      defaultBranch: "main",
+      private: true,
+      archived: false,
+      disabled: false,
+    },
+    session: { ...orchestrator, id: "scratch-orchestrator", projectId: "scratch-project" },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Add cloud project" }));
+  fireEvent.click(await screen.findByRole("button", { name: /Start from scratch/ }));
+  fireEvent.change(screen.getByPlaceholderText("my-new-app"), {
+    target: { value: "Scratch App" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create from scratch" }));
+
+  await waitFor(() =>
+    expect(apiMocks.createScratchProject).toHaveBeenCalledWith("org-one", {
+      displayName: "Scratch App",
+      githubInstallationId: 42,
+      private: true,
+      orchestrator: {
+        harness: "claude-code",
+        providerConnectionId: undefined,
+      },
+    }),
+  );
+  expect(apiMocks.createSession).not.toHaveBeenCalled();
 });
 
 it("opens provider connections from the no-agent empty state", async () => {

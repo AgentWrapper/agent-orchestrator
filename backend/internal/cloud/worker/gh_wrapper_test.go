@@ -46,7 +46,7 @@ func TestGitHubWrapperUsesHeartbeatRefreshedWorkerToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(githubArguments) != "pr\ncreate\n--title\nworker change\n" {
+	if string(githubArguments) != "pr\ncreate\n--repo\namoreX/flowlens\n--title\nworker change\n--head\nao/readme-tweak-9ae8187f\n" {
 		t.Fatalf("gh arguments = %q", githubArguments)
 	}
 	githubRepository, err := os.ReadFile(fixture.githubRepositoryPath)
@@ -55,6 +55,90 @@ func TestGitHubWrapperUsesHeartbeatRefreshedWorkerToken(t *testing.T) {
 	}
 	if string(githubRepository) != "amoreX/flowlens\n" {
 		t.Fatalf("GH_REPO = %q, want amoreX/flowlens", githubRepository)
+	}
+}
+
+func TestGitHubWrapperPreservesExplicitPullRequestHead(t *testing.T) {
+	fixture := newGitHubWrapperFixture(t)
+	output, err := fixture.commandWithArgs(
+		t,
+		false,
+		"pr",
+		"create",
+		"--head",
+		"custom-branch",
+		"--title",
+		"worker change",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run GitHub wrapper: %v: %s", err, output)
+	}
+	githubArguments, err := os.ReadFile(fixture.githubArgumentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(githubArguments) != "pr\ncreate\n--repo\namoreX/flowlens\n--head\ncustom-branch\n--title\nworker change\n" {
+		t.Fatalf("gh arguments = %q", githubArguments)
+	}
+}
+
+func TestGitHubWrapperTargetsBranchForArgumentlessPullRequestView(t *testing.T) {
+	fixture := newGitHubWrapperFixture(t)
+	output, err := fixture.commandWithArgs(
+		t,
+		false,
+		"pr",
+		"view",
+		"--json",
+		"number,url,state",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run GitHub wrapper: %v: %s", err, output)
+	}
+	githubArguments, err := os.ReadFile(fixture.githubArgumentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(githubArguments) != "pr\nview\n--repo\namoreX/flowlens\n--json\nnumber,url,state\nao/readme-tweak-9ae8187f\n" {
+		t.Fatalf("gh arguments = %q", githubArguments)
+	}
+}
+
+func TestGitHubWrapperDoesNotReplaceExplicitPullRequestViewSelector(t *testing.T) {
+	fixture := newGitHubWrapperFixture(t)
+	output, err := fixture.commandWithArgs(
+		t,
+		false,
+		"pr",
+		"view",
+		"2",
+		"--json",
+		"number,url,state",
+	).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run GitHub wrapper: %v: %s", err, output)
+	}
+	githubArguments, err := os.ReadFile(fixture.githubArgumentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(githubArguments) != "pr\nview\n--repo\namoreX/flowlens\n2\n--json\nnumber,url,state\n" {
+		t.Fatalf("gh arguments = %q", githubArguments)
+	}
+}
+
+func TestGitHubWrapperAddsRepositoryForPullRequestStatus(t *testing.T) {
+	fixture := newGitHubWrapperFixture(t)
+	output, err := fixture.commandWithArgs(t, false, "pr", "status").CombinedOutput()
+	if err != nil {
+		t.Fatalf("run GitHub wrapper: %v: %s", err, output)
+	}
+	githubArguments, err := os.ReadFile(fixture.githubArgumentsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(githubArguments) != "pr\nstatus\n--repo\namoreX/flowlens\n" {
+		t.Fatalf("gh arguments = %q", githubArguments)
 	}
 }
 
@@ -154,13 +238,21 @@ printf '%s\n' "$@" > "$MOCK_GH_ARGUMENTS"
 
 func (f githubWrapperFixture) command(t *testing.T, brokerFailure bool) *exec.Cmd {
 	t.Helper()
-	command := exec.Command(
-		"/bin/sh",
-		f.wrapperPath,
+	return f.commandWithArgs(
+		t,
+		brokerFailure,
 		"pr",
 		"create",
 		"--title",
 		"worker change",
+	)
+}
+
+func (f githubWrapperFixture) commandWithArgs(t *testing.T, brokerFailure bool, args ...string) *exec.Cmd {
+	t.Helper()
+	command := exec.Command(
+		"/bin/sh",
+		append([]string{f.wrapperPath}, args...)...,
 	)
 	command.Dir = f.workspaceDir
 	command.Env = append(os.Environ(),
@@ -168,6 +260,7 @@ func (f githubWrapperFixture) command(t *testing.T, brokerFailure bool) *exec.Cm
 		"AO_GH_REAL_BINARY="+f.realGitHubPath,
 		"AO_CLOUD_PUBLIC_URL=https://cloud.example",
 		"AO_SESSION_ID=session-one",
+		"AO_SESSION_BRANCH=ao/readme-tweak-9ae8187f",
 		"AO_WORKER_TOKEN=startup-worker-token",
 		"AO_DATA_DIR="+f.dataDir,
 		"MOCK_CURL_ARGUMENTS="+f.curlArgumentsPath,
