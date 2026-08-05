@@ -98,6 +98,7 @@ describe("CenterPane toolbar session label", () => {
 			session: worker,
 			shellTerminals: [shell],
 			terminalTarget: {
+				generation: shell.createdAt,
 				kind: "shell",
 				handleId: shell.handleId,
 				title: shell.title,
@@ -131,7 +132,12 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({
 			session: worker,
 			shellTerminals: [shell],
-			terminalTarget: { kind: "shell", handleId: shell.handleId, title: shell.title },
+			terminalTarget: {
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				title: shell.title,
+			},
 			onCloseShellTerminal,
 		});
 
@@ -152,7 +158,12 @@ describe("CenterPane toolbar session label", () => {
 		const view = renderCenterPane({
 			session: worker,
 			shellTerminals: [shell],
-			terminalTarget: { kind: "shell", handleId: shell.handleId, title: shell.title },
+			terminalTarget: {
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				title: shell.title,
+			},
 			onCloseShellTerminal: vi.fn(),
 		});
 
