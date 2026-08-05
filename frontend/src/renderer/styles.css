@@ -599,6 +599,10 @@ button.settings-row-bar {
 	.review-run-agent-select {
 		width: 100%;
 	}
+
+	.review-run-actions {
+		margin-left: 0;
+	}
 }
 
 @utility settings-menu-surface {

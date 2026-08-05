@@ -1305,7 +1305,7 @@ function ReviewPanel({
 							triggerClassName="review-run-agent-select h-control-md w-36 shrink-0 text-xs"
 							value={reviewerOverride}
 						/>
-						<div className="flex shrink-0 items-center gap-1.5">
+						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
 							<Button
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
 								disabled={reviewRunning ? isCancelling : runDisabled}
