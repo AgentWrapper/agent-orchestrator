@@ -592,21 +592,6 @@ button.settings-row-bar {
 	width: 100%;
 }
 
-@container (max-width: 28rem) {
-	.review-run-controls {
-		align-items: flex-start;
-		flex-direction: column;
-	}
-
-	.review-run-agent-select {
-		width: 100%;
-	}
-
-	.review-run-actions {
-		margin-left: 0;
-	}
-}
-
 @utility settings-menu-surface {
 	display: flex;
 	width: max-content;
