@@ -209,13 +209,6 @@ func DefaultResourceProfile() ResourceProfile {
 	return ResourceProfile{CPU: 4, Memory: 8, Disk: 10}
 }
 
-// StandaloneResourceProfile returns the sandbox profile used by standalone
-// projects. Keep this aligned with the default profile until standalone agents
-// share one VM instead of consuming one sandbox each.
-func StandaloneResourceProfile() ResourceProfile {
-	return DefaultResourceProfile()
-}
-
 // Sandbox records desired and observed state for a session environment.
 type Sandbox struct {
 	SessionID             SessionID       `json:"sessionId"`

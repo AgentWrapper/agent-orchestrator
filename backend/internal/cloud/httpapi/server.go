@@ -1450,7 +1450,7 @@ func (s *Server) createStandaloneProject(w http.ResponseWriter, r *http.Request)
 		Kind:                     "worker",
 		Harness:                  input.Orchestrator.Harness,
 		DisplayName:              displayName,
-		Resource:                 clouddomain.StandaloneResourceProfile(),
+		Resource:                 clouddomain.DefaultResourceProfile(),
 		Provider:                 s.sandboxProvider,
 		ProviderConnectionID:     providerConnectionID(s.sandboxProvider, input.Orchestrator.ProviderConnectionID),
 		MaxActiveSandboxesPerOrg: s.maxActiveSandboxesPerOrg,
@@ -2020,7 +2020,7 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	project, err := s.store.GetProject(r.Context(), ownerOrgID, input.ProjectID)
+	_, err := s.store.GetProject(r.Context(), ownerOrgID, input.ProjectID)
 	if errors.Is(err, cloudpostgres.ErrProjectNotFound) {
 		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
 		return
@@ -2029,14 +2029,10 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "load project for session", err)
 		return
 	}
-	defaultResource := clouddomain.DefaultResourceProfile()
-	if cloudProjectStandalone(project) {
-		defaultResource = clouddomain.StandaloneResourceProfile()
-	}
 	if input.Resource == (clouddomain.ResourceProfile{}) {
-		input.Resource = defaultResource
+		input.Resource = clouddomain.DefaultResourceProfile()
 	}
-	if input.Resource != defaultResource {
+	if input.Resource != clouddomain.DefaultResourceProfile() {
 		message := "Cloud V1 requires 4 CPU, 8 GiB memory, and 10 GiB disk."
 		writeError(
 			w,
