@@ -2,27 +2,22 @@ package session
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
-	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 )
 
-func TestDelegateTaskSendsStructuredMessageToNewestActiveOrchestrator(t *testing.T) {
+func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t *testing.T) {
 	tests := []struct {
-		name        string
-		agent       domain.AgentHarness
-		model       string
-		wantIntent  string
-		wantHarness domain.AgentHarness
-		wantModel   string
+		name      string
+		agent     domain.AgentHarness
+		model     string
+		wantAgent domain.AgentHarness
 	}{
-		{name: "project default", wantIntent: "project_default"},
-		{name: "requested agent and model", agent: domain.HarnessCursor, model: "  sonnet-custom  ", wantIntent: "requested", wantHarness: domain.HarnessCursor, wantModel: "sonnet-custom"},
+		{name: "project default"},
+		{name: "requested agent and model", agent: domain.HarnessCursor, model: "  sonnet-custom  ", wantAgent: domain.HarnessCursor},
 	}
 
 	for _, tt := range tests {
@@ -44,36 +39,50 @@ func TestDelegateTaskSendsStructuredMessageToNewestActiveOrchestrator(t *testing
 			if err != nil {
 				t.Fatalf("DelegateTask: %v", err)
 			}
-			if out.OrchestratorID != "orch-new" || len(cmd.sent) != 1 || cmd.sent[0] != "orch-new" {
-				t.Fatalf("out = %#v, sent = %#v; want orch-new", out, cmd.sent)
+			if out.WorkerID != "mer-9" || out.OrchestratorID != "orch-new" {
+				t.Fatalf("out = %#v, want worker mer-9 and orchestrator orch-new", out)
 			}
-			if !strings.Contains(cmd.sentMessages[0], "Choose the worker name and final prompt") {
-				t.Fatalf("delegation instructions missing: %q", cmd.sentMessages[0])
+			if !cmd.spawned || cmd.spawnedCfg.ProjectID != "ao" || cmd.spawnedCfg.Kind != domain.KindWorker || cmd.spawnedCfg.Harness != tt.wantAgent || cmd.spawnedCfg.Prompt != brief || cmd.spawnedCfg.DisplayName != "" {
+				t.Fatalf("spawn cfg = %#v", cmd.spawnedCfg)
 			}
-			payloadStart := strings.LastIndex(cmd.sentMessages[0], "\n") + 1
-			var got taskDelegationMessage
-			if err := json.Unmarshal([]byte(cmd.sentMessages[0][payloadStart:]), &got); err != nil {
-				t.Fatalf("decode delegation payload: %v; message=%q", err, cmd.sentMessages[0])
+			if len(cmd.sent) != 1 || cmd.sent[0] != "orch-new" {
+				t.Fatalf("sent = %#v; want orch-new", cmd.sent)
 			}
-			if got.Type != "task_delegation" || got.Brief != brief || got.Agent.Intent != tt.wantIntent || got.Agent.Harness != tt.wantHarness || got.Model != tt.wantModel {
-				t.Fatalf("payload = %#v", got)
+			for _, want := range []string{
+				"AO TASK TITLE UPDATE",
+				"Do not spawn another worker or orchestrator",
+				`ao session rename mer-9 "<title, max 20 chars>"`,
+				"Worker session id: mer-9",
+				brief,
+			} {
+				if !strings.Contains(cmd.sentMessages[0], want) {
+					t.Fatalf("title delegation missing %q:\n%s", want, cmd.sentMessages[0])
+				}
+			}
+			if tt.model != "" && !strings.Contains(cmd.sentMessages[0], "Requested model: sonnet-custom") {
+				t.Fatalf("title delegation missing requested model:\n%s", cmd.sentMessages[0])
 			}
 		})
 	}
 }
 
-func TestDelegateTaskRequiresActiveOrchestrator(t *testing.T) {
+func TestDelegateTaskDoesNotRequireActiveOrchestrator(t *testing.T) {
 	st := newFakeStore()
 	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
 	st.sessions["orch-dead"] = domain.SessionRecord{ID: "orch-dead", ProjectID: "ao", Kind: domain.KindOrchestrator, IsTerminated: true}
 	cmd := &fakeCommander{}
 
-	_, err := (&Service{store: st, manager: cmd}).DelegateTask(context.Background(), DelegateTaskInput{ProjectID: "ao", Brief: "Fix it"})
-	var apiError *apierr.Error
-	if !errors.As(err, &apiError) || apiError.Kind != apierr.KindConflict || apiError.Code != "ACTIVE_ORCHESTRATOR_REQUIRED" {
-		t.Fatalf("err = %v, want conflict ACTIVE_ORCHESTRATOR_REQUIRED", err)
+	out, err := (&Service{store: st, manager: cmd}).DelegateTask(context.Background(), DelegateTaskInput{ProjectID: "ao", Brief: "Fix it"})
+	if err != nil {
+		t.Fatalf("DelegateTask: %v", err)
+	}
+	if out.WorkerID != "mer-9" || out.OrchestratorID != "" {
+		t.Fatalf("out = %#v, want spawned worker without orchestrator", out)
 	}
 	if len(cmd.sent) != 0 {
 		t.Fatalf("sent = %#v, want none", cmd.sent)
+	}
+	if !cmd.spawned {
+		t.Fatal("worker was not spawned")
 	}
 }

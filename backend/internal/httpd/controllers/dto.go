@@ -409,10 +409,12 @@ type DelegateTaskRequest struct {
 	Model     string              `json:"model,omitempty" maxLength:"256"`
 }
 
-// DelegateTaskResponse confirms which active orchestrator received the task.
+// DelegateTaskResponse confirms which worker was spawned and, when available,
+// which orchestrator received the follow-up title request.
 type DelegateTaskResponse struct {
 	OK             bool             `json:"ok"`
-	OrchestratorID domain.SessionID `json:"orchestratorId"`
+	WorkerID       domain.SessionID `json:"workerId"`
+	OrchestratorID domain.SessionID `json:"orchestratorId,omitempty"`
 }
 
 // SessionPRFacts is the pull-request read shape returned under session PR routes.

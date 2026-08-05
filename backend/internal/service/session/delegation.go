@@ -2,17 +2,15 @@ package session
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// DelegateTaskInput describes a task the active project orchestrator should
-// turn into a worker session. Empty RequestedAgent means the orchestrator
-// should use the project's worker-agent default.
+// DelegateTaskInput describes a task AO should spawn as a worker session. Empty
+// RequestedAgent means the spawn uses the project's worker-agent default.
 type DelegateTaskInput struct {
 	ProjectID      domain.ProjectID
 	Brief          string
@@ -20,27 +18,16 @@ type DelegateTaskInput struct {
 	Model          string
 }
 
-// DelegateTaskOutcome identifies the orchestrator that accepted a delegation.
+// DelegateTaskOutcome identifies the spawned worker and, when present, the
+// orchestrator that received the follow-up title request.
 type DelegateTaskOutcome struct {
 	OrchestratorID domain.SessionID
+	WorkerID       domain.SessionID
 }
 
-type taskDelegationMessage struct {
-	Type  string              `json:"type"`
-	Brief string              `json:"brief"`
-	Agent taskDelegationAgent `json:"agent"`
-	Model string              `json:"model,omitempty"`
-}
-
-type taskDelegationAgent struct {
-	Intent  string              `json:"intent"`
-	Harness domain.AgentHarness `json:"harness,omitempty"`
-}
-
-// DelegateTask resolves the newest active orchestrator for the project and
-// sends it a structured delegation through the same guarded delivery path as
-// ao send. The orchestrator, not the daemon, chooses the worker name and final
-// prompt and performs the spawn.
+// DelegateTask spawns the worker directly, matching `ao spawn`, and leaves the
+// display name empty so the read model temporarily uses the worker id. If an
+// orchestrator is active, AO asks it to rename the worker from the task brief.
 func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (DelegateTaskOutcome, error) {
 	if _, err := s.requireProject(ctx, in.ProjectID); err != nil {
 		return DelegateTaskOutcome{}, err
@@ -52,6 +39,17 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 		return DelegateTaskOutcome{}, apierr.Invalid("UNKNOWN_HARNESS", "Unknown requested agent", nil)
 	}
 
+	worker, _, _, err := s.manager.Spawn(ctx, ports.SpawnConfig{
+		ProjectID: in.ProjectID,
+		Kind:      domain.KindWorker,
+		Harness:   in.RequestedAgent,
+		Prompt:    in.Brief,
+	})
+	if err != nil {
+		return DelegateTaskOutcome{}, toAPIError(err)
+	}
+
+	out := DelegateTaskOutcome{WorkerID: worker.ID}
 	active := true
 	orchestrators, err := s.List(ctx, ListFilter{
 		ProjectID:        in.ProjectID,
@@ -59,34 +57,35 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 		OrchestratorOnly: true,
 	})
 	if err != nil {
-		return DelegateTaskOutcome{}, err
+		return out, nil
 	}
 	if len(orchestrators) == 0 {
-		return DelegateTaskOutcome{}, apierr.Conflict(
-			"ACTIVE_ORCHESTRATOR_REQUIRED",
-			"Start an orchestrator for this project before starting a task.",
-			map[string]any{"projectId": in.ProjectID},
-		)
-	}
-
-	agent := taskDelegationAgent{Intent: "project_default"}
-	if in.RequestedAgent != "" {
-		agent = taskDelegationAgent{Intent: "requested", Harness: in.RequestedAgent}
-	}
-	payload, err := json.Marshal(taskDelegationMessage{
-		Type:  "task_delegation",
-		Brief: in.Brief,
-		Agent: agent,
-		Model: strings.TrimSpace(in.Model),
-	})
-	if err != nil {
-		return DelegateTaskOutcome{}, fmt.Errorf("encode task delegation: %w", err)
+		return out, nil
 	}
 
 	orchestrator := newestSession(orchestrators)
-	message := "AO TASK DELEGATION\nChoose the worker name and final prompt, then spawn the worker. Do not implement this task in the orchestrator session.\n" + string(payload)
-	if err := s.manager.Send(ctx, orchestrator.ID, message); err != nil {
-		return DelegateTaskOutcome{}, toAPIError(err)
+	out.OrchestratorID = orchestrator.ID
+	if err := s.manager.Send(ctx, orchestrator.ID, taskTitleDelegationMessage(worker.ID, in)); err != nil {
+		return out, nil
 	}
-	return DelegateTaskOutcome{OrchestratorID: orchestrator.ID}, nil
+	return out, nil
+}
+
+func taskTitleDelegationMessage(workerID domain.SessionID, in DelegateTaskInput) string {
+	var b strings.Builder
+	b.WriteString("AO TASK TITLE UPDATE\n")
+	b.WriteString("A worker was already spawned directly with the user's task. Do not spawn another worker or orchestrator, and do not implement the task in this orchestrator session.\n")
+	b.WriteString("Choose a concise task title from the brief and run:\n\n")
+	b.WriteString("ao session rename ")
+	b.WriteString(string(workerID))
+	b.WriteString(" \"<title, max 20 chars>\"\n\n")
+	b.WriteString("Worker session id: ")
+	b.WriteString(string(workerID))
+	b.WriteString("\nTask brief:\n")
+	b.WriteString(in.Brief)
+	if model := strings.TrimSpace(in.Model); model != "" {
+		b.WriteString("\nRequested model: ")
+		b.WriteString(model)
+	}
+	return b.String()
 }

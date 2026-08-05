@@ -355,7 +355,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Delegate a task to the project's active orchestrator */
+        /** Start a worker task and ask the orchestrator to title it */
         post: operations["delegateTask"];
         delete?: never;
         options?: never;
@@ -1107,7 +1107,8 @@ export interface components {
         };
         DelegateTaskResponse: {
             ok: boolean;
-            orchestratorId: string;
+            orchestratorId?: string;
+            workerId: string;
         };
         DevImportProjectsConflict: {
             path: string;

@@ -947,5 +947,9 @@
 	"settings.dev.resetDefaultsLabel": "重置默认值",
 	"settings.dev.resetReload": "重置并重新加载",
 	"settings.dev.decreaseAria": "减少{{label}}",
-	"settings.dev.increaseAria": "增加{{label}}"
+	"settings.dev.increaseAria": "增加{{label}}",
+	"newTask.task": "Task",
+	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
+	"newTask.model": "Model",
+	"newTask.taskRequired": "Task is required."
 }

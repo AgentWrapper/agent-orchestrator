@@ -1020,7 +1020,7 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 		envelope.WriteError(w, r, err)
 		return
 	}
-	envelope.WriteJSON(w, http.StatusAccepted, DelegateTaskResponse{OK: true, OrchestratorID: out.OrchestratorID})
+	envelope.WriteJSON(w, http.StatusAccepted, DelegateTaskResponse{OK: true, WorkerID: out.WorkerID, OrchestratorID: out.OrchestratorID})
 }
 
 // activity records an agent activity-state signal reported by an agent hook

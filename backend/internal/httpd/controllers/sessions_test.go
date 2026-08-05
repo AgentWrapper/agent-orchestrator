@@ -276,7 +276,7 @@ func (f *fakeSessionService) DelegateTask(_ context.Context, in sessionsvc.Deleg
 	if f.delegationErr != nil {
 		return sessionsvc.DelegateTaskOutcome{}, f.delegationErr
 	}
-	return sessionsvc.DelegateTaskOutcome{OrchestratorID: "ao-orch"}, nil
+	return sessionsvc.DelegateTaskOutcome{WorkerID: "ao-worker", OrchestratorID: "ao-orch"}, nil
 }
 
 func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
@@ -1669,10 +1669,11 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	}
 	var got struct {
 		OK             bool   `json:"ok"`
+		WorkerID       string `json:"workerId"`
 		OrchestratorID string `json:"orchestratorId"`
 	}
 	mustJSON(t, body, &got)
-	if !got.OK || got.OrchestratorID != "ao-orch" {
+	if !got.OK || got.WorkerID != "ao-worker" || got.OrchestratorID != "ao-orch" {
 		t.Fatalf("response = %#v", got)
 	}
 	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "Fix it" || svc.delegationInput.RequestedAgent != domain.HarnessCursor || svc.delegationInput.Model != "sonnet-custom" {
@@ -1680,16 +1681,16 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	}
 }
 
-func TestSessionsAPI_DelegateTaskValidationAndMissingOrchestrator(t *testing.T) {
+func TestSessionsAPI_DelegateTaskValidationAndServiceError(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"  "}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "TASK_REQUIRED")
 
-	svc.delegationErr = apierr.Conflict("ACTIVE_ORCHESTRATOR_REQUIRED", "Start an orchestrator for this project before starting a task.", nil)
+	svc.delegationErr = apierr.Invalid("UNKNOWN_HARNESS", "Unknown requested agent", nil)
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it"}`)
-	assertErrorCode(t, body, status, http.StatusConflict, "ACTIVE_ORCHESTRATOR_REQUIRED")
+	assertErrorCode(t, body, status, http.StatusBadRequest, "UNKNOWN_HARNESS")
 }
 
 func TestSessionsAPI_DelegateTaskRejectsOversizedBody(t *testing.T) {

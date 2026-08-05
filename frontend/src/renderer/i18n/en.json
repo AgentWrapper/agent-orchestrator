@@ -947,5 +947,9 @@
 	"zone.done": "Terminated",
 	"zone.merge": "Ready to merge",
 	"zone.pending": "In review",
-	"zone.working": "Working"
+	"zone.working": "Working",
+	"newTask.task": "Task",
+	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
+	"newTask.model": "Model",
+	"newTask.taskRequired": "Task is required."
 }

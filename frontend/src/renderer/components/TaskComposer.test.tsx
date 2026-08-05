@@ -32,8 +32,7 @@ function Wrap({ children }: { children: ReactNode }) {
 	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
-const title = () => screen.getByPlaceholderText(/Fix WebGL/i);
-const brief = () => screen.getByPlaceholderText(/Describe the change/i);
+const task = () => screen.getByPlaceholderText(/Describe the change/i);
 
 afterEach(() => {
 	h.post.mockReset();
@@ -44,7 +43,7 @@ describe("TaskComposer", () => {
 	it("emits busy state around an in-flight create and reports the new session", async () => {
 		const onSubmittingChange = vi.fn();
 		const onCreated = vi.fn();
-		let resolveCreate!: (value: { data: { session: { id: string } } }) => void;
+		let resolveCreate!: (value: { data: { workerId: string } }) => void;
 		h.post.mockReturnValueOnce(new Promise((resolve) => (resolveCreate = resolve)));
 
 		render(
@@ -53,19 +52,18 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		fireEvent.change(title(), { target: { value: "Ship it" } });
-		fireEvent.change(brief(), { target: { value: "Do the thing" } });
+		fireEvent.change(task(), { target: { value: "Do the thing" } });
 		fireEvent.click(screen.getByText("Start task"));
 
 		await waitFor(() => expect(onSubmittingChange).toHaveBeenLastCalledWith(true));
 		expect(h.post).toHaveBeenCalledWith(
-			"/api/v1/sessions",
+			"/api/v1/orchestrators/delegate",
 			expect.objectContaining({
-				body: expect.objectContaining({ projectId: "proj-1", issueId: "Ship it", prompt: "Do the thing" }),
+				body: expect.objectContaining({ projectId: "proj-1", brief: "Do the thing" }),
 			}),
 		);
 
-		await act(async () => resolveCreate({ data: { session: { id: "sess-1" } } }));
+		await act(async () => resolveCreate({ data: { workerId: "sess-1" } }));
 		await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sess-1"));
 		await waitFor(() => expect(onSubmittingChange).toHaveBeenLastCalledWith(false));
 	});
@@ -80,8 +78,7 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		fireEvent.change(title(), { target: { value: "T" } });
-		fireEvent.change(brief(), { target: { value: "B" } });
+		fireEvent.change(task(), { target: { value: "B" } });
 		fireEvent.click(screen.getByText("Start task"));
 
 		await waitFor(() => expect(screen.getByText("nope")).toBeInTheDocument());
@@ -95,7 +92,7 @@ describe("TaskComposer", () => {
 				<TaskComposer projectId="proj-1" onCreated={vi.fn()} onDirtyChange={onDirtyChange} />
 			</Wrap>,
 		);
-		fireEvent.change(title(), { target: { value: "T" } });
+		fireEvent.change(task(), { target: { value: "T" } });
 		expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 		unmount();
 		expect(onDirtyChange).toHaveBeenLastCalledWith(false);

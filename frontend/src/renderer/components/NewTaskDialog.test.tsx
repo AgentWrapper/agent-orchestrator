@@ -71,7 +71,7 @@ beforeEach(() => {
 			error: undefined,
 		};
 	});
-	postMock.mockReset().mockResolvedValue({ data: { ok: true, orchestratorId: "orch-1" }, error: undefined });
+	postMock.mockReset().mockResolvedValue({ data: { ok: true, workerId: "worker-1", orchestratorId: "orch-1" }, error: undefined });
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -92,7 +92,7 @@ describe("NewTaskDialog", () => {
 		expect(screen.queryByRole("button", { name: "Add image" })).not.toBeInTheDocument();
 	});
 
-	it("delegates the original task with project-default agent intent and optional model", async () => {
+	it("starts the original task with project-default agent intent and optional model", async () => {
 		const { onCreated, onOpenChange } = renderDialog();
 		const user = userEvent.setup();
 		const brief = "  Restore the fallback renderer after WebGL init fails.  ";
@@ -115,7 +115,7 @@ describe("NewTaskDialog", () => {
 		expect(requestBody()).not.toHaveProperty("issueId");
 		expect(requestBody()).not.toHaveProperty("branch");
 		expect(requestBody()).not.toHaveProperty("harness");
-		expect(onCreated).toHaveBeenCalledWith("orch-1");
+		expect(onCreated).toHaveBeenCalledWith("worker-1");
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	}, 20_000);
 
@@ -240,18 +240,14 @@ describe("NewTaskDialog", () => {
 
 	it.each([
 		{
-			code: "ACTIVE_ORCHESTRATOR_REQUIRED",
-			message: "Start an orchestrator for this project before starting a task.",
-		},
-		{
-			code: "SESSION_AWAITING_DECISION",
-			message: "orchestrator is waiting on a permission decision",
+			code: "UNKNOWN_HARNESS",
+			message: "Unknown requested agent",
 		},
 		{
 			code: "INTERNAL",
-			message: "task delegation failed",
+			message: "task start failed",
 		},
-	])("displays daemon delegation errors for $code", async ({ code, message }) => {
+	])("displays daemon start errors for $code", async ({ code, message }) => {
 		postMock.mockResolvedValueOnce({
 			data: undefined,
 			error: { code, message },

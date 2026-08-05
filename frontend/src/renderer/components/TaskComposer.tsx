@@ -1,15 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ImagePlus, Loader2, X } from "lucide-react";
-import {
-	type ClipboardEvent,
-	type DragEvent,
-	type FormEvent,
-	useCallback,
-	useEffect,
-	useId,
-	useRef,
-	useState,
-} from "react";
+import { Loader2 } from "lucide-react";
+import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -19,19 +10,15 @@ import type { components } from "../../api/schema";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
-import { useImageAttachments, type ImageAttachmentPayload } from "../hooks/useImageAttachments";
-import { cn } from "../lib/utils";
 
 type Project = components["schemas"]["Project"];
-type SpawnHarness = components["schemas"]["SpawnSessionRequest"]["harness"];
+type DelegateAgent = components["schemas"]["DelegateTaskRequest"]["agent"];
 
 type CreateTaskInput = {
 	projectId: string;
-	title: string;
-	prompt: string;
-	branch?: string;
-	harness?: SpawnHarness;
-	attachments?: ImageAttachmentPayload[];
+	brief: string;
+	agent?: DelegateAgent;
+	model?: string;
 };
 
 export type TaskComposerProps = {
@@ -53,39 +40,31 @@ export function TaskComposer({
 }: TaskComposerProps) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
-	const titleId = useId();
 	const promptId = useId();
-	const branchId = useId();
+	const modelId = useId();
 	const agentId = useId();
-	const [title, setTitle] = useState("");
 	const [prompt, setPrompt] = useState("");
-	const [branch, setBranch] = useState("");
+	const [model, setModel] = useState("");
 	const [agent, setAgent] = useState("");
 	const [agentTouched, setAgentTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
-	const [isDragging, setIsDragging] = useState(false);
-	const fileInputRef = useRef<HTMLInputElement>(null);
-	const { attachments, error: attachmentError, addFiles, remove: removeAttachment, toPayload } = useImageAttachments();
 	const createTask = useCallback(
 		async (input: CreateTaskInput): Promise<string> => {
 			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
 			try {
-				const { data, error } = await apiClient.POST("/api/v1/sessions", {
+				const { data, error } = await apiClient.POST("/api/v1/orchestrators/delegate", {
 					body: {
 						projectId: input.projectId,
-						kind: "worker",
-						harness: input.harness,
-						issueId: input.title,
-						prompt: input.prompt,
-						...(input.branch ? { branch: input.branch } : {}),
-						attachments: input.attachments && input.attachments.length > 0 ? input.attachments : undefined,
+						brief: input.brief,
+						agent: input.agent,
+						model: input.model,
 					},
 				});
 				if (error) throw new Error(apiErrorMessage(error, t("newTask.unableToStart")));
-				if (!data?.session?.id) throw new Error(t("newTask.noSession"));
+				if (!data?.workerId) throw new Error(t("newTask.noSession"));
 				void captureRendererEvent("ao.renderer.task_create_succeeded", { project_id: input.projectId });
-				return data.session.id;
+				return data.workerId;
 			} catch (err) {
 				void captureRendererEvent("ao.renderer.task_create_failed", { project_id: input.projectId });
 				void queryClient.invalidateQueries({ queryKey: agentsQueryKey });
@@ -113,14 +92,13 @@ export function TaskComposer({
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
 	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
-	const isScratchProject = projectQuery.data?.kind === "scratch";
 	const agentCatalog = agentsQuery.data;
 
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
 	}, [agentTouched, defaultWorkerAgent]);
 
-	const isDirty = title.trim() !== "" || prompt.trim() !== "" || branch.trim() !== "" || attachments.length > 0;
+	const isDirty = prompt.trim() !== "" || model.trim() !== "";
 	useEffect(() => {
 		onDirtyChange?.(isDirty);
 	}, [isDirty, onDirtyChange]);
@@ -135,11 +113,10 @@ export function TaskComposer({
 		event.preventDefault();
 		if (!projectId || isSubmitting) return;
 
-		const cleanTitle = title.trim();
 		const cleanPrompt = prompt.trim();
-		const cleanBranch = branch.trim();
-		if (!cleanTitle || !cleanPrompt) {
-			setError(t("newTask.titleRequired"));
+		const cleanModel = model.trim();
+		if (!cleanPrompt) {
+			setError(t("newTask.taskRequired"));
 			return;
 		}
 
@@ -148,11 +125,9 @@ export function TaskComposer({
 		try {
 			const sessionId = await createTask({
 				projectId,
-				title: cleanTitle,
-				prompt: cleanPrompt,
-				branch: !isScratchProject && cleanBranch ? cleanBranch : undefined,
-				harness: agentTouched && agent ? (agent as CreateTaskInput["harness"]) : undefined,
-				attachments: attachments.length > 0 ? toPayload() : undefined,
+				brief: prompt,
+				agent: agentTouched && agent ? (agent as CreateTaskInput["agent"]) : undefined,
+				model: cleanModel || undefined,
 			});
 			onCreated(sessionId);
 		} catch (err) {
@@ -162,72 +137,22 @@ export function TaskComposer({
 		}
 	};
 
-	const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
-		const files = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
-		if (files.length === 0) return;
-		event.preventDefault();
-		void addFiles(files);
-	};
-
-	const handleDrop = (event: DragEvent<HTMLDivElement>) => {
-		event.preventDefault();
-		setIsDragging(false);
-		const files = Array.from(event.dataTransfer?.files ?? []).filter((file) => file.type.startsWith("image/"));
-		if (files.length > 0) void addFiles(files);
-	};
-
-	const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
-		if (Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === "file")) {
-			event.preventDefault();
-			setIsDragging(true);
-		}
-	};
-
 	return (
 		<form onSubmit={submit} className="space-y-4 p-(--size-modal-padding)">
 			<div className="space-y-1.5">
-				<label className="text-xs font-medium text-muted-foreground" htmlFor={titleId}>
-					{t("newTask.titleLabel")}
-				</label>
-				<Input
-					id={titleId}
-					autoFocus={autoFocusTitle}
-					placeholder={t("newTask.titlePlaceholder")}
-					value={title}
-					onChange={(event) => setTitle(event.target.value)}
-				/>
-			</div>
-
-			<div className="space-y-1.5">
 				<div className="flex items-center justify-between">
 					<label className="text-xs font-medium text-muted-foreground" htmlFor={promptId}>
-						{t("newTask.brief")}
+						{t("newTask.task")}
 					</label>
-					<button
-						type="button"
-						className="inline-flex items-center gap-1 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-						onClick={() => fileInputRef.current?.click()}
-					>
-						<ImagePlus className="size-icon-sm" aria-hidden="true" />
-						{t("newTask.addImage")}
-					</button>
 				</div>
-				<div
-					className={cn(
-						"rounded-md border border-border transition",
-						isDragging && "border-accent ring-2 ring-accent-weak",
-					)}
-					onDrop={handleDrop}
-					onDragOver={handleDragOver}
-					onDragLeave={() => setIsDragging(false)}
-				>
+				<div className="rounded-md border border-border transition">
 					<textarea
 						id={promptId}
+						autoFocus={autoFocusTitle}
 						className="min-h-textarea-min w-full resize-y rounded-md bg-transparent px-3 py-2 text-control leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
-						placeholder={t("newTask.briefPlaceholder")}
+						placeholder={t("newTask.taskPlaceholder")}
 						value={prompt}
 						onChange={(event) => setPrompt(event.target.value)}
-						onPaste={handlePaste}
 						onKeyDown={(event) => {
 							if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
 								event.preventDefault();
@@ -235,50 +160,11 @@ export function TaskComposer({
 							}
 						}}
 					/>
-					{attachments.length > 0 && (
-						<ul className="grid max-h-40 grid-cols-2 gap-2 overflow-y-auto border-t border-border p-2 sm:grid-cols-3">
-							{attachments.map((attachment, index) => (
-								<li
-									key={attachment.id}
-									className="flex items-center gap-2 rounded-md border border-border bg-surface p-1 text-xs text-foreground"
-								>
-									<img
-										src={attachment.dataUrl}
-										alt={t("newTask.image", { number: index + 1 })}
-										className="size-7 shrink-0 rounded object-cover"
-									/>
-									<span className="min-w-0 flex-1 truncate font-medium">
-										{t("newTask.image", { number: index + 1 })}
-									</span>
-									<button
-										type="button"
-										className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition hover:bg-border hover:text-foreground"
-										aria-label={t("newTask.removeImage", { number: index + 1 })}
-										onClick={() => removeAttachment(attachment.id)}
-									>
-										<X className="size-icon-sm" aria-hidden="true" />
-									</button>
-								</li>
-							))}
-						</ul>
-					)}
 				</div>
-				<input
-					ref={fileInputRef}
-					type="file"
-					accept="image/*"
-					multiple
-					className="hidden"
-					onChange={(event) => {
-						if (event.target.files) void addFiles(event.target.files);
-						event.target.value = "";
-					}}
-				/>
-				{attachmentError && <p className="text-caption text-destructive">{attachmentError}</p>}
 				<p className="text-caption text-muted-foreground">{t("newTask.enterHint")}</p>
 			</div>
 
-			<div className={isScratchProject ? "grid gap-3" : "grid gap-3 sm:grid-cols-[1fr_1fr]"}>
+			<div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
 				<div className="space-y-1.5">
 					<RequiredAgentField
 						id={agentId}
@@ -303,19 +189,17 @@ export function TaskComposer({
 						{refreshAgentsMutation.isPending ? t("newTask.refreshingAgents") : t("newTask.refreshAgents")}
 					</button>
 				</div>
-				{!isScratchProject && (
-					<div className="space-y-1.5">
-						<Label className="text-xs font-medium text-muted-foreground" htmlFor={branchId}>
-							{t("newTask.branch")}
-						</Label>
-						<Input
-							id={branchId}
-							placeholder={t("newTask.optional")}
-							value={branch}
-							onChange={(event) => setBranch(event.target.value)}
-						/>
-					</div>
-				)}
+				<div className="space-y-1.5">
+					<Label className="text-xs font-medium text-muted-foreground" htmlFor={modelId}>
+						{t("newTask.model")}
+					</Label>
+					<Input
+						id={modelId}
+						placeholder={t("newTask.projectDefault")}
+						value={model}
+						onChange={(event) => setModel(event.target.value)}
+					/>
+				</div>
 			</div>
 
 			{error && (
