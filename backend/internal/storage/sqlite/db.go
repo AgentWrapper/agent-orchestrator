@@ -228,6 +228,13 @@ BEGIN
         NEW.updated_at);
 END`,
 		}},
+	// 0044_pr_reviews_target_sha.sql
+	{table: "pr_reviews", column: "target_sha",
+		addDDL: `ALTER TABLE pr_reviews ADD COLUMN target_sha TEXT NOT NULL DEFAULT ''`,
+		postAdd: []string{
+			`CREATE INDEX IF NOT EXISTS idx_pr_reviews_target_sha
+    ON pr_reviews (pr_url, target_sha, submitted_at)`,
+		}},
 }
 
 // reconcileSchema verifies that the columns in schemaRepairs physically exist
