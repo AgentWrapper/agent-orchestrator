@@ -287,7 +287,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 						verdict: "changes_requested",
 						submittedAt: minutesAgo(18),
 						reviewUrl: "https://github.com/acme-inc/ao-demo/pull/318#pullrequestreview-3101",
-						body: "The activity sample is tighter, but the toolbar density change needs a second look before this lands.",
+						body: "The activity sample is **tighter**, but the toolbar density change needs a second look before this lands.\n\n- Check compact spacing\n- Keep button labels readable",
 					},
 					{
 						reviewerId: "codex",

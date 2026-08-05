@@ -21,6 +21,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/agents/{agent}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Return the cached model picker for one agent, discovering it on first use */
+        get: operations["getAgentModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/agents/{agent}/models/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh and cache the model picker for one agent */
+        post: operations["refreshAgentModels"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/agents/{agent}/probe": {
         parameters: {
             query?: never;
@@ -923,6 +957,7 @@ export interface components {
             projectId?: null | string;
         };
         AgentConfig: {
+            mode?: string;
             model?: string;
             permissions?: string;
         };
@@ -934,6 +969,28 @@ export interface components {
             authStatus?: "authorized" | "unauthorized" | "unknown";
             id: string;
             label: string;
+        };
+        AgentModelInfo: {
+            id: string;
+            isDefault?: boolean;
+            label: string;
+            provider?: string;
+        };
+        AgentModelsResponse: {
+            agentId: string;
+            allowCustom: boolean;
+            binaryVersion?: string;
+            /** Format: date-time */
+            fetchedAt: string;
+            models: components["schemas"]["AgentModelInfo"][];
+            refreshRecommended?: boolean;
+            /** @enum {string} */
+            selectionMode: "catalog" | "text" | "mode";
+            source: string;
+            stale: boolean;
+            /** Format: date-time */
+            validatedAt?: string;
+            warning?: string;
         };
         BrowserCommandRequest: {
             action: string;
@@ -1680,6 +1737,132 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ListAgentsResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getAgentModels: {
+        parameters: {
+            query?: {
+                /** @description Optional project identifier used as the model-catalog cache scope. */
+                projectId?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentModelsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    refreshAgentModels: {
+        parameters: {
+            query?: {
+                /** @description Optional project identifier used as the model-catalog cache scope. */
+                projectId?: string;
+                /** @description When true, compare executable and config metadata before running discovery. */
+                revalidate?: boolean;
+            };
+            header?: never;
+            path: {
+                /** @description Agent adapter identifier. */
+                agent: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentModelsResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */

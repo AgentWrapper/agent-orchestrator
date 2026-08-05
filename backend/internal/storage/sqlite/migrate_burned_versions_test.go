@@ -63,6 +63,7 @@ var shippedMigrations = map[int64]string{
 	43: "0043_add_session_pinned.sql",
 	44: "0044_backfill_review_run_batch_id.sql",
 	45: "0045_add_session_context_pressure.sql",
+	47: "0047_agent_model_catalog.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they

@@ -3,7 +3,12 @@ import { useNavigate } from "@tanstack/react-router";
 import { AlertTriangle, RotateCw, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { findProjectOrchestrator, type WorkspaceSummary } from "../types/workspace";
-import { TopbarButton } from "./TopbarButton";
+import { Button } from "./ui/button";
+import {
+	settingsDialogContentClass,
+	settingsDialogFooterClass,
+	settingsDialogHeaderClass,
+} from "./ui/dialog";
 
 type OrchestratorReplacementDialogProps = {
 	projectId: string | null;
@@ -37,40 +42,46 @@ export function OrchestratorReplacementDialog({
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-orchestrator -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
-					<div className="flex items-start gap-3">
-						<div className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-muted text-warning">
-							<AlertTriangle className="size-icon-base" aria-hidden="true" />
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
+				<Dialog.Content
+					className={`${settingsDialogContentClass} fixed left-1/2 top-1/2 w-dialog-orchestrator -translate-x-1/2 -translate-y-1/2 data-[state=open]:animate-modal-in`}
+				>
+					<Dialog.Close asChild>
+						<button
+							type="button"
+							className="settings-dialog-close-button settings-close-button"
+							aria-label={t("orchestratorReplacement.close")}
+						>
+							<X className="size-5" aria-hidden="true" />
+						</button>
+					</Dialog.Close>
+					<div className={settingsDialogHeaderClass}>
+						<div className="flex items-start gap-3">
+							<div className="grid size-8 shrink-0 place-items-center rounded-md border border-border bg-muted text-warning">
+								<AlertTriangle className="size-icon-base" aria-hidden="true" />
+							</div>
+							<div className="min-w-0 flex-1">
+								<Dialog.Title className="settings-dialog-title">{t("orchestratorReplacement.title")}</Dialog.Title>
+								<Dialog.Description className="mt-1 text-control leading-5 text-settings-muted">
+									{error ?? t("orchestratorReplacement.fallback")}
+								</Dialog.Description>
+							</div>
 						</div>
-						<div className="min-w-0 flex-1">
-							<Dialog.Title className="text-sm font-medium text-foreground">
-								{t("orchestratorReplacement.title")}
-							</Dialog.Title>
-							<Dialog.Description className="mt-2 text-[13px] leading-5 text-muted-foreground">
-								{error ?? t("orchestratorReplacement.fallback")}
-							</Dialog.Description>
-						</div>
-						<Dialog.Close asChild>
-							<button
-								className="rounded-md p-1 text-passive hover:bg-interactive-hover hover:text-foreground"
-								type="button"
-							>
-								<X className="size-icon-base" aria-hidden="true" />
-								<span className="sr-only">{t("orchestratorReplacement.close")}</span>
-							</button>
-						</Dialog.Close>
 					</div>
-					<div className="mt-5 flex justify-end gap-2">
+					<div className={settingsDialogFooterClass}>
 						{orchestrator ? (
-							<TopbarButton onClick={openCurrent} variant="primary">
+							<Button type="button" variant="footer" onClick={openCurrent}>
 								{t("orchestratorReplacement.openCurrent")}
-							</TopbarButton>
+							</Button>
 						) : null}
-						<TopbarButton onClick={() => projectId && onRetry(projectId)} variant="accent">
+						<Button
+							type="button"
+							variant="footer-primary"
+							onClick={() => projectId && onRetry(projectId)}
+						>
 							<RotateCw className="size-3.5" aria-hidden="true" />
 							{t("orchestratorReplacement.retry")}
-						</TopbarButton>
+						</Button>
 					</div>
 				</Dialog.Content>
 			</Dialog.Portal>
