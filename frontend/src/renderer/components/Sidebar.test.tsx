@@ -938,7 +938,7 @@ describe("Sidebar", () => {
 
 		expect(document.querySelector('[data-slot="sidebar-brand-row"]')).toHaveClass("gap-2", "px-2.5");
 		expect(document.querySelector('[data-slot="sidebar-search-icon"]')).toHaveClass("size-5.5");
-		expect(screen.getByRole("button", { name: "Orchestrator board" }).querySelector("img")).not.toHaveClass(
+		expect(screen.getByRole("button", { name: "Orchestrator board" }).querySelector("img")).toHaveClass(
 			"-translate-y-[3px]",
 		);
 	});
