@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useQueryClient } from "@tanstack/react-query";
@@ -31,7 +31,6 @@ import {
 	isSessionIdle,
 	type AttentionZone,
 	type AttentionZoneView,
-	type SessionStatusView,
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { useRestoreSession } from "../hooks/useRestoreSession";
@@ -763,16 +762,24 @@ function SessionCard({
 	onOpen,
 	onTerminate,
 	interactive = true,
+	action,
+	branchAction,
+	footer,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
 	onTerminate?: () => void;
 	interactive?: boolean;
+	action?: ReactNode;
+	branchAction?: ReactNode;
+	footer?: ReactNode;
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status, t);
+	const activity = getAgentActivityView(session.activity, t);
+	const showLiveActivity = session.status === "working" && activity.state === "active";
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -794,7 +801,7 @@ function SessionCard({
 				role: "button",
 				tabIndex: 0,
 			}
-		: {};
+		: { role: "listitem" };
 	return (
 		<div
 			{...cardBodyProps}
@@ -845,13 +852,14 @@ function SessionCard({
 					}
 				/>
 			) : null}
+			{action ? <div className="absolute right-2 top-1.5 z-10">{action}</div> : null}
 			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
 				<AgentAvatar className="mt-0.5" provider={session.provider} />
 				<div className="min-w-0 flex-1">
 					<div
 						className={cn(
 							"line-clamp-2 overflow-hidden text-sm-md font-semibold leading-tight tracking-tight text-foreground",
-							showTerminate && "pr-6",
+							(showTerminate || action) && "pr-6",
 						)}
 						title={session.title}
 					>
@@ -861,6 +869,7 @@ function SessionCard({
 						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
 							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
 							<span className="truncate">{branch}</span>
+							{branchAction}
 						</div>
 					)}
 				</div>
@@ -868,8 +877,17 @@ function SessionCard({
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
 				<div className="flex items-center justify-between gap-2">
-					<span className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}>
-						<span className="size-dot-sm shrink-0 rounded-full bg-current" />
+					<span
+						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}
+						style={showLiveActivity ? { color: activity.tone } : undefined}
+					>
+						<span
+							aria-hidden="true"
+							className={cn(
+								"size-dot-sm shrink-0 rounded-full",
+								showLiveActivity ? activity.indicatorClassName : "bg-current",
+							)}
+						/>
 						{badge.label}
 					</span>
 					<span
@@ -880,9 +898,9 @@ function SessionCard({
 					</span>
 				</div>
 				{prSummaries.length > 0 && (
-					<div className="flex flex-col gap-1 font-mono text-2xs text-passive">
+					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-passive">
 						{groupPRsByLifecycle(prSummaries).map((group) => (
-							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
+							<BoardPRGroup group={group} key={group.status.label} />
 						))}
 					</div>
 				)}
@@ -900,6 +918,7 @@ function SessionCard({
 					{termination.error}
 				</div>
 			) : null}
+			{footer}
 		</div>
 	);
 }
@@ -917,21 +936,7 @@ function ArchiveSessionItem({
 	isRestoring: boolean;
 	isRestoreDisabled: boolean;
 }) {
-	const { t } = useTranslation();
-	const badge = getSessionStatusView(session.status, t);
-	const issueId = canonicalTrackerIssueId(session.issueId);
-	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const branch = session.branch || "";
-	const prMetadata =
-		prSummaries.length > 0 ? (
-			<div className="flex flex-col gap-1">
-				{groupPRsByLifecycle(prSummaries).map((group) => (
-					<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
-				))}
-			</div>
-		) : (
-			<span>{t("pr.noPRYet")}</span>
-		);
 	const restoreButton = (
 		<ArchiveRestoreButton
 			isDisabled={isRestoreDisabled}
@@ -942,44 +947,13 @@ function ArchiveSessionItem({
 	);
 
 	return (
-		<div className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface" role="listitem">
-			<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
-				<ArchiveStatus badge={badge} />
-				<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
-					{formatTimeCompact(session.updatedAt)}
-				</span>
-				{restoreButton}
-			</div>
-			<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
-				<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
-				<div className="mt-1 flex min-w-0 items-center gap-2">
-					<AgentAvatar provider={session.provider} />
-					{issueId && (
-						<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
-							{issueId}
-						</span>
-					)}
-				</div>
-				{branch && (
-					<div className="mt-2 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
-						<span className="truncate">{branch}</span>
-						<CopyActionButton label={`branch ${branch}`} value={branch} />
-					</div>
-				)}
-			</div>
-			<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-			<div className="px-3 py-1.5 font-mono text-2xs text-passive">{prMetadata}</div>
-			<ArchiveRestoreError message={restoreError} />
-		</div>
-	);
-}
-
-function ArchiveStatus({ badge }: { badge: SessionStatusView }) {
-	return (
-		<span className={cn("inline-flex shrink-0 items-center gap-1.5 text-caption font-medium", badge.className)}>
-			<span className="size-dot-sm rounded-full bg-current" aria-hidden="true" />
-			{badge.label}
-		</span>
+		<SessionCard
+			action={restoreButton}
+			branchAction={branch ? <CopyActionButton label={`branch ${branch}`} value={branch} /> : undefined}
+			footer={<ArchiveRestoreError message={restoreError} />}
+			interactive={false}
+			session={session}
+		/>
 	);
 }
 
@@ -1024,7 +998,7 @@ function ArchiveRestoreError({ message }: { message?: string }) {
 type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
-function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup; linksInteractive?: boolean }) {
+function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 	const { t } = useTranslation();
 	const statusLabel = t(`pr.state.${group.status.label}`);
 	return (
@@ -1035,19 +1009,15 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 			<span>{t("pr.short")}</span>
 			{group.prs.map((pr, index) => (
 				<span className="inline-flex items-center" key={pr.url || pr.htmlUrl || pr.number}>
-					{linksInteractive ? (
-						<a
-							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-							href={prBrowserUrl(pr)}
-							onClick={(event) => event.stopPropagation()}
-							rel="noreferrer"
-							target="_blank"
-						>
-							#{pr.number}
-						</a>
-					) : (
-						<span>#{pr.number}</span>
-					)}
+					<a
+						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+						href={prBrowserUrl(pr)}
+						onClick={(event) => event.stopPropagation()}
+						rel="noreferrer"
+						target="_blank"
+					>
+						#{pr.number}
+					</a>
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}
@@ -1113,7 +1083,7 @@ function groupPRsByLifecycle(prs: SessionPRSummary[]): BoardPRGroup[] {
 
 function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
 	if (pr.state === "draft") return { label: "draft", className: "text-passive" };
-	if (pr.state === "merged") return { label: "merged", className: "text-accent" };
+	if (pr.state === "merged") return { label: "merged", className: "text-status-merged" };
 	if (pr.state === "closed") return { label: "closed", className: "text-error" };
 	return { label: "open", className: "text-success" };
 }

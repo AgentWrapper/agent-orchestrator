@@ -33,5 +33,7 @@ describe("ReportProblemDialog", () => {
 		fireEvent.change(summaryInput, { target: { value: "Test Summary" } });
 		fireEvent.change(detailsInput, { target: { value: "Test Details" } });
 		expect(submitButton).toBeEnabled();
+		expect(submitButton).toHaveClass("settings-footer-button", "settings-footer-button-primary");
+		expect(submitButton.className).not.toMatch(/\btext-white\b/);
 	});
 });

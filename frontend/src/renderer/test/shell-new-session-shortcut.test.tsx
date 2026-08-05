@@ -79,6 +79,9 @@ const shellMocks = vi.hoisted(() => {
 vi.mock("@tanstack/react-query", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@tanstack/react-query")>()),
 	useQueryClient: () => shellMocks.queryClient,
+	// TerminalCacheProvider owns reviewer queries in production. This shell-only
+	// harness has no routed terminal children and intentionally omits a provider.
+	useQueries: () => [],
 }));
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
@@ -108,6 +111,10 @@ vi.mock("../lib/bridge", () => ({
 			setRecording: shellMocks.setKeybindingRecording,
 		},
 		window: {},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
+		},
 	},
 }));
 
@@ -124,6 +131,7 @@ vi.mock("../hooks/useDaemonStatus", () => ({
 // The shell layout opens standalone terminals; this suite only covers the
 // shortcut subscriptions, so the mutation is stubbed rather than driven.
 vi.mock("../hooks/useShellTerminals", () => ({
+	useShellTerminals: () => ({ data: [], isSuccess: true }),
 	useOpenShellTerminal: () => ({ mutate: shellMocks.openShellTerminal }),
 }));
 
@@ -579,15 +587,25 @@ describe("shell application shortcut subscriptions", () => {
 		});
 	});
 
-	it("focuses the mounted terminal", async () => {
-		const terminalInput = document.createElement("textarea");
-		terminalInput.className = "xterm-helper-textarea";
-		document.body.appendChild(terminalInput);
+	it("focuses the active terminal without targeting an earlier parked xterm", async () => {
+		const parked = document.createElement("div");
+		parked.dataset.terminalActivationPhase = "parked";
+		parked.inert = true;
+		const parkedInput = document.createElement("textarea");
+		parkedInput.className = "xterm-helper-textarea";
+		parked.appendChild(parkedInput);
+		const active = document.createElement("div");
+		active.dataset.terminalActivationPhase = "visible";
+		const activeInput = document.createElement("textarea");
+		activeInput.className = "xterm-helper-textarea";
+		active.appendChild(activeInput);
+		document.body.append(parked, active);
 		await renderShell();
 
 		act(() => shellMocks.state.focusTerminalListener?.());
 
-		expect(document.activeElement).toBe(terminalInput);
-		terminalInput.remove();
+		expect(document.activeElement).toBe(activeInput);
+		parked.remove();
+		active.remove();
 	});
 });

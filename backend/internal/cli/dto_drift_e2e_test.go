@@ -104,6 +104,18 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(context.Context, domain.Sessi
 	return domain.Session{}, nil
 }
 
+func (f *fakeSessionService) Pin(context.Context, domain.SessionID) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
+func (f *fakeSessionService) Unpin(context.Context, domain.SessionID) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
+func (f *fakeSessionService) SetReviewerHarness(context.Context, domain.SessionID, domain.ReviewerHarness) (domain.Session, error) {
+	return domain.Session{}, nil
+}
+
 func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
 	return nil
 }

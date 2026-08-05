@@ -26,12 +26,14 @@ function CommandDialog({
 	children,
 	className,
 	commandProps,
+	contentProps,
 	...props
 }: React.ComponentProps<typeof Dialog.Root> & {
 	title?: string;
 	description?: string;
 	className?: string;
 	commandProps?: React.ComponentProps<typeof CommandPrimitive>;
+	contentProps?: React.ComponentProps<typeof Dialog.Content>;
 }) {
 	const { className: commandClassName, ...restCommandProps } = commandProps ?? {};
 	return (
@@ -44,6 +46,7 @@ function CommandDialog({
 				<Dialog.Content
 					data-slot="command-dialog-content"
 					aria-label={title}
+					{...contentProps}
 					className={cn(
 						"fixed left-1/2 top-command-palette z-overlay w-command-palette -translate-x-1/2 overflow-hidden rounded-[var(--radius-command-palette)] border border-[var(--color-border-command-palette)] bg-[var(--color-bg-command-palette)] text-[var(--color-text-command-item)] shadow-[var(--shadow-command-palette)] outline-none data-[state=open]:animate-modal-in",
 						className,
