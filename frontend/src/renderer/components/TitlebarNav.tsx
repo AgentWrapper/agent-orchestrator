@@ -38,10 +38,12 @@ function useCanGoForward(): boolean {
 
 export function TitlebarNav({
 	historyLocked = false,
+	hasSessionTopbar = false,
 	isFullScreen = false,
 	onSidebarPreviewEnter,
 }: {
 	historyLocked?: boolean;
+	hasSessionTopbar?: boolean;
 	isFullScreen?: boolean;
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
@@ -65,7 +67,13 @@ export function TitlebarNav({
 			: "left-titlebar-cluster-left";
 	// Linux: match the framed board titlebar's y (mac inset 2px + surface border
 	// 1px) so the cluster shares its centerline with the project title.
-	const topClass = !isMac ? "top-0.75" : isFullScreen ? "top-0" : "-top-0.6";
+	const topClass = !isMac
+		? "top-0.75"
+		: isFullScreen && hasSessionTopbar && !isSidebarOpen
+			? "top-1.5"
+			: isFullScreen
+				? "top-0"
+				: "-top-0.6";
 	const heightClass = isMac && isFullScreen ? "h-traffic-light-clearance-fullscreen" : "h-traffic-light-clearance";
 
 	return (
