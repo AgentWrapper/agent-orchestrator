@@ -698,33 +698,25 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// ResizeObserver fires for every intermediate box during native fullscreen,
 		// sidebar drags and other animated application layout. Fitting on every
 		// callback repeatedly reallocates xterm's WebGL surface. Keep only the
-		// latest proposal and commit once the box has been quiet. Mid-drag cap
-		// fits are deferred (they caused 1–2 flashes on fast continuous drag),
-		// but a soft ceiling still forces a covered refresh so a long OS window
-		// resize cannot postpone the grid forever.
-		// Quiet window is slightly under the session PTY resize debounce (~100ms)
-		// so the grid catches up promptly after a drag without thrashing mid-gesture.
-		const FIT_QUIET_MS = 80;
+		// latest proposal and commit once the box has been quiet. Cap expiry
+		// during a drag only re-arms — never fit mid-gesture (that was the multi-
+		// flash path). A longer quiet window than the PTY debounce avoids settling
+		// on brief pauses inside one inspector drag; release still gets one fit.
+		const FIT_QUIET_MS = 160;
 		const FIT_CAP_MS = 500;
-		// After this many deferred caps (~2s of continuous motion), allow one
-		// covered fit even though the quiet timer is still armed.
-		const FIT_CAP_MAX_DEFER = 4;
 		let fitQuietTimer: ReturnType<typeof setTimeout> | null = null;
 		let fitCapTimer: ReturnType<typeof setTimeout> | null = null;
-		let fitCapDeferCount = 0;
 		let fitAllowsHidden = false;
 		let disposed = false;
 		const fitSettledListeners = new Set<() => void>();
 		const flushScheduledFit = (fromCap = false) => {
 			if (disposed) return;
-			// Prefer waiting for quiet (release / pause). Defer the periodic cap
-			// while resize events are still arriving, up to FIT_CAP_MAX_DEFER.
-			if (fromCap && fitQuietTimer !== null && fitCapDeferCount < FIT_CAP_MAX_DEFER) {
-				fitCapDeferCount += 1;
+			// Never fit while resize events are still arriving. Cap during a drag
+			// only re-arms; the quiet timer (release / real pause) owns the commit.
+			if (fromCap && fitQuietTimer !== null) {
 				fitCapTimer = setTimeout(() => flushScheduledFit(true), FIT_CAP_MS);
 				return;
 			}
-			fitCapDeferCount = 0;
 			if (fitQuietTimer !== null) {
 				clearTimeout(fitQuietTimer);
 				fitQuietTimer = null;

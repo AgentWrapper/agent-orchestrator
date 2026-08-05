@@ -888,40 +888,20 @@ describe("XtermTerminal", () => {
 			stubResizeObserver();
 			try {
 				render(<XtermTerminal theme="dark" />);
-				// Drain mount rAF + initial settle schedules (50/250/… + quiet 80).
+				// Drain mount rAF + initial settle schedules (50/250/… + quiet).
 				await act(async () => {
-					vi.advanceTimersByTime(1300);
+					vi.advanceTimersByTime(1500);
 				});
 				const settled = state.fitCalls;
 
-				// Past one cap interval without a quiet gap — must not commit mid-drag.
-				await dragFor(499);
+				// Past several cap intervals without a quiet gap — must not commit mid-drag.
+				await dragFor(2500);
 				expect(state.fitCalls).toBe(settled);
 
 				await act(async () => {
-					vi.advanceTimersByTime(80);
+					vi.advanceTimersByTime(160);
 				});
 				expect(state.fitCalls).toBe(settled + 1);
-			} finally {
-				vi.useRealTimers();
-				vi.unstubAllGlobals();
-			}
-		});
-
-		it("still covers a continuous drag after the deferred-cap ceiling", async () => {
-			vi.useFakeTimers();
-			stubAnimationFrameAsTimeout();
-			stubResizeObserver();
-			try {
-				render(<XtermTerminal theme="dark" />);
-				await act(async () => {
-					vi.advanceTimersByTime(1300);
-				});
-				const settled = state.fitCalls;
-
-				// 4 deferred caps (4 * 500ms) then the 5th forces a covered fit.
-				await dragFor(2500);
-				expect(state.fitCalls).toBeGreaterThan(settled);
 			} finally {
 				vi.useRealTimers();
 				vi.unstubAllGlobals();
