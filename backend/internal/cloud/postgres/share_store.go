@@ -20,6 +20,7 @@ type ProjectShareLink struct {
 	OrgID           clouddomain.OrgID       `json:"orgId"`
 	ProjectID       clouddomain.ProjectID   `json:"projectId"`
 	SessionID       clouddomain.SessionID   `json:"sessionId,omitempty"`
+	PolicyID        string                  `json:"policyId,omitempty"`
 	CreatedByUserID clouddomain.UserID      `json:"createdByUserId"`
 	Role            string                  `json:"role"`
 	Status          string                  `json:"status"`
@@ -50,6 +51,7 @@ type CreateProjectShareLinkInput struct {
 	Role            string
 	Token           string
 	AccessScope     string
+	PolicyID        string
 	RecipientEmails []string
 	RecipientOrgIDs []clouddomain.OrgID
 }
@@ -61,6 +63,7 @@ type SharedProjectGrant struct {
 	Project       clouddomain.Project            `json:"project"`
 	Session       *clouddomain.Session           `json:"session,omitempty"`
 	SessionRoles  []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
+	PolicyID      string                         `json:"policyId,omitempty"`
 	Role          string                         `json:"role"`
 	SharedByEmail string                         `json:"sharedByEmail"`
 	SharedByName  string                         `json:"sharedByName"`
@@ -69,8 +72,9 @@ type SharedProjectGrant struct {
 
 // ProjectShareAccess is the owner/admin management view for a project's shares.
 type ProjectShareAccess struct {
-	Links  []ProjectShareLink  `json:"links"`
-	Grants []ProjectShareGrant `json:"grants"`
+	Links    []ProjectShareLink   `json:"links"`
+	Grants   []ProjectShareGrant  `json:"grants"`
+	Policies []ProjectSharePolicy `json:"policies,omitempty"`
 }
 
 // ProjectShareGrant is an active redeemed share for one user.
@@ -79,6 +83,7 @@ type ProjectShareGrant struct {
 	User         clouddomain.User               `json:"user"`
 	SessionID    clouddomain.SessionID          `json:"sessionId,omitempty"`
 	SessionRoles []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
+	PolicyID     string                         `json:"policyId,omitempty"`
 	Role         string                         `json:"role"`
 	Status       string                         `json:"status"`
 	RedeemedAt   time.Time                      `json:"redeemedAt"`
@@ -89,6 +94,36 @@ type ProjectShareGrant struct {
 type ProjectShareGrantSessionRole struct {
 	SessionID clouddomain.SessionID `json:"sessionId"`
 	Role      string                `json:"role"`
+}
+
+// ProjectSharePolicy is a named reusable access policy for standalone projects.
+type ProjectSharePolicy struct {
+	ID              string                         `json:"id"`
+	OrgID           clouddomain.OrgID              `json:"orgId"`
+	ProjectID       clouddomain.ProjectID          `json:"projectId"`
+	CreatedByUserID clouddomain.UserID             `json:"createdByUserId"`
+	Name            string                         `json:"name"`
+	Status          string                         `json:"status"`
+	SessionRoles    []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
+	Links           []ProjectShareLink             `json:"links,omitempty"`
+	Grants          []ProjectShareGrant            `json:"grants,omitempty"`
+	CreatedAt       time.Time                      `json:"createdAt"`
+	UpdatedAt       time.Time                      `json:"updatedAt"`
+}
+
+// CreateProjectSharePolicyInput captures a named access policy.
+type CreateProjectSharePolicyInput struct {
+	OrgID           clouddomain.OrgID
+	ProjectID       clouddomain.ProjectID
+	CreatedByUserID clouddomain.UserID
+	Name            string
+	SessionRoles    []ProjectShareGrantSessionRole
+}
+
+// UpdateProjectSharePolicyInput changes a named access policy.
+type UpdateProjectSharePolicyInput struct {
+	Name         string
+	SessionRoles []ProjectShareGrantSessionRole
 }
 
 // CreateProjectShareLink stores a scoped share link.
@@ -109,16 +144,17 @@ func (s *Store) CreateProjectShareLink(
 	var link ProjectShareLink
 	err = tx.QueryRow(ctx, `
 		INSERT INTO ao_project_share_links (
-			org_id, project_id, session_id, created_by_user_id, token_hash, role, access_scope
+			org_id, project_id, session_id, created_by_user_id, token_hash, role, access_scope, policy_id
 		)
-		VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7)
-		RETURNING id, org_id, project_id, COALESCE(session_id::text, ''),
+		VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7, NULLIF($8, '')::uuid)
+		RETURNING id, org_id, project_id, COALESCE(session_id::text, ''), COALESCE(policy_id::text, ''),
 			created_by_user_id, role, status, expires_at, created_at, updated_at, access_scope
-	`, input.OrgID, input.ProjectID, string(input.SessionID), input.CreatedByUserID, hash[:], input.Role, input.AccessScope).Scan(
+	`, input.OrgID, input.ProjectID, string(input.SessionID), input.CreatedByUserID, hash[:], input.Role, input.AccessScope, input.PolicyID).Scan(
 		&link.ID,
 		&link.OrgID,
 		&link.ProjectID,
 		&link.SessionID,
+		&link.PolicyID,
 		&link.CreatedByUserID,
 		&link.Role,
 		&link.Status,
@@ -234,7 +270,7 @@ func (s *Store) RedeemProjectShareLink(
 
 	var link ProjectShareLink
 	err = tx.QueryRow(ctx, `
-		SELECT id, org_id, project_id, COALESCE(session_id::text, ''),
+		SELECT id, org_id, project_id, COALESCE(session_id::text, ''), COALESCE(policy_id::text, ''),
 			created_by_user_id, role, status, expires_at, created_at, updated_at, access_scope
 		FROM ao_project_share_links
 		WHERE token_hash = $1
@@ -245,6 +281,7 @@ func (s *Store) RedeemProjectShareLink(
 		&link.OrgID,
 		&link.ProjectID,
 		&link.SessionID,
+		&link.PolicyID,
 		&link.CreatedByUserID,
 		&link.Role,
 		&link.Status,
@@ -274,20 +311,26 @@ func (s *Store) RedeemProjectShareLink(
 	var grantID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO ao_project_share_grants (
-			share_link_id, org_id, project_id, session_id, user_id, shared_by_user_id, role
+			share_link_id, org_id, project_id, session_id, user_id, shared_by_user_id, role, policy_id
 		)
-		VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7)
+		VALUES ($1, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, NULLIF($8, '')::uuid)
 		ON CONFLICT (user_id, org_id, project_id) WHERE status = 'active'
 		DO UPDATE SET
 			share_link_id = EXCLUDED.share_link_id,
 			session_id = EXCLUDED.session_id,
 			shared_by_user_id = EXCLUDED.shared_by_user_id,
+			policy_id = EXCLUDED.policy_id,
 			role = EXCLUDED.role,
 			updated_at = now()
 		RETURNING id
-	`, link.ID, link.OrgID, link.ProjectID, string(link.SessionID), userID, link.CreatedByUserID, link.Role).Scan(&grantID)
+	`, link.ID, link.OrgID, link.ProjectID, string(link.SessionID), userID, link.CreatedByUserID, link.Role, link.PolicyID).Scan(&grantID)
 	if err != nil {
 		return SharedProjectGrant{}, fmt.Errorf("upsert project share grant: %w", err)
+	}
+	if link.PolicyID != "" {
+		if err := syncGrantSessionsFromPolicy(ctx, tx, grantID, link.PolicyID); err != nil {
+			return SharedProjectGrant{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return SharedProjectGrant{}, fmt.Errorf("commit redeem share link: %w", err)
@@ -343,6 +386,26 @@ func restrictedShareAllowsUser(
 	return orgAllowed, nil
 }
 
+func syncGrantSessionsFromPolicy(ctx context.Context, tx pgx.Tx, grantID string, policyID string) error {
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM ao_project_share_grant_sessions
+		WHERE grant_id = $1
+	`, grantID); err != nil {
+		return fmt.Errorf("clear policy grant sessions: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ao_project_share_grant_sessions (
+			grant_id, org_id, project_id, session_id, role
+		)
+		SELECT $1, org_id, project_id, session_id, role
+		FROM ao_project_share_policy_sessions
+		WHERE policy_id = $2
+	`, grantID, policyID); err != nil {
+		return fmt.Errorf("sync policy grant sessions: %w", err)
+	}
+	return nil
+}
+
 // ListProjectShareAccess returns active links and redeemed grants for one project.
 func (s *Store) ListProjectShareAccess(
 	ctx context.Context,
@@ -350,7 +413,7 @@ func (s *Store) ListProjectShareAccess(
 	projectID clouddomain.ProjectID,
 ) (ProjectShareAccess, error) {
 	linkRows, err := s.pool.Query(ctx, `
-		SELECT id, org_id, project_id, COALESCE(session_id::text, ''),
+		SELECT id, org_id, project_id, COALESCE(session_id::text, ''), COALESCE(policy_id::text, ''),
 			created_by_user_id, role, status, expires_at, created_at, updated_at, access_scope
 		FROM ao_project_share_links
 		WHERE org_id = $1 AND project_id = $2 AND status = 'active'
@@ -360,7 +423,7 @@ func (s *Store) ListProjectShareAccess(
 		return ProjectShareAccess{}, fmt.Errorf("list project share links: %w", err)
 	}
 	defer linkRows.Close()
-	access := ProjectShareAccess{Links: []ProjectShareLink{}, Grants: []ProjectShareGrant{}}
+	access := ProjectShareAccess{Links: []ProjectShareLink{}, Grants: []ProjectShareGrant{}, Policies: []ProjectSharePolicy{}}
 	for linkRows.Next() {
 		var link ProjectShareLink
 		if err := linkRows.Scan(
@@ -368,6 +431,7 @@ func (s *Store) ListProjectShareAccess(
 			&link.OrgID,
 			&link.ProjectID,
 			&link.SessionID,
+			&link.PolicyID,
 			&link.CreatedByUserID,
 			&link.Role,
 			&link.Status,
@@ -396,6 +460,7 @@ func (s *Store) ListProjectShareAccess(
 		SELECT
 			share_grant.id,
 			COALESCE(share_grant.session_id::text, ''),
+			COALESCE(share_grant.policy_id::text, ''),
 			user_row.id, user_row.auth_provider, user_row.external_user_id, user_row.email,
 			user_row.display_name, user_row.avatar_url, user_row.created_at, user_row.updated_at,
 			share_grant.role, share_grant.status, share_grant.redeemed_at, share_grant.updated_at
@@ -415,6 +480,7 @@ func (s *Store) ListProjectShareAccess(
 		if err := grantRows.Scan(
 			&grant.ID,
 			&grant.SessionID,
+			&grant.PolicyID,
 			&grant.User.ID,
 			&grant.User.AuthProvider,
 			&grant.User.ExternalUserID,
@@ -446,7 +512,111 @@ func (s *Store) ListProjectShareAccess(
 	for index := range access.Grants {
 		access.Grants[index].SessionRoles = sessionRoles[access.Grants[index].ID]
 	}
+	policies, err := s.listProjectSharePolicies(ctx, orgID, projectID)
+	if err != nil {
+		return ProjectShareAccess{}, err
+	}
+	policyByID := map[string]int{}
+	for index := range policies {
+		policyByID[policies[index].ID] = index
+	}
+	directLinks := make([]ProjectShareLink, 0, len(access.Links))
+	for _, link := range access.Links {
+		if link.PolicyID == "" {
+			directLinks = append(directLinks, link)
+			continue
+		}
+		if policyIndex, ok := policyByID[link.PolicyID]; ok {
+			policies[policyIndex].Links = append(policies[policyIndex].Links, link)
+		}
+	}
+	directGrants := make([]ProjectShareGrant, 0, len(access.Grants))
+	for _, grant := range access.Grants {
+		if grant.PolicyID == "" {
+			directGrants = append(directGrants, grant)
+			continue
+		}
+		if policyIndex, ok := policyByID[grant.PolicyID]; ok {
+			policies[policyIndex].Grants = append(policies[policyIndex].Grants, grant)
+		}
+	}
+	access.Links = directLinks
+	access.Grants = directGrants
+	access.Policies = policies
 	return access, nil
+}
+
+func (s *Store) listProjectSharePolicies(
+	ctx context.Context,
+	orgID clouddomain.OrgID,
+	projectID clouddomain.ProjectID,
+) ([]ProjectSharePolicy, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, org_id, project_id, created_by_user_id, name, status, created_at, updated_at
+		FROM ao_project_share_policies
+		WHERE org_id = $1 AND project_id = $2 AND status = 'active'
+		ORDER BY created_at DESC
+	`, orgID, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list project share policies: %w", err)
+	}
+	defer rows.Close()
+	policies := []ProjectSharePolicy{}
+	for rows.Next() {
+		var policy ProjectSharePolicy
+		if err := rows.Scan(
+			&policy.ID,
+			&policy.OrgID,
+			&policy.ProjectID,
+			&policy.CreatedByUserID,
+			&policy.Name,
+			&policy.Status,
+			&policy.CreatedAt,
+			&policy.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan project share policy: %w", err)
+		}
+		policies = append(policies, policy)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for index := range policies {
+		sessionRoles, err := s.projectSharePolicySessionRoles(ctx, policies[index].ID)
+		if err != nil {
+			return nil, err
+		}
+		policies[index].SessionRoles = sessionRoles
+	}
+	return policies, nil
+}
+
+func (s *Store) projectSharePolicySessionRoles(
+	ctx context.Context,
+	policyID string,
+) ([]ProjectShareGrantSessionRole, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT session_id, role
+		FROM ao_project_share_policy_sessions
+		WHERE policy_id = $1
+		ORDER BY created_at
+	`, policyID)
+	if err != nil {
+		return nil, fmt.Errorf("list project share policy sessions: %w", err)
+	}
+	defer rows.Close()
+	sessionRoles := []ProjectShareGrantSessionRole{}
+	for rows.Next() {
+		var sessionRole ProjectShareGrantSessionRole
+		if err := rows.Scan(&sessionRole.SessionID, &sessionRole.Role); err != nil {
+			return nil, fmt.Errorf("scan project share policy session: %w", err)
+		}
+		sessionRoles = append(sessionRoles, sessionRole)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return sessionRoles, nil
 }
 
 func (s *Store) projectShareGrantSessionRoles(
@@ -586,7 +756,190 @@ func (s *Store) UpdateProjectShareGrantAccess(
 			return grant, nil
 		}
 	}
+	for _, policy := range access.Policies {
+		for _, grant := range policy.Grants {
+			if grant.ID == grantID {
+				return grant, nil
+			}
+		}
+	}
 	return ProjectShareGrant{}, ErrProjectShareGrantNotFound
+}
+
+// CreateProjectSharePolicy stores a named reusable project access policy.
+func (s *Store) CreateProjectSharePolicy(
+	ctx context.Context,
+	input CreateProjectSharePolicyInput,
+) (ProjectSharePolicy, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ProjectSharePolicy{}, fmt.Errorf("begin create project share policy: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var policy ProjectSharePolicy
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO ao_project_share_policies (
+			org_id, project_id, created_by_user_id, name
+		)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, org_id, project_id, created_by_user_id, name, status, created_at, updated_at
+	`, input.OrgID, input.ProjectID, input.CreatedByUserID, strings.TrimSpace(input.Name)).Scan(
+		&policy.ID,
+		&policy.OrgID,
+		&policy.ProjectID,
+		&policy.CreatedByUserID,
+		&policy.Name,
+		&policy.Status,
+		&policy.CreatedAt,
+		&policy.UpdatedAt,
+	); err != nil {
+		return ProjectSharePolicy{}, fmt.Errorf("create project share policy: %w", err)
+	}
+	if err := replaceProjectSharePolicySessions(ctx, tx, policy.ID, input.OrgID, input.ProjectID, input.SessionRoles); err != nil {
+		return ProjectSharePolicy{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectSharePolicy{}, fmt.Errorf("commit create project share policy: %w", err)
+	}
+	policy.SessionRoles = input.SessionRoles
+	return policy, nil
+}
+
+// UpdateProjectSharePolicy changes a reusable project access policy.
+func (s *Store) UpdateProjectSharePolicy(
+	ctx context.Context,
+	orgID clouddomain.OrgID,
+	projectID clouddomain.ProjectID,
+	policyID string,
+	input UpdateProjectSharePolicyInput,
+) (ProjectSharePolicy, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return ProjectSharePolicy{}, fmt.Errorf("begin update project share policy: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var policy ProjectSharePolicy
+	if err := tx.QueryRow(ctx, `
+		UPDATE ao_project_share_policies
+		SET name = $4, updated_at = now()
+		WHERE org_id = $1 AND project_id = $2 AND id = $3 AND status = 'active'
+		RETURNING id, org_id, project_id, created_by_user_id, name, status, created_at, updated_at
+	`, orgID, projectID, policyID, strings.TrimSpace(input.Name)).Scan(
+		&policy.ID,
+		&policy.OrgID,
+		&policy.ProjectID,
+		&policy.CreatedByUserID,
+		&policy.Name,
+		&policy.Status,
+		&policy.CreatedAt,
+		&policy.UpdatedAt,
+	); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ProjectSharePolicy{}, ErrProjectSharePolicyNotFound
+		}
+		return ProjectSharePolicy{}, fmt.Errorf("update project share policy: %w", err)
+	}
+	if err := replaceProjectSharePolicySessions(ctx, tx, policy.ID, orgID, projectID, input.SessionRoles); err != nil {
+		return ProjectSharePolicy{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM ao_project_share_grant_sessions
+		WHERE grant_id IN (
+			SELECT id
+			FROM ao_project_share_grants
+			WHERE policy_id = $1 AND status = 'active'
+		)
+	`, policy.ID); err != nil {
+		return ProjectSharePolicy{}, fmt.Errorf("clear policy member sessions: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO ao_project_share_grant_sessions (
+			grant_id, org_id, project_id, session_id, role
+		)
+		SELECT grant_row.id, policy_session.org_id, policy_session.project_id,
+			policy_session.session_id, policy_session.role
+		FROM ao_project_share_grants grant_row
+		JOIN ao_project_share_policy_sessions policy_session
+			ON policy_session.policy_id = grant_row.policy_id
+		WHERE grant_row.policy_id = $1 AND grant_row.status = 'active'
+	`, policy.ID); err != nil {
+		return ProjectSharePolicy{}, fmt.Errorf("sync policy member sessions: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectSharePolicy{}, fmt.Errorf("commit update project share policy: %w", err)
+	}
+	policy.SessionRoles = input.SessionRoles
+	return policy, nil
+}
+
+// ArchiveProjectSharePolicy disables a policy and revokes its links and members.
+func (s *Store) ArchiveProjectSharePolicy(
+	ctx context.Context,
+	orgID clouddomain.OrgID,
+	projectID clouddomain.ProjectID,
+	policyID string,
+) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return fmt.Errorf("begin archive project share policy: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
+		UPDATE ao_project_share_policies
+		SET status = 'archived', updated_at = now()
+		WHERE org_id = $1 AND project_id = $2 AND id = $3 AND status = 'active'
+	`, orgID, projectID, policyID)
+	if err != nil {
+		return fmt.Errorf("archive project share policy: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrProjectSharePolicyNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE ao_project_share_links
+		SET status = 'revoked', updated_at = now()
+		WHERE policy_id = $1 AND status = 'active'
+	`, policyID); err != nil {
+		return fmt.Errorf("archive project share policy links: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE ao_project_share_grants
+		SET status = 'revoked', updated_at = now()
+		WHERE policy_id = $1 AND status = 'active'
+	`, policyID); err != nil {
+		return fmt.Errorf("archive project share policy grants: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit archive project share policy: %w", err)
+	}
+	return nil
+}
+
+func replaceProjectSharePolicySessions(
+	ctx context.Context,
+	tx pgx.Tx,
+	policyID string,
+	orgID clouddomain.OrgID,
+	projectID clouddomain.ProjectID,
+	sessionRoles []ProjectShareGrantSessionRole,
+) error {
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM ao_project_share_policy_sessions
+		WHERE policy_id = $1
+	`, policyID); err != nil {
+		return fmt.Errorf("clear project share policy sessions: %w", err)
+	}
+	for _, sessionRole := range sessionRoles {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO ao_project_share_policy_sessions (
+				policy_id, org_id, project_id, session_id, role
+			)
+			VALUES ($1, $2, $3, $4, $5)
+		`, policyID, orgID, projectID, sessionRole.SessionID, sessionRole.Role); err != nil {
+			return fmt.Errorf("insert project share policy session: %w", err)
+		}
+	}
+	return nil
 }
 
 // RevokeProjectShareGrant removes one user's active shared-project access.
@@ -647,6 +1000,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			COALESCE(session.activity_state, ''), COALESCE(session.is_terminated, false),
 			COALESCE(session.agent_session_id, ''), COALESCE(session.created_at, now()),
 			COALESCE(session.updated_at, now()),
+			COALESCE(share_grant.policy_id::text, ''),
 			share_grant.role,
 			shared_by.email,
 			shared_by.display_name,
@@ -698,6 +1052,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			&session.AgentSessionID,
 			&session.CreatedAt,
 			&session.UpdatedAt,
+			&grant.PolicyID,
 			&grant.Role,
 			&grant.SharedByEmail,
 			&grant.SharedByName,
@@ -755,6 +1110,8 @@ var (
 	ErrProjectShareLinkNotFound = errors.New("cloud project share link not found")
 	// ErrProjectShareGrantNotFound means the requested project share grant does not exist.
 	ErrProjectShareGrantNotFound = errors.New("cloud project share grant not found")
+	// ErrProjectSharePolicyNotFound means the requested project share policy does not exist.
+	ErrProjectSharePolicyNotFound = errors.New("cloud project share policy not found")
 	// ErrProjectShareSelfRedeem means the link creator attempted to redeem their own link.
 	ErrProjectShareSelfRedeem = errors.New("cannot redeem own project share link")
 	// ErrProjectShareUnauthorized means the current user is not an eligible link recipient.

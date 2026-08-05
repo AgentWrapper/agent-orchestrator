@@ -62,6 +62,9 @@ type store interface {
 	ListSharedProjectGrants(context.Context, string) ([]cloudpostgres.SharedProjectGrant, error)
 	ListProjectShareAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID) (cloudpostgres.ProjectShareAccess, error)
 	UpdateProjectShareGrantAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, string, clouddomain.SessionID, []cloudpostgres.ProjectShareGrantSessionRole) (cloudpostgres.ProjectShareGrant, error)
+	CreateProjectSharePolicy(context.Context, cloudpostgres.CreateProjectSharePolicyInput) (cloudpostgres.ProjectSharePolicy, error)
+	UpdateProjectSharePolicy(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, cloudpostgres.UpdateProjectSharePolicyInput) (cloudpostgres.ProjectSharePolicy, error)
+	ArchiveProjectSharePolicy(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string) error
 	RevokeProjectShareGrant(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string) error
 	RevokeProjectShareLink(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string) error
 	CreateSession(context.Context, clouddomain.AccountID, cloudpostgres.CreateSessionInput) (cloudpostgres.CreateSessionResult, error)
@@ -391,6 +394,9 @@ func (s *Server) routes() http.Handler {
 				org.With(s.requireOrgRole("admin")).Delete("/projects/{projectId}", s.deleteProject)
 				org.With(s.requireOrgRole("member")).Get("/projects/{projectId}/shares", s.listProjectShareAccess)
 				org.With(s.requireOrgRole("member")).Post("/projects/{projectId}/shares", s.createProjectShareLink)
+				org.With(s.requireOrgRole("member")).Post("/projects/{projectId}/shares/policies", s.createProjectSharePolicy)
+				org.With(s.requireOrgRole("member")).Patch("/projects/{projectId}/shares/policies/{policyId}", s.updateProjectSharePolicy)
+				org.With(s.requireOrgRole("member")).Delete("/projects/{projectId}/shares/policies/{policyId}", s.archiveProjectSharePolicy)
 				org.With(s.requireOrgRole("member")).Patch("/projects/{projectId}/shares/grants/{grantId}", s.updateProjectShareGrant)
 				org.With(s.requireOrgRole("member")).Delete("/projects/{projectId}/shares/grants/{grantId}", s.revokeProjectShareGrant)
 				org.With(s.requireOrgRole("member")).Delete("/projects/{projectId}/shares/links/{linkId}", s.revokeProjectShareLink)
@@ -1406,6 +1412,7 @@ func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) 
 	}
 	var input struct {
 		SessionID       clouddomain.SessionID `json:"sessionId"`
+		PolicyID        string                `json:"policyId"`
 		Role            string                `json:"role"`
 		AccessScope     string                `json:"accessScope"`
 		RecipientEmails []string              `json:"recipientEmails"`
@@ -1486,6 +1493,7 @@ func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) 
 		Role:            role,
 		Token:           token,
 		AccessScope:     accessScope,
+		PolicyID:        strings.TrimSpace(input.PolicyID),
 		RecipientEmails: input.RecipientEmails,
 		RecipientOrgIDs: input.RecipientOrgIDs,
 	})
@@ -1513,6 +1521,154 @@ func (s *Server) listProjectShareAccess(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"access": access})
+}
+
+func (s *Server) createProjectSharePolicy(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	org, _ := orgFromContext(r.Context())
+	principal, _ := cloudauth.PrincipalFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	var input struct {
+		Name         string                                       `json:"name"`
+		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		writeError(w, r, http.StatusBadRequest, "POLICY_NAME_REQUIRED", "Security policy name is required.")
+		return
+	}
+	if !s.validateStandaloneShareProject(w, r, account.ID, projectID) {
+		return
+	}
+	if !s.validateProjectShareSessionRoles(w, r, account.ID, projectID, input.SessionRoles) {
+		return
+	}
+	policy, err := s.store.CreateProjectSharePolicy(r.Context(), cloudpostgres.CreateProjectSharePolicyInput{
+		OrgID:           org.Organization.ID,
+		ProjectID:       projectID,
+		CreatedByUserID: clouddomain.UserID(principal.UserID),
+		Name:            name,
+		SessionRoles:    input.SessionRoles,
+	})
+	if err != nil {
+		s.internalError(w, r, "create project share policy", err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"policy": policy})
+}
+
+func (s *Server) updateProjectSharePolicy(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	org, _ := orgFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	policyID := strings.TrimSpace(chi.URLParam(r, "policyId"))
+	var input struct {
+		Name         string                                       `json:"name"`
+		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		writeError(w, r, http.StatusBadRequest, "POLICY_NAME_REQUIRED", "Security policy name is required.")
+		return
+	}
+	if !s.validateStandaloneShareProject(w, r, account.ID, projectID) {
+		return
+	}
+	if !s.validateProjectShareSessionRoles(w, r, account.ID, projectID, input.SessionRoles) {
+		return
+	}
+	policy, err := s.store.UpdateProjectSharePolicy(r.Context(), org.Organization.ID, projectID, policyID, cloudpostgres.UpdateProjectSharePolicyInput{
+		Name:         name,
+		SessionRoles: input.SessionRoles,
+	})
+	if errors.Is(err, cloudpostgres.ErrProjectSharePolicyNotFound) {
+		writeError(w, r, http.StatusNotFound, "SHARE_POLICY_NOT_FOUND", "That security policy no longer exists.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "update project share policy", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"policy": policy})
+}
+
+func (s *Server) archiveProjectSharePolicy(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	org, _ := orgFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	policyID := strings.TrimSpace(chi.URLParam(r, "policyId"))
+	if !s.validateStandaloneShareProject(w, r, account.ID, projectID) {
+		return
+	}
+	err := s.store.ArchiveProjectSharePolicy(r.Context(), org.Organization.ID, projectID, policyID)
+	if errors.Is(err, cloudpostgres.ErrProjectSharePolicyNotFound) {
+		writeError(w, r, http.StatusNotFound, "SHARE_POLICY_NOT_FOUND", "That security policy no longer exists.")
+		return
+	}
+	if err != nil {
+		s.internalError(w, r, "archive project share policy", err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) validateStandaloneShareProject(
+	w http.ResponseWriter,
+	r *http.Request,
+	accountID clouddomain.AccountID,
+	projectID clouddomain.ProjectID,
+) bool {
+	project, err := s.store.GetProject(r.Context(), accountID, projectID)
+	if errors.Is(err, cloudpostgres.ErrProjectNotFound) {
+		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
+		return false
+	}
+	if err != nil {
+		s.internalError(w, r, "load share project", err)
+		return false
+	}
+	if !cloudProjectStandalone(project) {
+		writeError(w, r, http.StatusBadRequest, "POLICY_PROJECT_UNSUPPORTED", "Security policies are only available for standalone projects.")
+		return false
+	}
+	return true
+}
+
+func (s *Server) validateProjectShareSessionRoles(
+	w http.ResponseWriter,
+	r *http.Request,
+	accountID clouddomain.AccountID,
+	projectID clouddomain.ProjectID,
+	sessionRoles []cloudpostgres.ProjectShareGrantSessionRole,
+) bool {
+	seen := map[clouddomain.SessionID]struct{}{}
+	for _, sessionRole := range sessionRoles {
+		if sessionRole.SessionID == "" || !validProjectShareRole(sessionRole.Role) {
+			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "Each agent access entry must include a session and viewer/editor permission.")
+			return false
+		}
+		if _, exists := seen[sessionRole.SessionID]; exists {
+			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "An agent can only appear once in shared access.")
+			return false
+		}
+		seen[sessionRole.SessionID] = struct{}{}
+		session, err := s.store.GetSession(r.Context(), accountID, sessionRole.SessionID)
+		if errors.Is(err, cloudpostgres.ErrSessionNotFound) || session.ProjectID != projectID {
+			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "Share scope must be this project's sessions.")
+			return false
+		}
+		if err != nil {
+			s.internalError(w, r, "validate project share session", err)
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request) {

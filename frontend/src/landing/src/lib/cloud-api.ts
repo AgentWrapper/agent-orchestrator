@@ -178,6 +178,7 @@ export interface CloudProjectShareLink {
   orgId: string;
   projectId: string;
   sessionId?: string;
+  policyId?: string;
   createdByUserId: string;
   role: "viewer" | "editor";
   status: "active" | "revoked";
@@ -192,6 +193,7 @@ export interface CloudProjectShareGrant {
   user: CloudUser;
   sessionId?: string;
   sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
+  policyId?: string;
   role: "viewer" | "editor";
   status: "active" | "revoked";
   redeemedAt: string;
@@ -201,6 +203,21 @@ export interface CloudProjectShareGrant {
 export interface CloudProjectShareAccess {
   links: CloudProjectShareLink[];
   grants: CloudProjectShareGrant[];
+  policies?: CloudProjectSharePolicy[];
+}
+
+export interface CloudProjectSharePolicy {
+  id: string;
+  orgId: string;
+  projectId: string;
+  createdByUserId: string;
+  name: string;
+  status: "active" | "archived";
+  sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
+  links?: CloudProjectShareLink[];
+  grants?: CloudProjectShareGrant[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CloudTurn {
@@ -655,6 +672,7 @@ export class CloudAPI {
     projectId: string,
     input: {
       sessionId?: string;
+      policyId?: string;
       role: "viewer" | "editor";
       accessScope?: "anyone" | "restricted";
       recipientEmails?: string[];
@@ -689,6 +707,55 @@ export class CloudAPI {
         `/projects/${encodeURIComponent(projectId)}/shares/grants/${encodeURIComponent(grantId)}`,
       ),
       { method: "PATCH", body: input },
+    );
+  }
+
+  async createProjectSharePolicy(
+    orgId: string,
+    projectId: string,
+    input: {
+      name: string;
+      sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
+    },
+  ) {
+    return this.request<{ policy: CloudProjectSharePolicy }>(
+      this.orgPath(
+        orgId,
+        `/projects/${encodeURIComponent(projectId)}/shares/policies`,
+      ),
+      { method: "POST", body: input },
+    );
+  }
+
+  async updateProjectSharePolicy(
+    orgId: string,
+    projectId: string,
+    policyId: string,
+    input: {
+      name: string;
+      sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
+    },
+  ) {
+    return this.request<{ policy: CloudProjectSharePolicy }>(
+      this.orgPath(
+        orgId,
+        `/projects/${encodeURIComponent(projectId)}/shares/policies/${encodeURIComponent(policyId)}`,
+      ),
+      { method: "PATCH", body: input },
+    );
+  }
+
+  async archiveProjectSharePolicy(
+    orgId: string,
+    projectId: string,
+    policyId: string,
+  ) {
+    return this.request<void>(
+      this.orgPath(
+        orgId,
+        `/projects/${encodeURIComponent(projectId)}/shares/policies/${encodeURIComponent(policyId)}`,
+      ),
+      { method: "DELETE" },
     );
   }
 

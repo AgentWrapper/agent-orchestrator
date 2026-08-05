@@ -44,6 +44,9 @@ const apiMocks = vi.hoisted(() => ({
   redeemProjectShareLink: vi.fn(),
   projectShareAccess: vi.fn(),
   updateProjectShareGrant: vi.fn(),
+  createProjectSharePolicy: vi.fn(),
+  updateProjectSharePolicy: vi.fn(),
+  archiveProjectSharePolicy: vi.fn(),
   revokeProjectShareGrant: vi.fn(),
   revokeProjectShareLink: vi.fn(),
   deleteProject: vi.fn(),
@@ -102,6 +105,9 @@ vi.mock("@/lib/cloud-api", () => ({
     redeemProjectShareLink = apiMocks.redeemProjectShareLink;
     projectShareAccess = apiMocks.projectShareAccess;
     updateProjectShareGrant = apiMocks.updateProjectShareGrant;
+    createProjectSharePolicy = apiMocks.createProjectSharePolicy;
+    updateProjectSharePolicy = apiMocks.updateProjectSharePolicy;
+    archiveProjectSharePolicy = apiMocks.archiveProjectSharePolicy;
     revokeProjectShareGrant = apiMocks.revokeProjectShareGrant;
     revokeProjectShareLink = apiMocks.revokeProjectShareLink;
     deleteProject = apiMocks.deleteProject;
@@ -301,6 +307,9 @@ beforeEach(() => {
     access: { links: [], grants: [] },
   });
   apiMocks.updateProjectShareGrant.mockResolvedValue({ grant: { id: "grant-one" } });
+  apiMocks.createProjectSharePolicy.mockResolvedValue({ policy: { id: "policy-one" } });
+  apiMocks.updateProjectSharePolicy.mockResolvedValue({ policy: { id: "policy-one" } });
+  apiMocks.archiveProjectSharePolicy.mockResolvedValue(undefined);
   apiMocks.revokeProjectShareGrant.mockResolvedValue(undefined);
   apiMocks.revokeProjectShareLink.mockResolvedValue(undefined);
   apiMocks.deleteProject.mockResolvedValue(undefined);
