@@ -223,6 +223,7 @@
   "inspector.review.run": "리뷰 실행",
   "inspector.reviewDelivery": "리뷰 전달",
   "inspector.autoInjectReviewFeedback": "리뷰 댓글 자동 주입",
+  "inspector.autoInjectReviewFeedbackHelpAria": "리뷰 댓글 자동 주입 정보",
   "inspector.autoInjectReviewFeedbackTooltip": "리뷰 댓글을 작업자 에이전트에게 자동으로 보냅니다.",
   "inspector.reviewRequestFailed": "리뷰 요청 실패",
   "inspector.reviewAlreadyRanForCommit": "이 커밋은 이미 리뷰되었습니다. 다른 리뷰를 실행하려면 새 커밋을 푸시하세요.",

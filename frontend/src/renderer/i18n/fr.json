@@ -225,6 +225,7 @@
   "inspector.review.run": "Lancer la revue",
   "inspector.reviewDelivery": "Transmission des revues",
   "inspector.autoInjectReviewFeedback": "Injecter automatiquement les commentaires de revue",
+  "inspector.autoInjectReviewFeedbackHelpAria": "À propos de l’injection automatique des commentaires de revue",
   "inspector.autoInjectReviewFeedbackTooltip": "Envoie automatiquement les commentaires de revue à l’agent worker.",
   "inspector.reviewRequestFailed": "Échec de la demande de revue",
   "inspector.reviewAlreadyRanForCommit": "Ce commit a déjà été relu. Poussez un nouveau commit pour lancer une autre revue.",

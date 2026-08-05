@@ -225,6 +225,7 @@
   "inspector.review.run": "Executar revisão",
   "inspector.reviewDelivery": "Entrega de revisões",
   "inspector.autoInjectReviewFeedback": "Injetar automaticamente comentários de revisão",
+  "inspector.autoInjectReviewFeedbackHelpAria": "Sobre injetar automaticamente comentários de revisão",
   "inspector.autoInjectReviewFeedbackTooltip": "Envia automaticamente os comentários de revisão para o agente worker.",
   "inspector.reviewRequestFailed": "Falha na solicitação de revisão",
   "inspector.reviewAlreadyRanForCommit": "Este commit já foi revisado. Envie um novo commit para executar outra revisão.",

@@ -223,6 +223,7 @@
   "inspector.review.run": "Review ausführen",
   "inspector.reviewDelivery": "Review-Weiterleitung",
   "inspector.autoInjectReviewFeedback": "Review-Kommentare automatisch einfügen",
+  "inspector.autoInjectReviewFeedbackHelpAria": "Info zu automatisch eingefügten Review-Kommentaren",
   "inspector.autoInjectReviewFeedbackTooltip": "Sendet Review-Kommentare automatisch an den Worker-Agent.",
   "inspector.reviewRequestFailed": "Review-Anfrage fehlgeschlagen",
   "inspector.reviewAlreadyRanForCommit": "Dieser Commit wurde bereits reviewt. Pushen Sie einen neuen Commit, um ein weiteres Review auszuführen.",

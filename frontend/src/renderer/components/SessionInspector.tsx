@@ -1633,51 +1633,47 @@ function ReviewsSection({
         runs={reviewsQuery.data?.runs ?? []}
         session={session}
       />
-      <Section surface title={t("inspector.reviewDelivery")}>
-        <div className="-mt-2 mb-4 rounded-settings-row bg-settings-row px-3.5 py-1.5">
-          <div className="flex min-h-5 flex-wrap items-center justify-between gap-x-3 gap-y-2">
-            <div className="flex min-w-0 flex-1 items-center gap-1">
-              <label
-                className="min-w-0 text-xs font-medium text-settings-label"
-                htmlFor={`auto-inject-review-${session.id}`}
-              >
-                {t("inspector.autoInjectReviewFeedback")}
-              </label>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      aria-label={t(
-                        "inspector.autoInjectReviewFeedbackTooltip",
-                      )}
-                      className="shrink-0 rounded-full text-settings-muted transition-colors hover:text-settings-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                      type="button"
-                    >
-                      <Info aria-hidden="true" className="size-icon-xs" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-56 leading-normal">
-                    {t("inspector.autoInjectReviewFeedbackTooltip")}
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </div>
-            <Switch
-              aria-label={t("inspector.autoInjectReviewFeedback")}
-              checked={session.autoInjectReviewFeedback ?? true}
-              className="shrink-0"
-              disabled={autoInjectPolicy.isPending}
-              id={`auto-inject-review-${session.id}`}
-              onCheckedChange={(checked) => autoInjectPolicy.mutate(checked)}
-            />
+      <div className="-mt-2 mb-4 rounded-settings-row bg-settings-row px-3.5 py-1.5">
+        <div className="flex min-h-5 flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex min-w-0 flex-1 items-center gap-1">
+            <label
+              className="min-w-0 text-xs font-medium leading-5 text-settings-label"
+              htmlFor={`auto-inject-review-${session.id}`}
+            >
+              {t("inspector.autoInjectReviewFeedback")}
+            </label>
+            <TooltipProvider delayDuration={0}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    aria-label={t("inspector.autoInjectReviewFeedbackHelpAria")}
+                    className="grid size-4 shrink-0 place-items-center rounded-full text-settings-muted hover:text-settings-label focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    type="button"
+                  >
+                    <Info aria-hidden="true" className="size-3" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {t("inspector.autoInjectReviewFeedbackTooltip")}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
+          <Switch
+            aria-label={t("inspector.autoInjectReviewFeedback")}
+            checked={session.autoInjectReviewFeedback ?? true}
+            className="shrink-0"
+            disabled={autoInjectPolicy.isPending}
+            id={`auto-inject-review-${session.id}`}
+            onCheckedChange={(checked) => autoInjectPolicy.mutate(checked)}
+          />
         </div>
         {autoInjectPolicyError ? (
           <p className="mt-1 text-2xs leading-normal text-error" role="status">
             {autoInjectPolicyError}
           </p>
         ) : null}
-      </Section>
+      </div>
     </div>
   );
 }

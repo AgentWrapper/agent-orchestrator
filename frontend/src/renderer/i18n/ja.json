@@ -223,6 +223,7 @@
   "inspector.review.run": "レビューを実行",
   "inspector.reviewDelivery": "レビューの配信",
   "inspector.autoInjectReviewFeedback": "レビューコメントを自動注入",
+  "inspector.autoInjectReviewFeedbackHelpAria": "レビューコメントの自動注入について",
   "inspector.autoInjectReviewFeedbackTooltip": "レビューコメントをワーカーエージェントへ自動的に送信します。",
   "inspector.reviewRequestFailed": "レビュー要求に失敗しました",
   "inspector.reviewAlreadyRanForCommit": "このコミットはすでにレビュー済みです。別のレビューを実行するには新しいコミットをプッシュしてください。",
