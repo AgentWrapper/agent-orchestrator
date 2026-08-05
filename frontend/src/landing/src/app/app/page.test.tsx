@@ -904,6 +904,10 @@ it("shows simplified GitHub organization access controls", async () => {
   expect(gitHubSection.getByText("Organization · selected repositories")).toBeVisible();
   expect(gitHubSection.queryByRole("link", { name: /Configure/ })).not.toBeInTheDocument();
   expect(gitHubSection.queryByRole("button", { name: /Sync/ })).not.toBeInTheDocument();
+  expect(gitHubSection.getByRole("link", { name: /Manage/ })).toHaveAttribute(
+    "href",
+    "https://github.com/organizations/aoagents/settings/installations/42",
+  );
 
   fireEvent.click(gitHubSection.getByRole("button", { name: "Disconnect" }));
   expect(confirmDisconnect).toHaveBeenCalledWith(

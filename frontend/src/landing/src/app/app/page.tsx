@@ -51,6 +51,7 @@ import {
   type CloudAgent,
   type CloudGitHubConnection,
   type CloudGitHubGrantedRepository,
+  type CloudGitHubInstallation,
   type CloudGitHubUserConnection,
   type CloudOrgMember,
   type CloudOrgMembership,
@@ -3673,6 +3674,19 @@ function CloudSettings({
   );
 }
 
+function gitHubInstallationSettingsURL(
+  installation: Pick<
+    CloudGitHubInstallation,
+    "githubInstallationId" | "accountLogin" | "accountType"
+  >,
+) {
+  const id = encodeURIComponent(installation.githubInstallationId);
+  if (installation.accountType.toLowerCase() === "organization") {
+    return `https://github.com/organizations/${encodeURIComponent(installation.accountLogin)}/settings/installations/${id}`;
+  }
+  return `https://github.com/settings/installations/${id}`;
+}
+
 function gitHubCallbackNotice(result: string | null) {
   switch (result) {
     case "connected":
@@ -3969,28 +3983,39 @@ export function GitHubConnectionSettings({
                     </p>
                   </div>
                   {canAdmin && orgId ? (
-                    <button
-                      type="button"
-                      className={`${button} text-[#ef9b9b] hover:bg-[#ef6b6b]/10`}
-                      disabled={loading}
-                      onClick={() => {
-                        if (
-                          !window.confirm(
-                            `Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`,
-                          )
-                        ) {
-                          return;
-                        }
-                        void run(() =>
-                          api.disconnectGitHubInstallation(
-                            orgId,
-                            installation.githubInstallationId,
-                          ),
-                        );
-                      }}
-                    >
-                      Disconnect
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <a
+                        className={button}
+                        href={gitHubInstallationSettingsURL(installation)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Manage
+                        <ExternalLink className="size-3" />
+                      </a>
+                      <button
+                        type="button"
+                        className={`${button} text-[#ef9b9b] hover:bg-[#ef6b6b]/10`}
+                        disabled={loading}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `Disconnect GitHub account ${installation.accountLogin}? Cloud projects will no longer be able to use its repository grants.`,
+                            )
+                          ) {
+                            return;
+                          }
+                          void run(() =>
+                            api.disconnectGitHubInstallation(
+                              orgId,
+                              installation.githubInstallationId,
+                            ),
+                          );
+                        }}
+                      >
+                        Disconnect
+                      </button>
+                    </div>
                   ) : null}
                 </div>
               ))}
