@@ -115,6 +115,24 @@ const primaryButton =
   "inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-[#4d8dff] px-3 text-sm text-white transition-colors hover:bg-[#397df0] disabled:cursor-not-allowed disabled:opacity-45";
 const field =
   "h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-[#4d8dff]";
+const sandboxTypeOptions = [
+  {
+    value: "read_only",
+    label: "Read-only",
+    description: "2h lifetime · effective access is view-only",
+  },
+  {
+    value: "standard",
+    label: "Standard",
+    description: "4h lifetime · normal collaborator sandbox",
+  },
+  {
+    value: "trusted",
+    label: "Trusted",
+    description: "8h lifetime · highest trust sandbox",
+  },
+] as const;
+type SharePolicySandboxType = (typeof sandboxTypeOptions)[number]["value"];
 
 function isStandaloneProject(project?: CloudProject | null) {
   return (
@@ -323,6 +341,9 @@ export default function CloudAppPage() {
   const [shareLink, setShareLink] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
   const [newPolicyName, setNewPolicyName] = useState("");
+  const [newPolicySandboxType, setNewPolicySandboxType] = useState<
+    "read_only" | "standard" | "trusted"
+  >("standard");
   const [policyInviteEmails, setPolicyInviteEmails] = useState<
     Record<string, string>
   >({});
@@ -1338,6 +1359,7 @@ export default function CloudAppPage() {
     await run(async () => {
       await api.createProjectSharePolicy(selectedOrgId, shareProject.id, {
         name,
+        sandboxType: newPolicySandboxType,
         sessionRoles: shareProjectSessions.map((cloudSession) => ({
           sessionId: cloudSession.id,
           role: "viewer",
@@ -1352,6 +1374,7 @@ export default function CloudAppPage() {
     policyId: string,
     input: {
       name: string;
+      sandboxType: SharePolicySandboxType;
       sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) => {
@@ -1433,6 +1456,7 @@ export default function CloudAppPage() {
     setShareLink("");
     setShareCopied(false);
     setNewPolicyName("");
+    setNewPolicySandboxType("standard");
     setPolicyInviteEmails({});
     setPolicyLinks({});
   };
@@ -2654,7 +2678,7 @@ export default function CloudAppPage() {
                     <LoaderCircle className="size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
                   ) : null}
                 </div>
-                <div className="flex gap-2">
+                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px_auto]">
                   <input
                     className={field}
                     value={newPolicyName}
@@ -2662,6 +2686,22 @@ export default function CloudAppPage() {
                     placeholder="New policy name"
                     aria-label="New security policy name"
                   />
+                  <select
+                    className={field}
+                    value={newPolicySandboxType}
+                    onChange={(event) =>
+                      setNewPolicySandboxType(
+                        event.target.value as SharePolicySandboxType,
+                      )
+                    }
+                    aria-label="New policy sandbox type"
+                  >
+                    {sandboxTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
                     className={button}
@@ -2681,6 +2721,13 @@ export default function CloudAppPage() {
                     );
                     const roleForAgent = (sessionId: string) =>
                       policyRoles.get(sessionId) ?? "none";
+                    const effectiveRoleForAgent = (sessionId: string) => {
+                      const chosenRole = roleForAgent(sessionId);
+                      if (chosenRole === "none") return "none";
+                      return policy.sandboxType === "read_only"
+                        ? "viewer"
+                        : chosenRole;
+                    };
                     const updatePolicyAgentRole = (
                       sessionId: string,
                       role: "none" | "viewer" | "editor",
@@ -2693,6 +2740,7 @@ export default function CloudAppPage() {
                       }
                       void updateSharePolicy(policy.id, {
                         name: policy.name,
+                        sandboxType: policy.sandboxType,
                         sessionRoles: Array.from(nextRoles.entries()).map(
                           ([id, value]) => ({
                             sessionId: id,
@@ -2701,15 +2749,33 @@ export default function CloudAppPage() {
                         ),
                       });
                     };
+                    const updatePolicySandboxType = (
+                      sandboxType: SharePolicySandboxType,
+                    ) => {
+                      void updateSharePolicy(policy.id, {
+                        name: policy.name,
+                        sandboxType,
+                        sessionRoles: policy.sessionRoles ?? [],
+                      });
+                    };
                     const setPolicyAllAgents = (role: "viewer" | "editor") => {
                       void updateSharePolicy(policy.id, {
                         name: policy.name,
+                        sandboxType: policy.sandboxType,
                         sessionRoles: shareProjectSessions.map((cloudSession) => ({
                           sessionId: cloudSession.id,
                           role,
                         })),
                       });
                     };
+                    const resetPolicyToSandboxType = () => {
+                      setPolicyAllAgents(
+                        policy.sandboxType === "read_only" ? "viewer" : "editor",
+                      );
+                    };
+                    const sandboxOption = sandboxTypeOptions.find(
+                      (option) => option.value === policy.sandboxType,
+                    );
                     const policyLink = policyLinks[policy.id];
                     return (
                       <details
@@ -2725,7 +2791,8 @@ export default function CloudAppPage() {
                               {(policy.grants?.length ?? 0)} member
                               {(policy.grants?.length ?? 0) === 1 ? "" : "s"} ·{" "}
                               {policyRoles.size} agent
-                              {policyRoles.size === 1 ? "" : "s"}
+                              {policyRoles.size === 1 ? "" : "s"} ·{" "}
+                              {sandboxOption?.label ?? "Standard"}
                             </div>
                           </div>
                           <ChevronRight className="size-3.5 shrink-0 text-white/30 transition-transform group-open:rotate-90" />
@@ -2742,6 +2809,7 @@ export default function CloudAppPage() {
                                 if (name && name !== policy.name) {
                                   void updateSharePolicy(policy.id, {
                                     name,
+                                    sandboxType: policy.sandboxType,
                                     sessionRoles: policy.sessionRoles ?? [],
                                   });
                                 }
@@ -2749,12 +2817,44 @@ export default function CloudAppPage() {
                               aria-label={`Policy name for ${policy.name}`}
                             />
                           </label>
+                          <label className="block text-[11px] font-medium text-white/35">
+                            Sandbox type
+                            <select
+                              className={`${field} mt-1`}
+                              value={policy.sandboxType}
+                              disabled={loading}
+                              onChange={(event) =>
+                                updatePolicySandboxType(
+                                  event.target.value as SharePolicySandboxType,
+                                )
+                              }
+                              aria-label={`Sandbox type for ${policy.name}`}
+                            >
+                              {sandboxTypeOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="mt-1 block text-[11px] font-normal text-white/30">
+                              {sandboxOption?.description ??
+                                "4h lifetime · normal collaborator sandbox"}
+                            </span>
+                          </label>
                           <div className="rounded-lg border border-white/[0.06] bg-black/10 p-2">
                             <div className="mb-2 flex items-center justify-between gap-2">
                               <div className="text-[11px] font-medium text-white/40">
                                 Agent permissions
                               </div>
                               <div className="flex gap-1">
+                                <button
+                                  type="button"
+                                  className="h-7 rounded-md px-2 text-[11px] text-white/40 hover:bg-white/[0.05] hover:text-white/70"
+                                  disabled={loading}
+                                  onClick={resetPolicyToSandboxType}
+                                >
+                                  Reset to type
+                                </button>
                                 <button
                                   type="button"
                                   className="h-7 rounded-md px-2 text-[11px] text-white/40 hover:bg-white/[0.05] hover:text-white/70"
@@ -2779,8 +2879,16 @@ export default function CloudAppPage() {
                                   key={cloudSession.id}
                                   className="grid grid-cols-[minmax(0,1fr)_112px] items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-white/[0.03]"
                                 >
-                                  <span className="truncate text-white/60">
-                                    {cloudSession.displayName}
+                                  <span className="min-w-0">
+                                    <span className="block truncate text-white/60">
+                                      {cloudSession.displayName}
+                                    </span>
+                                    {effectiveRoleForAgent(cloudSession.id) !==
+                                    roleForAgent(cloudSession.id) ? (
+                                      <span className="block truncate text-[10px] text-white/30">
+                                        Effective: view-only
+                                      </span>
+                                    ) : null}
                                   </span>
                                   <select
                                     className="h-7 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70"

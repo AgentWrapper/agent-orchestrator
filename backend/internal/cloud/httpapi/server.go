@@ -1102,6 +1102,19 @@ func validProjectShareRole(role string) bool {
 	return role == "viewer" || role == "editor"
 }
 
+func normalizedSharePolicySandboxType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "", "standard":
+		return "standard"
+	case "read_only", "read-only", "readonly":
+		return "read_only"
+	case "trusted":
+		return "trusted"
+	default:
+		return ""
+	}
+}
+
 func orgRoleAtLeast(actual, required string) bool {
 	return orgRoleRank(actual) >= orgRoleRank(required)
 }
@@ -1530,6 +1543,7 @@ func (s *Server) createProjectSharePolicy(w http.ResponseWriter, r *http.Request
 	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
 	var input struct {
 		Name         string                                       `json:"name"`
+		SandboxType  string                                       `json:"sandboxType"`
 		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
 	}
 	if !decodeJSON(w, r, &input) {
@@ -1546,11 +1560,17 @@ func (s *Server) createProjectSharePolicy(w http.ResponseWriter, r *http.Request
 	if !s.validateProjectShareSessionRoles(w, r, account.ID, projectID, input.SessionRoles) {
 		return
 	}
+	sandboxType := normalizedSharePolicySandboxType(input.SandboxType)
+	if sandboxType == "" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SANDBOX_TYPE", "Sandbox type must be read-only, standard, or trusted.")
+		return
+	}
 	policy, err := s.store.CreateProjectSharePolicy(r.Context(), cloudpostgres.CreateProjectSharePolicyInput{
 		OrgID:           org.Organization.ID,
 		ProjectID:       projectID,
 		CreatedByUserID: clouddomain.UserID(principal.UserID),
 		Name:            name,
+		SandboxType:     sandboxType,
 		SessionRoles:    input.SessionRoles,
 	})
 	if err != nil {
@@ -1567,6 +1587,7 @@ func (s *Server) updateProjectSharePolicy(w http.ResponseWriter, r *http.Request
 	policyID := strings.TrimSpace(chi.URLParam(r, "policyId"))
 	var input struct {
 		Name         string                                       `json:"name"`
+		SandboxType  string                                       `json:"sandboxType"`
 		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
 	}
 	if !decodeJSON(w, r, &input) {
@@ -1583,8 +1604,14 @@ func (s *Server) updateProjectSharePolicy(w http.ResponseWriter, r *http.Request
 	if !s.validateProjectShareSessionRoles(w, r, account.ID, projectID, input.SessionRoles) {
 		return
 	}
+	sandboxType := normalizedSharePolicySandboxType(input.SandboxType)
+	if sandboxType == "" {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SANDBOX_TYPE", "Sandbox type must be read-only, standard, or trusted.")
+		return
+	}
 	policy, err := s.store.UpdateProjectSharePolicy(r.Context(), org.Organization.ID, projectID, policyID, cloudpostgres.UpdateProjectSharePolicyInput{
 		Name:         name,
+		SandboxType:  sandboxType,
 		SessionRoles: input.SessionRoles,
 	})
 	if errors.Is(err, cloudpostgres.ErrProjectSharePolicyNotFound) {

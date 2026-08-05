@@ -212,6 +212,8 @@ export interface CloudProjectSharePolicy {
   projectId: string;
   createdByUserId: string;
   name: string;
+  sandboxType: "read_only" | "standard" | "trusted";
+  sandboxLifetimeMinutes: number;
   status: "active" | "archived";
   sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
   links?: CloudProjectShareLink[];
@@ -715,6 +717,7 @@ export class CloudAPI {
     projectId: string,
     input: {
       name: string;
+      sandboxType: "read_only" | "standard" | "trusted";
       sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) {
@@ -733,6 +736,7 @@ export class CloudAPI {
     policyId: string,
     input: {
       name: string;
+      sandboxType: "read_only" | "standard" | "trusted";
       sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) {
