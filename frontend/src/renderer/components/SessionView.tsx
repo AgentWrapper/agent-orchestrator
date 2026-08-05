@@ -25,7 +25,7 @@ import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 
-const INSPECTOR_MIN_PERCENT = 22;
+const INSPECTOR_MIN_PERCENT = 30;
 const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
@@ -33,7 +33,7 @@ const shellTopbarHiddenByPlatform = hidesShellTopbar();
 function initialSplitPercent(): number {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
-	if (!Number.isFinite(parsed)) return 28;
+	if (!Number.isFinite(parsed)) return INSPECTOR_MIN_PERCENT;
 	return Math.min(INSPECTOR_MAX_PERCENT, Math.max(INSPECTOR_MIN_PERCENT, parsed));
 }
 

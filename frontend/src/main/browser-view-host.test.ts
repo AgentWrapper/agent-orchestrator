@@ -62,6 +62,7 @@ function setupHost() {
 		on: (event: string, listener: (...args: never[]) => void) => {
 			webContentsListeners.set(event, listener);
 		},
+		focus: vi.fn(),
 		reload: vi.fn(),
 		send: vi.fn(),
 		setWindowOpenHandler: () => undefined,
@@ -1267,19 +1268,43 @@ describe("browser annotation IPC", () => {
 		expect(webContents.send).not.toHaveBeenCalledWith("browser:annotation:setMode", { enabled: true });
 	});
 
-	it("forwards preview annotation submissions to the renderer-owned view", async () => {
+	it("focuses the preview webContents when annotation mode is enabled, so a keypress reaches it without a prior click", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+
+		expect(webContents.focus).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not steal focus when annotation mode is turned off", async () => {
+		const { invoke, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: true });
+		webContents.focus.mockClear();
+
+		await invoke("browser:annotation:setMode", { viewId: "1:sess-1", enabled: false });
+
+		expect(webContents.focus).not.toHaveBeenCalled();
+	});
+
+	it("forwards a single-element preview annotation submission to the renderer-owned view", async () => {
 		const { invoke, send, sent } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 
 		send("browser:annotation:submit", 99, {
 			instruction: "Make this button blue.",
-			context: {
-				url: "http://localhost:5173/",
-				tag: "button",
-				classes: [],
-				selector: "button",
-				rect: { x: 0, y: 0, width: 80, height: 30 },
-				computedStyle: {},
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					rect: { x: 0, y: 0, width: 80, height: 30 },
+					nearbyText: [],
+					computedStyle: {},
+				},
 			},
 		});
 
@@ -1288,9 +1313,112 @@ describe("browser annotation IPC", () => {
 			payload: expect.objectContaining({
 				viewId: "1:sess-1",
 				instruction: "Make this button blue.",
-				context: expect.objectContaining({ selector: "button" }),
+				selection: expect.objectContaining({
+					kind: "element",
+					context: expect.objectContaining({ selector: "button" }),
+				}),
 			}),
 		});
+	});
+
+	it("forwards a multi-element preview annotation submission to the renderer-owned view", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Align these two.",
+			selection: {
+				kind: "elements",
+				contexts: [
+					{
+						url: "http://localhost:5173/",
+						tag: "button",
+						classes: [],
+						selector: "button#a",
+						rect: { x: 0, y: 0, width: 80, height: 30 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+					{
+						url: "http://localhost:5173/",
+						tag: "button",
+						classes: [],
+						selector: "button#b",
+						rect: { x: 100, y: 0, width: 80, height: 30 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+				],
+			},
+		});
+
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:submitted",
+			payload: expect.objectContaining({
+				viewId: "1:sess-1",
+				instruction: "Align these two.",
+				selection: expect.objectContaining({
+					kind: "elements",
+					contexts: [
+						expect.objectContaining({ selector: "button#a" }),
+						expect.objectContaining({ selector: "button#b" }),
+					],
+				}),
+			}),
+		});
+	});
+
+	it("ignores a malformed annotation selection instead of forwarding it", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: { kind: "elements", contexts: [] },
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
+	});
+
+	it("ignores a single-element selection whose context is missing required fields", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: {
+				kind: "element",
+				context: { tag: "button" },
+			},
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
+	});
+
+	it("ignores a multi-element selection containing a malformed context entry", async () => {
+		const { invoke, send, sent } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		send("browser:annotation:submit", 99, {
+			instruction: "Align these two.",
+			selection: {
+				kind: "elements",
+				contexts: [
+					{
+						url: "http://localhost/",
+						tag: "button",
+						classes: [],
+						selector: "button",
+						rect: { x: 0, y: 0, width: 1, height: 1 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+					null,
+				],
+			},
+		});
+
+		expect(sent.some((entry) => entry.channel === "browser:annotation:submitted")).toBe(false);
 	});
 
 	it("ignores preview annotation events after the view is destroyed", async () => {
