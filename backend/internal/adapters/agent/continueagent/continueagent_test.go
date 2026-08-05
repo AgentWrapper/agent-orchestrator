@@ -36,13 +36,155 @@ func TestDoesNotImplementAuthChecker(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
+func TestGetConfigSpec(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	if len(spec.Fields) != 1 {
+		t.Fatalf("expected 1 field, got %d", len(spec.Fields))
+	}
+	f := spec.Fields[0]
+	if f.Key != "model" {
+		t.Errorf("expected field Key='model', got %q", f.Key)
+	}
+	if f.Type != ports.ConfigFieldString {
+		t.Errorf("expected field Type=ConfigFieldString, got %v", f.Type)
+	}
+}
+
+func TestGetLaunchCommandWithModel(t *testing.T) {
+	tests := []struct {
+		name      string
+		model     string
+		wantModel []string
+	}{
+		{
+			name:      "model present",
+			model:     "gpt-4o",
+			wantModel: []string{"--model", "gpt-4o"},
+		},
+		{
+			name:      "whitespace trimmed",
+			model:     "   claude-3-5-sonnet   ",
+			wantModel: []string{"--model", "claude-3-5-sonnet"},
+		},
+		{
+			name:      "empty model ignored",
+			model:     "",
+			wantModel: nil,
+		},
+		{
+			name:      "whitespace only ignored",
+			model:     "   ",
+			wantModel: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Plugin{resolvedBinary: "cn"}
+			cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+				Config: ports.AgentConfig{
+					Model: tt.model,
+				},
+				Prompt: "hello",
+			})
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+
+			// Verify model arguments are either present or absent in the expected location
+			if len(tt.wantModel) > 0 {
+				found := false
+				for i := 0; i < len(cmd)-1; i++ {
+					if cmd[i] == tt.wantModel[0] && cmd[i+1] == tt.wantModel[1] {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected command %v to contain %v", cmd, tt.wantModel)
+				}
+			} else {
+				for _, arg := range cmd {
+					if arg == "--model" {
+						t.Errorf("expected command %v NOT to contain --model", cmd)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestGetRestoreCommandWithModel(t *testing.T) {
+	tests := []struct {
+		name      string
+		model     string
+		wantModel []string
+	}{
+		{
+			name:      "model present",
+			model:     "gpt-4o",
+			wantModel: []string{"--model", "gpt-4o"},
+		},
+		{
+			name:      "whitespace trimmed",
+			model:     "   claude-3-5-sonnet   ",
+			wantModel: []string{"--model", "claude-3-5-sonnet"},
+		},
+		{
+			name:      "empty model ignored",
+			model:     "",
+			wantModel: nil,
+		},
+		{
+			name:      "whitespace only ignored",
+			model:     "   ",
+			wantModel: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plugin := &Plugin{resolvedBinary: "cn"}
+			cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+				Config: ports.AgentConfig{
+					Model: tt.model,
+				},
+				Session: ports.SessionRef{
+					Metadata: map[string]string{
+						ports.MetadataKeyAgentSessionID: "sess-123",
+					},
+				},
+			})
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if !ok {
+				t.Fatal("expected ok=true")
+			}
+
+			// Verify model arguments are either present or absent in the expected location
+			if len(tt.wantModel) > 0 {
+				found := false
+				for i := 0; i < len(cmd)-1; i++ {
+					if cmd[i] == tt.wantModel[0] && cmd[i+1] == tt.wantModel[1] {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected command %v to contain %v", cmd, tt.wantModel)
+				}
+			} else {
+				for _, arg := range cmd {
+					if arg == "--model" {
+						t.Errorf("expected command %v NOT to contain --model", cmd)
+					}
+				}
+			}
+		})
 	}
 }
 
