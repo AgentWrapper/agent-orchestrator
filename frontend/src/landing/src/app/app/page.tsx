@@ -395,6 +395,9 @@ export default function CloudAppPage() {
   const [shareRole, setShareRole] = useState<"viewer" | "editor">("viewer");
   const [sharePolicyType, setSharePolicyType] =
     useState<SharePolicySandboxType>("standard");
+  const [sharePolicyFilter, setSharePolicyFilter] = useState<
+    "all" | SharePolicySandboxType
+  >("all");
   const [shareAccessScope, setShareAccessScope] = useState<
     "anyone" | "restricted"
   >("anyone");
@@ -2760,7 +2763,7 @@ export default function CloudAppPage() {
                   {
                     scope: "restricted" as const,
                     label: "Restricted",
-                    description: "Only listed people or workspaces",
+                    description: "Only listed people",
                   },
                 ].map((option) => {
                   const selected = shareAccessScope === option.scope;
@@ -2810,7 +2813,7 @@ export default function CloudAppPage() {
 
             {isStandaloneProject(shareProject) ? (
               <div className="space-y-3 border-t border-white/[0.06] pt-4">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <div className="text-xs font-medium text-white/55">
                       Manage access
@@ -2819,73 +2822,99 @@ export default function CloudAppPage() {
                       Change each person&apos;s policy.
                     </div>
                   </div>
-                  {shareAccessLoading ? (
-                    <LoaderCircle className="size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
-                  ) : null}
+                  <div className="flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.02] p-1">
+                    {[
+                      { value: "all" as const, label: "All" },
+                      ...sandboxTypeOptions.map((option) => ({
+                        value: option.value,
+                        label: option.label,
+                      })),
+                    ].map((option) => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        className={`h-7 rounded-md px-2 text-[11px] transition ${
+                          sharePolicyFilter === option.value
+                            ? "bg-white/[0.08] text-white/75"
+                            : "text-white/35 hover:bg-white/[0.04] hover:text-white/60"
+                        }`}
+                        onClick={() => setSharePolicyFilter(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                    {shareAccessLoading ? (
+                      <LoaderCircle className="ml-1 size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
+                    ) : null}
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  {sandboxTypeOptions.map((option) => {
-                    const policy = shareAccess?.policies?.find(
-                      (item) => item.sandboxType === option.value,
-                    );
-                    const grants = policy?.grants ?? [];
-                    return (
-                      <details
-                        key={option.value}
-                        className="group rounded-lg border border-white/[0.06] bg-white/[0.018]"
-                        open={grants.length > 0}
+                  {shareAccess?.policies
+                    ?.flatMap((policy) =>
+                      (policy.grants ?? []).map((grant) => ({
+                        grant,
+                        policyType: policy.sandboxType,
+                      })),
+                    )
+                    .filter(
+                      ({ policyType }) =>
+                        sharePolicyFilter === "all" ||
+                        policyType === sharePolicyFilter,
+                    )
+                    .map(({ grant, policyType }) => (
+                      <div
+                        key={grant.id}
+                        className="grid gap-2 rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-2 text-xs text-white/55 sm:grid-cols-[minmax(0,1fr)_220px_auto]"
                       >
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 [&::-webkit-details-marker]:hidden">
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium text-white/80">
-                              {option.label}
-                            </div>
-                            <div className="mt-0.5 truncate text-xs text-white/30">
-                              {grants.length} member{grants.length === 1 ? "" : "s"} ·{" "}
-                              {option.description}
-                            </div>
+                        <div className="min-w-0 pt-2">
+                          <div className="truncate text-white/70">
+                            {grant.user.displayName || grant.user.email}
                           </div>
-                          <ChevronRight className="size-3.5 shrink-0 text-white/30 transition-transform group-open:rotate-90" />
-                        </summary>
-                        <div className="space-y-1 px-3 pb-3">
-                          {grants.length > 0 ? (
-                            grants.map((grant) => (
-                              <div
-                                key={grant.id}
-                                className="grid gap-2 rounded-md px-2 py-2 text-xs text-white/55 hover:bg-white/[0.03] sm:grid-cols-[minmax(0,1fr)_220px_auto]"
-                              >
-                                <span className="min-w-0 truncate pt-2">
-                                  {grant.user.displayName || grant.user.email}
-                                </span>
-                                <SharePolicyTypePicker
-                                  value={option.value}
-                                  disabled={loading}
-                                  onChange={(value) =>
-                                    void updateShareGrantPolicy(grant.id, value)
-                                  }
-                                  label={`Policy for ${
-                                    grant.user.displayName || grant.user.email
-                                  }`}
-                                />
-                                <button
-                                  type="button"
-                                  className="h-9 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
-                                  disabled={loading}
-                                  onClick={() => void revokeShareGrant(grant.id)}
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="px-2 py-2 text-xs text-white/30">
-                              No members in this policy yet.
-                            </div>
-                          )}
+                          <div className="truncate text-[11px] text-white/30">
+                            {grant.user.email}
+                          </div>
                         </div>
-                      </details>
-                    );
-                  })}
+                        <SharePolicyTypePicker
+                          value={policyType}
+                          disabled={loading}
+                          onChange={(value) =>
+                            void updateShareGrantPolicy(grant.id, value)
+                          }
+                          label={`Policy for ${
+                            grant.user.displayName || grant.user.email
+                          }`}
+                        />
+                        <button
+                          type="button"
+                          className="h-9 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
+                          disabled={loading}
+                          onClick={() => void revokeShareGrant(grant.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  {(shareAccess?.policies ?? []).flatMap(
+                    (policy) => policy.grants ?? [],
+                  ).length === 0 ? (
+                    <div className="rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-3 text-xs text-white/30">
+                      No shared people yet.
+                    </div>
+                  ) : null}
+                  {(shareAccess?.policies ?? []).flatMap(
+                    (policy) =>
+                      sharePolicyFilter === "all" ||
+                      policy.sandboxType === sharePolicyFilter
+                        ? (policy.grants ?? [])
+                        : [],
+                  ).length === 0 &&
+                  (shareAccess?.policies ?? []).flatMap(
+                    (policy) => policy.grants ?? [],
+                  ).length > 0 ? (
+                    <div className="rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-3 text-xs text-white/30">
+                      No people match this filter.
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ) : null}
