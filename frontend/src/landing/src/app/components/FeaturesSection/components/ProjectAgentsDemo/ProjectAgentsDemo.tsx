@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, FolderGit2, FolderOpen, GitBranch, GitPullRequest, Info, LayoutDashboard, MoreVertical, Network, PanelLeft, Pin, Plus, Search, Settings, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, FolderOpen, GitBranch, GitPullRequest, Info, LayoutDashboard, MoreVertical, Network, PanelLeft, Pin, Plus, Search, X } from "lucide-react";
 import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 import { featurePreviewTokens } from "../FeaturePreviewShell";
@@ -172,101 +172,6 @@ function DemoCursor({ x, y, pressed, clickId }: { x: number; y: number; pressed:
 }
 
 /* ------------------------------------------------------------------ */
-/* Board (always mounted underneath — the modal overlays it, exactly   */
-/* like the real dialog over the app).                                 */
-/* ------------------------------------------------------------------ */
-function LegacyBoardView({ plusHover, started }: { plusHover: boolean; started: boolean }) {
-	return (
-		<div className="flex h-full">
-			{/* Sidebar */}
-			<div className="flex w-[158px] shrink-0 flex-col gap-1 border-r px-2 py-2.5" style={{ borderColor: T.line, background: T.sidebar }}>
-				<div className="flex items-center justify-between px-1.5 pb-1">
-					<span className="text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ color: T.faint }}>
-						Projects
-					</span>
-					<span
-						className="grid size-[18px] place-items-center rounded"
-						style={{ background: plusHover ? T.hover : "transparent", color: plusHover ? T.fg : T.mut }}
-					>
-						<Plus className="size-3" aria-hidden="true" />
-					</span>
-				</div>
-				<div className="flex items-center gap-2 rounded-md px-1.5 py-[7px]" style={{ background: T.selected }}>
-					<FolderGit2 className="size-[13px] shrink-0" style={{ color: T.mut }} aria-hidden="true" />
-					<span className="min-w-0 flex-1 truncate text-[11.5px] font-medium" style={{ color: T.fg }}>
-						agent-orchestrator
-					</span>
-				</div>
-				<div className="ml-4 flex items-center gap-2 rounded-md px-1.5 py-[5px]">
-					<span className="size-1.5 rounded-full" style={{ background: T.success }} />
-					<span className="truncate text-[10.5px]" style={{ color: T.mut }}>
-						orchestrator
-					</span>
-				</div>
-				<div className="flex items-center gap-2 rounded-md px-1.5 py-[7px] opacity-45">
-					<FolderGit2 className="size-[13px] shrink-0" style={{ color: T.mut }} aria-hidden="true" />
-					<span className="truncate text-[11.5px]" style={{ color: T.mut }}>
-						landing-site
-					</span>
-				</div>
-				{/* Newly created project appears after "Create and start". */}
-				<AnimatePresence>
-					{started ? (
-						<motion.div
-							initial={{ opacity: 0, y: -4 }}
-							animate={{ opacity: 1, y: 0 }}
-							exit={{ opacity: 0 }}
-							transition={{ duration: 0.35, ease: [0.2, 0, 0, 1] }}
-						>
-							<div className="flex items-center gap-2 rounded-md px-1.5 py-[7px]" style={{ background: T.hover }}>
-								<FolderGit2 className="size-[13px] shrink-0" style={{ color: T.mut }} aria-hidden="true" />
-								<span className="min-w-0 flex-1 truncate text-[11.5px] font-medium" style={{ color: T.fg }}>
-									test-component
-								</span>
-							</div>
-							<div className="ml-4 flex items-center gap-2 rounded-md px-1.5 py-[5px]">
-								<span className="relative flex size-1.5">
-									<span className="absolute inline-flex size-full animate-ping rounded-full opacity-40" style={{ background: T.success }} />
-									<span className="relative inline-flex size-1.5 rounded-full" style={{ background: T.success }} />
-								</span>
-								<span className="truncate text-[10.5px]" style={{ color: T.mut }}>
-									orchestrator · starting
-								</span>
-							</div>
-						</motion.div>
-					) : null}
-				</AnimatePresence>
-			</div>
-
-			{/* Board columns */}
-			<div className="relative min-w-0 flex-1 p-3" style={{ background: T.bg }}>
-				<div className="grid h-full grid-cols-2 gap-2.5">
-					{[
-						{ title: "Working", cards: ["fix: session restore", "feat: kanban filters"] },
-						{ title: "In review", cards: ["PR #3406 · linux-rpm"] },
-					].map((col) => (
-						<div key={col.title} className="flex min-h-0 flex-col gap-2">
-							<span className="text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ color: T.faint }}>
-								{col.title}
-							</span>
-							{col.cards.map((card) => (
-								<div
-									key={card}
-									className="rounded-[10px] px-2.5 py-2 text-[10.5px]"
-									style={{ background: T.card, border: `1px solid ${T.line}`, color: T.mut, opacity: 0.7 }}
-								>
-									{card}
-								</div>
-							))}
-						</div>
-					))}
-				</div>
-			</div>
-		</div>
-	);
-}
-
-/* ------------------------------------------------------------------ */
 /* Project agents modal — faithful to CreateProjectAgentSheet.         */
 /* ------------------------------------------------------------------ */
 function BoardView({ scene }: { scene: ProjectAgentsScene }) {
@@ -353,7 +258,7 @@ function BoardView({ scene }: { scene: ProjectAgentsScene }) {
 	);
 }
 
-function ProjectKindDialog({ projectActive }: { projectActive: boolean }) {
+function ProjectKindDialog() {
 	return (
 		<motion.div className="absolute inset-0 z-20" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
 			<div className="absolute inset-0" style={{ background: T.scrim, backdropFilter: "blur(4px)" }} />
@@ -379,14 +284,14 @@ function ProjectKindDialog({ projectActive }: { projectActive: boolean }) {
 				<div className="grid grid-cols-2" style={{ gap: V.importPicker.cardGap }}>
 					<div
 						className="flex flex-col rounded-[12px] border"
-						style={{ minHeight: V.importPicker.cardMinHeight, padding: V.importPicker.cardPadding, paddingBottom: V.importPicker.cardPaddingBottom, gap: V.importPicker.cardGap, background: T.bg, borderColor: T.line, color: T.fg }}
+						style={{ minHeight: V.importPicker.cardMinHeight, padding: V.importPicker.cardPadding, paddingBottom: V.importPicker.cardPaddingBottom, gap: V.importPicker.cardGap, background: T.selected, borderColor: T.line, color: T.fg }}
 					>
 						<div className="flex w-full flex-col items-start gap-2 rounded-lg border border-dashed px-2.5 pt-2.5" style={{ height: V.importPicker.illustrationHeight, paddingBottom: V.agentSelect.workspaceIllustrationPaddingBottom, background: T.popover, borderColor: T.line }}>
 							<div className="flex items-center gap-1.5 text-[10px]" style={{ color: T.mut }}><FolderOpen className="size-3" />my-workspace/</div>
 							<div className="flex w-full flex-col" style={{ gap: V.agentSelect.workspaceRepoListGap }}>
 								{["web-app", "api-server", "shared-libs"].map((repo) => (
 									<span key={repo} className="flex w-full items-center rounded px-2 text-[8px] font-semibold" style={{ paddingTop: V.agentSelect.workspaceRepoRowPaddingY, paddingBottom: V.agentSelect.workspaceRepoRowPaddingY, background: T.selected }}>
-										<span className="mr-1.5 size-1 rounded-full" style={{ background: T.blue }} />{repo}
+										<span className="mr-1.5 size-1 rounded-full" style={{ background: T.fg }} />{repo}
 									</span>
 								))}
 							</div>
@@ -399,11 +304,11 @@ function ProjectKindDialog({ projectActive }: { projectActive: boolean }) {
 					<div
 						data-cursor-target="project-kind"
 						className="flex flex-col rounded-[12px] border"
-						style={{ minHeight: V.importPicker.cardMinHeight, padding: V.importPicker.cardPadding, paddingBottom: V.importPicker.cardPaddingBottom, gap: V.importPicker.cardGap, background: projectActive ? T.selected : T.bg, borderColor: T.line, color: T.fg }}
+						style={{ minHeight: V.importPicker.cardMinHeight, padding: V.importPicker.cardPadding, paddingBottom: V.importPicker.cardPaddingBottom, gap: V.importPicker.cardGap, background: T.selected, borderColor: T.line, color: T.fg }}
 					>
 						<div className="flex items-center justify-center" style={{ height: V.importPicker.illustrationHeight }}>
 							<span className="flex h-[31px] items-center rounded-lg border px-2.5 text-[10px]" style={{ borderColor: T.line, background: T.selected }}>
-								<span className="mr-1.5 size-1.5 rounded-full bg-[#60a5fa]" /><strong>web-app</strong><span className="ml-1" style={{ color: T.mut }}>&middot; main</span>
+								<span className="mr-1.5 size-1.5 rounded-full" style={{ background: T.fg }} /><strong>web-app</strong><span className="ml-1" style={{ color: T.mut }}>&middot; main</span>
 							</span>
 						</div>
 						<div className="mt-auto flex flex-col items-start gap-1 text-left">
@@ -466,7 +371,7 @@ function ProjectAgentsModal({
 							Project agents
 						</div>
 						<div className="mt-1 break-all text-[12px]" style={{ color: T.mut }}>
-							C:\Users\Lenovo\Desktop\agent-orchestrator
+							~/Projects/agent-orchestrator
 						</div>
 					</div>
 					<span
@@ -687,7 +592,7 @@ export function ProjectAgentsDemo() {
 				<div className="pointer-events-none absolute inset-0">
 					<BoardView scene={scene} />
 					<AnimatePresence>
-						{scene.modePicker ? <ProjectKindDialog key="project-kind" projectActive={scene.target === "project-kind"} /> : null}
+						{scene.modePicker ? <ProjectKindDialog key="project-kind" /> : null}
 						{scene.modal ? (
 							<ProjectAgentsModal
 								key="modal"
