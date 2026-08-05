@@ -1132,8 +1132,9 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
-		expect(screen.queryByText(/2 unresolved/)).not.toBeInTheDocument();
-		expect(screen.queryByText("Reviews on the pull request")).not.toBeInTheDocument();
+		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
+		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
+		expect(screen.getByText("Reviews on the pull request")).toBeInTheDocument();
 		expect(screen.queryByText("No one has reviewed this pull request yet.")).not.toBeInTheDocument();
 	});
 

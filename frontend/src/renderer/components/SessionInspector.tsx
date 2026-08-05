@@ -907,7 +907,8 @@ function ReviewsSection({
 	const githubReviews = prSummaries.filter(
 		(pr) =>
 			pr.state === "open" &&
-			(pr.review?.reviews?.length ?? 0) > 0,
+			((pr.review?.reviews?.length ?? 0) > 0 ||
+				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
 	const unresolvedTotal = githubReviews
 		.reduce((total, pr) => total + (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0), 0);
@@ -939,7 +940,7 @@ function ReviewsSection({
 					}}
 					session={session}
 				/>
-			{scmSummary.isLoading || githubReviewCount > 0 ? (
+			{scmSummary.isLoading || githubReviewCount > 0 || unresolvedTotal > 0 ? (
 				<Section
 					surface
 					title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
