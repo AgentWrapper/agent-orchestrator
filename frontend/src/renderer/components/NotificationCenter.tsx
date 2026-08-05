@@ -446,6 +446,7 @@ function NotificationItem({
 	const Icon = notificationIcon(notification.type);
 	const sessionId = notification.target.sessionId || notification.sessionId;
 	const canOpenSession = Boolean(sessionId) && sessionsReady && !terminated;
+	const showSessionMeta = Boolean(meta?.sessionName) && !notificationMentions(notification, meta?.sessionName ?? "");
 	const openRow = () => {
 		if (canOpenSession) onOpenSession(notification);
 	};
@@ -496,11 +497,13 @@ function NotificationItem({
 							{notification.body}
 						</p>
 					) : null}
-					{meta ? (
+					{meta && (meta.projectName || showSessionMeta) ? (
 						<p className="mt-1 flex min-w-0 items-center gap-1.5 text-caption leading-none text-passive">
-							<span className="truncate font-medium text-muted-foreground">{meta.projectName}</span>
-							<span aria-hidden="true">·</span>
-							<span className="truncate">{meta.sessionName}</span>
+							{meta.projectName ? (
+								<span className="truncate font-medium text-muted-foreground">{meta.projectName}</span>
+							) : null}
+							{meta.projectName && showSessionMeta ? <span aria-hidden="true">·</span> : null}
+							{showSessionMeta ? <span className="truncate">{meta.sessionName}</span> : null}
 						</p>
 					) : null}
 				</div>
@@ -534,6 +537,12 @@ function NotificationItem({
 			</div>
 		</div>
 	);
+}
+
+function notificationMentions(notification: NotificationDTO, value: string): boolean {
+	const needle = value.trim().toLocaleLowerCase();
+	if (!needle) return false;
+	return `${notification.title}\n${notification.body}`.toLocaleLowerCase().includes(needle);
 }
 
 function notificationIcon(type: string) {

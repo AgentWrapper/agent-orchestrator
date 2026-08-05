@@ -34,8 +34,8 @@ const allNotifications: NotificationDTO[] = [
 		projectId: "proj-1",
 		prUrl: "https://github.com/acme/app/pull/67",
 		type: "ready_to_merge",
-		title: "PR #67 is ready to merge",
-		body: "Checkout flow has no known blocking CI or review feedback.",
+		title: "Fix checkout totals · PR #67",
+		body: "Checkout flow is ready to merge. CI passed with no blocking review feedback.",
 		status: "unread",
 		createdAt: "2026-07-21T11:00:00Z",
 		target: { kind: "pr", sessionId: "sess-2", prUrl: "https://github.com/acme/app/pull/67" },
@@ -171,11 +171,12 @@ beforeEach(() => {
 		data: [
 			{
 				id: "proj-1",
+				name: "acme/app",
 				sessions: [
-					{ id: "sess-1", isTerminated: false, status: "needs_input" },
-					{ id: "sess-2", isTerminated: false, status: "ready_to_merge" },
-					{ id: "sess-4", isTerminated: false, status: "needs_input" },
-					{ id: "sess-dead", isTerminated: true, status: "terminated" },
+					{ id: "sess-1", isTerminated: false, status: "needs_input", title: "Checkout flow" },
+					{ id: "sess-2", isTerminated: false, status: "ready_to_merge", title: "Checkout flow" },
+					{ id: "sess-4", isTerminated: false, status: "needs_input", title: "Docs sweep" },
+					{ id: "sess-dead", isTerminated: true, status: "terminated", title: "Old PR" },
 				],
 			},
 		],
@@ -280,7 +281,7 @@ describe("NotificationCenter", () => {
 
 		const rows = panel.getAllByRole("listitem");
 		expect(rows.map((row) => row.textContent)).toEqual([
-			expect.stringContaining("PR #67 is ready to merge"),
+			expect.stringContaining("Fix checkout totals · PR #67"),
 			expect.stringContaining("Checkout flow needs input"),
 			expect.stringContaining("Docs sweep needs input"),
 			expect.stringContaining("PR #9 merged"),
@@ -299,7 +300,7 @@ describe("NotificationCenter", () => {
 		expect(screen.queryByRole("button", { name: "Mark notification read" })).not.toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input")).toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input").className).toContain("font-medium");
-		expect(screen.getByText("PR #67 is ready to merge").className).toContain("font-medium");
+		expect(screen.getByText("Fix checkout totals · PR #67").className).toContain("font-medium");
 		expect(screen.getByText("Docs sweep needs input").className).not.toContain("font-medium");
 	});
 
@@ -478,12 +479,23 @@ describe("NotificationCenter", () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		await userEvent.click(screen.getByText("PR #67 is ready to merge"));
+		await userEvent.click(screen.getByText("Fix checkout totals · PR #67"));
 		expect(window.open).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "proj-1", sessionId: "sess-2" },
 		});
+	});
+
+	it("shows the PR title prominently and does not repeat the session name in metadata", async () => {
+		renderNotificationCenter();
+		await clickOpen();
+
+		const title = screen.getByText("Fix checkout totals · PR #67");
+		const row = title.closest('[role="listitem"]');
+		expect(row).not.toBeNull();
+		expect(row).toHaveTextContent("acme/app");
+		expect(row?.textContent?.match(/Checkout flow/g)).toHaveLength(1);
 	});
 
 	it("opens the session with the keyboard from a focused row", async () => {

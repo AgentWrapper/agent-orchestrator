@@ -35,8 +35,11 @@ func titleForIntent(intent Intent) string {
 	case domain.NotificationNeedsInput:
 		return fmt.Sprintf("%s needs your input", sessionLabel(intent))
 	case domain.NotificationReadyToMerge:
-		if s := sessionLabel(intent); s != "session" {
-			return fmt.Sprintf("%s is ready to merge", s)
+		if title := strings.TrimSpace(intent.PRTitle); title != "" {
+			if label := prLabel(intent); label != "PR" {
+				return fmt.Sprintf("%s · %s", title, label)
+			}
+			return title
 		}
 		return fmt.Sprintf("%s is ready to merge", prLabel(intent))
 	case domain.NotificationPRMerged:
@@ -53,6 +56,9 @@ func bodyForIntent(intent Intent) string {
 	case domain.NotificationNeedsInput:
 		return "Your agent is waiting on you to continue."
 	case domain.NotificationReadyToMerge:
+		if session := sessionLabel(intent); session != "session" {
+			return fmt.Sprintf("%s is ready to merge. CI passed with no blocking review feedback.", session)
+		}
 		return "CI passed with no blocking review feedback."
 	case domain.NotificationPRMerged:
 		title := strings.TrimSpace(intent.PRTitle)
