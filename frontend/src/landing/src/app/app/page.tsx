@@ -2302,8 +2302,11 @@ export default function CloudAppPage() {
                           <button
                             type="button"
                             className={`mr-0.5 grid size-6 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-white/[0.06] hover:text-white ${
-                              sessionMenuOpenId === cloudSession.id
-                                ? "bg-white/[0.06] text-white"
+                              sessionMenuOpenId === cloudSession.id ||
+                              (selectedProjectId === project.id &&
+                                selectedSessionId === cloudSession.id &&
+                                view === "session")
+                                ? "bg-white/[0.06] text-white opacity-100"
                                 : "opacity-0 group-hover/session:opacity-100 focus:opacity-100"
                             }`}
                             aria-label={`More actions for ${cloudSession.displayName}`}
@@ -6053,9 +6056,8 @@ function ProjectForm({
               </select>
             </label>
             <div className="rounded-lg border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs leading-5 text-white/45">
-              Standalone agents run independently and appear directly in the
-              sidebar. They can still use your normal cloud agent setup and
-              GitHub tooling inside the runtime when credentials are available.
+              Independent cloud agent. GitHub tools work inside the runtime when
+              credentials are available.
             </div>
             {availableAgents.size === 0 ? (
               <button
