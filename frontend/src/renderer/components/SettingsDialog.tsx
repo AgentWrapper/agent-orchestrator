@@ -1,4 +1,4 @@
-import { Bot, CircleHelp, GitBranch, Inbox, MonitorCog, RefreshCw, Settings2, Wrench, X } from "lucide-react";
+import { Bot, CircleHelp, GitBranch, Inbox, MonitorCog, RefreshCw, Settings2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { GlobalSettingsForm, type GlobalSettingsSection } from "./GlobalSettingsForm";
@@ -35,7 +35,6 @@ export function SettingsDialog() {
 	const globalSections: Array<{ id: Exclude<GlobalSettingsSection, "all">; label: string; icon: typeof Settings2 }> = [
 		{ id: "general", label: t("settings.general"), icon: Settings2 },
 		{ id: "updates", label: t("settings.updates"), icon: RefreshCw },
-		{ id: "developer", label: t("settings.developer"), icon: Wrench },
 		{ id: "help", label: t("settings.help"), icon: CircleHelp },
 	];
 
@@ -68,9 +67,10 @@ export function SettingsDialog() {
 				)}
 				showCloseButton={false}
 			>
-			{displaySettings && <div className="flex h-full min-h-0">
-					<aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-card">
-						<p className="px-3 pb-1 pt-3 text-2xs font-semibold uppercase tracking-wider text-muted-foreground/60">{t("settings.title")}</p>
+				{displaySettings && (
+					<div className="flex h-full min-h-0">
+						<aside className="flex w-48 shrink-0 flex-col border-r border-(--color-border-settings-dialog-header) bg-[var(--color-bg-primary)]">
+						<p className="px-3 pb-1 pt-3 text-2xs font-semibold tracking-wider text-muted-foreground/60">{t("settings.title")}</p>
 						<nav aria-label={t("settings.navSectionsAria")} className="flex flex-col gap-0.5 p-2 pt-0">
 							{isProjectSettings
 								? projectSections.map(({ id, label, icon }) => (
@@ -95,15 +95,15 @@ export function SettingsDialog() {
 					</aside>
 
 					{/* Main area — same bg as the app page */}
-					<div className="flex min-w-0 flex-1 flex-col bg-popover">
-						<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-auto shrink-0 flex-row items-center justify-between")}>
-							<DialogTitle className="text-sm font-semibold text-foreground">{activeLabel}</DialogTitle>
+					<div className="flex min-w-0 flex-1 flex-col bg-card">
+						<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-auto shrink-0 flex-row items-center justify-between border-b-0")}>
+							<DialogTitle className="text-2xl font-bold text-foreground">{activeLabel}</DialogTitle>
 							<DialogDescription className="sr-only">
 								{isProjectSettings ? t("settings.project.dialogDescription") : t("settings.dialogDescription", { section: activeLabel.toLowerCase() })}
 							</DialogDescription>
 							<DialogClose
 								aria-label={t("settings.close")}
-								className="settings-close-button"
+								className="settings-close-button border border-transparent transition-colors hover:border-(--color-border-settings-input) hover:bg-[var(--color-bg-settings-input)]"
 							>
 								<X aria-hidden="true" className="size-4" />
 							</DialogClose>
@@ -116,7 +116,8 @@ export function SettingsDialog() {
 							)}
 						</div>
 					</div>
-			</div>}
+					</div>
+				)}
 		</DialogContent>
 	</Dialog>
 	);

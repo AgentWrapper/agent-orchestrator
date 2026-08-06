@@ -2,16 +2,14 @@ import { useState } from "react";
 import { Keyboard, Mail } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ConnectMobileModal } from "./ConnectMobileModal";
-import { DeveloperModeSection } from "./settings/DeveloperModeSection";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
-import { DevSettingsSection } from "./settings/DevSettingsSection";
 import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
 
-export type GlobalSettingsSection = "general" | "updates" | "developer" | "help" | "all";
+export type GlobalSettingsSection = "general" | "updates" | "help" | "all";
 
 export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettingsSection }) {
 	const { t } = useTranslation();
@@ -45,12 +43,6 @@ export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettin
 					</>
 				)}
 				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}
-				{(section === "all" || section === "developer") && (
-					<>
-						<DeveloperModeSection titleHidden={leadingTitleHidden} />
-						<DevSettingsSection titleHidden={leadingTitleHidden} />
-					</>
-				)}
 				{(section === "all" || section === "help") && (
 					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden}>
 						<SettingsLinkRow icon={Mail} label={t("settings.reportProblem")} onClick={() => setReportProblemOpen(true)} />

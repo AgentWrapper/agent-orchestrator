@@ -302,14 +302,12 @@ function SummaryView({
 }) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
-	const developerMode = useUiStore((state) => state.developerMode);
-	const usageQuery = useSessionUsage(session.id, developerMode);
+	const usageQuery = useSessionUsage(session.id, false);
 	const showUsage =
-		developerMode &&
 		!usageQuery.isLoading &&
 		!usageQuery.isError &&
 		hasMeaningfulSessionUsage(usageQuery.data);
-	const showUsageError = developerMode && usageQuery.isError;
+	const showUsageError = usageQuery.isError;
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;

@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { appI18n } from "../i18n";
 import { GlobalSettingsForm } from "./GlobalSettingsForm";
 import { useLocaleStore } from "../stores/locale-store";
-import { useUiStore } from "../stores/ui-store";
 
 const {
 	getUpdate,
@@ -139,8 +138,6 @@ beforeEach(async () => {
 	getKeybindings.mockResolvedValue({});
 	setKeybindings.mockImplementation(async (overrides) => overrides);
 	setKeybindingRecording.mockResolvedValue(undefined);
-	// Feature Releases lives behind Developer Mode; reset to the default (off).
-	useUiStore.getState().setDeveloperMode(false);
 	// Locale defaults to English so existing copy assertions stay green.
 	await appI18n.changeLanguage("en");
 	useLocaleStore.setState({ locale: "en", loaded: false, saving: false, saveError: false });
@@ -155,7 +152,6 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
-		expect(screen.getByRole("switch", { name: "Developer Mode" })).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
@@ -246,16 +242,6 @@ describe("GlobalSettingsForm", () => {
 	it("hides the nightly warning on the stable channel", async () => {
 		renderForm();
 		await screen.findByText("Updates");
-		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
-	});
-
-	it("hides the nightly warning when Feature Releases is selected", async () => {
-		useUiStore.getState().setDeveloperMode(true);
-		getUpdate.mockResolvedValue({ enabled: true, channel: "nightly", nightlyAck: true, feature: null });
-		renderForm();
-		expect(await screen.findByText(/Nightly builds are cut every day/i)).toBeInTheDocument();
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
 		expect(screen.queryByText(/Nightly builds are cut every day/i)).not.toBeInTheDocument();
 	});
 
@@ -423,46 +409,8 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.queryByLabelText("Report preview")).not.toBeInTheDocument();
 	});
 
-	it("hides the Feature Releases channel option when Developer Mode is off", async () => {
-		renderForm();
-		await screen.findByText("Updates");
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		expect(await screen.findByRole("menuitem", { name: "Stable (Latest)" })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: "Feature Releases" })).not.toBeInTheDocument();
-	});
-
-	it("reveals the Feature Releases channel option when Developer Mode is turned on", async () => {
-		renderForm();
-		await screen.findByText("Updates");
-		await userEvent.click(screen.getByRole("switch", { name: "Developer Mode" }));
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		expect(await screen.findByRole("menuitem", { name: "Feature Releases" })).toBeInTheDocument();
-	});
-
-	it("persists Developer Mode to localStorage and defaults off", async () => {
-		expect(useUiStore.getState().developerMode).toBe(false);
-		renderForm();
-		const toggle = await screen.findByRole("switch", { name: "Developer Mode" });
-		expect(toggle).toHaveAttribute("aria-checked", "false");
-		await userEvent.click(toggle);
-		expect(useUiStore.getState().developerMode).toBe(true);
-		expect(window.localStorage.getItem("ao.developerMode")).toBe("true");
-	});
-
-	it("hides the feature-build picker when Developer Mode is turned off after selecting it", async () => {
-		useUiStore.getState().setDeveloperMode(true);
-		renderForm();
-		await screen.findByText("Updates");
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
-		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
-		// Toggling Developer Mode off must drop the transient picker (primaryValue guard).
-		await userEvent.click(screen.getByRole("switch", { name: "Developer Mode" }));
-		await waitFor(() => expect(screen.queryByText("No live feature releases.")).not.toBeInTheDocument());
-	});
-
-	it("surfaces a Return action for a persisted feature pin even when Developer Mode is off", async () => {
-		// A pin persists in settings but is not yet running; Developer Mode is off (default).
+	it("surfaces a Return action for a persisted feature pin", async () => {
+		// A pin persists in settings but is not yet running; updates are on the stable channel.
 		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
 		featGetActive.mockResolvedValue(null);
 		renderForm();
@@ -475,87 +423,12 @@ describe("GlobalSettingsForm", () => {
 				/Automatic updates, if enabled, keep tracking PR #2270 until you return home or the build retires\./i,
 			),
 		).toBeInTheDocument();
-		// The Feature Releases channel option and its build picker stay hidden.
-		expect(screen.queryByLabelText("Feature build")).not.toBeInTheDocument();
 		await userEvent.click(screen.getByLabelText("Updates channel"));
-		expect(screen.queryByRole("menuitem", { name: "Feature Releases" })).not.toBeInTheDocument();
 		await userEvent.keyboard("{Escape}");
 		// Return delegates to the single updater-serialized returnHome operation.
 		await userEvent.click(screen.getByRole("button", { name: "Return to Stable" }));
 		await waitFor(() => expect(updReturnHome).toHaveBeenCalledWith(expect.any(String)));
 		expect(updCheck).not.toHaveBeenCalled();
-	});
-
-	it("keeps Updates unchanged with Developer Mode on for a pinned-but-not-running build", async () => {
-		// With Developer Mode on the visible picker shows the pin, so no extra banner.
-		useUiStore.getState().setDeveloperMode(true);
-		getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: { pr: 2270 } });
-		featGetActive.mockResolvedValue(null);
-		renderForm();
-		expect(await screen.findByLabelText("Feature build")).toBeInTheDocument();
-		expect(screen.queryByText("PR #2270 is pinned but not yet installed.")).not.toBeInTheDocument();
-	});
-
-	it("reveals the feature-build picker when Feature Releases is selected", async () => {
-		useUiStore.getState().setDeveloperMode(true);
-		renderForm();
-		await screen.findByText("Updates");
-		// The picker must be reachable from a clean state (no pin seeded).
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
-		// Secondary picker mounts; no live builds are mocked, so it shows the empty state.
-		expect(await screen.findByText("No live feature releases.")).toBeInTheDocument();
-		expect(featListBuilds).toHaveBeenCalled();
-	});
-
-	it("pins a feature build after confirming and ignores unowned updater events", async () => {
-		useUiStore.getState().setDeveloperMode(true);
-		featListBuilds.mockResolvedValue([
-			{
-				pr: 2270,
-				title: "Fix foo",
-				base: "0.2.0",
-				sha: "abc",
-				slug: "x",
-				buildId: "v0.2.0-pr2270.202607061200",
-				publishedAt: new Date().toISOString(),
-			},
-		]);
-		let emit: (s: { state: string; version?: string; requestId?: string }) => void = () => undefined;
-		updOnStatus.mockImplementation((cb: (s: unknown) => void) => {
-			emit = cb as typeof emit;
-			return () => undefined;
-		});
-		renderForm();
-		await screen.findByText("Updates");
-
-		await userEvent.click(screen.getByLabelText("Updates channel"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: "Feature Releases" }));
-
-		await userEvent.click(await screen.findByLabelText("Feature build"));
-		await userEvent.click(await screen.findByRole("menuitem", { name: /PR #2270: Fix foo/ }));
-
-		// Confirmation dialog replaces window.confirm.
-		await userEvent.click(await screen.findByRole("button", { name: "Confirm" }));
-
-		await waitFor(() =>
-			expect(updCheck).toHaveBeenCalledWith({
-				settings: expect.objectContaining({ feature: { pr: 2270 } }),
-				requestId: expect.any(String),
-			}),
-		);
-		const requestId = updCheck.mock.calls[0]?.[0]?.requestId as string;
-
-		// An older hourly operation can finish while the feature request waits for
-		// updater ownership. Its events must not arm the feature install flow.
-		act(() => emit({ state: "available", version: "1.2.3" }));
-		expect(updDownload).not.toHaveBeenCalled();
-
-		// The owned feature operation auto-progresses available -> download -> install.
-		act(() => emit({ state: "available", version: "1.2.3", requestId }));
-		await waitFor(() => expect(updDownload).toHaveBeenCalledWith(requestId));
-		act(() => emit({ state: "downloaded", version: "1.2.3", requestId }));
-		await waitFor(() => expect(updInstall).toHaveBeenCalled());
 	});
 
 	it("returns to Stable, then auto-progresses check -> download -> install", async () => {
