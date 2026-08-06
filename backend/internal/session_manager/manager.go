@@ -561,7 +561,7 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	agentConfig := applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, project.Config), cfg.AgentConfig)
 	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
-	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env, false); err != nil {
+	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: %w", id, err)
 	}
@@ -1361,7 +1361,7 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
-	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env, false); err != nil {
+	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
 	argv, delivery, mode, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
@@ -3052,16 +3052,15 @@ func (m *Manager) augmentAgentRuntimeEnv(agent ports.Agent, env map[string]strin
 // starts the agent: installing the workspace-local activity hooks (so early
 // startup hooks can update the already-created session row), then any optional
 // PreLaunch step. Shared by Spawn and Restore.
-func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, env map[string]string, sessionStatePrepared bool) error {
+func (m *Manager) prepareWorkspace(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, env map[string]string) error {
 	if err := agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{
-		SessionID:            string(id),
-		WorkspacePath:        workspacePath,
-		DataDir:              m.dataDir,
-		Env:                  env,
-		SessionStatePrepared: sessionStatePrepared,
-		SystemPrompt:         systemPrompt,
-		SystemPromptFile:     systemPromptFile,
-		Config:               agentConfig,
+		SessionID:        string(id),
+		WorkspacePath:    workspacePath,
+		DataDir:          m.dataDir,
+		Env:              env,
+		SystemPrompt:     systemPrompt,
+		SystemPromptFile: systemPromptFile,
+		Config:           agentConfig,
 	}); err != nil {
 		m.cleanupPreparedAgentWorkspace(ctx, agent, id, workspacePath, env)
 		return fmt.Errorf("install hooks: %w", err)
@@ -3104,20 +3103,17 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 		return
 	}
 	cleaner, cleansWorkspace := agent.(workspaceCleaner)
-	_, cleansSessionState := agent.(agentSessionStateLifecycle)
-	if !cleansWorkspace && !cleansSessionState {
+	if !cleansWorkspace {
 		return
 	}
 	env := spawnEnv(rec.ID, rec.ProjectID, rec.IssueID, m.dataDir, nil)
-	agentConfig := ports.AgentConfig{}
 	if project, err := m.loadProject(ctx, rec.ProjectID); err == nil {
 		env = m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
-		agentConfig = effectiveAgentConfig(rec.Kind, project.Config)
 	} else {
 		m.logger.Warn("workspace cleanup: project env unavailable; agent cleanup using AO env only",
 			"sessionID", rec.ID, "projectID", rec.ProjectID, "error", err)
 	}
-	if cleansWorkspace && strings.TrimSpace(workspacePath) != "" {
+	if strings.TrimSpace(workspacePath) != "" {
 		if err := cleaner.CleanupWorkspace(ctx, ports.WorkspaceHookConfig{
 			DataDir:       m.dataDir,
 			Env:           env,
@@ -3125,11 +3121,6 @@ func (m *Manager) cleanupAgentWorkspace(ctx context.Context, rec domain.SessionR
 			WorkspacePath: workspacePath,
 		}); err != nil {
 			m.logger.Warn("workspace cleanup: agent cleanup failed", "sessionID", rec.ID, "workspacePath", workspacePath, "error", err)
-		}
-	}
-	if cleansSessionState {
-		if err := m.cleanupAgentSessionState(ctx, agent, rec, agentConfig, env); err != nil {
-			m.logger.Warn("workspace cleanup: provider session-state cleanup failed", "sessionID", rec.ID, "harness", rec.Harness, "error", err)
 		}
 	}
 }

@@ -125,8 +125,10 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
 
-	if err := appendCodexStandingInstructions(&cmd, cfg.DataDir, cfg.SessionID, cfg.SystemPrompt, cfg.SystemPromptFile); err != nil {
-		return nil, err
+	if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
+	} else if cfg.SystemPromptFile != "" {
+		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
 	}
 
 	if cfg.Prompt != "" {
@@ -164,8 +166,10 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
-	if err := appendCodexStandingInstructions(&cmd, cfg.DataDir, cfg.Session.ID, cfg.SystemPrompt, cfg.SystemPromptFile); err != nil {
-		return nil, false, err
+	if cfg.SystemPrompt != "" {
+		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
+	} else if cfg.SystemPromptFile != "" {
+		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
 	}
 	cmd = append(cmd, agentSessionID)
 	if cfg.Prompt != "" {

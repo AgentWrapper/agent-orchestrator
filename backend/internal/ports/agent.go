@@ -328,17 +328,13 @@ type LaunchConfig struct {
 
 // WorkspaceHookConfig carries inputs needed to install workspace-local agent hooks.
 type WorkspaceHookConfig struct {
-	Config    AgentConfig
-	DataDir   string
-	Env       map[string]string
-	SessionID string
-	// SessionStatePrepared tells an adapter that its optional provider-global
-	// launch state was already materialized during switch preflight. Workspace
-	// hooks must not repeat that fallible write after the source-stop boundary.
-	SessionStatePrepared bool
-	SystemPrompt         string
-	SystemPromptFile     string
-	WorkspacePath        string
+	Config           AgentConfig
+	DataDir          string
+	Env              map[string]string
+	SessionID        string
+	SystemPrompt     string
+	SystemPromptFile string
+	WorkspacePath    string
 }
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.

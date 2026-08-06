@@ -1,7 +1,6 @@
 package codex
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -29,15 +28,6 @@ func canonicalTempDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dir
-}
-
-func mustCodexSessionProfileName(t *testing.T, dataDir, sessionID string) string {
-	t.Helper()
-	name, ok := codexSessionProfileName(dataDir, sessionID)
-	if !ok {
-		t.Fatalf("codexSessionProfileName(%q, %q) returned no name", dataDir, sessionID)
-	}
-	return name
 }
 
 // sessionHookFlags mirrors the `-c` hook config appendSessionHookFlags emits,
@@ -126,22 +116,6 @@ func TestNativeSessionConfigDirExplicitEmptyIgnoresDaemonOverride(t *testing.T) 
 	}
 }
 
-func TestCodexSessionProfileNameIsDeterministicPlainAndSessionScoped(t *testing.T) {
-	first := mustCodexSessionProfileName(t, "/ao/one", "session-1")
-	if got := mustCodexSessionProfileName(t, "/ao/one", " session-1 "); got != first {
-		t.Fatalf("trimmed session profile = %q, want %q", got, first)
-	}
-	if other := mustCodexSessionProfileName(t, "/ao/one", "session-2"); other == first {
-		t.Fatalf("different sessions resolved to the same profile %q", first)
-	}
-	if otherRoot := mustCodexSessionProfileName(t, "/ao/two", "session-1"); otherRoot == first {
-		t.Fatalf("different AO data roots resolved to the same profile %q", first)
-	}
-	if !strings.HasPrefix(first, "ao-") || strings.Trim(first, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
-		t.Fatalf("profile name %q is not a plain AO-owned name", first)
-	}
-}
-
 func TestLocateAndProbeNativeSessionTranscript(t *testing.T) {
 	configDir := t.TempDir()
 	sessionID := "019f9f7c-53c0-7f10-8d56-a8a979dd7001"
@@ -212,18 +186,12 @@ func TestProbeNativeSessionUnknownWithoutConfigDir(t *testing.T) {
 func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	workspace := canonicalTempDir(t)
-	dataDir := filepath.Join(t.TempDir(), "ao-data")
-	promptFile := filepath.Join(t.TempDir(), "prompt with spaces.md")
-	if err := os.WriteFile(promptFile, []byte("file instructions\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		DataDir:          dataDir,
 		Permissions:      ports.PermissionModeBypassPermissions,
 		Prompt:           "-fix this",
 		SessionID:        "session-123",
-		SystemPromptFile: promptFile,
+		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
 		SystemPrompt:     "inline wins",
 		WorkspacePath:    workspace,
 	})
@@ -244,7 +212,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
-		"--profile", mustCodexSessionProfileName(t, dataDir, "session-123"),
+		"-c", "developer_instructions="+codexTOMLConfigString("inline wins"),
 		"--", "-fix this",
 	)
 	if !reflect.DeepEqual(cmd, want) {
@@ -252,13 +220,17 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandRejectsMissingSystemPromptFile(t *testing.T) {
+func TestGetLaunchCommandUsesSystemPromptFileFallback(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
-	_, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: promptFile,
 	})
-	if err == nil {
-		t.Fatal("expected error for missing system prompt file")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsSubsequence(cmd, []string{"-c", "model_instructions_file=" + promptFile}) {
+		t.Fatalf("command %#v missing system prompt file fallback", cmd)
 	}
 }
 
@@ -576,203 +548,6 @@ func TestGetAgentHooksWritesNothingIntoFreshWorkspace(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksCreatesAndUpdatesAdditiveSessionProfile(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "codex"}
-	workspace := t.TempDir()
-	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	promptFile := filepath.Join(t.TempDir(), "system.md")
-	if err := os.WriteFile(promptFile, []byte("file instructions\nwith a 'quote'\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg := ports.WorkspaceHookConfig{
-		DataDir:          filepath.Join(t.TempDir(), "ao-data"),
-		Env:              map[string]string{codexHomeEnv: codexHome},
-		SessionID:        "sess-1",
-		SystemPrompt:     "inline must not win",
-		SystemPromptFile: promptFile,
-		WorkspacePath:    workspace,
-	}
-	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
-		t.Fatal(err)
-	}
-
-	profileName := mustCodexSessionProfileName(t, cfg.DataDir, cfg.SessionID)
-	profilePath := filepath.Join(codexHome, profileName+".config.toml")
-	want := codexProfileHeader(profileName) + "developer_instructions = " + codexTOMLConfigString("file instructions\nwith a 'quote'") + "\n"
-	data, err := os.ReadFile(profilePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != want {
-		t.Fatalf("profile contents\nwant: %q\n got: %q", want, data)
-	}
-	if strings.Contains(string(data), "model_instructions_file") {
-		t.Fatalf("profile replaces built-ins instead of layering developer instructions: %s", data)
-	}
-	info, err := os.Stat(profilePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("profile mode = %o, want 600", got)
-	}
-	if err := os.WriteFile(promptFile, []byte("updated instructions\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	updated, err := os.ReadFile(profilePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want = codexProfileHeader(profileName) + "developer_instructions = " + codexTOMLConfigString("updated instructions") + "\n"
-	if string(updated) != want {
-		t.Fatalf("updated profile contents\nwant: %q\n got: %q", want, updated)
-	}
-}
-
-func TestGetAgentHooksDoesNotRepeatPreflightSessionStateWrite(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "codex"}
-	err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
-		SessionID:            "sess-prepared",
-		SessionStatePrepared: true,
-		SystemPromptFile:     filepath.Join(t.TempDir(), "removed-after-preflight.md"),
-		WorkspacePath:        t.TempDir(),
-	})
-	if err != nil {
-		t.Fatalf("GetAgentHooks repeated fallible session-state preparation: %v", err)
-	}
-}
-
-func TestGetAgentHooksRefusesNonAOProfileCollision(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "codex"}
-	codexHome := t.TempDir()
-	profileName := mustCodexSessionProfileName(t, "", "sess-collision")
-	profilePath := filepath.Join(codexHome, profileName+".config.toml")
-	foreign := []byte("developer_instructions = 'user-owned'\n")
-	if err := os.WriteFile(profilePath, foreign, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
-		Env:           map[string]string{codexHomeEnv: codexHome},
-		SessionID:     "sess-collision",
-		SystemPrompt:  "AO instructions",
-		WorkspacePath: t.TempDir(),
-	})
-	if err == nil || !strings.Contains(err.Error(), "refusing to overwrite non-AO profile") {
-		t.Fatalf("GetAgentHooks error = %v, want collision refusal", err)
-	}
-	data, readErr := os.ReadFile(profilePath)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if !bytes.Equal(data, foreign) {
-		t.Fatalf("foreign profile changed\nwant: %q\n got: %q", foreign, data)
-	}
-}
-
-func TestCleanupSessionStateRemovesOwnedProfile(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "codex"}
-	codexHome := t.TempDir()
-	cfg := ports.WorkspaceHookConfig{
-		DataDir:      filepath.Join(t.TempDir(), "ao-data"),
-		Env:          map[string]string{codexHomeEnv: codexHome},
-		SessionID:    "sess-cleanup",
-		SystemPrompt: "AO instructions",
-	}
-	if err := plugin.PrepareSessionState(context.Background(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	profileName := mustCodexSessionProfileName(t, cfg.DataDir, cfg.SessionID)
-	profilePath := filepath.Join(codexHome, profileName+".config.toml")
-	if err := plugin.CleanupSessionState(context.Background(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(profilePath); !os.IsNotExist(err) {
-		t.Fatalf("profile state after cleanup = %v, want not-exist", err)
-	}
-	if err := plugin.CleanupSessionState(context.Background(), cfg); err != nil {
-		t.Fatalf("idempotent cleanup: %v", err)
-	}
-}
-
-func TestCleanupSessionStatePreservesForeignProfile(t *testing.T) {
-	plugin := &Plugin{resolvedBinary: "codex"}
-	codexHome := t.TempDir()
-	cfg := ports.WorkspaceHookConfig{
-		Env:       map[string]string{codexHomeEnv: codexHome},
-		SessionID: "sess-foreign-cleanup",
-	}
-	profileName := mustCodexSessionProfileName(t, cfg.DataDir, cfg.SessionID)
-	profilePath := filepath.Join(codexHome, profileName+".config.toml")
-	foreign := []byte("developer_instructions = 'user-owned'\n")
-	if err := os.WriteFile(profilePath, foreign, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err := plugin.CleanupSessionState(context.Background(), cfg)
-	if err == nil || !strings.Contains(err.Error(), "refusing to remove non-AO profile") {
-		t.Fatalf("CleanupSessionState error = %v, want ownership refusal", err)
-	}
-	data, readErr := os.ReadFile(profilePath)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if !bytes.Equal(data, foreign) {
-		t.Fatalf("foreign profile changed\nwant: %q\n got: %q", foreign, data)
-	}
-}
-
-func TestCleanupSessionStateRejectsUnsafeOwnedLookingPaths(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Run("wrong mode", func(t *testing.T) {
-			plugin := &Plugin{resolvedBinary: "codex"}
-			codexHome := t.TempDir()
-			cfg := ports.WorkspaceHookConfig{Env: map[string]string{codexHomeEnv: codexHome}, SessionID: "sess-mode"}
-			profileName := mustCodexSessionProfileName(t, cfg.DataDir, cfg.SessionID)
-			profilePath := filepath.Join(codexHome, profileName+".config.toml")
-			contents := []byte(codexProfileHeader(profileName) + "developer_instructions = \"copied marker\"\n")
-			if err := os.WriteFile(profilePath, contents, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(profilePath, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			err := plugin.CleanupSessionState(context.Background(), cfg)
-			if err == nil || !strings.Contains(err.Error(), "refusing to remove non-AO profile") {
-				t.Fatalf("CleanupSessionState error = %v, want wrong-mode refusal", err)
-			}
-			if _, err := os.Stat(profilePath); err != nil {
-				t.Fatalf("wrong-mode profile was removed: %v", err)
-			}
-		})
-	}
-
-	t.Run("symlink", func(t *testing.T) {
-		plugin := &Plugin{resolvedBinary: "codex"}
-		codexHome := t.TempDir()
-		cfg := ports.WorkspaceHookConfig{Env: map[string]string{codexHomeEnv: codexHome}, SessionID: "sess-symlink"}
-		profileName := mustCodexSessionProfileName(t, cfg.DataDir, cfg.SessionID)
-		profilePath := filepath.Join(codexHome, profileName+".config.toml")
-		targetPath := filepath.Join(t.TempDir(), "target.config.toml")
-		contents := []byte(codexProfileHeader(profileName) + "developer_instructions = \"copied marker\"\n")
-		if err := os.WriteFile(targetPath, contents, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(targetPath, profilePath); err != nil {
-			t.Skipf("symlink unavailable: %v", err)
-		}
-		err := plugin.CleanupSessionState(context.Background(), cfg)
-		if err == nil || !strings.Contains(err.Error(), "refusing to remove non-AO profile") {
-			t.Fatalf("CleanupSessionState error = %v, want symlink refusal", err)
-		}
-		info, statErr := os.Lstat(profilePath)
-		if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("symlink state after cleanup = mode %v err %v, want preserved", info, statErr)
-		}
-	})
-}
-
 func TestGetAgentHooksRequiresWorkspacePath(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: "  "})
@@ -906,18 +681,12 @@ func TestUninstallHooksRemovesLegacyCodexHooks(t *testing.T) {
 func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	workspace := canonicalTempDir(t)
-	dataDir := filepath.Join(t.TempDir(), "ao-data")
-	promptFile := filepath.Join(t.TempDir(), "restore system.md")
-	if err := os.WriteFile(promptFile, []byte("restore instructions\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		DataDir:          dataDir,
 		Permissions:      ports.PermissionModeAuto,
 		Prompt:           "continue from AO",
 		SystemPrompt:     "restore inline wins",
-		SystemPromptFile: promptFile,
+		SystemPromptFile: filepath.Join("tmp", "restore system.md"),
 		Session: ports.SessionRef{
 			ID:            "session-123",
 			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
@@ -945,7 +714,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
-		"--profile", mustCodexSessionProfileName(t, dataDir, "session-123"),
+		"-c", "developer_instructions="+codexTOMLConfigString("restore inline wins"),
 		"thread-123",
 		"--", "continue from AO",
 	)
@@ -954,16 +723,20 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 }
 
-func TestGetRestoreCommandRejectsNonRegularSystemPromptFile(t *testing.T) {
+func TestGetRestoreCommandUsesSystemPromptFileFallback(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
-	_, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		SystemPromptFile: t.TempDir(),
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		SystemPromptFile: promptFile,
 		Session: ports.SessionRef{
 			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
 		},
 	})
-	if err == nil || ok {
-		t.Fatalf("restore = (ok=%v, err=%v), want non-regular-file error", ok, err)
+	if err != nil || !ok {
+		t.Fatalf("restore = (ok=%v, err=%v), want ok", ok, err)
+	}
+	if !containsSubsequence(cmd, []string{"-c", "model_instructions_file=" + promptFile, "thread-123"}) {
+		t.Fatalf("restore command %#v missing system prompt file fallback", cmd)
 	}
 }
 

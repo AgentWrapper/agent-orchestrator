@@ -328,23 +328,6 @@ type switchTestAgent struct {
 	restorePrompt    string
 }
 
-type switchSessionStateAgent struct {
-	*switchTestAgent
-	prepareErr   error
-	prepareCalls int
-	cleanupCalls int
-}
-
-func (a *switchSessionStateAgent) PrepareSessionState(context.Context, ports.WorkspaceHookConfig) error {
-	a.prepareCalls++
-	return a.prepareErr
-}
-
-func (a *switchSessionStateAgent) CleanupSessionState(context.Context, ports.WorkspaceHookConfig) error {
-	a.cleanupCalls++
-	return nil
-}
-
 type switchReleaseLCM struct {
 	lifecycleRecorder
 	onRelease func(domain.SessionID, string)
@@ -544,21 +527,6 @@ func newSwitchTestManager(t *testing.T, runtime runtimeController) (*Manager, *s
 		ackSwitchContinuation(store, id, message)
 	}
 	return manager, store, messenger
-}
-
-func addSwitchSessionStateLifecycle(t *testing.T, manager *Manager, harness domain.AgentHarness) *switchSessionStateAgent {
-	t.Helper()
-	agents, ok := manager.agents.(switchTestAgents)
-	if !ok {
-		t.Fatalf("agent resolver = %T, want switchTestAgents", manager.agents)
-	}
-	base, ok := agents[harness].(*switchTestAgent)
-	if !ok {
-		t.Fatalf("agent %q = %T, want *switchTestAgent", harness, agents[harness])
-	}
-	wrapped := &switchSessionStateAgent{switchTestAgent: base}
-	agents[harness] = wrapped
-	return wrapped
 }
 
 func ackSwitchContinuation(store *switchTestStore, id domain.SessionID, message string) {
@@ -1264,31 +1232,7 @@ func TestSwitchAgentRejectsUnsafeInlinePromptBudgetBeforeStoppingSource(t *testi
 	}
 }
 
-func TestSwitchAgentPreparesTargetSessionStateBeforeStoppingSource(t *testing.T) {
-	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{aliveByHandle: map[string]bool{"proj-1": true}}}
-	manager, _, _ := newSwitchTestManager(t, runtime)
-	target := addSwitchSessionStateLifecycle(t, manager, domain.HarnessCodex)
-	target.prepareErr = errors.New("profile collision")
-
-	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
-		TargetHarness:  domain.HarnessCodex,
-		IdempotencyKey: "target-session-state-preflight",
-	})
-	if err == nil || !strings.Contains(err.Error(), "target session-state preflight: profile collision") {
-		t.Fatalf("switch error = %v, want session-state preflight error", err)
-	}
-	if sw.State != domain.AgentSwitchFailed {
-		t.Fatalf("switch state = %q, want failed", sw.State)
-	}
-	if target.prepareCalls != 1 || target.cleanupCalls != 0 {
-		t.Fatalf("target session-state calls = prepare %d cleanup %d, want 1/0", target.prepareCalls, target.cleanupCalls)
-	}
-	if runtime.destroyed != 0 || runtime.created != 0 {
-		t.Fatalf("runtime mutations = destroyed %d created %d, want 0/0", runtime.destroyed, runtime.created)
-	}
-}
-
-func TestSwitchAgentRetainsPreparedTargetStateWhenCreateReturnsNoHandle(t *testing.T) {
+func TestSwitchAgentRetainsSwitchWhenCreateReturnsNoHandle(t *testing.T) {
 	runtime := &switchCreateErrorRuntime{
 		fakeRestartRuntime: &fakeRestartRuntime{fakeRuntime: &fakeRuntime{
 			aliveByHandle: map[string]bool{"proj-1": true},
@@ -1296,20 +1240,16 @@ func TestSwitchAgentRetainsPreparedTargetStateWhenCreateReturnsNoHandle(t *testi
 		createErr: errors.New("command too long"),
 	}
 	manager, store, _ := newSwitchTestManager(t, runtime)
-	target := addSwitchSessionStateLifecycle(t, manager, domain.HarnessCodex)
 
 	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
 		TargetHarness:  domain.HarnessCodex,
-		IdempotencyKey: "target-session-state-rollback",
+		IdempotencyKey: "target-create-no-handle",
 	})
 	if err == nil || !strings.Contains(err.Error(), "start target runtime: command too long") {
 		t.Fatalf("switch error = %v, want launch failure", err)
 	}
 	if sw.State != domain.AgentSwitchStartingTarget || sw.TargetRuntimeHandleID != "" {
 		t.Fatalf("switch = state %q handle %q, want retained starting_target with no handle", sw.State, sw.TargetRuntimeHandleID)
-	}
-	if target.prepareCalls != 1 || target.cleanupCalls != 0 {
-		t.Fatalf("target session-state calls = prepare %d cleanup %d, want 1/0", target.prepareCalls, target.cleanupCalls)
 	}
 	if runtime.destroyed != 1 || len(runtime.destroyedIDs) != 1 || runtime.destroyedIDs[0] != "proj-1" {
 		t.Fatalf("runtime destroys = %d %v, want only the source handle", runtime.destroyed, runtime.destroyedIDs)
@@ -1319,27 +1259,6 @@ func TestSwitchAgentRetainsPreparedTargetStateWhenCreateReturnsNoHandle(t *testi
 	}
 	if manager.SessionInputAllowed("proj-1") {
 		t.Fatal("ambiguous target Create result reopened the switch input gate")
-	}
-}
-
-func TestSwitchAgentCleansSourceSessionStateOnlyAfterTargetOwnership(t *testing.T) {
-	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{aliveByHandle: map[string]bool{"proj-1": true}}}
-	manager, _, _ := newSwitchTestManager(t, runtime)
-	source := addSwitchSessionStateLifecycle(t, manager, domain.HarnessClaudeCode)
-	target := addSwitchSessionStateLifecycle(t, manager, domain.HarnessCodex)
-
-	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
-		TargetHarness:  domain.HarnessCodex,
-		IdempotencyKey: "source-session-state-cleanup",
-	})
-	if err != nil || sw.State != domain.AgentSwitchCompleted {
-		t.Fatalf("switch = state %q err %v, want completed", sw.State, err)
-	}
-	if source.prepareCalls != 0 || source.cleanupCalls != 1 {
-		t.Fatalf("source session-state calls = prepare %d cleanup %d, want 0/1", source.prepareCalls, source.cleanupCalls)
-	}
-	if target.prepareCalls != 1 || target.cleanupCalls != 0 {
-		t.Fatalf("target session-state calls = prepare %d cleanup %d, want 1/0", target.prepareCalls, target.cleanupCalls)
 	}
 }
 
