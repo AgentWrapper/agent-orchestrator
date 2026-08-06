@@ -43,6 +43,7 @@ var claudeManagedHooks = []hooksjson.HookSpec{
 	{Event: "PermissionRequest", Command: claudeHookCommandPrefix + "permission-request"},
 	{Event: "Stop", Command: claudeHookCommandPrefix + "stop"},
 	{Event: "Notification", Command: claudeHookCommandPrefix + "notification"},
+	{Event: "SubagentStop", Command: claudeHookCommandPrefix + "subagent-stop"},
 	{Event: "SessionEnd", Command: claudeHookCommandPrefix + "session-end"},
 }
 

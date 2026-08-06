@@ -13,6 +13,17 @@
  * (:root[data-theme="light"]). apply-initial-theme runs before CSS load; the
  * Zustand theme toggle updates data-theme on <html>.
  */
+
+/*
+ * Theme switches run under document.startViewTransition so per-element
+ * color/background transitions are hidden behind a snapshot. Kill the
+ * default root crossfade — we want an instant cut, not an animation.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation: none;
+	mix-blend-mode: normal;
+}
 @theme inline {
 	--font-sans: var(--font-family-base);
 	--font-mono: var(--font-family-mono);
@@ -107,6 +118,7 @@
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-terminal: var(--color-bg-terminal);
+	--color-terminal-opaque: var(--color-bg-terminal-opaque);
 	--color-terminal-dim: var(--color-text-terminal-dim);
 	--color-scrim: var(--bridge-scrim);
 
@@ -454,13 +466,22 @@
 	border-radius: 0;
 }
 
-/* Session chrome is portaled above the sidebar/content row. Join that topbar
- * to the center surface so the workspace reads as one continuous frame. */
+/* Session topbar now lives inside .center-panel-surface. When it's rendered
+ * there, drop the outer border and radius (the surface provides both) and keep
+ * only a bottom divider separating the tabs from the terminal below.
+ * When it's rendered in-place (native fullscreen), keep the legacy surface
+ * treatment so the topbar still looks like a standalone panel header. */
 .session-topbar-surface {
 	overflow: hidden;
 	border: 1px solid var(--color-border-strong);
 	border-radius: var(--radius-center-panel) var(--radius-center-panel) 0 0;
 	background-color: var(--color-bg-primary);
+}
+
+.center-panel-surface .session-topbar-surface {
+	border: none;
+	border-bottom: 1px solid var(--color-border-strong);
+	border-radius: 0;
 }
 
 /* When the sidebar is off-canvas, clear only the fixed navigation cluster.
@@ -481,13 +502,14 @@
 }
 
 .center-panel-shell.center-panel-shell--session {
-	padding-top: 0;
+	/* No padding override: session pages use the same inset as other pages now
+	 * that SessionTopbarHost lives inside the surface. Class is kept for
+	 * identification (e.g. tests). */
 }
 
 .center-panel-shell--session > .center-panel-surface {
-	border-top: 0;
-	border-top-left-radius: 0;
-	border-top-right-radius: 0;
+	/* Session surface uses standard border-radius; topbar clips to rounded corners
+	 * inside the surface. No override needed. */
 }
 
 .center-panel-titlebar {
@@ -589,20 +611,17 @@ button.settings-row-bar {
 
 .review-run-controls-container {
 	container-type: inline-size;
+	width: 100%;
 }
 
 .review-run-controls {
 	flex-wrap: nowrap;
+	width: 100%;
 }
 
-@container (max-width: 28rem) {
-	.review-run-controls {
-		align-items: flex-start;
-		flex-direction: column;
-	}
-
-	.review-run-agent-select {
-		width: 100%;
+@container (max-width: 20rem) {
+	.review-run-action-label {
+		display: none;
 	}
 }
 
@@ -701,6 +720,11 @@ button.settings-row-bar {
 	}
 }
 
+@utility settings-model-control {
+	width: var(--size-settings-inline-input-max);
+	max-width: var(--size-settings-inline-input-max);
+}
+
 @utility settings-row-value {
 	min-width: 0;
 	max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));
@@ -751,13 +775,12 @@ button.settings-row-bar {
 	transition-property: opacity;
 	transition-duration: var(--duration-normal);
 
-	&:hover {
+	&:hover:not(:disabled) {
 		opacity: 0.9;
 	}
 
 	&:disabled {
 		cursor: not-allowed;
-		opacity: 0.5;
 	}
 }
 
@@ -865,18 +888,20 @@ button.settings-row-bar {
 
 @utility import-close-button {
 	position: absolute;
-	top: var(--space-3);
-	right: var(--space-3);
+	top: var(--size-import-modal-padding);
+	right: var(--size-import-modal-padding);
 	z-index: calc(var(--z-chrome) + 1);
 	display: grid;
-	width: calc(var(--spacing) * 5);
-	height: calc(var(--spacing) * 5);
+	width: var(--size-control-md);
+	height: var(--size-control-md);
 	place-items: center;
+	border-radius: var(--radius-md);
 	color: var(--color-text-import-muted);
-	transition-property: color;
+	transition-property: color, background-color;
 	transition-duration: var(--duration-normal);
 
 	&:hover {
+		background-color: var(--color-interactive-hover);
 		color: var(--color-text-import-title);
 	}
 
@@ -1090,6 +1115,20 @@ textarea,
 	background: var(--color-bg-primary);
 }
 
+/* Paint the pane with the opaque RGB of --color-bg-terminal only. The e7 alpha
+   on the token composites against app chrome and left a #111316 fringe in the
+   p-2 gutter / FitAddon leftover strips. */
+.terminal-surface {
+	background-color: var(--color-bg-terminal-opaque);
+}
+
+.terminal-surface .xterm,
+.terminal-surface .xterm-viewport,
+.terminal-surface .xterm-screen,
+.terminal-surface .xterm-helpers {
+	background-color: var(--color-bg-terminal-opaque) !important;
+}
+
 @keyframes status-pulse {
 	0%,
 	100% {
@@ -1230,9 +1269,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 /* Expanded-only sidebar chrome waits for the rail width transition to finish
  * before painting, so tap-to-expand does not flash labels inside the narrow
  * collapsed rail. */
-.sidebar-expanded-chrome {
-	transition: opacity 150ms ease-out;
-}
+.sidebar-expanded-chrome {}
 [data-slot="sidebar-container"][data-expanded-chrome="hidden"] .sidebar-expanded-chrome {
 	opacity: 0;
 	pointer-events: none;
@@ -1246,10 +1283,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	.ao-startup-status,
 	.ao-startup-dots span {
 		animation: none;
-	}
-
-	.sidebar-expanded-chrome {
-		transition: none;
 	}
 
 	[data-slot="command-dialog-overlay"],
@@ -2001,14 +2034,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Collapse/expand animation for the inspector panel: rrp v4 drives panel
- * sizes via flex-grow, which is animatable. Suppress it while the separator
- * is actively dragged so resizing tracks the pointer 1:1. */
+/* Do not animate the inspector's flex-grow. The sibling is a live xterm WebGL
+ * surface: interpolating this value makes ResizeObserver fit the terminal at
+ * every intermediate width, reallocating the renderer and eventually causing
+ * a PTY/SIGWINCH repaint. The inspector still opens and closes atomically, and
+ * direct separator drags remain interactive. */
 .session-split #inspector[data-panel] {
-	transition: flex-grow 0.2s linear;
-}
-
-.session-split:has([data-separator="active"]) #inspector[data-panel] {
 	transition: none;
 }
 
@@ -2826,18 +2857,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	box-shadow: none;
 }
 
-.browser-panel__transition-frame {
-	position: absolute;
-	inset: 0;
-	z-index: 2;
-	width: 100%;
-	height: 100%;
-	object-fit: fill;
-	background: var(--bg);
-	pointer-events: none;
-	animation: browser-transition-frame 240ms ease-out forwards;
-}
-
 .browser-panel__slot {
 	position: absolute;
 	inset: 0;
@@ -2872,15 +2891,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	font-size: 12px;
 }
 
-@keyframes browser-transition-frame {
-	0% {
-		opacity: 1;
-	}
-	100% {
-		opacity: 0;
-	}
-}
-
 @keyframes browser-popout-in {
 	from {
 		opacity: 0.94;
@@ -2893,8 +2903,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.browser-popout-overlay,
-	.browser-panel__transition-frame {
+	.browser-popout-overlay {
 		animation: none;
 	}
 

@@ -1,6 +1,6 @@
 import { Languages, MessageSquare, Monitor, Moon, Palette, Smartphone, SquareTerminal, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import type { ThemePreference } from "../../lib/theme";
+import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
 import { useLocaleStore } from "../../stores/locale-store";
 import { useUiStore } from "../../stores/ui-store";
@@ -69,6 +69,18 @@ function SessionInterfaceRow() {
 	);
 }
 
+const COLOR_THEME_OPTIONS = [
+	{ value: "orchestrate", label: "Orchestrate" },
+	{ value: "github", label: "GitHub" },
+	{ value: "catppuccin", label: "Catppuccin" },
+	{ value: "dracula", label: "Dracula" },
+	{ value: "tokyo-night", label: "Tokyo Night" },
+	{ value: "rose-pine", label: "Rosé Pine" },
+	{ value: "nord", label: "Nord" },
+	{ value: "gruvbox", label: "Gruvbox" },
+	{ value: "solarized", label: "Solarized" },
+] satisfies SettingsOption<ThemeStyle>[];
+
 export function GeneralSettingsSection({
 	onConnectMobile,
 	titleHidden,
@@ -79,6 +91,8 @@ export function GeneralSettingsSection({
 	const { t } = useTranslation();
 	const themePreference = useUiStore((state) => state.themePreference);
 	const setThemePreference = useUiStore((state) => state.setThemePreference);
+	const themeStyle = useUiStore((state) => state.themeStyle);
+	const setThemeStyle = useUiStore((state) => state.setThemeStyle);
 	const locale = useLocaleStore((state) => state.locale);
 	const setLocale = useLocaleStore((state) => state.setLocale);
 	const localeSaving = useLocaleStore((state) => state.saving);
@@ -107,7 +121,15 @@ export function GeneralSettingsSection({
 
 	return (
 		<SettingsSection title={t("settings.general")} titleHidden={titleHidden}>
-			<SettingsRow icon={Palette} label={t("settings.theme")}>
+			<SettingsRow icon={Palette} label={t("settings.colorTheme")}>
+				<SettingsOptionMenu
+					aria-label={t("settings.colorTheme")}
+					value={themeStyle}
+					options={COLOR_THEME_OPTIONS}
+					onChange={setThemeStyle}
+				/>
+			</SettingsRow>
+			<SettingsRow icon={Moon} label={t("settings.theme")}>
 				<SettingsOptionMenu
 					aria-label={t("settings.theme")}
 					value={themePreference}

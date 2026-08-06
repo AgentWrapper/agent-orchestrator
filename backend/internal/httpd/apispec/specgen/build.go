@@ -67,6 +67,8 @@ func Build() ([]byte, error) {
 			"Code-review runs and findings"),
 		*(&openapi31.Tag{Name: "notifications"}).WithDescription(
 			"Durable dashboard notifications"),
+		*(&openapi31.Tag{Name: "usage"}).WithDescription(
+			"Token usage telemetry for AO sessions"),
 		*(&openapi31.Tag{Name: "push"}).WithDescription(
 			"Mobile push-device registration for OS push notifications"),
 		*(&openapi31.Tag{Name: "events"}).WithDescription(
@@ -231,6 +233,8 @@ var schemaNames = map[string]string{
 	"ControllersRollbackSessionResponse":                  "RollbackSessionResponse",
 	"ControllersSendSessionMessageRequest":                "SendSessionMessageRequest",
 	"ControllersSendSessionMessageResponse":               "SendSessionMessageResponse",
+	"ControllersDelegateTaskRequest":                      "DelegateTaskRequest",
+	"ControllersDelegateTaskResponse":                     "DelegateTaskResponse",
 	"ControllersClaimPRResponse":                          "ClaimPRResponse",
 	"ControllersClaimPRRequest":                           "ClaimPRRequest",
 	"ControllersSessionPRFacts":                           "SessionPRFacts",
@@ -252,6 +256,8 @@ var schemaNames = map[string]string{
 	"AgentInventory":                                      "ListAgentsResponse",
 	"AgentInfo":                                           "AgentInfo",
 	"AgentProbeResult":                                    "ProbeAgentResponse",
+	"PortsAgentModelCatalog":                              "AgentModelsResponse",
+	"PortsAgentModelInfo":                                 "AgentModelInfo",
 	"ControllersListNotificationsQuery":                   "ListNotificationsQuery",
 	"ControllersNotificationStreamQuery":                  "NotificationStreamQuery",
 	"ControllersNotificationIDParam":                      "NotificationIDParam",
@@ -262,6 +268,14 @@ var schemaNames = map[string]string{
 	"ControllersNotificationEnvelope":                     "NotificationEnvelope",
 	"ControllersMarkAllNotificationsReadRequest":          "MarkAllNotificationsReadRequest",
 	"ControllersMarkAllNotificationsReadResponse":         "MarkAllNotificationsReadResponse",
+	"ControllersUsageHookMetadata":                        "UsageHookMetadata",
+	"ControllersListUsageSessionsQuery":                   "ListUsageSessionsQuery",
+	"ControllersCompactSessionUsageResponse":              "CompactSessionUsageResponse",
+	"ControllersListCompactSessionUsageResponse":          "ListCompactSessionUsageResponse",
+	"ControllersUsageTotalsResponse":                      "UsageTotalsResponse",
+	"ControllersUsageModelResponse":                       "UsageModelResponse",
+	"ControllersUsageHarnessResponse":                     "UsageHarnessResponse",
+	"ControllersSessionUsageResponse":                     "SessionUsageResponse",
 	// httpd/controllers — standalone shell terminal wire envelopes
 	"ControllersShellTerminalHandleIDParam": "ShellTerminalHandleIDParam",
 	"ControllersOpenShellTerminalRequest":   "OpenShellTerminalRequest",
@@ -397,6 +411,7 @@ func operations() []operation {
 	ops = append(ops, prOperations()...)
 	ops = append(ops, reviewOperations()...)
 	ops = append(ops, notificationOperations()...)
+	ops = append(ops, usageOperations()...)
 	ops = append(ops, pushOperations()...)
 	ops = append(ops, importOperations()...)
 	ops = append(ops, devOperations()...)
@@ -443,6 +458,32 @@ func browserOperations() []operation {
 type conversationSnapshotQuery struct {
 	BeforeSequence *int64 `query:"beforeSequence,omitempty" minimum:"1" description:"Read items older than this conversation sequence. Omit for the newest page."`
 	Limit          *int64 `query:"limit,omitempty" minimum:"1" maximum:"500" description:"Maximum combined messages and activities to return. Defaults to 200."`
+}
+
+func usageOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/usage/sessions", id: "listCompactSessionUsage", tag: "usage",
+			summary:    "List compact token usage for session cards",
+			pathParams: []any{controllers.ListUsageSessionsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListCompactSessionUsageResponse{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/usage/sessions/{sessionId}", id: "getSessionUsage", tag: "usage",
+			summary:    "Get detailed token usage for one session",
+			pathParams: []any{controllers.SessionIDParam{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SessionUsageResponse{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
 }
 
 // shellTerminalOperations describes the standalone shell terminal surface:
@@ -739,6 +780,30 @@ func agentOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.ProbeAgentResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodGet, path: "/api/v1/agents/{agent}/models", id: "getAgentModels", tag: "agents",
+			summary:    "Return the cached model picker for one agent, discovering it on first use",
+			pathParams: []any{controllers.AgentIDParam{}, controllers.AgentModelsQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentModelsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/agents/{agent}/models/refresh", id: "refreshAgentModels", tag: "agents",
+			summary:    "Refresh and cache the model picker for one agent",
+			pathParams: []any{controllers.AgentIDParam{}, controllers.AgentModelsRefreshQuery{}},
+			resps: []respUnit{
+				{http.StatusOK, controllers.AgentModelsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},
@@ -1472,6 +1537,19 @@ func sessionOperations() []operation {
 				{http.StatusCreated, controllers.SpawnOrchestratorResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/orchestrators/delegate", id: "delegateTask", tag: "sessions",
+			summary: "Start a worker task and ask the orchestrator to title it",
+			reqBody: controllers.DelegateTaskRequest{},
+			resps: []respUnit{
+				{http.StatusAccepted, controllers.DelegateTaskResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusConflict, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

@@ -69,6 +69,19 @@ type sessionTerminator interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 }
 
+type sessionUsageFinalizer interface {
+	FinalizeSession(
+		ctx context.Context,
+		id domain.SessionID,
+		expectedRuntimeLaunchID string,
+		expectedSessionRevision time.Time,
+	) error
+}
+
+type sessionUsageReactivator interface {
+	ReactivateSession(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string) error
+}
+
 type pendingLaunch struct {
 	launchID string
 	ready    chan struct{}
@@ -120,8 +133,13 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
-	containers           ports.ContainerReaper
-	projects             projectConfigLoader
+	// usageFinalizer is late-bound because the usage pipeline is optional. It
+	// receives terminal intent before is_terminated makes the session ineligible
+	// for normal source discovery.
+	usageFinalizer   sessionUsageFinalizer
+	usageReactivator sessionUsageReactivator
+	containers       ports.ContainerReaper
+	projects         projectConfigLoader
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -175,6 +193,15 @@ func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.completionTerminator = terminator
+}
+
+// SetUsageFinalizer wires termination and relaunches to usage collection.
+// Telemetry failures never block the lifecycle transition.
+func (m *Manager) SetUsageFinalizer(finalizer sessionUsageFinalizer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.usageFinalizer = finalizer
+	m.usageReactivator, _ = finalizer.(sessionUsageReactivator)
 }
 
 // PrepareLaunch registers a supervised generation before the runtime starts.
@@ -264,15 +291,21 @@ func needsInputResolutions(prev, next domain.SessionRecord, now time.Time) []por
 // existing recent-activity guard; supervised workload death is independently
 // fenced by the launch generation and never terminates the runtime.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
-	terminated := false
-	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated {
+	matchesLaunch := func(cur domain.SessionRecord) bool {
+		currentLaunch := cur.Metadata.RuntimeLaunchID
+		return currentLaunch == "" || f.LaunchID == currentLaunch
+	}
+	var (
+		finalizer           sessionUsageFinalizer
+		terminationLaunch   string
+		terminationRevision time.Time
+		shouldTerminate     bool
+	)
+	if err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated || !matchesLaunch(cur) {
 			return cur, false
 		}
 		currentLaunch := cur.Metadata.RuntimeLaunchID
-		if currentLaunch != "" && f.LaunchID != currentLaunch {
-			return cur, false
-		}
 		if currentLaunch != "" && f.Runtime == ports.ProbeAlive && f.Workload == ports.ProbeDead {
 			if cur.Activity.State == domain.ActivityExited {
 				return cur, false
@@ -283,6 +316,24 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 			return next, true
 		}
 		if !runtimeClearlyDead(f, cur.Activity, now, m.window) {
+			return cur, false
+		}
+		finalizer = m.usageFinalizer
+		terminationLaunch = currentLaunch
+		terminationRevision = cur.UpdatedAt
+		shouldTerminate = true
+		return cur, false
+	}); err != nil || !shouldTerminate {
+		return err
+	}
+
+	finalizeSessionUsage(ctx, id, terminationLaunch, terminationRevision, finalizer)
+
+	terminated := false
+	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated || !cur.UpdatedAt.Equal(terminationRevision) ||
+			cur.Metadata.RuntimeLaunchID != terminationLaunch || !matchesLaunch(cur) ||
+			!runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
 		next := cur
@@ -689,26 +740,37 @@ func (m *Manager) resolveNotifications(ctx context.Context, resolutions ...ports
 
 // MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.
 func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	defer m.finishLaunchLocked(id, strings.TrimSpace(metadata.RuntimeLaunchID))
-	rec, ok, err := m.store.GetSession(ctx, id)
+	launchID := strings.TrimSpace(metadata.RuntimeLaunchID)
+	reactivator, err := func() (sessionUsageReactivator, error) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		defer m.finishLaunchLocked(id, launchID)
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
+		}
+		now := m.clock()
+		rec.IsTerminated = false
+		rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+		// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
+		// a relaunch with broken hooks degrades to no_signal instead of inheriting
+		// a stale "signals worked once" fact.
+		rec.FirstSignalAt = time.Time{}
+		rec.Metadata = mergeMetadata(rec.Metadata, metadata)
+		rec.UpdatedAt = now
+		if err := m.store.UpdateSession(ctx, rec); err != nil {
+			return nil, err
+		}
+		return m.usageReactivator, nil
+	}()
 	if err != nil {
 		return err
 	}
-	if !ok {
-		return fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
-	}
-	now := m.clock()
-	rec.IsTerminated = false
-	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
-	// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
-	// a relaunch with broken hooks degrades to no_signal instead of inheriting
-	// a stale "signals worked once" fact.
-	rec.FirstSignalAt = time.Time{}
-	rec.Metadata = mergeMetadata(rec.Metadata, metadata)
-	rec.UpdatedAt = now
-	return m.store.UpdateSession(ctx, rec)
+	reactivateSessionUsage(ctx, id, launchID, reactivator)
+	return nil
 }
 
 // CommitControllerEpoch atomically changes which controller owns a live
@@ -793,20 +855,67 @@ func (m *Manager) CommitControllerEpoch(
 // session's Docker containers via the optional ContainerReaper (#2652) as its one
 // built-in external side effect.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
-	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated {
-			return cur, false
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		cur.IsTerminated = true
-		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
-		delete(m.flights, id) // runs under m.mu (mutate holds it)
-		return cur, true
-	})
-	if err != nil {
-		return err
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil || !ok {
+			return err
+		}
+		if rec.IsTerminated {
+			m.reapSessionContainers(ctx, id)
+			return nil
+		}
+
+		launchID := rec.Metadata.RuntimeLaunchID
+		sessionRevision := rec.UpdatedAt
+		m.mu.Lock()
+		finalizer := m.usageFinalizer
+		m.mu.Unlock()
+		finalizeSessionUsage(ctx, id, launchID, sessionRevision, finalizer)
+
+		const (
+			terminationChanged = iota
+			terminationApplied
+			terminationAlreadyApplied
+			terminationLaunchChanged
+		)
+		outcome := terminationChanged
+		err = m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+			switch {
+			case cur.IsTerminated:
+				outcome = terminationAlreadyApplied
+				return cur, false
+			case cur.Metadata.RuntimeLaunchID != launchID:
+				outcome = terminationLaunchChanged
+				return cur, false
+			case !cur.UpdatedAt.Equal(sessionRevision):
+				return cur, false
+			default:
+				cur.IsTerminated = true
+				cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
+				delete(m.flights, id) // runs under m.mu (mutate holds it)
+				outcome = terminationApplied
+				return cur, true
+			}
+		})
+		if err != nil {
+			return err
+		}
+		switch outcome {
+		case terminationApplied, terminationAlreadyApplied:
+			m.reapSessionContainers(ctx, id)
+			return nil
+		case terminationLaunchChanged:
+			return fmt.Errorf("lifecycle: runtime launch changed while terminating session %q", id)
+		default:
+			// A same-launch activity transition changed UpdatedAt after usage was
+			// finalized. Retry from a fresh snapshot so termination and usage
+			// finalization commit against the same durable revision.
+			continue
+		}
 	}
-	m.reapSessionContainers(ctx, id)
-	return nil
 }
 
 // reapSessionContainers is the container leg of #2652 (the container-owning
@@ -844,6 +953,35 @@ func (m *Manager) reapSessionContainers(ctx context.Context, id domain.SessionID
 	}
 	if removed > 0 {
 		slog.Default().Info("lifecycle: reaped session containers", "session", id, "removed", removed)
+	}
+}
+
+func finalizeSessionUsage(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedRuntimeLaunchID string,
+	expectedSessionRevision time.Time,
+	finalizer sessionUsageFinalizer,
+) {
+	if finalizer == nil {
+		return
+	}
+	if err := finalizer.FinalizeSession(ctx, id, expectedRuntimeLaunchID, expectedSessionRevision); err != nil {
+		slog.Default().Warn("lifecycle: finalize session usage before termination", "session", id, "err", err)
+	}
+}
+
+func reactivateSessionUsage(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedRuntimeLaunchID string,
+	reactivator sessionUsageReactivator,
+) {
+	if reactivator == nil {
+		return
+	}
+	if err := reactivator.ReactivateSession(ctx, id, expectedRuntimeLaunchID); err != nil {
+		slog.Default().Warn("lifecycle: reactivate session usage after launch", "session", id, "err", err)
 	}
 }
 

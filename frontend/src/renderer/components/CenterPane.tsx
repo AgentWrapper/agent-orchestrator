@@ -125,6 +125,8 @@ export function CenterPane({
 		const workspaceSurface = pane.closest<HTMLElement>(".center-panel-surface");
 		const measure = () => {
 			const paneRect = pane.getBoundingClientRect();
+			// leftInset/rightInset are kept for the terminal region width calculation
+			// but no longer used for viewport-alignment padding (topbar is inside the surface).
 			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? paneRect;
 			const next = {
 				leftInset: workspaceRect.left,
@@ -189,13 +191,8 @@ export function CenterPane({
 	);
 
 	const terminalTopbar = (
-		<div
-			className="flex h-session-topbar w-full shrink-0 items-stretch bg-sidebar pt-1"
-			style={{
-				paddingLeft: isFullscreen ? 0 : terminalBounds.leftInset,
-				paddingRight: isFullscreen ? 0 : terminalBounds.rightInset,
-			}}
-		>
+		<div className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
+
 			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 				<div
 					className={cn(

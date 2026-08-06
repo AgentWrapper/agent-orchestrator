@@ -4,6 +4,7 @@ import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
 
 /** TestFlight beta for the Agent Orchestrator iOS app. */
 export const TESTFLIGHT_URL = "https://testflight.apple.com/join/t4U3fu2H";
@@ -36,14 +37,14 @@ export function ConnectMobileGetApp() {
 					</span>
 				</div>
 				<div className="flex shrink-0 items-center gap-1.5">
-					<button
+					<Button
 						type="button"
+						variant="footer"
 						aria-label={t("mobile.joinTestFlightAria")}
 						onClick={() => void aoBridge.app.openExternal(TESTFLIGHT_URL)}
-						className="settings-footer-button"
 					>
 						{t("mobile.joinBeta")}
-					</button>
+					</Button>
 					<button
 						type="button"
 						aria-label={showQR ? t("mobile.hideQR") : t("mobile.showQR")}
@@ -90,14 +91,14 @@ export function ConnectMobileGetApp() {
 						{t("mobile.androidHint")}
 					</span>
 				</div>
-				<button
+				<Button
 					type="button"
+					variant="footer"
 					aria-label={t("mobile.androidSignupAria")}
 					onClick={() => void aoBridge.app.openExternal(ANDROID_SIGNUP_URL)}
-					className="settings-footer-button"
 				>
 					{t("mobile.joinWaitlist")}
-				</button>
+				</Button>
 			</div>
 		</div>
 	);

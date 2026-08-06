@@ -20,7 +20,7 @@ func openTestDB(t *testing.T) *sql.DB {
 // The whole backward-compatibility promise of the Chat feature: a database that
 // already has sessions must come out of the migration with every one of them in
 // TUI mode, so an upgrade changes nobody's workflow.
-func TestMigration0052BackfillsExistingSessionsToTUI(t *testing.T) {
+func TestMigration0066BackfillsExistingSessionsToTUI(t *testing.T) {
 	db := openTestDB(t)
 
 	// Stop before the Chat migration: sessions exist, session_mode does not.
@@ -38,7 +38,7 @@ func TestMigration0052BackfillsExistingSessionsToTUI(t *testing.T) {
 		}
 	}
 
-	upTo(t, db, 52)
+	upTo(t, db, 66)
 
 	rows, err := db.Query(`SELECT id, session_mode, provider_conversation_id, controller_generation FROM sessions ORDER BY id`)
 	if err != nil {
@@ -73,9 +73,9 @@ func TestMigration0052BackfillsExistingSessionsToTUI(t *testing.T) {
 
 // A fresh install must also default to TUI: the mode is only ever Chat because
 // something explicitly asked for it.
-func TestMigration0052FreshDatabaseDefaultsToTUI(t *testing.T) {
+func TestMigration0066FreshDatabaseDefaultsToTUI(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 52)
+	upTo(t, db, 66)
 
 	now := time.Now().UTC()
 	if _, err := db.Exec(`INSERT INTO projects (id, path, display_name, registered_at)
@@ -132,9 +132,9 @@ func TestReconcileSchemaRepairsMissingConversationCurrentSessionID(t *testing.T)
 	}
 }
 
-func TestMigration0052ConversationSchemaConstraints(t *testing.T) {
+func TestMigration0066ConversationSchemaConstraints(t *testing.T) {
 	db := openTestDB(t)
-	upTo(t, db, 52)
+	upTo(t, db, 66)
 
 	now := time.Now().UTC()
 	mustExec(t, db, `INSERT INTO projects (id, path, display_name, registered_at) VALUES ('p1','/tmp/p1','proj',?)`, now)
@@ -232,7 +232,7 @@ func TestChatMigrationsEmitConversationCDC(t *testing.T) {
 	db := openTestDB(t)
 	// Exercise the final schema: later activity-kind migrations rebuild the table
 	// and must preserve the trigger introduced with Chat mode.
-	upTo(t, db, 53)
+	upTo(t, db, 79)
 
 	now := time.Now().UTC()
 	mustExec(t, db, `INSERT INTO projects (id, path, display_name, registered_at) VALUES ('p1','/tmp/p1','proj',?)`, now)

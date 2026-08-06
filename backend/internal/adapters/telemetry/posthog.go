@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -84,6 +85,12 @@ var remoteCommandTokens = map[string]struct{}{
 }
 
 var remotePayloadAllowlist = map[string]map[string]struct{}{
+	// Reported by the LAN listener on the first authenticated request per
+	// transport per day (httpd/mobile_connect_telemetry.go). "transport" is a
+	// closed vocabulary — lan / tailscale / loopback / other — never an address.
+	"ao.mobile.device_connected": {
+		"transport": {},
+	},
 	"ao.app.active": {
 		"actor_type":   {},
 		"channel":      {},
@@ -150,6 +157,23 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"kind":                   {},
 		"since_first_project_ms": {},
 	},
+	"ao.review.triggered": {
+		"created_runs": {},
+		"harness":      {},
+		"reused":       {},
+	},
+	"ao.review.trigger_failed": {
+		"error_kind": {},
+	},
+	"ao.review.submitted": {
+		"duration_ms":        {},
+		"harness":            {},
+		"posted_to_provider": {},
+		"verdict":            {},
+	},
+	"ao.review.cancelled": {
+		"cancelled_runs": {},
+	},
 	"ao.projects.created": {
 		"has_git_remote": {},
 		"kind":           {},
@@ -185,9 +209,11 @@ type postHogClient interface {
 
 // PostHogSink exports allowlisted telemetry events to PostHog.
 type PostHogSink struct {
-	apiKey     string
-	host       string
-	distinctID string
+	apiKey       string
+	host         string
+	distinctID   string
+	defaultAgent string
+	tenure       *tenureTracker
 	// appVersion stamps app_version/ao_version on every exported event. Empty
 	// leaves the properties off entirely rather than reporting a misleading
 	// "unknown" that would show up as a real version in release breakdowns.
@@ -200,7 +226,7 @@ type PostHogSink struct {
 }
 
 // NewPostHogSink starts a buffered PostHog exporter with a stable install ID.
-func NewPostHogSink(dataDir, apiKey, host, appVersion string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
+func NewPostHogSink(dataDir, apiKey, host, appVersion, defaultAgent string, client postHogClient, log *slog.Logger) (*PostHogSink, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, fmt.Errorf("posthog api key is required")
 	}
@@ -215,13 +241,15 @@ func NewPostHogSink(dataDir, apiKey, host, appVersion string, client postHogClie
 		return nil, err
 	}
 	s := &PostHogSink{
-		apiKey:     apiKey,
-		host:       strings.TrimRight(host, "/"),
-		distinctID: distinctID,
-		client:     client,
-		log:        telemetryLogger(log),
-		appVersion: strings.TrimSpace(appVersion),
-		ch:         make(chan ports.TelemetryEvent, postHogBufferSize),
+		apiKey:       apiKey,
+		host:         strings.TrimRight(host, "/"),
+		distinctID:   distinctID,
+		defaultAgent: safeAgentSlug(defaultAgent),
+		tenure:       newTenureTracker(dataDir, time.Now),
+		client:       client,
+		log:          telemetryLogger(log),
+		appVersion:   strings.TrimSpace(appVersion),
+		ch:           make(chan ports.TelemetryEvent, postHogBufferSize),
 	}
 	s.wg.Add(1)
 	go s.loop()
@@ -312,6 +340,24 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 	if s.appVersion != "" {
 		props["app_version"] = s.appVersion
 		props["ao_version"] = s.appVersion
+		// Channel of the build actually running, from the version string. A
+		// nightly build carries "-nightly." (CI stamps 0.11.3-nightly.5); plain
+		// semver is stable. The renderer sends the same property.
+		props["version_channel"] = versionChannel(s.appVersion)
+	}
+	// Which agent this install actually defaults to. Without it, "how many people
+	// use Claude versus Codex" is only answerable for sessions that were spawned,
+	// which silently excludes everyone who installed and never ran one.
+	if s.defaultAgent != "" {
+		props["default_agent"] = s.defaultAgent
+	}
+	// Tenure turns retention into a property rather than a cohort query, so the
+	// spread of first-day versus long-standing installs is one breakdown.
+	if s.tenure != nil {
+		ageDays, activeDays, bucket := s.tenure.observe()
+		props["install_age_days"] = ageDays
+		props["active_days"] = activeDays
+		props["tenure"] = string(bucket)
 	}
 	if ev.RequestID != "" {
 		props["request_id"] = ev.RequestID
@@ -431,6 +477,31 @@ func sanitizeRemoteValue(key string, v any) (any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// agentSlugPattern is the shape of a real adapter id (claude-code, codex, ...).
+// AO_AGENT is free text and cfg.Agent is only validated against the registry
+// when the daemon builds its resolver, which happens after ao.daemon.started is
+// already emitted. So a malformed value, including a filesystem path, could ride
+// on that first event. safeAgentSlug drops anything that is not a plain slug, so
+// telemetry carries a known-shape id or nothing, never a path.
+var agentSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+
+func safeAgentSlug(agent string) string {
+	trimmed := strings.TrimSpace(agent)
+	if agentSlugPattern.MatchString(trimmed) {
+		return trimmed
+	}
+	return ""
+}
+
+// versionChannel derives stable/nightly from the version string, matching the
+// renderer's versionChannelFrom.
+func versionChannel(appVersion string) string {
+	if strings.Contains(strings.ToLower(appVersion), "-nightly.") {
+		return "nightly"
+	}
+	return "stable"
 }
 
 func loadOrCreateInstallID(dataDir string) (string, error) {

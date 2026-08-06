@@ -5,6 +5,7 @@ import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
 import { conversationQueryKey } from "../hooks/useConversation";
+import { sessionUsageQueryRoot } from "../hooks/useSessionUsageSummaries";
 
 export type EventTransport = {
 	connect: () => () => void;
@@ -87,6 +88,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 					if (workspaceInvalidationPending) {
 						void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 						void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
+						void queryClient.invalidateQueries({ queryKey: sessionUsageQueryRoot });
 						workspaceInvalidationPending = false;
 					}
 					for (const sessionId of pendingConversationSessions) {

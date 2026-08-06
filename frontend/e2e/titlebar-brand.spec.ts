@@ -54,7 +54,7 @@ test("project board route: brand clears the macOS titlebar cluster and stays rea
 	await expect(page.getByText("Projects")).toBeVisible();
 
 	// In-app nav to /projects/:id (a hard load boots the router at the board).
-	await page.getByRole("button", { name: "Open api-gateway dashboard" }).click();
+	await page.locator('[data-sidebar="menu-button"]').filter({ hasText: "api-gateway" }).first().click();
 	// The active project row marks itself aria-current=page once navigation lands.
 	await expect(page.locator('[aria-current="page"]')).toBeVisible();
 

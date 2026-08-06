@@ -470,6 +470,29 @@ type SendSessionMessageResponse struct {
 	Message   string           `json:"message"`
 }
 
+// DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
+// An omitted agent tells the orchestrator to use the project's worker default.
+// Attachments are intentionally absent from this MVP contract: delegation uses
+// the string-only guarded messenger and cannot safely hand image bytes to a
+// worker that does not exist yet without a durable attachment store.
+type DelegateTaskRequest struct {
+	ProjectID domain.ProjectID    `json:"projectId"`
+	Brief     string              `json:"brief" maxLength:"4096"`
+	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
+	Model     string              `json:"model,omitempty" maxLength:"256"`
+	// Mode is omitted for the daemon-owned default. The UI sends tui only when
+	// the user explicitly accepts the fallback after Chat preflight fails.
+	Mode domain.SessionMode `json:"mode,omitempty" enum:"tui,chat"`
+}
+
+// DelegateTaskResponse confirms which worker was spawned and, when available,
+// which orchestrator received the follow-up title request.
+type DelegateTaskResponse struct {
+	OK             bool             `json:"ok"`
+	WorkerID       domain.SessionID `json:"workerId"`
+	OrchestratorID domain.SessionID `json:"orchestratorId,omitempty"`
+}
+
 // SessionPRFacts is the pull-request read shape returned under session PR routes.
 type SessionPRFacts struct {
 	URL            string                `json:"url"`
@@ -679,12 +702,24 @@ type ClaimPRResponse struct {
 // state-only semantics.
 // AgentSessionID may arrive without State on metadata-only SessionStart hooks.
 type SetActivityRequest struct {
-	State          string `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook. Optional for metadata-only hooks."`
-	Event          string `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
-	ToolName       string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
-	ToolUseID      string `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
-	AgentSessionID string `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
-	LaunchID       string `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
+	State          string             `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook. Optional for metadata-only hooks."`
+	Event          string             `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
+	ToolName       string             `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
+	ToolUseID      string             `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
+	AgentSessionID string             `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
+	LaunchID       string             `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
+	Usage          *UsageHookMetadata `json:"usage,omitempty" description:"Provider transcript metadata used by the local usage pipeline."`
+}
+
+// UsageHookMetadata is the transcript metadata carried by supported Claude
+// Code and Codex hooks. It contains paths and identifiers only, never prompt or
+// response content.
+type UsageHookMetadata struct {
+	Harness                domain.AgentHarness `json:"harness" enum:"claude-code,codex"`
+	TranscriptPath         string              `json:"transcriptPath,omitempty"`
+	ModelID                string              `json:"modelId,omitempty"`
+	SubagentID             string              `json:"subagentId,omitempty"`
+	SubagentTranscriptPath string              `json:"subagentTranscriptPath,omitempty"`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.
@@ -730,8 +765,76 @@ type RefreshAgentsResponse = agentsvc.Inventory
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
 
+// AgentModelsQuery scopes a model catalog to a project where providers may be
+// configured per workspace.
+type AgentModelsQuery struct {
+	ProjectID string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+}
+
+// AgentModelsRefreshQuery controls forced refresh versus cheap background
+// revalidation for a project-scoped model catalog.
+type AgentModelsRefreshQuery struct {
+	ProjectID  string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+	Revalidate bool   `query:"revalidate,omitempty" description:"When true, compare executable and config metadata before running discovery."`
+}
+
+// AgentModelsResponse is the normalized model picker for one agent.
+type AgentModelsResponse = ports.AgentModelCatalog
+
+// AgentModelInfo is one selectable model or agent-owned mode.
+type AgentModelInfo = ports.AgentModelInfo
+
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
+
+// ListUsageSessionsQuery is the query string accepted by GET
+// /api/v1/usage/sessions.
+type ListUsageSessionsQuery struct {
+	ProjectID domain.ProjectID `query:"projectId,omitempty" description:"Optional project id filter for dashboard cards."`
+}
+
+// CompactSessionUsageResponse is one session card's token-only usage summary.
+type CompactSessionUsageResponse struct {
+	SessionID   domain.SessionID `json:"sessionId"`
+	TotalTokens int64            `json:"totalTokens" minimum:"0"`
+	Incomplete  bool             `json:"incomplete"`
+}
+
+// ListCompactSessionUsageResponse is the batch dashboard usage response.
+type ListCompactSessionUsageResponse struct {
+	Sessions []CompactSessionUsageResponse `json:"sessions"`
+}
+
+// UsageTotalsResponse is the normalized telemetry aggregate for one scope.
+type UsageTotalsResponse struct {
+	InputTokens         *int64 `json:"inputTokens"`
+	UncachedInputTokens *int64 `json:"uncachedInputTokens"`
+	CacheReadTokens     *int64 `json:"cacheReadTokens"`
+	CacheWriteTokens    *int64 `json:"cacheWriteTokens"`
+	OutputTokens        *int64 `json:"outputTokens"`
+	ReasoningTokens     *int64 `json:"reasoningTokens"`
+}
+
+// UsageModelResponse is telemetry grouped by exact model id.
+type UsageModelResponse struct {
+	ModelID string              `json:"modelId"`
+	Totals  UsageTotalsResponse `json:"totals"`
+}
+
+// UsageHarnessResponse groups model telemetry under one AO harness.
+type UsageHarnessResponse struct {
+	Harness string               `json:"harness"`
+	Totals  UsageTotalsResponse  `json:"totals"`
+	Models  []UsageModelResponse `json:"models"`
+}
+
+// SessionUsageResponse is detailed telemetry for the session inspector.
+type SessionUsageResponse struct {
+	SessionID  domain.SessionID       `json:"sessionId"`
+	Incomplete bool                   `json:"incomplete"`
+	Totals     UsageTotalsResponse    `json:"totals"`
+	Harnesses  []UsageHarnessResponse `json:"harnesses"`
+}
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
