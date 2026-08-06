@@ -794,6 +794,11 @@ export function getMacInstallBlocker(): string | undefined {
   if (process.platform !== "darwin") return undefined;
   // .../Agent Orchestrator.app/Contents/MacOS/<binary> -> the .app bundle root
   const bundle = path.resolve(process.execPath, "..", "..", "..");
+  // Everything below assumes that shape. Under `npm start`, and in tests,
+  // execPath is a bare node/electron binary and this resolves to some unrelated
+  // ancestor directory whose permissions say nothing about installability, so
+  // fail open rather than guess from it.
+  if (!bundle.endsWith(".app")) return undefined;
   if (bundle.includes("/AppTranslocation/")) {
     return (
       "macOS is running Agent Orchestrator from a temporary read-only location " +

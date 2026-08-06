@@ -1367,6 +1367,23 @@ describe("quitAndInstallUpdate", () => {
     }
   });
 
+  // Under `npm start` and in tests execPath is a bare node/electron binary, so
+  // the derived path is an unrelated ancestor dir. Its permissions must not
+  // decide anything.
+  it("fails open when execPath is not inside a .app bundle", async () => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
   it("never blocks off macOS, even for translocation-looking paths", async () => {
     const restore = stubProcess("win32", TRANSLOCATED_EXEC_PATH);
     try {
