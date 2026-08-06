@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 )
 
 type fakeStore struct {
@@ -420,5 +422,27 @@ func TestServiceWithoutTelemetrySinkStaysSilent(t *testing.T) {
 	svc := New(nil, store)
 	if _, err := svc.Submit(context.Background(), "worker-1", "run-1", domain.VerdictApproved, "", ""); err != nil {
 		t.Fatalf("Submit without a sink: %v", err)
+	}
+}
+
+// reviewErrorKind must distinguish the engine's sentinels. They are wrapped with
+// %w and only become *apierr.Error at the HTTP boundary, so the generic
+// classifier would report every trigger failure as "internal" and the
+// trigger_failed event's error_kind could never say why.
+func TestReviewErrorKindClassifiesEngineSentinels(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"invalid", fmt.Errorf("%w: no PR", reviewcore.ErrInvalid), "invalid"},
+		{"not_found", fmt.Errorf("%w: worker gone", reviewcore.ErrNotFound), "not_found"},
+		{"agent_unavailable", fmt.Errorf("%w", ports.ErrAgentBinaryNotFound), "agent_unavailable"},
+		{"fallback_internal", errors.New("something unexpected"), "internal"},
+	}
+	for _, c := range cases {
+		if got := reviewErrorKind(c.err); got != c.want {
+			t.Errorf("%s: reviewErrorKind = %q, want %q", c.name, got, c.want)
+		}
 	}
 }

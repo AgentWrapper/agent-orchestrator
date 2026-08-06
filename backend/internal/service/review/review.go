@@ -6,6 +6,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -28,6 +29,20 @@ var (
 // can carry repository paths and agent binary locations, so only the kind and a
 // stable code ever leave the process.
 func reviewErrorKind(err error) string {
+	// The engine returns its own sentinels (reviewcore.ErrInvalid / ErrNotFound)
+	// and ports.ErrAgentBinaryNotFound, wrapped with %w. Those are mapped to API
+	// error kinds only at the HTTP controller boundary, after Trigger has already
+	// returned here, so telemetrymeta.ErrorKindAndCode (which only classifies
+	// *apierr.Error) would collapse every trigger failure to "internal" and the
+	// field could never say why a trigger failed. Classify the sentinels first.
+	switch {
+	case errors.Is(err, reviewcore.ErrInvalid):
+		return "invalid"
+	case errors.Is(err, reviewcore.ErrNotFound):
+		return "not_found"
+	case errors.Is(err, ports.ErrAgentBinaryNotFound):
+		return "agent_unavailable"
+	}
 	kind, _ := telemetrymeta.ErrorKindAndCode(err)
 	return kind
 }
