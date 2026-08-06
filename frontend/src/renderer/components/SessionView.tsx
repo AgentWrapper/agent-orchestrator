@@ -247,14 +247,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
 		(session?.mode === "chat" ? "tui" : "chat");
-	const interfaceBusy = Boolean(
-		session &&
-		(session.status === "working" ||
-			session.status === "needs_input" ||
-			session.activity?.state === "active" ||
-			session.activity?.state === "waiting_input" ||
-			session.activity?.state === "blocked"),
-	);
 	const interfaceWaitingForInput = Boolean(
 		session &&
 		(session.status === "needs_input" ||
@@ -276,12 +268,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();
-		if (interfaceBusy) {
-			setInterfaceSwitchDialogOpen(true);
-			return;
-		}
-		void beginInterfaceSwitch("drain");
-	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
+		setInterfaceSwitchDialogOpen(true);
+	}, [interfaceSwitch]);
 	const showInterfaceSwitchAction = Boolean(
 		interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError,
 	);

@@ -14,6 +14,11 @@ const interfaceTransitionMock = vi.hoisted(() => ({
 	resetStartError: vi.fn(),
 	cancel: vi.fn(),
 }));
+const interfaceTransitionState = vi.hoisted(() => ({
+	status: undefined as
+		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string }
+		| undefined,
+}));
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -31,7 +36,7 @@ vi.mock("../hooks/useWindowFullScreen", () => ({
 vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 	interfaceTransitionIsActive: () => false,
 	useSessionInterfaceTransition: () => ({
-		status: undefined,
+		status: interfaceTransitionState.status,
 		transition: undefined,
 		isLoading: false,
 		statusError: undefined,
@@ -119,9 +124,10 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./chat/SessionChatSurface", () => ({
-	SessionChatSurface: ({ onOpenShell }: { onOpenShell?: () => void }) => (
+	SessionChatSurface: ({ onOpenShell, interfaceAction }: { onOpenShell?: () => void; interfaceAction?: ReactNode }) => (
 		<div data-testid="chat-surface">
 			chat surface
+			{interfaceAction}
 			<button type="button" onClick={onOpenShell}>
 				open shell from chat
 			</button>
@@ -137,6 +143,7 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
 		onNewShellTerminal,
+		topbarActions,
 	}: {
 		terminalTarget?: { kind: string; handleId?: string };
 		session?: WorkspaceSession;
@@ -145,9 +152,11 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
 		onNewShellTerminal?: () => void;
+		topbarActions?: ReactNode;
 	}) => (
 		<div>
 			terminal center
+			{topbarActions}
 			<div data-testid="terminal-target">
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : "worker"}
 			</div>
@@ -402,6 +411,7 @@ describe("SessionView", () => {
 		interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
 		interfaceTransitionMock.cancel.mockReset();
+		interfaceTransitionState.status = undefined;
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -529,6 +539,39 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
 		expect(screen.getByText("chat surface")).toBeInTheDocument();
+	});
+
+	it("opens the switch policy dialog from TUI instead of auto-starting", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
+		const session = workerSession("sess-1");
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Open Chat" }));
+
+		expect(screen.getByRole("dialog")).toHaveTextContent("Switch to Chat?");
+		expect(screen.getByRole("button", { name: /Finish work, then switch/ })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Stop now and switch/ })).toBeInTheDocument();
+		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
+	});
+
+	it("opens the switch policy dialog from Chat instead of auto-starting", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Open Terminal UI" }));
+
+		expect(screen.getByRole("dialog")).toHaveTextContent("Switch to Terminal UI?");
+		expect(screen.getByRole("button", { name: /Finish work, then switch/ })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Stop now and switch/ })).toBeInTheDocument();
+		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
 	});
 
 	it("walks backward through auxiliary terminals before returning to the permanent terminal", () => {
