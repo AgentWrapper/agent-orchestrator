@@ -655,8 +655,9 @@ describe("SessionView", () => {
 	it("gives every terminal/inspector split size an explicit unit", () => {
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("terminal")).toEqual(["72%", "45%"]);
-		expect(panelSizes("inspector")).toEqual(["30%", "240px", "45%"]);
+		expect(panelSizes("terminal")).toEqual(["72%", "50%"]);
+		expect(panelSizes("inspector")).toEqual(["30%", "240px", "50%"]);
+		expect(screen.getByTestId("panel-inspector")).toHaveClass("session-inspector-panel");
 	});
 
 	it("opens the Summary inspector alongside the terminal by default", () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
@@ -29,7 +29,7 @@ import { cn } from "../lib/utils";
 const INSPECTOR_DEFAULT_PERCENT = 30;
 const INSPECTOR_MIN_PERCENT = 15;
 const INSPECTOR_MIN_SIZE = "240px";
-const INSPECTOR_MAX_PERCENT = 45;
+const INSPECTOR_MAX_PERCENT = 50;
 const INSPECTOR_COLLAPSED_SIZE = "0%";
 const INSPECTOR_MOTION_MS = 240;
 const inspectorSplitStorageKey = "ao.inspector.split";
@@ -511,10 +511,15 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
-			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
+			<ResizablePanelGroup
+				className="session-split min-h-0 flex-1"
+				id="session-workspace"
+				orientation="horizontal"
+				style={{ "--session-inspector-max-width": `${INSPECTOR_MAX_PERCENT}%` } as CSSProperties}
+			>
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
-				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
+				<ResizablePanel defaultSize="72%" id="terminal" minSize={`${100 - INSPECTOR_MAX_PERCENT}%`}>
 					<div className="flex h-full min-h-0 flex-col">
 						<ShellTopbar />
 						<CenterPane
@@ -551,6 +556,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 						/>
 						<ResizablePanel
 							aria-hidden={!inspectorPanelVisible}
+							className="session-inspector-panel"
 							collapsible={!isInspectorOpen}
 							defaultSize={inspectorDefaultSize}
 							id="inspector"

@@ -1917,6 +1917,14 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: flex-grow 240ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* react-resizable-panels enforces this during pointer movement; the CSS cap is
+ * the second guard while the parent workspace itself is changing width (for
+ * example, during the left-sidebar spring). The inspector can never cross the
+ * center line, even for a frame. */
+.session-split > .session-inspector-panel[data-panel] {
+	max-width: var(--session-inspector-max-width, 50%);
+}
+
 .session-split:has([data-separator="active"]) > [data-panel] {
 	transition: none;
 }
