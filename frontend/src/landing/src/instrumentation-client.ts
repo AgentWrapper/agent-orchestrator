@@ -6,6 +6,7 @@ import {
   resolveMarketingPostHogHost,
 } from "@/lib/analytics/posthog-config";
 import { ANALYTICS_CONSENT_KEY } from "@/lib/constants";
+import { campaignProperties } from "@/lib/analytics/campaign";
 
 // NEXT_PUBLIC_* is inlined at build time. Until the deploy workflow passed this
 // through, it was undefined on the deployed site and init was skipped entirely,
@@ -30,6 +31,12 @@ if (POSTHOG_KEY) {
     app_name: "marketing",
     domain: window.location.hostname,
   });
+
+  // Capture the entry URL's UTM campaign now, before any client-side navigation
+  // can drop the query string. captureCampaign is idempotent, so the later reads
+  // inside track() return this same stored value; doing it here only guarantees
+  // the anchor is the arrival URL rather than wherever the first event fired.
+  campaignProperties();
 }
 
 export const onRouterTransitionStart = () => {};

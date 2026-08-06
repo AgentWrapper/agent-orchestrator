@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   DESKTOP_PROJECT_KEY,
@@ -60,4 +63,20 @@ describe("design partner replay", () => {
       });
     }
   });
+});
+
+// Replay containment is a denylist against the desktop project's key, and that
+// key is hand-duplicated here because the shared source lives in the desktop
+// package, outside this static-export app, so importing it at runtime would drag
+// desktop code into the marketing bundle. This test is the drift detector: if
+// the desktop key is ever rotated in shared/posthog-config.ts, this fails and
+// forces the literal here to be reconciled, rather than replay silently arming
+// on the shared project.
+it("keeps DESKTOP_PROJECT_KEY in sync with the shared desktop constant", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const sharedPath = resolve(here, "../../../../shared/posthog-config.ts");
+  const source = readFileSync(sharedPath, "utf8");
+  const match = source.match(/DEFAULT_POSTHOG_PROJECT_KEY\s*=\s*"([^"]+)"/);
+  expect(match, `could not find DEFAULT_POSTHOG_PROJECT_KEY in ${sharedPath}`).toBeTruthy();
+  expect(DESKTOP_PROJECT_KEY).toBe(match![1]);
 });
