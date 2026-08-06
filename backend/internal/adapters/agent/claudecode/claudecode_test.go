@@ -902,6 +902,12 @@ func TestGetLaunchCommandOmitsToolFlagsWhenUnset(t *testing.T) {
 	}
 }
 
+func TestComposerIsEmptyUsesClaudePromptMarker(t *testing.T) {
+	if !(&Plugin{}).ComposerIsEmpty("\x1b[39m❯\u00a0") {
+		t.Fatal("blank Claude composer was not recognized")
+	}
+}
+
 func contains(values []string, needle string) bool {
 	for _, v := range values {
 		if v == needle {

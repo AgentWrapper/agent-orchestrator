@@ -35,7 +35,6 @@ WHEN OLD.activity_state <> NEW.activity_state
     OR OLD.pinned_at <> NEW.pinned_at
     OR (OLD.pinned_at IS NULL AND NEW.pinned_at IS NOT NULL)
     OR (OLD.pinned_at IS NOT NULL AND NEW.pinned_at IS NULL)
-    OR OLD.reviewer_harness <> NEW.reviewer_harness
     OR OLD.harness <> NEW.harness
     OR OLD.runtime_launch_id <> NEW.runtime_launch_id
     OR OLD.agent_session_id <> NEW.agent_session_id

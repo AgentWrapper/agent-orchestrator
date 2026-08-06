@@ -80,6 +80,12 @@ gpt-5.6-sol low · ~/project
 	}
 }
 
+func TestComposerIsEmptyUsesCodexPromptMarker(t *testing.T) {
+	if !(&Plugin{}).ComposerIsEmpty("› \x1b[2mExplain this codebase\x1b[0m\n\x1b[2mmodel · workspace\x1b[0m") {
+		t.Fatal("dim placeholder should prove an empty Codex composer")
+	}
+}
+
 func TestContinuationCapabilities(t *testing.T) {
 	got := (&Plugin{}).ContinuationCapabilities()
 	want := ports.ContinuationCapabilities{

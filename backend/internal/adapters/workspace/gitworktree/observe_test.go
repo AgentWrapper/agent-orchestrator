@@ -48,7 +48,7 @@ func TestObserveWorkspaceReturnsBoundedGitFacts(t *testing.T) {
 			case "branch":
 				return []byte("feature/switch\n"), nil
 			case "status":
-				return []byte(" M manager.go\n?? handoff.md\n"), nil
+				return []byte(" M manager.go\n?? notes.md\n"), nil
 			case "log":
 				return []byte("abc123\x1fimplement switch\x1f2026-08-04T10:00:00Z\x1e"), nil
 			default:

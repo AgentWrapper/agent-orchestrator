@@ -13,7 +13,6 @@ import (
 )
 
 const supervisedExitReportTimeout = 5 * time.Second
-const supervisedExitRetryDelay = time.Second
 
 func newAgentProcessCommand(ctx *commandContext) *cobra.Command {
 	root := &cobra.Command{
@@ -80,21 +79,13 @@ func (c *commandContext) runSupervisedProcess(ctx context.Context, sessionID, la
 }
 
 func (c *commandContext) reportSupervisedExit(sessionID, launchID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), supervisedExitReportTimeout)
+	defer cancel()
 	path := "sessions/" + sessionID + "/activity"
 	req := setActivityAPIRequest{State: "exited", Event: "process-exited", LaunchID: launchID}
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), supervisedExitReportTimeout)
-		err := c.postJSON(ctx, path, req, nil)
-		cancel()
-		if err == nil {
-			return
-		}
-		// Do not leave the foreground until AO has durably observed this exact
-		// generation's exit. The outer supervised terminal launch parks on a
-		// non-interpreting input sink afterward, but retaining the supervisor
-		// here also prevents stale durable activity while the daemon is briefly
-		// unavailable.
+	if err := c.postJSON(ctx, path, req, nil); err != nil {
+		// Reconciliation will recover this event from process absence. Keep the
+		// delivery failure visible without preventing the terminal's shell.
 		c.reportHookFailure("agent-process", "process-exited", sessionID, err)
-		time.Sleep(supervisedExitRetryDelay)
 	}
 }
