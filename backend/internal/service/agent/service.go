@@ -308,15 +308,18 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 			binary = resolved
 		}
 	}
-	version := s.discoverer.BinaryVersion(ctx, binary)
+	request := ports.AgentModelDiscoveryRequest{
+		AgentID: agentID, Binary: binary, WorkingDir: discovery.workingDir, Env: discovery.env,
+	}
+	// Fingerprints the same inputs the discovery run would read, so a change to
+	// either the executable or the configuration behind it invalidates the cache.
+	version := s.discoverer.CatalogFingerprint(ctx, request)
 	if hasCached && mode != modelLoadRefresh && cached.BinaryVersion == version {
 		cached.Catalog.RefreshRecommended = false
 		return cached.Catalog, nil
 	}
 
-	discovered, discoverErr := s.discoverer.Discover(ctx, ports.AgentModelDiscoveryRequest{
-		AgentID: agentID, Binary: binary, WorkingDir: discovery.workingDir, Env: discovery.env,
-	})
+	discovered, discoverErr := s.discoverer.Discover(ctx, request)
 	discovered.BinaryVersion = version
 	discovered.ValidatedAt = time.Now().UTC()
 	discovered.RefreshRecommended = false
