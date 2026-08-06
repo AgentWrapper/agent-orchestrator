@@ -1,6 +1,7 @@
 import { ChevronRight } from "lucide-react";
 import { motion, type MotionValue } from "motion/react";
 import type { CSSProperties, ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import type { ReverbTopbarModel } from "./topbar-model";
 
@@ -44,13 +45,14 @@ export function ReverbTopbar({
 	dragStyle,
 	className,
 }: ReverbTopbarProps) {
+	const { t } = useTranslation();
 	const currentIndex = model.breadcrumbs.length - 1;
 	const noDragStyle = interactiveStyleFor(dragStyle);
 	const hasRouteControls = Boolean(error || actions);
 
 	return (
 		<motion.header
-			aria-label="Reverb workspace"
+			aria-label={t("topbar.reverbWorkspace")}
 			className={cn(
 				"reverb-topbar center-panel-titlebar grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-border z-chrome",
 				className,
@@ -67,7 +69,7 @@ export function ReverbTopbar({
 
 				{model.breadcrumbs.length > 0 ? (
 					<nav
-						aria-label="Workspace breadcrumb"
+						aria-label={t("topbar.workspaceBreadcrumb")}
 						className="reverb-topbar__breadcrumbs min-w-0"
 						style={noDragStyle}
 					>
@@ -128,7 +130,7 @@ export function ReverbTopbar({
 
 			{context ? (
 				<div
-					aria-label={model.contextAriaLabel ?? "Current context"}
+					aria-label={model.contextAriaLabel ?? t("topbar.currentContext")}
 					className="reverb-topbar__state min-w-0"
 					role="group"
 					style={noDragStyle}
@@ -148,7 +150,7 @@ export function ReverbTopbar({
 
 				{actions ? (
 					<div
-						aria-label="Page actions"
+						aria-label={t("topbar.pageActions")}
 						className="reverb-topbar__actions flex shrink-0 items-center"
 						role="group"
 						style={noDragStyle}
@@ -163,7 +165,7 @@ export function ReverbTopbar({
 
 				{utilities ? (
 					<div
-						aria-label="Global utilities"
+						aria-label={t("topbar.globalUtilities")}
 						className="reverb-topbar__utilities flex shrink-0 items-center"
 						role="group"
 						style={noDragStyle}

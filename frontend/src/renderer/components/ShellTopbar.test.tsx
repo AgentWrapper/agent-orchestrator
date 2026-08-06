@@ -312,7 +312,8 @@ describe("ShellTopbar orchestrator actions", () => {
 	it("shows labelled orchestrator-session actions and explains them on hover", async () => {
 		renderTopbar(orchestrator);
 		const providerLabel = screen.getByText("claude-code");
-		expect(providerLabel.previousElementSibling).toHaveAttribute("src", expect.stringContaining("claude-code"));
+		expect(providerLabel.previousElementSibling?.tagName).toBe("IMG");
+		expect(providerLabel.previousElementSibling).toHaveAttribute("aria-hidden", "true");
 		expect(providerLabel.previousElementSibling).toHaveClass("size-icon-xs");
 
 		const actions = within(screen.getByRole("group", { name: "Page actions" })).getAllByRole("button");
@@ -492,7 +493,7 @@ describe("ShellTopbar route variants", () => {
 
 describe("ShellTopbar session controls", () => {
 	it("keeps breadcrumb, context, actions, and utilities in the shared three-zone order", () => {
-		renderTopbarSessions([worker], "sess-1");
+		renderTopbarSessions([sessionWith()], "sess-1");
 
 		const topbar = document.querySelector(".reverb-topbar");
 		expect(topbar).not.toBeNull();

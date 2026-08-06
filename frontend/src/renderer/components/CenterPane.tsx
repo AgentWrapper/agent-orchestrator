@@ -431,7 +431,7 @@ export function CenterPane({
 							>
 								<TerminalIcon aria-hidden="true" className="size-icon-xs!" />
 								<span className="min-w-0 flex-1 truncate">{t("shortcut.new-shell-terminal")}</span>
-								<DropdownMenuShortcut className="font-mono tracking-normal">
+								<DropdownMenuShortcut aria-hidden="true" className="font-mono tracking-normal">
 									{newTerminalShortcutLabel}
 								</DropdownMenuShortcut>
 							</DropdownMenuItem>

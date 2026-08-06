@@ -275,7 +275,7 @@ describe("SessionInspector tabs", () => {
 		for (const label of ["Summary", "Reviews", "Browser", "Files"]) {
 			const tab = screen.getByRole("tab", { name: label });
 			expect(tab).not.toHaveClass("text-sm-md");
-			expect(within(tab).getByText(label)).toHaveClass("text-2xs", "@max-[359px]/inspector:hidden");
+			expect(within(tab).getByText(label)).toHaveClass("session-inspector__responsive-label", "text-2xs");
 		}
 		expect(summaryTab).not.toHaveClass("flex-1");
 		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
