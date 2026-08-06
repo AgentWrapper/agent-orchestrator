@@ -3,17 +3,15 @@ import {
 	cpSync,
 	existsSync,
 	mkdirSync,
-	mkdtempSync,
 	readFileSync,
 	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { npmInvocation, pruneNodeDistribution } from "./build-acp-runtime-helpers.mjs";
+import { createWorkDirectory, npmInvocation, pruneNodeDistribution } from "./build-acp-runtime-helpers.mjs";
 
 const NODE_VERSION = "22.23.2";
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -83,7 +81,7 @@ for (const name of nativeClaudePackages) {
 	rmSync(join(anthropicDir, name), { recursive: true, force: true });
 }
 
-const workDir = mkdtempSync(join(tmpdir(), "ao-acp-runtime-"));
+const workDir = createWorkDirectory(outDir);
 try {
 	const [sums, archive] = await Promise.all([
 		download(`${baseURL}/SHASUMS256.txt`),

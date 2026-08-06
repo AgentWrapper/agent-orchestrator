@@ -1,9 +1,9 @@
 // @vitest-environment node
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { npmInvocation, pruneNodeDistribution } from "./build-acp-runtime-helpers.mjs";
+import { createWorkDirectory, npmInvocation, pruneNodeDistribution } from "./build-acp-runtime-helpers.mjs";
 
 const temporaryDirectories = [];
 
@@ -11,6 +11,16 @@ afterEach(() => {
 	for (const directory of temporaryDirectories.splice(0)) {
 		rmSync(directory, { recursive: true, force: true });
 	}
+});
+
+describe("createWorkDirectory", () => {
+	it("places extraction on the output filesystem", () => {
+		const outputRoot = temporaryDirectory();
+		const workDirectory = createWorkDirectory(outputRoot);
+
+		expect(dirname(workDirectory)).toBe(outputRoot);
+		expect(existsSync(workDirectory)).toBe(true);
+	});
 });
 
 describe("npmInvocation", () => {
