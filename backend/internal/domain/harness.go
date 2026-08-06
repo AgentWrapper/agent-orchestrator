@@ -23,6 +23,7 @@ const (
 	HarnessDevin      AgentHarness = "devin"
 	HarnessCline      AgentHarness = "cline"
 	HarnessKimi       AgentHarness = "kimi"
+	HarnessMuse       AgentHarness = "muse"
 	HarnessKiro       AgentHarness = "kiro"
 	HarnessKilocode   AgentHarness = "kilocode"
 	HarnessVibe       AgentHarness = "vibe"
@@ -39,7 +40,7 @@ var AllHarnesses = []AgentHarness{
 	HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessOpenCode, HarnessGrok,
 	HarnessDroid, HarnessAmp, HarnessAgy, HarnessCrush, HarnessCursor, HarnessQwen,
 	HarnessCopilot, HarnessGoose, HarnessAuggie, HarnessContinue, HarnessDevin,
-	HarnessCline, HarnessKimi, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,
+	HarnessCline, HarnessKimi, HarnessMuse, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,
 	HarnessAutohand,
 }
 

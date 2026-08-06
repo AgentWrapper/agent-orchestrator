@@ -3,16 +3,15 @@ import {
 	cpSync,
 	existsSync,
 	mkdirSync,
-	mkdtempSync,
 	readFileSync,
 	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createWorkDirectory, npmInvocation, pruneNodeDistribution } from "./build-acp-runtime-helpers.mjs";
 
 const NODE_VERSION = "22.23.2";
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -35,6 +34,7 @@ const baseURL = `https://nodejs.org/dist/v${NODE_VERSION}`;
 const buildSignature = createHash("sha256")
 	.update(readFileSync(join(sourceDir, "package-lock.json")))
 	.update(readFileSync(fileURLToPath(import.meta.url)))
+	.update(readFileSync(join(scriptsDir, "build-acp-runtime-helpers.mjs")))
 	.update(`node=${NODE_VERSION};platform=${platform};arch=${arch}`)
 	.digest("hex");
 const markerPath = join(outDir, ".ao-acp-runtime.json");
@@ -59,7 +59,8 @@ mkdirSync(outDir, { recursive: true });
 cpSync(join(sourceDir, "package.json"), join(outDir, "package.json"));
 cpSync(join(sourceDir, "package-lock.json"), join(outDir, "package-lock.json"));
 
-run("npm", ["ci", "--omit=dev", "--omit=optional", "--ignore-scripts"], { cwd: outDir });
+const npm = npmInvocation(["ci", "--omit=dev", "--omit=optional", "--ignore-scripts"]);
+run(npm.command, npm.args, { cwd: outDir });
 
 // The Claude Agent SDK declares platform-native Claude executables as optional
 // dependencies. --omit=optional excludes them; this removal is defense-in-depth.
@@ -80,7 +81,7 @@ for (const name of nativeClaudePackages) {
 	rmSync(join(anthropicDir, name), { recursive: true, force: true });
 }
 
-const workDir = mkdtempSync(join(tmpdir(), "ao-acp-runtime-"));
+const workDir = createWorkDirectory(outDir);
 try {
 	const [sums, archive] = await Promise.all([
 		download(`${baseURL}/SHASUMS256.txt`),
@@ -112,9 +113,7 @@ try {
 	renameSync(extracted, nodeOut);
 	// Only the runtime executable is needed; npm, headers, docs, and corepack are
 	// build/development tools and would add roughly 80 MB to every desktop update.
-	for (const name of ["include", "lib", "share", "CHANGELOG.md", "README.md"]) {
-		rmSync(join(nodeOut, name), { recursive: true, force: true });
-	}
+	pruneNodeDistribution(nodeOut);
 } finally {
 	rmSync(workDir, { recursive: true, force: true });
 }

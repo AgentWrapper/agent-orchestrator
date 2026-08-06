@@ -51,7 +51,7 @@ export const TESTFLIGHT_URL = "https://testflight.apple.com/join/t4U3fu2H";
 /** Apple's TestFlight app itself — step one, and useless to skip. */
 export const TESTFLIGHT_APP_URL = "https://apps.apple.com/app/testflight/id899247664";
 
-export const AGENT_HARNESSES = 23;
+export const AGENT_HARNESSES = 24;
 export const TAGLINE = "Stop babysitting agents. Start merging real work.";
 export const HERO_SUBHEADLINE = "Run a fleet of coding agents while keeping branches, reviews, and CI failures manageable.";
 export const HERO_SECONDARY_SUBHEADLINE = "Isolated workspaces for Claude Code, Codex, and any CLI agent. Review every change from one dashboard. Free and open source.";
