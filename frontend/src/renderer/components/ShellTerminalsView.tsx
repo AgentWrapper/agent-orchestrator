@@ -132,7 +132,13 @@ export function ShellTerminalsView() {
 					<TerminalPane
 						daemonReady={daemonStatus.state === "ready"}
 						fontSize={12}
-						terminalTarget={{ kind: "shell", handleId: active.handleId, title: active.title }}
+						terminalTarget={{
+							generation: active.createdAt,
+							kind: "shell",
+							handleId: active.handleId,
+							sessionId: active.sessionId,
+							title: active.title,
+						}}
 						theme={theme}
 					/>
 				) : (

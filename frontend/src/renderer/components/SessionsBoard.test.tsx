@@ -768,6 +768,7 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		const prStatus = screen.getByLabelText("#42 merged");
 		expect(prStatus).toHaveTextContent("PR#42merged");
+		expect(within(prStatus).getByText("merged")).toHaveClass("text-status-merged");
 		const openPrStatus = screen.getByLabelText("#41 open");
 		expect(openPrStatus.parentElement).toBe(prStatus.parentElement);
 		expect(prStatus.parentElement).toHaveClass("flex-wrap");

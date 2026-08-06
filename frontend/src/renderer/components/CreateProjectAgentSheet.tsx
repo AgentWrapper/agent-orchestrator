@@ -159,7 +159,7 @@ export function CreateProjectAgentSheet({
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-agents-sheet border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet)] p-0 text-[var(--color-text-agents-sheet-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
-					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] px-6 py-5">
+					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] p-(--size-import-dialog-padding)">
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-[var(--color-text-agents-sheet-title)]">
 								{kind === "workspace" ? t("createProject.workspaceAgents") : t("createProject.projectAgents")}
@@ -171,7 +171,7 @@ export function CreateProjectAgentSheet({
 						<Dialog.Close asChild>
 							<button
 								type="button"
-								className="grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-agents-sheet-description)] transition hover:bg-interactive-hover hover:text-[var(--color-text-agents-sheet-title)] disabled:pointer-events-none disabled:opacity-50"
+								className="settings-close-button"
 								aria-label={t("createProject.closeAgents")}
 								disabled={isBusy}
 							>
@@ -180,7 +180,7 @@ export function CreateProjectAgentSheet({
 						</Dialog.Close>
 					</div>
 					<form
-						className="space-y-5 px-6 py-5"
+						className="space-y-5 p-(--size-import-dialog-padding)"
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!canSubmit) return;
@@ -307,17 +307,16 @@ export function CreateProjectAgentSheet({
 							</div>
 						)}
 
-						<div className="flex items-center justify-end gap-2 pt-1">
+						<div className="flex items-center justify-end gap-3 pt-1">
 							<Button
 								type="button"
-								variant="outline"
+								variant="footer"
 								disabled={isBusy}
-								className="rounded-lg border-[var(--color-border-agents-sheet)] bg-transparent text-[var(--color-text-agents-sheet-title)] hover:bg-interactive-hover"
 								onClick={() => onOpenChange(false)}
 							>
 								{t("createProject.cancel")}
 							</Button>
-							<Button type="submit" variant="primary" className="rounded-lg" disabled={!canSubmit}>
+							<Button type="submit" variant="footer-primary" disabled={!canSubmit}>
 								{isInitializing
 									? t("createProject.settingUp")
 									: isCreating

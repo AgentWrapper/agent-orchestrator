@@ -1,16 +1,22 @@
 import { create } from "zustand";
 import type { TerminalTarget } from "../types/terminal";
 import {
+	applyDocumentTheme,
+	applyDocumentThemeStyle,
 	readStoredThemePreference,
+	readStoredThemeStyle,
 	resolveTheme,
+	runThemeTransition,
 	systemTheme,
 	themeStorageKey,
+	themeStyleStorageKey,
 	type Theme,
 	type ThemePreference,
+	type ThemeStyle,
 } from "../lib/theme";
 
-export type { Theme, ThemePreference } from "../lib/theme";
-export { readStoredThemePreference, resolveTheme } from "../lib/theme";
+export type { Theme, ThemePreference, ThemeStyle } from "../lib/theme";
+export { readStoredThemePreference, readStoredThemeStyle, resolveTheme } from "../lib/theme";
 
 export type SettingsModal =
 	| { scope: "global" }
@@ -53,6 +59,8 @@ type UiState = {
 	themePreference: ThemePreference;
 	/** Resolved light/dark for React consumers; may track OS while preference is system. */
 	resolvedTheme: Theme;
+	/** Named color style theme (e.g. "catppuccin", "nord") — independent of light/dark mode. */
+	themeStyle: ThemeStyle;
 	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
 	developerMode: boolean;
 	restartingProjectIds: ReadonlySet<string>;
@@ -86,6 +94,7 @@ type UiState = {
 	devSettings: DevSettings;
 	setWorkbenchTab: (tab: WorkbenchTab) => void;
 	setThemePreference: (theme: ThemePreference) => void;
+	setThemeStyle: (style: ThemeStyle) => void;
 	openGlobalSettings: () => void;
 	openProjectSettings: (projectId: string) => void;
 	closeSettings: () => void;
@@ -148,8 +157,9 @@ function inspectorState(sessions: Record<string, InspectorSessionState>, session
 }
 
 const initialThemePreference = readStoredThemePreference();
+const initialThemeStyle = readStoredThemeStyle();
 
-export const useUiStore = create<UiState>((set) => ({
+export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
@@ -157,6 +167,7 @@ export const useUiStore = create<UiState>((set) => ({
 	settingsModal: null,
 	themePreference: initialThemePreference,
 	resolvedTheme: resolveTheme(initialThemePreference),
+	themeStyle: initialThemeStyle,
 	developerMode: initialDeveloperMode(),
 	restartingProjectIds: new Set<string>(),
 	orchestratorReplacementErrors: {},
@@ -169,8 +180,21 @@ export const useUiStore = create<UiState>((set) => ({
 	devSettings: initialDevSettings(),
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
-		getLocalStorage()?.setItem(themeStorageKey, themePreference);
-		set({ themePreference, resolvedTheme: resolveTheme(themePreference) });
+		if (get().themePreference === themePreference) return;
+		runThemeTransition(() => {
+			const resolvedTheme = resolveTheme(themePreference);
+			getLocalStorage()?.setItem(themeStorageKey, themePreference);
+			applyDocumentTheme(resolvedTheme);
+			set({ themePreference, resolvedTheme });
+		});
+	},
+	setThemeStyle: (themeStyle) => {
+		if (get().themeStyle === themeStyle) return;
+		runThemeTransition(() => {
+			getLocalStorage()?.setItem(themeStyleStorageKey, themeStyle);
+			applyDocumentThemeStyle(themeStyle);
+			set({ themeStyle });
+		});
 	},
 	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
@@ -183,12 +207,16 @@ export const useUiStore = create<UiState>((set) => ({
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
-	syncSystemTheme: () =>
-		set((state) => {
-			if (state.themePreference !== "system") return state;
-			const next = systemTheme();
-			return next === state.resolvedTheme ? state : { resolvedTheme: next };
-		}),
+	syncSystemTheme: () => {
+		const { themePreference, resolvedTheme } = get();
+		if (themePreference !== "system") return;
+		const next = systemTheme();
+		if (next === resolvedTheme) return;
+		runThemeTransition(() => {
+			applyDocumentTheme(next);
+			set({ resolvedTheme: next });
+		});
+	},
 	toggleSidebar: () =>
 		set((state) => {
 			const isSidebarOpen = !state.isSidebarOpen;

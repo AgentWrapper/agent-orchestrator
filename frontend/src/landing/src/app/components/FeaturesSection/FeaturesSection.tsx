@@ -4,15 +4,15 @@ import { FeatureDemo } from "./components/FeatureDemo";
 import { DelegationDemo } from "./components/DelegationDemo/DelegationDemo";
 import { FeedbackLoopDemo } from "./components/FeedbackLoopDemo/FeedbackLoopDemo";
 import { FleetBoardDemo } from "./components/FleetBoardDemo/FleetBoardDemo";
-import { HarnessCoverageDemo } from "./components/HarnessCoverageDemo/HarnessCoverageDemo";
 import { MobileAppDemo } from "./components/MobileAppDemo/MobileAppDemo";
+import { ProjectAgentsDemo } from "./components/ProjectAgentsDemo/ProjectAgentsDemo";
 import { FEATURES } from "./constants";
 
 const DEMO_COMPONENTS = [
 	DelegationDemo,
 	FleetBoardDemo,
 	FeedbackLoopDemo,
-	HarnessCoverageDemo,
+	ProjectAgentsDemo,
 	MobileAppDemo,
 ];
 

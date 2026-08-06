@@ -98,6 +98,7 @@ describe("CenterPane toolbar session label", () => {
 			session: worker,
 			shellTerminals: [shell],
 			terminalTarget: {
+				generation: shell.createdAt,
 				kind: "shell",
 				handleId: shell.handleId,
 				title: shell.title,
@@ -131,7 +132,12 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({
 			session: worker,
 			shellTerminals: [shell],
-			terminalTarget: { kind: "shell", handleId: shell.handleId, title: shell.title },
+			terminalTarget: {
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				title: shell.title,
+			},
 			onCloseShellTerminal,
 		});
 
@@ -152,7 +158,12 @@ describe("CenterPane toolbar session label", () => {
 		const view = renderCenterPane({
 			session: worker,
 			shellTerminals: [shell],
-			terminalTarget: { kind: "shell", handleId: shell.handleId, title: shell.title },
+			terminalTarget: {
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				title: shell.title,
+			},
 			onCloseShellTerminal: vi.fn(),
 		});
 
@@ -206,13 +217,12 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByText("No session")).toBeInTheDocument();
 	});
 
-	it("uses the padded session topbar height for the terminal header", () => {
+	it("uses the inspector tab height for the terminal header", () => {
 		renderCenterPane({ session: worker });
 
 		const tablist = screen.getByRole("tablist", { name: "Open terminals" });
-		const header = tablist.closest(".h-session-topbar");
-		expect(header).toHaveClass("h-session-topbar");
-		expect(screen.getByTestId("session-workspace-topbar")).toHaveClass("py-1");
+		const header = tablist.closest(".h-inspector-tabs");
+		expect(header).toHaveClass("h-inspector-tabs");
 		expect(tablist.parentElement).toHaveClass("h-full");
 	});
 
@@ -231,7 +241,9 @@ describe("CenterPane toolbar session label", () => {
 		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "New terminal" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
 		expect(terminalRegion).not.toContainElement(screen.getByTestId("session-action-region"));
-		expect(screen.getByTestId("session-action-region")).toContainElement(
+		const actionRegion = screen.getByTestId("session-action-region");
+		expect(actionRegion).not.toHaveClass("border-l");
+		expect(actionRegion).toContainElement(
 			screen.getByRole("button", { name: "Session action" }),
 		);
 	});

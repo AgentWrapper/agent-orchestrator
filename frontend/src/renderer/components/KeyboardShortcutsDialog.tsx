@@ -11,6 +11,7 @@ import type { AppShortcutId, ShortcutCategory } from "../../shared/shortcuts";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Button } from "./ui/button";
 
 function shortcutLabel(id: AppShortcutId, t: TFunction): string {
 	return t(shortcutLabelKeys[id]);
@@ -50,15 +51,15 @@ export function KeyboardShortcutsDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-h-[min(680px,calc(100svh-32px))] max-w-xl gap-0 overflow-hidden border-border bg-popover p-0 text-popover-foreground">
-				<DialogHeader className="border-b border-border px-5 py-4">
-					<DialogTitle className="text-[15px]">{t("shortcut.dialogTitle")}</DialogTitle>
-					<DialogDescription className="text-xs">
+			<DialogContent className="max-h-[min(680px,calc(100svh-32px))] max-w-xl gap-0 overflow-hidden border-[var(--color-border-settings-dialog)] bg-popover p-0 text-popover-foreground shadow-[var(--shadow-settings-dialog)] sm:rounded-(--radius-settings-dialog-lg)">
+				<DialogHeader className="border-b border-[var(--color-border-settings-dialog-header)] p-(--size-modal-padding)">
+					<DialogTitle className="settings-dialog-title">{t("shortcut.dialogTitle")}</DialogTitle>
+					<DialogDescription className="text-xs text-settings-muted">
 						{t("shortcut.dialogDescription")}
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="overflow-y-auto px-5 py-2">
+				<div className="overflow-y-auto px-(--size-modal-padding) py-2">
 					{SHORTCUT_CATEGORIES.map((category) => {
 						const shortcuts = availableShortcuts.filter((shortcut) => shortcut.category === category);
 						if (shortcuts.length === 0) return null;
@@ -100,14 +101,10 @@ export function KeyboardShortcutsDialog({
 					})}
 				</div>
 				{onCustomize ? (
-					<div className="flex justify-end border-t border-border px-5 py-3">
-						<button
-							type="button"
-							className="rounded-md bg-accent px-3 py-2 text-control font-medium text-accent-foreground transition-opacity hover:opacity-90"
-							onClick={onCustomize}
-						>
+					<div className="flex justify-end border-t border-[var(--color-border-settings-dialog-header)] p-(--size-modal-padding)">
+						<Button type="button" variant="footer-primary" onClick={onCustomize}>
 							{t("shortcut.customize")}
-						</button>
+						</Button>
 					</div>
 				) : null}
 			</DialogContent>

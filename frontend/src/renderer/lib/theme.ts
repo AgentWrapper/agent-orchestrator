@@ -1,7 +1,16 @@
 export type Theme = "light" | "dark";
 export type ThemePreference = Theme | "system";
 
-export type ThemeStyle = "orchestrate" | "github" | "catppuccin" | "dracula" | "tokyo-night" | "rose-pine";
+export type ThemeStyle =
+	| "orchestrate"
+	| "github"
+	| "catppuccin"
+	| "dracula"
+	| "tokyo-night"
+	| "rose-pine"
+	| "nord"
+	| "gruvbox"
+	| "solarized";
 
 export const themeStorageKey = "ao.theme";
 export const themeStyleStorageKey = "ao.theme-style";
@@ -41,7 +50,10 @@ export function readStoredThemeStyle(): ThemeStyle {
 			stored === "catppuccin" ||
 			stored === "dracula" ||
 			stored === "tokyo-night" ||
-			stored === "rose-pine"
+			stored === "rose-pine" ||
+			stored === "nord" ||
+			stored === "gruvbox" ||
+			stored === "solarized"
 		) {
 			return stored;
 		}
@@ -64,4 +76,18 @@ export function applyDocumentThemeStyle(style: ThemeStyle): void {
 	} else {
 		document.documentElement.dataset.styleTheme = style;
 	}
+}
+
+/**
+ * Apply a theme DOM update under a View Transition so per-element
+ * `transition-colors` / background tweens are hidden behind a snapshot.
+ * Default VT crossfade is disabled in CSS — this is an instant cut.
+ * Falls back to a plain update when the API is unavailable.
+ */
+export function runThemeTransition(update: () => void): void {
+	if (typeof document === "undefined" || typeof document.startViewTransition !== "function") {
+		update();
+		return;
+	}
+	document.startViewTransition(update);
 }

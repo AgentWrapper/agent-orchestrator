@@ -38,10 +38,12 @@ function useCanGoForward(): boolean {
 
 export function TitlebarNav({
 	historyLocked = false,
+	hasSessionTopbar = false,
 	isFullScreen = false,
 	onSidebarPreviewEnter,
 }: {
 	historyLocked?: boolean;
+	hasSessionTopbar?: boolean;
 	isFullScreen?: boolean;
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
@@ -65,11 +67,18 @@ export function TitlebarNav({
 			: "left-titlebar-cluster-left";
 	// Linux: match the framed board titlebar's y (mac inset 2px + surface border
 	// 1px) so the cluster shares its centerline with the project title.
-	const topClass = !isMac ? "top-0.75" : isFullScreen ? "top-0" : "-top-0.6";
+	const topClass = !isMac
+		? "top-0.75"
+		: isFullScreen && hasSessionTopbar && !isSidebarOpen
+			? "top-1.5"
+			: isFullScreen
+				? "top-0"
+				: "-top-0.6";
+	const heightClass = isMac && isFullScreen ? "h-traffic-light-clearance-fullscreen" : "h-traffic-light-clearance";
 
 	return (
 		<div
-			className={`fixed ${topClass} ${leftClass} z-titlebar flex h-traffic-light-clearance items-center gap-1`}
+			className={`fixed ${topClass} ${leftClass} z-titlebar flex ${heightClass} items-center gap-1`}
 			data-slot="titlebar-nav"
 			style={noDragStyle}
 		>
@@ -122,7 +131,7 @@ function TitlebarButton({
 		<button
 			aria-label={label}
 			aria-disabled={disabled || undefined}
-			className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-passive"
+			className="grid size-control-md place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:bg-transparent disabled:hover:text-passive"
 			disabled={disabled}
 			onClick={onClick}
 			onPointerEnter={onPointerEnter}

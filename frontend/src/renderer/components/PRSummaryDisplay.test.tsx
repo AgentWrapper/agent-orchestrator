@@ -69,6 +69,26 @@ describe("PRSummaryParts", () => {
 		expect(container.querySelector(".animate-status-pulse")).toBeInTheDocument();
 	});
 
+	it("optically centers the primary status marker with its text line", () => {
+		const { container } = render(<PRCardStatusSummary pr={summary()} />);
+
+		const marker = container.querySelector(".size-dot-sm");
+		expect(marker).toHaveClass("mt-1");
+		expect(marker).not.toHaveClass("mt-1.5");
+	});
+
+	it("centers a supplied primary action beside the compact status stack", () => {
+		const { container } = render(<PRCardStatusSummary action={<button type="button">Merge</button>} pr={summary()} />);
+
+		const action = screen.getByRole("button", { name: "Merge" });
+		const supportingStatus = screen.getByRole("link", { name: "Checks passing" });
+		expect(action.parentElement).toHaveClass("shrink-0", "self-center");
+		expect(action.parentElement?.parentElement).toHaveClass("items-center");
+		expect(action.parentElement?.previousElementSibling).toContainElement(supportingStatus);
+		expect(action.parentElement?.previousElementSibling).toHaveClass("gap-1.5");
+		expect(container.querySelector(".pl-4")).not.toContainElement(action);
+	});
+
 	it("renders failing check links with visible error contrast", () => {
 		render(
 			<PRCardStatusSummary

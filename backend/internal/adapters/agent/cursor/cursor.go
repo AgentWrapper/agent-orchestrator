@@ -69,6 +69,11 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Cursor CLI's optional model override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	return agentbase.ModelConfigSpec(ctx, "Model override passed to `cursor-agent --model`.")
+}
+
 // GetLaunchCommand builds the argv to start a new interactive Cursor CLI
 // session:
 //
@@ -88,6 +93,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 
 	// Prompt is positional and must be last. The `--` sentinel ends option
 	// parsing so a leading "-" in the prompt is not read as a flag.
@@ -123,6 +129,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 6)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	cmd = append(cmd, "--resume", agentSessionID)
 	return cmd, true, nil
 }

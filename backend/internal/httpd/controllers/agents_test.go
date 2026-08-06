@@ -11,18 +11,25 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 )
 
 type fakeAgentCatalog struct {
-	inventory    agentsvc.Inventory
-	refreshed    agentsvc.Inventory
-	probed       agentsvc.ProbeResult
-	err          error
-	listCalls    int
-	refreshCalls int
-	probeCalls   int
-	probeAgent   string
+	inventory       agentsvc.Inventory
+	refreshed       agentsvc.Inventory
+	probed          agentsvc.ProbeResult
+	err             error
+	listCalls       int
+	refreshCalls    int
+	probeCalls      int
+	probeAgent      string
+	models          ports.AgentModelCatalog
+	modelCalls      int
+	modelAgent      string
+	modelProject    string
+	modelRefresh    bool
+	revalidateCalls int
 }
 
 func (f *fakeAgentCatalog) List(context.Context) (agentsvc.Inventory, error) {
@@ -42,6 +49,21 @@ func (f *fakeAgentCatalog) Probe(_ context.Context, agentID string) (agentsvc.Pr
 	f.probeCalls++
 	f.probeAgent = agentID
 	return f.probed, f.err
+}
+
+func (f *fakeAgentCatalog) Models(_ context.Context, agentID, projectID string, refresh bool) (ports.AgentModelCatalog, error) {
+	f.modelCalls++
+	f.modelAgent = agentID
+	f.modelProject = projectID
+	f.modelRefresh = refresh
+	return f.models, f.err
+}
+
+func (f *fakeAgentCatalog) RevalidateModels(_ context.Context, agentID, projectID string) (ports.AgentModelCatalog, error) {
+	f.revalidateCalls++
+	f.modelAgent = agentID
+	f.modelProject = projectID
+	return f.models, f.err
 }
 
 func TestListAgents(t *testing.T) {
@@ -128,4 +150,69 @@ func TestProbeAgent(t *testing.T) {
 	if catalog.probeCalls != 1 || catalog.probeAgent != "codex" {
 		t.Fatalf("probe calls=%d agent=%q, want one codex probe", catalog.probeCalls, catalog.probeAgent)
 	}
+}
+
+func TestGetAndRefreshAgentModels(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, tc := range []struct {
+		name           string
+		method         string
+		path           string
+		wantRefresh    bool
+		wantRevalidate bool
+	}{
+		{name: "cached", method: http.MethodGet, path: "/api/v1/agents/codex/models?projectId=proj-1"},
+		{name: "refresh", method: http.MethodPost, path: "/api/v1/agents/codex/models/refresh?projectId=proj-1", wantRefresh: true},
+		{name: "revalidate", method: http.MethodPost, path: "/api/v1/agents/codex/models/refresh?projectId=proj-1&revalidate=true", wantRevalidate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := &fakeAgentCatalog{models: ports.AgentModelCatalog{
+				AgentID:       "codex",
+				SelectionMode: ports.ModelSelectionCatalog,
+				Models:        []ports.AgentModelInfo{{ID: "gpt-5.6-sol", Label: "GPT-5.6 Sol"}},
+				AllowCustom:   true,
+				Source:        "official-catalog",
+			}}
+			srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Agents: catalog}, httpd.ControlDeps{}))
+			defer srv.Close()
+
+			body, status, _ := doRequest(t, srv, tc.method, tc.path, "")
+			if status != http.StatusOK {
+				t.Fatalf("%s %s = %d, body=%s", tc.method, tc.path, status, body)
+			}
+			for _, want := range []string{`"agentId":"codex"`, `"selectionMode":"catalog"`, `"id":"gpt-5.6-sol"`} {
+				if !strings.Contains(string(body), want) {
+					t.Fatalf("body missing %s: %s", want, body)
+				}
+			}
+			wantModelCalls := 1
+			if tc.wantRevalidate {
+				wantModelCalls = 0
+			}
+			if catalog.modelCalls != wantModelCalls || catalog.revalidateCalls != btoi(tc.wantRevalidate) || catalog.modelAgent != "codex" || catalog.modelProject != "proj-1" || catalog.modelRefresh != tc.wantRefresh {
+				t.Fatalf("model call = count:%d revalidate:%d agent:%q project:%q refresh:%v", catalog.modelCalls, catalog.revalidateCalls, catalog.modelAgent, catalog.modelProject, catalog.modelRefresh)
+			}
+		})
+	}
+}
+
+func TestRefreshAgentModelsWithoutCatalogReturnsNotImplemented(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{}, httpd.ControlDeps{}))
+	defer srv.Close()
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/agents/codex/models/refresh", "")
+	if status != http.StatusNotImplemented {
+		t.Fatalf("POST refresh without catalog = %d, body=%s", status, body)
+	}
+	if !strings.Contains(string(body), `"error"`) {
+		t.Fatalf("body = %s, want API error envelope", body)
+	}
+}
+
+func btoi(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
