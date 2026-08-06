@@ -12,7 +12,9 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 }));
 
 vi.mock("./CreateProjectAgentSheet", () => ({
-	RequiredAgentField: () => <div data-testid="agent-field" />,
+	RequiredAgentField: ({ value, hint }: { value: string; hint?: string }) => (
+		<div data-testid="agent-field" data-value={value} data-hint={hint ?? ""} />
+	),
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -138,6 +140,83 @@ describe("TaskComposer", () => {
 		expect(onDirtyChange).toHaveBeenLastCalledWith(true);
 		unmount();
 		expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+	});
+
+	it("preselects the project worker agent and spawns with it", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return { data: { agent: "codex", selectionMode: "text", models: [], allowCustom: true } };
+			}
+			return {
+				data: { status: "ok", project: { agent: "claude-code", config: { worker: { agent: "codex" } } } },
+			};
+		});
+		h.post.mockResolvedValueOnce({ data: { workerId: "sess-3" } });
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "codex"));
+		expect(screen.getByTestId("agent-field")).toHaveAttribute("data-hint", "Project default");
+
+		fireEvent.change(task(), { target: { value: "Ship it" } });
+		fireEvent.click(screen.getByText("Start task"));
+
+		await waitFor(() =>
+			expect(h.post).toHaveBeenCalledWith(
+				"/api/v1/orchestrators/delegate",
+				expect.objectContaining({ body: expect.objectContaining({ agent: "codex" }) }),
+			),
+		);
+	});
+
+	it("falls back to the global default agent when the project sets no worker agent", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return { data: { agent: "claude-code", selectionMode: "text", models: [], allowCustom: true } };
+			}
+			return { data: { status: "ok", project: { agent: "claude-code", config: {} } } };
+		});
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "claude-code"));
+		expect(screen.getByTestId("agent-field")).toHaveAttribute("data-hint", "Global default");
+	});
+
+	it("preselects the agent's default model when the project configures none", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "text",
+						models: [
+							{ id: "gpt-5", label: "GPT-5" },
+							{ id: "gpt-5-codex", label: "GPT-5 Codex", isDefault: true },
+						],
+						allowCustom: true,
+					},
+				};
+			}
+			return { data: { status: "ok", project: { agent: "codex", config: {} } } };
+		});
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		expect(await screen.findByDisplayValue("gpt-5-codex")).toBeInTheDocument();
+		expect(screen.getByText("Agent default")).toBeInTheDocument();
 	});
 
 	it("uses the project worker model as the new task model default", async () => {

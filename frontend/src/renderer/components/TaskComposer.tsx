@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
+import { FieldDefaultHint } from "./FieldDefaultHint";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
@@ -129,15 +130,44 @@ export function TaskComposer({
 		mutationFn: refreshAgents,
 		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
 	});
-	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
+	// The composer preselects the agent and model a spawn would actually use
+	// instead of parking the controls on a "default" label the user has to
+	// remember. A caption names where the preselection came from.
+	const projectWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
+	const globalDefaultAgent = projectQuery.data?.agent ?? "";
+	const defaultWorkerAgent = projectWorkerAgent || globalDefaultAgent;
 	const selectedAgent = agent || defaultWorkerAgent;
 	const defaultWorkerModel =
 		projectQuery.data?.config?.worker?.agentConfig?.model ?? projectQuery.data?.config?.agentConfig?.model ?? "";
 	const defaultWorkerMode =
 		projectQuery.data?.config?.worker?.agentConfig?.mode ?? projectQuery.data?.config?.agentConfig?.mode ?? "";
-	const defaultModelForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerModel : "";
-	const defaultModeForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerMode : "";
+	const projectModelForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerModel : "";
+	const projectModeForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerMode : "";
 	const agentCatalog = agentsQuery.data;
+
+	// Shares the picker's query key, so this is the same fetch, not a second one.
+	const modelCatalogQuery = useQuery(agentModelsQueryOptions(selectedAgent, projectId ?? ""));
+	const catalogDefaultOption = modelCatalogQuery.data?.models?.find((item) => item.isDefault)?.id ?? "";
+	const catalogUsesModes = modelCatalogQuery.data?.selectionMode === "mode";
+	const defaultModelForSelectedAgent =
+		projectModelForSelectedAgent || (catalogUsesModes ? "" : catalogDefaultOption);
+	const defaultModeForSelectedAgent = projectModeForSelectedAgent || (catalogUsesModes ? catalogDefaultOption : "");
+
+	const agentDefaultHint =
+		selectedAgent !== "" && selectedAgent === defaultWorkerAgent
+			? projectWorkerAgent !== ""
+				? t("newTask.projectDefaultHint")
+				: t("newTask.globalDefaultHint")
+			: undefined;
+	const modelIsDefault =
+		(model !== "" || mode !== "") &&
+		model === defaultModelForSelectedAgent &&
+		mode === defaultModeForSelectedAgent;
+	const modelDefaultHint = !modelIsDefault
+		? undefined
+		: projectModelForSelectedAgent !== "" || projectModeForSelectedAgent !== ""
+			? t("newTask.projectDefaultHint")
+			: t("newTask.agentDefaultHint");
 
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
@@ -182,7 +212,9 @@ export function TaskComposer({
 			const sessionId = await createTask({
 				projectId,
 				brief: prompt,
-				agent: agentTouched && agent ? (agent as CreateTaskInput["agent"]) : undefined,
+				// The visible selection is authoritative: it is either the user's pick
+				// or the resolved default, so spawning names it explicitly.
+				agent: selectedAgent ? (selectedAgent as CreateTaskInput["agent"]) : undefined,
 				model: requestedModel,
 				mode: interfaceMode,
 			});
@@ -236,7 +268,8 @@ export function TaskComposer({
 					<RequiredAgentField
 						id={agentId}
 						label={t("newTask.agent")}
-						placeholder={t("newTask.projectDefault")}
+						hint={agentDefaultHint}
+						placeholder={t("newTask.selectAgent")}
 						value={agent}
 						authorized={agentCatalog?.authorized}
 						installed={agentCatalog?.installed}
@@ -258,9 +291,12 @@ export function TaskComposer({
 					</button>
 				</div>
 				<div className="space-y-1.5">
-					<Label className="text-xs font-medium text-muted-foreground" htmlFor={modelId}>
-						{t("newTask.model")}
-					</Label>
+					<div className="flex min-w-0 items-baseline gap-1.5">
+						<Label className="text-xs font-medium text-muted-foreground" htmlFor={modelId}>
+							{t("newTask.model")}
+						</Label>
+						{modelDefaultHint && <FieldDefaultHint text={modelDefaultHint} />}
+					</div>
 					<TaskModelPicker
 						id={modelId}
 						agentId={selectedAgent}
@@ -433,7 +469,7 @@ function TaskModelPicker({
 							value={value}
 							disabled={agentId === ""}
 							onChange={(event) => onModelChange(event.target.value)}
-							placeholder={query.isFetching ? t("settings.models.loading") : t("newTask.projectDefault")}
+							placeholder={query.isFetching ? t("settings.models.loading") : t("newTask.agentDefaultHint")}
 						/>
 						{hasCatalog && (
 							<AgentModelCombobox

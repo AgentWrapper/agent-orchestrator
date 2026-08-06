@@ -90,13 +90,17 @@ describe("NewTaskDialog", () => {
 		expect(agentLabel).toHaveAttribute("data-slot", "label");
 		expect(modelLabel).toHaveAttribute("data-slot", "label");
 		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveAttribute("data-size", "sm");
+		// The agent control shows the resolved default agent, captioned as inherited,
+		// rather than a bare "Project default" the user would have to decode.
+		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent("Claude Code");
+		expect(screen.getByText("Project default")).toBeInTheDocument();
 		expect(screen.getByLabelText("Model")).toHaveValue("");
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Add image" })).not.toBeInTheDocument();
 	});
 
-	it("starts the original task with project-default agent intent and optional model", async () => {
+	it("starts the original task naming the preselected project-default agent and optional model", async () => {
 		const { onCreated, onOpenChange } = renderDialog();
 		const user = userEvent.setup();
 		const brief = "  Restore the fallback renderer after WebGL init fails.  ";
@@ -112,7 +116,9 @@ describe("NewTaskDialog", () => {
 			body: {
 				projectId: "proj-1",
 				brief,
-				agent: undefined,
+				// The dialog preselects the project's worker agent, so the delegate
+				// call names it instead of relying on a server-side fallback.
+				agent: "claude-code",
 				model: "placeholder-model",
 			},
 		});
