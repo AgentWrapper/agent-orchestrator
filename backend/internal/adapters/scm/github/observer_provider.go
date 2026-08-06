@@ -35,6 +35,9 @@ const (
 	githubReviewThreadMaxPages = 2
 	// githubReviewSummaryLimit bounds submitted decisive reviews used for summary links.
 	githubReviewSummaryLimit = 20
+	// githubCheckRunsMaxPages bounds the pagination when fetching all check runs
+	// for a commit. This prevents unbounded pagination on malformed responses.
+	githubCheckRunsMaxPages = 10
 )
 
 // ParseRepository normalizes a GitHub remote/origin URL into a provider-neutral
@@ -138,7 +141,10 @@ func (p *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, he
 	}
 	page, err := decodeRestCheckRunsPage(resp.Body)
 	if err != nil {
-		return ports.SCMGuardResult{}, err
+		// Decode failure is unexpected but shouldn't block the whole repo poll.
+		// Return NotModified=false with no ETag so the observer falls back to the
+		// full GraphQL refresh path; DefaultPRMaxAge bounds staleness.
+		return ports.SCMGuardResult{}, nil
 	}
 	if page.TotalCount > len(page.CheckRuns) {
 		// The commit has more runs than one page fits; rely on a stable
@@ -172,7 +178,7 @@ func decodeRestCheckRunsPage(body []byte) (restCheckRunsPage, error) {
 // the first page and returns every run across all pages.
 func (p *Provider) fetchRemainingCommitCheckRuns(ctx context.Context, repo ports.SCMRepo, headSHA string, page restCheckRunsPage) ([]restCommitCheckRun, error) {
 	runs := append([]restCommitCheckRun(nil), page.CheckRuns...)
-	for pageNum := 2; len(runs) < page.TotalCount; pageNum++ {
+	for pageNum := 2; len(runs) < page.TotalCount && pageNum <= githubCheckRunsMaxPages; pageNum++ {
 		q := url.Values{}
 		q.Set("per_page", strconv.Itoa(githubCheckRunsPageSize))
 		q.Set("page", strconv.Itoa(pageNum))
@@ -196,25 +202,20 @@ func (p *Provider) fetchRemainingCommitCheckRuns(ctx context.Context, repo ports
 // set, sorted so the order GitHub returns runs in cannot matter. It only hashes
 // the fields that determine the aggregate CI state (name, status, conclusion).
 func commitCheckRunsFingerprint(runs []restCommitCheckRun) string {
-	sort.Slice(runs, func(i, j int) bool {
-		if runs[i].Name != runs[j].Name {
-			return runs[i].Name < runs[j].Name
-		}
-		if runs[i].Status != runs[j].Status {
-			return runs[i].Status < runs[j].Status
-		}
-		return runs[i].Conclusion < runs[j].Conclusion
-	})
-	h := sha256.New()
-	for _, r := range runs {
-		_, _ = h.Write([]byte(r.Name))
-		h.Write([]byte{0})
-		_, _ = h.Write([]byte(r.Status))
-		h.Write([]byte{0})
-		_, _ = h.Write([]byte(r.Conclusion))
-		h.Write([]byte{0x1e})
+	parts := make([]string, len(runs))
+	for i, r := range runs {
+		parts[i] = strings.Join([]string{r.Name, r.Status, r.Conclusion}, "\x00")
 	}
-	return hex.EncodeToString(h.Sum(nil))
+	return stableCheckFingerprint(parts)
+}
+
+// stableCheckFingerprint computes a stable SHA256 hash of a sorted string slice.
+// The slice is sorted, joined with "\x1e", then hashed. This shared logic is
+// used by both commitCheckRunsFingerprint and githubFailedFingerprint.
+func stableCheckFingerprint(parts []string) string {
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1e")))
+	return hex.EncodeToString(sum[:])
 }
 
 // FetchPullRequests fetches normalized PR/check metadata for up to 25 PR refs in
@@ -572,13 +573,11 @@ func githubFailedFingerprint(head string, checks []ports.SCMCheckObservation) st
 	if len(checks) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(checks))
-	for _, ch := range checks {
-		parts = append(parts, strings.Join([]string{head, ch.Name, ch.Status, ch.Conclusion, ch.URL, ch.ProviderID}, "\x00"))
+	parts := make([]string, len(checks))
+	for i, ch := range checks {
+		parts[i] = strings.Join([]string{head, ch.Name, ch.Status, ch.Conclusion, ch.URL, ch.ProviderID}, "\x00")
 	}
-	sort.Strings(parts)
-	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1e")))
-	return hex.EncodeToString(sum[:])
+	return stableCheckFingerprint(parts)
 }
 
 func mergeabilityObservation(providerMergeable, providerMergeState, ci, review string, draft bool) ports.SCMMergeabilityObservation {
