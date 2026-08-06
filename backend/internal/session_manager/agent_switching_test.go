@@ -397,7 +397,7 @@ func (a *switchTestAgent) ComposerIsEmpty(output string) bool {
 	return true
 }
 
-func (a *switchTestAgent) NativeSessionConfigDir(context.Context, string, map[string]string) (string, error) {
+func (a *switchTestAgent) NativeSessionConfigDir(context.Context, map[string]string) (string, error) {
 	return a.configDir, nil
 }
 
@@ -1400,7 +1400,7 @@ func TestSwitchAgentResumesVerifiedPriorNativeSession(t *testing.T) {
 	store.native["native-prior"] = domain.AgentNativeSession{
 		ID: "native-prior", AOSessionID: "proj-1", Harness: domain.HarnessCodex,
 		ConfigDir: target.configDir, NativeSessionID: "codex-prior",
-		LastGenerationID: "old-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		LastGenerationID: "old-generation", CreatedAt: now, LastUsedAt: now,
 	}
 
 	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "resume-prior"})
@@ -1426,7 +1426,7 @@ func TestSwitchAgentUnknownResumeEvidenceStartsFresh(t *testing.T) {
 	store.native["native-unknown"] = domain.AgentNativeSession{
 		ID: "native-unknown", AOSessionID: "proj-1", Harness: domain.HarnessCodex,
 		ConfigDir: target.configDir, NativeSessionID: "uncertain",
-		LastGenerationID: "old-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		LastGenerationID: "old-generation", CreatedAt: now, LastUsedAt: now,
 	}
 
 	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "fresh-on-unknown"})
@@ -1938,8 +1938,8 @@ func TestSwitchAgentCompletesWhenAcknowledgementWinsFailureCAS(t *testing.T) {
 	if sw.State != domain.AgentSwitchCompleted || sw.TargetAcknowledgedAt == nil {
 		t.Fatalf("switch = state %q acknowledgement %v, want completed acknowledgement", sw.State, sw.TargetAcknowledgedAt)
 	}
-	if sw.ErrorCode != "" || sw.ErrorDetail != "" {
-		t.Fatalf("completed switch retained failure = %q: %q", sw.ErrorCode, sw.ErrorDetail)
+	if sw.ErrorCode != "" {
+		t.Fatalf("completed switch retained failure = %q", sw.ErrorCode)
 	}
 }
 
@@ -2254,7 +2254,7 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 			targetNative := domain.AgentNativeSession{
 				ID: "native-target", AOSessionID: "proj-1", Harness: domain.HarnessCodex,
 				NativeSessionID:  "codex-target",
-				LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+				LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now,
 			}
 			store.native[targetNative.ID] = targetNative
 			targetRef := targetNative.ID
@@ -2328,7 +2328,7 @@ func TestReconcileRejectsTargetGenerationWithoutProviderNativeIdentity(t *testin
 	targetNative := domain.AgentNativeSession{
 		ID: "native-provider-assigned-pending", AOSessionID: "proj-1", Harness: domain.HarnessCodex,
 		LastGenerationID: "target-generation",
-		CreatedAt:        now, LastUsedAt: now, UpdatedAt: now,
+		CreatedAt:        now, LastUsedAt: now,
 	}
 	store.native[targetNative.ID] = targetNative
 	ref := targetNative.ID
@@ -2486,12 +2486,22 @@ func TestSwitchAgentRefreshesLateSourceNativeIdentityAtStopBoundary(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sw.State != domain.AgentSwitchCompleted || sw.SourceNativeSessionRef == nil {
-		t.Fatalf("switch did not complete with source native reference: %+v", sw)
+	if sw.State != domain.AgentSwitchCompleted {
+		t.Fatalf("switch did not complete: %+v", sw)
 	}
-	retained, ok, err := store.GetAgentNativeSession(context.Background(), *sw.SourceNativeSessionRef)
-	if err != nil || !ok {
-		t.Fatalf("retained source native session = %+v, ok=%v err=%v", retained, ok, err)
+	retainedSessions, err := store.ListAgentNativeSessions(context.Background(), rec.ID)
+	if err != nil {
+		t.Fatalf("list retained native sessions: %v", err)
+	}
+	var retained domain.AgentNativeSession
+	for _, candidate := range retainedSessions {
+		if candidate.Harness == domain.HarnessClaudeCode && candidate.NativeSessionID == "late-source-native" {
+			retained = candidate
+			break
+		}
+	}
+	if retained.ID == "" {
+		t.Fatalf("late source native session was not retained: %+v", retainedSessions)
 	}
 	expectedTranscriptPath := safeNativeTranscriptPath(transcriptPath, source.configDir)
 	if retained.NativeSessionID != "late-source-native" || retained.TranscriptPath != expectedTranscriptPath {

@@ -220,7 +220,7 @@ func TestNewNativeSessionIDReturnsDistinctClaudeUUIDs(t *testing.T) {
 
 func TestNativeSessionConfigDirUsesRuntimeOverride(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "claude-profile")
-	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), "ignored", map[string]string{
+	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), map[string]string{
 		claudeConfigDirEnv: dir,
 	})
 	if err != nil {
@@ -235,7 +235,7 @@ func TestNativeSessionConfigDirExplicitEmptyIgnoresDaemonOverride(t *testing.T) 
 	home := t.TempDir()
 	t.Setenv(claudeConfigDirEnv, filepath.Join(t.TempDir(), "daemon-claude-profile"))
 
-	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), "ignored", map[string]string{
+	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), map[string]string{
 		claudeConfigDirEnv: "",
 		"HOME":             home,
 	})

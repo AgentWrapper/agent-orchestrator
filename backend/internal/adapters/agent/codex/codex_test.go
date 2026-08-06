@@ -89,7 +89,7 @@ func TestContinuationCapabilities(t *testing.T) {
 
 func TestNativeSessionConfigDirUsesRuntimeOverride(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "codex-home")
-	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), "ignored", map[string]string{
+	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), map[string]string{
 		codexHomeEnv: dir,
 	})
 	if err != nil {
@@ -104,7 +104,7 @@ func TestNativeSessionConfigDirExplicitEmptyIgnoresDaemonOverride(t *testing.T) 
 	home := t.TempDir()
 	t.Setenv(codexHomeEnv, filepath.Join(t.TempDir(), "daemon-codex-home"))
 
-	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), "ignored", map[string]string{
+	got, err := (&Plugin{}).NativeSessionConfigDir(context.Background(), map[string]string{
 		codexHomeEnv: "",
 		"HOME":       home,
 	})

@@ -55,18 +55,14 @@ type SwitchAgentConfig struct {
 
 type preparedTargetActivation struct {
 	agent                    ports.Agent
-	config                   ports.AgentConfig
 	env                      map[string]string
 	launch                   ports.LaunchConfig
 	argv                     []string
 	launchID                 domain.AgentGenerationID
 	native                   domain.AgentNativeSession
 	nativeExpectedGeneration domain.AgentGenerationID
-	nativeCreate             bool
 	startMode                domain.AgentSwitchTargetStartMode
 	inlinePromptMaxBytes     int
-	systemPrompt             string
-	systemFile               string
 }
 
 type prFactReader interface {
@@ -136,7 +132,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	defer func() {
 		if sagaCreated && retErr != nil && !result.State.Terminal() && !skipTerminalization {
 			settleCtx, cancel := switchDurableContext(ctx)
-			settled, failErr := m.failAgentSwitch(settleCtx, store, result, switchErrorCode(retErr, result.State), safeSwitchError(retErr))
+			settled, failErr := m.failAgentSwitch(settleCtx, store, result, switchErrorCode(retErr, result.State))
 			cancel()
 			if failErr == nil {
 				result = settled
@@ -221,18 +217,17 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 
 	now := m.clock()
 	switchRec := domain.AgentSwitch{
-		ID:                     domain.AgentSwitchID("switch-" + uuid.NewString()),
-		SessionID:              id,
-		IdempotencyKey:         cfg.IdempotencyKey,
-		RequestFingerprint:     requestFingerprint,
-		FromHarness:            rec.Harness,
-		TargetHarness:          cfg.TargetHarness,
-		SourceNativeSessionRef: nativeSessionIDPtr(sourceNative.ID),
-		State:                  domain.AgentSwitchPreparingHandoff,
-		AgentHandoffStatus:     domain.AgentHandoffNotAttempted,
-		SourceGenerationID:     sourceGeneration,
-		RequestedAt:            now,
-		UpdatedAt:              now,
+		ID:                 domain.AgentSwitchID("switch-" + uuid.NewString()),
+		SessionID:          id,
+		IdempotencyKey:     cfg.IdempotencyKey,
+		RequestFingerprint: requestFingerprint,
+		FromHarness:        rec.Harness,
+		TargetHarness:      cfg.TargetHarness,
+		State:              domain.AgentSwitchPreparingHandoff,
+		AgentHandoffStatus: domain.AgentHandoffNotAttempted,
+		SourceGenerationID: sourceGeneration,
+		RequestedAt:        now,
+		UpdatedAt:          now,
 	}
 	requestedSwitch := switchRec
 	switchRec, created, err := store.CreateAgentSwitch(ctx, requestedSwitch)
@@ -381,9 +376,6 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	if nativeID := strings.TrimSpace(stoppedSession.Metadata.AgentSessionID); nativeID != "" {
 		sourceNative.NativeSessionID = nativeID
 	}
-	if transcriptPath := safeNativeTranscriptPath(stoppedSession.Metadata.NativeTranscriptPath, sourceNative.ConfigDir); transcriptPath != "" {
-		sourceNative.TranscriptPath = transcriptPath
-	}
 	refreshCtx, cancelRefresh := switchDurableContext(ctx)
 	refreshedSourceNative, refreshErr := m.preserveCurrentNativeSession(
 		refreshCtx,
@@ -444,7 +436,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	// Only now may the target mutate workspace-local hooks/instructions. The
 	// source snapshot above therefore cannot contain target preflight artifacts.
 	// A pre-activation failure removes this provider-owned state.
-	if err := m.prepareWorkspace(ctx, target.agent, rec.ID, rec.Metadata.WorkspacePath, target.systemPrompt, target.systemFile, target.config, target.env); err != nil {
+	if err := m.prepareWorkspace(ctx, target.agent, rec.ID, rec.Metadata.WorkspacePath, target.launch.SystemPrompt, target.launch.SystemPromptFile, target.launch.Config, target.env); err != nil {
 		return result, fmt.Errorf("switch agent %s: prepare target workspace: %w", id, err)
 	}
 	targetWorkspacePrepared = true
@@ -659,7 +651,7 @@ func validateContinuationAgent(agent ports.Agent) error {
 }
 
 func (m *Manager) preserveCurrentNativeSession(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, agent ports.Agent, env map[string]string, generation domain.AgentGenerationID) (domain.AgentNativeSession, error) {
-	configDir, err := nativeConfigDir(ctx, agent, m.dataDir, env)
+	configDir, err := nativeConfigDir(ctx, agent, env)
 	if err != nil {
 		return domain.AgentNativeSession{}, err
 	}
@@ -688,7 +680,6 @@ func (m *Manager) preserveCurrentNativeSession(ctx context.Context, store ports.
 		updated.TranscriptPath = transcript
 		updated.LastGenerationID = generation
 		updated.LastUsedAt = now
-		updated.UpdatedAt = now
 		if changed, updateErr := store.UpdateAgentNativeSession(ctx, updated, existing.LastGenerationID); updateErr != nil {
 			return domain.AgentNativeSession{}, updateErr
 		} else if changed {
@@ -699,7 +690,7 @@ func (m *Manager) preserveCurrentNativeSession(ctx context.Context, store ports.
 		ID: domain.AgentNativeSessionID("native-" + uuid.NewString()), AOSessionID: rec.ID,
 		Harness: rec.Harness, ConfigDir: configDir, NativeSessionID: nativeID,
 		TranscriptPath:   transcript,
-		LastGenerationID: generation, CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		LastGenerationID: generation, CreatedAt: now, LastUsedAt: now,
 	}
 	stored, _, err := store.CreateAgentNativeSession(ctx, created)
 	return stored, err
@@ -731,7 +722,7 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	config := effectiveAgentConfig(rec.Kind, project.Config)
 	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
 	m.augmentAgentRuntimeEnv(agent, env)
-	configDir, err := nativeConfigDir(ctx, agent, m.dataDir, env)
+	configDir, err := nativeConfigDir(ctx, agent, env)
 	if err != nil {
 		return preparedTargetActivation{}, err
 	}
@@ -815,26 +806,22 @@ func (m *Manager) prepareTargetActivation(ctx context.Context, store ports.Agent
 	}
 	now := m.clock()
 	var expectedGeneration domain.AgentGenerationID
-	nativeCreate := false
 	if mode == domain.AgentSwitchTargetStartResumed {
 		expectedGeneration = candidate.LastGenerationID
 		candidate.LastGenerationID = launchID
 		candidate.LastUsedAt = now
-		candidate.UpdatedAt = now
 	} else {
-		nativeCreate = true
 		candidate = domain.AgentNativeSession{
 			ID: domain.AgentNativeSessionID("native-" + uuid.NewString()), AOSessionID: rec.ID,
 			Harness: harness, ConfigDir: configDir, NativeSessionID: launch.NativeSessionID,
-			LastGenerationID: launchID, CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+			LastGenerationID: launchID, CreatedAt: now, LastUsedAt: now,
 		}
 	}
 	return preparedTargetActivation{
-		agent: agent, config: config, env: env, launch: launch, argv: argv,
+		agent: agent, env: env, launch: launch, argv: argv,
 		launchID: launchID, native: candidate, nativeExpectedGeneration: expectedGeneration,
-		nativeCreate: nativeCreate, startMode: mode,
+		startMode:            mode,
 		inlinePromptMaxBytes: inlinePromptMaxBytes,
-		systemPrompt:         systemPrompt, systemFile: systemFile,
 	}, nil
 }
 
@@ -853,8 +840,8 @@ func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.Sess
 				Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: target.native.NativeSessionID},
 			},
 			Kind: rec.Kind, DataDir: m.dataDir, Prompt: prompt,
-			SystemPrompt: target.systemPrompt, SystemPromptFile: target.systemFile,
-			Config: target.config, Permissions: target.config.Permissions,
+			SystemPrompt: launch.SystemPrompt, SystemPromptFile: launch.SystemPromptFile,
+			Config: launch.Config, Permissions: launch.Config.Permissions,
 		})
 		if err != nil {
 			return fmt.Errorf("restore command: %w", err)
@@ -886,7 +873,7 @@ func (m *Manager) prepareTargetLaunchPrompt(ctx context.Context, rec domain.Sess
 // gives provider SessionStart hooks a durable row in which to stage an assigned
 // native id while lifecycle still fences the source-owned session row.
 func persistPreparedTargetNativeSession(ctx context.Context, store ports.AgentSwitchStore, target *preparedTargetActivation) error {
-	if target.nativeCreate {
+	if target.startMode == domain.AgentSwitchTargetStartFresh {
 		stored, created, err := store.CreateAgentNativeSession(ctx, target.native)
 		if err != nil {
 			return err
@@ -974,12 +961,12 @@ func (m *Manager) findTargetResumeCandidate(ctx context.Context, store ports.Age
 	return domain.AgentNativeSession{}, false, nil
 }
 
-func nativeConfigDir(ctx context.Context, agent ports.Agent, dataDir string, env map[string]string) (string, error) {
+func nativeConfigDir(ctx context.Context, agent ports.Agent, env map[string]string) (string, error) {
 	provider, ok := agent.(ports.AgentNativeSessionConfigProvider)
 	if !ok {
 		return "", errors.New("adapter does not expose its native session config directory")
 	}
-	dir, err := provider.NativeSessionConfigDir(ctx, dataDir, env)
+	dir, err := provider.NativeSessionConfigDir(ctx, env)
 	if err != nil {
 		return "", err
 	}
@@ -1991,7 +1978,7 @@ func (m *Manager) advanceAgentSwitch(ctx context.Context, store ports.AgentSwitc
 	return nil
 }
 
-func (m *Manager) failAgentSwitch(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, code, detail string) (domain.AgentSwitch, error) {
+func (m *Manager) failAgentSwitch(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, code string) (domain.AgentSwitch, error) {
 	current, ok, err := store.GetAgentSwitch(ctx, sw.ID)
 	if err != nil {
 		return sw, err
@@ -2019,7 +2006,6 @@ func (m *Manager) failAgentSwitch(ctx context.Context, store ports.AgentSwitchSt
 		failed := current
 		failed.State = domain.AgentSwitchFailed
 		failed.ErrorCode = boundedString(code, 128)
-		failed.ErrorDetail = boundedString(detail, 2048)
 		failed.UpdatedAt = m.clock()
 		changed, err := store.FailAgentSwitchIfUnacknowledged(ctx, failed)
 		if err != nil {
@@ -2046,7 +2032,6 @@ func (m *Manager) failAgentSwitch(ctx context.Context, store ports.AgentSwitchSt
 	}
 	err = m.advanceAgentSwitch(ctx, store, &current, domain.AgentSwitchFailed, func(next *domain.AgentSwitch) {
 		next.ErrorCode = boundedString(code, 128)
-		next.ErrorDetail = boundedString(detail, 2048)
 	})
 	return current, err
 }
@@ -2086,23 +2071,6 @@ func (m *Manager) ListAgentSwitches(ctx context.Context, id domain.SessionID) ([
 	return store.ListAgentSwitches(ctx, id)
 }
 
-// GetAgentSwitch scopes switch lookup to its owning session so ids cannot be
-// used to enumerate another AO session's local artifact paths.
-func (m *Manager) GetAgentSwitch(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error) {
-	store, err := m.switchStore()
-	if err != nil {
-		return domain.AgentSwitch{}, err
-	}
-	sw, ok, err := store.GetAgentSwitch(ctx, switchID)
-	if err != nil {
-		return domain.AgentSwitch{}, err
-	}
-	if !ok || sw.SessionID != id {
-		return domain.AgentSwitch{}, ErrSwitchNotFound
-	}
-	return sw, nil
-}
-
 // SubmitAgentHandoff accepts optional source-authored context. The source
 // generation and store state fence make a late response harmless.
 func (m *Manager) SubmitAgentHandoff(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID, sourceGenerationID domain.AgentGenerationID, raw json.RawMessage) (domain.AgentSwitch, error) {
@@ -2110,9 +2078,12 @@ func (m *Manager) SubmitAgentHandoff(ctx context.Context, id domain.SessionID, s
 	if err != nil {
 		return domain.AgentSwitch{}, err
 	}
-	sw, err := m.GetAgentSwitch(ctx, id, switchID)
+	sw, err := requireAgentSwitch(ctx, store, switchID)
 	if err != nil {
 		return domain.AgentSwitch{}, err
+	}
+	if sw.SessionID != id {
+		return domain.AgentSwitch{}, ErrSwitchNotFound
 	}
 	if sw.SourceGenerationID != sourceGenerationID {
 		return sw, ErrStaleHandoff
@@ -2283,20 +2254,20 @@ func (m *Manager) reconcileRetainedAgentSwitchOnce(ctx context.Context, store po
 }
 
 func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, sw domain.AgentSwitch) (bool, error) {
-	fail := func(code, detail string) (bool, error) {
-		_, err := m.failAgentSwitch(ctx, store, sw, code, detail)
+	fail := func(code string) (bool, error) {
+		_, err := m.failAgentSwitch(ctx, store, sw, code)
 		return err == nil, err
 	}
 	switch sw.State {
 	case domain.AgentSwitchPreparingHandoff:
-		return fail("daemon_restart_pre_stop", "AO restarted before the source-stop boundary; the source remains the durable owner")
+		return fail("daemon_restart_pre_stop")
 	case domain.AgentSwitchStoppingSource:
 		return m.reconcileStoppingSource(ctx, store, rec, sw)
 	case domain.AgentSwitchSourceStopped:
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		return fail("daemon_restart_post_stop", "AO restarted after the source stopped and before a target was activated")
+		return fail("daemon_restart_post_stop")
 	case domain.AgentSwitchStartingTarget:
 		return m.reconcileStartingTarget(ctx, store, rec, sw)
 	case domain.AgentSwitchTargetReady:
@@ -2315,9 +2286,9 @@ func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwi
 			if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 				return false, cleanupErr
 			}
-			return fail("daemon_restart_unrecoverable_target", "the adopted target had no recoverable provider-native session identity and was stopped")
+			return fail("daemon_restart_unrecoverable_target")
 		}
-		return fail("daemon_restart_before_delivery", "the exact target owns the session, but AO restarted before continuation delivery began")
+		return fail("daemon_restart_before_delivery")
 	case domain.AgentSwitchDelivering:
 		recoverable, identityErr := m.targetNativeIdentityRecoverable(ctx, store, rec, sw)
 		if identityErr != nil {
@@ -2337,7 +2308,7 @@ func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwi
 			if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 				return false, cleanupErr
 			}
-			return fail("daemon_restart_unrecoverable_target", "the unacknowledged target had no recoverable provider-native session identity and was stopped")
+			return fail("daemon_restart_unrecoverable_target")
 		}
 		if sw.TargetAcknowledgedAt != nil {
 			if _, err := m.completeAcknowledgedAgentSwitch(ctx, store, sw); err != nil {
@@ -2345,7 +2316,7 @@ func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwi
 			}
 			return true, nil
 		}
-		return fail("delivery_unconfirmed", "AO restarted while continuation delivery was in doubt; the turn was not resent")
+		return fail("delivery_unconfirmed")
 	default:
 		if sw.State.Terminal() {
 			return true, nil
@@ -2376,7 +2347,6 @@ func (m *Manager) targetNativeIdentityRecoverable(ctx context.Context, store por
 	if transcript := safeNativeTranscriptPath(rec.Metadata.NativeTranscriptPath, native.ConfigDir); transcript != "" {
 		native.TranscriptPath = transcript
 	}
-	native.UpdatedAt = m.clock()
 	updated, err := store.UpdateAgentNativeSession(ctx, native, sw.TargetGenerationID)
 	if err != nil {
 		return false, err
@@ -2412,7 +2382,7 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 		// No target can exist before the source-stopped transaction. A reaper or
 		// explicit kill that won this race therefore makes the switch safely
 		// terminal instead of leaving its input gate retained forever.
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "source_session_terminated", "the AO session was terminated before source-stop ownership could be recorded")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, "source_session_terminated")
 		return failErr == nil, failErr
 	}
 	handle := ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}
@@ -2421,7 +2391,7 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 		// No target can exist in stopping_source, so closing the saga cannot
 		// create dual ownership. Normal runtime reconciliation will retry the
 		// liveness probe independently.
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "source_stop_unconfirmed", safeSwitchError(err))
+		_, failErr := m.failAgentSwitch(ctx, store, sw, "source_stop_unconfirmed")
 		return failErr == nil, failErr
 	}
 	if alive {
@@ -2429,7 +2399,7 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 		// transaction. Therefore any surviving handle in stopping_source still
 		// belongs to the source side (provider process or preserved shell). Keep
 		// it; process-level inspection is unavailable for hook-native sources.
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_pre_stop", "the source runtime survived; no target was created")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_pre_stop")
 		return failErr == nil, failErr
 	}
 
@@ -2453,7 +2423,7 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 	if err != nil {
 		return false, err
 	}
-	_, err = m.failAgentSwitch(ctx, store, current, "daemon_restart_post_stop", "the source was stopped before AO restarted; no target was launched")
+	_, err = m.failAgentSwitch(ctx, store, current, "daemon_restart_post_stop")
 	return err == nil, err
 }
 
@@ -2474,14 +2444,14 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop", "target liveness was unknown and its runtime was removed conservatively")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
 		return failErr == nil, failErr
 	}
 	if !alive {
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop", "the target runtime was not created before AO restarted")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
 		return failErr == nil, failErr
 	}
 	inspector, ok := m.runtime.(ports.ExactSupervisedProcessInspector)
@@ -2499,7 +2469,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop", "target generation inspection failed and its runtime was removed conservatively")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
 		return failErr == nil, failErr
 	}
 	if !targetAlive {
@@ -2509,7 +2479,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop", "a live runtime did not match the expected target generation and was removed")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
 		return failErr == nil, failErr
 	}
 	if sw.TargetNativeSessionRef == nil {
@@ -2519,7 +2489,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop", "the target generation lacked a durable native-session reference")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
 		return failErr == nil, failErr
 	}
 	targetNative, found, err := store.GetAgentNativeSession(ctx, *sw.TargetNativeSessionRef)
@@ -2534,8 +2504,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		detail := "the target generation lacked a recoverable provider-native session identity"
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop", detail)
+		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
 		return failErr == nil, failErr
 	}
 	activated, err := store.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
@@ -2560,7 +2529,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 	if err != nil {
 		return false, err
 	}
-	_, err = m.failAgentSwitch(ctx, store, current, "daemon_restart_before_delivery", "the exact target generation was adopted, but no continuation was sent during boot recovery")
+	_, err = m.failAgentSwitch(ctx, store, current, "daemon_restart_before_delivery")
 	return err == nil, err
 }
 

@@ -25,7 +25,6 @@ var routineInternalCLICommands = []string{
 	"ao session ls",
 	"ao session get",
 	"ao session agent-switch ls",
-	"ao session agent-switch get",
 	"ao session handoff",
 	"ao session handoff submit",
 	"ao project ls",
@@ -55,7 +54,7 @@ func CLIActorType(actorType, commandPath string) string {
 		return "user"
 	}
 	switch normalized {
-	case "ao session agent-switch", "ao session agent-switch get", "ao session agent-switch ls", "ao session switch-agent":
+	case "ao session agent-switch", "ao session agent-switch ls", "ao session switch-agent":
 		return "user"
 	}
 	if normalized == "ao hooks" {

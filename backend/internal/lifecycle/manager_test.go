@@ -1198,7 +1198,7 @@ func TestActivity_ReleaseLaunchUnblocksTargetHookAfterAtomicOwnershipTransfer(t 
 	store.native[targetNativeRef] = domain.AgentNativeSession{
 		ID: targetNativeRef, AOSessionID: "mer-1", Harness: domain.HarnessCodex,
 		LastGenerationID: "target-generation",
-		CreatedAt:        activatedAt.Add(-time.Second), LastUsedAt: activatedAt.Add(-time.Second), UpdatedAt: activatedAt.Add(-time.Second),
+		CreatedAt:        activatedAt.Add(-time.Second), LastUsedAt: activatedAt.Add(-time.Second),
 	}
 	rec := working("mer-1")
 	rec.Harness = domain.HarnessClaudeCode

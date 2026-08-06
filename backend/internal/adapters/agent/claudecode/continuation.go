@@ -45,7 +45,7 @@ func (p *Plugin) NewNativeSessionID() string {
 // NativeSessionConfigDir returns Claude Code's session-state root. A project
 // environment may explicitly select CLAUDE_CONFIG_DIR; otherwise Claude uses
 // ~/.claude.
-func (p *Plugin) NativeSessionConfigDir(ctx context.Context, _ string, env map[string]string) (string, error) {
+func (p *Plugin) NativeSessionConfigDir(ctx context.Context, env map[string]string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

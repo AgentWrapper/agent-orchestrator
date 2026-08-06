@@ -1577,52 +1577,6 @@ paths:
       summary: List a session's durable agent-switch history
       tags:
       - sessions
-  /api/v1/sessions/{sessionId}/agent-switches/{switchId}:
-    get:
-      operationId: getSessionAgentSwitch
-      parameters:
-      - description: Session identifier, e.g. project-1.
-        in: path
-        name: sessionId
-        required: true
-        schema:
-          description: Session identifier, e.g. project-1.
-          type: string
-      - description: Durable agent-switch identifier.
-        in: path
-        name: switchId
-        required: true
-        schema:
-          description: Durable agent-switch identifier.
-          type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentSwitchResponse'
-          description: OK
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Internal Server Error
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Fetch one durable agent-switch saga
-      tags:
-      - sessions
   /api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff:
     post:
       operationId: submitSessionAgentHandoff

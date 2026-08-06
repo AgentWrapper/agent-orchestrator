@@ -632,7 +632,6 @@ func (m *Manager) stagePendingAgentSwitchNativeMetadata(ctx context.Context, id 
 	if !changed {
 		return nil
 	}
-	native.UpdatedAt = m.clock()
 	updated, err := store.UpdateAgentNativeSession(ctx, native, sw.TargetGenerationID)
 	if err != nil {
 		return err

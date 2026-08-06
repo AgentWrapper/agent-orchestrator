@@ -248,19 +248,18 @@ func (f *fakeSessionService) SwitchAgent(_ context.Context, id domain.SessionID,
 	}
 	f.switchConfig = cfg
 	now := time.Now().UTC()
-	sourceRef := domain.AgentNativeSessionID("native-source")
 	targetRef := domain.AgentNativeSessionID("native-target")
 	record := domain.AgentSwitch{
 		ID: "switch-1", SessionID: id, IdempotencyKey: "private-retry-key",
 		FromHarness: domain.HarnessClaudeCode, TargetHarness: cfg.TargetHarness,
-		SourceNativeSessionRef: &sourceRef, TargetNativeSessionRef: &targetRef,
-		TargetStartMode: domain.AgentSwitchTargetStartFresh, State: domain.AgentSwitchCompleted,
+		TargetNativeSessionRef: &targetRef,
+		TargetStartMode:        domain.AgentSwitchTargetStartFresh, State: domain.AgentSwitchCompleted,
 		AgentHandoffStatus: domain.AgentHandoffReceived,
 		AgentHandoffPath:   "/private/ao/agent-handoff.json", AgentHandoffHash: "private-hash",
 		SourceGenerationID: "private-source-generation", TargetGenerationID: "private-target-generation",
 		TargetRuntimeHandleID: "private-target-runtime-handle",
-		ErrorCode:             "SAFE_ERROR_CODE", ErrorDetail: "private failure detail",
-		RequestedAt: now, UpdatedAt: now,
+		ErrorCode:             "SAFE_ERROR_CODE",
+		RequestedAt:           now, UpdatedAt: now,
 	}
 	f.agentSwitches[record.ID] = record
 	return record, nil
@@ -279,14 +278,6 @@ func (f *fakeSessionService) ListAgentSwitches(_ context.Context, id domain.Sess
 	return out, nil
 }
 
-func (f *fakeSessionService) GetAgentSwitch(_ context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error) {
-	record, ok := f.agentSwitches[switchID]
-	if !ok || record.SessionID != id {
-		return domain.AgentSwitch{}, apierr.NotFound("AGENT_SWITCH_NOT_FOUND", "Unknown agent switch")
-	}
-	return record, nil
-}
-
 func (f *fakeSessionService) SubmitAgentHandoff(
 	_ context.Context,
 	id domain.SessionID,
@@ -294,9 +285,9 @@ func (f *fakeSessionService) SubmitAgentHandoff(
 	sourceGenerationID domain.AgentGenerationID,
 	handoff json.RawMessage,
 ) (domain.AgentSwitch, error) {
-	record, err := f.GetAgentSwitch(context.Background(), id, switchID)
-	if err != nil {
-		return domain.AgentSwitch{}, err
+	record, ok := f.agentSwitches[switchID]
+	if !ok || record.SessionID != id {
+		return domain.AgentSwitch{}, apierr.NotFound("AGENT_SWITCH_NOT_FOUND", "Unknown agent switch")
 	}
 	f.handoffSource = sourceGenerationID
 	f.handoff = append(json.RawMessage(nil), handoff...)
@@ -497,17 +488,6 @@ func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 	mustJSON(t, body, &listed)
 	if len(listed.Switches) != 1 || listed.Switches[0].ID != "switch-1" {
 		t.Fatalf("listed switches = %+v", listed.Switches)
-	}
-
-	body, status, _ = doRequest(t, srv, http.MethodGet, "/api/v1/sessions/ao-1/agent-switches/switch-1", "")
-	if status != http.StatusOK {
-		t.Fatalf("get switch = %d, want 200; body=%s", status, body)
-	}
-	assertAgentSwitchResponseRedacted(t, body)
-	var fetched controllers.AgentSwitchResponse
-	mustJSON(t, body, &fetched)
-	if fetched.Switch.ID != "switch-1" {
-		t.Fatalf("fetched switch = %+v", fetched.Switch)
 	}
 
 	body, status, _ = doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/agent-switches/switch-1/handoff", `{

@@ -52,7 +52,6 @@ Every product command resolves to a daemon HTTP route. Run `ao <command>
 | `ao session restore <id>`           | `POST /api/v1/sessions/{id}/restore`           |
 | `ao session switch-agent <id> <target-harness>` | `POST /api/v1/sessions/{id}/switch-agent` |
 | `ao session agent-switch ls <session-id>` | `GET /api/v1/sessions/{id}/agent-switches` |
-| `ao session agent-switch get <session-id> <switch-id>` | `GET /api/v1/sessions/{id}/agent-switches/{switchId}` |
 | `ao session handoff submit`         | `POST /api/v1/sessions/{id}/agent-switches/{switchId}/handoff` |
 | `ao session rename <id> <name>`     | `PATCH /api/v1/sessions/{id}`                  |
 | `ao session cleanup`                | `POST /api/v1/sessions/cleanup`                |
@@ -84,10 +83,9 @@ ao session switch-agent ao-7 codex \
   --idempotency-key switch-ao-7-to-codex
 
 ao session agent-switch ls ao-7 --json
-ao session agent-switch get ao-7 switch-123 --json
 ```
 
-`switch-agent`, `agent-switch ls`, and `agent-switch get` all support `--json`.
+`switch-agent` and `agent-switch ls` both support `--json`.
 The `agent-switch` command also has the `agent-switches` alias, and `ls` has the
 `list` alias.
 

@@ -103,7 +103,7 @@ func (s *Store) UpdateAgentNativeSession(ctx context.Context, rec domain.AgentNa
 		ConfigDir: rec.ConfigDir, NativeSessionID: rec.NativeSessionID,
 		TranscriptPath:   rec.TranscriptPath,
 		NextGenerationID: rec.LastGenerationID, LastUsedAt: rec.LastUsedAt,
-		UpdatedAt: rec.UpdatedAt, ID: rec.ID, AoSessionID: rec.AOSessionID,
+		ID: rec.ID, AoSessionID: rec.AOSessionID,
 		ExpectedGenerationID: expectedGenerationID,
 	})
 	if err != nil {
@@ -126,9 +126,6 @@ func (s *Store) CreateAgentSwitch(ctx context.Context, rec domain.AgentSwitch) (
 
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	if err := ensureNativeSessionRefBelongsTo(ctx, s.qw, rec.SessionID, rec.FromHarness, rec.SourceNativeSessionRef, "source"); err != nil {
-		return domain.AgentSwitch{}, false, fmt.Errorf("create agent switch %s: %w", rec.ID, err)
-	}
 	n, err := s.qw.InsertAgentSwitch(ctx, agentSwitchToInsert(rec))
 	if err != nil {
 		return domain.AgentSwitch{}, false, fmt.Errorf("create agent switch %s: %w", rec.ID, err)
@@ -252,9 +249,9 @@ func (s *Store) UpdateAgentSwitch(ctx context.Context, rec domain.AgentSwitch, e
 		TargetStartMode:        rec.TargetStartMode, NextState: rec.State,
 		NextTargetGenerationID:    rec.TargetGenerationID,
 		NextTargetRuntimeHandleID: rec.TargetRuntimeHandleID,
-		ErrorCode:                 rec.ErrorCode, ErrorDetail: rec.ErrorDetail,
-		UpdatedAt: rec.UpdatedAt,
-		ID:        rec.ID, SessionID: rec.SessionID, ExpectedState: expectedState,
+		ErrorCode:                 rec.ErrorCode,
+		UpdatedAt:                 rec.UpdatedAt,
+		ID:                        rec.ID, SessionID: rec.SessionID, ExpectedState: expectedState,
 		ExpectedSourceGenerationID: expectedSourceGenerationID,
 		ExpectedTargetGenerationID: expectedTargetGenerationID,
 	})
@@ -282,7 +279,7 @@ func (s *Store) FailAgentSwitchIfUnacknowledged(ctx context.Context, rec domain.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	n, err := s.qw.FailAgentSwitchIfUnacknowledged(ctx, gen.FailAgentSwitchIfUnacknowledgedParams{
-		ErrorCode: rec.ErrorCode, ErrorDetail: rec.ErrorDetail, FailedAt: rec.UpdatedAt,
+		ErrorCode: rec.ErrorCode, FailedAt: rec.UpdatedAt,
 		ID: rec.ID, SessionID: rec.SessionID,
 		ExpectedSourceGenerationID: rec.SourceGenerationID,
 		ExpectedTargetGenerationID: rec.TargetGenerationID,
@@ -530,10 +527,10 @@ func validateAgentNativeSession(rec domain.AgentNativeSession) error {
 	if !rec.Harness.IsKnown() {
 		return fmt.Errorf("agent native session %s: unknown harness %q", rec.ID, rec.Harness)
 	}
-	if rec.CreatedAt.IsZero() || rec.LastUsedAt.IsZero() || rec.UpdatedAt.IsZero() {
-		return fmt.Errorf("agent native session %s: created, last-used, and updated timestamps are required", rec.ID)
+	if rec.CreatedAt.IsZero() || rec.LastUsedAt.IsZero() {
+		return fmt.Errorf("agent native session %s: created and last-used timestamps are required", rec.ID)
 	}
-	if rec.LastUsedAt.Before(rec.CreatedAt) || rec.UpdatedAt.Before(rec.CreatedAt) {
+	if rec.LastUsedAt.Before(rec.CreatedAt) {
 		return fmt.Errorf("agent native session %s: timestamps precede creation", rec.ID)
 	}
 	return nil
@@ -642,7 +639,7 @@ func agentNativeSessionToInsert(rec domain.AgentNativeSession) gen.InsertAgentNa
 		ID: rec.ID, AoSessionID: rec.AOSessionID, Harness: rec.Harness, ConfigDir: rec.ConfigDir,
 		NativeSessionID: rec.NativeSessionID, TranscriptPath: rec.TranscriptPath,
 		LastGenerationID: rec.LastGenerationID, CreatedAt: rec.CreatedAt,
-		LastUsedAt: rec.LastUsedAt, UpdatedAt: rec.UpdatedAt,
+		LastUsedAt: rec.LastUsedAt,
 	}
 }
 
@@ -651,7 +648,7 @@ func agentNativeSessionFromGen(row gen.AgentNativeSession) domain.AgentNativeSes
 		ID: row.ID, AOSessionID: row.AoSessionID, Harness: row.Harness, ConfigDir: row.ConfigDir,
 		NativeSessionID: row.NativeSessionID, TranscriptPath: row.TranscriptPath,
 		LastGenerationID: row.LastGenerationID, CreatedAt: row.CreatedAt,
-		LastUsedAt: row.LastUsedAt, UpdatedAt: row.UpdatedAt,
+		LastUsedAt: row.LastUsedAt,
 	}
 }
 
@@ -668,7 +665,6 @@ func agentSwitchToInsert(rec domain.AgentSwitch) gen.InsertAgentSwitchParams {
 		ID: rec.ID, SessionID: rec.SessionID, IdempotencyKey: rec.IdempotencyKey,
 		RequestFingerprint: rec.RequestFingerprint,
 		FromHarness:        rec.FromHarness, TargetHarness: rec.TargetHarness,
-		SourceNativeSessionRef: rec.SourceNativeSessionRef,
 		TargetNativeSessionRef: rec.TargetNativeSessionRef,
 		TargetStartMode:        rec.TargetStartMode, State: rec.State,
 		AgentHandoffStatus:    rec.AgentHandoffStatus,
@@ -678,8 +674,8 @@ func agentSwitchToInsert(rec domain.AgentSwitch) gen.InsertAgentSwitchParams {
 		TargetGenerationID:    rec.TargetGenerationID,
 		TargetRuntimeHandleID: rec.TargetRuntimeHandleID,
 		TargetAcknowledgedAt:  timePtrToNull(rec.TargetAcknowledgedAt),
-		ErrorCode:             rec.ErrorCode, ErrorDetail: rec.ErrorDetail,
-		RequestedAt: rec.RequestedAt, UpdatedAt: rec.UpdatedAt,
+		ErrorCode:             rec.ErrorCode,
+		RequestedAt:           rec.RequestedAt, UpdatedAt: rec.UpdatedAt,
 	}
 }
 
@@ -688,7 +684,6 @@ func agentSwitchFromGen(row gen.AgentSwitch) domain.AgentSwitch {
 		ID: row.ID, SessionID: row.SessionID, IdempotencyKey: row.IdempotencyKey,
 		RequestFingerprint: row.RequestFingerprint,
 		FromHarness:        row.FromHarness, TargetHarness: row.TargetHarness,
-		SourceNativeSessionRef: cloneNativeSessionID(row.SourceNativeSessionRef),
 		TargetNativeSessionRef: cloneNativeSessionID(row.TargetNativeSessionRef),
 		TargetStartMode:        row.TargetStartMode, State: row.State,
 		AgentHandoffStatus:    row.AgentHandoffStatus,
@@ -698,8 +693,8 @@ func agentSwitchFromGen(row gen.AgentSwitch) domain.AgentSwitch {
 		TargetGenerationID:    row.TargetGenerationID,
 		TargetRuntimeHandleID: row.TargetRuntimeHandleID,
 		TargetAcknowledgedAt:  nullTimeToPtr(row.TargetAcknowledgedAt),
-		ErrorCode:             row.ErrorCode, ErrorDetail: row.ErrorDetail,
-		RequestedAt: row.RequestedAt, UpdatedAt: row.UpdatedAt,
+		ErrorCode:             row.ErrorCode,
+		RequestedAt:           row.RequestedAt, UpdatedAt: row.UpdatedAt,
 	}
 }
 

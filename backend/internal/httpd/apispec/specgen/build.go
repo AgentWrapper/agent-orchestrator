@@ -1185,17 +1185,6 @@ func sessionOperations() []operation {
 			},
 		},
 		{
-			method: http.MethodGet, path: "/api/v1/sessions/{sessionId}/agent-switches/{switchId}", id: "getSessionAgentSwitch", tag: "sessions",
-			summary:    "Fetch one durable agent-switch saga",
-			pathParams: []any{controllers.SessionIDParam{}, controllers.AgentSwitchIDParam{}},
-			resps: []respUnit{
-				{http.StatusOK, controllers.AgentSwitchResponse{}},
-				{http.StatusNotFound, envelope.APIError{}},
-				{http.StatusInternalServerError, envelope.APIError{}},
-				{http.StatusNotImplemented, envelope.APIError{}},
-			},
-		},
-		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/agent-switches/{switchId}/handoff", id: "submitSessionAgentHandoff", tag: "sessions",
 			summary:    "Submit a generation-fenced source-agent handoff",
 			pathParams: []any{controllers.SessionIDParam{}, controllers.AgentSwitchIDParam{}},

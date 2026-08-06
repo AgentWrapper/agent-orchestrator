@@ -66,9 +66,7 @@ CREATE TABLE agent_native_sessions (
     last_generation_id TEXT NOT NULL DEFAULT '',
     created_at         TIMESTAMP NOT NULL,
     last_used_at       TIMESTAMP NOT NULL,
-    updated_at         TIMESTAMP NOT NULL,
-    CHECK (last_used_at >= created_at),
-    CHECK (updated_at >= created_at)
+    CHECK (last_used_at >= created_at)
 );
 -- +goose StatementEnd
 
@@ -105,7 +103,6 @@ CREATE TABLE agent_switches (
         ),
     from_harness               TEXT NOT NULL CHECK (length(from_harness) > 0),
     target_harness             TEXT NOT NULL CHECK (length(target_harness) > 0),
-    source_native_session_ref  TEXT REFERENCES agent_native_sessions (id) ON DELETE SET NULL,
     target_native_session_ref  TEXT REFERENCES agent_native_sessions (id) ON DELETE SET NULL,
     target_start_mode          TEXT NOT NULL DEFAULT ''
         CHECK (target_start_mode IN ('', 'fresh', 'resumed')),
@@ -126,7 +123,6 @@ CREATE TABLE agent_switches (
     target_runtime_handle_id   TEXT NOT NULL DEFAULT '',
     target_acknowledged_at     TIMESTAMP,
     error_code                 TEXT NOT NULL DEFAULT '',
-    error_detail               TEXT NOT NULL DEFAULT '',
     requested_at               TIMESTAMP NOT NULL,
     updated_at                 TIMESTAMP NOT NULL,
     UNIQUE (session_id, idempotency_key),
@@ -150,36 +146,8 @@ CREATE TABLE agent_switches (
 -- +goose StatementEnd
 
 -- Foreign keys prove that a referenced native row exists; these triggers also
--- bind it to the switch's AO session and source/target harness. Keep the
+-- bind it to the switch's AO session and target harness. Keep the
 -- invariant in SQLite so direct SQL and future store paths cannot bypass it.
--- +goose StatementBegin
-CREATE TRIGGER agent_switches_source_native_scope_insert
-BEFORE INSERT ON agent_switches
-WHEN NEW.source_native_session_ref IS NOT NULL
-    AND NOT EXISTS (
-        SELECT 1 FROM agent_native_sessions
-        WHERE id = NEW.source_native_session_ref
-          AND ao_session_id = NEW.session_id
-          AND harness = NEW.from_harness
-    )
-BEGIN
-    SELECT RAISE(ABORT, 'agent switch source native session scope mismatch');
-END;
--- +goose StatementEnd
--- +goose StatementBegin
-CREATE TRIGGER agent_switches_source_native_scope_update
-BEFORE UPDATE OF session_id, from_harness, source_native_session_ref ON agent_switches
-WHEN NEW.source_native_session_ref IS NOT NULL
-    AND NOT EXISTS (
-        SELECT 1 FROM agent_native_sessions
-        WHERE id = NEW.source_native_session_ref
-          AND ao_session_id = NEW.session_id
-          AND harness = NEW.from_harness
-    )
-BEGIN
-    SELECT RAISE(ABORT, 'agent switch source native session scope mismatch');
-END;
--- +goose StatementEnd
 -- +goose StatementBegin
 CREATE TRIGGER agent_switches_target_native_scope_insert
 BEFORE INSERT ON agent_switches
@@ -265,12 +233,6 @@ DROP TRIGGER IF EXISTS agent_switches_target_native_scope_update;
 -- +goose StatementEnd
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS agent_switches_target_native_scope_insert;
--- +goose StatementEnd
--- +goose StatementBegin
-DROP TRIGGER IF EXISTS agent_switches_source_native_scope_update;
--- +goose StatementEnd
--- +goose StatementBegin
-DROP TRIGGER IF EXISTS agent_switches_source_native_scope_insert;
 -- +goose StatementEnd
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS sessions_cdc_update;

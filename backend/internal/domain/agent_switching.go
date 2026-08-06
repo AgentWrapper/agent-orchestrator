@@ -78,7 +78,6 @@ type AgentNativeSession struct {
 	LastGenerationID AgentGenerationID `json:"lastGenerationId,omitempty"`
 	CreatedAt        time.Time         `json:"createdAt"`
 	LastUsedAt       time.Time         `json:"lastUsedAt"`
-	UpdatedAt        time.Time         `json:"updatedAt"`
 }
 
 // AgentSwitchState is the durable progress of a switch saga. It is an
@@ -216,7 +215,6 @@ type AgentSwitch struct {
 	RequestFingerprint     AgentSwitchRequestFingerprint `json:"-"`
 	FromHarness            AgentHarness                  `json:"fromHarness"`
 	TargetHarness          AgentHarness                  `json:"targetHarness"`
-	SourceNativeSessionRef *AgentNativeSessionID         `json:"sourceNativeSessionRef,omitempty"`
 	TargetNativeSessionRef *AgentNativeSessionID         `json:"targetNativeSessionRef,omitempty"`
 	TargetStartMode        AgentSwitchTargetStartMode    `json:"targetStartMode,omitempty"`
 	State                  AgentSwitchState              `json:"state"`
@@ -228,7 +226,6 @@ type AgentSwitch struct {
 	TargetRuntimeHandleID  string                        `json:"-"`
 	TargetAcknowledgedAt   *time.Time                    `json:"targetAcknowledgedAt,omitempty"`
 	ErrorCode              string                        `json:"errorCode,omitempty"`
-	ErrorDetail            string                        `json:"errorDetail,omitempty"`
 	RequestedAt            time.Time                     `json:"requestedAt"`
 	UpdatedAt              time.Time                     `json:"updatedAt"`
 }

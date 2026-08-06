@@ -32,12 +32,6 @@ func (s *Service) ListAgentSwitches(ctx context.Context, id domain.SessionID) ([
 	return switches, toAPIError(err)
 }
 
-// GetAgentSwitch returns one durable switch saga belonging to the session.
-func (s *Service) GetAgentSwitch(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error) {
-	switchRecord, err := s.manager.GetAgentSwitch(ctx, id, switchID)
-	return switchRecord, toAPIError(err)
-}
-
 // SubmitAgentHandoff records a generation-fenced, source-authored JSON handoff.
 func (s *Service) SubmitAgentHandoff(
 	ctx context.Context,

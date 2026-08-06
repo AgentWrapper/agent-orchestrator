@@ -232,15 +232,13 @@ func TestSessionSwitchAgentJSONAndTypedDaemonError(t *testing.T) {
 	})
 }
 
-func TestSessionAgentSwitchListAndGet(t *testing.T) {
+func TestSessionAgentSwitchList(t *testing.T) {
 	cfg := setConfigEnv(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/agent-switches":
 			_, _ = io.WriteString(w, `{"switches":[`+agentSwitchFixture("switch-1", "completed")+`]}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/sessions/demo-1/agent-switches/switch-1":
-			_, _ = io.WriteString(w, `{"switch":`+agentSwitchFixture("switch-1", "completed")+`}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -257,19 +255,6 @@ func TestSessionAgentSwitchListAndGet(t *testing.T) {
 		if !strings.Contains(listOut, needle) {
 			t.Errorf("list output missing %q:\n%s", needle, listOut)
 		}
-	}
-
-	getOut, errOut, err := executeCLI(t, Deps{ProcessAlive: func(int) bool { return true }},
-		"session", "agent-switch", "get", "demo-1", "switch-1", "--json")
-	if err != nil {
-		t.Fatalf("agent-switch get failed: %v\nstderr=%s", err, errOut)
-	}
-	var got agentSwitchResponse
-	if err := json.Unmarshal([]byte(getOut), &got); err != nil {
-		t.Fatalf("get output is not JSON: %v\n%s", err, getOut)
-	}
-	if got.Switch.ID != "switch-1" || got.Switch.State != "completed" {
-		t.Fatalf("unexpected get response: %#v", got)
 	}
 }
 

@@ -66,7 +66,7 @@ type NativeSessionRef struct {
 // a launch. AO stores the returned path with the native-session binding so a
 // later probe does not accidentally inspect another account/config home.
 type AgentNativeSessionConfigProvider interface {
-	NativeSessionConfigDir(ctx context.Context, dataDir string, env map[string]string) (string, error)
+	NativeSessionConfigDir(ctx context.Context, env map[string]string) (string, error)
 }
 
 // NativeSessionAvailability is a tri-state result. Unknown is materially

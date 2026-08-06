@@ -25,10 +25,6 @@ type sessionAgentSwitchListOptions struct {
 	json bool
 }
 
-type sessionAgentSwitchGetOptions struct {
-	json bool
-}
-
 type sessionHandoffSubmitOptions struct {
 	session            string
 	switchID           string
@@ -114,7 +110,6 @@ func newSessionAgentSwitchCommand(ctx *commandContext) *cobra.Command {
 		Short:   "Inspect agent switches for a session",
 	}
 	cmd.AddCommand(newSessionAgentSwitchListCommand(ctx))
-	cmd.AddCommand(newSessionAgentSwitchGetCommand(ctx))
 	return cmd
 }
 
@@ -134,28 +129,6 @@ func newSessionAgentSwitchListCommand(ctx *commandContext) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&opts.json, "json", false, "Output agent switches as JSON")
-	return cmd
-}
-
-func newSessionAgentSwitchGetCommand(ctx *commandContext) *cobra.Command {
-	var opts sessionAgentSwitchGetOptions
-	cmd := &cobra.Command{
-		Use:   "get <session-id> <switch-id>",
-		Short: "Fetch one agent switch",
-		Args:  usageArgs(cobra.ExactArgs(2)),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			sessionID, err := normalizeSessionID(args[0])
-			if err != nil {
-				return err
-			}
-			switchID := strings.TrimSpace(args[1])
-			if switchID == "" {
-				return usageError{errors.New("switch id is required")}
-			}
-			return ctx.getSessionAgentSwitch(cmd.Context(), cmd, sessionID, switchID, opts)
-		},
-	}
-	cmd.Flags().BoolVar(&opts.json, "json", false, "Output the agent switch as JSON")
 	return cmd
 }
 
@@ -232,23 +205,6 @@ func (c *commandContext) listSessionAgentSwitches(
 		return writeJSON(cmd.OutOrStdout(), res)
 	}
 	return writeAgentSwitchList(cmd, res.Switches)
-}
-
-func (c *commandContext) getSessionAgentSwitch(
-	ctx context.Context,
-	cmd *cobra.Command,
-	sessionID, switchID string,
-	opts sessionAgentSwitchGetOptions,
-) error {
-	var res agentSwitchResponse
-	path := "sessions/" + url.PathEscape(sessionID) + "/agent-switches/" + url.PathEscape(switchID)
-	if err := c.getJSON(ctx, path, &res); err != nil {
-		return err
-	}
-	if opts.json {
-		return writeJSON(cmd.OutOrStdout(), res)
-	}
-	return writeAgentSwitchDetails(cmd, res.Switch)
 }
 
 func (c *commandContext) submitSessionAgentHandoff(

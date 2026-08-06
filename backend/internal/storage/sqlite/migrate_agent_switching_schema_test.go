@@ -61,7 +61,7 @@ WHERE session_id = 'switch-session' AND event_type = 'session_updated';
 	}
 	if _, err := db.Exec(`
 UPDATE agent_switches
-SET error_detail = 'durable diagnostic', updated_at = ?
+SET error_code = 'DURABLE_DIAGNOSTIC', updated_at = ?
 WHERE id = 'switch-1';
 `, now.Add(2*time.Minute)); err != nil {
 		t.Fatalf("update agent switch: %v", err)

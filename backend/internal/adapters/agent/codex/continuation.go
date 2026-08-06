@@ -34,7 +34,7 @@ func (p *Plugin) ContinuationCapabilities() ports.ContinuationCapabilities {
 
 // NativeSessionConfigDir returns the exact CODEX_HOME used by the invocation,
 // falling back to Codex's standard ~/.codex state root.
-func (p *Plugin) NativeSessionConfigDir(ctx context.Context, _ string, env map[string]string) (string, error) {
+func (p *Plugin) NativeSessionConfigDir(ctx context.Context, env map[string]string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}

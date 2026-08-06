@@ -31,7 +31,6 @@ type AgentNativeSession struct {
 	LastGenerationID domain.AgentGenerationID
 	CreatedAt        time.Time
 	LastUsedAt       time.Time
-	UpdatedAt        time.Time
 }
 
 type AgentSwitch struct {
@@ -41,7 +40,6 @@ type AgentSwitch struct {
 	RequestFingerprint     domain.AgentSwitchRequestFingerprint
 	FromHarness            domain.AgentHarness
 	TargetHarness          domain.AgentHarness
-	SourceNativeSessionRef *domain.AgentNativeSessionID
 	TargetNativeSessionRef *domain.AgentNativeSessionID
 	TargetStartMode        domain.AgentSwitchTargetStartMode
 	State                  domain.AgentSwitchState
@@ -53,7 +51,6 @@ type AgentSwitch struct {
 	TargetRuntimeHandleID  string
 	TargetAcknowledgedAt   sql.NullTime
 	ErrorCode              string
-	ErrorDetail            string
 	RequestedAt            time.Time
 	UpdatedAt              time.Time
 }

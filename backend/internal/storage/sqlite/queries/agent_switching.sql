@@ -2,21 +2,21 @@
 INSERT INTO agent_native_sessions (
     id, ao_session_id, harness, config_dir,
     native_session_id, transcript_path,
-    last_generation_id, created_at, last_used_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    last_generation_id, created_at, last_used_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT DO NOTHING;
 
 -- name: GetAgentNativeSession :one
 SELECT id, ao_session_id, harness, config_dir,
     native_session_id, transcript_path,
-    last_generation_id, created_at, last_used_at, updated_at
+    last_generation_id, created_at, last_used_at
 FROM agent_native_sessions
 WHERE id = ?;
 
 -- name: FindAgentNativeSession :one
 SELECT id, ao_session_id, harness, config_dir,
     native_session_id, transcript_path,
-    last_generation_id, created_at, last_used_at, updated_at
+    last_generation_id, created_at, last_used_at
 FROM agent_native_sessions
 WHERE ao_session_id = ?
   AND harness = ?
@@ -26,7 +26,7 @@ WHERE ao_session_id = ?
 -- name: ListAgentNativeSessions :many
 SELECT id, ao_session_id, harness, config_dir,
     native_session_id, transcript_path,
-    last_generation_id, created_at, last_used_at, updated_at
+    last_generation_id, created_at, last_used_at
 FROM agent_native_sessions
 WHERE ao_session_id = ?
 ORDER BY last_used_at DESC, created_at DESC, id DESC;
@@ -37,8 +37,7 @@ UPDATE agent_native_sessions SET
     native_session_id = sqlc.arg(native_session_id),
     transcript_path = sqlc.arg(transcript_path),
     last_generation_id = sqlc.arg(next_generation_id),
-    last_used_at = sqlc.arg(last_used_at),
-    updated_at = sqlc.arg(updated_at)
+    last_used_at = sqlc.arg(last_used_at)
 WHERE id = sqlc.arg(id)
   AND ao_session_id = sqlc.arg(ao_session_id)
   AND last_generation_id = sqlc.arg(expected_generation_id);
@@ -47,23 +46,23 @@ WHERE id = sqlc.arg(id)
 INSERT INTO agent_switches (
     id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
-    source_native_session_ref, target_native_session_ref, target_start_mode,
+    target_native_session_ref, target_start_mode,
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code, error_detail,
+    target_acknowledged_at, error_code,
     requested_at, updated_at
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT DO NOTHING;
 
 -- name: GetAgentSwitch :one
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
-    source_native_session_ref, target_native_session_ref, target_start_mode,
+    target_native_session_ref, target_start_mode,
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code, error_detail,
+    target_acknowledged_at, error_code,
     requested_at, updated_at
 FROM agent_switches
 WHERE id = ?;
@@ -71,10 +70,10 @@ WHERE id = ?;
 -- name: GetAgentSwitchByIdempotencyKey :one
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
-    source_native_session_ref, target_native_session_ref, target_start_mode,
+    target_native_session_ref, target_start_mode,
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code, error_detail,
+    target_acknowledged_at, error_code,
     requested_at, updated_at
 FROM agent_switches
 WHERE session_id = ? AND idempotency_key = ?;
@@ -82,10 +81,10 @@ WHERE session_id = ? AND idempotency_key = ?;
 -- name: GetActiveAgentSwitch :one
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
-    source_native_session_ref, target_native_session_ref, target_start_mode,
+    target_native_session_ref, target_start_mode,
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code, error_detail,
+    target_acknowledged_at, error_code,
     requested_at, updated_at
 FROM agent_switches
 WHERE session_id = ?
@@ -94,10 +93,10 @@ WHERE session_id = ?
 -- name: ListAgentSwitches :many
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
-    source_native_session_ref, target_native_session_ref, target_start_mode,
+    target_native_session_ref, target_start_mode,
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
-    target_acknowledged_at, error_code, error_detail,
+    target_acknowledged_at, error_code,
     requested_at, updated_at
 FROM agent_switches
 WHERE session_id = ?
@@ -111,7 +110,6 @@ UPDATE agent_switches SET
     target_generation_id = sqlc.arg(next_target_generation_id),
     target_runtime_handle_id = sqlc.arg(next_target_runtime_handle_id),
     error_code = sqlc.arg(error_code),
-    error_detail = sqlc.arg(error_detail),
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(id)
   AND session_id = sqlc.arg(session_id)
@@ -127,7 +125,6 @@ WHERE id = sqlc.arg(id)
 UPDATE agent_switches SET
     state = 'failed',
     error_code = sqlc.arg(error_code),
-    error_detail = sqlc.arg(error_detail),
     updated_at = sqlc.arg(failed_at)
 WHERE id = sqlc.arg(id)
   AND session_id = sqlc.arg(session_id)

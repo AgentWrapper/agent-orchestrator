@@ -172,11 +172,6 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "AgentHarness"
-          - column: "agent_switches.source_native_session_ref"
-            go_type:
-              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
-              type: "AgentNativeSessionID"
-              pointer: true
           - column: "agent_switches.target_native_session_ref"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

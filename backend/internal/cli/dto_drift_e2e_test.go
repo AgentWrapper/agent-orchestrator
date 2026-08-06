@@ -93,10 +93,6 @@ func (f *fakeSessionService) ListAgentSwitches(context.Context, domain.SessionID
 	return nil, nil
 }
 
-func (f *fakeSessionService) GetAgentSwitch(context.Context, domain.SessionID, domain.AgentSwitchID) (domain.AgentSwitch, error) {
-	return domain.AgentSwitch{}, nil
-}
-
 func (f *fakeSessionService) SubmitAgentHandoff(context.Context, domain.SessionID, domain.AgentSwitchID, domain.AgentGenerationID, json.RawMessage) (domain.AgentSwitch, error) {
 	return domain.AgentSwitch{}, nil
 }

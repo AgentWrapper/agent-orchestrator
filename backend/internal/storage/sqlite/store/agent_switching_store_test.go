@@ -48,7 +48,7 @@ func TestAgentNativeSessionsRetainMultipleConversationsNewestFirst(t *testing.T)
 		ConfigDir: "/ao/codex/a", NativeSessionID: "codex-thread-1",
 		TranscriptPath:   "/transcripts/codex-1.jsonl",
 		LastGenerationID: "generation-1",
-		CreatedAt:        now, LastUsedAt: now, UpdatedAt: now,
+		CreatedAt:        now, LastUsedAt: now,
 	}
 	stored, created, err := s.CreateAgentNativeSession(ctx, first)
 	if err != nil || !created || stored.ID != first.ID {
@@ -62,7 +62,6 @@ func TestAgentNativeSessionsRetainMultipleConversationsNewestFirst(t *testing.T)
 	second.LastGenerationID = "generation-2"
 	second.CreatedAt = now.Add(time.Minute)
 	second.LastUsedAt = second.CreatedAt
-	second.UpdatedAt = second.CreatedAt
 	if _, created, err := s.CreateAgentNativeSession(ctx, second); err != nil || !created {
 		t.Fatalf("create second same-harness conversation: created=%v err=%v", created, err)
 	}
@@ -82,7 +81,7 @@ func TestAgentNativeSessionsRetainMultipleConversationsNewestFirst(t *testing.T)
 		pending := first
 		pending.ID, pending.NativeSessionID = id, ""
 		pending.CreatedAt = now.Add(2 * time.Minute)
-		pending.LastUsedAt, pending.UpdatedAt = pending.CreatedAt, pending.CreatedAt
+		pending.LastUsedAt = pending.CreatedAt
 		if _, created, err := s.CreateAgentNativeSession(ctx, pending); err != nil || !created {
 			t.Fatalf("create pending native session %s: created=%v err=%v", id, created, err)
 		}
@@ -109,7 +108,7 @@ func TestAgentNativeSessionGenerationFence(t *testing.T) {
 	rec := domain.AgentNativeSession{
 		ID: "native-claude", AOSessionID: session.ID, Harness: domain.HarnessClaudeCode,
 		ConfigDir: "/ao/claude", LastGenerationID: "source-generation",
-		CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		CreatedAt: now, LastUsedAt: now,
 	}
 	if _, _, err := s.CreateAgentNativeSession(ctx, rec); err != nil {
 		t.Fatalf("create native session: %v", err)
@@ -119,7 +118,6 @@ func TestAgentNativeSessionGenerationFence(t *testing.T) {
 	rec.TranscriptPath = "/claude/session.jsonl"
 	rec.LastGenerationID = "next-generation"
 	rec.LastUsedAt = now.Add(time.Minute)
-	rec.UpdatedAt = rec.LastUsedAt
 	if ok, err := s.UpdateAgentNativeSession(ctx, rec, "stale-generation"); err != nil || ok {
 		t.Fatalf("stale native update: ok=%v err=%v", ok, err)
 	}
@@ -145,21 +143,12 @@ func TestAgentSwitchIdempotencySingleActiveSagaAndGenerationFences(t *testing.T)
 		t.Fatalf("create AO session: %v", err)
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	sourceNative := domain.AgentNativeSession{
-		ID: "native-source", AOSessionID: session.ID, Harness: domain.HarnessClaudeCode,
-		NativeSessionID:  "claude-1",
-		LastGenerationID: "source-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
-	}
-	if _, _, err := s.CreateAgentNativeSession(ctx, sourceNative); err != nil {
-		t.Fatalf("create source native session: %v", err)
-	}
-	sourceRef := sourceNative.ID
 	switchRec := domain.AgentSwitch{
 		ID: "switch-1", SessionID: session.ID, IdempotencyKey: "request-1",
 		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
 		FromHarness:        domain.HarnessClaudeCode,
-		TargetHarness:      domain.HarnessCodex, SourceNativeSessionRef: &sourceRef,
-		State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
+		TargetHarness:      domain.HarnessCodex,
+		State:              domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
 		AgentHandoffStatus: domain.AgentHandoffNotAttempted,
 		SourceGenerationID: "source-generation", RequestedAt: now, UpdatedAt: now,
 	}
@@ -239,7 +228,7 @@ func TestAgentSwitchIdempotencySingleActiveSagaAndGenerationFences(t *testing.T)
 	targetNative := domain.AgentNativeSession{
 		ID: "native-target", AOSessionID: session.ID, Harness: domain.HarnessCodex,
 		NativeSessionID:  "codex-1",
-		LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now,
 	}
 	if _, _, err := s.CreateAgentNativeSession(ctx, targetNative); err != nil {
 		t.Fatalf("create target native session: %v", err)
@@ -411,29 +400,39 @@ func TestAgentSwitchRejectsNativeReferenceFromAnotherAOSession(t *testing.T) {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	foreign := domain.AgentNativeSession{
-		ID: "foreign-native", AOSessionID: second.ID, Harness: domain.HarnessClaudeCode,
-		NativeSessionID:  "claude-foreign",
-		LastGenerationID: "foreign-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		ID: "foreign-native", AOSessionID: second.ID, Harness: domain.HarnessCodex,
+		NativeSessionID:  "codex-foreign",
+		LastGenerationID: "foreign-generation", CreatedAt: now, LastUsedAt: now,
 	}
 	if _, _, err := s.CreateAgentNativeSession(ctx, foreign); err != nil {
 		t.Fatalf("create foreign native session: %v", err)
 	}
-	foreignRef := foreign.ID
-	_, _, err = s.CreateAgentSwitch(ctx, domain.AgentSwitch{
+	base, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
 		ID: "cross-session", SessionID: first.ID, IdempotencyKey: "cross-session",
 		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(first.ID, domain.HarnessCodex, ""),
 		FromHarness:        domain.HarnessClaudeCode,
-		TargetHarness:      domain.HarnessCodex, SourceNativeSessionRef: &foreignRef,
+		TargetHarness:      domain.HarnessCodex,
 		State:              domain.AgentSwitchPreparingHandoff,
 		AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",
 		RequestedAt: now, UpdatedAt: now,
 	})
-	if err == nil {
+	if err != nil || !created {
+		t.Fatalf("create switch: created=%v err=%v", created, err)
+	}
+	advanceAgentSwitchFixture(ctx, t, s, &base, domain.AgentSwitchStoppingSource, now.Add(time.Second))
+	advanceAgentSwitchFixture(ctx, t, s, &base, domain.AgentSwitchSourceStopped, now.Add(2*time.Second))
+	advanceAgentSwitchFixture(ctx, t, s, &base, domain.AgentSwitchStartingTarget, now.Add(3*time.Second))
+	foreignRef := foreign.ID
+	base.TargetNativeSessionRef = &foreignRef
+	base.TargetStartMode = domain.AgentSwitchTargetStartResumed
+	base.TargetGenerationID = "target-generation"
+	base.UpdatedAt = now.Add(4 * time.Second)
+	if ok, err := s.UpdateAgentSwitch(ctx, base, domain.AgentSwitchStartingTarget, "source-generation", ""); err == nil || ok {
 		t.Fatal("cross-session native reference was accepted")
 	}
 }
 
-func TestAgentSwitchRejectsNativeReferenceWithWrongHarness(t *testing.T) {
+func TestAgentSwitchRejectsTargetNativeReferenceWithWrongHarness(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "switch-harness")
@@ -443,31 +442,15 @@ func TestAgentSwitchRejectsNativeReferenceWithWrongHarness(t *testing.T) {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 
-	wrongSource := domain.AgentNativeSession{
-		ID: "wrong-source-harness", AOSessionID: session.ID, Harness: domain.HarnessCodex,
-		NativeSessionID:  "codex-source",
-		LastGenerationID: "source-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
-	}
-	if _, _, err := s.CreateAgentNativeSession(ctx, wrongSource); err != nil {
-		t.Fatalf("create wrong-harness source: %v", err)
-	}
-	wrongSourceRef := wrongSource.ID
 	base := domain.AgentSwitch{
-		ID: "wrong-source-switch", SessionID: session.ID, IdempotencyKey: "wrong-source-switch",
+		ID: "wrong-target-switch", SessionID: session.ID, IdempotencyKey: "wrong-target-switch",
 		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
 		FromHarness:        domain.HarnessClaudeCode,
-		TargetHarness:      domain.HarnessCodex, SourceNativeSessionRef: &wrongSourceRef,
+		TargetHarness:      domain.HarnessCodex,
 		State:              domain.AgentSwitchPreparingHandoff,
 		AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",
 		RequestedAt: now, UpdatedAt: now,
 	}
-	if _, _, err := s.CreateAgentSwitch(ctx, base); err == nil {
-		t.Fatal("same-session source native reference with the wrong harness was accepted")
-	}
-
-	base.ID = "wrong-target-switch"
-	base.IdempotencyKey = "wrong-target-switch"
-	base.SourceNativeSessionRef = nil
 	stored, created, err := s.CreateAgentSwitch(ctx, base)
 	if err != nil || !created {
 		t.Fatalf("create switch without source reference: created=%v err=%v", created, err)
@@ -475,7 +458,7 @@ func TestAgentSwitchRejectsNativeReferenceWithWrongHarness(t *testing.T) {
 	wrongTarget := domain.AgentNativeSession{
 		ID: "wrong-target-harness", AOSessionID: session.ID, Harness: domain.HarnessClaudeCode,
 		NativeSessionID:  "claude-target",
-		LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now,
 	}
 	if _, _, err := s.CreateAgentNativeSession(ctx, wrongTarget); err != nil {
 		t.Fatalf("create wrong-harness target: %v", err)
@@ -505,7 +488,7 @@ func TestAgentSwitchTargetAcknowledgementIsGenerationFencedAndWriteOnce(t *testi
 	target := domain.AgentNativeSession{
 		ID: "ack-target", AOSessionID: session.ID, Harness: domain.HarnessCodex,
 		NativeSessionID:  "codex-ack",
-		LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now,
 	}
 	if _, _, err := s.CreateAgentNativeSession(ctx, target); err != nil {
 		t.Fatalf("create target native session: %v", err)
@@ -583,7 +566,7 @@ func TestAgentSwitchDeliveryFailureIsAtomicWithAcknowledgement(t *testing.T) {
 			target := domain.AgentNativeSession{
 				ID: "delivery-target", AOSessionID: session.ID, Harness: domain.HarnessCodex,
 				NativeSessionID:  "codex-delivery",
-				LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+				LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now,
 			}
 			if _, _, err := s.CreateAgentNativeSession(ctx, target); err != nil {
 				t.Fatalf("create target native session: %v", err)
@@ -632,7 +615,6 @@ func TestAgentSwitchDeliveryFailureIsAtomicWithAcknowledgement(t *testing.T) {
 			failure := stored
 			failure.State = domain.AgentSwitchFailed
 			failure.ErrorCode = "delivery_unconfirmed"
-			failure.ErrorDetail = "acknowledgement deadline elapsed"
 			failure.UpdatedAt = failedAt
 			if ok, err := s.UpdateAgentSwitch(ctx, failure, domain.AgentSwitchDelivering, "source-generation", "target-generation"); err == nil || ok {
 				t.Fatalf("generic delivery failure bypassed acknowledgement CAS: ok=%v err=%v", ok, err)
@@ -691,7 +673,7 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 		ID: "activation-target", AOSessionID: session.ID, Harness: domain.HarnessCodex,
 		NativeSessionID: "codex-native-id",
 		TranscriptPath:  "/codex/target.jsonl", LastGenerationID: "target-generation",
-		CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		CreatedAt: now, LastUsedAt: now,
 	}
 	if _, _, err := s.CreateAgentNativeSession(ctx, target); err != nil {
 		t.Fatalf("create target native session: %v", err)
@@ -868,7 +850,7 @@ func TestAgentSwitchOwnershipTransactionsRejectTerminatedSession(t *testing.T) {
 	target := domain.AgentNativeSession{
 		ID: "terminated-target", AOSessionID: session.ID, Harness: domain.HarnessCodex,
 		NativeSessionID:  "codex-terminated",
-		LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now, UpdatedAt: now,
+		LastGenerationID: "target-generation", CreatedAt: now, LastUsedAt: now,
 	}
 	if _, _, err := s.CreateAgentNativeSession(ctx, target); err != nil {
 		t.Fatalf("create target native session: %v", err)

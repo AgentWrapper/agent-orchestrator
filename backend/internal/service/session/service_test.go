@@ -1124,11 +1124,6 @@ func (f *fakeCommander) ListAgentSwitches(_ context.Context, id domain.SessionID
 	f.switchSessionID = id
 	return f.switches, f.switchErr
 }
-func (f *fakeCommander) GetAgentSwitch(_ context.Context, id domain.SessionID, switchID domain.AgentSwitchID) (domain.AgentSwitch, error) {
-	f.switchSessionID = id
-	f.switchID = switchID
-	return f.switchResult, f.switchErr
-}
 func (f *fakeCommander) SubmitAgentHandoff(_ context.Context, id domain.SessionID, switchID domain.AgentSwitchID, sourceGenerationID domain.AgentGenerationID, handoff json.RawMessage) (domain.AgentSwitch, error) {
 	f.switchSessionID = id
 	f.switchID = switchID
@@ -1703,11 +1698,6 @@ func TestAgentSwitchingDelegatesToManager(t *testing.T) {
 	listed, err := svc.ListAgentSwitches(context.Background(), "mer-1")
 	if err != nil || len(listed) != 1 || listed[0].ID != want.ID {
 		t.Fatalf("ListAgentSwitches = %+v, err=%v", listed, err)
-	}
-
-	got, err = svc.GetAgentSwitch(context.Background(), "mer-1", "switch-7")
-	if err != nil || got.ID != want.ID || fc.switchID != "switch-7" {
-		t.Fatalf("GetAgentSwitch = %+v, switchID=%q, err=%v", got, fc.switchID, err)
 	}
 
 	payload := json.RawMessage(`{"summary":"ready"}`)
