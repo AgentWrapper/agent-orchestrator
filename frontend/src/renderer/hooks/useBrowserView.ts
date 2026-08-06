@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
-	BrowserAgentActivityState,
 	BrowserDevToolsState,
 	BrowserMirrorFrame,
 	BrowserNavState,
@@ -21,12 +20,6 @@ export type BrowserVisualTransition = {
 type UseBrowserViewOptions = {
 	sessionId: string;
 	active: boolean;
-	/**
-	 * Broad worker activity used to keep the browser presence latched across
-	 * fast, separate browser commands. Undefined preserves command-scoped
-	 * behavior for older callers that do not have session activity data.
-	 */
-	agentWorking?: boolean;
 	poppedOut: boolean;
 	/**
 	 * When true, the view is cleared and the daemon-driven preview is suppressed.
@@ -67,8 +60,6 @@ export type BrowserViewModel = {
 	openDevTools: () => Promise<void>;
 	closeDevTools: () => Promise<void>;
 	prepareForOverlay: () => Promise<void>;
-	agentBrowserActive: boolean;
-	agentBrowserActivity: BrowserAgentActivityState | null;
 	visualTransition: BrowserVisualTransition | null;
 	destroy: () => void;
 	annotationMode: boolean;
@@ -97,7 +88,6 @@ const EMPTY_DEVTOOLS_STATE: BrowserDevToolsState = {
 };
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
-const AGENT_BROWSER_ACTIVITY_FALLBACK_MS = 12_000;
 const VISUAL_TRANSITION_DURATION_MS = 240;
 const VISUAL_TRANSITION_CAPTURE_TIMEOUT_MS = 120;
 
@@ -154,7 +144,6 @@ async function decodeMirrorFrame(source: string): Promise<void> {
 export function useBrowserView({
 	sessionId,
 	active,
-	agentWorking,
 	poppedOut,
 	terminated,
 	previewUrl,
@@ -167,8 +156,6 @@ export function useBrowserView({
 	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
 	const [devtoolsState, setDevtoolsState] = useState<BrowserDevToolsState>(EMPTY_DEVTOOLS_STATE);
 	const [tabNotice, setTabNotice] = useState("");
-	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
-	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
 	const [visualTransition, setVisualTransition] = useState<BrowserVisualTransition | null>(null);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
@@ -185,56 +172,12 @@ export function useBrowserView({
 	const mirrorTokenRef = useRef(0);
 	const mirrorTimerRef = useRef<number | null>(null);
 	const tabNoticeTimerRef = useRef<number | null>(null);
-	const agentBrowserFallbackTimerRef = useRef<number | null>(null);
-	const agentBrowserLeaseRef = useRef(false);
-	const agentWorkingRef = useRef(agentWorking);
-	const previousAgentWorkingRef = useRef(agentWorking);
 	const visualTransitionTimerRef = useRef<number | null>(null);
 	const hasNativeBrowser = Boolean(window.ao?.browser);
-
-	const clearAgentBrowserFallback = useCallback(() => {
-		if (agentBrowserFallbackTimerRef.current === null) return;
-		window.clearTimeout(agentBrowserFallbackTimerRef.current);
-		agentBrowserFallbackTimerRef.current = null;
-	}, []);
-
-	const clearAgentBrowserActivity = useCallback(() => {
-		agentBrowserLeaseRef.current = false;
-		clearAgentBrowserFallback();
-		setAgentBrowserActive(false);
-	}, [clearAgentBrowserFallback]);
-
-	const scheduleAgentBrowserFallback = useCallback(() => {
-		clearAgentBrowserFallback();
-		if (agentWorkingRef.current === true) return;
-		agentBrowserFallbackTimerRef.current = window.setTimeout(() => {
-			agentBrowserFallbackTimerRef.current = null;
-			if (agentWorkingRef.current !== true) {
-				agentBrowserLeaseRef.current = false;
-				setAgentBrowserActive(false);
-			}
-		}, AGENT_BROWSER_ACTIVITY_FALLBACK_MS);
-	}, [clearAgentBrowserFallback]);
 
 	useEffect(() => {
 		activeRef.current = active;
 	}, [active]);
-
-	useEffect(() => {
-		const previous = previousAgentWorkingRef.current;
-		previousAgentWorkingRef.current = agentWorking;
-		agentWorkingRef.current = agentWorking;
-		if (agentWorking === true) {
-			clearAgentBrowserFallback();
-			return;
-		}
-		// A known active -> idle/waiting transition is the authoritative end of
-		// the browser-work session. Do not clear on the initial false value: a
-		// browser command can arrive before the first activity CDC update.
-		if (agentWorking === false && previous === true) {
-			clearAgentBrowserActivity();
-		}
-	}, [agentWorking, clearAgentBrowserActivity, clearAgentBrowserFallback]);
 
 	useEffect(() => {
 		hasUrlRef.current = Boolean(navState.url);
@@ -392,10 +335,6 @@ export function useBrowserView({
 		setTabsState(EMPTY_TABS_STATE);
 		setDevtoolsState(EMPTY_DEVTOOLS_STATE);
 		setTabNotice("");
-		agentBrowserLeaseRef.current = false;
-		clearAgentBrowserFallback();
-		setAgentBrowserActive(false);
-		setAgentBrowserActivity(null);
 		setVisualTransition(null);
 		clearVisualTransitionTimer();
 		if (tabNoticeTimerRef.current !== null) {
@@ -433,8 +372,6 @@ export function useBrowserView({
 		});
 		return () => {
 			disposed = true;
-			clearAgentBrowserFallback();
-			agentBrowserLeaseRef.current = false;
 			const id = viewIdRef.current;
 			if (id) {
 				if (annotationModeRef.current) {
@@ -446,7 +383,6 @@ export function useBrowserView({
 			viewIdRef.current = "";
 		};
 	}, [
-		clearAgentBrowserFallback,
 		clearVisualTransitionTimer,
 		hasNativeBrowser,
 		scheduleSettleMeasure,
@@ -482,30 +418,12 @@ export function useBrowserView({
 		});
 	}, []);
 
-	useEffect(() => {
-		return window.ao?.browser.onAgentActivity((state) => {
-			if (state.viewId !== viewIdRef.current) return;
-			setAgentBrowserActivity(state);
-			if (state.active) {
-				agentBrowserLeaseRef.current = true;
-				setAgentBrowserActive(true);
-				scheduleAgentBrowserFallback();
-				return;
-			}
-			// With session activity available, a command's completion is not the
-			// end of the agent's browser work. The activity transition effect above
-			// closes the latched presence when the worker finishes or hands off.
-			if (agentWorkingRef.current === undefined) clearAgentBrowserActivity();
-		});
-	}, [clearAgentBrowserActivity, scheduleAgentBrowserFallback]);
-
 	useEffect(
 		() => () => {
 			if (tabNoticeTimerRef.current !== null) window.clearTimeout(tabNoticeTimerRef.current);
-			clearAgentBrowserFallback();
 			clearVisualTransitionTimer();
 		},
-		[clearAgentBrowserFallback, clearVisualTransitionTimer],
+		[clearVisualTransitionTimer],
 	);
 
 	useLayoutEffect(() => {
@@ -762,7 +680,6 @@ export function useBrowserView({
 	}, [clear, navigate, previewRevision, previewUrl, terminated, viewId]);
 
 	const destroy = useCallback(() => {
-		clearAgentBrowserActivity();
 		const id = viewIdRef.current;
 		if (!id) return;
 		if (annotationModeRef.current) {
@@ -783,7 +700,6 @@ export function useBrowserView({
 		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
 	}, [
-		clearAgentBrowserActivity,
 		clearMirrorTimer,
 		clearVisualTransitionTimer,
 		sendHiddenBounds,
@@ -816,8 +732,6 @@ export function useBrowserView({
 		openDevTools: () => runDevtools("open"),
 		closeDevTools: () => runDevtools("close"),
 		prepareForOverlay,
-		agentBrowserActive,
-		agentBrowserActivity,
 		visualTransition,
 		destroy,
 		annotationMode,

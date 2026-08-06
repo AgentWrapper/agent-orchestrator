@@ -61,11 +61,16 @@ type PhysicalTargetAttachment = {
 	ownedDebugger: boolean;
 };
 
+type DevtoolsCapability = {
+	targetId: string;
+};
+
 export class AgentBrowserCDPBridge {
 	private readonly server: WebSocketServer;
 	private readonly pathToken = randomBytes(32).toString("base64url");
 	private readonly attached = new Map<string, AttachedTarget>();
 	private readonly physical = new Map<string, PhysicalTargetAttachment>();
+	private readonly devtoolsCapabilities = new Map<string, DevtoolsCapability>();
 	private endpoint = "";
 
 	constructor(private readonly targets: AgentBrowserTargetProvider) {
@@ -96,10 +101,16 @@ export class AgentBrowserCDPBridge {
 				socket.close(1008, "Invalid AO browser CDP endpoint");
 				return;
 			}
+			const devtoolsToken = optionalString(requestURL.searchParams.get("devtools"));
+			const devtoolsCapability = devtoolsToken ? this.devtoolsCapabilities.get(devtoolsToken) : undefined;
+			if (devtoolsToken && !devtoolsCapability) {
+				socket.close(1008, "Invalid AO browser DevTools capability");
+				return;
+			}
 			this.handleConnection(socket, {
 				socket,
-				targetId: optionalString(requestURL.searchParams.get("target")),
-				trustedDevtools: requestURL.searchParams.get("client") === "devtools",
+				targetId: devtoolsCapability?.targetId,
+				trustedDevtools: Boolean(devtoolsCapability),
 			});
 		});
 		return this.endpoint;
@@ -108,7 +119,15 @@ export class AgentBrowserCDPBridge {
 	/** Returns a private, target-pinned endpoint for the Chromium DevTools UI. */
 	endpointForTarget(targetId: string): string {
 		if (!this.endpoint) throw new Error("AO browser CDP bridge is not started");
-		const query = new URLSearchParams({ target: targetId, client: "devtools" });
+		if (!this.targets.listTargets().some((target) => target.id === targetId)) {
+			throw new Error("Target is outside this AO worker");
+		}
+		// The target binding and elevated protocol role live in this in-memory map.
+		// Never derive either privilege from query-string values: the base endpoint
+		// is intentionally passed to the restricted agent-browser process.
+		const token = randomBytes(32).toString("base64url");
+		this.devtoolsCapabilities.set(token, { targetId });
+		const query = new URLSearchParams({ devtools: token });
 		return `${this.endpoint}?${query.toString()}`;
 	}
 
@@ -117,6 +136,7 @@ export class AgentBrowserCDPBridge {
 		for (const socket of this.server.clients) socket.close(1001, "AO browser session closed");
 		await new Promise<void>((resolve) => this.server.close(() => resolve()));
 		this.physical.clear();
+		this.devtoolsCapabilities.clear();
 		this.endpoint = "";
 	}
 

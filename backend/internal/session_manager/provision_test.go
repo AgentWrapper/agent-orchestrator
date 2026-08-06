@@ -15,7 +15,9 @@ import (
 
 type fixedBrowserCapability string
 
-func (f fixedBrowserCapability) Token(_ domain.SessionID) string { return string(f) }
+func (f fixedBrowserCapability) Issue(_ domain.SessionID) (string, string, error) {
+	return string(f), "verifier-1", nil
+}
 
 func TestSpawnEnvProjectVarsCannotOverrideInternal(t *testing.T) {
 	env := spawnEnv("mer-1", "mer", "issue-9", "/data", map[string]string{
@@ -41,9 +43,30 @@ func TestRuntimeEnvInjectsBrowserCapability(t *testing.T) {
 		executable:          func() (string, error) { return filepath.Join("/opt", "aod", "ao"), nil },
 		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	env := manager.runtimeEnv("mer-1", "mer", "", nil)
+	env, verifier, err := manager.launchRuntimeEnv("mer-1", "mer", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if env[EnvBrowserCapability] != "capability-1" {
 		t.Fatalf("%s = %q", EnvBrowserCapability, env[EnvBrowserCapability])
+	}
+	if verifier != "verifier-1" {
+		t.Fatalf("verifier = %q", verifier)
+	}
+}
+
+func TestRuntimeEnvClearsDaemonBrowserRuntimeSecrets(t *testing.T) {
+	manager := &Manager{
+		dataDir:    "/data",
+		executable: func() (string, error) { return filepath.Join("/opt", "aod", "ao"), nil },
+		logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	env := manager.runtimeEnv("mer-1", "mer", "", map[string]string{
+		EnvBrowserRuntimeToken:      "runtime-secret",
+		EnvBrowserRuntimeTokenStdin: "1",
+	})
+	if env[EnvBrowserRuntimeToken] != "" || env[EnvBrowserRuntimeTokenStdin] != "" {
+		t.Fatalf("daemon browser runtime credentials leaked to worker: token=%q stdin=%q", env[EnvBrowserRuntimeToken], env[EnvBrowserRuntimeTokenStdin])
 	}
 }
 

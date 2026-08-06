@@ -172,7 +172,6 @@ if (typeof window !== "undefined") {
 			onNavState: () => () => undefined,
 			onTabsState: () => () => undefined,
 			onDevToolsState: () => () => undefined,
-			onAgentActivity: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,
 			onAnnotationCancel: () => () => undefined,
 		},

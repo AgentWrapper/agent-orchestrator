@@ -67,15 +67,6 @@ export type BrowserTabsState = {
 	};
 };
 
-export type BrowserAgentActivityState = {
-	viewId: string;
-	tabId?: string;
-	active: boolean;
-	action: string;
-	phase?: "started" | "finished";
-	commandId?: string;
-};
-
 export type BrowserDevToolsState = {
 	viewId: string;
 	open: boolean;
@@ -218,7 +209,6 @@ type BrowserSessionEntry = {
 	visible: boolean;
 	parked: boolean;
 	networkTabId?: string;
-	agentBrowserCommands: number;
 	devtools?: {
 		window: BrowserDevToolsWindowLike;
 		targetTabId: string;
@@ -352,24 +342,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	let lastFocusedViewId: string | null = null;
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
-	};
-	const setAgentBrowserActivity = (
-		session: BrowserSessionEntry,
-		action: string,
-		active: boolean,
-		commandId?: string,
-		phase?: BrowserAgentActivityState["phase"],
-		tabId?: string,
-	): void => {
-		session.agentBrowserCommands = Math.max(0, session.agentBrowserCommands + (active ? 1 : -1));
-		options.mainWindow.webContents.send("browser:agentActivity", {
-			viewId: session.viewId,
-			...(tabId ? { tabId } : {}),
-			active: session.agentBrowserCommands > 0,
-			action,
-			...(phase ? { phase } : {}),
-			...(commandId ? { commandId } : {}),
-		} satisfies BrowserAgentActivityState);
 	};
 	const applyBrowserViewBounds = (view: BrowserViewLike, bounds: BrowserRect, visible?: boolean): void => {
 		view.setBounds(bounds);
@@ -533,7 +505,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				zoomFactor: 1,
 				visible: false,
 				parked: false,
-				agentBrowserCommands: 0,
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
@@ -1038,7 +1009,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			}
 			const session = ensureSession(sessionId);
 			const entry = activeEntry(session);
-			const agentTabId = entry.tabId;
 			const runNative = async (nativeAction: string, nativeArgs: Record<string, unknown> = {}) => {
 				if (!options.agentBrowserRuntime) {
 					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
@@ -1051,8 +1021,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					signal,
 				);
 			};
-			const commandId = randomUUID();
-			setAgentBrowserActivity(session, action, true, commandId, "started", agentTabId);
 			try {
 				switch (action) {
 				case "open": {
@@ -1065,7 +1033,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					if (typeof result.snapshot !== "string") {
 						throw browserError("BROWSER_AUTOMATION_INVALID_OUTPUT", "Browser snapshot output was invalid");
 					}
-					return { text: result.snapshot, refs: result.refs, untrustedExternalContent: true };
+					return {
+						text: result.snapshot,
+						refs: result.refs,
+						...(result._boundary ? { _boundary: result._boundary } : {}),
+						untrustedExternalContent: true,
+					};
 				}
 				case "click":
 				case "dblclick":
@@ -1164,7 +1137,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
 				}
 			} finally {
-				setAgentBrowserActivity(session, action, false, commandId, "finished", agentTabId);
 			}
 		},
 		dispose: () => {
@@ -1771,7 +1743,10 @@ function externalText(value: unknown): string {
 }
 
 function markUntrusted(value: string): string {
-	return `${UNTRUSTED_BEGIN}\n${value}\n${UNTRUSTED_END}`;
+	const escaped = value
+		.replaceAll(UNTRUSTED_BEGIN, `\\u003c${UNTRUSTED_BEGIN.slice(1)}`)
+		.replaceAll(UNTRUSTED_END, `\\u003c${UNTRUSTED_END.slice(1)}`);
+	return `${UNTRUSTED_BEGIN}\n${escaped}\n${UNTRUSTED_END}`;
 }
 
 function normalizeNativeMessages(result: Record<string, unknown>, action: string): Record<string, unknown> {

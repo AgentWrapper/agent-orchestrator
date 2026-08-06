@@ -102,7 +102,7 @@ type ManagedPreviewServer interface {
 // SessionCapabilityValidator verifies the daemon-issued token injected only
 // into the owning worker session.
 type SessionCapabilityValidator interface {
-	Valid(sessionID domain.SessionID, token string) bool
+	Valid(sessionID domain.SessionID, token, verifier string) bool
 }
 
 // SessionsController owns the session routes. Nil keeps routes registered but
@@ -612,7 +612,11 @@ func (c *SessionsController) authorizePreviewServer(w http.ResponseWriter, r *ht
 		envelope.WriteAPIError(w, r, http.StatusConflict, "conflict", "SESSION_TERMINATED", "Session is terminated", nil)
 		return false
 	}
-	if !c.Capabilities.Valid(id, strings.TrimSpace(r.Header.Get(browserCapabilityHeader))) {
+	if !c.Capabilities.Valid(
+		id,
+		strings.TrimSpace(r.Header.Get(browserCapabilityHeader)),
+		sess.Metadata.BrowserCapabilityVerifier,
+	) {
 		envelope.WriteAPIError(
 			w,
 			r,

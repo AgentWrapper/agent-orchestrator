@@ -38,6 +38,10 @@ type browserCommandResponseDTO struct {
 
 const browserCapabilityHeader = "X-AO-Browser-Capability"
 const maxBrowserWaitMillis = 55_000
+const (
+	browserUntrustedBegin = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>"
+	browserUntrustedEnd   = "<<<END UNTRUSTED EXTERNAL CONTENT>>>"
+)
 
 func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	var jsonOutput bool
@@ -577,7 +581,7 @@ func (c *commandContext) runBrowserAction(cmd *cobra.Command, action string, arg
 func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any) error {
 	if action == "snapshot" {
 		if text, ok := result["text"].(string); ok {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), text)
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), browserUntrustedText(text))
 			return err
 		}
 	}
@@ -591,7 +595,7 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 			if item, ok := message.(map[string]any); ok {
 				level, _ := item["level"].(string)
 				text, _ := item["message"].(string)
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", level, text); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", level, browserUntrustedText(text)); err != nil {
 					return err
 				}
 			}
@@ -599,6 +603,10 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 		return nil
 	}
 	if action == "get" {
+		if value, ok := result["value"].(string); ok {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), browserUntrustedText(value))
+			return err
+		}
 		if value, ok := result["value"]; ok {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), value)
 			return err
@@ -634,6 +642,15 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 	}
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), "Browser "+action+" completed.")
 	return err
+}
+
+func browserUntrustedText(value string) string {
+	// Page-controlled text must not be able to inject a delimiter that looks
+	// like the end of AO's trust boundary. Escape only exact marker collisions;
+	// the surrounding fixed markers remain easy for humans and agents to parse.
+	value = strings.ReplaceAll(value, browserUntrustedBegin, `\u003c`+browserUntrustedBegin[1:])
+	value = strings.ReplaceAll(value, browserUntrustedEnd, `\u003c`+browserUntrustedEnd[1:])
+	return browserUntrustedBegin + "\n" + value + "\n" + browserUntrustedEnd
 }
 
 func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[string]any) error {

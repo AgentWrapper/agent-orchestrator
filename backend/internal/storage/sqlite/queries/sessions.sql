@@ -7,9 +7,9 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
-    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
     created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
@@ -18,7 +18,7 @@ UPDATE sessions SET
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, updated_at = ?
+    cleanup_generation = ?, browser_capability_verifier = ?, updated_at = ?
 WHERE id = ?;
 
 -- name: GetSession :one
@@ -27,7 +27,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, browser_capability_verifier
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -36,7 +36,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, browser_capability_verifier
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -45,7 +45,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, browser_capability_verifier
 FROM sessions ORDER BY project_id, num;
 
 

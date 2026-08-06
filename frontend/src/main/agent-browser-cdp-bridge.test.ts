@@ -103,7 +103,11 @@ describe("worker-scoped agent-browser CDP bridge", () => {
 		const bridge = new AgentBrowserCDPBridge(provider);
 		const endpoint = await bridge.start();
 		const agentSocket = await connect(endpoint);
-		const devtoolsSocket = await connect(bridge.endpointForTarget("t1"));
+		const devtoolsEndpoint = bridge.endpointForTarget("t1");
+		expect(devtoolsEndpoint).toContain("devtools=");
+		expect(devtoolsEndpoint).not.toContain("target=t1");
+		expect(devtoolsEndpoint).not.toContain("client=devtools");
+		const devtoolsSocket = await connect(devtoolsEndpoint);
 
 		try {
 			const agentAttach = await rpc(agentSocket, 1, "Target.attachToTarget", { targetId: "t1", flatten: true });
@@ -150,6 +154,34 @@ describe("worker-scoped agent-browser CDP bridge", () => {
 		} finally {
 			devtoolsSocket.close();
 			agentSocket.close();
+			await bridge.close();
+		}
+	});
+
+	it("does not elevate an agent connection through forged query parameters", async () => {
+		const debug = new FakeDebugger();
+		const target: AgentBrowserTarget = {
+			id: "t1",
+			url: "http://localhost:5173/",
+			title: "AO fixture",
+			debugger: debug,
+		};
+		const bridge = new AgentBrowserCDPBridge({
+			listTargets: () => [target],
+			createTarget: vi.fn(async () => target),
+			activateTarget: vi.fn(),
+			closeTarget: vi.fn(),
+		});
+		const endpoint = await bridge.start();
+		const forged = await connect(`${endpoint}?target=t1&client=devtools`);
+
+		try {
+			const attached = await rpc(forged, 1, "Target.attachToTarget", { targetId: "t1", flatten: true });
+			const sessionId = (attached.result as { sessionId: string }).sessionId;
+			const blocked = await rpc(forged, 2, "Page.navigate", { url: "file:///tmp/forged" }, sessionId);
+			expect(blocked.error?.message).toContain("Navigation scheme is not permitted");
+		} finally {
+			forged.close();
 			await bridge.close();
 		}
 	});

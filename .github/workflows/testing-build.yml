@@ -56,6 +56,12 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - run: npm ci
+      - name: Prepare pinned agent-browser runtime
+        run: npm run browser-runtime:prepare -- --quiet
+      - name: Verify native agent-browser compatibility
+        env:
+          AO_AGENT_BROWSER_TEST_BINARY: ${{ github.workspace }}/frontend/agent-browser/${{ runner.os == 'Windows' && 'agent-browser.exe' || 'agent-browser' }}
+        run: npx vitest run --config vite.renderer.config.ts src/main/agent-browser-runtime.test.ts
       - name: Build (unsigned)
         # `npm run make` keeps the premake daemon build; --targets restricts to this
         # platform's maker.

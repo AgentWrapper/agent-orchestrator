@@ -5,7 +5,6 @@ import type { BrowserMirrorFrame } from "../../main/browser-view-host";
 
 type Listener = (state: BrowserNavState) => void;
 type TabsListener = (state: import("../../main/browser-view-host").BrowserTabsState) => void;
-type ActivityListener = (state: import("../../main/browser-view-host").BrowserAgentActivityState) => void;
 type DevToolsListener = (state: import("../../main/browser-view-host").BrowserDevToolsState) => void;
 
 function createSlot(rect: Partial<DOMRect> = {}) {
@@ -29,7 +28,6 @@ function createSlot(rect: Partial<DOMRect> = {}) {
 function setupBridge() {
 	const listeners = new Set<Listener>();
 	const tabsListeners = new Set<TabsListener>();
-	const activityListeners = new Set<ActivityListener>();
 	const devtoolsListeners = new Set<DevToolsListener>();
 	const bridge = {
 		stateFor(viewId: string): BrowserNavState {
@@ -107,10 +105,6 @@ function setupBridge() {
 			devtoolsListeners.add(listener);
 			return () => devtoolsListeners.delete(listener);
 		}),
-		onAgentActivity: vi.fn((listener: ActivityListener) => {
-			activityListeners.add(listener);
-			return () => activityListeners.delete(listener);
-		}),
 		onAnnotationSubmit: vi.fn(() => () => undefined),
 		onAnnotationCancel: vi.fn(() => () => undefined),
 		emit(state: BrowserNavState) {
@@ -118,9 +112,6 @@ function setupBridge() {
 		},
 		emitTabs(state: Parameters<TabsListener>[0]) {
 			tabsListeners.forEach((listener) => listener(state));
-		},
-		emitActivity(state: Parameters<ActivityListener>[0]) {
-			activityListeners.forEach((listener) => listener(state));
 		},
 		emitDevTools(state: Parameters<DevToolsListener>[0]) {
 			devtoolsListeners.forEach((listener) => listener(state));
@@ -203,46 +194,6 @@ describe("useBrowserView", () => {
 		expect(bridge.closeTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
 	});
 
-	it("tracks browser-command activity only for the current worker view", async () => {
-		const bridge = setupBridge();
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-
-		act(() => {
-			bridge.emitActivity({ viewId: "42:other-session", active: true, action: "click" });
-		});
-		expect(result.current.agentBrowserActive).toBe(false);
-
-		act(() => {
-			bridge.emitActivity({ viewId: "42:sess-1", active: true, action: "click", tabId: "t2" });
-		});
-		expect(result.current.agentBrowserActive).toBe(true);
-		expect(result.current.agentBrowserActivity).toMatchObject({ tabId: "t2" });
-
-		act(() => {
-			bridge.emitActivity({ viewId: "42:sess-1", active: false, action: "click" });
-		});
-		expect(result.current.agentBrowserActive).toBe(false);
-	});
-
-	it("keeps browser presence latched until the worker hands off", async () => {
-		const bridge = setupBridge();
-		const { result, rerender } = renderHook(
-			({ agentWorking }: { agentWorking: boolean }) =>
-				useBrowserView({ sessionId: "sess-1", active: true, agentWorking, poppedOut: false }),
-			{ initialProps: { agentWorking: true } },
-		);
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-
-		act(() => {
-			bridge.emitActivity({ viewId: "42:sess-1", active: true, action: "snapshot" });
-			bridge.emitActivity({ viewId: "42:sess-1", active: false, action: "snapshot" });
-		});
-		expect(result.current.agentBrowserActive).toBe(true);
-
-		rerender({ agentWorking: false });
-		await waitFor(() => expect(result.current.agentBrowserActive).toBe(false));
-	});
 	it("holds a captured frame while selecting a tab so the native handoff does not flash", async () => {
 		const bridge = setupBridge();
 		const slot = createSlot();

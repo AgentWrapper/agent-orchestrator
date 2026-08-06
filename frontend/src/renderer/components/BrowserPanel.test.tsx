@@ -42,13 +42,6 @@ const hookState = vi.hoisted(() => ({
 	tabs: [{ id: "t1", url: "", title: "", active: true }],
 	activeTabId: "t1",
 	tabNotice: "",
-	agentBrowserActive: false,
-	agentBrowserActivity: null as {
-		active: boolean;
-		action?: string;
-		phase?: "started" | "finished";
-		tabId?: string;
-	} | null,
 	visualTransition: null as { kind: "tab-switch" | "popout"; snapshotUrl: string } | null,
 	previewUrl: undefined as string | undefined,
 	navState: {
@@ -77,8 +70,6 @@ vi.mock("../hooks/useBrowserView", () => ({
 			tabs: hookState.tabs,
 			activeTabId: hookState.activeTabId,
 			tabNotice: hookState.tabNotice,
-			agentBrowserActive: hookState.agentBrowserActive,
-			agentBrowserActivity: hookState.agentBrowserActivity,
 			visualTransition: hookState.visualTransition,
 			selectTab: hookState.selectTab,
 			closeTab: hookState.closeTab,
@@ -191,8 +182,6 @@ describe("BrowserPanel", () => {
 		hookState.tabs = [{ id: "t1", url: "", title: "", active: true }];
 		hookState.activeTabId = "t1";
 		hookState.tabNotice = "";
-		hookState.agentBrowserActive = false;
-		hookState.agentBrowserActivity = null;
 		hookState.visualTransition = null;
 		hookState.navState = {
 			viewId: "42:sess-1",
@@ -269,21 +258,18 @@ describe("BrowserPanel", () => {
 		expect(hookState.closeTab).toHaveBeenCalledWith("t1");
 	});
 
-	it("does not expose agent activity in the tabs menu", async () => {
+	it("does not render a tab-specific agent marker", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
 		];
 		hookState.activeTabId = "t2";
-		hookState.agentBrowserActive = true;
-		hookState.agentBrowserActivity = { active: true, action: "click", phase: "started", tabId: "t1" };
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		await userEvent.click(screen.getByRole("button", { name: "Browser tabs (2)" }));
 
-		expect(screen.queryByTestId("browser-agent-tab-t1")).not.toBeInTheDocument();
-		expect(screen.queryByTestId("browser-agent-tab-t2")).not.toBeInTheDocument();
+		expect(screen.queryByText("Agent", { exact: true })).not.toBeInTheDocument();
 	});
 
 	it("renders a rounded native mirror viewport without edge-cropping", () => {
@@ -374,54 +360,13 @@ describe("BrowserPanel", () => {
 		expect(hookState.setAnnotationMode).toHaveBeenCalledWith(true);
 	});
 
-	it("does not show an agent-working status pill", () => {
+	it("does not render a global browser activity status", () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		const first = render(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{
-					...session,
-					status: "idle",
-					activity: { state: "active", lastActivityAt: "2026-06-15T00:00:00Z" },
-				}}
-			/>,
-		);
-
-		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		expect(screen.queryByText("Agent working")).not.toBeInTheDocument();
-
-		first.unmount();
-		hookState.agentBrowserActive = true;
-		render(
-			<BrowserPanel
-				active
-				onTogglePopOut={() => undefined}
-				poppedOut={false}
-				session={{
-					...session,
-					status: "working",
-					activity: { state: "idle", lastActivityAt: "2026-06-15T00:00:00Z" },
-				}}
-			/>,
-		);
-
-		expect(screen.getByRole("button", { name: /annotate/i })).toBeEnabled();
-		expect(screen.queryByTestId("browser-agent-status")).not.toBeInTheDocument();
-		expect(screen.queryByText("Agent working")).not.toBeInTheDocument();
-	});
-
-	it("does not render browser activity text anywhere in the panel", () => {
-		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
-		hookState.agentBrowserActive = true;
-		hookState.agentBrowserActivity = { active: true, action: "click", phase: "started" };
 
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
 		expect(screen.queryByText("Agent clicking")).not.toBeInTheDocument();
 		expect(screen.queryByText("Agent using browser")).not.toBeInTheDocument();
-		expect(screen.queryByText("Agent working")).not.toBeInTheDocument();
 		expect(screen.queryByTestId("browser-agent-status")).not.toBeInTheDocument();
 	});
 

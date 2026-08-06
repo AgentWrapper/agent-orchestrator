@@ -197,12 +197,9 @@ export function useBrowserAnnotationQueue({
 }
 
 export function BrowserPanel({ session, active, poppedOut, onTogglePopOut }: BrowserPanelProps) {
-	const agentWorking =
-		session.activity && session.activity.state !== "unknown" ? session.activity.state === "active" : undefined;
 	const browserView = useBrowserView({
 		sessionId: session.id,
 		active,
-		agentWorking,
 		poppedOut,
 		previewUrl: session.previewUrl,
 		previewRevision: session.previewRevision,

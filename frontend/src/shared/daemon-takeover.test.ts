@@ -2,7 +2,7 @@
 //   cd frontend && npx vitest run src/shared/daemon-takeover.test.ts
 import { describe, expect, it } from "vitest";
 import { DAEMON_SERVICE_NAME, type DaemonProbe } from "./daemon-attach";
-import { shouldReplacePortHolder } from "./daemon-takeover";
+import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./daemon-takeover";
 
 // A minimal valid DaemonProbe (non-null means the AO daemon answered /healthz).
 const healthyProbe: DaemonProbe = {
@@ -23,5 +23,28 @@ describe("shouldReplacePortHolder", () => {
 
 	it("returns false when probe is null and no live holder PID (nothing to kill)", () => {
 		expect(shouldReplacePortHolder(null, false)).toBe(false);
+	});
+});
+
+describe("browserDaemonOwnershipDecision", () => {
+	it("reuses a daemon authenticated by this app launch", () => {
+		expect(browserDaemonOwnershipDecision("run-1", { owner: "app", appRunId: "run-1" })).toEqual({
+			action: "attach",
+		});
+	});
+
+	it("replaces an older app daemon without making it persistent", () => {
+		expect(browserDaemonOwnershipDecision("run-2", { owner: "app", appRunId: "run-1" })).toEqual({
+			action: "replace",
+			keepAlive: false,
+		});
+	});
+
+	it("preserves persistent and headless daemon lifetime during replacement", () => {
+		expect(browserDaemonOwnershipDecision("run-2", { owner: "persistent", appRunId: "run-1" })).toEqual({
+			action: "replace",
+			keepAlive: true,
+		});
+		expect(browserDaemonOwnershipDecision("run-2", {})).toEqual({ action: "replace", keepAlive: true });
 	});
 });

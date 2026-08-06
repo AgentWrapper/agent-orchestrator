@@ -74,8 +74,9 @@ surface (`npm run sqlc`, `npm run api`).
   the Browser panel is hidden. Network capture is off by default, tab-scoped,
   bounded, automatically expires, and omits bodies and sensitive values. Tabs
   within one worker share an ephemeral Electron profile; different workers
-  have isolated cookies and web storage. The toolbar activity signal is scoped
-  to actual agent browser commands; annotation progress is separate and its
+  have isolated cookies and web storage. The browser tab menu is only a tab
+  navigation control: it does not render a global activity pill or a
+  tab-specific agent marker. Annotation progress is separate and its
   successful-delivery confirmation clears automatically.
 - Chromium's official DevTools frontend is available from the direct Browser
   toolbar button, `Ctrl+Shift+I` (Cmd+Option+I on macOS), the titlebar View menu,

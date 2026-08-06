@@ -1,7 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
 import type {
-	BrowserAgentActivityState,
 	BrowserDevToolsInput,
 	BrowserDevToolsState,
 	BrowserMirrorFrame,
@@ -203,13 +202,6 @@ const api = {
 			ipcRenderer.on("browser:devtoolsState", wrapped);
 			return () => {
 				ipcRenderer.off("browser:devtoolsState", wrapped);
-			};
-		},
-		onAgentActivity: (listener: (state: BrowserAgentActivityState) => void) => {
-			const wrapped = (_event: Electron.IpcRendererEvent, state: BrowserAgentActivityState) => listener(state);
-			ipcRenderer.on("browser:agentActivity", wrapped);
-			return () => {
-				ipcRenderer.off("browser:agentActivity", wrapped);
 			};
 		},
 		onAnnotationSubmit: (listener: (payload: BrowserAnnotationSubmitPayload) => void) => {

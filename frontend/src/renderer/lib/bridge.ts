@@ -129,7 +129,6 @@ export const aoBridge: AoBridge =
 			onNavState: () => () => undefined,
 			onTabsState: () => () => undefined,
 			onDevToolsState: () => () => undefined,
-			onAgentActivity: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,
 			onAnnotationCancel: () => () => undefined,
 		},

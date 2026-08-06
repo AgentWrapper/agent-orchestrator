@@ -52,12 +52,13 @@ import {
 	resolveDaemonFromPort,
 	resolveDaemonFromRunFile,
 } from "./shared/daemon-attach";
-import { shouldReplacePortHolder } from "./shared/daemon-takeover";
+import { browserDaemonOwnershipDecision, shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
 import { AgentBrowserRuntime } from "./main/agent-browser-runtime";
+import { sameBrowserRuntimeIdentity, type BrowserRuntimeIdentity } from "./main/browser-runtime-identity";
 import { connectSupervisor, type SupervisorLinkHandle } from "./main/supervisor-link";
 import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/browser-runtime-link";
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
@@ -123,6 +124,7 @@ let browserCleanupComplete = false;
 let browserQuitRequested = false;
 let createWindowPromise: Promise<void> | null = null;
 let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
+let browserRuntimeLinkIdentity: BrowserRuntimeIdentity | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
@@ -230,6 +232,7 @@ function applyRuntimeAppIcon(): void {
 }
 
 function setDaemonStatus(nextStatus: DaemonStatus): void {
+	if (nextStatus.state !== "ready") disposeBrowserRuntimeLink();
 	daemonStatus = nextStatus;
 	mainWindow?.webContents.send("daemon:status", daemonStatus);
 	if (nextStatus.state === "ready" && browserViewHost) {
@@ -430,8 +433,7 @@ async function createWindowInternal(): Promise<void> {
 	});
 
 	mainWindow.on("closed", () => {
-		browserRuntimeLink?.dispose();
-		browserRuntimeLink = null;
+		disposeBrowserRuntimeLink();
 		keybindingRecordingActive = false;
 		void disposeBrowserViewHost();
 		mainWindow = null;
@@ -562,7 +564,7 @@ function ensureShellEnv(): Promise<void> {
 const appRunId = process.env.AO_APP_RUN_ID ?? `apprun-${randomUUID()}`;
 const browserRuntimeToken = randomBytes(32).toString("base64url");
 
-function daemonEnv(): NodeJS.ProcessEnv {
+function daemonEnv(forceKeep = keepDaemonAlive(process.env)): NodeJS.ProcessEnv {
 	// AO_OWNER is the daemon's durable spawn-mode record: the daemon writes it
 	// into running.json and the attach path reads it to decide the supervisor
 	// link from the daemon's own state (not this Electron process's env, which
@@ -575,11 +577,15 @@ function daemonEnv(): NodeJS.ProcessEnv {
 	// standalone shell terminals survive; a later app launch gets a new id, which
 	// is how the daemon recognises the previous run's shells as orphans and
 	// destroys them (see internal/service/shellterm).
-	const AO_OWNER = keepDaemonAlive(process.env) ? "persistent" : "app";
+	const AO_OWNER = forceKeep ? "persistent" : "app";
 	const ownerTag = {
 		AO_OWNER,
 		AO_APP_RUN_ID: appRunId,
-		AO_BROWSER_RUNTIME_TOKEN: browserRuntimeToken,
+		// The browser runtime token is handed over through the child's private
+		// stdin pipe below. Never put it in the daemon environment, where a
+		// same-UID worker could inspect the parent process.
+		AO_BROWSER_RUNTIME_TOKEN: "",
+		AO_BROWSER_RUNTIME_TOKEN_STDIN: "1",
 	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).
@@ -682,8 +688,14 @@ function supervisorPipeFromRunFile(rfp: string | null): string {
 	return "\\\\.\\pipe\\ao-supervise-" + dir.replace(/[^a-zA-Z0-9-]/g, "-");
 }
 
+function disposeBrowserRuntimeLink(): void {
+	browserRuntimeLink?.dispose();
+	browserRuntimeLink = null;
+	browserRuntimeLinkIdentity = null;
+}
+
 function establishBrowserRuntimeLink(): void {
-	if (!browserViewHost || browserRuntimeLink) return;
+	if (!browserViewHost) return;
 	const rfp = runFilePath();
 	if (!rfp) {
 		console.warn("AO: browser runtime link skipped; run-file path unavailable");
@@ -700,8 +712,17 @@ function establishBrowserRuntimeLink(): void {
 		console.warn("AO: browser runtime link skipped; daemon did not publish an address");
 		return;
 	}
-	let token = browserRuntimeToken;
-	token = runInfo?.browserRuntimeToken ?? token;
+	const token = browserRuntimeToken;
+	const identity = {
+		pid: runInfo?.pid ?? 0,
+		startedAtMs: runInfo?.startedAtMs ?? 0,
+		address,
+		token,
+	};
+	if (browserRuntimeLink && browserRuntimeLinkIdentity && sameBrowserRuntimeIdentity(browserRuntimeLinkIdentity, identity)) {
+		return;
+	}
+	if (browserRuntimeLink) disposeBrowserRuntimeLink();
 	browserRuntimeLink = connectBrowserRuntime(address, {
 		token,
 		execute: (command, signal) => {
@@ -715,6 +736,7 @@ function establishBrowserRuntimeLink(): void {
 		},
 		log: (message) => console.log(`AO: ${message}`),
 	});
+	browserRuntimeLinkIdentity = identity;
 }
 
 function establishSupervisorLink(): void {
@@ -737,7 +759,7 @@ function establishSupervisorLink(): void {
 
 async function inspectExistingDaemon(
 	launch: DaemonLaunchSpec,
-): Promise<{ status: DaemonStatus; owner: string | undefined } | null> {
+): Promise<{ status: DaemonStatus; owner: string | undefined; appRunId: string | undefined } | null> {
 	const handshakePath = runFilePath();
 	let runFileContents: string | null = null;
 	if (handshakePath) {
@@ -754,8 +776,21 @@ async function inspectExistingDaemon(
 		identityError: (probe) => daemonIdentityError(launch, probe),
 	});
 	if (!status) return null;
-	const owner = runFileContents ? (parseRunFile(runFileContents)?.owner ?? undefined) : undefined;
-	return { status, owner };
+	const info = runFileContents ? parseRunFile(runFileContents) : null;
+	return { status, owner: info?.owner, appRunId: info?.appRunId };
+}
+
+async function gracefullyReplaceDaemonForBrowser(status: DaemonStatus): Promise<void> {
+	if (!status.port) throw new Error("the running daemon did not report a port");
+	const response = await fetch(`http://127.0.0.1:${status.port}/shutdown`, { method: "POST" });
+	if (!response.ok) throw new Error(`daemon shutdown returned HTTP ${response.status}`);
+
+	const deadline = Date.now() + 8_000;
+	while (Date.now() < deadline) {
+		if (!(await readDaemonProbe(status.port, "healthz"))) return;
+		await new Promise<void>((resolve) => setTimeout(resolve, 200));
+	}
+	throw new Error("the previous daemon did not stop within 8 seconds");
 }
 
 async function refreshDaemonStatus(): Promise<DaemonStatus> {
@@ -773,6 +808,9 @@ async function refreshDaemonStatus(): Promise<DaemonStatus> {
 	if (!launch) return daemonStatus;
 	const existing = await inspectExistingDaemon(launch);
 	if (existing) {
+		if (browserDaemonOwnershipDecision(appRunId, existing).action === "replace") {
+			return startDaemon();
+		}
 		setDaemonStatus(existing.status);
 	} else if (
 		daemonStatus.state === "ready" ||
@@ -835,19 +873,35 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		return daemonStatus;
 	}
 
+	let replacementKeepAlive: boolean | undefined;
 	const existing = await inspectExistingDaemon(launch);
 	if (startEpoch !== daemonStartEpoch) {
 		return daemonStatus;
 	}
 	if (existing) {
-		setDaemonStatus(existing.status);
-		// Re-link the supervisor only when attaching to an app-owned daemon (one we
-		// previously spawned). Headless `ao start` daemons (owner unset) stay unlinked
-		// so they remain persistent after app quit.
-		if (shouldLinkOnAttach(existing.owner)) {
-			establishSupervisorLink();
+		const ownership = browserDaemonOwnershipDecision(appRunId, existing);
+		if (ownership.action === "replace") {
+			try {
+				await gracefullyReplaceDaemonForBrowser(existing.status);
+				replacementKeepAlive = ownership.keepAlive;
+			} catch (err) {
+				setDaemonStatus({
+					state: "error",
+					message: `Could not take ownership of the browser runtime: ${(err as Error).message}`,
+					code: "not_ready",
+				});
+				return daemonStatus;
+			}
+		} else {
+			setDaemonStatus(existing.status);
+			// Re-link the supervisor only when attaching to an app-owned daemon (one we
+			// previously spawned). Headless `ao start` daemons (owner unset) stay unlinked
+			// so they remain persistent after app quit.
+			if (shouldLinkOnAttach(existing.owner)) {
+				establishSupervisorLink();
+			}
+			return daemonStatus;
 		}
-		return daemonStatus;
 	}
 
 	// Defensive: inspectExistingDaemon only attaches when the run-file agrees with
@@ -867,7 +921,8 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		return daemonStatus;
 	}
 	if (directDaemon) {
-		setDaemonStatus(directDaemon);
+		let portAttachOwner: string | undefined;
+		let portAttachAppRunId: string | undefined;
 		// Re-link iff the daemon is app-owned. Read the run-file for the owner tag;
 		// if unavailable (run-file absent or unreadable), treat as headless and skip.
 		// ponytail: narrow TOCTOU here (the port was probed live, then the run-file
@@ -876,18 +931,36 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 		// linking a headless daemon, and establishSupervisorLink disposes any prior
 		// link so nothing leaks.
 		const rfp = runFilePath();
-		let portAttachOwner: string | undefined;
 		if (rfp) {
 			try {
-				portAttachOwner = parseRunFile(await readFile(rfp, "utf8"))?.owner ?? undefined;
+				const info = parseRunFile(await readFile(rfp, "utf8"));
+				portAttachOwner = info?.owner;
+				portAttachAppRunId = info?.appRunId;
 			} catch {
 				// run-file absent or unreadable: treat as headless, skip link.
 			}
 		}
-		if (shouldLinkOnAttach(portAttachOwner)) {
-			establishSupervisorLink();
+		const ownership = browserDaemonOwnershipDecision(appRunId, {
+			owner: portAttachOwner,
+			appRunId: portAttachAppRunId,
+		});
+		if (ownership.action === "replace") {
+			try {
+				await gracefullyReplaceDaemonForBrowser(directDaemon);
+				replacementKeepAlive = ownership.keepAlive;
+			} catch (err) {
+				setDaemonStatus({
+					state: "error",
+					message: `Could not take ownership of the browser runtime: ${(err as Error).message}`,
+					code: "not_ready",
+				});
+				return daemonStatus;
+			}
+		} else {
+			setDaemonStatus(directDaemon);
+			if (shouldLinkOnAttach(portAttachOwner)) establishSupervisorLink();
+			return daemonStatus;
 		}
-		return daemonStatus;
 	}
 
 	// Wedged-orphan kill+replace: both attach paths returned null, but a process
@@ -992,28 +1065,28 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 	// defeating the keep-alive. Redirect stdio to ~/.ao/daemon.log and unref the
 	// child so the parent does not wait on it. Port discovery then relies on the
 	// running.json handshake (the log pipe scan is skipped).
-	const keep = keepDaemonAlive(process.env);
+	const keep = replacementKeepAlive ?? keepDaemonAlive(process.env);
 	let keepDaemonLogFd: number | undefined;
-	let stdio: "pipe" | "ignore" | ["ignore", number, number] = "pipe";
+	let stdio: "pipe" | "ignore" | ["pipe", number | "ignore", number | "ignore"] = "pipe";
 	if (keep) {
 		const logPath = path.join(os.homedir(), ".ao", "daemon.log");
 		try {
 			keepDaemonLogFd = openSync(logPath, "a");
-			stdio = ["ignore", keepDaemonLogFd, keepDaemonLogFd];
+			stdio = ["pipe", keepDaemonLogFd, keepDaemonLogFd];
 		} catch {
 			// Log redirect failed (e.g. ~/.ao not creatable, permission denied):
 			// fall back to "ignore" so the daemon still runs, but warn — otherwise
 			// a long-lived keep-alive daemon would run with zero log output.
 			console.warn(`AO: keep-daemon log redirect failed; daemon will run with stdio disabled: ${logPath}`);
 			keepDaemonLogFd = undefined;
-			stdio = "ignore";
+			stdio = ["pipe", "ignore", "ignore"];
 		}
 	}
 	let child: ChildProcess;
 	try {
 		child = spawn(launch.command, launch.args, {
 			cwd: launch.cwd,
-			env: daemonEnv(),
+			env: daemonEnv(keep),
 			shell: launch.shell,
 			detached: true,
 			// Hide the daemon's console on a Windows GUI launch (no flashing terminal).
@@ -1041,6 +1114,15 @@ async function startDaemonInner(startEpoch: number): Promise<DaemonStatus> {
 			// best-effort — the child still holds its inherited copy
 		}
 		keepDaemonLogFd = undefined;
+	}
+	// daemonEnv deliberately contains only a marker. Deliver the actual token
+	// over the inherited pipe, then close it; Go does not pass this descriptor to
+	// worker processes when it spawns them.
+	if (child.stdin) {
+		child.stdin.on("error", () => undefined);
+		child.stdin.end(`${browserRuntimeToken}\n`);
+	} else {
+		console.warn("AO: browser runtime token handoff pipe was unavailable");
 	}
 	if (keep) child.unref();
 	daemonProcess = child;
@@ -1227,8 +1309,7 @@ function stopDaemon(): DaemonStatus {
 	// A later daemon:start re-establishes the link via reportBoundPort.
 	supervisorLink?.dispose();
 	supervisorLink = null;
-	browserRuntimeLink?.dispose();
-	browserRuntimeLink = null;
+	disposeBrowserRuntimeLink();
 	killDaemon(daemonProcess);
 	setDaemonStatus({ state: "stopped" });
 	return daemonStatus;
@@ -1641,8 +1722,7 @@ app.whenReady().then(async () => {
 // the process exits for any reason (Cmd+Q, crash, SIGKILL). Sessions survive.
 app.on("before-quit", (event) => {
 	browserQuitRequested = true;
-	browserRuntimeLink?.dispose();
-	browserRuntimeLink = null;
+	disposeBrowserRuntimeLink();
 	if (!browserCleanupComplete) {
 		event.preventDefault();
 		if (!browserQuitCleanupPromise) {

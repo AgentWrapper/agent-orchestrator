@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AgentBrowserCDPBridge, type AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 
@@ -17,6 +17,24 @@ const RUNTIME_OWNER_FILE = "owner.json";
 const RUNTIME_ROOT_PATTERN = /^(?:run-(\d+)-[0-9a-f]{12}|r-[0-9a-f]{10})$/;
 /** Agent Browser's Unix preflight uses the macOS-sized 103-byte limit on all Unix builds. */
 export const AGENT_BROWSER_UNIX_SOCKET_PATH_MAX_BYTES = 103;
+
+const NATIVE_ENV_ALLOWLIST = new Set([
+	"path",
+	"pathext",
+	"systemroot",
+	"windir",
+	"comspec",
+	"temp",
+	"tmp",
+	"tmpdir",
+	"lang",
+	"lc_all",
+	"lc_ctype",
+	"term",
+	"colorterm",
+	"no_color",
+	"force_color",
+]);
 
 const ALLOWED_COMMANDS = new Set([
 	"open",
@@ -131,6 +149,7 @@ export class AgentBrowserRuntime {
 	private readonly platform: NodeJS.Platform;
 	private readonly socketDirOverride?: string;
 	private socketDir: string | null = null;
+	private socketDirAlias: string | null = null;
 	private runtimeRootPromise: Promise<void> | null = null;
 	private runtimeRoot: string | null = null;
 	private disposed = false;
@@ -369,10 +388,26 @@ export class AgentBrowserRuntime {
 					encoding: "utf8",
 					flag: "wx",
 				});
-				const socketDir = this.socketDirOverride ?? path.join(root, "s");
-				await ensurePrivateDirectory(socketDir);
+				const actualSocketDir = this.socketDirOverride ?? path.join(root, "s");
+				await ensurePrivateDirectory(actualSocketDir);
+				let socketDir = actualSocketDir;
+				let socketDirAlias: string | null = null;
+				if (!this.socketDirOverride && process.platform !== "win32") {
+					// agent-browser applies the macOS 103-byte Unix socket limit on
+					// every Unix build. Keep the real runtime state under ~/.ao, but
+					// hand the native process a short symlink path whose length does
+					// not depend on the user's home directory or username.
+					socketDirAlias = path.join("/tmp", `ao-br-${process.pid}-${randomBytes(6).toString("hex")}`);
+					await symlink(actualSocketDir, socketDirAlias, "dir");
+					socketDir = socketDirAlias;
+				}
 				this.socketDir = socketDir;
+				this.socketDirAlias = socketDirAlias;
 			} catch (error) {
+				if (this.socketDirAlias) {
+					await removePath(this.socketDirAlias, this.log, "failed short socket alias");
+					this.socketDirAlias = null;
+				}
 				await removePath(root, this.log, "failed runtime root");
 				throw error;
 			}
@@ -389,8 +424,11 @@ export class AgentBrowserRuntime {
 	private async removeRuntimeRootIfIdle(): Promise<void> {
 		if (!this.runtimeRoot || this.sessions.size > 0 || this.initializing.size > 0 || this.closing.size > 0) return;
 		const root = this.runtimeRoot;
+		const socketDirAlias = this.socketDirAlias;
 		this.runtimeRoot = null;
 		this.runtimeRootPromise = null;
+		this.socketDirAlias = null;
+		if (socketDirAlias) await removePath(socketDirAlias, this.log, "short socket alias");
 		await removePath(root, this.log, "runtime root");
 		this.socketDir = null;
 	}
@@ -406,14 +444,22 @@ export class AgentBrowserRuntime {
 	}
 
 	private environment(runtime: SessionRuntime): NodeJS.ProcessEnv {
-		const environment: NodeJS.ProcessEnv = { ...process.env };
-		for (const name of Object.keys(environment)) {
-			if (name.startsWith("AGENT_BROWSER_")) delete environment[name];
+		// The native runtime is a third-party executable. Inheriting Electron's
+		// complete environment would expose shell credentials, cloud/API tokens,
+		// proxy credentials, and runtime injection flags to it. Keep only process
+		// execution/locale essentials and add AO's explicitly scoped contract below.
+		const environment: NodeJS.ProcessEnv = {};
+		for (const [name, value] of Object.entries(process.env)) {
+			if (value !== undefined && NATIVE_ENV_ALLOWLIST.has(name.toLowerCase())) environment[name] = value;
 		}
-		for (const name of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]) delete environment[name];
 		Object.assign(environment, {
 			HOME: runtime.runtimeDir,
 			USERPROFILE: runtime.runtimeDir,
+			XDG_CONFIG_HOME: runtime.runtimeDir,
+			XDG_CACHE_HOME: runtime.runtimeDir,
+			TEMP: runtime.runtimeDir,
+			TMP: runtime.runtimeDir,
+			TMPDIR: runtime.runtimeDir,
 			AGENT_BROWSER_CONFIG: runtime.configPath,
 			AGENT_BROWSER_CDP: runtime.endpoint,
 			AGENT_BROWSER_SOCKET_DIR: this.socketDir!,
@@ -637,7 +683,7 @@ function nativeWaitArguments(args: Record<string, unknown>): string[] {
 	throw runtimeError("INVALID_ARGUMENT", "A wait condition is required");
 }
 
-function parseAgentBrowserJSON(stdout: string): AgentBrowserJSONResult {
+export function parseAgentBrowserJSON(stdout: string): AgentBrowserJSONResult {
 	let envelope: unknown;
 	try {
 		envelope = JSON.parse(stdout);
@@ -648,9 +694,14 @@ function parseAgentBrowserJSON(stdout: string): AgentBrowserJSONResult {
 	if (envelope.success === false) {
 		throw runtimeError("AGENT_BROWSER_COMMAND_FAILED", stringError(envelope.error) || "Browser automation failed");
 	}
-	const data = envelope.data;
-	if (isRecord(data)) return { ...data, untrustedExternalContent: true };
-	return { value: data, untrustedExternalContent: true };
+	const boundary = validContentBoundary(envelope._boundary);
+	const result: Record<string, unknown> = isRecord(envelope.data) ? { ...envelope.data } : { value: envelope.data };
+	// `_boundary` is native-output metadata. Never forward a page-shaped field
+	// with the same name as trusted metadata, but preserve the root field emitted
+	// by agent-browser 0.33.1 so downstream adapters retain its nonce and origin.
+	delete result._boundary;
+	if (boundary) result._boundary = boundary;
+	return { ...result, untrustedExternalContent: true };
 }
 
 function nativeRef(value: string): string {
@@ -694,6 +745,13 @@ function stringError(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function validContentBoundary(value: unknown): Record<string, string> | undefined {
+	if (!isRecord(value) || typeof value.nonce !== "string" || !value.nonce || typeof value.origin !== "string") {
+		return undefined;
+	}
+	return { nonce: value.nonce, origin: value.origin };
 }
 
 export function validateAgentBrowserArguments(args: string[]): void {

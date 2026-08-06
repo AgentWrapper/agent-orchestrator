@@ -51,11 +51,11 @@ type fakeManagedPreviewServer struct {
 
 type allowSessionCapability struct{}
 
-func (allowSessionCapability) Valid(domain.SessionID, string) bool { return true }
+func (allowSessionCapability) Valid(domain.SessionID, string, string) bool { return true }
 
 type denySessionCapability struct{}
 
-func (denySessionCapability) Valid(domain.SessionID, string) bool { return false }
+func (denySessionCapability) Valid(domain.SessionID, string, string) bool { return false }
 
 func (f *fakeManagedPreviewServer) Start(
 	_ context.Context,

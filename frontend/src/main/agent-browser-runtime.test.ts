@@ -9,6 +9,7 @@ import {
 	BROWSER_RUNTIME_RECLAIM_GRACE_MS,
 	agentBrowserSocketPath,
 	nativeArgumentsForAction,
+	parseAgentBrowserJSON,
 	scavengeBrowserRuntime,
 	validateAgentBrowserArguments,
 } from "./agent-browser-runtime";
@@ -99,7 +100,7 @@ describe("agent-browser runtime lifecycle", () => {
 		const bridge = {
 			start: vi.fn(overrides.start ?? (async () => "ws://127.0.0.1:1/fixture")),
 			close: vi.fn(overrides.close ?? (async () => undefined)),
-			endpointForTarget: vi.fn(() => "ws://127.0.0.1:1/fixture?target=t1"),
+		endpointForTarget: vi.fn(() => "ws://127.0.0.1:1/fixture?devtools=fixture-capability"),
 		};
 		const processRunner = vi.fn(
 			overrides.processRunner ?? (async () => ({ stdout: "", stderr: "", exitCode: 0 })),
@@ -144,8 +145,12 @@ describe("agent-browser runtime lifecycle", () => {
 			const environment = (processRunner.mock.calls[0] as unknown[])[2] as NodeJS.ProcessEnv;
 			const namespace = environment.AGENT_BROWSER_NAMESPACE!;
 			const socketDir = environment.AGENT_BROWSER_SOCKET_DIR!;
-			expect(socketDir).toContain(path.join(dataDir, "r-"));
-			expect(socketDir).toMatch(/[\\/]s$/);
+			if (process.platform === "win32") {
+				expect(socketDir).toContain(path.join(dataDir, "r-"));
+				expect(socketDir).toMatch(/[\\/]s$/);
+			} else {
+				expect(socketDir).toMatch(/^\/tmp\/ao-br-/);
+			}
 			expect(namespace).toMatch(/^ao-[0-9a-f]{4}-[0-9a-f]{12}$/);
 			const socketPath = agentBrowserSocketPath(socketDir, namespace);
 			expect(Buffer.byteLength(socketPath, "utf8")).toBeLessThanOrEqual(
@@ -157,6 +162,24 @@ describe("agent-browser runtime lifecycle", () => {
 		} finally {
 			await runtime.dispose();
 			await cleanup(dataDir);
+		}
+	});
+
+	it("passes only the native runtime allowlist and AO-scoped variables", async () => {
+		vi.stubEnv("AWS_SECRET_ACCESS_KEY", "should-not-cross-process");
+		vi.stubEnv("HTTP_PROXY", "http://user:secret@example.test:8080");
+		const { dataDir, processRunner, runtime } = await fixture();
+		try {
+			await runtime.run("session-1", ["snapshot"], provider);
+			const environment = (processRunner.mock.calls[0] as unknown[])[2] as NodeJS.ProcessEnv;
+			expect(environment.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+			expect(environment.HTTP_PROXY).toBeUndefined();
+			expect(environment.AGENT_BROWSER_CDP).toBe("ws://127.0.0.1:1/fixture");
+			expect(environment.HOME).toContain(path.join(dataDir, "r-"));
+		} finally {
+			await runtime.dispose();
+			await cleanup(dataDir);
+			vi.unstubAllEnvs();
 		}
 	});
 
@@ -270,6 +293,29 @@ describe("agent-browser runtime lifecycle", () => {
 		} finally {
 			await cleanup(dataDir);
 		}
+	});
+});
+
+describe("agent-browser structured output", () => {
+	it("preserves the native root content boundary metadata", () => {
+		const result = parseAgentBrowserJSON(
+			JSON.stringify({
+				success: true,
+				data: { snapshot: "page text", _boundary: { nonce: "page-spoof", origin: "page" } },
+				_boundary: { nonce: "native-nonce", origin: "https://example.test/" },
+			}),
+		);
+		expect(result).toMatchObject({
+			snapshot: "page text",
+			_boundary: { nonce: "native-nonce", origin: "https://example.test/" },
+			untrustedExternalContent: true,
+		});
+	});
+
+	it("does not treat a page-shaped boundary field as trusted metadata", () => {
+		const result = parseAgentBrowserJSON(JSON.stringify({ success: true, data: { value: "page", _boundary: "spoof" } }));
+		expect(result._boundary).toBeUndefined();
+		expect(result.untrustedExternalContent).toBe(true);
 	});
 });
 

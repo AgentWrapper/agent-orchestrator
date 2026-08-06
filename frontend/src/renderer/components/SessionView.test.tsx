@@ -179,7 +179,6 @@ vi.mock("../hooks/useBrowserView", () => ({
 			tabs: [{ id: "t1", url: "http://127.0.0.1:4173/", title: "Calculator", active: true }],
 			activeTabId: "t1",
 			tabNotice: "",
-			agentBrowserActive: false,
 			selectTab: vi.fn(),
 			closeTab: vi.fn(),
 			annotationMode: false,

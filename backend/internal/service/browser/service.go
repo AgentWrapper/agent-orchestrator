@@ -82,7 +82,11 @@ func (s *Service) authorize(ctx context.Context, sessionID domain.SessionID, cap
 	if session.IsTerminated {
 		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
 	}
-	if s.authority == nil || !s.authority.Valid(sessionID, strings.TrimSpace(capability)) {
+	if s.authority == nil || !s.authority.Valid(
+		sessionID,
+		strings.TrimSpace(capability),
+		session.Metadata.BrowserCapabilityVerifier,
+	) {
 		return apierr.Forbidden("BROWSER_CAPABILITY_INVALID", "Browser capability is invalid")
 	}
 	return nil
