@@ -66,15 +66,28 @@ func TestVSCodeLeadsThePreferenceOrder(t *testing.T) {
 	}
 }
 
-// writeShim creates an executable stub where a real editor's launcher would be.
-func writeShim(t *testing.T, path string) {
+// writeShim creates an executable stub where a real editor's launcher would
+// be, returning the path actually written. On Windows, editor CLI launchers
+// are batch shims (VS Code's own "code.cmd" being the canonical example), so
+// the fixture gets a .cmd extension and valid batch content: Go's Windows
+// FileMode only reports the executable bit for a handful of recognized
+// extensions, and a bare extensionless file is never one of them, so a
+// same-content-everywhere fixture would silently fail every detection
+// assertion on that platform.
+func writeShim(t *testing.T, path string) string {
 	t.Helper()
+	content := []byte("#!/bin/sh\nexit 0\n")
+	if runtime.GOOS == "windows" {
+		path += ".cmd"
+		content = []byte("@echo off\r\nexit /b 0\r\n")
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(path, content, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return path
 }
 
 // useFixtureRoots isolates detection from the machine's real installs: an empty
@@ -128,8 +141,7 @@ func TestEveryCandidateIsDetectedFromPath(t *testing.T) {
 			useFixtureRoots(t)
 			bin := t.TempDir()
 			extraPathDirs = []string{bin}
-			want := filepath.Join(bin, c.commands[0])
-			writeShim(t, want)
+			want := writeShim(t, filepath.Join(bin, c.commands[0]))
 
 			found := Detect()
 			if len(found) != 1 || found[0].ID != c.id || found[0].Bin != want {
@@ -210,12 +222,8 @@ func TestOpenWithoutAResolvedBinaryFails(t *testing.T) {
 
 func TestOpenPassesTheFolderThenTheFiles(t *testing.T) {
 	dir := t.TempDir()
-	bin := filepath.Join(t.TempDir(), "fake-editor")
 	out := filepath.Join(dir, "argv.txt")
-	writeShim(t, bin)
-	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > "+out+"\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin := writeArgvCapturingEditor(t, filepath.Join(t.TempDir(), "fake-editor"), out)
 	file := filepath.Join(dir, "src.go")
 	if err := os.WriteFile(file, []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -228,6 +236,34 @@ func TestOpenPassesTheFolderThenTheFiles(t *testing.T) {
 	if argv != dir+"\n"+file+"\n" {
 		t.Fatalf("argv = %q, want the folder then the file", argv)
 	}
+}
+
+// writeArgvCapturingEditor writes a fake editor launcher that records its
+// arguments, one per line, to out — returning the path Open must be given.
+// This exercises launchCommand end to end rather than just detection, so its
+// Windows form is a real .cmd batch shim run through cmd.exe (the same shape
+// VS Code's own launcher takes), not the placeholder writeShim fixture.
+// Positional parameters (%~1, %~2) are used instead of %*: this test always
+// calls Open with exactly the folder and one file, and unlike %*, %~N keeps
+// an argument containing spaces as one value instead of splitting on them.
+func writeArgvCapturingEditor(t *testing.T, path, out string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		path += ".cmd"
+		content := "@echo off\r\n(echo %~1\r\necho %~2\r\n) > \"" + out + "\"\r\n"
+		if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	content := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + out + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func byID(t *testing.T, id string) candidate {

@@ -50,6 +50,30 @@ func TestMostRecentlyChangedFileCleanWorktreeOpensFolderOnly(t *testing.T) {
 	}
 }
 
+// An untracked symlink pointing outside the worktree is exactly the "newest
+// change" mostRecentlyChangedFile is meant to surface, and editorTargetFile
+// must not hand its resolved target to the editor unconfined.
+func TestEditorTargetFileAutoPickSkipsASymlinkEscape(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("outside the workspace\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(repo, "escape.txt")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("creating symlink: %v", err)
+	}
+
+	rel, abs, err := (&Service{}).editorTargetFile(context.Background(), repo, "workspace", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel != "" || abs != "" {
+		t.Fatalf("got (%q, %q), want the escaping symlink skipped like no change at all", rel, abs)
+	}
+}
+
 func TestEditorRootFallsBackToProjectCheckout(t *testing.T) {
 	project := newWorkspaceRepo(t)
 	st := newFakeStore()

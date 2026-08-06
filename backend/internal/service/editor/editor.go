@@ -13,8 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-
-	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
 
 // ErrNoEditor is returned when no supported editor could be found.
@@ -125,15 +123,17 @@ func jetBrainsBundles(app, bin string) []appShim {
 
 // extraPathDirs are searched after PATH. The daemon is launched by the desktop
 // supervisor rather than a login shell, so it can miss the Homebrew and
-// /usr/local prefixes where these shims usually live. The JetBrains Toolbox
-// scripts directory is the only place its generated launchers exist unless the
-// user has added it to their own PATH.
+// /usr/local prefixes where these shims usually live.
+//
+// JetBrains Toolbox's generated launchers live under the OS-default
+// application-data directories (~/Library/Application Support,
+// ~/.local/share), which AO's app-state rule forbids reading from. Without an
+// explicit exception, a Toolbox-installed IDE is only detected once the user
+// adds its scripts directory to PATH themselves.
 var extraPathDirs = []string{
 	"/opt/homebrew/bin",
 	"/usr/local/bin",
 	"/usr/bin",
-	os.ExpandEnv("$HOME/Library/Application Support/JetBrains/Toolbox/scripts"),
-	os.ExpandEnv("$HOME/.local/share/JetBrains/Toolbox/scripts"),
 }
 
 // Detect returns every supported editor found on this machine, in preference
@@ -213,7 +213,7 @@ func Open(ed Editor, dir string, files ...string) error {
 		return ErrUnknownEditor
 	}
 	args := append([]string{dir}, files...)
-	cmd := aoprocess.Command(ed.Bin, args...)
+	cmd := launchCommand(ed.Bin, args...)
 	cmd.Dir = dir
 	cmd.Stdin = nil
 	cmd.Stdout = nil

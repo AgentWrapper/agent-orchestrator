@@ -149,7 +149,16 @@ func (s *Service) editorTargetFile(ctx context.Context, root, scope, rawPath str
 	if rel == "" {
 		return "", "", nil
 	}
-	return rel, filepath.Join(root, filepath.FromSlash(rel)), nil
+	// Route the auto-picked file through the same confinement explicit paths
+	// get: an untracked symlink can be the newest "change" the worktree scan
+	// sees, and following it unchecked would hand the editor a path outside
+	// the session workspace. An escape here is treated like "nothing changed"
+	// rather than failing the whole open — the folder still opens.
+	abs, _, err := confinedWorkspaceFile(root, rel)
+	if err != nil {
+		return "", "", nil
+	}
+	return rel, abs, nil
 }
 
 // mostRecentlyChangedFile returns the worktree file with a git change against
