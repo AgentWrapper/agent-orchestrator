@@ -458,7 +458,7 @@ export async function refreshAgents(cfg: ServerConfig): Promise<AgentCatalog> {
 // ---- Push notifications -----------------------------------------------------
 
 // Register (idempotent upsert) this device's Expo push token with the daemon so
-// its dispatcher can deliver OS push notifications. Keyed daemon-side by token.
+// its dispatcher can deliver OS push notifications. Keyed daemon-side by install ID.
 export async function registerPushDevice(
 	cfg: ServerConfig,
 	device: { token: string; platform?: string; deviceName?: string },

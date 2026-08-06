@@ -18,9 +18,10 @@ import (
 )
 
 // stubDeviceRoster and stubDeviceLive give TestRouteSpecParity a non-nil
-// DeviceRoster so mountMobileDevices (which, like mountMobile, skips mounting
-// on a nil registry) registers its routes here — otherwise the roster's spec
-// operations below would have no mounted route to match.
+// DeviceRoster so mountMobileDevices (which mounts its routes unconditionally
+// and answers 503 DEVICE_REGISTRY_UNAVAILABLE when the registry is unavailable)
+// registers its routes here — otherwise the roster's spec operations below
+// would have no mounted route to match.
 type stubDeviceRoster struct{}
 
 func (stubDeviceRoster) List() []mobilebridge.PushDevice { return nil }

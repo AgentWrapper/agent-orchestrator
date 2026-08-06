@@ -1019,7 +1019,8 @@ type PushDeviceTokenParam struct {
 
 // RegisterPushDeviceRequest is the body of POST /api/v1/push/devices. The phone
 // sends its Expo push token plus a bit of descriptive metadata; the daemon keys
-// the registry on the token and re-registering is an idempotent upsert.
+// the registry on the install ID (the token is an attribute and is now optional)
+// and re-registering is an idempotent upsert.
 type RegisterPushDeviceRequest struct {
 	InstallID string `json:"installId" description:"Stable per-install device id. Keys the registry so a rotated push token updates the same row."`
 	// Optional: a row represents a paired phone, not a push registration. Omitted

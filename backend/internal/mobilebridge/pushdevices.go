@@ -73,7 +73,7 @@ func PushDevicesPath(dataDir string) string {
 type DeviceRegistry struct {
 	mu      sync.RWMutex
 	path    string
-	devices map[string]PushDevice // keyed by Token
+	devices map[string]PushDevice // keyed by InstallID
 	removed []removedDevice       // tombstones from explicit Delete calls, newest last
 }
 
