@@ -2899,6 +2899,77 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/usage/sessions:
+    get:
+      operationId: listCompactSessionUsage
+      parameters:
+      - description: Optional project id filter for dashboard cards.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project id filter for dashboard cards.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListCompactSessionUsageResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List compact token usage for session cards
+      tags:
+      - usage
+  /api/v1/usage/sessions/{sessionId}:
+    get:
+      operationId: getSessionUsage
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionUsageResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get detailed token usage for one session
+      tags:
+      - usage
 components:
   schemas:
     APIError:
@@ -3137,6 +3208,21 @@ components:
       required:
       - sessionId
       - reason
+      type: object
+    CompactSessionUsageResponse:
+      properties:
+        incomplete:
+          type: boolean
+        sessionId:
+          type: string
+        totalTokens:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - sessionId
+      - totalTokens
+      - incomplete
       type: object
     ContainerReapConfig:
       properties:
@@ -3484,6 +3570,15 @@ components:
       - supported
       - installed
       - authorized
+      type: object
+    ListCompactSessionUsageResponse:
+      properties:
+        sessions:
+          items:
+            $ref: '#/components/schemas/CompactSessionUsageResponse'
+          type: array
+      required:
+      - sessions
       type: object
     ListNotificationsResponse:
       properties:
@@ -4487,6 +4582,24 @@ components:
       required:
       - session
       type: object
+    SessionUsageResponse:
+      properties:
+        harnesses:
+          items:
+            $ref: '#/components/schemas/UsageHarnessResponse'
+          type: array
+        incomplete:
+          type: boolean
+        sessionId:
+          type: string
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+      required:
+      - sessionId
+      - incomplete
+      - totals
+      - harnesses
+      type: object
     SetActivityRequest:
       properties:
         agentSessionId:
@@ -4514,6 +4627,9 @@ components:
         toolUseId:
           description: Native tool-use id, for tool-use hook events.
           type: string
+        usage:
+          $ref: '#/components/schemas/UsageHookMetadata'
+          description: Provider transcript metadata used by the local usage pipeline.
       type: object
     SetActivityResponse:
       properties:
@@ -4797,6 +4913,83 @@ components:
       required:
       - title
       type: object
+    UsageHarnessResponse:
+      properties:
+        harness:
+          type: string
+        models:
+          items:
+            $ref: '#/components/schemas/UsageModelResponse'
+          type: array
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+      required:
+      - harness
+      - totals
+      - models
+      type: object
+    UsageHookMetadata:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          type: string
+        modelId:
+          type: string
+        subagentId:
+          type: string
+        subagentTranscriptPath:
+          type: string
+        transcriptPath:
+          type: string
+      required:
+      - harness
+      type: object
+    UsageModelResponse:
+      properties:
+        modelId:
+          type: string
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+      required:
+      - modelId
+      - totals
+      type: object
+    UsageTotalsResponse:
+      properties:
+        cacheReadTokens:
+          type:
+          - "null"
+          - integer
+        cacheWriteTokens:
+          type:
+          - "null"
+          - integer
+        inputTokens:
+          type:
+          - "null"
+          - integer
+        outputTokens:
+          type:
+          - "null"
+          - integer
+        reasoningTokens:
+          type:
+          - "null"
+          - integer
+        uncachedInputTokens:
+          type:
+          - "null"
+          - integer
+      required:
+      - inputTokens
+      - uncachedInputTokens
+      - cacheReadTokens
+      - cacheWriteTokens
+      - outputTokens
+      - reasoningTokens
+      type: object
     WorkspaceFileResponse:
       properties:
         additions:
@@ -4912,6 +5105,8 @@ tags:
   name: reviews
 - description: Durable dashboard notifications
   name: notifications
+- description: Token usage telemetry for AO sessions
+  name: usage
 - description: Mobile push-device registration for OS push notifications
   name: push
 - description: Server-sent CDC event stream with durable replay

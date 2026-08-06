@@ -1,8 +1,10 @@
 package lifecycle
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -126,6 +128,252 @@ func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
 	got := st.sessions["mer-1"]
 	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
 		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+}
+
+func TestRuntimeObservation_CrashFinalizesUsageBeforeTermination(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.UpdatedAt = time.Date(2026, 8, 2, 11, 0, 0, 0, time.UTC)
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{
+		Runtime:  ports.ProbeDead,
+		Workload: ports.ProbeFailed,
+		LaunchID: "launch-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 || finalizer.sawTerminated {
+		t.Fatalf("finalizer calls=%d sawTerminated=%v, want 1/false", finalizer.calls, finalizer.sawTerminated)
+	}
+	if finalizer.launchID != "launch-1" {
+		t.Fatalf("finalizer launch id=%q, want launch-1", finalizer.launchID)
+	}
+	if !finalizer.sessionRevision.Equal(rec.UpdatedAt) {
+		t.Fatalf("finalizer session revision=%s, want %s", finalizer.sessionRevision, rec.UpdatedAt)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("crashed session was not terminated")
+	}
+}
+
+func TestRuntimeObservation_FinalizerErrorIsLoggedAndDoesNotBlockTermination(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st, err: errors.New("usage unavailable")}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{Runtime: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("finalizer error prevented crash termination")
+	}
+	if got := logs.String(); !strings.Contains(got, "lifecycle: finalize session usage before termination") || !strings.Contains(got, "usage unavailable") {
+		t.Fatalf("finalizer error log = %q", got)
+	}
+}
+
+func TestRuntimeObservation_DoesNotFinalizeRejectedObservations(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	oldActivity := domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-2 * time.Minute)}
+	tests := []struct {
+		name  string
+		rec   domain.SessionRecord
+		facts ports.RuntimeFacts
+	}{
+		{
+			name:  "probe failed",
+			rec:   domain.SessionRecord{ID: "mer-1", Activity: oldActivity},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeFailed, ObservedAt: now},
+		},
+		{
+			name: "stale launch",
+			rec: domain.SessionRecord{
+				ID:       "mer-1",
+				Activity: oldActivity,
+				Metadata: domain.SessionMetadata{RuntimeLaunchID: "launch-2"},
+			},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeDead, LaunchID: "launch-1", ObservedAt: now},
+		},
+		{
+			name: "workload dead while runtime alive",
+			rec: domain.SessionRecord{
+				ID:       "mer-1",
+				Activity: oldActivity,
+				Metadata: domain.SessionMetadata{RuntimeLaunchID: "launch-1"},
+			},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeAlive, Workload: ports.ProbeDead, LaunchID: "launch-1", ObservedAt: now},
+		},
+		{
+			name:  "already terminated",
+			rec:   domain.SessionRecord{ID: "mer-1", IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeDead, ObservedAt: now},
+		},
+		{
+			name:  "recent activity",
+			rec:   domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeDead, ObservedAt: now},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, st, _ := newManager()
+			m.clock = func() time.Time { return now }
+			st.sessions[tt.rec.ID] = tt.rec
+			finalizer := &fakeUsageFinalizer{store: st}
+			m.SetUsageFinalizer(finalizer)
+
+			if err := m.ApplyRuntimeObservation(ctx, tt.rec.ID, tt.facts); err != nil {
+				t.Fatal(err)
+			}
+			if finalizer.calls != 0 {
+				t.Fatalf("finalizer calls=%d, want 0", finalizer.calls)
+			}
+		})
+	}
+}
+
+func TestRuntimeObservation_DoesNotTerminateNewRuntimeGenerationAfterFinalization(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, _ string, _ time.Time) error {
+		return m.MarkSpawned(ctx, id, domain.SessionMetadata{RuntimeLaunchID: "launch-new"})
+	}
+	m.SetUsageFinalizer(finalizer)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{
+			Runtime:  ports.ProbeDead,
+			LaunchID: "launch-old",
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ApplyRuntimeObservation deadlocked while finalizing usage")
+	}
+
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("stale runtime observation changed new generation: %+v", got)
+	}
+}
+
+func TestRuntimeObservation_DoesNotTerminateAfterActivityDuringFinalization(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	m, st, _ := newManager()
+	m.clock = func() time.Time { return now }
+	rec := domain.SessionRecord{
+		ID:       "mer-1",
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-2 * time.Minute)},
+		Metadata: domain.SessionMetadata{RuntimeLaunchID: "launch-1"},
+	}
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, _ string, _ time.Time) error {
+		return m.ApplyActivitySignal(ctx, id, ports.ActivitySignal{
+			Valid:     true,
+			State:     domain.ActivityIdle,
+			Timestamp: now,
+			LaunchID:  "launch-1",
+		})
+	}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{
+		Runtime:    ports.ProbeDead,
+		LaunchID:   "launch-1",
+		ObservedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || !got.Activity.LastActivityAt.Equal(now) {
+		t.Fatalf("runtime observation overrode activity recorded during finalization: %+v", got)
+	}
+}
+
+func TestRuntimeObservation_RetriesAfterRevisionChangesDuringFinalization(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	m, st, _ := newManager()
+	m.clock = func() time.Time { return now }
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-2 * time.Minute)},
+		UpdatedAt: now.Add(-2 * time.Minute),
+		Metadata:  domain.SessionMetadata{RuntimeLaunchID: "launch-1"},
+	}
+	st.sessions[rec.ID] = rec
+	finalized := 0
+	var revisions []time.Time
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, launchID string, sessionRevision time.Time) error {
+		revisions = append(revisions, sessionRevision)
+		if finalizer.calls == 1 {
+			if err := m.ApplyActivitySignal(ctx, id, ports.ActivitySignal{
+				Valid:     true,
+				State:     domain.ActivityExited,
+				Timestamp: now,
+				Event:     "process-exited",
+				LaunchID:  launchID,
+			}); err != nil {
+				return err
+			}
+		}
+		current := st.sessions[id]
+		if !current.IsTerminated &&
+			current.Metadata.RuntimeLaunchID == launchID &&
+			current.UpdatedAt.Equal(sessionRevision) {
+			finalized++
+		}
+		return nil
+	}
+	m.SetUsageFinalizer(finalizer)
+	facts := ports.RuntimeFacts{
+		Runtime:    ports.ProbeDead,
+		LaunchID:   "launch-1",
+		ObservedAt: now,
+	}
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if finalized != 0 || got.IsTerminated || got.Activity.State != domain.ActivityExited || !got.UpdatedAt.Equal(now) {
+		t.Fatalf("first pass finalized=%d session=%+v, want no finalization and live exited revision", finalized, got)
+	}
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	got = st.sessions[rec.ID]
+	if finalizer.calls != 2 || finalized != 1 || !got.IsTerminated {
+		t.Fatalf("second pass finalizer calls=%d finalized=%d session=%+v", finalizer.calls, finalized, got)
+	}
+	if len(revisions) != 2 || !revisions[0].Equal(rec.UpdatedAt) || !revisions[1].Equal(now) {
+		t.Fatalf("finalizer revisions=%v, want [%s %s]", revisions, rec.UpdatedAt, now)
 	}
 }
 
@@ -526,6 +774,155 @@ func TestMarkTerminated(t *testing.T) {
 	got := st.sessions["mer-1"]
 	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
 		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+}
+
+type fakeUsageFinalizer struct {
+	store           *fakeStore
+	calls           int
+	sawTerminated   bool
+	launchID        string
+	sessionRevision time.Time
+	err             error
+	onFinalize      func(domain.SessionID, string, time.Time) error
+}
+
+func (f *fakeUsageFinalizer) FinalizeSession(
+	_ context.Context,
+	id domain.SessionID,
+	launchID string,
+	sessionRevision time.Time,
+) error {
+	f.calls++
+	f.sawTerminated = f.store.sessions[id].IsTerminated
+	f.launchID = launchID
+	f.sessionRevision = sessionRevision
+	if f.onFinalize != nil {
+		return f.onFinalize(id, launchID, sessionRevision)
+	}
+	return f.err
+}
+
+type fakeUsageLifecycle struct {
+	fakeUsageFinalizer
+	reactivateCalls  int
+	reactivateID     domain.SessionID
+	reactivateLaunch string
+	sawLive          bool
+}
+
+func (f *fakeUsageLifecycle) ReactivateSession(
+	_ context.Context,
+	id domain.SessionID,
+	launchID string,
+) error {
+	f.reactivateCalls++
+	f.reactivateID = id
+	f.reactivateLaunch = launchID
+	f.sawLive = !f.store.sessions[id].IsTerminated
+	return nil
+}
+
+func TestMarkSpawnedReactivatesUsageAfterLifecycleTransition(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+		Metadata:     domain.SessionMetadata{RuntimeLaunchID: "launch-old"},
+	}
+	usage := &fakeUsageLifecycle{fakeUsageFinalizer: fakeUsageFinalizer{store: st}}
+	m.SetUsageFinalizer(usage)
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{RuntimeLaunchID: "launch-new"}); err != nil {
+		t.Fatal(err)
+	}
+	if usage.reactivateCalls != 1 || usage.reactivateID != "mer-1" ||
+		usage.reactivateLaunch != "launch-new" || !usage.sawLive {
+		t.Fatalf("usage reactivation = calls:%d id:%q launch:%q live:%v",
+			usage.reactivateCalls, usage.reactivateID, usage.reactivateLaunch, usage.sawLive)
+	}
+}
+
+func TestMarkTerminatedFinalizesUsageBeforeLifecycleTransition(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.UpdatedAt = time.Date(2026, 8, 2, 11, 30, 0, 0, time.UTC)
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st, err: errors.New("best effort failure")}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 || finalizer.sawTerminated {
+		t.Fatalf("finalizer calls=%d sawTerminated=%v, want 1/false", finalizer.calls, finalizer.sawTerminated)
+	}
+	if !finalizer.sessionRevision.Equal(rec.UpdatedAt) {
+		t.Fatalf("finalizer session revision=%s, want %s", finalizer.sessionRevision, rec.UpdatedAt)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("finalizer failure prevented session termination")
+	}
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 {
+		t.Fatalf("already terminated session finalized %d times, want once", finalizer.calls)
+	}
+}
+
+func TestMarkTerminatedDoesNotTerminateNewRuntimeGeneration(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, _ string, _ time.Time) error {
+		return m.MarkSpawned(ctx, id, domain.SessionMetadata{RuntimeLaunchID: "launch-new"})
+	}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.MarkTerminated(ctx, rec.ID); err == nil || !strings.Contains(err.Error(), "runtime launch changed") {
+		t.Fatalf("MarkTerminated() error = %v, want runtime launch change", err)
+	}
+	if finalizer.launchID != "launch-old" {
+		t.Fatalf("finalizer launch id=%q, want launch-old", finalizer.launchID)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("stale termination changed new runtime generation: %+v", got)
+	}
+}
+
+func TestMarkTerminatedRetriesFinalizationAfterSameLaunchRevisionChange(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.UpdatedAt = time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
+	st.sessions[rec.ID] = rec
+	var revisions []time.Time
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, _ string, revision time.Time) error {
+		revisions = append(revisions, revision)
+		if len(revisions) == 1 {
+			current := st.sessions[id]
+			current.UpdatedAt = current.UpdatedAt.Add(time.Second)
+			st.sessions[id] = current
+		}
+		return nil
+	}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.MarkTerminated(ctx, rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(revisions) != 2 || !revisions[0].Equal(rec.UpdatedAt) || !revisions[1].Equal(rec.UpdatedAt.Add(time.Second)) {
+		t.Fatalf("finalization revisions = %v", revisions)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("session was not terminated after revision-fenced retry")
 	}
 }
 
@@ -2104,6 +2501,25 @@ func TestMarkTerminated_ReapsContainers(t *testing.T) {
 	}
 	if len(cr.sessions) != 1 || cr.sessions[0] != "mer-1" {
 		t.Fatalf("expected container reap for mer-1, got %v", cr.sessions)
+	}
+}
+
+func TestMarkTerminated_ReapsContainersAgainWhenAlreadyTerminated(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.sessions) != 2 {
+		t.Fatalf("container reap calls = %v, want retry on repeated termination", cr.sessions)
 	}
 }
 
