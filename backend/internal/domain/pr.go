@@ -16,10 +16,32 @@ type PRFacts struct {
 	Review         ReviewDecision
 	Mergeability   Mergeability
 	ReviewComments bool // has unresolved review comments (any author) to address
+	CheckCount     int  // number of persisted CI checks observed for this PR
 	SourceBranch   string
 	TargetBranch   string
 	HeadSHA        string
 	UpdatedAt      time.Time
+}
+
+// PRMergeReady reports the provider-neutral merge readiness rule shared by
+// service layers. Unknown CI is accepted only when AO has observed no check
+// rows at all; unknown with checks present can mean an incomplete/paginated
+// provider rollup and must fail closed.
+func PRMergeReady(pr PRFacts) bool {
+	if pr.Draft || pr.Review == ReviewChangesRequest || pr.ReviewComments {
+		return false
+	}
+	if pr.Mergeability != MergeMergeable {
+		return false
+	}
+	switch pr.CI {
+	case CIPassing:
+		return true
+	case CIUnknown, "":
+		return pr.CheckCount == 0
+	default:
+		return false
+	}
 }
 
 // PullRequest is the app-level representation of one tracked pull request as

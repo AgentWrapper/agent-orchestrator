@@ -20,7 +20,7 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	additions: 10,
 	deletions: 3,
 	changedFiles: 2,
-	ci: { state: "passing", failingChecks: [] },
+	ci: { state: "passing", checkCount: 0, failingChecks: [] },
 	review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 	mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
 	updatedAt: "2026-06-15T00:00:00Z",
@@ -50,7 +50,7 @@ describe("PRSummaryParts", () => {
 		const { container } = render(
 			<PRCardStatusSummary
 				pr={summary({
-					ci: { state: "pending", failingChecks: [] },
+					ci: { state: "pending", checkCount: 1, failingChecks: [] },
 					review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 					mergeability: {
 						state: "blocked",
@@ -93,12 +93,13 @@ describe("PRSummaryParts", () => {
 		render(
 			<PRCardStatusSummary
 				pr={summary({
-					ci: {
-						state: "failing",
-						failingChecks: [
-							{ name: "renderer-smoke", status: "failed", conclusion: "failure", url: "https://ci/smoke" },
-						],
-					},
+				ci: {
+					state: "failing",
+					checkCount: 1,
+					failingChecks: [
+						{ name: "renderer-smoke", status: "failed", conclusion: "failure", url: "https://ci/smoke" },
+					],
+				},
 				})}
 			/>,
 		);
@@ -123,6 +124,7 @@ describe("PRSummaryParts", () => {
 				pr={summary({
 					ci: {
 						state: "failing",
+						checkCount: 3,
 						failingChecks: [
 							{ name: "unit", status: "failed", conclusion: "failure", url: "https://checks.example/unit" },
 							{ name: "lint", status: "failed", conclusion: "failure", url: "https://checks.example/lint" },
@@ -146,6 +148,7 @@ describe("PRSummaryParts", () => {
 				pr={summary({
 					ci: {
 						state: "failing",
+						checkCount: 3,
 						failingChecks: [
 							{ name: "unit", status: "failed", conclusion: "failure", url: "https://checks.example/unit" },
 							{ name: "lint", status: "failed", conclusion: "failure", url: "https://checks.example/lint" },

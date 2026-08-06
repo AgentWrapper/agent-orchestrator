@@ -103,6 +103,11 @@ SELECT
     pr.mergeability,
     pr.head_sha,
     pr.updated_at,
+    (
+        SELECT COUNT(*)
+        FROM pr_checks
+        WHERE pr_checks.pr_url = pr.url
+    ) AS check_count,
     EXISTS (
         SELECT 1
         FROM pr_comment
@@ -132,6 +137,11 @@ SELECT
     pr.target_branch,
     pr.head_sha,
     pr.updated_at,
+    (
+        SELECT COUNT(*)
+        FROM pr_checks
+        WHERE pr_checks.pr_url = pr.url
+    ) AS check_count,
     EXISTS (
         SELECT 1
         FROM pr_comment
@@ -163,3 +173,22 @@ SELECT pr.session_id, sessions.is_terminated
 FROM pr
 JOIN sessions ON sessions.id = pr.session_id
 WHERE pr.url = ?;
+
+-- name: GetPRByNumber :many
+-- Numbers are only unique within one repo; :many lets the caller detect and
+-- reject the cross-repo collision case explicitly instead of guessing.
+SELECT * FROM pr WHERE number = ?;
+
+-- name: GetPRReviewCommentsUnresolved :one
+SELECT EXISTS (
+    SELECT 1
+    FROM pr_comment
+    WHERE pr_comment.pr_url = ?
+      AND pr_comment.resolved = 0
+      AND pr_comment.is_bot = 0
+) AS review_comments;
+
+-- name: GetPRByRepoAndNumber :one
+-- Repo-scoped lookup: unlike GetPRByNumber, this can't collide across repos,
+-- since (repo, number) is effectively unique for currently-tracked PRs.
+SELECT * FROM pr WHERE repo = ? AND number = ?;

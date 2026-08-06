@@ -188,6 +188,81 @@ func scmObserveError(err error) error {
 }
 
 // ---------------------------------------------------------------------------
+// REST: merge action
+// ---------------------------------------------------------------------------
+
+// MergePR merges the pull request via GitHub's REST merge endpoint. headSHA,
+// when non-empty, is sent as GitHub's `sha` precondition so a commit pushed
+// after AO's last observation cannot be silently merged out from under it —
+// GitHub returns 409 if the current head doesn't match, which now surfaces as
+// ErrProviderPRPreconditions instead of being unreachable.
+func (p *Provider) MergePR(ctx context.Context, owner, repo string, number int, headSHA, method string) (mergeCommitSHA string, err error) {
+	body := map[string]string{"merge_method": method}
+	if headSHA != "" {
+		body["sha"] = headSHA
+	}
+	resp, err := p.client.doREST(ctx, http.MethodPut,
+		repoPath(owner, repo, "pulls", strconv.Itoa(number), "merge"),
+		nil,
+		body,
+	)
+	switch resp.StatusCode {
+	case http.StatusOK:
+		// falls through to decode below
+	case http.StatusMethodNotAllowed: // 405: not mergeable (checks failing, blocked, etc.)
+		return "", ErrProviderPRNotMergeable
+	case http.StatusConflict: // 409: sha precondition failed — head moved since our last observation
+		return "", ErrProviderPRPreconditions
+	default:
+		if err != nil {
+			return "", fmt.Errorf("github scm: merge PR #%d: %w", number, err)
+		}
+	}
+	var out struct {
+		Merged bool   `json:"merged"`
+		SHA    string `json:"sha"`
+	}
+	if decErr := json.Unmarshal(resp.Body, &out); decErr != nil {
+		return "", fmt.Errorf("github scm: decode merge response: %w", decErr)
+	}
+	if !out.Merged {
+		return "", ErrProviderPRNotMergeable
+	}
+	return out.SHA, nil
+}
+
+// RepoMergeSettings is which merge strategies a repo currently allows —
+// queried before merging so ActionService doesn't assume squash (or any
+// method) is universally enabled.
+type RepoMergeSettings struct {
+	AllowMergeCommit bool
+	AllowSquash      bool
+	AllowRebase      bool
+}
+
+// RepoMergeSettings fetches the repo's allowed merge strategies.
+func (p *Provider) RepoMergeSettings(ctx context.Context, owner, repo string) (ports.SCMRepoMergeSettings, error) {
+	resp, err := p.client.doREST(ctx, http.MethodGet, repoPath(owner, repo), nil, nil)
+	if err != nil {
+		return ports.SCMRepoMergeSettings{}, err
+	}
+	var out struct {
+		AllowMergeCommit *bool `json:"allow_merge_commit"`
+		AllowSquashMerge *bool `json:"allow_squash_merge"`
+		AllowRebaseMerge *bool `json:"allow_rebase_merge"`
+	}
+	if err := json.Unmarshal(resp.Body, &out); err != nil {
+		return ports.SCMRepoMergeSettings{}, fmt.Errorf("github scm: decode repo settings: %w", err)
+	}
+	// Absent fields (older API shapes) mean "not restricted", i.e. allowed.
+	return ports.SCMRepoMergeSettings{
+		AllowMergeCommit: out.AllowMergeCommit == nil || *out.AllowMergeCommit,
+		AllowSquash:      out.AllowSquashMerge == nil || *out.AllowSquashMerge,
+		AllowRebase:      out.AllowRebaseMerge == nil || *out.AllowRebaseMerge,
+	}, nil
+}
+
+// ---------------------------------------------------------------------------
 // REST: pull payload
 // ---------------------------------------------------------------------------
 

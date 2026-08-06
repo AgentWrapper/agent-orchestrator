@@ -44,6 +44,7 @@ func (s *Store) ListPRFactsForSession(ctx context.Context, id domain.SessionID) 
 			Review:         r.ReviewDecision,
 			Mergeability:   r.Mergeability,
 			ReviewComments: r.ReviewComments,
+			CheckCount:     int(r.CheckCount),
 			SourceBranch:   r.SourceBranch,
 			TargetBranch:   r.TargetBranch,
 			HeadSHA:        r.HeadSha,
@@ -65,6 +66,7 @@ func prFactsFromGen(r gen.GetDisplayPRFactsBySessionRow) domain.PRFacts {
 		Review:         r.ReviewDecision,
 		Mergeability:   r.Mergeability,
 		ReviewComments: r.ReviewComments,
+		CheckCount:     int(r.CheckCount),
 		HeadSHA:        r.HeadSha,
 		UpdatedAt:      r.UpdatedAt,
 	}

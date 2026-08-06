@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -19,6 +21,7 @@ var (
 
 type actionStore interface {
 	GetPR(ctx context.Context, url string) (domain.PullRequest, bool, error)
+	WriteSCMObservation(ctx context.Context, pr domain.PullRequest, checks []domain.PullRequestCheck, reviews []domain.PullRequestReview, threads []domain.PullRequestReviewThread, comments []domain.PullRequestComment, reviewMode ports.ReviewWriteMode) error
 }
 
 type actionReader interface {
@@ -28,23 +31,25 @@ type actionReader interface {
 
 // ActionDeps contains the storage and SCM boundaries used by ActionService.
 type ActionDeps struct {
-	Store  actionStore
-	Merger ports.SCMMerger
-	Reader actionReader
+	Store     actionStore
+	Merger    ports.SCMMerger
+	Reader    actionReader
+	Lifecycle lifecycle // may be nil; when nil the post-merge reaction is skipped
 }
 
 // ActionService validates current pull request state before applying mutations.
 type ActionService struct {
-	store  actionStore
-	merger ports.SCMMerger
-	reader actionReader
+	store     actionStore
+	merger    ports.SCMMerger
+	reader    actionReader
+	lifecycle lifecycle
 }
 
 var _ ActionManager = (*ActionService)(nil)
 
 // NewActionService builds the guarded pull request action service.
 func NewActionService(deps ActionDeps) *ActionService {
-	return &ActionService{store: deps.Store, merger: deps.Merger, reader: deps.Reader}
+	return &ActionService{store: deps.Store, merger: deps.Merger, reader: deps.Reader, lifecycle: deps.Lifecycle}
 }
 
 // Merge re-fetches authoritative SCM state and then squash-merges only the
@@ -106,6 +111,48 @@ func (s *ActionService) Merge(ctx context.Context, request MergeRequest) (MergeR
 			return MergeResult{}, fmt.Errorf("%w: %w", ErrPRNotMergeable, err)
 		default:
 			return MergeResult{}, fmt.Errorf("merge pull request: %w", err)
+		}
+	}
+	// From here the provider merge is real and irreversible. Everything below is
+	// best-effort local reconciliation — none of it may become a returned error,
+	// or the API/UI would report "Merge failed" and offer a Retry that re-merges
+	// an already-merged PR. Failures are logged; the SCM observer's next poll
+	// reconciles any local state that didn't get written and re-runs cleanup.
+	now := time.Now().UTC()
+	merged := tracked
+	merged.Merged = true
+	merged.Closed = false
+	merged.Draft = false
+	merged.MergeCommitSHA = out.MergeCommitSHA
+	merged.Mergeability = domain.MergeUnknown
+	merged.ProviderState = "closed"
+	merged.ProviderMergeable = "MERGED"
+	merged.ProviderMergeStateStatus = "MERGED"
+	merged.UpdatedAt = now
+	merged.UpdatedAtProvider = now
+	merged.MergedAtProvider = now
+	merged.ObservedAt = now
+	if err := s.store.WriteSCMObservation(ctx, merged, nil, nil, nil, nil, ports.ReviewWritePreserve); err != nil {
+		slog.Default().Error("failed to persist merged PR snapshot after a successful provider merge; will reconcile on next SCM observation", "pr_url", merged.URL, "err", err)
+	}
+	// The termination/worktree cleanup that normally follows an SCM observation
+	// should run now instead of waiting for the next observer poll, regardless of
+	// whether the local persistence write above succeeded — the merge itself is
+	// real and GitHub-confirmed either way.
+	if s.lifecycle != nil {
+		obs := ports.PRObservation{
+			Fetched:      true,
+			URL:          merged.URL,
+			Number:       merged.Number,
+			Draft:        false,
+			Merged:       true,
+			Closed:       false,
+			CI:           tracked.CI,
+			Review:       tracked.Review,
+			Mergeability: domain.MergeUnknown,
+		}
+		if err := s.lifecycle.ApplyPRObservation(ctx, tracked.SessionID, obs); err != nil {
+			slog.Default().Error("post-merge lifecycle reaction failed; will retry on next SCM observation", "pr_url", merged.URL, "session_id", tracked.SessionID, "err", err)
 		}
 	}
 	return MergeResult{PRNumber: tracked.Number, Method: string(ports.SCMMergeSquash), MergeCommitSHA: out.MergeCommitSHA}, nil

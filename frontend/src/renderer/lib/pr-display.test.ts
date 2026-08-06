@@ -25,7 +25,7 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 	additions: 10,
 	deletions: 3,
 	changedFiles: 2,
-	ci: { state: "passing", failingChecks: [] },
+	ci: { state: "passing", checkCount: 0, failingChecks: [] },
 	review: { decision: "approved", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 	mergeability: { state: "mergeable", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
 	updatedAt: "2026-06-15T00:00:00Z",
@@ -51,7 +51,7 @@ describe("prStatusRows", () => {
 	it("formats the three PR states without exposing raw unknown", () => {
 		const rows = prStatusRows(
 			summary({
-				ci: { state: "unknown", failingChecks: [] },
+				ci: { state: "unknown", checkCount: 0, failingChecks: [] },
 				review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 				mergeability: { state: "unknown", reasons: [], prUrl: "https://github.com/acme/repo/pull/7" },
 			}),
@@ -103,6 +103,7 @@ describe("prCardPresentation", () => {
 			summary({
 				ci: {
 					state: "failing",
+					checkCount: 1,
 					failingChecks: [{ name: "unit", status: "failed", conclusion: "failure", url: "https://ci/unit" }],
 				},
 				review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
@@ -122,7 +123,7 @@ describe("prCardPresentation", () => {
 	it("retains running checks as linked supporting state when review is the primary action", () => {
 		const presentation = prCardPresentation(
 			summary({
-				ci: { state: "pending", failingChecks: [] },
+				ci: { state: "pending", checkCount: 1, failingChecks: [] },
 				review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 				mergeability: {
 					state: "blocked",
@@ -143,7 +144,7 @@ describe("prCardPresentation", () => {
 	it("shows running checks instead of an internal provider blocker", () => {
 		const presentation = prCardPresentation(
 			summary({
-				ci: { state: "pending", failingChecks: [] },
+				ci: { state: "pending", checkCount: 1, failingChecks: [] },
 				mergeability: {
 					state: "unstable",
 					reasons: ["blocked_by_provider"],
@@ -214,6 +215,33 @@ describe("sessionPRDisplaySummaries", () => {
 		expect(fallback.updatedAt).toBe("2026-06-15T11:00:00Z");
 		expect(fallback.createdAt).toBeUndefined();
 		expect(fallback.stateChangedAt).toBeUndefined();
+	});
+
+	it("fails closed on unknown CI in the PullRequestFacts fallback instead of fabricating the no-checks sentinel", () => {
+		const [fallback] = sessionPRDisplaySummaries(
+			session([
+				{
+					url: "https://github.com/acme/repo/pull/7",
+					number: 7,
+					state: "open",
+					ci: "unknown",
+					review: "none",
+					mergeability: "mergeable",
+					reviewComments: false,
+					updatedAt: "2026-06-15T11:00:00Z",
+				},
+			]),
+			[],
+		);
+
+		// No summaries fetched yet — every PR falls through to the
+		// PullRequestFacts-derived fallback, which has no real check-count
+		// fact. It must not fabricate checkCount: 0 (the authoritative
+		// "no checks configured" sentinel isPRMergeable trusts), or an
+		// incomplete/paginated CI rollup would render an enabled Merge
+		// button before the real SessionPRSummary loads.
+		expect(fallback.ci.state).toBe("unknown");
+		expect(fallback.ci.checkCount).toBeGreaterThan(0);
 	});
 
 	it("deduplicates repeated API summaries before rendering", () => {
@@ -385,7 +413,7 @@ describe("sessionPRDisplaySummaries", () => {
 				},
 			]),
 			[
-				summary({ number: 7, title: "enriched PR #7", ci: { state: "passing", failingChecks: [] } }),
+				summary({ number: 7, title: "enriched PR #7", ci: { state: "passing", checkCount: 0, failingChecks: [] } }),
 				summary({ number: 7, title: "duplicate enriched PR #7" }),
 			],
 		);
@@ -450,6 +478,7 @@ describe("prSummaryParts", () => {
 			summary({
 				ci: {
 					state: "failing",
+					checkCount: 1,
 					failingChecks: [
 						{ name: "copy-check", status: "failed", conclusion: "failure", url: "https://checks.example/copy" },
 					],
@@ -504,6 +533,7 @@ describe("prSummaryParts", () => {
 			summary({
 				ci: {
 					state: "failing",
+					checkCount: 4,
 					failingChecks: [
 						{ name: "unit", status: "failed", conclusion: "failure", url: "https://checks.example/unit" },
 						{ name: "lint", status: "failed", conclusion: "failure", url: "https://checks.example/lint" },
@@ -651,7 +681,7 @@ describe("prSummaryParts", () => {
 		const parts = prSummaryParts(
 			summary({
 				state: "merged",
-				ci: { state: "failing", failingChecks: [{ name: "unit", status: "failed", conclusion: "failure" }] },
+				ci: { state: "failing", checkCount: 1, failingChecks: [{ name: "unit", status: "failed", conclusion: "failure" }] },
 				review: { decision: "changes_requested", hasUnresolvedHumanComments: true, unresolvedBy: [] },
 				mergeability: { state: "conflicting", reasons: ["conflicts"], prUrl: "https://github.com/acme/repo/pull/7" },
 			}),

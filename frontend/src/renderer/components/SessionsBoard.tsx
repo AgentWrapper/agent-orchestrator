@@ -7,6 +7,7 @@ import {
 	AlertTriangle,
 	Check,
 	Copy,
+	GitMerge,
 	GitBranch,
 	LoaderCircle,
 	Plus,
@@ -40,6 +41,7 @@ import {
 	useTerminateSessionState,
 } from "../hooks/useTerminateSession";
 import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { useMergePR, isPRMergeable, mergeDisabledReason } from "../lib/pr-actions";
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
@@ -56,10 +58,11 @@ import { cn } from "../lib/utils";
 import { isLinuxPlatform, isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useUiStore } from "../stores/ui-store";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
+
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -900,7 +903,7 @@ function SessionCard({
 				{prSummaries.length > 0 && (
 					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-passive">
 						{groupPRsByLifecycle(prSummaries).map((group) => (
-							<BoardPRGroup group={group} key={group.status.label} />
+							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} sessionId={session.id} />
 						))}
 					</div>
 				)}
@@ -998,9 +1001,18 @@ function ArchiveRestoreError({ message }: { message?: string }) {
 type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
-function BoardPRGroup({ group }: { group: BoardPRGroup }) {
+function BoardPRGroup({
+	group,
+	linksInteractive = true,
+	sessionId,
+}: {
+	group: BoardPRGroup;
+	linksInteractive?: boolean;
+	sessionId: string;
+}) {
 	const { t } = useTranslation();
 	const statusLabel = t(`pr.state.${group.status.label}`);
+	const showMergeActions = linksInteractive && group.status.label === "open";
 	return (
 		<span
 			aria-label={`${group.prs.map((pr) => `#${pr.number}`).join(", ")} ${statusLabel}`}
@@ -1008,7 +1020,7 @@ function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 		>
 			<span>{t("pr.short")}</span>
 			{group.prs.map((pr, index) => (
-				<span className="inline-flex items-center" key={pr.url || pr.htmlUrl || pr.number}>
+				<span className="inline-flex items-center gap-1" key={pr.url || pr.htmlUrl || pr.number}>
 					<a
 						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
 						href={prBrowserUrl(pr)}
@@ -1019,10 +1031,53 @@ function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 						#{pr.number}
 					</a>
 					{index < group.prs.length - 1 ? "," : null}
+					{showMergeActions ? <MergePRButton pr={pr} sessionId={sessionId} /> : null}
 				</span>
 			))}
 			<span className={cn("font-medium", group.status.className)}>{statusLabel}</span>
 		</span>
+	);
+}
+
+function MergePRButton({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
+	const { t } = useTranslation();
+	const mutation = useMergePR();
+	const eligible = isPRMergeable(pr);
+	const tooltipText = mutation.isError
+		? mutation.error instanceof Error
+			? mutation.error.message
+			: t("pr.mergeFailed")
+		: eligible
+			? t("pr.mergeTooltip")
+			: mergeDisabledReason(pr);
+
+	return (
+		<TooltipProvider>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span
+						className="inline-flex"
+						onClick={(event) => event.stopPropagation()}
+						tabIndex={!eligible ? 0 : -1}
+					>
+						<button
+							aria-label={t("pr.mergeAriaLabel", { number: pr.number })}
+							className={cn(
+								"inline-flex items-center gap-0.5 rounded-sm px-1 py-0.5 text-2xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent",
+								mutation.isError ? "text-destructive hover:bg-destructive/10" : "text-accent hover:bg-accent/10",
+							)}
+							disabled={!eligible || mutation.isPending}
+							onClick={() => mutation.mutate({ pr, sessionId })}
+							type="button"
+						>
+							<GitMerge className="size-icon-2xs" aria-hidden="true" />
+							{mutation.isPending ? t("pr.merging") : mutation.isError ? t("pr.retryMerge") : t("pr.merge")}
+						</button>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="top">{tooltipText}</TooltipContent>
+			</Tooltip>
+		</TooltipProvider>
 	);
 }
 

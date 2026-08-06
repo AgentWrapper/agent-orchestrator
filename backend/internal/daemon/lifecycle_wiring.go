@@ -132,7 +132,9 @@ type sessionLifecycle interface {
 // over the selected runtime, routed git/scratch workspaces, the shared store +
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
-// the caller can wire Reconcile into the boot sequence.
+// the caller can wire Reconcile into the boot sequence, and the GitHub SCM
+// provider (nil if credentials are unavailable at startup) so the caller can
+// wire it into the PR action service for merge support.
 func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR

@@ -10,4 +10,5 @@ var (
 	ErrPRHeadChanged    = errors.New("pr: head changed")
 	ErrPRPreconditions  = errors.New("pr: merge preconditions unmet")
 	ErrNothingToResolve = errors.New("pr: nothing to resolve")
+	ErrNotImplemented   = errors.New("pr: operation not implemented")
 )

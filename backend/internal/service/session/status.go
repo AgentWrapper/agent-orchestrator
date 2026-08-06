@@ -119,6 +119,28 @@ func aggregatePRStatus(open []domain.PRFacts) domain.SessionStatus {
 	return worst
 }
 
+// prPipelineStatus derives the display-facing status for one open PR. The
+// domain package owns the neutral merge-readiness predicate; session service
+// owns how that predicate maps into the dashboard status vocabulary.
+func prPipelineStatus(pr domain.PRFacts) domain.SessionStatus {
+	switch {
+	case pr.CI == domain.CIFailing:
+		return domain.StatusCIFailed
+	case pr.Draft:
+		return domain.StatusDraft
+	case pr.Review == domain.ReviewChangesRequest || pr.ReviewComments:
+		return domain.StatusChangesRequested
+	case domain.PRMergeReady(pr):
+		return domain.StatusMergeable
+	case pr.Review == domain.ReviewApproved:
+		return domain.StatusApproved
+	case pr.Review == domain.ReviewRequired:
+		return domain.StatusReviewPending
+	default:
+		return domain.StatusPROpen
+	}
+}
+
 // isActionableChildSignal reports whether a blocked stacked child's pipeline
 // status is a problem the user can act on now, independent of the child's
 // inability to merge until its parent does.
@@ -152,24 +174,5 @@ func statusSeverity(s domain.SessionStatus) int {
 		return 6
 	default:
 		return 7
-	}
-}
-
-func prPipelineStatus(pr domain.PRFacts) domain.SessionStatus {
-	switch {
-	case pr.CI == domain.CIFailing:
-		return domain.StatusCIFailed
-	case pr.Draft:
-		return domain.StatusDraft
-	case pr.Review == domain.ReviewChangesRequest || pr.ReviewComments:
-		return domain.StatusChangesRequested
-	case pr.Mergeability == domain.MergeMergeable:
-		return domain.StatusMergeable
-	case pr.Review == domain.ReviewApproved:
-		return domain.StatusApproved
-	case pr.Review == domain.ReviewRequired:
-		return domain.StatusReviewPending
-	default:
-		return domain.StatusPROpen
 	}
 }

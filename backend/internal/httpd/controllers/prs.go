@@ -48,7 +48,7 @@ func (c *PRsController) merge(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := c.Svc.Merge(r.Context(), prsvc.MergeRequest{PRID: prID, PRURL: in.PRURL, ExpectedHeadSHA: in.ExpectedHeadSHA})
 	if err != nil {
-		writePRError(w, r, err)
+		writePRError(w, r, err, "/api/v1/prs/{id}/merge")
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, MergePRResponse{OK: true, PRNumber: res.PRNumber, Method: res.Method})
@@ -61,7 +61,6 @@ func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) 
 	}
 	prID := chi.URLParam(r, "id")
 
-	// Body is optional: omitting it resolves all unresolved threads.
 	var in ResolveCommentsRequest
 	if err := decodeJSON(r, &in); err != nil && !isEmptyBody(err) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
@@ -70,15 +69,17 @@ func (c *PRsController) resolveComments(w http.ResponseWriter, r *http.Request) 
 
 	res, err := c.Svc.ResolveComments(r.Context(), prID, in.CommentIDs)
 	if err != nil {
-		writePRError(w, r, err)
+		writePRError(w, r, err, "/api/v1/prs/{id}/resolve-comments")
 		return
 	}
 	envelope.WriteJSON(w, http.StatusOK, ResolveCommentsResponse{OK: true, Resolved: res.Resolved})
 }
 
 // writePRError maps PR sentinel errors to their locked HTTP envelopes,
-// falling back to 500 for unexpected failures.
-func writePRError(w http.ResponseWriter, r *http.Request, err error) {
+// falling back to 500 for unexpected failures. notImplementedPath is the
+// caller's own route, so ErrNotImplemented reports the endpoint that was
+// actually called instead of a hardcoded one shared across handlers.
+func writePRError(w http.ResponseWriter, r *http.Request, err error, notImplementedPath string) {
 	switch {
 	case errors.Is(err, prsvc.ErrInvalidPR):
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PR", "Invalid PR", nil)
@@ -92,6 +93,8 @@ func writePRError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "PR_PRECONDITIONS_UNMET", "PR merge preconditions are not met", nil)
 	case errors.Is(err, prsvc.ErrNothingToResolve):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "NOTHING_TO_RESOLVE", "No unresolved review threads to resolve", nil)
+	case errors.Is(err, prsvc.ErrNotImplemented):
+		apispec.NotImplemented(w, r, "POST", notImplementedPath)
 	default:
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "PR_OPERATION_FAILED", "PR operation failed", nil)
 	}

@@ -96,7 +96,7 @@ const prSummary = (
 		additions: 4,
 		deletions: 1,
 		changedFiles: 2,
-		ci: { state: "passing", failingChecks: [] },
+		ci: { state: "passing", checkCount: 0, failingChecks: [] },
 		review: { decision: "none", hasUnresolvedHumanComments: false, unresolvedBy: [] },
 		mergeability: { state: "mergeable", reasons: [], prUrl: url, conflictFiles: [] },
 		updatedAt: "2026-06-15T12:00:00Z",

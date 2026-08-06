@@ -233,6 +233,7 @@ const prSummary = (sessionId: string, number: number, overrides: Partial<Session
 		changedFiles: 3,
 		ci: {
 			state: facts?.ci === "failing" ? "failing" : facts?.ci === "pending" ? "pending" : "passing",
+			checkCount: 0,
 			failingChecks: [],
 		},
 		review: {
@@ -347,6 +348,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			deletions: 17,
 			ci: {
 				state: "failing",
+				checkCount: 4,
 				failingChecks: [
 					{
 						name: "backend / go test ./...",
@@ -383,6 +385,7 @@ export const mockSessionScmSummaries: Record<string, SessionPRSummary[]> = {
 			deletions: 22,
 			ci: {
 				state: "failing",
+				checkCount: 2,
 				failingChecks: [
 					{
 						name: "render tests",

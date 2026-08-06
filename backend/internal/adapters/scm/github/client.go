@@ -27,9 +27,11 @@ const (
 // errors.Is; the orchestrator's lifecycle code is intentionally insulated
 // from raw HTTP status codes.
 var (
-	ErrNotFound    = ports.ErrSCMNotFound
-	ErrAuthFailed  = errors.New("github scm: authentication failed")
-	ErrRateLimited = errors.New("github scm: rate limited")
+	ErrNotFound                = ports.ErrSCMNotFound
+	ErrAuthFailed              = errors.New("github scm: authentication failed")
+	ErrProviderPRNotMergeable  = ports.ErrSCMPRNotMergeable
+	ErrProviderPRPreconditions = ports.ErrSCMPRPreconditions
+	ErrRateLimited             = errors.New("github scm: rate limited")
 )
 
 // RateLimitError carries the structured backoff hints from a rate-limit
