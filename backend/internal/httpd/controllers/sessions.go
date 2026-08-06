@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -33,11 +34,11 @@ const (
 	maxMessageLen     = 4096
 	maxDisplayNameLen = 20
 
-	// Attachment limits guard the daemon against oversized spawn bodies. Images
+	// Attachment limits guard the daemon against oversized spawn bodies. Files
 	// are pasted/dropped into the task brief and inlined as base64 in the JSON
 	// body, so the caps are deliberately conservative.
 	maxAttachments      = 8
-	maxAttachmentBytes  = 10 << 20 // 10 MiB per image, decoded
+	maxAttachmentBytes  = 10 << 20 // 10 MiB per file, decoded
 	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
 	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
 	// per-attachment and total caps above only apply after the whole body is
@@ -47,18 +48,11 @@ const (
 	maxSpawnBodyBytes = maxAttachmentsBytes*4/3 + (2 << 20)
 )
 
-// attachmentExtByMime maps the accepted image MIME types to the file extension
-// used when the image is written into the worktree. Raster formats only: the
-// agent is told to open the file for visual context, so active-content formats
-// (notably image/svg+xml, which is XML that can carry scripts/external entities)
-// are intentionally excluded.
-var attachmentExtByMime = map[string]string{
-	"image/png":  ".png",
-	"image/jpeg": ".jpg",
-	"image/jpg":  ".jpg",
-	"image/gif":  ".gif",
-	"image/webp": ".webp",
-	"image/bmp":  ".bmp",
+// blockedAttachmentMimes contains MIME types that are explicitly rejected for
+// security reasons. SVG is excluded because it is XML that can carry active
+// content (scripts/external entities).
+var blockedAttachmentMimes = map[string]bool{
+	"image/svg+xml": true,
 }
 
 var errPreviewFileNotFound = errors.New("preview file not found")
@@ -244,9 +238,57 @@ type spawnAttachmentError struct {
 	message string
 }
 
-// decodeSpawnAttachments validates and base64-decodes the inline image
-// attachments from a spawn request, enforcing count, per-image, and total size
-// caps. It returns a nil slice when there are no attachments.
+// extensionForMimeType returns a file extension for a MIME type. For known
+// MIME types, it returns a standard extension. For unknown types, it attempts
+// to extract a reasonable extension from the MIME type, or falls back to ".bin".
+func extensionForMimeType(mimeType string) string {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+
+	// Preferred extensions for MIME types with multiple options
+	preferredExts := map[string]string{
+		"image/jpeg": ".jpg",
+		"image/jpg":  ".jpg",
+		"text/plain": ".txt",
+	}
+
+	// Check if we have a preferred extension for this MIME type
+	if pref, ok := preferredExts[mimeType]; ok {
+		return pref
+	}
+
+	// Try the standard mime package
+	exts, err := mime.ExtensionsByType(mimeType)
+	if err == nil && len(exts) > 0 {
+		// Prefer common extensions when available
+		for _, ext := range exts {
+			switch ext {
+			case ".jpg", ".jpeg", ".png", ".gif", ".pdf", ".txt", ".json", ".xml", ".html", ".css", ".js", ".md", ".zip", ".tar", ".gz":
+				return ext
+			}
+		}
+		return exts[0] // Return the primary extension if no preferred match
+	}
+
+	// Fallback: extract from the MIME type itself
+	// e.g., "application/pdf" -> ".pdf", "text/plain" -> ".plain"
+	parts := strings.SplitN(mimeType, "/", 2)
+	if len(parts) == 2 {
+		subtype := parts[1]
+		// Handle common suffixes like "+xml", "+json"
+		if idx := strings.Index(subtype, "+"); idx >= 0 {
+			subtype = subtype[:idx]
+		}
+		return "." + subtype
+	}
+
+	// Ultimate fallback for unknown MIME types
+	return ".bin"
+}
+
+// decodeSpawnAttachments validates and base64-decodes the inline file
+// attachments from a spawn request, enforcing count, per-file, and total size
+// caps. It accepts any MIME type except explicitly blocked ones (e.g., SVG
+// for security reasons). Returns a nil slice when there are no attachments.
 func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment, *spawnAttachmentError) {
 	if len(in) == 0 {
 		return nil, nil
@@ -257,10 +299,16 @@ func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment,
 	out := make([]ports.SpawnAttachment, 0, len(in))
 	total := 0
 	for _, a := range in {
-		ext, ok := attachmentExtByMime[strings.ToLower(strings.TrimSpace(a.MimeType))]
-		if !ok {
+		mimeType := strings.ToLower(strings.TrimSpace(a.MimeType))
+
+		// Check for blocked MIME types (e.g., SVG for security)
+		if blockedAttachmentMimes[mimeType] {
 			return nil, &spawnAttachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
 		}
+
+		// Get file extension for the MIME type
+		ext := extensionForMimeType(mimeType)
+
 		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
 		if err != nil {
 			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}

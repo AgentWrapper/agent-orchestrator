@@ -58,14 +58,15 @@ func TestStageAttachmentsReturnsTheWorktreePaths(t *testing.T) {
 	}
 }
 
-// The same allowlist and caps as spawn: this is the same operation against a
+// The same security restrictions as spawn: this is the same operation against a
 // session that already exists, so it must not be a looser door into the worktree.
+// Blocked types (e.g., SVG for security) and the same caps are enforced, but all
+// other MIME types are accepted.
 func TestStageAttachmentsRejectsWhatSpawnRejects(t *testing.T) {
 	srv := stagingServer(t, newFakeSessionService())
 
 	for name, payload := range map[string]string{
 		"svg":            `{"attachments":[{"mimeType":"image/svg+xml","data":"PHN2Zy8+"}]}`,
-		"pdf":            `{"attachments":[{"mimeType":"application/pdf","data":"eA=="}]}`,
 		"bad base64":     `{"attachments":[{"mimeType":"image/png","data":"!!!"}]}`,
 		"empty payload":  `{"attachments":[{"mimeType":"image/png","data":""}]}`,
 		"too many":       pngBody(9),
@@ -78,6 +79,25 @@ func TestStageAttachmentsRejectsWhatSpawnRejects(t *testing.T) {
 				t.Errorf("status = %d, want 400 (%s)", status, body)
 			}
 		})
+	}
+}
+
+func TestStageAttachmentsAcceptsAllNonBlockedTypes(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := stagingServer(t, svc)
+
+	// PDF should now be accepted
+	pdfBody := `{"attachments":[{"mimeType":"application/pdf","data":"eA=="}]}`
+	body, status, _ := doRequest(t, srv, http.MethodPost,
+		"/api/v1/sessions/ao-1/attachments", pdfBody)
+	if status != http.StatusCreated {
+		t.Errorf("status = %d, want 201 (%s)", status, body)
+	}
+	if len(svc.staged) != 1 {
+		t.Fatalf("service received %d attachments, want 1", len(svc.staged))
+	}
+	if svc.staged[0].Ext != ".pdf" {
+		t.Errorf("decoded attachment ext = %q, want .pdf", svc.staged[0].Ext)
 	}
 }
 

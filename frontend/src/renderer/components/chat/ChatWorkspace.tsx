@@ -25,7 +25,6 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
-	Archive,
 	ArrowDown,
 	Loader2,
 	MessageSquare,
@@ -36,7 +35,6 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
-import type { SessionKind } from "../../types/workspace";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import {
@@ -54,7 +52,6 @@ import { ChatComposer } from "./ChatComposer";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
 import { TurnSettingsBar } from "./TurnSettingsBar";
-import { ContextMeter } from "./ContextMeter";
 import { ElicitationCard } from "./ElicitationCard";
 import {
 	McpServerBanner,
@@ -85,8 +82,10 @@ import {
 
 export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
+	/** The session title from the sidebar (matches what users see in the left sidebar) */
+	sessionTitle?: string;
 	/** The AO role using this shared conversation surface. */
-	sessionRole?: SessionKind;
+	sessionRole?: "worker" | "orchestrator";
 	/** Session-level actions owned above the conversation surface. */
 	interfaceAction?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
@@ -171,6 +170,7 @@ export interface ChatWorkspaceProps {
 
 export function ChatWorkspace({
 	snapshot,
+	sessionTitle,
 	sessionRole = "worker",
 	interfaceAction,
 	controllerTransitioning,
@@ -195,9 +195,6 @@ export function ChatWorkspace({
 	onChooseConfigOption,
 	configOptionPending,
 	configOptionError,
-	onCompact,
-	compacting,
-	compactUnavailable,
 	onRollback,
 	rollbackPending,
 	rollbackError,
@@ -237,15 +234,9 @@ export function ChatWorkspace({
 		>
 			<ChatHeader
 				snapshot={snapshot}
+				sessionTitle={sessionTitle}
 				sessionRole={sessionRole}
-				onCompact={onCompact}
-				compacting={compacting}
-				compactUnavailable={compactUnavailable}
 				interfaceAction={interfaceAction}
-				// The daemon refuses a compaction mid-turn, because the provider would
-				// silently discard the running turn to make room. Said here too so the
-				// control explains itself before it is pressed.
-				turnInFlight={Boolean(turn)}
 			/>
 			{/* Ordered by what blocks what. A session that needs credentials cannot make
 			    progress at all, so it is stated first; the controller's own health next;
@@ -474,20 +465,14 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 
 function ChatHeader({
 	snapshot,
+	sessionTitle,
 	interfaceAction,
 	sessionRole,
-	onCompact,
-	compacting,
-	compactUnavailable,
-	turnInFlight,
 }: {
 	snapshot: ConversationSnapshot;
+	sessionTitle?: string;
 	interfaceAction?: ReactNode;
-	sessionRole: SessionKind;
-	onCompact?: () => void;
-	compacting?: boolean;
-	compactUnavailable?: string;
-	turnInFlight?: boolean;
+	sessionRole: "worker" | "orchestrator";
 }) {
 	const RoleIcon = sessionRole === "orchestrator" ? Workflow : MessageSquare;
 	const roleLabel = sessionRole === "orchestrator" ? "Orchestrator" : "Worker";
@@ -497,11 +482,10 @@ function ChatHeader({
 				<RoleIcon aria-hidden="true" className="size-3.5" />
 			</span>
 			<div className="flex min-w-0 flex-col gap-0.5">
-				{/* The thread's own name when it has one. The daemon also pushes it into
-				    the session's display name, so the sidebar and this header agree
-				    without either deriving a label of its own. */}
-				<strong className="truncate text-[13px] font-medium leading-tight text-foreground" title={snapshot.title}>
-					{snapshot.title || snapshot.sessionId}
+				{/* Show the session title (same as sidebar) for both worker and orchestrator */}
+				{/* Use sessionTitle from sidebar for consistency */}
+				<strong className="truncate text-[13px] font-medium leading-tight text-foreground" title={sessionTitle || snapshot.title || snapshot.sessionId}>
+					{sessionTitle || snapshot.title || snapshot.sessionId}
 				</strong>
 				<span className="flex items-center gap-1.5 text-[10.5px] leading-none text-muted-foreground">
 					<span className="cursor-chat-role-label">{roleLabel}</span>
@@ -510,91 +494,14 @@ function ChatHeader({
 				</span>
 			</div>
 			<div className="ml-auto flex shrink-0 items-center gap-2">
-				{/* Current state from the snapshot, not a timeline event: the provider
-				    reports usage after every tool call, and a row per report is what
-				    buried the conversation. A bare total used to live here, which could
-				    not answer the question the user actually has -- how full is this,
-				    and am I about to hit a quota wall. */}
-				<ContextMeter usage={snapshot.usage} rateLimits={snapshot.rateLimits} />
-				{/* Beside the meter on purpose: the meter is what tells a user the
-				    context is filling, and this is what they can do about it. */}
-				<CompactButton
-					onCompact={onCompact}
-					compacting={compacting}
-					unavailable={compactUnavailable}
-					turnInFlight={turnInFlight}
-					compactedAt={snapshot.compactedAt}
-				/>
+				{/* Context meter removed per user request */}
 				{interfaceAction}
-				{/* The mode is a durable session fact, so it is stated rather than
-				    implied by which surface happens to be open. */}
-				<span className="cursor-chat-mode-badge rounded-sm px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide">
-					chat
-				</span>
+				{/* Current mode indicator - active chat icon */}
+				<div className="flex size-7 items-center justify-center rounded-md bg-raised">
+					<MessageSquare aria-hidden="true" className="size-3.5 text-logo-accent" />
+				</div>
 			</div>
 		</header>
-	);
-}
-
-/**
- * Reclaim context by summarizing earlier history.
- *
- * Worth a control of its own because without it a long conversation eventually
- * cannot accept another turn at all: every turn re-sends the history, so context
- * fills whether or not the user does anything unusual. This is the difference
- * between a session that works for an hour and one that works for a day.
- *
- * Disabled mid-turn rather than hidden: the daemon refuses it then, because the
- * provider would silently discard the running turn to make room, and a control
- * that vanishes teaches nothing. The tooltip says which of those it is.
- *
- * A harness whose provider cannot compact makes the control disappear once the
- * daemon has said so. It is not hidden up front because the snapshot does not
- * carry driver capabilities, and adding them for one button would be a wider
- * contract change than the affordance is worth.
- */
-function CompactButton({
-	onCompact,
-	compacting,
-	unavailable,
-	turnInFlight,
-	compactedAt,
-}: {
-	onCompact?: () => void;
-	compacting?: boolean;
-	unavailable?: string;
-	turnInFlight?: boolean;
-	compactedAt?: string;
-}) {
-	if (!onCompact) return null;
-	if (unavailable === "This agent cannot compact its history") {
-		return <span className="text-[11px] text-muted-foreground">{unavailable}</span>;
-	}
-
-	const title = turnInFlight
-		? "Finish or stop the current turn before compacting"
-		: compactedAt
-			? `Summarize earlier history to reclaim context. Last compacted ${new Date(compactedAt).toLocaleString()}.`
-			: "Summarize earlier history to reclaim context";
-
-	return (
-		<Button
-			type="button"
-			size="sm"
-			variant="ghost"
-			onClick={onCompact}
-			disabled={compacting || turnInFlight}
-			title={title}
-			aria-label="Compact conversation history"
-			className="h-5 gap-1 px-1.5 text-[11px]"
-		>
-			{compacting ? (
-				<Loader2 aria-hidden="true" className="size-3 animate-spin" />
-			) : (
-				<Archive aria-hidden="true" className="size-3" />
-			)}
-			{compacting ? "Compacting…" : "Compact"}
-		</Button>
 	);
 }
 
@@ -1048,7 +955,7 @@ function Timeline({
 					size="sm"
 					variant="outline"
 					onClick={() => setPinned(true)}
-					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 shadow-sm"
+					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 bg-raised shadow-sm"
 				>
 					<ArrowDown aria-hidden="true" className="size-3.5" />
 					Jump to latest

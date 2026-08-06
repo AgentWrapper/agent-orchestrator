@@ -1,4 +1,4 @@
-import { ArrowRightLeft, Loader2, MessageSquare, Monitor, TriangleAlert, X } from "lucide-react";
+import { ArrowRightLeft, Loader2, MessageSquare, Terminal, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
 	SessionInterfaceMode,
@@ -25,8 +25,9 @@ function targetLabel(target: SessionInterfaceMode): string {
 }
 
 function TargetIcon({ target, className }: { target: SessionInterfaceMode; className?: string }) {
-	const Icon = target === "chat" ? MessageSquare : Monitor;
-	return <Icon aria-hidden="true" className={className} />;
+	const Icon = target === "chat" ? MessageSquare : Terminal;
+	// Terminal icon should be white
+	return <Icon aria-hidden="true" className={target === "chat" ? className : "size-3.5 text-white"} />;
 }
 
 const phaseCopy: Record<SessionInterfaceTransition["phase"], string> = {
@@ -112,17 +113,22 @@ export function SessionInterfaceSwitchButton({
 			type="button"
 			size="sm"
 			variant="ghost"
-			className={cn("h-7 gap-1.5 px-2 text-xs text-muted-foreground", className)}
+			className={cn(
+				"h-7 gap-1.5 px-2 text-xs text-muted-foreground",
+				supported && "hover:text-foreground",
+				!supported && "opacity-50",
+				className,
+			)}
 			disabled={!supported || pending}
 			onClick={onClick}
 			title={supported ? `${label} using this agent's native conversation` : disabledReason}
+			aria-label={label}
 		>
 			{pending ? (
 				<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 			) : (
 				<TargetIcon target={target} className="size-3.5" />
 			)}
-			<span>{pending ? "Switching…" : label}</span>
 		</Button>
 	);
 }

@@ -14,7 +14,7 @@
  * next message and never restarts the agent.
  *
  * Three completions live on top of a plain textarea — `/` for the agent's own
- * skills, `@` for worktree files, and pasted or dropped images. It is a textarea and
+ * skills, `@` for worktree files, and pasted or dropped files. It is a textarea and
  * not a rich editor; the reasoning is in composerSuggest.ts, where the logic that
  * would otherwise justify one lives. What matters here is that the original
  * keyboard contract survives: Enter sends, Shift+Enter makes a newline, and no
@@ -55,20 +55,21 @@ import {
 	type Suggestion,
 } from "./composerSuggest";
 import {
-	useImageAttachments,
-	type ImageAttachmentPayload,
-} from "../../hooks/useImageAttachments";
+	useFileAttachments,
+	type FileAttachmentPayload,
+} from "../../hooks/useFileAttachments";
+import { File } from "lucide-react";
 import type { ChatSkill } from "../../types/conversation";
 
 /**
- * Tell the agent to open the images. Mirrors the wording spawn uses for a task
- * brief, so the same instruction reaches the agent whether an image was attached at
+ * Tell the agent to open the attached files. Mirrors the wording spawn uses for a task
+ * brief, so the same instruction reaches the agent whether a file was attached at
  * spawn or mid-conversation.
  */
 function withAttachmentReferences(text: string, paths: string[]): string {
 	if (paths.length === 0) return text;
 	const lead = text.trim() === "" ? "" : `${text}\n\n`;
-	return `${lead}Attached images (read these files in the workspace for visual context):\n${paths
+	return `${lead}Attached files (read these files in the workspace):\n${paths
 		.map((path) => `- ${path}`)
 		.join("\n")}`;
 }
@@ -90,7 +91,7 @@ export function ChatComposer({
 	steerRefusal,
 	commandError,
 }: {
-	onSend: (text: string, attachments?: ImageAttachmentPayload[]) => void | Promise<unknown>;
+	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
 	/** The next-turn controls, rendered inline. Omitted in the fixture preview. */
 	settings?: ReactNode;
 	/** A send is in flight. */
@@ -105,11 +106,11 @@ export function ChatComposer({
 	/** The path list was capped, so the menu says so rather than implying it is all. */
 	filePathsTruncated?: boolean;
 	/**
-	 * Writes staged images into the worktree and answers with the paths the agent
-	 * can open. Absent means images cannot be delivered, and no attach control is
+	 * Writes staged files into the worktree and answers with the paths the agent
+	 * can open. Absent means files cannot be delivered, and no attach control is
 	 * offered at all.
 	 */
-	onStageAttachments?: (attachments: ImageAttachmentPayload[]) => Promise<string[]>;
+	onStageAttachments?: (attachments: FileAttachmentPayload[]) => Promise<string[]>;
 	/** Send the same staged bytes as native ACP image blocks when negotiated. */
 	nativeImages?: boolean;
 	/**
@@ -152,7 +153,7 @@ export function ChatComposer({
 	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
 	const menuId = useId();
 
-	const images = useImageAttachments();
+	const fileAttachments = useFileAttachments();
 	const canAttach = Boolean(onStageAttachments);
 
 	const trigger = useMemo(() => findActiveTrigger(text, caret), [text, caret]);
@@ -170,7 +171,7 @@ export function ChatComposer({
 	// index from the previous list can point past the end of this one.
 	const activeIndex = Math.min(highlighted, suggestions.length - 1);
 
-	const staged = images.attachments.length > 0;
+	const staged = fileAttachments.attachments.length > 0;
 	// The control disappears the moment the turn ends, and the armed mode degrades
 	// with it: a steer with nothing in flight is refused, so it must never be what
 	// Enter is still pointing at.
@@ -248,28 +249,28 @@ export function ChatComposer({
 			// Staged before the send so a failed write is reported instead of a
 			// message that claims attachments the agent cannot open.
 			let paths: string[];
-			const signature = images.attachments.map((image) => image.id).join(":");
+			const signature = fileAttachments.attachments.map((file) => file.id).join(":");
 			try {
 				if (stagedDelivery.current?.signature === signature) {
 					paths = stagedDelivery.current.paths;
 				} else {
-					paths = await onStageAttachments(images.toPayload());
+					paths = await onStageAttachments(fileAttachments.toPayload());
 					stagedDelivery.current = { signature, paths };
 				}
 			} catch {
-				setSendError("The images could not be attached. Nothing was sent.");
+				setSendError("The files could not be attached. Nothing was sent.");
 				return;
 			}
 			try {
 				const message = withAttachmentReferences(body, paths);
-				if (nativeImages) await onSend(message, images.toPayload());
+				if (nativeImages) await onSend(message, fileAttachments.toPayload());
 				else await onSend(message);
 			} catch {
 				setSendError("Message not sent. Your draft and attachments were kept so you can retry.");
 				return;
 			}
 			stagedDelivery.current = null;
-			images.clear();
+			fileAttachments.clear();
 		} else {
 			try {
 				await onSend(body);
@@ -352,7 +353,7 @@ export function ChatComposer({
 		const hasText =
 			typeof clipboard?.getData === "function" && clipboard.getData("text/plain") !== "";
 		if (!hasText) event.preventDefault();
-		void images.addFiles(files);
+		void fileAttachments.addFiles(files);
 	}
 
 	function onDrop(event: DragEvent<HTMLFormElement>) {
@@ -361,10 +362,10 @@ export function ChatComposer({
 		const files = Array.from(event.dataTransfer?.files ?? []);
 		if (files.length === 0) return;
 		event.preventDefault();
-		void images.addFiles(files);
+		void fileAttachments.addFiles(files);
 	}
 
-	const attachmentError = images.error ?? sendError ?? commandError;
+	const attachmentError = fileAttachments.error ?? sendError ?? commandError;
 
 	return (
 		<form
@@ -394,24 +395,30 @@ export function ChatComposer({
 			) : null}
 
 			{staged ? (
-				<ul className="flex flex-wrap gap-1.5" aria-label="Attached images">
-					{images.attachments.map((image, index) => (
+				<ul className="flex flex-wrap gap-1.5" aria-label="Attached files">
+					{fileAttachments.attachments.map((file) => (
 						<li
-							key={image.id}
+							key={file.id}
 							className="flex items-center gap-1.5 rounded border border-border bg-background py-0.5 pl-0.5 pr-1"
 						>
-							<img
-								src={image.dataUrl}
-								alt=""
-								className="size-6 rounded-sm object-cover"
-							/>
-							<span className="text-[11px] text-muted-foreground">
-								Image {index + 1}
+							{file.dataUrl ? (
+								<img
+									src={file.dataUrl}
+									alt=""
+									className="size-6 rounded-sm object-cover"
+								/>
+							) : (
+								<div className="flex size-6 items-center justify-center rounded-sm bg-surface">
+									<File aria-hidden="true" className="size-3.5 text-muted-foreground" />
+								</div>
+							)}
+							<span className="max-w-[120px] truncate text-[11px] text-muted-foreground" title={file.name}>
+								{file.name}
 							</span>
 							<button
 								type="button"
-								onClick={() => images.remove(image.id)}
-								aria-label={`Remove image ${index + 1}`}
+								onClick={() => fileAttachments.remove(file.id)}
+								aria-label={`Remove ${file.name}`}
 								className="text-muted-foreground hover:text-foreground"
 							>
 								<X aria-hidden="true" className="size-3" />
@@ -481,11 +488,10 @@ export function ChatComposer({
 							<input
 								ref={filePicker}
 								type="file"
-								accept="image/png,image/jpeg,image/gif,image/webp,image/bmp"
 								multiple
 								hidden
 								onChange={(event) => {
-									void images.addFiles(Array.from(event.target.files ?? []));
+									void fileAttachments.addFiles(Array.from(event.target.files ?? []));
 									// Cleared so picking the same file twice still fires a change.
 									event.target.value = "";
 								}}
@@ -496,8 +502,8 @@ export function ChatComposer({
 								size="sm"
 								disabled={disabled}
 								onClick={() => filePicker.current?.click()}
-								aria-label="Attach an image"
-								title="Attach an image"
+								aria-label="Attach a file"
+								title="Attach a file"
 								className="size-8 shrink-0 p-0"
 							>
 								<Paperclip aria-hidden="true" className="size-4 text-muted-foreground" />

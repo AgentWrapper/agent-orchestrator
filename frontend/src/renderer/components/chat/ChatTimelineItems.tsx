@@ -802,7 +802,12 @@ function McpToolRow({ activity }: { activity: ConversationActivity }) {
 						</span>
 					</span>
 				) : null}
-				<strong className={cn("shrink-0 font-medium", failed ? "text-destructive" : "text-foreground")}>
+				<strong
+					className={cn(
+						"shrink-0 text-[10.5px] font-medium",
+						failed ? "text-destructive" : "text-foreground",
+					)}
+				>
 					{tool}
 				</strong>
 				<span className="min-w-0 flex-1 truncate text-[10.5px] text-muted-foreground/70">
@@ -831,7 +836,7 @@ function McpToolRow({ activity }: { activity: ConversationActivity }) {
 			{open && hasBody ? (
 				<div className="flex flex-col gap-2 px-[11px] pb-2.5">
 					{detail?.error ? (
-						<p className="rounded border border-destructive/30 bg-background px-2.5 py-1.5 text-[11px] leading-relaxed text-destructive">
+						<p className="rounded border border-destructive/30 bg-background px-2.5 py-1.5 text-[10.5px] leading-relaxed text-destructive">
 							{detail.error}
 						</p>
 					) : null}
