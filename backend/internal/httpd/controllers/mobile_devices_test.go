@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
@@ -132,10 +134,52 @@ func TestDeleteDevice(t *testing.T) {
 	}
 }
 
+// TestRosterRoutesBlockedOnLANListener pins isLANControlBlockedPath's decision
+// for these two literal paths, so it catches deletion of the "/api/v1/mobile"
+// entry from lanControlBlockedPrefixes. It is intentionally decoupled from
+// what mountMobileDevices actually mounts, so it CANNOT catch the roster
+// routes being moved or aliased off the /api/v1/mobile prefix (e.g. to
+// /api/v1/devices) — that class of regression is covered instead by
+// TestRosterMountedRoutesAreLANBlocked below, which walks the live router.
+// It also never drives lanControlBlock or authMiddleware ordering on a real
+// socket — TestLANManagerBlocksLoopbackOnlyControlRoutes in
+// lan_listener_test.go covers that end-to-end.
 func TestRosterRoutesBlockedOnLANListener(t *testing.T) {
 	for _, path := range []string{"/api/v1/mobile/devices", "/api/v1/mobile/devices/i1"} {
 		if !httpd.IsLANControlBlockedPathForTest(path) {
 			t.Fatalf("%s must be blocked on the LAN listener — a phone must not read or change the roster", path)
 		}
+	}
+}
+
+// TestRosterMountedRoutesAreLANBlocked walks the actual routes
+// mountMobileDevices registers on the real router and asserts every one of
+// them is reported blocked by isLANControlBlockedPath. Unlike
+// TestRosterRoutesBlockedOnLANListener (which restates two path literals),
+// this test fails if the roster routes are ever moved or aliased off the
+// /api/v1/mobile prefix, since it derives its path list from the router
+// itself rather than from a hardcoded string.
+func TestRosterMountedRoutesAreLANBlocked(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	router := httpd.NewRouterWithControl(config.Config{}, log, nil,
+		httpd.APIDeps{DeviceRoster: &fakeRoster{}, DeviceLive: fakeLive{}}, httpd.ControlDeps{})
+
+	checked := 0
+	err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if !strings.HasPrefix(route, "/api/v1/mobile/devices") {
+			return nil
+		}
+		checked++
+		concrete := strings.ReplaceAll(route, "{installId}", "i1")
+		if !httpd.IsLANControlBlockedPathForTest(concrete) {
+			t.Errorf("%s %s is mounted but not blocked on the LAN listener", method, concrete)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk router: %v", err)
+	}
+	if checked == 0 {
+		t.Fatal("no /api/v1/mobile/devices routes were mounted — router wiring changed?")
 	}
 }
