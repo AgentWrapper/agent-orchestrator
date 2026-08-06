@@ -683,8 +683,9 @@
 	width: 1px;
 	height: calc(var(--size-topbar-control) - var(--space-3));
 	flex: 0 0 1px;
-	margin-inline: var(--space-1);
-	background: var(--color-border-topbar);
+	margin-inline-start: var(--space-1);
+	margin-inline-end: var(--space-2);
+	background: color-mix(in srgb, var(--color-text-topbar) 18%, transparent);
 }
 
 .reverb-topbar__activity {
@@ -730,7 +731,7 @@
 	width: 1px;
 	height: calc(var(--size-topbar-control) - var(--space-3));
 	flex: 0 0 1px;
-	background: var(--color-border-topbar);
+	background: color-mix(in srgb, var(--color-text-topbar) 18%, transparent);
 }
 
 .reverb-topbar__utility-separator {
