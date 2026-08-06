@@ -850,3 +850,50 @@ func TestModelsFingerprintsTheSameInputsDiscoveryReads(t *testing.T) {
 		t.Fatalf("fingerprint request = %#v, want the project working dir and env", *fingerprinted)
 	}
 }
+
+func TestModelsAsksClientsToRevalidateAnAgedCatalog(t *testing.T) {
+	cache := &fakeModelCache{}
+	discoverer := &fakeModelDiscoverer{version: "v1", catalog: ports.AgentModelCatalog{
+		SelectionMode: ports.ModelSelectionCatalog,
+		Models:        []ports.AgentModelInfo{{ID: "model-one"}},
+		Source:        "cli",
+	}}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("opencode", "OpenCode", nil),
+	}, cache, nil, discoverer)
+
+	fresh, err := svc.Models(context.Background(), "opencode", "proj-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Just discovered: nothing to revalidate, so the client must not be nudged.
+	if fresh.RefreshRecommended {
+		t.Fatal("a freshly discovered catalog asked for revalidation")
+	}
+
+	record := cache.records["opencode\x00proj-1"]
+	var aged ports.AgentModelCatalog
+	if err := json.Unmarshal([]byte(record.CatalogJSON), &aged); err != nil {
+		t.Fatal(err)
+	}
+	aged.ValidatedAt = time.Now().Add(-modelCatalogTrustWindow - time.Hour)
+	data, err := json.Marshal(aged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.CatalogJSON = string(data)
+	cache.records["opencode\x00proj-1"] = record
+
+	// A CLI-backed catalog can drift with no change to the binary or its config,
+	// so an aged cache hit is what replaces the manual "Refresh models" button.
+	stale, err := svc.Models(context.Background(), "opencode", "proj-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stale.RefreshRecommended {
+		t.Fatalf("catalog validated %s ago did not ask for revalidation", time.Since(aged.ValidatedAt))
+	}
+	if discoverer.discoverCalls.Load() != 1 {
+		t.Fatalf("discovery calls = %d, want the cached catalog served immediately", discoverer.discoverCalls.Load())
+	}
+}

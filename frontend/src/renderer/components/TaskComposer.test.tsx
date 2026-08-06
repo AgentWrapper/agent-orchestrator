@@ -9,12 +9,11 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
 	agentsQueryOptions: { queryKey: ["agents"], queryFn: async () => ({}) },
 	refreshAgents: vi.fn(),
+	refreshAgentsIfStale: vi.fn(async () => undefined),
 }));
 
 vi.mock("./CreateProjectAgentSheet", () => ({
-	RequiredAgentField: ({ value, hint }: { value: string; hint?: string }) => (
-		<div data-testid="agent-field" data-value={value} data-hint={hint ?? ""} />
-	),
+	RequiredAgentField: ({ value }: { value: string }) => <div data-testid="agent-field" data-value={value} />,
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -160,7 +159,8 @@ describe("TaskComposer", () => {
 		);
 
 		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "codex"));
-		expect(screen.getByTestId("agent-field")).toHaveAttribute("data-hint", "Project default");
+		// Provenance is a caption, not a label on the control.
+		expect(screen.getByText(/Agent from project settings/)).toBeInTheDocument();
 
 		fireEvent.change(task(), { target: { value: "Ship it" } });
 		fireEvent.click(screen.getByText("Start task"));
@@ -188,7 +188,7 @@ describe("TaskComposer", () => {
 		);
 
 		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "claude-code"));
-		expect(screen.getByTestId("agent-field")).toHaveAttribute("data-hint", "Global default");
+		expect(screen.getByText(/Agent from global default/)).toBeInTheDocument();
 	});
 
 	it("preselects the agent's default model when the project configures none", async () => {
@@ -216,7 +216,8 @@ describe("TaskComposer", () => {
 		);
 
 		expect(await screen.findByDisplayValue("gpt-5-codex")).toBeInTheDocument();
-		expect(screen.getByText("Agent default")).toBeInTheDocument();
+		// Named in words ("model chosen by codex") rather than labelled "Agent default".
+		expect(screen.getByText(/model chosen by codex/)).toBeInTheDocument();
 	});
 
 	it("uses the project worker model as the new task model default", async () => {

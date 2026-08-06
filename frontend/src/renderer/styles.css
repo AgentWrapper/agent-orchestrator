@@ -737,6 +737,99 @@ button.settings-row-bar {
 	max-width: var(--size-settings-inline-input-max);
 }
 
+/* Eyebrow label — mono, uppercase, passive (DESIGN.md → Typography). Section
+   titles and dialog titles use this instead of a heading + subtitle pair. */
+@utility eyebrow-label {
+	font-family: var(--font-mono);
+	font-size: var(--font-size-xs);
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: var(--tracking-wide-lg);
+	color: var(--color-text-passive);
+}
+
+/* Keycap inside a primary action, naming the shortcut that triggers it. */
+@utility composer-keycap {
+	display: inline-flex;
+	min-width: 1rem;
+	align-items: center;
+	justify-content: center;
+	border-radius: var(--radius-xs);
+	background-color: color-mix(in oklab, currentcolor 14%, transparent);
+	padding-inline: calc(var(--spacing) * 1);
+	font-family: var(--font-mono);
+	font-size: var(--font-size-xs);
+	line-height: 1.1;
+	opacity: 0.75;
+}
+
+/* Inline value control inside the task composer's "Runs with" sentence. Reads as
+   a value you can change, not as a form field: no visible field chrome until
+   hover/focus, and it sizes to its content instead of a column. */
+@utility composer-chip {
+	display: inline-flex;
+	width: auto;
+	min-width: 0;
+	max-width: 100%;
+	height: var(--size-control-md);
+	align-items: center;
+	gap: calc(var(--spacing) * 2);
+	border: 1px solid transparent;
+	border-radius: var(--radius-md);
+	background-color: var(--color-bg-composer-chip);
+	padding-inline: var(--space-2);
+	font-size: var(--font-size-base);
+	color: var(--color-foreground);
+	transition-property: background-color, border-color, box-shadow, color;
+	transition-duration: var(--duration-fast);
+
+	&:hover:not(:disabled) {
+		background-color: var(--color-bg-composer-chip-hover);
+	}
+
+	&:focus-visible {
+		border-color: var(--bridge-accent);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		outline: none;
+	}
+
+	&[data-state="open"] {
+		background-color: var(--color-bg-composer-chip-hover);
+		border-color: var(--color-border);
+	}
+}
+
+/* Search field inside a dropdown menu. settings-inline-input cannot be reused
+   here: it is a settings-ROW control, so it caps at 42% width and right-aligns
+   its text, which reads as a stray half-width box once it sits in a menu. */
+@utility menu-search-input {
+	width: 100%;
+	height: var(--size-settings-inline-input-height);
+	border: 1px solid var(--color-border-settings-input);
+	border-radius: var(--radius-md);
+	background-color: var(--color-bg-settings-input);
+	padding-inline: var(--space-2_5);
+	font-size: var(--font-size-md);
+	line-height: 1.25rem;
+	color: var(--color-text-settings-input);
+	text-align: left;
+	outline: none;
+	box-shadow: none;
+	transition-property: border-color, box-shadow, color;
+	transition-duration: var(--duration-normal);
+
+	&::placeholder {
+		color: var(--color-text-settings-placeholder);
+	}
+
+	&:focus-visible {
+		border-color: var(--bridge-accent);
+		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
+		color: var(--color-text-settings-row);
+		outline: none;
+	}
+}
+
 @utility settings-row-value {
 	min-width: 0;
 	max-width: min(var(--size-settings-row-value-max), var(--size-settings-row-value-max-percent));

@@ -368,7 +368,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	labelClassName?: string;
 	contentClassName?: string;
 	value: string;
-	variant?: "stacked" | "settings-row";
+	variant?: "stacked" | "settings-row" | "chip";
 }) {
 	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
 	const options = buildRankedAgentOptions({
@@ -424,6 +424,63 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	}
 
 	const selectedOption = options.find((agent) => agent.id === value);
+
+	// Chip: the value reads as part of a sentence ("Runs with Codex") rather than
+	// as a form field, so the label is carried by that sentence, not by a <Label>.
+	if (variant === "chip") {
+		return (
+			<Select value={value} onValueChange={onChange} disabled={disabled}>
+				{/* The ! overrides are deliberate: SelectTrigger ships a form-control
+				    height, padding and chevron size, and a chip has to match the model
+				    chip beside it rather than the field it descends from. */}
+				<SelectTrigger
+					id={id}
+					size="sm"
+					className={cn(
+						"composer-chip h-control-md! bg-(--color-bg-composer-chip)! px-2! text-control! [&_svg]:size-icon-sm",
+						invalid && "text-error",
+						triggerClassName,
+					)}
+					aria-label={label}
+					aria-invalid={invalid || undefined}
+				>
+					<SelectValue placeholder={placeholder}>
+						{selectedOption ? (
+							<span className="flex min-w-0 items-center gap-2">
+								<AgentAvatar provider={selectedOption.id} className="size-icon-base" decorative />
+								<span className="min-w-0 truncate">{selectedOption.label}</span>
+							</span>
+						) : null}
+					</SelectValue>
+				</SelectTrigger>
+				<SelectContent
+					position="popper"
+					side="bottom"
+					align="start"
+					sideOffset={6}
+					className={cn("max-h-select-menu-max!", contentClassName)}
+				>
+					{options.map((agent) => (
+						<SelectItem
+							key={agent.id}
+							value={agent.id}
+							disabled={agent.disabled}
+							className="[&>span:last-child]:w-full"
+						>
+							<AgentSelectMenuItem
+								agentId={agent.id}
+								label={agent.label}
+								selected={value === agent.id}
+								status={agent.status}
+								statusTone={agent.statusTone}
+								disabled={agent.disabled}
+							/>
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
+		);
+	}
 
 	return (
 		<div className="flex flex-col gap-1.5">

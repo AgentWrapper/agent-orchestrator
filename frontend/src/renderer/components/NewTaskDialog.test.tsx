@@ -40,8 +40,27 @@ function renderDialog() {
 }
 
 function requestBody() {
-	return (postMock.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+	const call = postMock.mock.calls.find(([path]) => path === "/api/v1/orchestrators/delegate");
+	if (!call) throw new Error("delegate was never called");
+	return (call[1] as { body: Record<string, unknown> }).body;
 }
+
+const agentInventory = {
+	supported: [
+		{ id: "claude-code", label: "Claude Code" },
+		{ id: "cursor", label: "Cursor" },
+		{ id: "kiro", label: "Kiro" },
+	],
+	installed: [
+		{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+		{ id: "cursor", label: "Cursor", authStatus: "authorized" },
+		{ id: "kiro", label: "Kiro", authStatus: "unknown" },
+	],
+	authorized: [
+		{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
+		{ id: "cursor", label: "Cursor", authStatus: "authorized" },
+	],
+};
 
 async function waitForAgentCatalog() {
 	await waitFor(() => expect(screen.getAllByText("Claude Code").length).toBeGreaterThan(0));
@@ -50,32 +69,17 @@ async function waitForAgentCatalog() {
 beforeEach(() => {
 	getMock.mockReset().mockImplementation(async (path: string) => {
 		if (path === "/api/v1/agents") {
-			return {
-				data: {
-					supported: [
-						{ id: "claude-code", label: "Claude Code" },
-						{ id: "cursor", label: "Cursor" },
-						{ id: "kiro", label: "Kiro" },
-					],
-					installed: [
-						{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-						{ id: "cursor", label: "Cursor", authStatus: "authorized" },
-						{ id: "kiro", label: "Kiro", authStatus: "unknown" },
-					],
-					authorized: [
-						{ id: "claude-code", label: "Claude Code", authStatus: "authorized" },
-						{ id: "cursor", label: "Cursor", authStatus: "authorized" },
-					],
-				},
-				error: undefined,
-			};
+			return { data: agentInventory, error: undefined };
 		}
 		return {
 			data: { status: "ok", project: { id: "proj-1", config: { worker: { agent: "claude-code" } } } },
 			error: undefined,
 		};
 	});
-	postMock.mockReset().mockResolvedValue({ data: { ok: true, workerId: "worker-1", orchestratorId: "orch-1" }, error: undefined });
+	postMock.mockReset().mockImplementation(async (path: string) => {
+		if (path === "/api/v1/agents/refresh") return { data: agentInventory, error: undefined };
+		return { data: { ok: true, workerId: "worker-1", orchestratorId: "orch-1" }, error: undefined };
+	});
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -85,15 +89,11 @@ describe("NewTaskDialog", () => {
 		renderDialog();
 		await waitForAgentCatalog();
 
-		const agentLabel = screen.getByText("Agent", { selector: "label" });
-		const modelLabel = screen.getByText("Model", { selector: "label" });
-		expect(agentLabel).toHaveAttribute("data-slot", "label");
-		expect(modelLabel).toHaveAttribute("data-slot", "label");
-		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveAttribute("data-size", "sm");
-		// The agent control shows the resolved default agent, captioned as inherited,
-		// rather than a bare "Project default" the user would have to decode.
+		// Agent and model read as one sentence — "Runs with <agent> <model>" — instead
+		// of two labelled fields, and the agent shows the resolved default by name.
+		expect(screen.getByText("Runs with")).toBeInTheDocument();
 		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent("Claude Code");
-		expect(screen.getByText("Project default")).toBeInTheDocument();
+		expect(screen.getByText(/Agent from project settings/)).toBeInTheDocument();
 		expect(screen.getByLabelText("Model")).toHaveValue("");
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
@@ -111,7 +111,7 @@ describe("NewTaskDialog", () => {
 		await user.type(screen.getByLabelText("Model"), "placeholder-model");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(requestBody).not.toThrow());
 		expect(postMock).toHaveBeenCalledWith("/api/v1/orchestrators/delegate", {
 			body: {
 				projectId: "proj-1",
@@ -165,7 +165,7 @@ describe("NewTaskDialog", () => {
 
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(requestBody).not.toThrow());
 		expect(requestBody().agent).toBe("cursor");
 	});
 
@@ -183,7 +183,7 @@ describe("NewTaskDialog", () => {
 		await user.type(screen.getByLabelText("Task"), "B");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(requestBody).not.toThrow());
 		expect(requestBody().agent).toBe("kiro");
 	});
 
@@ -194,7 +194,7 @@ describe("NewTaskDialog", () => {
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		expect(await screen.findByText("Task is required.")).toBeInTheDocument();
-		expect(postMock).not.toHaveBeenCalled();
+		expect(postMock).not.toHaveBeenCalledWith("/api/v1/orchestrators/delegate", expect.anything());
 	});
 
 	it("shows an empty Model field for scratch projects and omits it from delegation", async () => {
@@ -228,7 +228,7 @@ describe("NewTaskDialog", () => {
 		await user.type(screen.getByLabelText("Task"), "Build a quick prototype in scratch.");
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(requestBody).not.toThrow());
 		expect(requestBody()).not.toHaveProperty("branch");
 		expect(requestBody().model).toBeUndefined();
 	});
@@ -243,11 +243,11 @@ describe("NewTaskDialog", () => {
 		// Shift+Enter must NOT submit — it adds a newline.
 		await user.keyboard("{Shift>}{Enter}{/Shift}");
 		await user.type(task, "Second line");
-		expect(postMock).not.toHaveBeenCalled();
+		expect(postMock).not.toHaveBeenCalledWith("/api/v1/orchestrators/delegate", expect.anything());
 
 		// Plain Enter submits the task.
 		await user.keyboard("{Enter}");
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+		await waitFor(() => expect(requestBody).not.toThrow());
 		expect(requestBody().brief).toContain("\n");
 	});
 
@@ -261,11 +261,11 @@ describe("NewTaskDialog", () => {
 
 		// Alt+Enter must NOT submit — Alt is excluded so it can't submit by accident.
 		await user.keyboard("{Alt>}{Enter}{/Alt}");
-		expect(postMock).not.toHaveBeenCalled();
+		expect(postMock).not.toHaveBeenCalledWith("/api/v1/orchestrators/delegate", expect.anything());
 
 		// Shift+Enter must NOT submit — it inserts a newline.
 		await user.keyboard("{Shift>}{Enter}{/Shift}");
-		expect(postMock).not.toHaveBeenCalled();
+		expect(postMock).not.toHaveBeenCalledWith("/api/v1/orchestrators/delegate", expect.anything());
 
 		// Plain Enter submits the task.
 		await user.keyboard("{Enter}");

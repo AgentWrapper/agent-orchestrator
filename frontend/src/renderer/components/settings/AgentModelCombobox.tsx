@@ -1,5 +1,5 @@
-import { ChevronDown } from "lucide-react";
-import { useMemo, useState } from "react";
+import { ChevronDown, RefreshCw } from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AgentModelCatalog } from "../../hooks/useAgentModelsQuery";
 import { cn } from "../../lib/utils";
@@ -46,8 +46,12 @@ export function AgentModelCombobox({
 	allowCustom,
 	onChange,
 	onCustom,
+	onRefresh,
+	refreshing = false,
+	emptyLabel,
 	triggerLabel,
 	triggerClassName,
+	renderTrigger,
 	"aria-label": ariaLabel,
 }: {
 	value: string;
@@ -55,8 +59,14 @@ export function AgentModelCombobox({
 	allowCustom: boolean;
 	onChange: (value: string) => void;
 	onCustom: (value: string) => void;
+	/** Rediscovery action, offered inside the menu instead of as standing chrome. */
+	onRefresh?: () => void;
+	refreshing?: boolean;
+	/** Names what happens with no override, e.g. "Let codex choose". */
+	emptyLabel?: string;
 	triggerLabel?: string;
 	triggerClassName?: string;
+	renderTrigger?: (label: string) => ReactNode;
 	"aria-label": string;
 }) {
 	const { t } = useTranslation();
@@ -76,6 +86,8 @@ export function AgentModelCombobox({
 	const groups = useMemo(() => groupModels(visibleModels, normalizedSearch === "", value), [visibleModels, normalizedSearch, value]);
 	const customSearchValue = search.trim();
 	const showCustomSearchAction = allowCustom && customSearchValue !== "" && rankedModels.length === 0;
+	const noOverrideLabel = emptyLabel ?? t("settings.models.agentDefault");
+	const currentLabel = triggerLabel ?? selected?.label ?? noOverrideLabel;
 
 	return (
 		<DropdownMenu onOpenChange={(open) => !open && setSearch("")}>
@@ -88,7 +100,11 @@ export function AgentModelCombobox({
 					)}
 					aria-label={ariaLabel}
 				>
-					<span className="min-w-0 truncate">{triggerLabel ?? selected?.label ?? t("settings.models.agentDefault")}</span>
+					{renderTrigger ? (
+						renderTrigger(currentLabel)
+					) : (
+						<span className="min-w-0 truncate">{currentLabel}</span>
+					)}
 					<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
 				</button>
 			</DropdownMenuTrigger>
@@ -103,13 +119,13 @@ export function AgentModelCombobox({
 						value={search}
 						onChange={(event) => setSearch(event.target.value)}
 						placeholder={t("settings.models.searchPlaceholder")}
-						className="settings-inline-input w-full"
+						className="menu-search-input"
 					/>
 				</div>
 
 				{normalizedSearch === "" && (
 					<DropdownMenuItem onSelect={() => onChange("")} className={modelItemClass(value === "")}>
-						{t("settings.models.agentDefault")}
+						{noOverrideLabel}
 					</DropdownMenuItem>
 				)}
 
@@ -157,6 +173,28 @@ export function AgentModelCombobox({
 						<DropdownMenuSeparator />
 						<DropdownMenuItem onSelect={() => onCustom("")} className={modelItemClass(false)}>
 							{t("settings.models.custom")}
+						</DropdownMenuItem>
+					</>
+				)}
+				{/* Rediscovery lives here, not as a standing link beside the field: it is
+				    a rare repair action, and the daemon revalidates a stale catalog on its
+				    own. Keeping it in the menu costs no layout in the calm state. */}
+				{onRefresh && (
+					<>
+						<DropdownMenuSeparator />
+						<DropdownMenuItem
+							disabled={refreshing}
+							onSelect={(event) => {
+								event.preventDefault();
+								onRefresh();
+							}}
+							className={modelItemClass(false)}
+						>
+							<RefreshCw
+								className={cn("size-icon-sm shrink-0 opacity-70", refreshing && "animate-spin")}
+								aria-hidden="true"
+							/>
+							{refreshing ? t("settings.models.refreshing") : t("settings.models.refreshList")}
 						</DropdownMenuItem>
 					</>
 				)}
