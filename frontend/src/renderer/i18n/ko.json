@@ -277,7 +277,7 @@
 	"mobile.devices.live": "온라인",
 	"mobile.devices.loading": "기기를 불러오는 중…",
 	"mobile.devices.notificationsFor": "{{name}}의 알림",
-	"mobile.devices.notificationsNotEnabled": "이 기기에서는 알림이 활성화되어 있지 않습니다.",
+	"mobile.devices.notificationsNotEnabled": "이 기기에서는 알림이 켜져 있지 않습니다.",
 	"mobile.devices.registryUnavailable": "기기 레지스트리를 사용할 수 없습니다 — AO가 저장된 기기를 읽지 못했습니다.",
 	"mobile.devices.removeAria": "{{name}} 제거",
 	"mobile.devices.title": "기기",

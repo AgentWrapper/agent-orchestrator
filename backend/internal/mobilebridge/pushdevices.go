@@ -96,7 +96,14 @@ func LoadRegistry(path string) (*DeviceRegistry, error) {
 	}
 	migrated := false
 	for _, d := range file.Devices {
-		if d.Token == "" {
+		// A row with neither a token nor an install ID carries no identity at
+		// all — there is nothing to key it on and nothing worth synthesizing an
+		// id for, so it is dropped rather than kept or multiplied across
+		// reloads. Every other shape (tokenless-but-identified, or legacy
+		// tokened-but-unidentified) is preserved: a row represents a paired
+		// phone, not a push registration, so an empty token alone is not a
+		// reason to discard it.
+		if d.Token == "" && d.InstallID == "" {
 			continue
 		}
 		if d.InstallID == "" {

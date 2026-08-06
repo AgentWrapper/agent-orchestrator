@@ -279,7 +279,7 @@
 	"mobile.devices.live": "En línea",
 	"mobile.devices.loading": "Cargando dispositivos…",
 	"mobile.devices.notificationsFor": "Notificaciones de {{name}}",
-	"mobile.devices.notificationsNotEnabled": "Las notificaciones no están habilitadas en este dispositivo.",
+	"mobile.devices.notificationsNotEnabled": "Las notificaciones no están activadas en este dispositivo.",
 	"mobile.devices.registryUnavailable": "Registro de dispositivos no disponible — AO no pudo leer tus dispositivos guardados.",
 	"mobile.devices.removeAria": "Eliminar {{name}}",
 	"mobile.devices.title": "Dispositivos",

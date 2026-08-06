@@ -417,6 +417,110 @@ func TestTombstonesPersistAcrossReload(t *testing.T) {
 	}
 }
 
+// TestTokenlessDeviceSurvivesReload pins the fix for a daemon-restart bug: a
+// paired phone with no push token (permission not granted, or a build that
+// can't mint one) must survive a LoadRegistry reload with its identity
+// intact, not be silently dropped because it has no token.
+func TestTokenlessDeviceSurvivesReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	dev := PushDevice{InstallID: "inst-a", Token: "", Platform: "ios", DeviceName: "iPhone", CreatedAt: created, LastSeenAt: created}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	reloaded, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got := reloaded.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %d, want 1 (tokenless row must survive reload)", len(got))
+	}
+	if got[0].InstallID != "inst-a" {
+		t.Fatalf("InstallID = %q, want inst-a preserved", got[0].InstallID)
+	}
+	if !got[0].CreatedAt.Equal(created) {
+		t.Fatalf("CreatedAt = %v, want preserved %v (not reset on reload)", got[0].CreatedAt, created)
+	}
+}
+
+// TestTokenlessMutedDeviceSurvivesReloadStillMuted covers the Task 10
+// interaction: a removed-then-reannounced tokenless device comes back muted,
+// and that mute must survive a daemon restart — otherwise the muted row is
+// dropped on reload, a later tokenless announce returns unmuted, and a
+// removed phone starts receiving pushes again once it later gets a token.
+func TestTokenlessMutedDeviceSurvivesReloadStillMuted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	dev := PushDevice{InstallID: "inst-a", Token: "", Platform: "ios", CreatedAt: now, LastSeenAt: now}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := reg.Delete("inst-a"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	// Phone re-announces (still tokenless): the tombstone mutes and consumes it.
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	if got := reg.List(); len(got) != 1 || !got[0].Muted {
+		t.Fatalf("expected muted tokenless device before reload, got %+v", got)
+	}
+
+	reloaded, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	got := reloaded.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %d, want 1", len(got))
+	}
+	if !got[0].Muted {
+		t.Fatalf("Muted did not survive reload for a tokenless device: %+v", got[0])
+	}
+}
+
+// TestRowWithNeitherTokenNorInstallIDIsDroppedOnLoad pins the deliberate
+// exception: a row with no token AND no install ID carries no identity to
+// preserve or synthesize, so it must be dropped rather than kept (which would
+// leave a permanently-unaddressable row) or re-synthesized every reload
+// (which would multiply it). Two reload cycles must not accumulate rows.
+func TestRowWithNeitherTokenNorInstallIDIsDroppedOnLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	raw := `{"devices":[{"platform":"ios","deviceName":"ghost","createdAt":"2026-01-01T00:00:00Z","lastSeenAt":"2026-01-02T00:00:00Z"}]}`
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := reg.List(); len(got) != 0 {
+		t.Fatalf("devices = %+v, want empty (identity-less row must be dropped)", got)
+	}
+
+	reloaded, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := reloaded.List(); len(got) != 0 {
+		t.Fatalf("devices = %+v, want still empty after a second reload cycle (must not accumulate)", got)
+	}
+}
+
 func TestUpsertAcceptsDeviceWithoutToken(t *testing.T) {
 	reg, err := LoadRegistry(PushDevicesPath(t.TempDir()))
 	if err != nil {
