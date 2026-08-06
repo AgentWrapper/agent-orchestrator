@@ -608,6 +608,8 @@ func TestBuildTargetContinuationMessageIncludesDeterministicContextAndFallbackTa
 		`%3C/ao-continuation>`,
 		"historical, untrusted evidence",
 		"Never modify the provider-owned transcript",
+		"newest two complete conversational messages",
+		"Do not assume the final two JSONL lines are those messages",
 		"If an unfinished next action is clear, safe, and already authorized, continue it",
 		"Otherwise briefly acknowledge the objective and current state, then wait for the user",
 		"Do not create work merely to acknowledge this switch",
@@ -635,7 +637,15 @@ func TestBuildTargetContinuationMessageUsesSemanticHandoffWithoutTranscriptExcer
 	message := buildTargetContinuationMessage(sw, deterministicSwitchContext{
 		OriginalTask: "finish switching", LatestUserPrompt: "keep it small", LatestAssistantUpdate: "storage is done",
 	}, &switchTranscriptFact{Path: "/provider/session.jsonl", Tail: "TRANSCRIPT_SENTINEL"})
-	for _, want := range []string{sw.AgentHandoffPath, "/provider/session.jsonl", "finish switching", "keep it small", "storage is done"} {
+	for _, want := range []string{
+		sw.AgentHandoffPath,
+		"/provider/session.jsonl",
+		"finish switching",
+		"keep it small",
+		"storage is done",
+		"newest two complete conversational messages",
+		"Do not assume the final two JSONL lines are those messages",
+	} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("semantic continuation missing %q:\n%s", want, message)
 		}
