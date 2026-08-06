@@ -1,4 +1,5 @@
 import { authHeaders, httpBase, normalizeServerHost, type ServerConfig } from "./config";
+import { cachedInstallId, getInstallId } from "./installId";
 import type { AttentionLevel } from "./theme";
 
 // ---- Types (subset of AO's DashboardSession we use on the phone) ------------
@@ -262,10 +263,16 @@ async function req(cfg: ServerConfig, path: string, init?: RequestInit, timeoutM
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	let res: Response;
 	try {
+		const installId = cachedInstallId();
 		res = await fetch(url, {
 			...init,
 			signal: controller.signal,
-			headers: { ...authHeaders(cfg), "Content-Type": "application/json", ...(init?.headers ?? {}) },
+			headers: {
+				...authHeaders(cfg),
+				"Content-Type": "application/json",
+				...(installId ? { "X-AO-Install-Id": installId } : {}),
+				...(init?.headers ?? {}),
+			},
 		});
 	} catch (e) {
 		if ((e as { name?: string })?.name === "AbortError") {
@@ -456,9 +463,10 @@ export async function registerPushDevice(
 	cfg: ServerConfig,
 	device: { token: string; platform?: string; deviceName?: string },
 ): Promise<void> {
+	const installId = await getInstallId();
 	await req(cfg, `${API}/push/devices`, {
 		method: "POST",
-		body: JSON.stringify(device),
+		body: JSON.stringify({ ...device, installId }),
 	});
 }
 
