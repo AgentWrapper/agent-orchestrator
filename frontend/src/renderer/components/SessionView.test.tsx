@@ -650,13 +650,13 @@ describe("SessionView", () => {
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
 	// (numbers were percentages in the older API the shadcn examples use). Every
-	// constraint needs an explicit unit; the compact inspector minimum is the one
-	// intentional pixel constraint so it can reach icon-only mode on wide windows.
+	// constraint needs an explicit unit. The 360px default matches the label
+	// breakpoint; the 240px minimum intentionally permits icon-only mode.
 	it("gives every terminal/inspector split size an explicit unit", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(panelSizes("terminal")).toEqual(["72%", "50%"]);
-		expect(panelSizes("inspector")).toEqual(["30%", "240px", "50%"]);
+		expect(panelSizes("inspector")).toEqual(["360px", "240px", "50%"]);
 		expect(screen.getByTestId("panel-inspector")).toHaveClass("session-inspector-panel");
 	});
 
@@ -668,7 +668,7 @@ describe("SessionView", () => {
 		const topbar = within(terminalPanel).getByTestId("session-topbar");
 		const centerPane = within(terminalPanel).getByTestId("center-pane");
 		expect(topbar.compareDocumentPosition(centerPane) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-		expect(panelSizes("inspector")[0]).toBe("30%");
+		expect(panelSizes("inspector")[0]).toBe("360px");
 		// Open panels are non-collapsible so a drag clamps at minSize instead of
 		// snapping the rail away; only the closed panel is collapsible.
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("data-collapsible");
@@ -690,7 +690,7 @@ describe("SessionView", () => {
 	it("mounts the inspector open by default", () => {
 		render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
+		expect(panelSizes("inspector")[0]).toBe("360px");
 		const pane = screen.getByTestId("panel-inspector");
 		expect(pane).not.toHaveAttribute("inert");
 		expect(pane).toHaveAttribute("aria-hidden", "false");
@@ -751,7 +751,7 @@ describe("SessionView", () => {
 		// Opening resizes to the persisted split rather than expand(): the open
 		// panel re-registers as non-collapsible, and rrp's expand() no-ops on a
 		// non-collapsible panel.
-		expect(handle.resize).toHaveBeenCalledWith("30%");
+		expect(handle.resize).toHaveBeenCalledWith("360px");
 		expect(handle.collapse).not.toHaveBeenCalled();
 	});
 
@@ -766,7 +766,7 @@ describe("SessionView", () => {
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(handle.resize).toHaveBeenCalledWith("30%");
+		expect(handle.resize).toHaveBeenCalledWith("360px");
 
 		// Plain ⌘B belongs to the sidebar — the inspector must not react.
 		fireEvent.keyDown(window, { key: "b", metaKey: true });
@@ -860,7 +860,7 @@ describe("SessionView", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		rerender(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
+		expect(panelSizes("inspector")[0]).toBe("360px");
 		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("aria-hidden", "false");
 		expect(document.querySelector(".session-inspector-motion")).toHaveAttribute("data-motion-state", "open");
 		const handle = panels.get("inspector")!.handle;
@@ -886,7 +886,7 @@ describe("SessionView", () => {
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(handle.resize).toHaveBeenCalledWith("30%");
+		expect(handle.resize).toHaveBeenCalledWith("360px");
 	});
 
 	it("renders no inspector panel or handle for orchestrator sessions", () => {
@@ -1025,7 +1025,7 @@ describe("SessionView", () => {
 
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toBe("30%");
+		expect(panelSizes("inspector")[0]).toBe("360px");
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 

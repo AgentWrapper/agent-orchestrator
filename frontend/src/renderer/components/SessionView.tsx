@@ -26,7 +26,9 @@ import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { hidesShellTopbar } from "../lib/platform";
 import { cn } from "../lib/utils";
 
-const INSPECTOR_DEFAULT_PERCENT = 30;
+// Inspector labels hide below 360px, so this is the smallest initial width
+// that presents both each destination icon and its name.
+const INSPECTOR_DEFAULT_SIZE = "360px";
 const INSPECTOR_MIN_PERCENT = 15;
 const INSPECTOR_MIN_SIZE = "240px";
 const INSPECTOR_MAX_PERCENT = 50;
@@ -36,11 +38,11 @@ const inspectorSplitStorageKey = "ao.inspector.split";
 const emptySessionTabIds: string[] = [];
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
-function initialSplitPercent(): number {
+function initialInspectorSize(): string {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
-	if (!Number.isFinite(parsed)) return INSPECTOR_DEFAULT_PERCENT;
-	return Math.min(INSPECTOR_MAX_PERCENT, Math.max(INSPECTOR_MIN_PERCENT, parsed));
+	if (!Number.isFinite(parsed)) return INSPECTOR_DEFAULT_SIZE;
+	return `${Math.min(INSPECTOR_MAX_PERCENT, Math.max(INSPECTOR_MIN_PERCENT, parsed))}%`;
 }
 
 function previewRevealKey(previewUrl?: string, previewRevision?: number): string {
@@ -404,7 +406,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	if (!hasInspector) {
 		inspectorDefaultSizeRef.current = null;
 	} else if (inspectorDefaultSizeRef.current === null) {
-		inspectorDefaultSizeRef.current = isInspectorOpen ? `${initialSplitPercent()}%` : INSPECTOR_COLLAPSED_SIZE;
+		inspectorDefaultSizeRef.current = isInspectorOpen ? initialInspectorSize() : INSPECTOR_COLLAPSED_SIZE;
 	}
 	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? INSPECTOR_COLLAPSED_SIZE;
 
@@ -451,7 +453,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 		if (!panel) return;
 		if (isInspectorOpen) {
 			setInspectorMotionState("opening");
-			panel.resize(`${initialSplitPercent()}%`);
+			panel.resize(initialInspectorSize());
 			const frame = window.requestAnimationFrame(() => setInspectorMotionState("open"));
 			return () => window.cancelAnimationFrame(frame);
 		}
