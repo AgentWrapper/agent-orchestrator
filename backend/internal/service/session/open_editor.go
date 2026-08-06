@@ -152,11 +152,10 @@ func (s *Service) editorTargetFile(ctx context.Context, root, scope, rawPath str
 	// Route the auto-picked file through the same confinement explicit paths
 	// get: an untracked symlink can be the newest "change" the worktree scan
 	// sees, and following it unchecked would hand the editor a path outside
-	// the session workspace. An escape here is treated like "nothing changed"
-	// rather than failing the whole open — the folder still opens.
-	abs, _, err := confinedWorkspaceFile(root, rel)
-	if err != nil {
-		return "", "", nil
+	// the session workspace.
+	abs, _, confineErr := confinedWorkspaceFile(root, rel)
+	if confineErr != nil {
+		return "", "", nil //nolint:nilerr // an escaping auto-pick degrades to "nothing changed", not a failed open
 	}
 	return rel, abs, nil
 }
