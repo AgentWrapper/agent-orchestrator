@@ -10,6 +10,8 @@ import { markNotificationRead } from "./api";
 import { notificationTarget } from "./notificationView";
 import { configurePushHandler, ensureAndroidChannel, registerForPush, unregisterFromPush } from "./push";
 import { useApp } from "./store";
+import { MOBILE_EVENTS } from "./telemetry/events";
+import { mobileTelemetry } from "./telemetry/runtime";
 
 // Set the foreground presentation policy before any notification can arrive.
 configurePushHandler();
@@ -71,22 +73,25 @@ export function PushManager(): null {
 	useEffect(() => {
 		if (!navState?.key) return; // wait until navigation is ready to accept routes
 
-		const handle = (resp: Notifications.NotificationResponse | null) => {
+		const handle = (resp: Notifications.NotificationResponse | null, coldStart: boolean) => {
 			if (!resp) return;
-			route((resp.notification.request.content.data ?? {}) as PushData);
+			route((resp.notification.request.content.data ?? {}) as PushData, coldStart);
 		};
 
 		if (!handledColdStart.current) {
 			handledColdStart.current = true;
-			void Notifications.getLastNotificationResponseAsync().then(handle);
+			void Notifications.getLastNotificationResponseAsync().then((r) => handle(r, true));
 		}
-		const sub = Notifications.addNotificationResponseReceivedListener(handle);
+		const sub = Notifications.addNotificationResponseReceivedListener((r) => handle(r, false));
 		return () => sub.remove();
 		// route() reads the latest config via ref-free closure; re-bind when it changes.
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [navState?.key, config]);
 
-	function route(data: PushData) {
+	function route(data: PushData, coldStart = false) {
+		const type = data.type ?? "";
+		const target = type === "needs_input" ? "session" : type.includes("pr") ? "prs" : "notifications";
+		mobileTelemetry()?.capture(MOBILE_EVENTS.notificationOpened, { target, cold_start: coldStart });
 		// Best-effort mark-read so unread counts stay consistent with the dashboard.
 		if (config && data.notificationId) {
 			markNotificationRead(config, data.notificationId).catch(() => {});

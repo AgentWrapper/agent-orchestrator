@@ -29,10 +29,9 @@ export const MOBILE_EVENTS = {
 	// A push notification opened the app. The retention signal.
 	notificationOpened: "ao.mobile_app.notification_opened",
 
-	// A screen came into view. Drives "most-used surface".
-	screenViewed: "ao.mobile_app.screen_viewed",
 	// A core action was taken (spawn, merge, kill, ...). Drives "most-used
-	// feature".
+	// feature". Screen-view tracking was dropped by product decision: feature
+	// events answer the usage question without a second per-navigation stream.
 	featureUsed: "ao.mobile_app.feature_used",
 
 } as const;
@@ -69,21 +68,6 @@ export const MOBILE_ALLOWLIST: Record<string, Readonly<Record<string, PropRule>>
 		// notificationView already maps a push to a small set of destinations.
 		target: { oneOf: ["session", "prs", "notifications", "home"] },
 		cold_start: { flag: true },
-	},
-	[MOBILE_EVENTS.screenViewed]: {
-		screen: {
-			oneOf: [
-				"agents",
-				"orchestrator",
-				"prs",
-				"settings",
-				"terminal",
-				"spawn",
-				"notifications",
-				"onboarding",
-				"pair",
-			],
-		},
 	},
 	[MOBILE_EVENTS.featureUsed]: {
 		feature: {

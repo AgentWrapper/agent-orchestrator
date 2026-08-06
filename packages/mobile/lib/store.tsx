@@ -19,6 +19,8 @@ import {
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
 import { shouldKeepPolling } from "./connectionError";
 import { collectPRs } from "./prView";
+import { MOBILE_EVENTS } from "./telemetry/events";
+import { mobileTelemetry, trackFeature } from "./telemetry/runtime";
 
 const ACTIVE_PROJECT_KEY = "ao.activeProject";
 const POLL_INTERVAL_MS = 8000;
@@ -150,6 +152,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setError(null);
 			setErrorStatus(null);
 			setConnection("open");
+			mobileTelemetry()?.capture(MOBILE_EVENTS.connected, { trigger: "launch" });
 			// Badge count for the board's bell. Deliberately after the session fetch
 			// and separately caught: an older daemon without /notifications must not
 			// knock the board offline. limit:1 because we only read unreadCount.
@@ -213,53 +216,58 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [activeProjectId, projects]);
 
 	const spawn = useCallback(
-		async ({ projectId, prompt, issueId, harness }: SpawnOptions) => {
-			const c = cfgRef.current;
-			const proj = projectId ?? targetProject();
-			if (!c || !proj) throw new Error("Pick a project first");
-			const session = await spawnSession(c, { projectId: proj, prompt, issueId, harness });
-			await fetchAll();
-			return session;
-		},
+		async ({ projectId, prompt, issueId, harness }: SpawnOptions) =>
+			trackFeature("spawn", async () => {
+				const c = cfgRef.current;
+				const proj = projectId ?? targetProject();
+				if (!c || !proj) throw new Error("Pick a project first");
+				const session = await spawnSession(c, { projectId: proj, prompt, issueId, harness });
+				await fetchAll();
+				return session;
+			}),
 		[targetProject, fetchAll],
 	);
 
 	const launchConductor = useCallback(
-		async (projectId: string, clean = false) => {
-			const c = cfgRef.current!;
-			const link = await apiLaunchOrchestrator(c, projectId, clean);
-			await fetchAll();
-			return link;
-		},
+		async (projectId: string, clean = false) =>
+			trackFeature("conductor", async () => {
+				const c = cfgRef.current!;
+				const link = await apiLaunchOrchestrator(c, projectId, clean);
+				await fetchAll();
+				return link;
+			}),
 		[fetchAll],
 	);
 
 	const merge = useCallback(
-		async (pr: DashboardPR) => {
-			await apiMergePR(cfgRef.current!, pr);
-			await fetchAll();
-		},
+		async (pr: DashboardPR) =>
+			trackFeature("merge", async () => {
+				await apiMergePR(cfgRef.current!, pr);
+				await fetchAll();
+			}),
 		[fetchAll],
 	);
 
 	const kill = useCallback(
-		async (id: string) => {
-			await killSession(cfgRef.current!, id);
-			await fetchAll();
-		},
+		async (id: string) =>
+			trackFeature("kill", async () => {
+				await killSession(cfgRef.current!, id);
+				await fetchAll();
+			}),
 		[fetchAll],
 	);
 
 	const restore = useCallback(
-		async (id: string) => {
-			await restoreSession(cfgRef.current!, id);
-			await fetchAll();
-		},
+		async (id: string) =>
+			trackFeature("restore", async () => {
+				await restoreSession(cfgRef.current!, id);
+				await fetchAll();
+			}),
 		[fetchAll],
 	);
 
 	const send = useCallback(async (id: string, message: string) => {
-		await sendMessage(cfgRef.current!, id, message);
+		await trackFeature("send", () => sendMessage(cfgRef.current!, id, message));
 	}, []);
 
 	// Memoized so the provider doesn't hand every useApp() consumer a brand-new
