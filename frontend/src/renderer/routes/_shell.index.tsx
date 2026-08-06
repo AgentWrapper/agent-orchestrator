@@ -15,12 +15,17 @@ function ShellIndex() {
 	useEffect(() => {
 		if (!workspaceQuery.isSuccess) return;
 		const workspaces = workspaceQuery.data ?? [];
-		if (workspaces.length !== 1) return;
-		const [workspace] = workspaces;
-		if (workspace.id !== "scratch" || workspace.kind !== "scratch") return;
+		const projects = workspaces.filter((workspace) => workspace.kind !== "scratch");
+		const workspace =
+			projects.length === 1
+				? projects[0]
+				: projects.length === 0 && workspaces.length === 1 && workspaces[0]?.kind === "scratch"
+					? workspaces[0]
+					: undefined;
+		if (!workspace) return;
 		void navigate({
 			to: "/projects/$projectId",
-			params: { projectId: "scratch" },
+			params: { projectId: workspace.id },
 			replace: true,
 		});
 	}, [navigate, workspaceQuery.data, workspaceQuery.isSuccess]);
