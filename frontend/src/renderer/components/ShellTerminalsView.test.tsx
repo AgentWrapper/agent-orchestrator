@@ -6,6 +6,7 @@ vi.mock("../hooks/useShellTerminals", () => ({
 	useCloseShellTerminal: () => ({ mutate: vi.fn() }),
 	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
 	useShellTerminals: () => ({ data: [] }),
+	useRefreshShellTerminals: () => vi.fn(async () => []),
 }));
 
 vi.mock("../lib/shell-context", () => ({

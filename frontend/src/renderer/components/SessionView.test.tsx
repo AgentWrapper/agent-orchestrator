@@ -1,5 +1,5 @@
 import { StrictMode, type ReactNode, type Ref } from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
@@ -106,6 +106,8 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
 		onNewShellTerminal,
+		onShellExited,
+		attachEpoch,
 	}: {
 		terminalTarget?: { kind: string; handleId?: string };
 		session?: WorkspaceSession;
@@ -114,6 +116,8 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
 		onNewShellTerminal?: () => void;
+		onShellExited?: (handleId: string) => void;
+		attachEpoch?: number;
 	}) => (
 		<div>
 			terminal center
@@ -122,6 +126,7 @@ vi.mock("./CenterPane", () => ({
 			</div>
 			<div data-testid="session-tab">{session?.title ?? ""}</div>
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
+			<div data-testid="attach-epoch">{String(attachEpoch ?? 0)}</div>
 			{shellTerminals.map((s) => (
 				<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
 					select {s.title}
@@ -130,6 +135,11 @@ vi.mock("./CenterPane", () => ({
 			{shellTerminals.map((s) => (
 				<button key={`close-${s.handleId}`} type="button" onClick={() => onCloseShellTerminal?.(s.handleId)}>
 					close {s.title}
+				</button>
+			))}
+			{shellTerminals.map((s) => (
+				<button key={`exit-${s.handleId}`} type="button" onClick={() => onShellExited?.(s.handleId)}>
+					report exit {s.title}
 				</button>
 			))}
 			<button type="button" onClick={() => onSelectSessionTerminal?.()}>
@@ -246,11 +256,13 @@ vi.mock("../hooks/useWorkspaceQuery", () => ({
 }));
 // Standalone shell terminals are orthogonal to the split under test, and their
 // real hooks would need a QueryClientProvider this suite deliberately omits.
+const refreshShellTerminalsMock = vi.fn(async () => shellTerminalsState.data);
 vi.mock("../hooks/useShellTerminals", () => ({
 	useShellTerminals: () => ({ data: shellTerminalsState.data, isLoading: false }),
 	useOpenShellTerminal: () => ({ mutate: openShellTerminalMock }),
 	useCloseShellTerminal: () => ({ mutate: closeShellTerminalMock }),
 	useRenameShellTerminal: () => ({ mutate: vi.fn() }),
+	useRefreshShellTerminals: () => refreshShellTerminalsMock,
 }));
 
 // jsdom has no layout engine, so the real react-resizable-panels would never
@@ -479,6 +491,56 @@ describe("SessionView", () => {
 		expect(closeShellTerminalMock).toHaveBeenCalledWith("sh-a");
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker");
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
+	});
+
+	// A pane reporting "exited" is not proof the shell died: the attach loop
+	// reports the same after giving up on a failing liveness probe. If the
+	// daemon still lists the shell it is alive, and the pane — which holds
+	// "exited" forever once it lands there — must be remounted to reconnect,
+	// not left telling the user to close a live terminal.
+	it("re-attaches instead of closing when the daemon still has the shell", async () => {
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				sessionId: "sess-1",
+				title: "Terminal 1",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+		];
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "select Terminal 1" }));
+		expect(screen.getByTestId("attach-epoch")).toHaveTextContent("0");
+
+		fireEvent.click(screen.getByRole("button", { name: "report exit Terminal 1" }));
+
+		await waitFor(() => expect(screen.getByTestId("attach-epoch")).toHaveTextContent("1"));
+		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("Terminal 1");
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("shell");
+	});
+
+	// The other half: the daemon confirms it is gone, so the pane goes back to
+	// the session rather than remounting an attachment to a dead handle.
+	it("hands the pane back to the session when the daemon drops the shell", async () => {
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				sessionId: "sess-1",
+				title: "Terminal 1",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+		];
+		render(<SessionView sessionId="sess-1" />);
+		fireEvent.click(screen.getByRole("button", { name: "select Terminal 1" }));
+		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("shell");
+
+		shellTerminalsState.data = [];
+		fireEvent.click(screen.getByRole("button", { name: "report exit Terminal 1" }));
+
+		await waitFor(() => expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBe("worker"));
+		expect(screen.getByTestId("attach-epoch")).toHaveTextContent("0");
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

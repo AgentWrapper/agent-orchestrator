@@ -46,6 +46,20 @@ type TerminalPaneProps = {
 	fontSize: number;
 	/** Provider-owned shared transport lease factory. */
 	createMux?: () => TerminalMux;
+	/**
+	 * Fired once when a shell pane reports its PTY ended (the user typed `exit`,
+	 * killed the process — or the attach loop gave up). Nothing else tells the
+	 * client: the shell list is only refetched around this client's own
+	 * open/close.
+	 */
+	onShellExited?: (handleId: string) => void;
+	/**
+	 * Bumped to force a fresh attachment for the same handle. A pane that
+	 * reported "exited" holds that state forever, so when the daemon says the
+	 * shell is in fact still alive, the only way back to a live terminal is to
+	 * remount the attachment.
+	 */
+	attachEpoch?: number;
 };
 
 type TerminalCacheDescriptor = {
@@ -110,12 +124,17 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 function cacheDescriptor(
 	session: WorkspaceSession | undefined,
 	terminalTarget: TerminalTarget | undefined,
+	attachEpoch = 0,
 ): TerminalCacheDescriptor | null {
 	if (terminalTarget?.kind === "shell") {
 		if (!terminalTargetBelongsToSession(terminalTarget, session?.id)) return null;
 		const ownerKey = `shell:${session?.id ?? "standalone"}:${terminalTarget.handleId}`;
 		return {
-			cacheKey: `${ownerKey}|handle:${terminalTarget.handleId}|generation:${terminalTarget.generation}`,
+			// The epoch is part of the key, not just the props: a bump must produce
+			// a cache MISS so `activate` discards the old (possibly wedged) entry
+			// for this owner and mounts a fresh one, the same way a new `generation`
+			// already does for a replaced PTY.
+			cacheKey: `${ownerKey}|handle:${terminalTarget.handleId}|generation:${terminalTarget.generation}|epoch:${attachEpoch}`,
 			generation: terminalTarget.generation,
 			handleId: terminalTarget.handleId,
 			kind: "shell",
@@ -635,6 +654,8 @@ export function TerminalPane({
 	daemonReady,
 	terminalTarget: requestedTerminalTarget,
 	fontSize,
+	onShellExited,
+	attachEpoch = 0,
 }: TerminalPaneProps) {
 	const terminalTarget =
 		requestedTerminalTarget &&
@@ -646,6 +667,9 @@ export function TerminalPane({
 		terminalTarget?.kind === "reviewer" || terminalTarget?.kind === "shell"
 			? terminalTarget.handleId
 			: (session?.terminalHandleId ?? "empty");
+	// The epoch is folded into the key too so the non-cached fallback below
+	// remounts on a bump the same way the cached path's cacheKey does.
+	const attachKey = `${terminalKey}:${attachEpoch}`;
 
 	if (!window.ao) {
 		// A standalone shell has no agent and no branch, so it previews as a plain
@@ -698,19 +722,20 @@ export function TerminalPane({
 		);
 	}
 
-	const props = { session, theme, daemonReady, terminalTarget, fontSize };
-	const descriptor = cacheDescriptor(session, terminalTarget);
+	const props = { session, theme, daemonReady, terminalTarget, fontSize, onShellExited };
+	const descriptor = cacheDescriptor(session, terminalTarget, attachEpoch);
 	if (cache && descriptor) {
 		return <CachedTerminalSlot descriptor={descriptor} props={props} />;
 	}
 
 	return (
 		<AttachedTerminal
-			key={terminalKey}
+			key={attachKey}
 			session={session}
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			onShellExited={onShellExited}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -853,6 +878,7 @@ function AttachedTerminal({
 	terminalTarget,
 	fontSize,
 	createMux,
+	onShellExited,
 	isVisible = true,
 	onFatal,
 	onTerminalReady,
@@ -933,6 +959,30 @@ function AttachedTerminal({
 			current = false;
 		};
 	}, [replayPaintPending, replaySettled, terminal]);
+	// A shell whose PTY exits leaves a tab that can never be attached again, so
+	// retire it instead of parking a dead pane in the strip.
+	//
+	// This is a HINT, never a close. "exited" does not prove the shell died:
+	// attach() reaches the same state after the liveness probe or the attach
+	// itself errors past the retry cap, and a probe error is not proof of
+	// death. Destroying on that would kill a live shell and whatever is
+	// running in it. So this only asks the daemon to re-check — its list
+	// prunes a shell it can confirm is gone and deliberately KEEPS one whose
+	// probe errored.
+	//
+	// Reported once per pane: the component is keyed by handle (+ attach
+	// epoch), so a later shell on the same tab, or a forced re-attach, mounts
+	// fresh. Only for shells — a session pane that ends still has a row, a
+	// status, and a restore path, so its tab must stay.
+	const reportedShellExitRef = useRef(false);
+	useEffect(() => {
+		if (state !== "exited") return;
+		if (terminalTarget?.kind !== "shell") return;
+		if (reportedShellExitRef.current) return;
+		reportedShellExitRef.current = true;
+		onShellExited?.(terminalTarget.handleId);
+	}, [state, terminalTarget, onShellExited]);
+
 	const handleId = shellTerminalHandleId ?? attachSession?.terminalHandleId;
 	const provider = terminalTarget?.kind === "reviewer" ? terminalTarget.harness : session?.provider;
 	const isSessionActive = session ? sessionIsActive(session) : false;

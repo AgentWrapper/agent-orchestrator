@@ -15,7 +15,10 @@
 package shellterm
 
 import (
+	"fmt"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -43,10 +46,11 @@ type OpenShellTerminalInput struct {
 	SessionID domain.SessionID `json:"sessionId,omitempty"`
 }
 
-// shellTerminalTitle labels a tab by the directory the shell started in, which
-// is the only thing that distinguishes one shell pane from another in the UI.
-// A path that has no usable base (a bare root, or an empty string) falls back
-// to a generic label rather than rendering an empty tab.
+// shellTerminalTitle labels a standalone tab by the directory the shell started
+// in. Those shells come from the board or /terminals and can span projects, so
+// the directory is what tells them apart. A path with no usable base (a bare
+// root, or an empty string) falls back to a generic label rather than
+// rendering an empty tab.
 func shellTerminalTitle(workingDir string) string {
 	base := filepath.Base(workingDir)
 	switch base {
@@ -54,4 +58,28 @@ func shellTerminalTitle(workingDir string) string {
 		return "Shell"
 	}
 	return base
+}
+
+// sessionShellTerminalTitle numbers a session's tabs instead of naming them.
+// Every shell in a session starts in that session's worktree, so the directory
+// was identical on every tab and told the user nothing; the session itself is
+// already the first tab in the strip. ordinal is 1-based.
+func sessionShellTerminalTitle(ordinal int) string {
+	return fmt.Sprintf("%s%d", sessionShellTerminalPrefix, ordinal)
+}
+
+const sessionShellTerminalPrefix = "Terminal "
+
+// sessionTerminalOrdinal reads back a title this package generated. A title the
+// user renamed does not parse and reports false, so it stops reserving a number.
+func sessionTerminalOrdinal(title string) (int, bool) {
+	rest, found := strings.CutPrefix(title, sessionShellTerminalPrefix)
+	if !found {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
 }

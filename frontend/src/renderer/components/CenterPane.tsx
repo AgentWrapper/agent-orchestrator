@@ -15,8 +15,8 @@ import { useUiStore, type Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
 import { ShellTerminalTab } from "./ShellTerminalTab";
+import { AgentAvatar, hasAgentLogo } from "./AgentAvatar";
 import { TerminalPane } from "./TerminalPane";
-import { AgentAvatar } from "./AgentAvatar";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -37,6 +37,10 @@ type CenterPaneProps = {
 	onNewShellTerminal?: () => void;
 	/** Session actions consolidated into the terminal bar by SessionView. */
 	topbarActions?: ReactNode;
+	/** A shell pane reported its PTY ended; the owner re-checks with the daemon. */
+	onShellExited?: (handleId: string) => void;
+	/** Bumped to force a fresh attachment when a reported exit turns out false. */
+	attachEpoch?: number;
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
@@ -71,6 +75,8 @@ export function CenterPane({
 	onRenameShellTerminal,
 	onNewShellTerminal,
 	topbarActions,
+	onShellExited,
+	attachEpoch,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -356,8 +362,10 @@ export function CenterPane({
 				role="tabpanel"
 			>
 				<TerminalPane
+					attachEpoch={attachEpoch}
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					onShellExited={onShellExited}
 					session={session}
 					terminalTarget={target}
 					theme={theme}
@@ -369,6 +377,8 @@ export function CenterPane({
 
 type SessionPaneTabProps = {
 	label: string;
+	/** Agent behind this session, shown as its logo so the tab reads as the agent's. */
+	provider?: string;
 	isActive: boolean;
 	onSelect?: () => void;
 	session?: WorkspaceSession;
@@ -390,7 +400,11 @@ function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabPr
 					: "text-muted-foreground hover:bg-raised hover:text-foreground",
 			)}
 		>
-			{session ? <AgentAvatar className="size-icon-base" decorative provider={session.provider} /> : null}
+			{/* Logo only, never the initial-letter fallback: an agent without a mark
+			    (e.g. the fake harness) would put a bare letter tile in the strip. */}
+			{session?.provider && hasAgentLogo(session.provider) ? (
+				<AgentAvatar className="size-icon-base" decorative provider={session.provider} />
+			) : null}
 			<button
 				ref={ref}
 				aria-current={isActive}
