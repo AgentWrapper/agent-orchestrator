@@ -95,6 +95,10 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 								? session.reviewerHarness
 								: undefined,
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+						// Carried through verbatim: the session surface must render from
+						// the mode this session was created with, not from whatever the
+						// current default happens to be.
+						mode: session.mode === "chat" ? "chat" : "tui",
 						branch: session.branch || undefined,
 						status,
 						scmStatus,

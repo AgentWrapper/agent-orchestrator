@@ -4,12 +4,17 @@ import { useTranslation } from "react-i18next";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
+import { SessionChatSurface } from "./chat/SessionChatSurface";
 import { SessionFilesView } from "./SessionFilesView";
 import { SessionInspector } from "./SessionInspector";
+import {
+	SessionInterfaceActionGroup,
+	SessionInterfaceSwitchButton,
+	SessionInterfaceSwitchDialog,
+	SessionInterfaceTransitionNotice,
+} from "./SessionInterfaceSwitch";
 import { ShellTopbar } from "./ShellTopbar";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resizable";
-import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
-import { useShell } from "../lib/shell-context";
 import { useBrowserView } from "../hooks/useBrowserView";
 import {
 	useCloseShellTerminal,
@@ -17,13 +22,20 @@ import {
 	useRenameShellTerminal,
 	useShellTerminals,
 } from "../hooks/useShellTerminals";
+import {
+	interfaceTransitionIsActive,
+	useSessionInterfaceTransition,
+} from "../hooks/useSessionInterfaceTransition";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
+import { apiErrorMessage } from "../lib/api-client";
 import { hidesShellTopbar } from "../lib/platform";
+import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
+import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 
 const INSPECTOR_MIN_PERCENT = 30;
 const INSPECTOR_MAX_PERCENT = 45;
@@ -83,9 +95,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
+	const [dismissedTransitionID, setDismissedTransitionID] = useState("");
 	const isNativeFullScreen = useWindowFullScreen();
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 
 	// Shell terminals opened inside a session live beside its pane as extra tabs,
 	// scoped to the session on screen so each session has its own shell set.
@@ -222,8 +237,67 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		);
 	}, [shellTerminals]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
-	// Orchestrator sessions are terminal-only; only worker sessions have the rail.
+	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
+	const activeInterfaceTransition = interfaceTransitionIsActive(interfaceSwitch.transition);
+	const chatControllerTransitioning = Boolean(
+		interfaceSwitch.transition?.targetMode === "chat" &&
+			(activeInterfaceTransition || interfaceSwitch.settling),
+	);
+	const interfaceTarget =
+		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
+		(session?.mode === "chat" ? "tui" : "chat");
+	const interfaceWaitingForInput = Boolean(
+		session &&
+		(session.status === "needs_input" ||
+			session.activity?.state === "waiting_input" ||
+			session.activity?.state === "blocked"),
+	);
+	const beginInterfaceSwitch = useCallback(
+		async (policy: "drain" | "interrupt") => {
+			try {
+				await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
+				setInterfaceSwitchDialogOpen(false);
+			} catch {
+				// The mutation owns the typed error. Keep the dialog open so it is
+				// visible instead of also producing an unhandled rejection.
+				setInterfaceSwitchDialogOpen(true);
+			}
+		},
+		[interfaceSwitch, interfaceTarget],
+	);
+	const requestInterfaceSwitch = useCallback(() => {
+		interfaceSwitch.resetStartError();
+		setInterfaceSwitchDialogOpen(true);
+	}, [interfaceSwitch]);
+	const showInterfaceSwitchAction = Boolean(
+		interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError,
+	);
+	const interfaceSwitchAction = session && showInterfaceSwitchAction ? (
+		<SessionInterfaceSwitchButton
+			target={interfaceTarget}
+			supported={Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition}
+			disabledReason={
+				interfaceSwitch.isLoading
+					? "Checking whether this agent can switch interfaces…"
+					: interfaceSwitch.status?.reason || interfaceSwitch.statusError
+			}
+			pending={interfaceSwitch.starting || activeInterfaceTransition}
+			transition={interfaceSwitch.transition}
+			cancelling={interfaceSwitch.cancelling}
+			cancelError={interfaceSwitch.cancelError}
+			onClick={requestInterfaceSwitch}
+			onCancel={() => {
+				void interfaceSwitch.cancel().catch(() => {});
+			}}
+		/>
+	) : null;
+	const sessionHeaderActions = (
+		<SessionInterfaceActionGroup>
+			{interfaceSwitchAction}
+			<ShellTopbar embedded />
+		</SessionInterfaceActionGroup>
+	);
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -254,6 +328,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionId)
 		? terminalTarget
 		: ({ kind: "worker" } satisfies TerminalTarget);
+	const showChatSurface = session?.mode === "chat" && routedTerminalTarget.kind === "worker";
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
 	// takes the agent's terminal off screen while the route still points here.
@@ -444,20 +519,46 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
 				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
-					<CenterPane
-						daemonReady={daemonStatus.state === "ready"}
-						onCloseShellTerminal={closeShellTerminalByHandle}
-						onNewShellTerminal={addShellTerminal}
-						onRenameShellTerminal={renameShellTerminalByHandle}
-						onSelectSessionTerminal={selectSessionTerminal}
-						onSelectShellTerminal={selectShellTerminal}
-						onSelectWorkerTerminal={selectSessionTerminal}
-						session={session}
-						shellTerminals={shellTerminals}
-						terminalTarget={routedTerminalTarget}
-						theme={theme}
-						topbarActions={<ShellTopbar embedded />}
-					/>
+					<div className="relative h-full min-h-0">
+						{/* The committed mode owns the agent surface. Auxiliary shell and
+						    reviewer targets remain terminal surfaces in either mode. */}
+						{showChatSurface ? (
+							<SessionChatSurface
+								session={session}
+								headerActions={sessionHeaderActions}
+								controllerTransitioning={chatControllerTransitioning}
+								onOpenShell={addShellTerminal}
+								openingShell={openShellTerminal.isPending}
+								shellError={
+									openShellTerminal.error ? apiErrorMessage(openShellTerminal.error) : undefined
+								}
+							/>
+						) : (
+							<CenterPane
+								agentInputDisabled={
+									(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
+								}
+								daemonReady={daemonStatus.state === "ready"}
+								onCloseShellTerminal={closeShellTerminalByHandle}
+								onNewShellTerminal={addShellTerminal}
+								onRenameShellTerminal={renameShellTerminalByHandle}
+								onSelectSessionTerminal={selectSessionTerminal}
+								onSelectShellTerminal={selectShellTerminal}
+								onSelectWorkerTerminal={selectSessionTerminal}
+								session={session}
+								shellTerminals={shellTerminals}
+								terminalTarget={routedTerminalTarget}
+								theme={theme}
+								topbarActions={sessionHeaderActions}
+							/>
+						)}
+						{interfaceSwitch.transition?.id !== dismissedTransitionID ? (
+							<SessionInterfaceTransitionNotice
+								transition={interfaceSwitch.transition}
+								onDismiss={() => setDismissedTransitionID(interfaceSwitch.transition?.id ?? "")}
+							/>
+						) : null}
+					</div>
 				</ResizablePanel>
 				{hasInspector ? (
 					<>
@@ -509,6 +610,15 @@ export function SessionView({ sessionId }: SessionViewProps) {
 					</>
 				) : null}
 			</ResizablePanelGroup>
+			<SessionInterfaceSwitchDialog
+				open={interfaceSwitchDialogOpen}
+				target={interfaceTarget}
+				waitingForInput={interfaceWaitingForInput}
+				busy={interfaceSwitch.starting}
+				error={interfaceSwitch.startError}
+				onOpenChange={setInterfaceSwitchDialogOpen}
+				onChoose={(policy) => void beginInterfaceSwitch(policy)}
+			/>
 			{filesPoppedOut && session
 				? createPortal(
 						<div

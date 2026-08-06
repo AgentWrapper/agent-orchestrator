@@ -15,6 +15,7 @@ import {
 	type DashboardStats,
 	type OrchestratorLink,
 	type ProjectInfo,
+	type SessionMode,
 } from "./api";
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
 import { shouldKeepPolling } from "./connectionError";
@@ -38,6 +39,8 @@ export type SpawnOptions = {
 	/** The task name. Becomes the session's title — see sessionTitle. */
 	issueId?: string;
 	harness?: string;
+	/** Mobile defaults to Chat; TUI remains an explicit compatibility choice. */
+	mode?: SessionMode;
 };
 
 type AppState = {
@@ -61,7 +64,7 @@ type AppState = {
 	refresh: () => Promise<void>;
 	setActiveProject: (id: string) => void;
 	spawn: (opts: SpawnOptions) => Promise<DashboardSession>;
-	launchConductor: (projectId: string, clean?: boolean) => Promise<OrchestratorLink>;
+	launchConductor: (projectId: string, clean?: boolean, mode?: SessionMode) => Promise<OrchestratorLink>;
 	merge: (pr: DashboardPR) => Promise<void>;
 	kill: (id: string) => Promise<void>;
 	restore: (id: string) => Promise<void>;
@@ -216,12 +219,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [activeProjectId, projects]);
 
 	const spawn = useCallback(
-		async ({ projectId, prompt, issueId, harness }: SpawnOptions) =>
+		async ({ projectId, prompt, issueId, harness, mode }: SpawnOptions) =>
 			trackFeature("spawn", async () => {
 				const c = cfgRef.current;
 				const proj = projectId ?? targetProject();
 				if (!c || !proj) throw new Error("Pick a project first");
-				const session = await spawnSession(c, { projectId: proj, prompt, issueId, harness });
+				const session = await spawnSession(c, { projectId: proj, prompt, issueId, harness, mode: mode ?? "chat" });
 				await fetchAll();
 				return session;
 			}),
@@ -229,10 +232,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	);
 
 	const launchConductor = useCallback(
-		async (projectId: string, clean = false) =>
+		async (projectId: string, clean = false, mode: SessionMode = "chat") =>
 			trackFeature("conductor", async () => {
 				const c = cfgRef.current!;
-				const link = await apiLaunchOrchestrator(c, projectId, clean);
+				const link = await apiLaunchOrchestrator(c, projectId, clean, mode);
 				await fetchAll();
 				return link;
 			}),
@@ -269,6 +272,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const send = useCallback(async (id: string, message: string) => {
 		await trackFeature("send", () => sendMessage(cfgRef.current!, id, message));
 	}, []);
+	const refresh = useCallback(async () => {
+		await fetchAll();
+	}, [fetchAll]);
 
 	// Memoized so the provider doesn't hand every useApp() consumer a brand-new
 	// object (causing re-renders) on each render. Re-renders now track real state changes.
@@ -288,9 +294,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			error,
 			errorStatus,
 			reloadConfig,
-			refresh: async () => {
-				await fetchAll();
-			},
+			refresh,
 			setActiveProject,
 			spawn,
 			launchConductor,
@@ -313,7 +317,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			error,
 			errorStatus,
 			reloadConfig,
-			fetchAll,
+			refresh,
 			setActiveProject,
 			spawn,
 			launchConductor,

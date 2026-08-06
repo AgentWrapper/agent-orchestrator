@@ -1,4 +1,4 @@
-import { Languages, Monitor, Moon, Palette, Smartphone, Sun } from "lucide-react";
+import { Languages, MessageSquare, Monitor, Moon, Palette, Smartphone, SquareTerminal, Sun } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { ThemePreference, ThemeStyle } from "../../lib/theme";
 import type { AppLocale } from "../../i18n";
@@ -7,6 +7,67 @@ import { useUiStore } from "../../stores/ui-store";
 import { SettingsOptionMenu, type SettingsOption } from "./SettingsOptionMenu";
 import { SettingsLinkRow, SettingsRow } from "./SettingsRow";
 import { SettingsSection } from "./SettingsSection";
+import { cn } from "../../lib/utils";
+import { useSettings, useUpdateSessionInterface } from "../../hooks/useSettings";
+import type { SessionMode } from "../../types/workspace";
+
+/**
+ * The default interface for new sessions.
+ *
+ * Daemon-owned, so `ao spawn` and mobile resolve the same value. Two things this
+ * control must be honest about: it only affects sessions created afterwards —
+ * a session's interface is fixed when it is born — and chat is limited to the
+ * agents that have a structured driver today.
+ */
+function SessionInterfaceRow() {
+	const { t } = useTranslation();
+	const { settings, isLoading, error } = useSettings();
+	const { update, saving, error: saveError } = useUpdateSessionInterface();
+	const interfaceOptions = [
+		{
+			value: "tui",
+			label: t("settings.sessionInterface.terminal"),
+			icon: <SquareTerminal className="size-icon-lg" aria-hidden="true" />,
+		},
+		{
+			value: "chat",
+			label: t("settings.sessionInterface.chat"),
+			icon: <MessageSquare className="size-icon-lg" aria-hidden="true" />,
+		},
+	] satisfies SettingsOption<SessionMode>[];
+
+	const chatAvailable = (settings?.chatHarnesses.length ?? 0) > 0;
+	const help = !chatAvailable
+		? t("settings.sessionInterface.unavailable")
+		: t("settings.sessionInterface.available", { harnesses: settings?.chatHarnesses.join(", ") });
+
+	const note = saveError ?? error ?? help;
+
+	return (
+		<div className="flex flex-col">
+			<SettingsRow icon={MessageSquare} label={t("settings.sessionInterface.label")}>
+				<SettingsOptionMenu
+					aria-label={t("settings.sessionInterface.label")}
+					value={settings?.defaultSessionMode ?? "tui"}
+					options={interfaceOptions}
+					onChange={(mode) => update(mode)}
+					disabled={isLoading || saving || !chatAvailable}
+				/>
+			</SettingsRow>
+			{/* Stated rather than implied: this changes what NEW sessions get. An
+			    existing session's interface is fixed when it is created, so nothing
+			    here can move a session that already exists. */}
+			<p
+				className={cn(
+					"px-2 pb-2 text-xs leading-relaxed",
+					saveError || error ? "text-destructive" : "text-muted-foreground",
+				)}
+			>
+				{note}
+			</p>
+		</div>
+	);
+}
 
 const COLOR_THEME_OPTIONS = [
 	{ value: "orchestrate", label: "Orchestrate" },
@@ -92,6 +153,7 @@ export function GeneralSettingsSection({
 					{t("settings.language.saveFailed")}
 				</p>
 			) : null}
+			<SessionInterfaceRow />
 			<SettingsLinkRow icon={Smartphone} label={t("settings.connectMobile")} onClick={onConnectMobile} />
 		</SettingsSection>
 	);

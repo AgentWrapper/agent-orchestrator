@@ -9,6 +9,8 @@ import { TooltipProvider } from "./ui/tooltip";
 
 const shortcutMocks = vi.hoisted(() => ({
 	closeListener: undefined as (() => void) | undefined,
+	nextTabListener: undefined as (() => void) | undefined,
+	previousTabListener: undefined as (() => void) | undefined,
 	closeableStates: [] as boolean[],
 }));
 
@@ -22,6 +24,18 @@ vi.mock("../lib/bridge", () => ({
 					if (shortcutMocks.closeListener === listener) shortcutMocks.closeListener = undefined;
 				};
 		},
+			onPreviousTabShortcut: (listener: () => void) => {
+				shortcutMocks.previousTabListener = listener;
+				return () => {
+					if (shortcutMocks.previousTabListener === listener) shortcutMocks.previousTabListener = undefined;
+				};
+			},
+			onNextTabShortcut: (listener: () => void) => {
+				shortcutMocks.nextTabListener = listener;
+				return () => {
+					if (shortcutMocks.nextTabListener === listener) shortcutMocks.nextTabListener = undefined;
+				};
+			},
 		},
 	},
 }));
@@ -55,6 +69,8 @@ function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}
 
 beforeEach(() => {
 	shortcutMocks.closeListener = undefined;
+	shortcutMocks.nextTabListener = undefined;
+	shortcutMocks.previousTabListener = undefined;
 	shortcutMocks.closeableStates.length = 0;
 });
 
@@ -151,6 +167,29 @@ describe("CenterPane toolbar session label", () => {
 
 		act(() => shortcutMocks.closeListener?.());
 		expect(onCloseShellTerminal).not.toHaveBeenCalled();
+	});
+
+	it("cycles from the session terminal to its next shell tab", () => {
+		const [shell] = makeShells(1);
+		const onSelectShellTerminal = vi.fn();
+		renderCenterPane({ session: worker, shellTerminals: [shell], onSelectShellTerminal });
+
+		act(() => shortcutMocks.nextTabListener?.());
+		expect(onSelectShellTerminal).toHaveBeenCalledWith(shell.handleId);
+	});
+
+	it("wraps from a shell tab to the session terminal", () => {
+		const [shell] = makeShells(1);
+		const onSelectSessionTerminal = vi.fn();
+		renderCenterPane({
+			session: worker,
+			shellTerminals: [shell],
+			terminalTarget: { generation: shell.createdAt, kind: "shell", handleId: shell.handleId, title: shell.title },
+			onSelectSessionTerminal,
+		});
+
+		act(() => shortcutMocks.nextTabListener?.());
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
 	});
 
 	it("enables the global close shortcut only while a closeable shell is active", () => {
