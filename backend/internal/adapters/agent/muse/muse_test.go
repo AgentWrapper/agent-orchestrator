@@ -164,7 +164,7 @@ func TestGetLaunchCommandCombinesSystemPromptAndManagedHooksEnvironment(t *testi
 	}
 	want := []string{
 		"env",
-		museSystemPromptEnvVar + "=follow AO rules",
+		museDeveloperPromptEnvVar + "=follow AO rules",
 		museManagedHooksEnvVar + "=" + hooksPath,
 		"muse", "--trust-workspace",
 	}
