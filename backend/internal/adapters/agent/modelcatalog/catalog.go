@@ -122,9 +122,12 @@ func (Discoverer) Discover(ctx context.Context, request ports.AgentModelDiscover
 	return Discover(ctx, request.AgentID, request.Binary, request.WorkingDir, request.Env)
 }
 
-// BinaryVersion returns a stable fingerprint for the installed agent binary.
-func (Discoverer) BinaryVersion(ctx context.Context, binary string) string {
-	return BinaryVersion(ctx, binary)
+// CatalogFingerprint returns a stable fingerprint of the discovery inputs: the
+// installed agent binary plus the configuration this adapter reads to build the
+// catalog. Folding configuration in is what lets a settings edit invalidate a
+// cached catalog, since the binary alone does not change when settings do.
+func (Discoverer) CatalogFingerprint(ctx context.Context, request ports.AgentModelDiscoveryRequest) string {
+	return CatalogFingerprint(ctx, request.AgentID, request.Binary, request.WorkingDir, request.Env)
 }
 
 // Manual returns the manual-entry fallback catalog for an agent.
@@ -318,6 +321,34 @@ func BinaryVersion(ctx context.Context, binary string) string {
 	_, _ = hash.Write([]byte{0})
 	_, _ = hash.Write([]byte(strconv.FormatInt(info.ModTime().UnixNano(), 10)))
 	return fmt.Sprintf("%x", hash.Sum(nil)[:8])
+}
+
+// CatalogFingerprint hashes every discovery input for an agent: the resolved
+// executable, plus the configuration values the adapter reads. A cached catalog
+// stays valid only while this is unchanged, so configuration AO reads during
+// discovery must be represented here or an edit would never take effect.
+func CatalogFingerprint(ctx context.Context, agentID, binary, workingDir string, env map[string]string) string {
+	binaryVersion := BinaryVersion(ctx, binary)
+	config := discoveryConfigInputs(agentID, workingDir, env)
+	if config == "" {
+		// Keep the executable-only fingerprint byte-identical to what earlier
+		// daemons wrote, so upgrading does not invalidate every cached catalog.
+		return binaryVersion
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(binaryVersion))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(config))
+	return fmt.Sprintf("%x", hash.Sum(nil)[:8])
+}
+
+// discoveryConfigInputs returns the configuration an agent's discovery consults,
+// or "" when the catalog depends on the binary alone.
+func discoveryConfigInputs(agentID, workingDir string, env map[string]string) string {
+	if agentID != "claude-code" {
+		return ""
+	}
+	return "model=" + claudeCodeResolvedModel(workingDir, env)
 }
 
 func catalog(agentID, source string, allowCustom bool, at time.Time, models ...ports.AgentModelInfo) ports.AgentModelCatalog {
