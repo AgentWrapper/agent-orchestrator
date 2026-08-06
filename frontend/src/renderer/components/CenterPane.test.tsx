@@ -173,8 +173,9 @@ describe("CenterPane toolbar session label", () => {
 		const menu = screen.getByRole("menu");
 		const newTerminal = screen.getByRole("menuitem", { name: /New terminal/ });
 		expect(menu).toHaveClass("w-64", "rounded-xl", "backdrop-blur-xl");
-		expect(newTerminal).toHaveClass("min-h-10", "bg-interactive-active/60");
-		expect(newTerminal.querySelector("svg")).toHaveClass("size-icon-sm!");
+		expect(newTerminal).toHaveClass("min-h-8", "px-2", "py-1.5");
+		expect(newTerminal).not.toHaveClass("min-h-10", "bg-interactive-active/60");
+		expect(newTerminal.querySelector("svg")).toHaveClass("size-icon-xs!");
 		expect(screen.getByText("Sessions")).toBeInTheDocument();
 	});
 
@@ -196,6 +197,7 @@ describe("CenterPane toolbar session label", () => {
 
 		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
 		const search = screen.getByRole("textbox", { name: "Search sessions" });
+		expect(search).toHaveClass("h-control-form", "rounded-lg", "text-control");
 		const terminal = screen.getByRole("menuitem", { name: "New terminal" });
 		expect(terminal.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(screen.getByRole("menuitem", { name: /Worker 5/ })).toBeInTheDocument();

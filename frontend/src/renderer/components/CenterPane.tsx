@@ -299,14 +299,12 @@ export function CenterPane({
 							sideOffset={8}
 						>
 							<DropdownMenuItem
-								className="min-h-10 rounded-lg border border-border/70 bg-interactive-active/60 px-2.5 py-2 text-foreground focus:border-border-strong focus:bg-interactive-hover"
+								className="min-h-8 rounded-lg px-2 py-1.5"
 								onSelect={onNewShellTerminal}
 							>
-								<span className="grid size-control-sm shrink-0 place-items-center rounded-md bg-background/60 text-muted-foreground shadow-xs">
-									<TerminalIcon aria-hidden="true" className="size-icon-sm! text-muted-foreground!" />
-								</span>
-								<span className="min-w-0 flex-1 font-semibold">{t("shortcut.new-shell-terminal")}</span>
-								<DropdownMenuShortcut className="rounded bg-background/60 px-1.5 py-0.5 font-mono tracking-normal">
+								<TerminalIcon aria-hidden="true" className="size-icon-xs!" />
+								<span className="min-w-0 flex-1 truncate">{t("shortcut.new-shell-terminal")}</span>
+								<DropdownMenuShortcut className="font-mono tracking-normal">
 									{newTerminalShortcutLabel}
 								</DropdownMenuShortcut>
 							</DropdownMenuItem>
@@ -318,11 +316,11 @@ export function CenterPane({
 								<div className="relative px-0.5 pb-1">
 									<Search
 										aria-hidden="true"
-										className="pointer-events-none absolute top-1/2 left-2.5 size-icon-sm -translate-y-[calc(50%+2px)] text-passive"
+										className="pointer-events-none absolute top-1/2 left-2.5 size-icon-sm -translate-y-1/2 text-passive"
 									/>
 									<Input
 										aria-label={t("terminal.searchSessions")}
-										className="h-control-md rounded-md border-border/70 bg-background/50 pl-7 text-control"
+										className="h-control-form rounded-lg border-border/70 bg-background/50 pr-2.5 pl-7 text-control"
 										onChange={(event) => setSessionSearch(event.target.value)}
 										onKeyDown={(event) => event.stopPropagation()}
 										placeholder={t("terminal.searchSessions")}
@@ -348,14 +346,14 @@ export function CenterPane({
 												/>
 												<span className="min-w-0 flex-1 truncate">{candidate.title}</span>
 												<span className="max-w-20 truncate text-micro text-passive">
-											{isOpen ? t("inspector.open") : candidate.workspaceName}
+													{isOpen ? t("inspector.open") : candidate.workspaceName}
 												</span>
 											</DropdownMenuItem>
-											);
-										})
-									) : (
+										);
+									})
+								) : (
 									<DropdownMenuItem disabled>{t("terminal.noSessionsFound")}</DropdownMenuItem>
-									)}
+								)}
 							</div>
 							{hasMoreSessions && !expandedSessionList ? (
 								<>
