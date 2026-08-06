@@ -123,6 +123,7 @@ func TestGetLaunchCommandInjectsSystemPromptWithoutProjectFiles(t *testing.T) {
 }
 
 func TestGetLaunchCommandInjectsManagedHooksPath(t *testing.T) {
+	t.Setenv(aoRunFileEnvVar, "")
 	dataDir := t.TempDir()
 	p := &Plugin{resolvedBinary: "muse"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
@@ -147,6 +148,7 @@ func TestGetLaunchCommandInjectsManagedHooksPath(t *testing.T) {
 }
 
 func TestGetLaunchCommandCombinesSystemPromptAndManagedHooksEnvironment(t *testing.T) {
+	t.Setenv(aoRunFileEnvVar, "")
 	dataDir := t.TempDir()
 	p := &Plugin{resolvedBinary: "muse"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
@@ -165,6 +167,33 @@ func TestGetLaunchCommandCombinesSystemPromptAndManagedHooksEnvironment(t *testi
 		"env",
 		museSystemPromptEnvVar + "=follow AO rules",
 		museManagedHooksEnvVar + "=" + hooksPath,
+		"muse", "--trust-workspace",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandRoutesHooksToExplicitDaemonRunFile(t *testing.T) {
+	dataDir := t.TempDir()
+	runFile := filepath.Join(t.TempDir(), "running.json")
+	t.Setenv(aoRunFileEnvVar, runFile)
+	p := &Plugin{resolvedBinary: "muse"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		DataDir:   dataDir,
+		SessionID: "sess-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooksPath, err := museManagedHooksPath(dataDir, "sess-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"env",
+		museManagedHooksEnvVar + "=" + hooksPath,
+		aoRunFileEnvVar + "=" + runFile,
 		"muse", "--trust-workspace",
 	}
 	if !reflect.DeepEqual(cmd, want) {
