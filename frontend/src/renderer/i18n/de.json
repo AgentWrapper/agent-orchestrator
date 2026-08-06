@@ -272,7 +272,7 @@
 	"mobile.copyPassword": "Passwort kopieren",
 	"mobile.description": "Koppeln Sie die Agent Orchestrator Mobile-App über Ihr LAN mit diesem Desktop.",
 	"mobile.devices.confirmRemove": "Entfernen bestätigen",
-	"mobile.devices.description": "Mit diesem Desktop gekoppelte Telefone. Stummgeschaltete Geräte bleiben gekoppelt, erhalten aber keine Benachrichtigungen. Ein entferntes Telefon, das sich erneut verbindet, kehrt stummgeschaltet zurück; erzeugen Sie das Passwort neu, um es dauerhaft zu blockieren.",
+	"mobile.devices.description": "Mit diesem Desktop gekoppelte Telefone. Stummgeschaltete Geräte bleiben gekoppelt, erhalten aber keine Benachrichtigungen. Ein entferntes Telefon, das sich erneut verbindet, kehrt stummgeschaltet zurück; erzeugen Sie das Passwort neu und koppeln Sie nur die Telefone erneut, die Sie behalten möchten.",
 	"mobile.devices.empty": "Noch keine Geräte gekoppelt.",
 	"mobile.devices.live": "Online",
 	"mobile.devices.loading": "Geräte werden geladen…",

@@ -299,7 +299,7 @@
 	"mobile.copyPassword": "复制密码",
 	"mobile.description": "通过局域网将 Agent Orchestrator 手机应用与此桌面配对。",
 	"mobile.devices.confirmRemove": "确认移除",
-	"mobile.devices.description": "已与此桌面配对的手机。已静音的设备仍保持配对，但不会收到通知。已移除的手机如果重新连接，会以静音状态返回；如需彻底屏蔽，请重新生成密码。",
+	"mobile.devices.description": "已与此桌面配对的手机。已静音的设备仍保持配对，但不会收到通知。已移除的手机如果重新连接，会以静音状态返回；重新生成密码后，只重新配对你想保留的手机。",
 	"mobile.devices.empty": "尚未配对任何设备。",
 	"mobile.devices.live": "在线",
 	"mobile.devices.loading": "正在加载设备…",

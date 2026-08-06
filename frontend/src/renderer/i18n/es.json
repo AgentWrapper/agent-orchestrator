@@ -274,7 +274,7 @@
 	"mobile.copyPassword": "Copiar contraseña",
 	"mobile.description": "Empareja la aplicación móvil de Agent Orchestrator con este escritorio a través de tu LAN.",
 	"mobile.devices.confirmRemove": "Confirmar eliminación",
-	"mobile.devices.description": "Teléfonos emparejados con este escritorio. Los dispositivos silenciados siguen emparejados pero no reciben notificaciones. Un teléfono eliminado que vuelve a conectarse regresa silenciado; regenera la contraseña para bloquearlo definitivamente.",
+	"mobile.devices.description": "Teléfonos emparejados con este escritorio. Los dispositivos silenciados siguen emparejados pero no reciben notificaciones. Un teléfono eliminado que vuelve a conectarse regresa silenciado; regenera la contraseña y vuelve a emparejar solo los teléfonos que quieras conservar.",
 	"mobile.devices.empty": "Aún no hay dispositivos emparejados.",
 	"mobile.devices.live": "En línea",
 	"mobile.devices.loading": "Cargando dispositivos…",
