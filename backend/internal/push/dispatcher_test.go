@@ -270,6 +270,30 @@ func TestDispatchSkipsMutedDevices(t *testing.T) {
 	}
 }
 
+// TestDispatchAllMutedNeverCallsSend pins the early return in dispatch: when
+// every registered device is muted, the filtered messages slice is empty and
+// Send must never be called at all (not called-with-empty-slice, which would
+// draw a 400 from Expo). TestDispatchSkipsMutedDevices only covers the mixed
+// case, so a regression that dropped the `len(messages) == 0` guard would slip
+// past it silently.
+func TestDispatchAllMutedNeverCallsSend(t *testing.T) {
+	now := time.Now().UTC()
+	store := &fakeDeviceStore{devices: []mobilebridge.PushDevice{
+		{InstallID: "i1", Token: "ExponentPushToken[muted1]", Muted: true, CreatedAt: now, LastSeenAt: now},
+		{InstallID: "i2", Token: "ExponentPushToken[muted2]", Muted: true, CreatedAt: now, LastSeenAt: now},
+	}}
+	sender := newFakeSender(nil)
+	d := NewDispatcher(nil, store, sender, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	d.dispatch(context.Background(), domain.NotificationRecord{ID: "n1", Title: "hi"})
+
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if sender.sent {
+		t.Fatal("Send was called despite every device being muted")
+	}
+}
+
 func TestDispatcherSweepSkipsFreshAndDropsExpired(t *testing.T) {
 	store := &fakeDeviceStore{}
 	sender := newFakeSender(nil)

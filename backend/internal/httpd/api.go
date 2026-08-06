@@ -1,6 +1,7 @@
 package httpd
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -54,6 +55,33 @@ type APIDeps struct {
 	// DeviceRoster and DeviceLive back the desktop-only mobile device roster.
 	DeviceRoster controllers.DeviceRoster
 	DeviceLive   controllers.LiveSet
+}
+
+// normalizeAPIDeps closes the Presence/DeviceLive duplication trap structurally.
+// Liveness enters APIDeps twice — Presence drives the heartbeat middleware that
+// touches it, DeviceLive is what the device roster reads — and nothing enforces
+// they stay the same tracker. If a future edit set Presence but left DeviceLive
+// nil (or re-split them), the roster would silently and permanently report
+// every device offline: no error, no log, no test failure short of a live
+// phone. Defaulting DeviceLive to Presence here, at the one place APIDeps is
+// consumed to build the API, makes that trap unreachable rather than merely
+// currently avoided by careful call-site wiring.
+//
+// A nil Presence on its own is not an error: the roster must keep listing and
+// managing devices with every device simply reporting offline (see
+// MobileDevicesController.List's own nil-Presence fallback) — that decision
+// stands. What IS a real mis-wiring is a live DeviceRoster with no liveness
+// source at all after the fallback above; that gets exactly one startup
+// warning, because a silent-forever-offline roster is precisely what a
+// startup log is for.
+func normalizeAPIDeps(deps APIDeps, log *slog.Logger) APIDeps {
+	if deps.DeviceLive == nil && deps.Presence != nil {
+		deps.DeviceLive = deps.Presence
+	}
+	if deps.DeviceRoster != nil && deps.DeviceLive == nil {
+		log.Warn("mobile device roster has no liveness tracker wired; every device will report offline")
+	}
+	return deps
 }
 
 // API owns one controller per resource and is the single Register call the

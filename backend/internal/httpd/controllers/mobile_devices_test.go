@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
+	"github.com/aoagents/agent-orchestrator/backend/internal/presence"
 )
 
 type fakeRoster struct {
@@ -93,6 +94,49 @@ func TestListDevicesMergesLiveFlag(t *testing.T) {
 	}
 	if !byID["i2"].muted {
 		t.Fatal("i2 should report muted")
+	}
+}
+
+// TestListDevicesFallsBackToPresenceWhenDeviceLiveOmitted exercises the
+// wiring fix end-to-end: a caller (like daemon.go) that sets APIDeps.Presence
+// but leaves DeviceLive nil must still get correct liveness in the roster,
+// because NewRouterWithControl normalizes DeviceLive from Presence before the
+// roster controller is constructed. This is the regression the structural fix
+// in normalizeAPIDeps closes — without it, i1 below would incorrectly report
+// offline.
+func TestListDevicesFallsBackToPresenceWhenDeviceLiveOmitted(t *testing.T) {
+	now := time.Now().UTC()
+	roster := &fakeRoster{devices: []mobilebridge.PushDevice{
+		{InstallID: "i1", Token: "ExponentPushToken[a]", DeviceName: "iPhone", CreatedAt: now, LastSeenAt: now},
+	}}
+	tracker := presence.NewTracker()
+	tracker.Touch("i1")
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log,
+		nil, httpd.APIDeps{DeviceRoster: roster, Presence: tracker}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	res, err := http.Get(srv.URL + "/api/v1/mobile/devices")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+
+	var env struct {
+		Devices []struct {
+			InstallID string `json:"installId"`
+			Live      bool   `json:"live"`
+		} `json:"devices"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Devices) != 1 || !env.Devices[0].Live {
+		t.Fatalf("devices = %+v, want i1 live via the Presence fallback", env.Devices)
 	}
 }
 

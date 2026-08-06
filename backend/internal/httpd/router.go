@@ -45,6 +45,7 @@ type ControlDeps struct {
 // REST routes, never long-lived terminal streams or health probes.
 func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal.Manager, deps APIDeps, control ControlDeps) chi.Router {
 	log = loggerOrDefault(log)
+	deps = normalizeAPIDeps(deps, log)
 	r := chi.NewRouter()
 	api := NewAPI(cfg, deps)
 
