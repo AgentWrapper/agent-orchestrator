@@ -310,6 +310,9 @@ describe("ShellTopbar orchestrator actions", () => {
 
 	it("keeps orchestrator-session actions compact and explains them on hover", async () => {
 		renderTopbar(orchestrator);
+		const providerLabel = screen.getByText("claude-code");
+		expect(providerLabel.previousElementSibling).toHaveAttribute("src", expect.stringContaining("claude-code"));
+		expect(providerLabel.previousElementSibling).toHaveClass("size-icon-2xs");
 
 		const actions = within(screen.getByRole("group", { name: "Page actions" })).getAllByRole("button");
 		expect(actions.map((button) => button.getAttribute("aria-label"))).toEqual(["New task", "Open Kanban"]);

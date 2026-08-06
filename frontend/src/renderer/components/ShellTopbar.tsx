@@ -15,6 +15,7 @@ import {
 import { useEffect, useState } from "react";
 import { animate, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
+import { AgentAvatar } from "./AgentAvatar";
 import { hasConfiguredOrchestratorAgent, sessionIsActive, type WorkspaceSession } from "../types/workspace";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useReverbTopbarModel, type ReverbTopbarSurfaceOverride } from "../hooks/useReverbTopbarModel";
@@ -309,7 +310,7 @@ export function ShellTopbar({
 		isSessionRoute && session ? (
 			<div className="reverb-topbar__state-content">
 				{isOrchestrator ? (
-					<OrchestratorIcon className="size-icon-md shrink-0" aria-hidden="true" />
+					<AgentAvatar className="size-icon-2xs" decorative provider={session.provider} />
 				) : (
 					<GitBranch className="size-icon-md shrink-0" aria-hidden="true" />
 				)}

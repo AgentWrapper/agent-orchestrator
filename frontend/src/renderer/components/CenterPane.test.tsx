@@ -127,7 +127,9 @@ describe("CenterPane toolbar session label", () => {
 		);
 
 		for (const label of ["Orchestrator", "dummy-session", "dummy-2"]) {
-			expect(screen.getByRole("tab", { name: label }).parentElement).toHaveClass("session-pane-tab");
+			const tab = screen.getByRole("tab", { name: label });
+			expect(tab.parentElement).toHaveClass("session-pane-tab");
+			expect(tab.querySelector("img")).toHaveClass("size-icon-2xs");
 		}
 		expect(screen.getByRole("button", { name: "Close session tab dummy-session" })).toHaveClass("size-control-xs");
 		expect(screen.getByRole("button", { name: "Close session tab dummy-2" })).toHaveClass("size-control-xs");

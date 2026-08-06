@@ -23,6 +23,7 @@ import { cn } from "../lib/utils";
 import type { Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
+import { AgentAvatar } from "./AgentAvatar";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { Input } from "./ui/input";
@@ -234,6 +235,7 @@ export function CenterPane({
 											key={projectSession.id}
 											isActive={isCurrent && target.kind !== "shell"}
 											label={isOrchestratorSession(projectSession) ? t("shell.orchestrator") : projectSession.title}
+											provider={projectSession.provider}
 											onSelect={isCurrent ? onSelectSessionTerminal : () => onSelectProjectSession?.(projectSession)}
 											onClose={
 												projectSession.id !== effectiveTabOwnerSessionId
@@ -321,7 +323,11 @@ export function CenterPane({
 												disabled={isOpen}
 												onSelect={() => onAddProjectSession?.(candidate)}
 											>
-												<span className="size-2 shrink-0 rounded-full bg-passive" aria-hidden="true" />
+												<AgentAvatar
+													className="size-icon-2xs"
+													decorative
+													provider={candidate.provider}
+												/>
 												<span className="min-w-0 flex-1 truncate">{candidate.title}</span>
 												<span className="max-w-20 truncate text-micro text-passive">
 											{isOpen ? t("inspector.open") : candidate.workspaceName}
@@ -427,6 +433,7 @@ export function CenterPane({
 
 type SessionPaneTabProps = {
 	label: string;
+	provider: string;
 	isActive: boolean;
 	onSelect?: () => void;
 	onClose?: () => void;
@@ -436,7 +443,7 @@ type SessionPaneTabProps = {
 // background as the inspector rail tabs (Summary · Reviews · Browser), and
 // the full label only becomes the hover tooltip when the tab strip is
 // crowded enough to truncate it.
-function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabProps) {
+function SessionPaneTab({ label, provider, isActive, onSelect, onClose }: SessionPaneTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	return (
@@ -451,7 +458,7 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 				aria-current={isActive}
 				aria-selected={isActive}
 				className={cn(
-					"session-pane-tab__label min-w-flex-min max-w-shell-tab-max truncate font-mono font-semibold transition-colors",
+					"session-pane-tab__label inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1 overflow-hidden font-mono font-semibold transition-colors",
 					isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
 				)}
 				onClick={onSelect}
@@ -460,7 +467,8 @@ function SessionPaneTab({ label, isActive, onSelect, onClose }: SessionPaneTabPr
 				title={isTruncated ? label : t("terminal.sessionAria")}
 				type="button"
 			>
-				{label}
+				<AgentAvatar className="size-icon-2xs" decorative provider={provider} />
+				<span className="truncate">{label}</span>
 			</button>
 			{onClose ? (
 				<button
