@@ -428,11 +428,11 @@ func New(d Deps) *Manager {
 		inputDrained:          make(map[domain.SessionID]chan struct{}),
 		handoffWait:           60 * time.Second,
 		switchTargetStartWait: 3 * time.Second,
-		// Codex can draw its idle composer while startup instructions are still
-		// settling, so a correctly buffered continuation may take longer than ten
-		// seconds to fire its prompt-submit hook. Keep the acknowledgement wait
-		// bounded, but leave enough headroom to avoid a false delivery failure.
-		switchDeliveryAckWait: 30 * time.Second,
+		// Provider startup, including slow MCP initialization, can delay the
+		// prompt-submit hook even though the continuation is correctly buffered.
+		// Keep the acknowledgement wait below the CLI's four-minute switch timeout
+		// while leaving enough headroom to avoid a false delivery failure.
+		switchDeliveryAckWait: 150 * time.Second,
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,

@@ -1795,7 +1795,7 @@ func TestSwitchAgentGatesSendDuringReplacement(t *testing.T) {
 
 func TestSwitchDeliveryAcknowledgementWindowCoversSlowTargetStartup(t *testing.T) {
 	manager := New(Deps{})
-	if got, want := manager.switchDeliveryAckWait, 30*time.Second; got != want {
+	if got, want := manager.switchDeliveryAckWait, 150*time.Second; got != want {
 		t.Fatalf("switch delivery acknowledgement wait = %s, want %s", got, want)
 	}
 }
