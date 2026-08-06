@@ -172,7 +172,7 @@ export function CenterPane({
 			: []),
 		...unpinnedTabs.map((tab) => ({ ...tab, isPinned: false })),
 	];
-	const tabOverflowWatch = `${ownerSessionTab?.id ?? ""}|${orderedTabs.map((tab) => tab.id).join("|")}`;
+	const tabOverflowWatch = visibleTerminalTabs.map((tab) => tab.id).join("|");
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const target = terminalTarget ?? { kind: "worker" };
 	const activeTerminalLabel =
@@ -278,9 +278,18 @@ export function CenterPane({
 	};
 
 	const toggleTerminalTabPinned = (tabId: string) => {
+		const shouldPin = !pinnedTerminalTabIds.includes(tabId);
 		setPinnedTerminalTabIds((current) =>
 			current.includes(tabId) ? current.filter((currentId) => currentId !== tabId) : [...current, tabId],
 		);
+		if (!shouldPin) return;
+		setTerminalTabOrder((currentOrder) => {
+			const nextOrder = orderedTerminalTabs(reorderableTerminalTabs, currentOrder)
+				.map((tab) => tab.id)
+				.filter((currentId) => currentId !== tabId);
+			return [tabId, ...nextOrder];
+		});
+		tabsOverflow.ref.current?.scrollTo?.({ left: 0 });
 	};
 
 	return (

@@ -189,6 +189,8 @@ export function Sidebar({
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
+	const [preserveOverlayChrome, setPreserveOverlayChrome] = useState(isOverlay);
+	const overlayChromeVisible = isOverlay || preserveOverlayChrome;
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
@@ -204,6 +206,11 @@ export function Sidebar({
 			setExpandedChromeVisible(true);
 		}
 	}, [isCollapsed]);
+
+	useLayoutEffect(() => {
+		if (isOverlay) setPreserveOverlayChrome(true);
+		else if (!isCollapsed) setPreserveOverlayChrome(false);
+	}, [isCollapsed, isOverlay]);
 
 	// Disclosure state: projects are expanded by default; a project id present in
 	// this set is collapsed (sessions hidden).
@@ -267,8 +274,8 @@ export function Sidebar({
 			overlay={isOverlay}
 			className={cn(
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
-				isOverlay && "z-sidebar-preview opacity-90 shadow-2xl",
-				isOverlay || !underTopbar
+				overlayChromeVisible && "z-sidebar-preview opacity-95 shadow-2xl",
+				overlayChromeVisible || !underTopbar
 					? "top-0 h-svh!"
 					: "top-(--sidebar-chrome-offset) h-[calc(100svh-var(--sidebar-chrome-offset))]!",
 			)}
@@ -276,7 +283,7 @@ export function Sidebar({
 			<SidebarHeader
 				className={cn(
 					"gap-0 p-0 px-3 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
-					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
+					overlayChromeVisible && underTopbar && "pt-(--sidebar-chrome-offset)!",
 				)}
 			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old

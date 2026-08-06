@@ -373,8 +373,8 @@ describe("CenterPane toolbar session label", () => {
 		fireEvent.click(screen.getByRole("button", { name: `Pin tab ${shells[1].title}` }));
 
 		expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
-			"review the change",
 			"agent-orchestrator-1",
+			"review the change",
 			"do the thing",
 			"agent-orchestrator-0",
 		]);
