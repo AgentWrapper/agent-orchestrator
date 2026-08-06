@@ -158,7 +158,9 @@ func darwinApplicationsBundle() string {
 	if runtime.GOOS != "darwin" {
 		return ""
 	}
-	return filepath.Join("/Applications", appBundleName)
+	// Concatenated, not filepath.Join'd, to match knownAppLocations (and to keep
+	// gocritic's filepathJoin check happy about the leading separator).
+	return "/Applications/" + appBundleName
 }
 
 // appScanLocations is the known-location scan source. It is a package var so
