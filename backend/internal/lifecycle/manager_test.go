@@ -1839,7 +1839,7 @@ func TestApplyReviewBatchSendsCombinedAndDedups(t *testing.T) {
 	}
 }
 
-func TestApplyReviewBatchAutoInjectDisabledSuppressesDelivery(t *testing.T) {
+func TestApplyReviewBatchAutoInjectDisabledNoops(t *testing.T) {
 	st := newFakeStore()
 	rec := working("mer-1")
 	rec.AutoInjectReviewFeedback = false
@@ -1856,8 +1856,8 @@ func TestApplyReviewBatchAutoInjectDisabledSuppressesDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyReviewBatch: %v", err)
 	}
-	if outcome != ReviewDeliverySuppressed || len(msg.msgs) != 0 || st.signatureWrites != 0 {
-		t.Fatalf("disabled auto-inject should suppress, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
+	if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
+		t.Fatalf("disabled auto-inject should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
 	}
 }
 
@@ -1890,16 +1890,12 @@ func TestApplyReviewBatchNoopsWhenWorkerCannotBeNudged(t *testing.T) {
 		{
 			name:   "worker waiting input",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
-			rec: func() domain.SessionRecord {
-				r := working("mer-1")
-				r.Activity.State = domain.ActivityWaitingInput
-				return r
-			}(),
+			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityWaitingInput}},
 		},
 		{
 			name:   "worker agent exited",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
-			rec:    func() domain.SessionRecord { r := working("mer-1"); r.Activity.State = domain.ActivityExited; return r }(),
+			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityExited}},
 		},
 	}
 	for _, tt := range tests {

@@ -321,7 +321,7 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 	if err != nil {
 		return nil, err
 	}
-	if outcome != lifecycle.ReviewDeliverySent && outcome != lifecycle.ReviewDeliverySuppressed {
+	if outcome != lifecycle.ReviewDeliverySent {
 		return nil, nil
 	}
 	deliveredAt := s.clock()

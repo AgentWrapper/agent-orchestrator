@@ -28,10 +28,6 @@ const (
 	// ReviewDeliverySent means the worker nudge was sent or was already covered
 	// by sendOnce dedup state and may be stamped delivered.
 	ReviewDeliverySent ReviewDeliveryOutcome = "sent"
-	// ReviewDeliverySuppressed means the user disabled automatic review-feedback
-	// injection, so the caller may stamp the result as intentionally handled
-	// without sending it to the worker.
-	ReviewDeliverySuppressed ReviewDeliveryOutcome = "suppressed"
 )
 
 // ReviewResult is the already-persisted result of an AO-internal review pass.
@@ -62,7 +58,7 @@ func (m *Manager) ApplyReviewBatch(ctx context.Context, workerID domain.SessionI
 	}
 
 	if !rec.AutoInjectReviewFeedback {
-		return ReviewDeliverySuppressed, nil
+		return ReviewDeliveryNoop, nil
 	}
 
 	if cannotNudge(rec) {
