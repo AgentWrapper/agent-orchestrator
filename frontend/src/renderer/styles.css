@@ -283,12 +283,12 @@
 	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
-	--animate-overlay-in: overlay-in 130ms var(--ease-out);
-	--animate-modal-in: modal-in 180ms var(--ease-out);
+	--animate-overlay-in: overlay-in 80ms var(--ease-out);
+	--animate-modal-in: modal-in 120ms var(--ease-out);
 	--animate-popover-in: popover-in 150ms var(--ease-out);
 	/* Exits are shorter than entries: the system is responding, not deciding. */
-	--animate-overlay-out: overlay-out 90ms ease-in;
-	--animate-modal-out: modal-out 100ms cubic-bezier(0.4, 0, 1, 1);
+	--animate-overlay-out: overlay-out 60ms ease-in;
+	--animate-modal-out: modal-out 70ms cubic-bezier(0.4, 0, 1, 1);
 	--animate-popover-out: popover-out 100ms cubic-bezier(0.4, 0, 1, 1);
 }
 
@@ -609,6 +609,15 @@ button.settings-link-row:hover,
 button.settings-link-row:active {
 	background-color: var(--color-bg-settings-row-hover);
 	color: var(--color-text-settings-title);
+}
+
+/* Grouped rows size around the shared action control, keeping its top/bottom
+ * inset equal to the row's right and left inset. */
+.settings-grouped-rows > .settings-row-bar {
+	height: auto;
+	min-height: calc(var(--size-settings-action-height) + (var(--space-2) * 2));
+	padding-block: var(--space-2);
+	padding-inline: var(--space-3);
 }
 
 @utility settings-menu-item {

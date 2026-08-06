@@ -1,23 +1,27 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ConnectMobileModal } from "./ConnectMobileModal";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
-import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
 
 export type GlobalSettingsSection = "general" | "updates" | "help" | "all";
 
-export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettingsSection }) {
+export function GlobalSettingsForm({
+	section = "all",
+	onOpenKeyboardShortcuts,
+	onOpenConnectMobile,
+}: {
+	section?: GlobalSettingsSection;
+	onOpenKeyboardShortcuts?: () => void;
+	onOpenConnectMobile?: () => void;
+}) {
 	const { t } = useTranslation();
-	const [mobileOpen, setMobileOpen] = useState(false);
 	const [reportProblemOpen, setReportProblemOpen] = useState(false);
-	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
-	// One section per page means the dialog header already names it, so the
-	// page's leading heading would just repeat that title.
-	const leadingTitleHidden = section !== "all";
+	// The dialog header names the active page, so never repeat that title as the
+	// first group heading.
+	const leadingTitleHidden = true;
 
 	return (
 		<>
@@ -29,13 +33,13 @@ export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettin
 				{(section === "all" || section === "general") && (
 					<>
 						<GeneralSettingsSection
-							onConnectMobile={() => setMobileOpen(true)}
+							onConnectMobile={() => onOpenConnectMobile?.()}
 							titleHidden={leadingTitleHidden}
 						/>
 						<SettingsSection title={t("settings.preferences")} grouped>
 							<SettingsLinkRow
 								label={t("settings.keyboardShortcuts")}
-								onClick={() => setKeyboardShortcutsOpen(true)}
+								onClick={() => onOpenKeyboardShortcuts?.()}
 							/>
 						</SettingsSection>
 					</>
@@ -47,12 +51,7 @@ export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettin
 					</SettingsSection>
 				)}
 			</div>
-			<ConnectMobileModal open={mobileOpen} onOpenChange={setMobileOpen} />
 			<ReportProblemDialog open={reportProblemOpen} onOpenChange={setReportProblemOpen} />
-			<KeyboardShortcutsSettingsDialog
-				open={keyboardShortcutsOpen}
-				onOpenChange={setKeyboardShortcutsOpen}
-			/>
 		</>
 	);
 }

@@ -286,7 +286,7 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(await screen.findByText("Saved.")).toBeInTheDocument();
+		expect(await screen.findByText("Saved")).toBeInTheDocument();
 	}, 20_000);
 
 	it("loads workflow fields correctly", async () => {
@@ -504,7 +504,7 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(await screen.findByRole("button", { name: "Save changes" }));
 
 		expect(await screen.findByText("invalid permissions")).toBeInTheDocument();
-		expect(screen.queryByText("Saved.")).not.toBeInTheDocument();
+		expect(screen.queryByText("Saved")).not.toBeInTheDocument();
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
@@ -862,7 +862,7 @@ describe("ProjectSettingsForm", () => {
 
 		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(await screen.findByText("Saved.")).toBeInTheDocument();
+		expect(await screen.findByText("Saved")).toBeInTheDocument();
 		expect(await screen.findByText("Orchestrator restart failed: missing goose binary")).toBeInTheDocument();
 		expect(screen.queryByText("Save failed")).not.toBeInTheDocument();
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["project", "proj-1"] });

@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AgentModelCatalog } from "../../hooks/useAgentModelsQuery";
 import { cn } from "../../lib/utils";
+import { Input } from "../ui/input";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -98,7 +99,7 @@ export function AgentModelCombobox({
 				className="settings-menu-surface max-h-select-menu-max! w-[min(28rem,calc(100vw-2rem))] overflow-y-auto! overflow-x-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
 			>
 				<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
-					<input
+					<Input
 						type="search"
 						aria-label={t("settings.models.searchAria", { label: ariaLabel.toLocaleLowerCase() })}
 						value={search}

@@ -2,24 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useEffect, useState } from "react";
-import {
-	Bot,
-	Fingerprint,
-	FolderGit2,
-	FolderOpen,
-	GitBranch,
-	Hash,
-	Layers,
-	Link,
-	Network,
-	RefreshCw,
-	ScanEye,
-	Shield,
-	Sparkles,
-	Tag,
-	TriangleAlert,
-	type LucideIcon,
-} from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import type { components } from "../../api/schema";
 import {
 	agentModelsQueryKey,
@@ -42,7 +25,7 @@ import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
 import { SettingsRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
-import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 
 type Project = components["schemas"]["Project"];
 type ProjectConfig = components["schemas"]["ProjectConfig"];
@@ -54,8 +37,24 @@ const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permi
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export type ProjectSettingsSection = "general" | "agents" | "workflow" | "intake";
+export interface ProjectSettingsSaveState {
+	isPending: boolean;
+	showSaving: boolean;
+	validationError: string | null;
+	mutationError: string | null;
+	saved: boolean;
+	replacementError: string | null;
+}
 
-export function ProjectSettingsForm({ projectId, section = "general" }: { projectId: string; section?: ProjectSettingsSection }) {
+export function ProjectSettingsForm({
+	projectId,
+	section = "general",
+	onSaveState,
+}: {
+	projectId: string;
+	section?: ProjectSettingsSection;
+	onSaveState?: (state: ProjectSettingsSaveState) => void;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 
@@ -86,13 +85,26 @@ export function ProjectSettingsForm({ projectId, section = "general" }: { projec
 					onSaved={() => queryClient.invalidateQueries({ queryKey: workspaceQueryKey })}
 					projectId={projectId}
 					section={section}
+					onSaveState={onSaveState}
 				/>
 			)}
 		</>
 	);
 }
 
-function SettingsBody({ project, projectId, onSaved, section = "general" }: { project: Project; projectId: string; onSaved: () => void; section?: ProjectSettingsSection }) {
+function SettingsBody({
+	project,
+	projectId,
+	onSaved,
+	section = "general",
+	onSaveState,
+}: {
+	project: Project;
+	projectId: string;
+	onSaved: () => void;
+	section?: ProjectSettingsSection;
+	onSaveState?: (state: ProjectSettingsSaveState) => void;
+}) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const workspaceQuery = useWorkspaceQuery();
@@ -118,6 +130,7 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 		intakeAssignee: intake.assignee ?? "",
 	});
 	const [savedAt, setSavedAt] = useState<number | null>(null);
+	const [showSaving, setShowSaving] = useState(false);
 	const [replacementError, setReplacementError] = useState<string | null>(null);
 	const [validationError, setValidationError] = useState<string | null>(null);
 	const initialOrchestratorAgent = config.orchestrator?.agent ?? "";
@@ -233,18 +246,35 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 		},
 	});
 
-	const saveFooter = (
-		<SaveChangesFooter
-			isPending={mutation.isPending}
-			validationError={validationError}
-			mutationError={mutation.isError ? mutation.error : null}
-			savedAt={savedAt}
-			replacementError={replacementError}
-		/>
-	);
+	useEffect(() => {
+		if (!mutation.isPending) {
+			setShowSaving(false);
+			return;
+		}
+		const timeout = window.setTimeout(() => setShowSaving(true), 200);
+		return () => window.clearTimeout(timeout);
+	}, [mutation.isPending]);
+
+	useEffect(() => {
+		onSaveState?.({
+		isPending: mutation.isPending,
+		showSaving,
+			validationError,
+			mutationError: mutation.isError ? (mutation.error instanceof Error ? mutation.error.message : t("settings.project.saveFailed")) : null,
+			saved: savedAt !== null && !mutation.isPending && !mutation.isError,
+			replacementError: replacementError && !mutation.isPending && !mutation.isError ? replacementError : null,
+		});
+	}, [mutation.error, mutation.isError, mutation.isPending, onSaveState, replacementError, savedAt, showSaving, t, validationError]);
+
+	useEffect(() => {
+		if (savedAt === null) return;
+		const timeout = window.setTimeout(() => setSavedAt(null), 1800);
+		return () => window.clearTimeout(timeout);
+	}, [savedAt]);
 
 	return (
 		<form
+			id="project-settings-form"
 			className="flex w-full flex-col gap-(--size-settings-section-gap)"
 			onSubmit={(event) => {
 				event.preventDefault();
@@ -269,24 +299,27 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 			{/* ── General: identity + workspace repos ───────────────────── */}
 			{section === "general" && (
 				<>
-					<SettingsSection title={t("settings.project.identity")}>
+					<SettingsSection title={t("settings.project.identity")} titleHidden grouped>
 						<SettingsInputRow
-							icon={Tag}
 							label={t("settings.project.name")}
 							id="projectName"
 							value={form.displayName}
 							onChange={(value) => setForm((f) => ({ ...f, displayName: value }))}
 						/>
-						<SettingsValueRow icon={Fingerprint} label={t("settings.project.id")} value={project.id} />
-						<SettingsValueRow icon={Layers} label={t("settings.project.kind")} value={projectKindLabel(project.kind, t)} />
-						<SettingsValueRow icon={FolderOpen} label={t("settings.project.path")} value={project.path} />
-						<SettingsValueRow icon={Link} label={t("settings.project.repo")} value={project.repo || "—"} />
+						<SettingsValueRow label={t("settings.project.id")} value={project.id} />
+						<SettingsValueRow label={t("settings.project.kind")} value={projectKindLabel(project.kind, t)} />
+						<SettingsValueRow label={t("settings.project.path")} value={project.path} href={`file://${encodeURI(project.path)}`} />
+						<SettingsValueRow
+							label={t("settings.project.repo")}
+							value={project.repo || "—"}
+							href={project.repo ? repositoryHref(project.repo) : undefined}
+						/>
 					</SettingsSection>
 					{project.kind === "workspace" && (
-						<SettingsSection title={t("settings.project.workspaceRepos")}>
+						<SettingsSection title={t("settings.project.workspaceRepos")} grouped>
 							{project.workspaceRepos?.length ? (
 								project.workspaceRepos.map((repo) => (
-									<SettingsRow key={repo.name} icon={FolderGit2} label={repo.name}>
+									<SettingsRow key={repo.name} label={repo.name}>
 										<span className="settings-row-value">
 											{repo.relativePath}
 											{repo.repo ? ` · ${repo.repo}` : ""}
@@ -298,18 +331,16 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 							)}
 						</SettingsSection>
 					)}
-					{saveFooter}
 				</>
 			)}
 
 			{/* ── Agents: worker, orchestrator, model, permissions ───────── */}
 			{section === "agents" && (
 				<>
-					<SettingsSection title={t("settings.project.agents")}>
+					<SettingsSection title={t("settings.project.agents")} titleHidden grouped>
 						<RequiredAgentField
 							id="workerAgent"
 							variant="settings-row"
-							icon={Bot}
 							value={form.workerAgent}
 							placeholder={t("settings.project.selectWorker")}
 							label={t("settings.project.defaultWorker")}
@@ -334,7 +365,6 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 						<RequiredAgentField
 							id="orchestratorAgent"
 							variant="settings-row"
-							icon={Network}
 							value={form.orchestratorAgent}
 							placeholder={t("settings.project.selectOrchestrator")}
 							label={t("settings.project.defaultOrchestrator")}
@@ -356,13 +386,13 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 							onModelChange={(orchestratorModel) => setForm((f) => ({ ...f, orchestratorModel }))}
 							onModeChange={(orchestratorMode) => setForm((f) => ({ ...f, orchestratorMode }))}
 						/>
-						<SettingsRow icon={Shield} label={t("settings.project.permissionMode")}>
+						<SettingsRow label={t("settings.project.permissionMode")}>
 							<PermissionModeSelect
 								value={form.permissions}
 								onChange={(v) => setForm((f) => ({ ...f, permissions: v }))}
 							/>
 						</SettingsRow>
-						<SettingsRow icon={RefreshCw} label={t("settings.project.refreshAgents")}>
+						<SettingsRow label={t("settings.project.refreshAgents")}>
 							<button
 								type="button"
 								aria-label={t("settings.project.refreshAgents")}
@@ -385,7 +415,6 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 							<p className="px-1 text-xs leading-row text-error">{t("settings.project.agentsRequired")}</p>
 						)}
 					</SettingsSection>
-					{saveFooter}
 				</>
 			)}
 
@@ -394,9 +423,8 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 				<>
 					{!isScratchProject ? (
 						<>
-							<SettingsSection title={t("settings.project.worktrees")}>
+							<SettingsSection title={t("settings.project.worktrees")} grouped>
 								<SettingsInputRow
-									icon={GitBranch}
 									label={t("settings.project.defaultBranch")}
 									id="defaultBranch"
 									value={form.defaultBranch}
@@ -404,7 +432,6 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 									onChange={(value) => setForm((f) => ({ ...f, defaultBranch: value }))}
 								/>
 								<SettingsInputRow
-									icon={Hash}
 									label={t("settings.project.sessionPrefix")}
 									id="sessionPrefix"
 									value={form.sessionPrefix}
@@ -412,8 +439,8 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 									onChange={(value) => setForm((f) => ({ ...f, sessionPrefix: value }))}
 								/>
 							</SettingsSection>
-							<SettingsSection title={t("settings.project.reviewers")}>
-								<SettingsRow icon={ScanEye} label={t("settings.project.defaultReviewer")}>
+							<SettingsSection title={t("settings.project.reviewers")} grouped>
+								<SettingsRow label={t("settings.project.defaultReviewer")}>
 									<ReviewerSelect
 										value={form.reviewerHarness}
 										onChange={(v) => setForm((f) => ({ ...f, reviewerHarness: v }))}
@@ -427,7 +454,6 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 									/>
 								</SettingsRow>
 							</SettingsSection>
-							{saveFooter}
 						</>
 					) : (
 						<p className="px-1 text-xs text-settings-muted">{t("settings.project.workflow")}</p>
@@ -439,7 +465,7 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 			{section === "intake" && (
 				<>
 					{!isScratchProject ? (
-						<SettingsSection title={t("settings.project.trackerIntake")}>
+						<SettingsSection title={t("settings.project.trackerIntake")} grouped>
 							<IntakeFields
 								variant="settings"
 								form={intakeForm}
@@ -450,50 +476,9 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 					) : (
 						<p className="px-1 text-xs text-settings-muted">{t("settings.project.trackerIntake")}</p>
 					)}
-					{!isScratchProject && saveFooter}
 				</>
 			)}
 		</form>
-	);
-}
-
-function SaveChangesFooter({
-	isPending,
-	validationError,
-	mutationError,
-	savedAt,
-	replacementError,
-}: {
-	isPending: boolean;
-	validationError: string | null;
-	mutationError: unknown;
-	savedAt: number | null;
-	replacementError: string | null;
-}) {
-	const { t } = useTranslation();
-	return (
-		<div className="flex flex-col items-start">
-			<Button type="submit" variant="footer-primary" disabled={isPending}>
-				{isPending ? t("settings.project.saving") : t("settings.project.saveChanges")}
-			</Button>
-			{validationError && (
-				<span className="inline-flex items-center gap-1.5 text-xs text-error">
-					<TriangleAlert className="size-3 shrink-0 text-error" aria-hidden="true" />
-					{validationError}
-				</span>
-			)}
-			{mutationError != null && (
-				<span className="text-xs text-error">
-					{mutationError instanceof Error ? mutationError.message : t("settings.project.saveFailed")}
-				</span>
-			)}
-			{savedAt && !isPending && !mutationError && (
-				<span className="text-xs text-success">{t("settings.project.saved")}</span>
-			)}
-			{replacementError && !isPending && !mutationError && (
-				<span className="text-xs text-warning">{t("settings.project.restartFailed", { error: replacementError })}</span>
-			)}
-		</div>
 	);
 }
 
@@ -559,7 +544,7 @@ function AgentModelField({
 		];
 		return (
 			<>
-				<SettingsRow icon={Sparkles} label={label}>
+				<SettingsRow label={label}>
 					<div className="flex min-w-0 items-center gap-2">
 						<ModelRefreshButton
 							label={label}
@@ -599,7 +584,7 @@ function AgentModelField({
 	};
 	return (
 		<>
-			<SettingsRow icon={Sparkles} label={label}>
+			<SettingsRow label={label}>
 				<div className="flex min-w-0 items-center gap-2">
 					<ModelRefreshButton
 						label={label}
@@ -619,7 +604,7 @@ function AgentModelField({
 						/>
 					) : (
 						<>
-							<input
+							<Input
 								id={datalistID}
 								aria-label={label}
 								className="settings-inline-input settings-model-control"
@@ -679,14 +664,12 @@ function ModelRefreshButton({
 }
 
 function SettingsInputRow({
-	icon,
 	label,
 	id,
 	value,
 	onChange,
 	placeholder,
 }: {
-	icon?: LucideIcon;
 	label: string;
 	id: string;
 	value: string;
@@ -694,8 +677,8 @@ function SettingsInputRow({
 	placeholder?: string;
 }) {
 	return (
-		<SettingsRow icon={icon} label={label}>
-			<input
+		<SettingsRow label={label}>
+			<Input
 				id={id}
 				aria-label={label}
 				className="settings-inline-input"
@@ -708,19 +691,29 @@ function SettingsInputRow({
 }
 
 function SettingsValueRow({
-	icon,
 	label,
 	value,
+	href,
 }: {
-	icon?: LucideIcon;
 	label: string;
 	value: string;
+	href?: string;
 }) {
 	return (
-		<SettingsRow icon={icon} label={label}>
-			<span className="settings-row-value" title={value}>
-				{value}
-			</span>
+		<SettingsRow label={label}>
+			{href ? (
+				<a
+					href={href}
+					className="settings-row-value text-settings-accent hover:underline"
+					title={value}
+					rel={href.startsWith("http") ? "noreferrer" : undefined}
+					target={href.startsWith("http") ? "_blank" : undefined}
+				>
+					{value}
+				</a>
+			) : (
+				<span className="settings-row-value" title={value}>{value}</span>
+			)}
 		</SettingsRow>
 	);
 }
@@ -763,6 +756,16 @@ function projectKindLabel(kind: string, t: TFunction): string {
 		default:
 			return kind || t("settings.project.kind.unknown");
 	}
+}
+
+function repositoryHref(repository: string): string {
+	if (/^https?:\/\//i.test(repository)) return repository;
+	if (repository.startsWith("git@")) {
+		const [host, path] = repository.slice(4).split(":", 2);
+		return `https://${host}/${path.replace(/\.git$/, "")}`;
+	}
+	if (repository.startsWith("ssh://")) return repository.replace(/^ssh:\/\//, "https://").replace(/\.git$/, "");
+	return repository;
 }
 
 function scratchSupportedConfig(config: ProjectConfig): ProjectConfig {

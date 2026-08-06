@@ -32,7 +32,7 @@ export function SettingsSection({
 				className={cn(
 					"w-full",
 					grouped
-						? "flex w-full flex-col overflow-hidden rounded-lg border border-border divide-y divide-border [&>.settings-row-bar]:rounded-none"
+						? "settings-grouped-rows flex w-full flex-col overflow-hidden rounded-lg border border-border divide-y divide-border [&>.settings-row-bar]:rounded-none"
 						: "flex w-full flex-col gap-1.5",
 				)}
 			>
