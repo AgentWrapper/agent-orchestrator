@@ -1138,6 +1138,9 @@ export interface components {
             lastActivityAt: string;
             state: string;
         };
+        DomainAutoReviewConfig: {
+            enabled?: boolean;
+        };
         DomainReviewerConfig: {
             harness: string;
         };
@@ -1327,6 +1330,7 @@ export interface components {
             agentConfig?: components["schemas"]["AgentConfig"];
             agentRules?: string;
             agentRulesFile?: string;
+            autoReview?: components["schemas"]["DomainAutoReviewConfig"];
             containerReap?: components["schemas"]["ContainerReapConfig"];
             defaultBranch?: string;
             env?: {
@@ -1428,6 +1432,8 @@ export interface components {
             sessionId: string;
             status: string;
             targetSha: string;
+            /** @enum {string} */
+            triggerSource: "manual" | "auto";
             verdict: string;
         };
         ReviewRunResponse: {

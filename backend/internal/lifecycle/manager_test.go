@@ -15,16 +15,19 @@ var ctx = context.Background()
 
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
+	projects   map[string]domain.ProjectRecord
 	prs        map[domain.SessionID][]domain.PullRequest
+	reviews    map[string][]domain.PullRequestReview
 	signatures map[string]string
 
 	listPRsErr        error
+	listReviewsErr    error
 	signatureWriteErr error
 	signatureWrites   int
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
+	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, projects: map[string]domain.ProjectRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, reviews: map[string][]domain.PullRequestReview{}, signatures: map[string]string{}}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -37,6 +40,18 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 		return nil, f.listPRsErr
 	}
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	if f.listReviewsErr != nil {
+		return nil, f.listReviewsErr
+	}
+	return f.reviews[prURL], nil
+}
+
+func (f *fakeStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, bool, error) {
+	rec, ok := f.projects[id]
+	return rec, ok, nil
 }
 
 func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {

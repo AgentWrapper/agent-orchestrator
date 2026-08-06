@@ -902,6 +902,12 @@ function ReviewsSection({
 		},
 	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
+	const autoReviewEnabled = projectConfigQuery.data?.autoReview?.enabled === true;
+	const autoReviewStatus = reviewStates.some((state) => state.status === "changes_requested")
+		? t("inspector.autoReviewNextCommit")
+		: session.activity?.state === "idle"
+			? t("inspector.autoReviewAfterIdle")
+			: t("inspector.autoReviewWaitingIdle");
 	const scmSummary = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
 	const githubReviews = prSummaries.filter(
@@ -919,18 +925,23 @@ function ReviewsSection({
 			{/* One panel, two sources, in the order they happen: AO's own reviewer runs
 			    first, then whatever humans and bots leave on the PR. Tabs hid one
 			    behind the other when the point is to read them together. */}
-				<ReviewPanel
+			{autoReviewEnabled ? (
+				<p className="mb-2 text-xs text-passive">
+					<span className="text-success">{t("inspector.autoReviewOn")}</span> · {autoReviewStatus}
+				</p>
+			) : null}
+			<ReviewPanel
 					config={projectConfigQuery.data}
 					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? saveReviewer.error}
-				isLoading={reviewsQuery.isLoading}
-				isCancelling={cancelReview.isPending}
-				isTriggering={triggerReview.isPending}
-				onOpenTerminal={onOpenReviewerTerminal}
-				onCancel={() => cancelReview.mutate()}
-				onTrigger={() => triggerReview.mutate()}
-				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
-				reviewStates={reviewStates}
-				runs={reviewsQuery.data?.runs ?? []}
+					isLoading={reviewsQuery.isLoading}
+					isCancelling={cancelReview.isPending}
+					isTriggering={triggerReview.isPending}
+					onOpenTerminal={onOpenReviewerTerminal}
+					onCancel={() => cancelReview.mutate()}
+					onTrigger={() => triggerReview.mutate()}
+					reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
+					reviewStates={reviewStates}
+					runs={reviewsQuery.data?.runs ?? []}
 					notice={reviewNotice}
 					agentCatalog={agentsQuery.data}
 					reviewerOverride={reviewerOverride}
@@ -939,7 +950,7 @@ function ReviewsSection({
 						saveReviewer.mutate(next);
 					}}
 					session={session}
-				/>
+			/>
 			{scmSummary.isLoading || githubReviewCount > 0 || unresolvedTotal > 0 ? (
 				<Section
 					surface
@@ -1060,6 +1071,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 							sessionId: session.id,
 							status: "delivered",
 							targetSha,
+							triggerSource: "manual" as const,
 							verdict: pr.review === "approved" ? "approved" : "changes_requested",
 						}
 					: undefined;
@@ -1075,6 +1087,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 				sessionId: session.id,
 				status: "complete",
 				targetSha,
+				triggerSource: "manual" as const,
 				verdict: "",
 				...over,
 			});
@@ -1135,6 +1148,7 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 			sessionId: session.id,
 			status: "delivered",
 			targetSha: state.targetSha,
+			triggerSource: "manual" as const,
 		};
 		return [
 			{
@@ -1637,6 +1651,9 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 
 function aoReviewMeta(reviewState: PRReviewState): string {
 	const displayRun = reviewState.latestRun ?? reviewState.previousRun;
+	if (reviewState.status === "running") {
+		return `#${reviewState.prNumber} · Reviewing...`;
+	}
 	if (displayRun?.createdAt) {
 		return `#${reviewState.prNumber} · ${formatTimeCompact(displayRun.createdAt)}`;
 	}

@@ -255,7 +255,7 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	if !launcher.spawned || launcher.notified {
 		t.Fatalf("expected spawn (no live reviewer): %+v", launcher)
 	}
-	if res.Run.TargetSHA != "sha1" || res.Run.Status != domain.ReviewRunRunning || res.Run.Harness != domain.ReviewerClaudeCode {
+	if res.Run.TargetSHA != "sha1" || res.Run.Status != domain.ReviewRunRunning || res.Run.Harness != domain.ReviewerClaudeCode || res.Run.TriggerSource != domain.ReviewTriggerManual {
 		t.Fatalf("run = %+v", res.Run)
 	}
 	if launcher.gotSpec.RunID != res.Run.ID || launcher.gotSpec.BatchID != res.Run.BatchID {
@@ -263,6 +263,19 @@ func TestTriggerSpawnsNewReviewerAndRecordsRunAfterLaunch(t *testing.T) {
 	}
 	if len(store.runs) != 1 || store.review == nil || store.review.ReviewerHandleID != "review-mer-1" {
 		t.Fatalf("persisted review=%+v runs=%+v", store.review, store.runs)
+	}
+}
+
+func TestTriggerWithSourceRecordsAuto(t *testing.T) {
+	store := &fakeStore{}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, &fakeLauncher{handle: "review-mer-1"})
+
+	res, err := eng.TriggerWithSource(context.Background(), "mer-1", "", domain.ReviewTriggerAuto)
+	if err != nil {
+		t.Fatalf("TriggerWithSource: %v", err)
+	}
+	if !res.Created || res.Run.TriggerSource != domain.ReviewTriggerAuto {
+		t.Fatalf("run = %+v", res.Run)
 	}
 }
 

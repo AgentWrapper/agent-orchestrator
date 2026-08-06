@@ -910,6 +910,82 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
+	it("shows whether auto-review is enabled for the project", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+				return { data: { supported: agents, installed: agents, authorized: agents } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "", reviews: [reviewState(3, "needs_review")] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: { reviewers: [{ harness: "codex" }], autoReview: { enabled: true } },
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		const autoReviewStatus = await screen.findByText("Auto-review on");
+		expect(autoReviewStatus).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Run review" })).toBeEnabled();
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+	});
+
+	it("shows reviewing status and cancel action while auto-review is running", async () => {
+		const runningReview = { ...approvedReview, status: "running", verdict: "", body: "" };
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				const agents = ["claude-code", "codex", "opencode"].map((id) => ({ id, label: id }));
+				return { data: { supported: agents, installed: agents, authorized: agents } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return { data: { reviewerHandleId: "reviewer-pane", reviews: [{ ...reviewState(3, "running"), latestRun: runningReview }] } };
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: {
+							id: "ws-1",
+							kind: "git",
+							name: "my-app",
+							path: "/repo",
+							repo: "my-app",
+							defaultBranch: "main",
+							config: { reviewers: [{ harness: "codex" }], autoReview: { enabled: true } },
+						},
+					},
+				};
+			}
+			return { data: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByText("#3 · Reviewing...")).toBeInTheDocument();
+		expect(screen.getAllByText("Reviewing...").length).toBeGreaterThan(0);
+		expect(screen.getByRole("button", { name: "Cancel review" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Re-run review" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Run review" })).not.toBeInTheDocument();
+	});
+
 	it("hides review summary sections when no review data exists", async () => {
 		mockCommonGets([], "", []);
 

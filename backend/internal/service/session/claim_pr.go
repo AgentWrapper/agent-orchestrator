@@ -245,6 +245,7 @@ func claimRowsFromSCM(sessionID domain.SessionID, obs ports.SCMObservation, now 
 			URL:         review.URL,
 			Body:        review.Body,
 			IsBot:       review.IsBot,
+			TargetSHA:   review.TargetSHA,
 			SubmittedAt: submittedAt,
 		})
 	}

@@ -234,8 +234,9 @@ func (p *fakeProvider) FetchReviewThreads(_ context.Context, ref ports.SCMPRRef)
 }
 
 type fakeLifecycle struct {
-	observed []ports.SCMObservation
-	err      error
+	observed          []ports.SCMObservation
+	autoReviewStarted []domain.SessionID
+	err               error
 }
 
 func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionID, obs ports.SCMObservation) error {
@@ -247,7 +248,14 @@ func (l *fakeLifecycle) ApplySCMObservation(_ context.Context, _ domain.SessionI
 }
 
 func newTestObserver(store *fakeStore, provider *fakeProvider, lc Lifecycle, now time.Time) *Observer {
-	return New(provider, store, lc, Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128, IdentityResolver: provider})
+	cfg := Config{Clock: func() time.Time { return now }, Tick: time.Hour, Logger: quietSlog(), CacheMax: 128, IdentityResolver: provider}
+	if f, ok := lc.(*fakeLifecycle); ok {
+		cfg.AutoReview = func(_ context.Context, id domain.SessionID) error {
+			f.autoReviewStarted = append(f.autoReviewStarted, id)
+			return nil
+		}
+	}
+	return New(provider, store, lc, cfg)
 }
 
 func TestDispatchOrderIsDeterministic(t *testing.T) {
@@ -1134,6 +1142,31 @@ func TestPoll_UnchangedHashesDoNotWriteOrNotify(t *testing.T) {
 	}
 	if len(store.writes) != 0 || len(lc.observed) != 0 {
 		t.Fatalf("unchanged hashes wrote/notified: writes=%d observed=%d", len(store.writes), len(lc.observed))
+	}
+}
+
+func TestPoll_UnchangedHashesNotifyReviewerAutoStartWithPRHead(t *testing.T) {
+	store := testStoreWithSession()
+	obsValue := testObs(1)
+	local := knownPR(1)
+	local.MetadataHash = metadataSemanticHash(obsValue)
+	local.CIHash = ciSemanticHash(obsValue.CI)
+	local.ReviewHash = reviewSemanticHash(obsValue.Review)
+	store.prs["p-1"] = []domain.PullRequest{local}
+	provider := &fakeProvider{repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}}, observations: map[string]ports.SCMObservation{prKey(testRepo, 1): obsValue}}
+	lc := &fakeLifecycle{}
+	obs := newTestObserver(store, provider, lc, time.Unix(1, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) != 0 || len(lc.observed) != 0 {
+		t.Fatalf("unchanged reviewer auto-start wrote/notified full lifecycle: writes=%d observed=%d", len(store.writes), len(lc.observed))
+	}
+	if len(lc.autoReviewStarted) != 1 {
+		t.Fatalf("auto-review evaluations = %d, want 1", len(lc.autoReviewStarted))
+	}
+	if got := lc.autoReviewStarted[0]; got != "p-1" {
+		t.Fatalf("auto-review session = %s, want p-1", got)
 	}
 }
 

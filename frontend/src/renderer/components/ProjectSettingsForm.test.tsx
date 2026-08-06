@@ -500,6 +500,31 @@ describe("ProjectSettingsForm", () => {
 		expect(postMock).not.toHaveBeenCalled();
 	});
 
+	it("saves the auto-review pull requests reviewer setting", async () => {
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "codex" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		const autoReview = await screen.findByRole("switch", { name: "Auto-review pull requests" });
+		expect(autoReview).not.toBeChecked();
+		await userEvent.click(autoReview);
+		await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+		await waitFor(() => expect(putMock).toHaveBeenCalledTimes(1));
+			expect(putMock.mock.calls[0]?.[1]?.body.config.autoReview).toEqual({ enabled: true });
+	});
+
 	it("rejects a blank project name before sending the settings update", async () => {
 		mockProject({
 			id: "proj-1",
@@ -655,6 +680,7 @@ describe("ProjectSettingsForm", () => {
 					permissions: "auto",
 				},
 				reviewers: [{ harness: "codex" }],
+				autoReview: { enabled: true },
 				trackerIntake: { enabled: true, provider: "github", assignee: "octocat" },
 			},
 		});
@@ -665,6 +691,7 @@ describe("ProjectSettingsForm", () => {
 		expect(kindRow).toHaveTextContent("scratch");
 		expect(screen.queryByLabelText("Default branch")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Session prefix")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Auto-review pull requests")).not.toBeInTheDocument();
 		expect(screen.queryByText("Reviewers")).not.toBeInTheDocument();
 		expect(screen.queryByText("Tracker intake")).not.toBeInTheDocument();
 

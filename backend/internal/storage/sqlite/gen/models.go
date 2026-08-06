@@ -121,6 +121,7 @@ type PRReview struct {
 	IsBot       int64
 	SubmittedAt time.Time
 	Body        string
+	TargetSha   string
 }
 
 type PRReviewThread struct {
@@ -170,6 +171,7 @@ type ReviewRun struct {
 	GithubReviewID string
 	DeliveredAt    sql.NullTime
 	BatchID        string
+	TriggerSource  domain.ReviewTriggerSource
 }
 
 type Session struct {
@@ -199,9 +201,9 @@ type Session struct {
 	TerminateOnPRMerge bool
 	DiffBaseSha        string
 	DiffBaseRef        string
+	ReviewerHarness    domain.ReviewerHarness
 	IsPinned           bool
 	PinnedAt           sql.NullTime
-	ReviewerHarness    domain.ReviewerHarness
 }
 
 type SessionCleanupFact struct {

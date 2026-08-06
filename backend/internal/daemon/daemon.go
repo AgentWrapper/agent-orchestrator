@@ -17,6 +17,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/autoreview"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
@@ -186,7 +187,13 @@ func Run() error {
 		return fmt.Errorf("wire session service: %w", err)
 	}
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	autoReview := autoreview.New(store, reviewSvc, autoreview.Config{Logger: log})
+	lcStack.autoReviewDone = autoReview.Start(ctx)
+	evaluateAutoReview := func(ctx context.Context, id domain.SessionID) error {
+		_, err := autoReview.EvaluateSession(ctx, id)
+		return err
+	}
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, evaluateAutoReview, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
