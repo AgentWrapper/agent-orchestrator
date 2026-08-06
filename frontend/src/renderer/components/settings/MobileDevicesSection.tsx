@@ -38,9 +38,14 @@ class MobileDevicesQueryError extends Error {
 // Relative time is rendered here, on the desktop, and must stay here: Hermes has
 // no Intl.RelativeTimeFormat, so reusing this in the mobile app crashes at runtime
 // and vitest would not catch it.
-const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-
-function lastSeenLabel(iso: string): string {
+//
+// The formatter locale is threaded through as a parameter (i18next's resolved
+// language) rather than left to default: `new Intl.RelativeTimeFormat(undefined, ...)`
+// resolves to the OS locale, which can disagree with the app's own language
+// setting (e.g. app running in `ja` on an en-US machine) — exactly the mismatch
+// the multi-locale translation work above is meant to prevent.
+function lastSeenLabel(iso: string, language: string): string {
+	const relative = new Intl.RelativeTimeFormat(language, { numeric: "auto" });
 	const seconds = Math.round((Date.parse(iso) - Date.now()) / 1000);
 	const units: [Intl.RelativeTimeFormatUnit, number][] = [
 		["second", 60],
@@ -66,8 +71,12 @@ async function fetchDevices(): Promise<MobileDevice[]> {
 // MobileDevicesSection lists every paired phone with whether its app is open right
 // now, a per-device mute switch, and a remove action. Live status comes from the
 // daemon's presence tracker, which is fed by each phone's own REST poll.
+//
+// The caller (ConnectMobileModal) must only mount this while the bridge is
+// enabled — it is not gated on that itself, and its Switch/remove buttons issue
+// real PATCH/DELETE calls the moment they're interacted with.
 export function MobileDevicesSection() {
-	const { t } = useTranslation();
+	const { t, i18n } = useTranslation();
 	const queryClient = useQueryClient();
 	const [confirmingRemoval, setConfirmingRemoval] = useState<string | null>(null);
 
@@ -106,8 +115,27 @@ export function MobileDevicesSection() {
 	});
 
 	const devices = query.data ?? [];
+	// Stable client-side order: the daemon sorts live-first then by LastSeenAt
+	// descending, and LastSeenAt advances on every phone poll — with 2+ live
+	// devices that ordering can flip on any 3s refetch, jumping rows under the
+	// cursor mid-interaction (e.g. right as someone reaches for "Confirm remove").
+	// installId never changes for a paired device, so sorting on it keeps row
+	// order fixed across polls regardless of what the server returns.
+	const sortedDevices = [...devices].sort((a, b) => a.installId.localeCompare(b.installId));
 	const queryError = query.error as MobileDevicesQueryError | null;
 	const registryUnavailable = queryError?.code === DEVICE_REGISTRY_UNAVAILABLE_CODE;
+	// A transient poll failure (daemon restart mid-refetch, a one-off 500) should
+	// not blank a list we already successfully loaded — that flickers the whole
+	// section red and back every time. Only replace the section outright when
+	// there is no retained data to show. DEVICE_REGISTRY_UNAVAILABLE always takes
+	// over the section regardless of stale data — that state is distinct enough
+	// (an unreadable on-disk registry) that showing a stale list next to it would
+	// be misleading.
+	const hasData = query.data !== undefined;
+	const mutationError =
+		(mute.error instanceof Error && mute.error.message) ||
+		(remove.error instanceof Error && remove.error.message) ||
+		null;
 
 	return (
 		<section className="mt-6">
@@ -120,64 +148,69 @@ export function MobileDevicesSection() {
 				</div>
 			) : registryUnavailable ? (
 				<p className="mt-3 text-xs text-error">{t("mobile.devices.registryUnavailable")}</p>
-			) : queryError ? (
+			) : queryError && !hasData ? (
 				<p className="mt-3 text-xs text-error">{queryError.message}</p>
 			) : devices.length === 0 ? (
 				<p className="mt-3 text-xs text-muted-foreground">{t("mobile.devices.empty")}</p>
 			) : (
-				<ul className="mt-3 space-y-2">
-					{devices.map((device) => {
-						const name = device.deviceName || t("mobile.devices.unnamed");
-						return (
-							<li key={device.installId} className="flex items-center gap-3 rounded-md border p-3">
-								<Smartphone className="size-4 shrink-0 text-muted-foreground" />
-								<div className="min-w-0 flex-1">
-									<div className="truncate text-sm">{name}</div>
-									<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-										{device.live ? (
-											<>
-												<span className={cn("size-1.5 rounded-full bg-success")} aria-hidden />
-												<span>{t("mobile.devices.live")}</span>
-											</>
-										) : (
-											<span>{lastSeenLabel(device.lastSeenAt)}</span>
-										)}
+				<>
+					{queryError && <p className="mt-3 text-xs text-error">{queryError.message}</p>}
+					<ul className="mt-3 space-y-2">
+						{sortedDevices.map((device) => {
+							const name = device.deviceName || t("mobile.devices.unnamed");
+							return (
+								<li key={device.installId} className="flex items-center gap-3 rounded-md border p-3">
+									<Smartphone className="size-4 shrink-0 text-muted-foreground" />
+									<div className="min-w-0 flex-1">
+										<div className="truncate text-sm">{name}</div>
+										<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+											{device.live ? (
+												<>
+													<span className={cn("size-1.5 rounded-full bg-success")} aria-hidden />
+													<span>{t("mobile.devices.live")}</span>
+												</>
+											) : (
+												<span>{lastSeenLabel(device.lastSeenAt, i18n.language)}</span>
+											)}
+										</div>
 									</div>
-								</div>
 
-								<Switch
-									checked={!device.muted}
-									disabled={mute.isPending}
-									aria-label={t("mobile.devices.notificationsFor", { name })}
-									onCheckedChange={(next) =>
-										mute.mutate({ installId: device.installId, muted: !next })
-									}
-								/>
+									<Switch
+										checked={!device.muted}
+										disabled={mute.isPending}
+										aria-label={t("mobile.devices.notificationsFor", { name })}
+										onCheckedChange={(next) =>
+											mute.mutate({ installId: device.installId, muted: !next })
+										}
+									/>
 
-								{confirmingRemoval === device.installId ? (
-									<button
-										type="button"
-										className="text-xs text-error"
-										disabled={remove.isPending}
-										onClick={() => remove.mutate(device.installId)}
-									>
-										{t("mobile.devices.confirmRemove")}
-									</button>
-								) : (
-									<button
-										type="button"
-										aria-label={t("mobile.devices.removeAria", { name })}
-										className="text-muted-foreground hover:text-foreground"
-										onClick={() => setConfirmingRemoval(device.installId)}
-									>
-										<X className="size-4" />
-									</button>
-								)}
-							</li>
-						);
-					})}
-				</ul>
+									{confirmingRemoval === device.installId ? (
+										<button
+											type="button"
+											className="text-xs text-error"
+											disabled={remove.isPending}
+											onClick={() => remove.mutate(device.installId)}
+										>
+											{t("mobile.devices.confirmRemove")}
+										</button>
+									) : (
+										<button
+											type="button"
+											aria-label={t("mobile.devices.removeAria", { name })}
+											className="text-muted-foreground hover:text-foreground"
+											onClick={() => setConfirmingRemoval(device.installId)}
+										>
+											<X className="size-4" />
+										</button>
+									)}
+								</li>
+							);
+						})}
+					</ul>
+				</>
 			)}
+
+			{mutationError && <p className="mt-2 text-xs text-error">{mutationError}</p>}
 		</section>
 	);
 }

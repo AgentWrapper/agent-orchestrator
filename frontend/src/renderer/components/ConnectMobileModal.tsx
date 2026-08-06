@@ -309,7 +309,11 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											{t("mobile.regenerate")}
 										</Button>
 
-										<MobileDevicesSection />
+										{/* Not just visually hidden with the rest of this wrapper: the roster's
+										    Switch/remove controls issue real PATCH/DELETE calls, so they must be
+										    absent from the DOM (not merely aria-hidden) while the bridge is off —
+										    otherwise they stay keyboard-focusable behind the collapse animation. */}
+										{enabled && <MobileDevicesSection />}
 									</div>
 								</div>
 							</div>
