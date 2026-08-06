@@ -223,7 +223,7 @@
 	"inspector.reviewRequestFailed": "Review request failed",
 	"inspector.reviewAlreadyRanForCommit": "This commit has already been reviewed. Push a new commit to run another review.",
 	"inspector.reviewAlreadyRanShort": "Already reviewed",
-	"inspector.reviewBySource.ao": "AO {{harness}}",
+	"inspector.reviewBySource.ao": "AO",
 	"inspector.reviewBySource.github": "On GitHub",
 	"inspector.unresolvedCount": "{{count}} unresolved",
 	"inspector.selectReviewerAgent": "Select reviewer agent",

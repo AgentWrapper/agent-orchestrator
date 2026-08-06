@@ -1253,7 +1253,6 @@ function ReviewsSection({
 					session={session}
 				/>
 			<MergedReviewsSection
-				config={projectConfigQuery.data}
 				githubPRs={githubReviews}
 				isLoading={scmSummary.isLoading}
 				reviewStates={reviewStates}
@@ -1272,14 +1271,12 @@ function ReviewsSection({
  * "AO codex" against the agent that ran, "On GitHub" for everyone else.
  */
 function MergedReviewsSection({
-	config,
 	githubPRs,
 	isLoading,
 	reviewStates,
 	runs,
 	session,
 }: {
-	config?: ProjectConfig;
 	githubPRs: SessionPRSummary[];
 	isLoading: boolean;
 	reviewStates: PRReviewState[];
@@ -1290,7 +1287,6 @@ function MergedReviewsSection({
 	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	const runsByPR = runsByPRFrom(openReviewStates, runs);
 	const aoStates = triggeredReviewStatesFrom(openReviewStates, runs);
-	const fallbackHarness = config?.reviewers?.[0]?.harness || "claude-code";
 
 	// Union by PR number, newest PR first. A PR can appear on either side alone.
 	const byNumber = new Map<number, { ao?: PRReviewState; github?: SessionPRSummary }>();
@@ -1334,9 +1330,11 @@ function MergedReviewsSection({
 						>
 							{ao ? (
 								<div className="flex min-w-0 flex-col gap-1.5">
-									<ReviewSourceLabel>
-										{t("inspector.reviewBySource.ao", { harness: aoReviewHarness(ao, fallbackHarness) })}
-									</ReviewSourceLabel>
+									{/* Names the side, not the agent. A PR's passes can come from
+									    different reviewers, so one harness on the group caption is
+									    wrong as often as it is right, and every run row below already
+									    carries its own agent name and avatar. */}
+									<ReviewSourceLabel>{t("inspector.reviewBySource.ao")}</ReviewSourceLabel>
 									<ReviewerRuns reviewState={ao} runs={runsByPR.get(ao.prUrl) ?? []} />
 								</div>
 							) : null}
@@ -2003,11 +2001,6 @@ function triggeredReviewStatesFrom(openReviewStates: PRReviewState[], runs: Revi
 			reviewState.status === "up_to_date" ||
 			reviewState.status === "changes_requested",
 	);
-}
-
-/** The agent that produced a PR's review, for naming it in the merged list. */
-function aoReviewHarness(reviewState: PRReviewState, fallback: string): string {
-	return reviewState.latestRun?.harness || reviewState.previousRun?.harness || fallback;
 }
 
 function aoReviewMeta(reviewState: PRReviewState): string {

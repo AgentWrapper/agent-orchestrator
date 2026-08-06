@@ -224,7 +224,7 @@
 	"inspector.reviewRequestFailed": "리뷰 요청 실패",
 	"inspector.reviewAlreadyRanForCommit": "이 커밋은 이미 리뷰되었습니다. 다른 리뷰를 실행하려면 새 커밋을 푸시하세요.",
 	"inspector.reviewAlreadyRanShort": "이미 검토됨",
-	"inspector.reviewBySource.ao": "AO {{harness}}",
+	"inspector.reviewBySource.ao": "AO",
 	"inspector.reviewBySource.github": "GitHub에서",
 	"inspector.unresolvedCount": "미해결 {{count}}건",
 	"inspector.selectReviewerAgent": "리뷰어 에이전트 선택",
