@@ -1154,6 +1154,14 @@ func (f *fakeCommander) RollbackSpawn(context.Context, domain.SessionID) (bool, 
 	return false, false, nil
 }
 
+func (f *fakeCommander) StageAttachments(
+	context.Context,
+	domain.SessionID,
+	[]ports.SpawnAttachment,
+) ([]string, error) {
+	return nil, nil
+}
+
 // TestCleanupMapsManagerResult: the service forwards both reclaimed and
 // skipped sessions, with non-nil slices so the wire shape stays stable.
 func TestCleanupMapsManagerResult(t *testing.T) {
@@ -1218,7 +1226,7 @@ func TestSpawnOrchestratorCleanRetiresActiveOrchestratorsBeforeSpawn(t *testing.
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true); err != nil {
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true, ""); err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
 
@@ -1243,7 +1251,7 @@ func TestSpawnOrchestratorCleanContinuesWhenRetireNoticeFails(t *testing.T) {
 	fc := &fakeCommander{sendErr: errors.New("pane closed")}
 	svc := &Service{manager: fc, store: st}
 
-	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true); err != nil {
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true, ""); err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
 	if len(fc.retired) != 1 || fc.retired[0] != "mer-1" {
@@ -1254,6 +1262,56 @@ func TestSpawnOrchestratorCleanContinuesWhenRetireNoticeFails(t *testing.T) {
 	}
 }
 
+func TestSpawnOrchestratorCleanPreservesPersistedMode(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Mode: domain.SessionModeChat, CreatedAt: time.Unix(100, 0).UTC(),
+	}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true, ""); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if fc.spawnedCfg.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("replacement mode = %q, want persisted chat", fc.spawnedCfg.RequestedMode)
+	}
+}
+
+func TestSpawnOrchestratorCleanHonorsExplicitReplacementMode(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Kind: domain.KindOrchestrator,
+		Mode: domain.SessionModeTUI, CreatedAt: time.Unix(100, 0).UTC(),
+	}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", true, domain.SessionModeChat); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if fc.spawnedCfg.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("replacement mode = %q, want explicit chat", fc.spawnedCfg.RequestedMode)
+	}
+}
+
+func TestSpawnOrchestratorUsesExplicitModeForNewProjectOrchestrator(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	svc := &Service{manager: fc, store: st}
+
+	if _, err := svc.SpawnOrchestrator(context.Background(), "mer", false, domain.SessionModeChat); err != nil {
+		t.Fatalf("SpawnOrchestrator: %v", err)
+	}
+	if fc.spawnedCfg.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("requested mode = %q, want chat", fc.spawnedCfg.RequestedMode)
+	}
+}
+
 func TestSpawnOrchestratorCleanRetireNoticeIsBranchNeutral(t *testing.T) {
 	st := newFakeStore()
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
@@ -1261,7 +1319,7 @@ func TestSpawnOrchestratorCleanRetireNoticeIsBranchNeutral(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	if _, err := svc.SpawnOrchestrator(context.Background(), "scratch", true); err != nil {
+	if _, err := svc.SpawnOrchestrator(context.Background(), "scratch", true, ""); err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
 	if len(fc.sentMessages) != 1 {
@@ -1579,7 +1637,7 @@ func TestSpawnOrchestratorUnknownProjectReturns404(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	_, err := svc.SpawnOrchestrator(context.Background(), "ghost", false)
+	_, err := svc.SpawnOrchestrator(context.Background(), "ghost", false, "")
 	var e *apierr.Error
 	if !errors.As(err, &e) || e.Kind != apierr.KindNotFound || e.Code != "PROJECT_NOT_FOUND" {
 		t.Fatalf("err = %v, want apierr.NotFound PROJECT_NOT_FOUND", err)
@@ -1612,6 +1670,10 @@ func TestToAPIErrorMapsWorkspaceBranchSentinels(t *testing.T) {
 		{"agent exited", fmt.Errorf("send mer-1: %w", sessionmanager.ErrAgentExited), apierr.KindConflict, "AGENT_EXITED"},
 		{"agent not exited", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrAgentNotExited), apierr.KindConflict, "AGENT_NOT_EXITED"},
 		{"resume in progress", fmt.Errorf("resume agent mer-1: %w", sessionmanager.ErrResumeInProgress), apierr.KindConflict, "AGENT_RESUME_IN_PROGRESS"},
+		{"chat mode unsupported", fmt.Errorf("spawn: %w", ports.ErrChatUnsupported), apierr.KindConflict, "SESSION_MODE_UNSUPPORTED"},
+		{"chat driver unavailable", fmt.Errorf("spawn: %w", ports.ErrChatDriverUnavailable), apierr.KindConflict, "CHAT_DRIVER_UNAVAILABLE"},
+		{"chat driver incompatible", fmt.Errorf("spawn: %w", ports.ErrChatDriverIncompatible), apierr.KindConflict, "CHAT_DRIVER_INCOMPATIBLE"},
+		{"chat auth required", fmt.Errorf("spawn: %w", ports.ErrChatAuthRequired), apierr.KindConflict, "CHAT_AUTH_REQUIRED"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1859,7 +1921,7 @@ func TestSpawnOrchestratorNoCleanReturnsExistingWhenActiveExists(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false, "")
 	if err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
@@ -1891,7 +1953,7 @@ func TestSpawnOrchestratorNoCleanSpawnsWhenNoneExists(t *testing.T) {
 	fc := &fakeCommander{}
 	svc := &Service{manager: fc, store: st}
 
-	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	got, err := svc.SpawnOrchestrator(context.Background(), "mer", false, "")
 	if err != nil {
 		t.Fatalf("SpawnOrchestrator: %v", err)
 	}
@@ -1923,7 +1985,7 @@ func TestSpawnOrchestratorVerifiesReplacementHarness(t *testing.T) {
 	}
 	svc := &Service{manager: fc, store: st}
 
-	_, err := svc.SpawnOrchestrator(context.Background(), "mer", false)
+	_, err := svc.SpawnOrchestrator(context.Background(), "mer", false, "")
 	if err == nil || !strings.Contains(err.Error(), `uses harness "claude-code", want "codex"`) {
 		t.Fatalf("SpawnOrchestrator err = %v, want harness verification failure", err)
 	}

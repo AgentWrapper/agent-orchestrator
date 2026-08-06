@@ -44,6 +44,8 @@ type TerminalPaneProps = {
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
 	fontSize: number;
+	/** Refuse agent PTY input while a controller transition owns the source. */
+	inputDisabled?: boolean;
 	/** Provider-owned shared transport lease factory. */
 	createMux?: () => TerminalMux;
 };
@@ -102,6 +104,7 @@ function terminalPropsMatch(left: TerminalPaneProps, right: TerminalPaneProps): 
 		left.theme === right.theme &&
 		left.daemonReady === right.daemonReady &&
 		left.fontSize === right.fontSize &&
+		left.inputDisabled === right.inputDisabled &&
 		left.createMux === right.createMux &&
 		terminalTargetMatches(left.terminalTarget, right.terminalTarget)
 	);
@@ -635,6 +638,7 @@ export function TerminalPane({
 	daemonReady,
 	terminalTarget: requestedTerminalTarget,
 	fontSize,
+	inputDisabled,
 }: TerminalPaneProps) {
 	const terminalTarget =
 		requestedTerminalTarget &&
@@ -698,7 +702,7 @@ export function TerminalPane({
 		);
 	}
 
-	const props = { session, theme, daemonReady, terminalTarget, fontSize };
+	const props = { session, theme, daemonReady, terminalTarget, fontSize, inputDisabled };
 	const descriptor = cacheDescriptor(session, terminalTarget);
 	if (cache && descriptor) {
 		return <CachedTerminalSlot descriptor={descriptor} props={props} />;
@@ -711,6 +715,7 @@ export function TerminalPane({
 			theme={theme}
 			daemonReady={daemonReady}
 			fontSize={fontSize}
+			inputDisabled={inputDisabled}
 			terminalTarget={terminalTarget}
 		/>
 	);
@@ -852,6 +857,7 @@ function AttachedTerminal({
 	daemonReady,
 	terminalTarget,
 	fontSize,
+	inputDisabled,
 	createMux,
 	isVisible = true,
 	onFatal,
@@ -909,6 +915,7 @@ function AttachedTerminal({
 		coverInitialReplay: terminalTarget?.kind !== "reviewer",
 		createMux,
 		daemonReady,
+		inputDisabled,
 		isVisible,
 		shellTerminalHandleId,
 		onOutput: watchLinks ? handleOutput : undefined,

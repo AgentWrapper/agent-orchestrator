@@ -31,7 +31,7 @@ export function authHeaders(cfg: ServerConfig): Record<string, string> {
 
 // Strip a pasted scheme (http://, ws://, …) and trailing slashes so we never
 // build a double-scheme URL like "http://https://host".
-function cleanHost(host: string): string {
+export function normalizeServerHost(host: string): string {
 	return host
 		.trim()
 		.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
@@ -93,17 +93,17 @@ export async function clearConfig(): Promise<void> {
 }
 
 export function httpBase(cfg: ServerConfig): string {
-	return `${cfg.secure ? "https" : "http"}://${cleanHost(cfg.host)}:${cfg.httpPort}`;
+	return `${cfg.secure ? "https" : "http"}://${normalizeServerHost(cfg.host)}:${cfg.httpPort}`;
 }
 
 export function muxUrl(cfg: ServerConfig): string {
 	// The Go daemon serves the terminal mux at /mux on the same HTTP port as the
 	// REST API (not a separate mux port).
-	return `${cfg.secure ? "wss" : "ws"}://${cleanHost(cfg.host)}:${cfg.httpPort}/mux`;
+	return `${cfg.secure ? "wss" : "ws"}://${normalizeServerHost(cfg.host)}:${cfg.httpPort}/mux`;
 }
 
 export function isConfigured(cfg: ServerConfig): boolean {
-	return cleanHost(cfg.host).length > 0;
+	return normalizeServerHost(cfg.host).length > 0;
 }
 
 // Small reactive hook so screens re-render when the config changes.

@@ -117,6 +117,9 @@ export type PullRequestFacts = {
 	updatedAt: string;
 };
 
+/** The daemon-committed controller currently responsible for the session. */
+export type SessionMode = "chat" | "tui";
+
 export type WorkspaceSession = {
 	id: string;
 	terminalHandleId?: string;
@@ -129,6 +132,12 @@ export type WorkspaceSession = {
 	/** Reviewer selected for this session; absent means use the project default. */
 	reviewerHarness?: "claude-code" | "codex" | "opencode";
 	kind?: SessionKind;
+	/**
+	 * Which controller is currently committed for this session. The session
+	 * surface renders from THIS value, never from the current creation default.
+	 * Only the daemon's durable interface-transition coordinator may change it.
+	 */
+	mode?: SessionMode;
 	branch?: string;
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
