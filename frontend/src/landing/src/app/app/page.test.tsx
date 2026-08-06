@@ -1059,7 +1059,12 @@ it("creates custom standalone policies and manages one person's agents", async (
   fireEvent.click(screen.getByRole("button", { name: "Share project" }));
 
   const sharePolicy = await screen.findByLabelText("Share policy");
-  expect(within(sharePolicy).getByRole("option", { name: "Reviewers" })).toBeVisible();
+  expect(sharePolicy).toHaveTextContent("Standard");
+  expect(sharePolicy).toHaveTextContent("Command guard on");
+  fireEvent.click(sharePolicy);
+  expect(
+    await screen.findByRole("option", { name: /Reviewers/ }),
+  ).toHaveTextContent("Command guard on");
 
   fireEvent.click(
     screen.getByRole("checkbox", {

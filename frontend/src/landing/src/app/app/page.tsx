@@ -42,9 +42,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type SVGProps,
 } from "react";
+import { createPortal } from "react-dom";
 
 import {
   CloudAPI,
@@ -167,41 +169,213 @@ function SharePolicyPicker({
   disabled,
   onChange,
   label = "Policy",
+  compact = false,
 }: {
   value: SharePolicySelection;
   policies: CloudProjectSharePolicy[];
   disabled?: boolean;
   onChange: (value: SharePolicySelection) => void;
   label?: string;
+  compact?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
+  const [menuStyle, setMenuStyle] = useState<CSSProperties | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const customPolicies = policies.filter((policy) => !fixedSharePolicyType(policy));
-  return (
-    <select
-      className="h-8 w-full rounded-md border border-border bg-background px-2.5 text-sm text-foreground outline-none transition-colors focus:border-[#4d8dff] disabled:cursor-not-allowed disabled:opacity-60"
-      value={value}
-      disabled={disabled}
-      aria-label={label}
-      onChange={(event) =>
-        onChange(event.target.value as SharePolicySelection)
+  const options: Array<{
+    value: SharePolicySelection;
+    label: string;
+    description: string;
+    group: "Built-in" | "Custom policies";
+  }> = [
+    ...sandboxTypeOptions.map((option) => ({
+      value: `preset:${option.value}` as SharePolicySelection,
+      label: option.label,
+      description:
+        option.value === "read_only"
+          ? "View-only access · Command guard on"
+          : option.value === "standard"
+            ? "Selected-agent editing · Command guard on"
+            : "Full access and agent spawning · Command guard off",
+      group: "Built-in" as const,
+    })),
+    ...customPolicies.map((policy) => ({
+      value: `policy:${policy.id}` as SharePolicySelection,
+      label: policy.name,
+      description: `${policy.sessionRoles?.length ?? 0} agent${
+        (policy.sessionRoles?.length ?? 0) === 1 ? "" : "s"
+      } · Command guard ${policy.commandGuardEnabled ? "on" : "off"}`,
+      group: "Custom policies" as const,
+    })),
+  ];
+  const selected =
+    options.find((option) => option.value === value) ??
+    options.find((option) => option.value === "preset:standard")!;
+
+  useEffect(() => {
+    if (!open || !triggerRef.current) {
+      setMenuStyle(null);
+      return;
+    }
+    const rect = triggerRef.current.getBoundingClientRect();
+    const menuWidth = Math.min(
+      Math.max(rect.width, 300),
+      window.innerWidth - 16,
+    );
+    const left = Math.max(
+      8,
+      Math.min(rect.left, window.innerWidth - menuWidth - 8),
+    );
+    const below = window.innerHeight - rect.bottom - 12;
+    const above = rect.top - 12;
+    if (below >= 180 || below >= above) {
+      setMenuStyle({
+        position: "fixed",
+        left,
+        top: rect.bottom + 6,
+        width: menuWidth,
+        maxHeight: Math.max(120, Math.min(320, below)),
+        zIndex: 200,
+      });
+    } else {
+      setMenuStyle({
+        position: "fixed",
+        left,
+        bottom: window.innerHeight - rect.top + 6,
+        width: menuWidth,
+        maxHeight: Math.max(120, Math.min(320, above)),
+        zIndex: 200,
+      });
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (
+        triggerRef.current?.contains(target) ||
+        menuRef.current?.contains(target)
+      ) {
+        return;
       }
-    >
-      <optgroup label="Built-in">
-        {sandboxTypeOptions.map((option) => (
-          <option key={option.value} value={`preset:${option.value}`}>
-            {option.label}
-          </option>
-        ))}
-      </optgroup>
-      {customPolicies.length > 0 ? (
-        <optgroup label="Custom policies">
-          {customPolicies.map((policy) => (
-            <option key={policy.id} value={`policy:${policy.id}`}>
-              {policy.name}
-            </option>
-          ))}
-        </optgroup>
-      ) : null}
-    </select>
+      close();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      close();
+      triggerRef.current?.focus();
+    };
+    const handleScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) return;
+      close();
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [open]);
+
+  const groups = ["Built-in", "Custom policies"] as const;
+  return (
+    <div className="relative w-full">
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`flex w-full items-center gap-2 rounded-md border border-border bg-background px-2.5 text-left text-foreground outline-none transition-colors hover:bg-white/[0.025] focus-visible:border-[#4d8dff] disabled:cursor-not-allowed disabled:opacity-60 ${
+          compact ? "h-8" : "min-h-11 py-1.5"
+        }`}
+        disabled={disabled}
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm">{selected.label}</span>
+          {!compact ? (
+            <span className="mt-0.5 block truncate text-[11px] text-white/35">
+              {selected.description}
+            </span>
+          ) : null}
+        </span>
+        <ChevronDown
+          className={`size-3.5 shrink-0 text-white/35 transition-transform ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+      {open && menuStyle
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="listbox"
+              aria-label={label}
+              style={menuStyle}
+              className="overflow-y-auto rounded-lg border border-white/[0.12] bg-[#191b20] p-1.5 shadow-[0_18px_60px_rgba(0,0,0,0.55)]"
+            >
+              {groups.map((group) => {
+                const groupOptions = options.filter(
+                  (option) => option.group === group,
+                );
+                if (groupOptions.length === 0) return null;
+                return (
+                  <div key={group}>
+                    <div className="px-2 py-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-white/30">
+                      {group}
+                    </div>
+                    {groupOptions.map((option) => {
+                      const isSelected = option.value === value;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="option"
+                          aria-selected={isSelected}
+                          className={`flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors ${
+                            isSelected
+                              ? "bg-[#4d8dff]/10"
+                              : "hover:bg-white/[0.05]"
+                          }`}
+                          onClick={() => {
+                            onChange(option.value);
+                            setOpen(false);
+                            triggerRef.current?.focus();
+                          }}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm text-white/80">
+                              {option.label}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-4 text-white/35">
+                              {option.description}
+                            </span>
+                          </span>
+                          <Check
+                            className={`mt-0.5 size-3.5 shrink-0 text-[#7ba8ff] ${
+                              isSelected ? "opacity-100" : "opacity-0"
+                            }`}
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
   );
 }
 
@@ -3144,6 +3318,7 @@ export default function CloudAppPage() {
                           onChange={(value) =>
                             void updateShareGrantPolicy(grant.id, value)
                           }
+                          compact
                           label={`Policy for ${
                             grant.user.displayName || grant.user.email
                           }`}
