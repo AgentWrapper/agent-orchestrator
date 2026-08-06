@@ -1,12 +1,14 @@
 ---
 title: "Agent Orchestrator 0.12.1"
-description: "28 commits on the same day as 0.12.0. Nine color themes including Nord, Gruvbox and Solarized, per-agent model selection with a real catalog, new tasks that can go through the project orchestrator, and a merge button for a PR that is ready."
+description: "Nine color themes including Nord, Gruvbox and Solarized, per-agent model selection with a real catalog, new tasks that can go through the project orchestrator, and a merge button for a PR that is ready. Also fixes a macOS file descriptor leak from 0.12.0."
 date: "2026-08-05T18:28:27Z"
 ---
 
 > Covers everything since **v0.12.0**.
+>
+> **On macOS, update and then reboot.** 0.12.0 leaked file descriptors, and relaunching the app is not always enough to stop the old daemon binary from serving. See [the postmortem](https://github.com/Untrivial-ai/agent-orchestrator/discussions/3646).
 
-A same-day follow-up to 0.12.0. Most of it is finishing work that 0.12.0 started: the token palette now has themes on top of it, the sidebar it redesigned has animation, and the reviews and browser surfaces it reworked got their rough edges taken off. Two larger pieces landed alongside: per-agent model selection and orchestrator task delegation.
+A same-day follow-up to 0.12.0. Most of it is finishing work that 0.12.0 started: the token palette now has themes on top of it, the sidebar it redesigned has animation, and the reviews and browser surfaces it reworked got their rough edges taken off. Two larger pieces landed alongside, per-agent model selection and orchestrator task delegation, and the macOS descriptor leak that prompted the release is fixed.
 
 28 commits, 6 features and 17 fixes, no breaking changes.
 
@@ -46,7 +48,7 @@ Project lists animate open and closed, the sidebar itself opens and closes on a 
 
 ## Fixes
 
-**Resource leaks.** The workspace file watcher leaked a file descriptor per watched file on macOS, so a long-lived session watching a large tree would climb toward the process limit. (#3624)
+**The macOS descriptor leak.** On 0.12.0, the live Files view leaked file descriptors on macOS and never released them, so after a few hours of use the Files view came up blank and creating a task started failing with a 500. The cause was fsnotify v1.9.0's kqueue backend; 0.12.1 bumps it and adds a regression test on descriptor counts after teardown. Linux and Windows were never affected. [Postmortem](https://github.com/Untrivial-ai/agent-orchestrator/discussions/3646). (#3624)
 
 **Terminals.** A terminal keeps its viewport across navigation instead of resetting scroll position when you come back, and shows the latest output on return. (#3371)
 
@@ -66,6 +68,8 @@ Project lists animate open and closed, the sidebar itself opens and closes on a 
 
 ## Upgrading
 
-GitHub Releases and Homebrew are the supported install paths. Existing installs update in place, and there is nothing to do by hand coming from 0.12.0.
+GitHub Releases and Homebrew are the supported install paths. Existing installs update in place.
+
+On macOS, reboot after updating. When a daemon is already running and was not started by the app, the app attaches to it instead of owning it, so quitting and reopening leaves the old binary serving requests. Rebooting is the reliable way to be sure you are actually on 0.12.1. That attach behavior is being tracked as its own issue.
 
 **Full changelog:** https://github.com/Untrivial-ai/agent-orchestrator/compare/v0.12.0...v0.12.1
