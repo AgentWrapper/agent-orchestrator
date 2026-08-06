@@ -24,6 +24,7 @@ Natural-language-to-command mappings for common AO tasks.
 | Rename a session | `ao session rename <id> "<name>"` |
 | Restore a killed session | `ao session restore <id>` |
 | Clean up terminated sessions | `ao session cleanup` |
+| Make a Docker container this session starts survive AO cleanup | `docker run --label ao.session=$AO_SESSION_ID --label ao.spare=true ...` |
 | See a session's details | `ao session get <id>` |
 | Open the desktop app | `ao start` |
 | Check the daemon is up | `ao status` |

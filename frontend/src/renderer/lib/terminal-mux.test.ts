@@ -4,6 +4,7 @@ import {
 	bytesToBase64,
 	closeFrame,
 	createTerminalMux,
+	createTerminalMuxPool,
 	dataFrame,
 	muxUrlFromApiBase,
 	openFrame,
@@ -34,6 +35,12 @@ describe("terminal-mux framing", () => {
 
 	it("carries cols/rows on resize and id on close", () => {
 		expect(JSON.parse(resizeFrame("s", 120, 40))).toMatchObject({ type: "resize", cols: 120, rows: 40 });
+		expect(JSON.parse(resizeFrame("s", 120, 40, true))).toMatchObject({
+			type: "resize",
+			cols: 120,
+			rows: 40,
+			force: true,
+		});
 		expect(JSON.parse(closeFrame("s"))).toEqual({ ch: "terminal", type: "close", id: "s" });
 	});
 
@@ -184,5 +191,76 @@ describe("createTerminalMux client", () => {
 		mux.dispose();
 		socket.emitClose(); // browser fires close after socket.close()
 		expect(states).toEqual([]);
+	});
+});
+
+describe("createTerminalMuxPool", () => {
+	afterEach(() => {
+		FakeSocket.instances = [];
+	});
+
+	it("leases one shared socket to independent terminal attachments", () => {
+		const pool = createTerminalMuxPool(() =>
+			createTerminalMux("ws://x/mux", FakeSocket as unknown as typeof WebSocket),
+		);
+		const first = pool.acquire();
+		const second = pool.acquire();
+		expect(FakeSocket.instances).toHaveLength(1);
+		const socket = FakeSocket.instances[0];
+		socket.emitOpen();
+
+		first.open("a", 80, 24);
+		second.open("b", 120, 40);
+		expect(socket.sent.map((frame) => JSON.parse(frame).id)).toEqual(["a", "b"]);
+
+		first.dispose();
+		expect(socket.closed).toBe(false);
+		second.dispose();
+		expect(socket.closed).toBe(true);
+	});
+
+	it("routes listeners per lease and creates one replacement socket after a shared disconnect", () => {
+		const pool = createTerminalMuxPool(() =>
+			createTerminalMux("ws://x/mux", FakeSocket as unknown as typeof WebSocket),
+		);
+		const first = pool.acquire();
+		const second = pool.acquire();
+		const firstStates: string[] = [];
+		const secondStates: string[] = [];
+		first.onConnectionChange((state) => firstStates.push(state));
+		second.onConnectionChange((state) => secondStates.push(state));
+		FakeSocket.instances[0].emitOpen();
+		FakeSocket.instances[0].emitClose();
+		expect(firstStates).toEqual(["open", "closed"]);
+		expect(secondStates).toEqual(["open", "closed"]);
+
+		first.dispose();
+		second.dispose();
+		const replacementA = pool.acquire();
+		const replacementB = pool.acquire();
+		expect(FakeSocket.instances).toHaveLength(2);
+		replacementA.dispose();
+		replacementB.dispose();
+	});
+
+	it("releases every underlying listener on lease cleanup", () => {
+		const pool = createTerminalMuxPool(() =>
+			createTerminalMux("ws://x/mux", FakeSocket as unknown as typeof WebSocket),
+		);
+		const lease = pool.acquire();
+		const data: string[] = [];
+		lease.onData("a", (bytes) => data.push(new TextDecoder().decode(bytes)));
+		const socket = FakeSocket.instances[0];
+		socket.emitOpen();
+		lease.dispose();
+		socket.emitMessage(
+			JSON.stringify({
+				ch: "terminal",
+				data: bytesToBase64(new TextEncoder().encode("late")),
+				id: "a",
+				type: "data",
+			}),
+		);
+		expect(data).toEqual([]);
 	});
 });

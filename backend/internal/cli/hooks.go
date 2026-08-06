@@ -41,12 +41,21 @@ const (
 // native payload when present. All four are optional: an old daemon decodes
 // the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
-	State          string `json:"state,omitempty"`
-	Event          string `json:"event,omitempty"`
-	ToolName       string `json:"toolName,omitempty"`
-	ToolUseID      string `json:"toolUseId,omitempty"`
-	AgentSessionID string `json:"agentSessionId,omitempty"`
-	LaunchID       string `json:"launchId,omitempty"`
+	State          string             `json:"state,omitempty"`
+	Event          string             `json:"event,omitempty"`
+	ToolName       string             `json:"toolName,omitempty"`
+	ToolUseID      string             `json:"toolUseId,omitempty"`
+	AgentSessionID string             `json:"agentSessionId,omitempty"`
+	LaunchID       string             `json:"launchId,omitempty"`
+	Usage          *usageHookMetadata `json:"usage,omitempty"`
+}
+
+type usageHookMetadata struct {
+	Harness                string `json:"harness"`
+	TranscriptPath         string `json:"transcriptPath,omitempty"`
+	ModelID                string `json:"modelId,omitempty"`
+	SubagentID             string `json:"subagentId,omitempty"`
+	SubagentTranscriptPath string `json:"subagentTranscriptPath,omitempty"`
 }
 
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
@@ -103,6 +112,33 @@ func hookAgentSessionID(payload []byte) string {
 	return id
 }
 
+func hookUsageMetadata(agent string, payload []byte) *usageHookMetadata {
+	harness := domain.AgentHarness(agent)
+	if harness != domain.HarnessClaudeCode && harness != domain.HarnessCodex {
+		return nil
+	}
+	var native struct {
+		TranscriptPath         string `json:"transcript_path"`
+		Model                  string `json:"model"`
+		SubagentID             string `json:"agent_id"`
+		SubagentTranscriptPath string `json:"agent_transcript_path"`
+	}
+	if json.Unmarshal(payload, &native) != nil {
+		return nil
+	}
+	meta := &usageHookMetadata{
+		Harness:                agent,
+		TranscriptPath:         strings.TrimSpace(native.TranscriptPath),
+		ModelID:                strings.TrimSpace(native.Model),
+		SubagentID:             strings.TrimSpace(native.SubagentID),
+		SubagentTranscriptPath: strings.TrimSpace(native.SubagentTranscriptPath),
+	}
+	if meta.TranscriptPath == "" && meta.SubagentTranscriptPath == "" && meta.ModelID == "" {
+		return nil
+	}
+	return meta
+}
+
 type sessionStartHookOutput struct {
 	HookSpecificOutput struct {
 		HookEventName     string `json:"hookEventName"`
@@ -154,7 +190,8 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	if activitydispatch.SupportsHarness(domain.AgentHarness(agent)) {
 		agentSessionID = hookAgentSessionID(payload)
 	}
-	if !hasActivity && agentSessionID == "" {
+	usage := hookUsageMetadata(agent, payload)
+	if !hasActivity && agentSessionID == "" && usage == nil {
 		// Unknown agent, or an event carrying neither activity nor resumable
 		// session metadata: report nothing.
 		return nil
@@ -168,6 +205,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		ToolUseID:      toolUseID,
 		AgentSessionID: agentSessionID,
 		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+		Usage:          usage,
 	}
 	if hasActivity {
 		req.State = string(state)

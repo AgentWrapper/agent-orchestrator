@@ -3,21 +3,18 @@ export const COMPANY = {
   SHORT_NAME: "AO",
   MARKETING_URL: "https://aoagents.dev",
   DOCS_URL: "https://aoagents.dev/docs",
-  GITHUB_URL: "https://github.com/AgentWrapper/agent-orchestrator",
-  GITHUB_REPO: "AgentWrapper/agent-orchestrator",
+  GITHUB_URL: "https://github.com/Untrivial-ai/agent-orchestrator",
+  GITHUB_REPO: "Untrivial-ai/agent-orchestrator",
   STATUS_URL: "https://status.aoagents.dev",
   TRUST_URL: "https://aoagents.dev/privacy/",
-  MAIL_TO: "mailto:hello@aoagents.dev",
+  MAIL_TO: "mailto:prateek@untrivial.ai",
   X_URL: "https://x.com/aoagents",
-  LINKEDIN_URL: "https://www.linkedin.com/company/agent-orchestrator",
-  YOUTUBE_URL: "https://youtube.com/@aoagents",
+  LINKEDIN_URL: "https://www.linkedin.com/company/agent-orchestrator/",
   DISCORD_URL: "https://discord.com/invite/UZv7JjxbwG",
-  EMAIL_DOMAIN: "@aoagents.dev",
-  FOUNDERS_MAIL_TO: "mailto:founders@aoagents.dev",
-  FOUNDERS_EMAIL: "founders@aoagents.dev",
-  REPORT_ISSUE_URL: "https://github.com/AgentWrapper/agent-orchestrator/issues/new",
+  FOUNDERS_EMAIL: "prateek@untrivial.ai",
+  REPORT_ISSUE_URL: "https://github.com/Untrivial-ai/agent-orchestrator/issues/new",
   LICENSE: "Apache-2.0",
-  LICENSE_URL: "https://github.com/AgentWrapper/agent-orchestrator/blob/main/LICENSE",
+  LICENSE_URL: "https://github.com/Untrivial-ai/agent-orchestrator/blob/main/LICENSE",
 } as const;
 
 export const THEME_STORAGE_KEY = "ao-theme";
@@ -31,7 +28,7 @@ export const PLATFORMS = {
   LINUX: "linux",
 } as const;
 
-export const GITHUB_STARS_URL = "https://api.github.com/repos/AgentWrapper/agent-orchestrator";
+export const GITHUB_STARS_URL = "https://api.github.com/repos/Untrivial-ai/agent-orchestrator";
 
 // macOS still points at the .zip on purpose. The .dmg first-install artifact is
 // built by frontend/makers/maker-dmg.ts, but no published release carries it yet,
@@ -40,10 +37,19 @@ export const GITHUB_STARS_URL = "https://api.github.com/repos/AgentWrapper/agent
 // That flip is rollout step 6 in issue #3267 and must happen only after a real
 // release has been cut and the dmg verified. The .zip keeps publishing forever
 // either way, because electron-updater cannot auto-update from a .dmg.
-export const DOWNLOAD_URL_MAC_ARM64 = "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip";
-export const DOWNLOAD_URL_MAC_X64 = "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip";
-export const DOWNLOAD_URL_WINDOWS = "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe";
-export const DOWNLOAD_URL_LINUX = "https://github.com/AgentWrapper/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage";
+export const DOWNLOAD_URL_MAC_ARM64 = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-arm64.zip";
+export const DOWNLOAD_URL_MAC_X64 = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-darwin-x64.zip";
+export const DOWNLOAD_URL_WINDOWS = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-win32-x64.exe";
+export const DOWNLOAD_URL_LINUX = "https://github.com/Untrivial-ai/agent-orchestrator/releases/latest/download/agent-orchestrator-linux-x64.AppImage";
+
+// AO Mobile. iOS ships as a TestFlight beta — the same link the desktop app's
+// Connect Mobile panel opens (frontend/src/renderer/components/settings/
+// ConnectMobileGetApp.tsx), so the two must be changed together. Android is on
+// its way to Play (see docs/android-play-setup.md) and has no public link yet.
+export const TESTFLIGHT_URL = "https://testflight.apple.com/join/t4U3fu2H";
+
+/** Apple's TestFlight app itself — step one, and useless to skip. */
+export const TESTFLIGHT_APP_URL = "https://apps.apple.com/app/testflight/id899247664";
 
 export const AGENT_HARNESSES = 23;
 export const TAGLINE = "Stop babysitting agents. Start merging real work.";

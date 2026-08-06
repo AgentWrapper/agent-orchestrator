@@ -29,7 +29,17 @@ func (t NotificationType) Valid() bool {
 	}
 }
 
-// NotificationStatus is the read state for a stored notification.
+// NeedsResolution reports whether t describes an issue that stays open until
+// something changes (an agent waiting on the user, a PR waiting on a merge).
+// Terminal facts — a PR that merged or closed — describe something that already
+// happened, so they are surfaced once as unseen and never held as unresolved.
+func (t NotificationType) NeedsResolution() bool {
+	return t == NotificationNeedsInput || t == NotificationReadyToMerge
+}
+
+// NotificationStatus is the seen state for a stored notification. The stored
+// values remain "unread"/"read" for wire and schema compatibility; "unread"
+// means the user has not opened the notification panel since it arrived.
 type NotificationStatus string
 
 const (
@@ -57,11 +67,19 @@ const (
 	NotificationListUnread NotificationListStatus = "unread"
 	// NotificationListAll returns both read and unread notifications.
 	NotificationListAll NotificationListStatus = "all"
+	// NotificationListUnresolved returns notifications whose underlying issue is
+	// still open, regardless of whether the user has already seen them.
+	NotificationListUnresolved NotificationListStatus = "unresolved"
 )
 
 // Valid reports whether s is a supported notification list filter.
 func (s NotificationListStatus) Valid() bool {
-	return s == NotificationListUnread || s == NotificationListAll
+	switch s {
+	case NotificationListUnread, NotificationListAll, NotificationListUnresolved:
+		return true
+	default:
+		return false
+	}
 }
 
 // NotificationRecord is the durable notification persistence shape.
@@ -75,6 +93,30 @@ type NotificationRecord struct {
 	Body      string
 	Status    NotificationStatus
 	CreatedAt time.Time
+	// ResolvedAt is when the underlying issue went away — the session received
+	// its input, or the PR stopped waiting on a merge. Zero means still open.
+	// Only AO writes it; there is no user-facing "resolve" action.
+	ResolvedAt time.Time
+}
+
+// Resolved reports whether the issue behind this notification is closed.
+func (r NotificationRecord) Resolved() bool { return !r.ResolvedAt.IsZero() }
+
+// NotificationEventKind distinguishes the live notification stream events.
+type NotificationEventKind string
+
+const (
+	// NotificationCreated announces a newly persisted notification.
+	NotificationCreated NotificationEventKind = "created"
+	// NotificationResolved announces that a stored notification's underlying
+	// issue went away, so open dashboards can drop it from the unresolved list.
+	NotificationResolved NotificationEventKind = "resolved"
+)
+
+// NotificationEvent is one live notification-stream message.
+type NotificationEvent struct {
+	Kind   NotificationEventKind
+	Record NotificationRecord
 }
 
 var (

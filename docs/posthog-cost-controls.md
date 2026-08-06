@@ -40,30 +40,65 @@ include `telemetry_schema_version = 2`.
 
 Configure PostHog ingestion controls for project `475752` in this order.
 
-1. Keep all `ao.v2.*` events.
-2. Drop legacy CLI firehose events where `event = 'ao.cli.invoked'` and
-   `actor_type` is missing or null.
-3. Drop legacy active-user firehose events where `event = 'ao.app.active'`,
-   `channel = 'cli'`, `actor_type` is missing or null, and `command_path` is in:
-   - `ao hooks`
-   - `ao session ls`
-   - `ao session get`
-   - `ao orchestrator ls`
-   - `ao status`
-   - `ao project ls`
-   - `ao project get`
-   - `ao pty-host`
+Define `normalized_command_path` as `command_path` lowercased, trimmed, and with
+repeated whitespace collapsed. A routine command is one where
+`normalized_command_path` equals one of these paths, or starts with one of them
+followed by a space:
+
+- `ao hooks`
+- `ao session ls`
+- `ao session get`
+- `ao orchestrator ls`
+- `ao status`
+- `ao project ls`
+- `ao project get`
+- `ao pty-host`
+
+1. Keep non-routine `ao.v2.*` events.
+2. Drop `ao.cli.invoked` when the command is routine, regardless of
+   `actor_type`.
+3. Drop `ao.app.active` when `channel = 'cli'` and the command is routine,
+   regardless of `actor_type`.
 4. Keep legacy `ao.app.active` where `channel = 'renderer'` so old desktop-only
    installs still contribute to DAU until they update.
 5. Keep low-volume reliability events such as `ao.session.spawned`,
    `ao.session.spawn_failed`, `ao.session.waiting_input_entered`,
    `ao.session.waiting_input_exited`, `ao.http.5xx`, and `ao.daemon.panic`.
 6. Drop `$web_vitals` unless a time-boxed performance investigation needs it.
+7. Apply the same routine-command drop as a defensive backstop to
+   `ao.v2.cli.invoked` and CLI-channel `ao.v2.app.active`, even though current
+   clients should suppress those routine events before transmission.
 
-The 7-day estimate from these rules is a reduction from roughly 2.4M total
-events to well under 250k, before organic adoption of current builds. That is a
-10x+ reduction while keeping renderer DAU, current v2 CLI DAU, current v2
-command adoption, and reliability events.
+`actor_type` is still useful for segmentation and analysis, but it must not be
+part of the ingestion cost-control predicate. The command describes the activity
+to exclude, while `actor_type` changed across client generations.
+
+Examples the ingestion rule should cover:
+
+| Event | Command path | Actor | Result |
+| --- | --- | --- | --- |
+| `ao.cli.invoked` | `ao hooks` | `agent` | Drop |
+| `ao.cli.invoked` | `AO  HOOKS` | `user` | Drop |
+| `ao.cli.invoked` | `ao hooks claude-code post-tool-use` | `user` | Drop |
+| `ao.app.active` (`channel = cli`) | `ao session get sess-123` | `user` | Drop |
+| `ao.cli.invoked` | `ao spawn` | `user` | Keep |
+| `ao.app.active` (`channel = renderer`) | n/a | `renderer` | Keep |
+
+When these project-side ingestion controls are enabled, the 7-day estimate is a
+reduction from roughly 2.4M total events to well under 250k, before organic
+adoption of current builds. That is a 10x+ reduction while keeping renderer
+DAU, current v2 CLI DAU, current v2 command adoption, and reliability events.
+The app code alone does not enforce these PostHog UI rules for already-deployed
+legacy clients.
+
+Deployment boundary checklist:
+
+- Merging this PR protects clients that receive the next release.
+- Updating this Markdown does not modify the live PostHog project.
+- Update the live PostHog transformation separately with the same
+  actor-independent routine-command rule to stop already-deployed clients.
+- Verify the live transformation with the examples above, then check volume
+  shortly after enabling it and again after 24 hours.
 
 ## Follow-up: Failure-only Internal CLI Telemetry
 
@@ -133,6 +168,13 @@ Use layered controls:
    - renderer captures are bounded per event name per minute and per day
    - daemon remote exports are bounded per event name per minute and per day
    - burst-prone daemon failures are aggregated before export
+5. Use the AO kill switch for a stream that turns out to be noisy. Setting
+   `AO_TELEMETRY_DISABLED_EVENTS` silences named streams (with `*` prefix
+   matching) on installs that already exist, without shipping a release. Local
+   SQLite still records them, so the stream stays debuggable. See the kill-switch
+   section in [telemetry.md](telemetry.md). This is the in-app counterpart to a
+   PostHog ingestion rule: the rule stops paying for events already sent, the
+   switch stops sending them.
 
 Those steps protect cost from normal bugs and known old clients, but they do
 not fully protect a public project token from deliberate abuse.
@@ -190,25 +232,41 @@ filter out legacy CLI automation:
 
 ```sql
 SELECT
-    toDate(timestamp) AS day,
+    day,
     uniqExact(distinct_id) AS active_installs
-FROM events
-WHERE timestamp >= now() - INTERVAL 90 DAY
-  AND event = 'ao.app.active'
-  AND NOT (
-    properties.channel = 'cli'
-    AND (properties.actor_type IS NULL OR properties.actor_type = '')
-    AND properties.command_path IN (
-      'ao hooks',
-      'ao session ls',
-      'ao session get',
-      'ao orchestrator ls',
-      'ao status',
-      'ao project ls',
-      'ao project get',
-      'ao pty-host'
+FROM (
+    SELECT
+        distinct_id,
+        toDate(timestamp) AS day,
+        lower(trim(replaceRegexpAll(toString(properties.command_path), '[[:space:]]+', ' '))) AS normalized_command_path,
+        properties.channel AS channel
+    FROM events
+    WHERE timestamp >= now() - INTERVAL 90 DAY
+      AND event = 'ao.app.active'
+)
+WHERE NOT (
+    channel = 'cli'
+    AND (
+        normalized_command_path IN (
+            'ao hooks',
+            'ao session ls',
+            'ao session get',
+            'ao orchestrator ls',
+            'ao status',
+            'ao project ls',
+            'ao project get',
+            'ao pty-host'
+        )
+        OR startsWith(normalized_command_path, 'ao hooks ')
+        OR startsWith(normalized_command_path, 'ao session ls ')
+        OR startsWith(normalized_command_path, 'ao session get ')
+        OR startsWith(normalized_command_path, 'ao orchestrator ls ')
+        OR startsWith(normalized_command_path, 'ao status ')
+        OR startsWith(normalized_command_path, 'ao project ls ')
+        OR startsWith(normalized_command_path, 'ao project get ')
+        OR startsWith(normalized_command_path, 'ao pty-host ')
     )
-  )
+)
 GROUP BY day
 ORDER BY day
 ```
@@ -257,5 +315,8 @@ GROUP BY event, properties.actor_type, properties.channel
 ORDER BY events DESC
 ```
 
-If `ao.cli.invoked` with `actor_type = null` remains above a few hundred events
-per day after the rules are enabled, the drop rule is not broad enough.
+If routine CLI commands still appear in `ao.cli.invoked`, `ao.app.active`,
+`ao.v2.cli.invoked`, or CLI-channel `ao.v2.app.active` after the rules are
+enabled, the drop rule is not broad enough. Check both exact and prefixed shapes
+such as `ao hooks`, `AO  HOOKS`, `ao hooks claude-code post-tool-use`, and
+`ao session get sess-123`.

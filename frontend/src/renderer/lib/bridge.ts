@@ -1,4 +1,5 @@
 import type { AoBridge } from "../../preload";
+import { coerceLocale } from "../../shared/ui-locale";
 export type { FeatureBuild } from "../../main/feature-builds";
 
 export const aoBridge: AoBridge =
@@ -15,9 +16,13 @@ export const aoBridge: AoBridge =
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
+			onCloseShellTerminalShortcut: () => () => undefined,
+			setCloseShellTerminalShortcutEnabled: () => undefined,
 			onOpenSettingsShortcut: () => () => undefined,
 			onPreviousSessionShortcut: () => () => undefined,
 			onNextSessionShortcut: () => () => undefined,
+			onPreviousTabShortcut: () => () => undefined,
+			onNextTabShortcut: () => () => undefined,
 			onFocusTerminalShortcut: () => () => undefined,
 		},
 		terminal: {
@@ -129,7 +134,13 @@ export const aoBridge: AoBridge =
 		},
 		notifications: {
 			show: async () => undefined,
+			setBadge: async () => undefined,
+			devBounce: async () => undefined,
 			onClick: () => () => undefined,
+		},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
 		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),
@@ -138,6 +149,10 @@ export const aoBridge: AoBridge =
 		updateSettings: {
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
+		},
+		uiSettings: {
+			get: async () => ({ locale: "en" as const }),
+			set: async (settings) => ({ locale: coerceLocale(settings.locale) }),
 		},
 		keybindings: {
 			get: async () => ({}),
@@ -151,6 +166,7 @@ export const aoBridge: AoBridge =
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,
+			onTelemetry: () => () => undefined,
 		},
 		featureBuilds: {
 			list: async () => [],

@@ -8,7 +8,10 @@ import { useCallback, useEffect, useState } from "react";
 // kept only for back-compat and no longer used to build the mux URL.
 export type ServerConfig = {
 	host: string; // e.g. "100.101.102.103" or "my-pc.tail1234.ts.net"
-	httpPort: string; // AO daemon HTTP port (REST API + /mux), default 3001
+	// Port of the daemon's LAN mobile bridge (REST API + /mux), default 3011.
+	// NOT 3001 — that is the desktop/CLI daemon, which binds loopback only and
+	// can never be reached from a phone.
+	httpPort: string;
 	muxPort: string; // legacy separate mux port - unused against the Go daemon
 	secure?: boolean; // use https/wss instead of http/ws (TLS / Tailscale funnel)
 	password: string; // daemon connection password for Authorization header
@@ -16,7 +19,7 @@ export type ServerConfig = {
 
 export const DEFAULT_CONFIG: ServerConfig = {
 	host: "",
-	httpPort: "3001",
+	httpPort: "3011",
 	muxPort: "14801",
 	secure: false,
 	password: "",
@@ -28,7 +31,7 @@ export function authHeaders(cfg: ServerConfig): Record<string, string> {
 
 // Strip a pasted scheme (http://, ws://, …) and trailing slashes so we never
 // build a double-scheme URL like "http://https://host".
-function cleanHost(host: string): string {
+export function normalizeServerHost(host: string): string {
 	return host
 		.trim()
 		.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
@@ -78,18 +81,29 @@ export async function saveConfig(cfg: ServerConfig): Promise<void> {
 	}
 }
 
+/**
+ * Forget the paired server entirely. Both storage tiers must be cleared: wiping
+ * only the AsyncStorage blob would leave the connection password behind in the
+ * device keystore, so a later re-pair to the same host would silently
+ * resurrect it.
+ */
+export async function clearConfig(): Promise<void> {
+	await AsyncStorage.removeItem(KEY);
+	await SecureStore.deleteItemAsync(PW_KEY);
+}
+
 export function httpBase(cfg: ServerConfig): string {
-	return `${cfg.secure ? "https" : "http"}://${cleanHost(cfg.host)}:${cfg.httpPort}`;
+	return `${cfg.secure ? "https" : "http"}://${normalizeServerHost(cfg.host)}:${cfg.httpPort}`;
 }
 
 export function muxUrl(cfg: ServerConfig): string {
 	// The Go daemon serves the terminal mux at /mux on the same HTTP port as the
 	// REST API (not a separate mux port).
-	return `${cfg.secure ? "wss" : "ws"}://${cleanHost(cfg.host)}:${cfg.httpPort}/mux`;
+	return `${cfg.secure ? "wss" : "ws"}://${normalizeServerHost(cfg.host)}:${cfg.httpPort}/mux`;
 }
 
 export function isConfigured(cfg: ServerConfig): boolean {
-	return cleanHost(cfg.host).length > 0;
+	return normalizeServerHost(cfg.host).length > 0;
 }
 
 // Small reactive hook so screens re-render when the config changes.

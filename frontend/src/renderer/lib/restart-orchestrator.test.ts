@@ -7,9 +7,20 @@ const { spawnMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("./spawn-orchestrator", () => ({
+	OrchestratorSpawnError: class OrchestratorSpawnError extends Error {
+		constructor(
+			message: string,
+			readonly code?: string,
+			readonly requestId?: string,
+			readonly status?: number,
+		) {
+			super(message);
+		}
+	},
 	spawnOrchestrator: spawnMock,
 }));
 
+import { OrchestratorSpawnError } from "./spawn-orchestrator";
 import { restartProjectOrchestrator } from "./restart-orchestrator";
 
 describe("restartProjectOrchestrator", () => {
@@ -36,10 +47,12 @@ describe("restartProjectOrchestrator", () => {
 			onError,
 		});
 
-		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true);
+		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true, undefined);
 		expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: workspaceQueryKey });
 		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(1, "proj-1", null);
-		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(2, "proj-1", "missing goose binary");
+		expect(setOrchestratorReplacementError).toHaveBeenNthCalledWith(2, "proj-1", {
+			message: "missing goose binary",
+		});
 		expect(setProjectRestarting).toHaveBeenNthCalledWith(1, "proj-1", true);
 		expect(setProjectRestarting).toHaveBeenLastCalledWith("proj-1", false);
 		expect(onError).toHaveBeenCalledWith(failure);
@@ -65,9 +78,41 @@ describe("restartProjectOrchestrator", () => {
 			onError,
 		});
 
-		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", "missing goose binary");
+		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", {
+			message: "missing goose binary",
+		});
 		expect(setProjectRestarting).toHaveBeenLastCalledWith("proj-1", false);
 		expect(onError).toHaveBeenCalledWith(failure);
 		expect(navigate).not.toHaveBeenCalled();
+	});
+
+	it("preserves typed preflight details and retries with an explicit TUI mode", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue();
+		const setOrchestratorReplacementError = vi.fn();
+		spawnMock.mockRejectedValue(
+			new OrchestratorSpawnError(
+				"Claude Code is unavailable",
+				"CHAT_DRIVER_UNAVAILABLE",
+				"request-42",
+				400,
+			),
+		);
+
+		await restartProjectOrchestrator({
+			projectId: "proj-1",
+			queryClient,
+			navigate: vi.fn(),
+			setProjectRestarting: vi.fn(),
+			setOrchestratorReplacementError,
+			mode: "tui",
+		});
+
+		expect(spawnMock).toHaveBeenCalledWith("proj-1", "restart", true, "tui");
+		expect(setOrchestratorReplacementError).toHaveBeenLastCalledWith("proj-1", {
+			message: "Claude Code is unavailable",
+			code: "CHAT_DRIVER_UNAVAILABLE",
+			requestId: "request-42",
+		});
 	});
 });

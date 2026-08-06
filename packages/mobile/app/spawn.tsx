@@ -1,10 +1,9 @@
-import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
 import {
 	InteractionManager,
 	KeyboardAvoidingView,
-	Modal,
 	Platform,
 	Pressable,
 	ScrollView,
@@ -13,70 +12,65 @@ import {
 	TextInput,
 	View,
 } from "react-native";
-import { getAgents, refreshAgents, type AgentCatalog, type AgentInfo } from "../lib/api";
+import { AgentLogo } from "../lib/AgentLogo";
+import { agentErrorCopy } from "../lib/agentError";
+import { defaultAgent, rankAgents } from "../lib/agentPicker";
+import { ApiError, getAgents, getSettings, type AgentCatalog, type SessionMode } from "../lib/api";
+import { classifyConnectionFailure, describeConnectionFailure } from "../lib/connectionError";
+import { chatErrorCopy, isChatPreflightError } from "../lib/chatError";
 import { haptics } from "../lib/haptics";
+import { agentSheetRoute, projectSheetRoute } from "../lib/sheetResult";
 import { useApp } from "../lib/store";
-import { theme } from "../lib/theme";
-import { Button } from "../lib/ui";
-
-type RankedAgent = AgentInfo & {
-	rank: number;
-	reason: string;
-	selectable: boolean;
-};
-
-function rankAgents(catalog: AgentCatalog): RankedAgent[] {
-	const authorizedIds = new Set(catalog.authorized.map((a) => a.id));
-	const installedById = new Map(catalog.installed.map((a) => [a.id, a]));
-	return catalog.supported
-		.map((agent) => {
-			const installed = installedById.get(agent.id);
-			const authStatus = installed?.authStatus;
-			const isAuthorized = authorizedIds.has(agent.id) || authStatus === "authorized";
-			const isAuthUnknown = !!installed && !isAuthorized && authStatus !== "unauthorized";
-			const isSelectable = isAuthorized || isAuthUnknown;
-			const rank = isAuthorized ? 0 : isAuthUnknown ? 1 : installed ? 2 : 3;
-			const reason = !installed ? "Needs install" : isAuthUnknown ? "Auth unknown" : !isAuthorized ? "Needs auth" : "";
-			return { ...agent, rank, reason, selectable: isSelectable };
-		})
-		.sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
-}
+import type { Theme } from "../lib/theme";
+import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
+import { Button, SettingsGroup, SettingsRow } from "../lib/ui";
 
 export default function SpawnModal() {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
 	const { projects, activeProjectId, config, spawn } = useApp();
+
 	const [projectId, setProjectId] = useState<string | null>(null);
 	const [harness, setHarness] = useState("");
+	const [mode, setMode] = useState<SessionMode>("chat");
+	const [chatHarnesses, setChatHarnesses] = useState<string[]>([]);
+	const [name, setName] = useState("");
 	const [prompt, setPrompt] = useState("");
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | null>(null);
-	const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
-	const [loading, setLoading] = useState(true);
-	const [refreshing, setRefreshing] = useState(false);
-	const [pickerOpen, setPickerOpen] = useState(false);
 
-	// Default to the active project, else the only project.
+	const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
+	const [catalogError, setCatalogError] = useState<string | null>(null);
+	const [loading, setLoading] = useState(true);
+	const [offerTUI, setOfferTUI] = useState(false);
+
+	// Seed from the active project, or the only project. Mirrors the store's
+	// `targetProject()`; kept here because the screen needs it as UI state to
+	// drive the picker's value and the button's disabled state.
 	useEffect(() => {
 		if (projectId) return;
 		if (activeProjectId !== "all") setProjectId(activeProjectId);
 		else if (projects.length === 1) setProjectId(projects[0].id);
 	}, [activeProjectId, projects, projectId]);
 
-	// Fetch agent catalog from the daemon.
 	useEffect(() => {
 		if (!config) return;
 		let cancelled = false;
 		setLoading(true);
-		getAgents(config)
-			.then((c) => {
+		Promise.all([getAgents(config), getSettings(config)])
+			.then(([c, settings]) => {
 				if (cancelled) return;
 				setCatalog(c);
-				const ranked = rankAgents(c);
-				const first = ranked.find((a) => a.selectable) ?? ranked[0];
-				if (first && !harness) setHarness(first.id);
+				setChatHarnesses(settings.chatHarnesses);
+				setCatalogError(null);
+				const ranked = rankAgents(c).filter((agent) => settings.chatHarnesses.includes(agent.id));
+				setHarness((h) => (h && settings.chatHarnesses.includes(h) ? h : (defaultAgent(ranked) ?? "")));
 			})
-			.catch(() => {
-				if (!cancelled) setCatalog(null);
+			.catch((e) => {
+				// Previously swallowed into `catalog = null`, which left an empty
+				// picker and no way to tell the daemon was unreachable.
+				if (!cancelled) setCatalogError(agentErrorCopy(e));
 			})
 			.finally(() => {
 				if (!cancelled) setLoading(false);
@@ -86,36 +80,35 @@ export default function SpawnModal() {
 		};
 	}, [config]);
 
-	const handleRefresh = async () => {
-		if (!config || refreshing) return;
-		setRefreshing(true);
-		try {
-			const c = await refreshAgents(config);
-			setCatalog(c);
-			const ranked = rankAgents(c);
-			const first = ranked.find((a) => a.selectable) ?? ranked[0];
-			if (first && !harness) setHarness(first.id);
-		} catch {
-			// keep existing catalog
-		} finally {
-			setRefreshing(false);
-		}
-	};
-
-	const rankedAgents = useMemo(() => (catalog ? rankAgents(catalog) : []), [catalog]);
-	const selectedAgent = rankedAgents.find((a) => a.id === harness);
+	// Refreshing the catalog moved into the agent sheet route, which owns its own
+	// copy of it — see app/sheets/agent.tsx.
+	const allAgents = useMemo(() => rankAgents(catalog), [catalog]);
+	const agents = useMemo(() => mode === "chat" ? allAgents.filter((agent) => chatHarnesses.includes(agent.id)) : allAgents, [allAgents, chatHarnesses, mode]);
+	const selectedAgent = agents.find((a) => a.id === harness);
+	const project = projects.find((p) => p.id === projectId);
 
 	const onSpawn = async () => {
-		if (!projectId) {
-			setError("Pick a project first.");
+		// Validated on submit rather than by disabling the button — desktop's
+		// choice, and the better one: a disabled button with no explanation is
+		// worse than a message naming what is missing.
+		if (!name.trim() || !prompt.trim()) {
+			haptics.error();
+			setError("Name and task are required.");
 			return;
 		}
 		setBusy(true);
 		setError(null);
+		setOfferTUI(false);
 		try {
-			const session = await spawn(prompt.trim() || undefined, projectId, harness || undefined);
+			const session = await spawn({
+				projectId: projectId ?? undefined,
+				prompt: prompt.trim() || undefined,
+				issueId: name.trim() || undefined,
+				harness: harness || undefined,
+				mode,
+			});
 			haptics.success();
-			// Dismiss the modal first, then open the freshly spawned session's terminal
+			// Dismiss the modal first, then open the freshly spawned session's mode-aware surface
 			// once the dismiss transition has settled. Firing both navigations in the
 			// same tick overlaps their animations (the modal retracts while the session
 			// is already sliding in); runAfterInteractions waits for the modal's
@@ -131,208 +124,168 @@ export default function SpawnModal() {
 			});
 		} catch (e) {
 			haptics.error();
-			setError(e instanceof Error ? e.message : "Failed to spawn agent.");
+			setError(spawnErrorCopy(e));
+			setOfferTUI(mode === "chat" && isChatPreflightError(e));
 			setBusy(false);
 		}
 	};
 
 	return (
 		<KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-			<ScrollView contentContainerStyle={{ padding: 16 }} keyboardShouldPersistTaps="handled">
+			<ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
 				<Text style={styles.lead}>
 					Spawn a worker agent. It gets its own isolated workspace, then starts on the task you give it.
 				</Text>
 
-				<Text style={styles.label}>PROJECT</Text>
-				<View style={styles.chips}>
-					{projects.map((p) => (
-						<Pressable
-							key={p.id}
-							style={[styles.chip, projectId === p.id && styles.chipActive]}
-							onPress={() => {
-								haptics.select();
-								setProjectId(p.id);
-							}}
-						>
-							<Text style={[styles.chipText, projectId === p.id && styles.chipTextActive]}>{p.name}</Text>
-						</Pressable>
-					))}
+				<SettingsGroup footer="Agent availability is cached.">
+					<SettingsRow
+						icon="folder"
+						label="Project"
+						value={project?.name ?? "Choose a project"}
+						onPress={() =>
+							router.push(
+								projectSheetRoute({
+									selected: projectId ?? "",
+									onSelect: setProjectId,
+									// "All projects" is a filter — there is nothing to spawn into.
+									includeAll: false,
+									title: "Project",
+									subtitle: "Where this agent gets its workspace.",
+								}),
+							)
+						}
+					/>
+					<SettingsRow
+						icon="cpu"
+						label="Agent"
+						value={loading ? "Loading…" : (selectedAgent?.label ?? "Choose an agent")}
+						// The collapsed row carries the mark too, as desktop's trigger does.
+						leading={selectedAgent ? <AgentLogo harness={selectedAgent.id} size={20} /> : undefined}
+						disabled={loading}
+						onPress={() => router.push(agentSheetRoute({ selected: harness, onSelect: setHarness, allowed: mode === "chat" ? chatHarnesses : undefined, mode }))}
+					/>
+				</SettingsGroup>
+
+				<Text style={styles.label}>INTERFACE</Text>
+				<View accessibilityRole="radiogroup" style={styles.modeControl}>
+					<ModeChoice
+						label="Chat"
+						detail="Native conversation"
+						selected={mode === "chat"}
+						onPress={() => {
+							setMode("chat");
+							setHarness((current) => chatHarnesses.includes(current) ? current : (defaultAgent(allAgents.filter((agent) => chatHarnesses.includes(agent.id))) ?? ""));
+						}}
+					/>
+					<ModeChoice label="Terminal UI" detail="Agent's own TUI" selected={mode === "tui"} onPress={() => { setMode("tui"); setHarness((current) => current || (defaultAgent(allAgents) ?? "")); }} />
 				</View>
+				<Text style={styles.hint}>{mode === "chat" ? "Chat is the mobile default. The agent runs through its structured controller; no tmux is created for it." : "Compatibility mode. The agent runs inside tmux and mobile mirrors its terminal."}</Text>
+				{mode === "chat" && !loading && agents.length === 0 ? <Text style={styles.warn}>No installed agent on this AO host currently supports Chat. Choose Terminal UI or install/authenticate a Chat-capable agent.</Text> : null}
 
-				<View style={[styles.labelRow, { marginTop: 20 }]}>
-					<Text style={styles.label}>AGENT</Text>
-					<Pressable onPress={handleRefresh} disabled={loading || refreshing}>
-						<Text style={styles.refreshLink}>{refreshing ? "Refreshing..." : "Refresh"}</Text>
-					</Pressable>
-				</View>
+				{catalogError ? <Text style={styles.warn}>{catalogError}</Text> : null}
 
-				<Pressable style={styles.pickerTrigger} onPress={() => setPickerOpen(true)} disabled={loading}>
-					<Text style={[styles.pickerTriggerText, !selectedAgent && styles.pickerPlaceholder]}>
-						{loading ? "Loading agents..." : selectedAgent ? selectedAgent.label : "Select agent"}
-					</Text>
-					<Feather name={loading ? "loader" : "chevron-down"} size={16} color={theme.textTertiary} />
-				</Pressable>
-
-				{catalog && rankedAgents.length === 0 && (
-					<Text style={styles.hint}>No agents found. Is the daemon reachable?</Text>
-				)}
-
-				<Text style={[styles.label, { marginTop: 20 }]}>TASK (OPTIONAL)</Text>
+				<Text style={styles.label}>NAME</Text>
 				<TextInput
 					style={styles.input}
+					value={name}
+					onChangeText={setName}
+					placeholder="e.g. fix flaky login test"
+					placeholderTextColor={t.textFaint}
+					autoCapitalize="sentences"
+					returnKeyType="next"
+				/>
+				<Text style={styles.hint}>What this session is called on the board.</Text>
+
+				<Text style={styles.label}>TASK</Text>
+				<TextInput
+					style={[styles.input, styles.textarea]}
 					value={prompt}
 					onChangeText={setPrompt}
 					placeholder="e.g. Fix the flaky login test and open a PR"
-					placeholderTextColor={theme.textTertiary}
+					placeholderTextColor={t.textFaint}
 					multiline
 					autoCapitalize="sentences"
 				/>
 
 				{error ? <Text style={styles.error}>{error}</Text> : null}
+				{offerTUI ? <Button title="Create as Terminal UI instead" variant="ghost" icon="terminal" onPress={() => { setMode("tui"); setOfferTUI(false); setError(null); }} style={{ marginTop: 12 }} /> : null}
 
 				<Button
 					title="Spawn agent"
 					icon="zap"
 					loading={busy}
 					onPress={onSpawn}
-					disabled={!projectId}
+					disabled={!projectId || !harness}
 					style={{ marginTop: 20 }}
 				/>
 				<Button title="Cancel" variant="ghost" onPress={() => router.back()} style={{ marginTop: 10 }} />
 			</ScrollView>
 
-			<Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
-				<Pressable style={styles.modalBackdrop} onPress={() => setPickerOpen(false)}>
-					<Pressable style={styles.modalCard} onPress={() => {}}>
-						<Text style={styles.modalTitle}>Select agent</Text>
-						<ScrollView style={styles.modalList} keyboardShouldPersistTaps="handled">
-							{rankedAgents.map((a) => (
-								<Pressable
-									key={a.id}
-									style={[styles.modalItem, harness === a.id && styles.modalItemActive]}
-									onPress={() => {
-										if (a.selectable) {
-											haptics.select();
-											setHarness(a.id);
-											setPickerOpen(false);
-										}
-									}}
-								>
-									<View style={{ flex: 1 }}>
-										<Text
-											style={[
-												styles.modalItemLabel,
-												harness === a.id && styles.modalItemLabelActive,
-												!a.selectable && styles.modalItemLabelMuted,
-											]}
-										>
-											{a.label}
-										</Text>
-									</View>
-									{a.reason ? (
-										<View style={styles.modalItemReasonRow}>
-											{a.reason === "Auth unknown" ? (
-												<Feather name="alert-triangle" size={12} color={theme.amber} style={{ marginRight: 4 }} />
-											) : null}
-											<Text style={[styles.modalItemReason, a.reason === "Auth unknown" && { color: theme.amber }]}>
-												{a.reason}
-											</Text>
-										</View>
-									) : harness === a.id ? (
-										<Feather name="check" size={16} color={theme.blue} />
-									) : null}
-								</Pressable>
-							))}
-						</ScrollView>
-						<Button title="Cancel" variant="ghost" onPress={() => setPickerOpen(false)} style={{ marginTop: 8 }} />
-					</Pressable>
-				</Pressable>
-			</Modal>
 		</KeyboardAvoidingView>
 	);
 }
 
-const styles = StyleSheet.create({
-	screen: { flex: 1, backgroundColor: theme.bgBase },
-	lead: { color: theme.textSecondary, fontSize: 14, lineHeight: 20, marginBottom: 22 },
-	label: { color: theme.textTertiary, fontSize: 10, letterSpacing: 1, fontWeight: "700" },
-	labelRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 },
-	refreshLink: { color: theme.blue, fontSize: 12, fontWeight: "600" },
-	chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+function ModeChoice({ label, detail, selected, onPress }: { label: string; detail: string; selected: boolean; onPress(): void }) {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
+	return (
+		<Pressable
+			accessibilityRole="radio"
+			accessibilityState={{ selected }}
+			onPress={() => { haptics.select(); onPress(); }}
+			style={({ pressed }) => [styles.modeChoice, selected && styles.modeChoiceSelected, pressed && { opacity: 0.75 }]}
+		>
+			<Feather name={label === "Chat" ? "message-square" : "terminal"} size={16} color={selected ? t.blue : t.textTertiary} />
+			<View style={{ flex: 1 }}><Text style={[styles.modeLabel, selected && { color: t.blue }]}>{label}</Text><Text style={styles.modeDetail}>{detail}</Text></View>
+			{selected ? <Feather name="check" size={15} color={t.blue} /> : null}
+		</Pressable>
+	);
+}
 
-	chip: {
-		paddingHorizontal: 14,
-		paddingVertical: 7,
-		borderRadius: 20,
-		borderWidth: 1,
-		borderColor: theme.borderDefault,
-		backgroundColor: theme.bgElevated,
-	},
-	chipActive: { backgroundColor: theme.tintBlue, borderColor: theme.blue },
-	chipText: { color: theme.textSecondary, fontSize: 13, fontWeight: "600" },
-	chipTextActive: { color: theme.blue },
+// Human copy for a failed spawn, matching every other screen. This one used to
+// render `e.message` — the wire string, e.g. "401 - missing or invalid
+// connection password".
+function spawnErrorCopy(e: unknown): string {
+	if (isChatPreflightError(e)) return chatErrorCopy(e);
+	const status = e instanceof ApiError ? e.status : undefined;
+	const { title, message } = describeConnectionFailure(classifyConnectionFailure(status), {
+		host: "",
+		port: "",
+		platform: Platform.OS,
+	});
+	return `${title} ${message}`;
+}
 
-	pickerTrigger: {
-		flexDirection: "row",
-		alignItems: "center",
-		justifyContent: "space-between",
-		backgroundColor: theme.bgElevated,
-		borderColor: theme.borderDefault,
-		borderWidth: 1,
-		borderRadius: 10,
-		paddingHorizontal: 14,
-		paddingVertical: 13,
-	},
-	pickerTriggerText: { color: theme.textPrimary, fontSize: 15, fontWeight: "600", flex: 1 },
-	pickerPlaceholder: { color: theme.textTertiary, fontWeight: "400" },
-
-	hint: { color: theme.textTertiary, fontSize: 12, marginTop: 6 },
-
-	input: {
-		backgroundColor: theme.bgElevated,
-		borderColor: theme.borderDefault,
-		borderWidth: 1,
-		borderRadius: 10,
-		color: theme.textPrimary,
-		paddingHorizontal: 12,
-		paddingVertical: 12,
-		fontSize: 14,
-		minHeight: 96,
-		textAlignVertical: "top",
-	},
-	error: { color: theme.red, fontSize: 13, marginTop: 14 },
-
-	modalBackdrop: {
-		flex: 1,
-		backgroundColor: "rgba(0,0,0,0.6)",
-		alignItems: "center",
-		justifyContent: "center",
-		padding: 24,
-	},
-	modalCard: {
-		width: "100%",
-		maxWidth: 380,
-		maxHeight: "70%",
-		backgroundColor: theme.bgElevated,
-		borderRadius: 14,
-		borderWidth: 1,
-		borderColor: theme.borderDefault,
-		padding: 20,
-	},
-	modalTitle: { color: theme.textPrimary, fontSize: 17, fontWeight: "700", marginBottom: 14 },
-	modalList: { maxHeight: 320 },
-	modalItem: {
-		flexDirection: "row",
-		alignItems: "center",
-		paddingVertical: 12,
-		paddingHorizontal: 12,
-		borderRadius: 8,
-		marginBottom: 4,
-	},
-	modalItemActive: { backgroundColor: theme.tintBlue },
-	modalItemLabel: { color: theme.textPrimary, fontSize: 14, fontWeight: "600" },
-	modalItemLabelActive: { color: theme.blue },
-	modalItemLabelMuted: { color: theme.textTertiary },
-	modalItemReasonRow: { flexDirection: "row", alignItems: "center", marginLeft: 8 },
-	modalItemReason: { color: theme.textTertiary, fontSize: 11 },
-});
+const makeStyles = (t: Theme) =>
+	StyleSheet.create({
+		screen: { flex: 1, backgroundColor: t.bgBase },
+		lead: { color: t.textSecondary, fontSize: 14, lineHeight: 20, marginBottom: 22 },
+		label: {
+			color: t.textTertiary,
+			fontSize: 11,
+			letterSpacing: 1.2,
+			fontWeight: "700",
+			marginTop: 18,
+			marginBottom: 8,
+			marginLeft: 4,
+		},
+		input: {
+			backgroundColor: t.bgElevated,
+			borderColor: t.borderSubtle,
+			borderWidth: 1,
+			borderRadius: 12,
+			color: t.textPrimary,
+			paddingHorizontal: 14,
+			paddingVertical: 12,
+			fontSize: 15,
+		},
+		textarea: { minHeight: 96, textAlignVertical: "top" },
+		hint: { color: t.textTertiary, fontSize: 12, lineHeight: 17, marginTop: 8, marginHorizontal: 4 },
+		warn: { color: t.amber, fontSize: 13, lineHeight: 18, marginTop: 4 },
+		error: { color: t.red, fontSize: 13, lineHeight: 18, marginTop: 16 },
+		modeControl: { flexDirection: "row", gap: 9 },
+		modeChoice: { flex: 1, minHeight: 64, flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: t.borderSubtle, backgroundColor: t.bgElevated },
+		modeChoiceSelected: { borderColor: t.blue, backgroundColor: t.tintBlue },
+		modeLabel: { color: t.textPrimary, fontSize: 13, fontWeight: "700" },
+		modeDetail: { color: t.textTertiary, fontSize: 9, marginTop: 2 },
+	});

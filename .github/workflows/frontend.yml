@@ -26,11 +26,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            frontend/src/landing/package-lock.json
 
       - run: npm ci
+
+      - name: Install landing dependencies
+        run: npm ci --prefix src/landing
 
       - name: Typecheck project
         run: npm run typecheck
@@ -58,7 +63,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 

@@ -18,8 +18,11 @@ sections below — where they conflict, **agent-orchestrator wins**. Do not re-f
   `components/{ProjectSidebar,Dashboard,SessionCard,SessionDetailHeader,SessionInspector,StatusBadge}.tsx`.
 - **Palette (live in `frontend/src/renderer/styles.css` `:root`):** `--bg #0a0b0d`,
   `--bg-1 #15171b`, `--fg #f4f5f7`, `--fg-muted #9ba1aa`, `--fg-passive #646a73`,
-  hairline white-alpha borders, accent `--accent #4d8dff`; status: working=orange
-  `#f59f4c`, needs-you=amber `#e8c14a`, mergeable=green `#74b98a`, fail=red `#ef6b6b`.
+  hairline white-alpha borders, accent `--accent #4d8dff`; status palette updated in
+  PR 3 (token layer): working=blue `#60a5fa` (`--color-status-working`), needs-you=orange
+  `#fb923c` (`--color-status-needs-you`), in-review=yellow `#facc15`
+  (`--color-status-in-review`), ready/mergeable=green `#4ade80` (`--color-status-ready`),
+  fail=red via `--destructive` (`--color-status-exited`).
   The sidebar rail is the cooler `#08090b`.
 - **Cloned surfaces:** the four-column gradient kanban board, the `ProjectSidebar`
   (brand + project disclosure + nested session rows + Settings menu footer), the

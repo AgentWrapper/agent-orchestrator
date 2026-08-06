@@ -8,6 +8,7 @@
 		"jsx": "react-jsx",
 		"types": ["vite/client", "vitest/globals"],
 		"strict": true,
+		"resolveJsonModule": true,
 		"esModuleInterop": true,
 		"allowSyntheticDefaultImports": true,
 		"isolatedModules": true,

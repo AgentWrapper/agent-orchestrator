@@ -1,0 +1,106 @@
+/*
+ * Syntax colours for chat code blocks.
+ *
+ * Built on the terminal ANSI tokens rather than on product roles, for the reason
+ * tokens.css gives for keeping that palette separate: a code block is closer to
+ * a terminal than to app chrome, and mapping `keyword` onto `--color-accent`
+ * would tie the meaning of a Go keyword to the colour of a primary button. Those
+ * tokens already have a light variant, so the theme switch needs nothing here.
+ *
+ * Highlighting is class-based on purpose. Colours resolve at paint time from CSS
+ * variables, so flipping the theme re-paints; it does not re-tokenize.
+ *
+ * Scoped under `.chat-code` so highlight.js class names cannot leak styling into
+ * any other surface that happens to use them.
+ */
+
+.chat-code pre {
+	/* Go and Makefiles arrive tab-indented; the browser default of 8 wastes half
+	   the column in a panel this narrow. */
+	tab-size: 4;
+}
+
+/* A long line scrolls by default: a wrapped line of code is harder to read than
+   a scrolled one. The toggle in the block header opts into wrapping per block. */
+.chat-code[data-wrap="true"] pre {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.chat-code .hljs-comment,
+.chat-code .hljs-quote {
+	color: var(--color-text-passive);
+	font-style: italic;
+}
+
+.chat-code .hljs-keyword,
+.chat-code .hljs-literal,
+.chat-code .hljs-doctag,
+.chat-code .hljs-section,
+.chat-code .hljs-name,
+.chat-code .hljs-tag,
+.chat-code .hljs-selector-tag {
+	color: var(--color-term-magenta);
+}
+
+.chat-code .hljs-string,
+.chat-code .hljs-regexp,
+.chat-code .hljs-char.escape_,
+.chat-code .hljs-addition,
+.chat-code .hljs-template-tag {
+	color: var(--color-term-green);
+}
+
+.chat-code .hljs-number,
+.chat-code .hljs-symbol,
+.chat-code .hljs-bullet,
+.chat-code .hljs-link {
+	color: var(--color-term-yellow);
+}
+
+.chat-code .hljs-title,
+.chat-code .hljs-title.function_,
+.chat-code .hljs-function .hljs-title {
+	color: var(--color-term-blue);
+}
+
+.chat-code .hljs-type,
+.chat-code .hljs-title.class_,
+.chat-code .hljs-class .hljs-title,
+.chat-code .hljs-built_in,
+.chat-code .hljs-formula {
+	color: var(--color-term-cyan);
+}
+
+.chat-code .hljs-attr,
+.chat-code .hljs-attribute,
+.chat-code .hljs-property,
+.chat-code .hljs-variable,
+.chat-code .hljs-template-variable,
+.chat-code .hljs-selector-attr,
+.chat-code .hljs-selector-class,
+.chat-code .hljs-selector-id,
+.chat-code .hljs-selector-pseudo {
+	color: var(--color-term-red);
+}
+
+.chat-code .hljs-deletion {
+	color: var(--color-term-red);
+}
+
+/* Shell prompts, pragmas, shebangs: present but not worth a colour of their own. */
+.chat-code .hljs-meta,
+.chat-code .hljs-meta .hljs-keyword,
+.chat-code .hljs-punctuation,
+.chat-code .hljs-operator,
+.chat-code .hljs-params {
+	color: var(--color-text-muted);
+}
+
+.chat-code .hljs-emphasis {
+	font-style: italic;
+}
+
+.chat-code .hljs-strong {
+	font-weight: var(--font-weight-semibold);
+}
