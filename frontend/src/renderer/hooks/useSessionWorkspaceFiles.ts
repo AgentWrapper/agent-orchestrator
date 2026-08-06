@@ -28,7 +28,11 @@ export function sessionWorkspaceFilesQueryOptions(sessionId: string, errorMessag
 	return {
 		queryKey: sessionWorkspaceFilesQueryKey(sessionId),
 		queryFn: () => fetchSessionWorkspaceFiles(sessionId, errorMessage),
-		refetchInterval: 3500,
+		// SSE (subscribeWorkspaceFileChanges) already invalidates this query
+		// immediately on real filesystem changes and on reconnect, triggering
+		// an instant refetch regardless of this interval. Polling is only a
+		// safety net for missed/dropped SSE events, so it can stay slow.
+		refetchInterval: 30_000,
 	};
 }
 
