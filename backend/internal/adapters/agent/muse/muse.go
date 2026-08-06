@@ -28,8 +28,6 @@ import (
 
 const adapterID = "muse"
 
-const aoRunFileEnvVar = "AO_RUN_FILE"
-
 // Muse's own launcher forwards this process-local override to the runtime.
 // Unlike AGENTS.md, it applies only to this process and cannot dirty the
 // project. The installed Meta binary contract is covered by the launch tests.
@@ -96,13 +94,6 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 			return nil, fmt.Errorf("muse.GetLaunchCommand: %w", pathErr)
 		}
 		env = append(env, museManagedHooksEnvVar+"="+hooksPath)
-		// A dev Electron daemon can use real AO data while publishing its
-		// endpoint through a separate run file. Propagate that explicit route
-		// so Muse's hook subprocesses report to the daemon that launched the
-		// session, not another installed AO daemon sharing the same data.
-		if runFile := strings.TrimSpace(os.Getenv(aoRunFileEnvVar)); runFile != "" {
-			env = append(env, aoRunFileEnvVar+"="+runFile)
-		}
 	}
 	if len(env) > 0 {
 		cmd = append(cmd, "env")

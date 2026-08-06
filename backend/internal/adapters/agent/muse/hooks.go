@@ -17,27 +17,48 @@ import (
 const (
 	museManagedHooksEnvVar = "TBH_MANAGED_HOOKS_PATH"
 	museHookCommandPrefix  = "ao hooks muse "
+	aoRunFileEnvVar        = "AO_RUN_FILE"
 )
-
-var museManagedHooks = map[string][]hooksjson.MatcherGroup{
-	"SessionStart":      {museHookGroup("session-start")},
-	"UserPromptSubmit":  {museHookGroup("user-prompt-submit")},
-	"PreToolUse":        {museHookGroup("pre-tool-use")},
-	"PermissionRequest": {museHookGroup("permission-request")},
-	"PostToolUse":       {museHookGroup("post-tool-use")},
-	"Stop":              {museHookGroup("stop")},
-}
 
 type museHooksFile struct {
 	Hooks map[string][]hooksjson.MatcherGroup `json:"hooks"`
 }
 
-func museHookGroup(event string) hooksjson.MatcherGroup {
+func museManagedHooks(cfg ports.WorkspaceHookConfig) map[string][]hooksjson.MatcherGroup {
+	return map[string][]hooksjson.MatcherGroup{
+		"SessionStart":      {museHookGroup(cfg, "session-start")},
+		"UserPromptSubmit":  {museHookGroup(cfg, "user-prompt-submit")},
+		"PreToolUse":        {museHookGroup(cfg, "pre-tool-use")},
+		"PermissionRequest": {museHookGroup(cfg, "permission-request")},
+		"PostToolUse":       {museHookGroup(cfg, "post-tool-use")},
+		"Stop":              {museHookGroup(cfg, "stop")},
+	}
+}
+
+func museHookGroup(cfg ports.WorkspaceHookConfig, event string) hooksjson.MatcherGroup {
 	return hooksjson.MatcherGroup{Hooks: []hooksjson.HookEntry{{
 		Type:    "command",
-		Command: museHookCommandPrefix + event,
+		Command: museHookCommand(cfg, event),
 		Timeout: 5,
 	}}}
+}
+
+// Muse sanitizes AO_* variables from hook subprocesses. Put the non-sensitive
+// callback route directly in AO's per-session hook command so the callback can
+// identify its AO session and, in dev mode, the exact daemon that launched it.
+func museHookCommand(cfg ports.WorkspaceHookConfig, event string) string {
+	assignments := []string{
+		"AO_SESSION_ID=" + museShellQuote(strings.TrimSpace(cfg.SessionID)),
+		"AO_DATA_DIR=" + museShellQuote(strings.TrimSpace(cfg.DataDir)),
+	}
+	if runFile := strings.TrimSpace(os.Getenv(aoRunFileEnvVar)); runFile != "" {
+		assignments = append(assignments, aoRunFileEnvVar+"="+museShellQuote(runFile))
+	}
+	return "env " + strings.Join(assignments, " ") + " " + museHookCommandPrefix + event
+}
+
+func museShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 // GetAgentHooks writes Muse's managed-hook configuration under AO's data
@@ -51,7 +72,7 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err != nil {
 		return fmt.Errorf("muse.GetAgentHooks: %w", err)
 	}
-	data, err := json.MarshalIndent(museHooksFile{Hooks: museManagedHooks}, "", "  ")
+	data, err := json.MarshalIndent(museHooksFile{Hooks: museManagedHooks(cfg)}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("muse.GetAgentHooks: marshal hooks: %w", err)
 	}

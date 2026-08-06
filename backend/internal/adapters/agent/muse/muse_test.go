@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -123,7 +124,6 @@ func TestGetLaunchCommandInjectsSystemPromptWithoutProjectFiles(t *testing.T) {
 }
 
 func TestGetLaunchCommandInjectsManagedHooksPath(t *testing.T) {
-	t.Setenv(aoRunFileEnvVar, "")
 	dataDir := t.TempDir()
 	p := &Plugin{resolvedBinary: "muse"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
@@ -148,7 +148,6 @@ func TestGetLaunchCommandInjectsManagedHooksPath(t *testing.T) {
 }
 
 func TestGetLaunchCommandCombinesSystemPromptAndManagedHooksEnvironment(t *testing.T) {
-	t.Setenv(aoRunFileEnvVar, "")
 	dataDir := t.TempDir()
 	p := &Plugin{resolvedBinary: "muse"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
@@ -167,33 +166,6 @@ func TestGetLaunchCommandCombinesSystemPromptAndManagedHooksEnvironment(t *testi
 		"env",
 		museSystemPromptEnvVar + "=follow AO rules",
 		museManagedHooksEnvVar + "=" + hooksPath,
-		"muse", "--trust-workspace",
-	}
-	if !reflect.DeepEqual(cmd, want) {
-		t.Fatalf("cmd = %#v, want %#v", cmd, want)
-	}
-}
-
-func TestGetLaunchCommandRoutesHooksToExplicitDaemonRunFile(t *testing.T) {
-	dataDir := t.TempDir()
-	runFile := filepath.Join(t.TempDir(), "running.json")
-	t.Setenv(aoRunFileEnvVar, runFile)
-	p := &Plugin{resolvedBinary: "muse"}
-	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		DataDir:   dataDir,
-		SessionID: "sess-1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	hooksPath, err := museManagedHooksPath(dataDir, "sess-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		"env",
-		museManagedHooksEnvVar + "=" + hooksPath,
-		aoRunFileEnvVar + "=" + runFile,
 		"muse", "--trust-workspace",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -265,6 +237,7 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 }
 
 func TestWorkspaceHooksLeaveTrackedAgentsMDUnchanged(t *testing.T) {
+	t.Setenv(aoRunFileEnvVar, "")
 	workspace := t.TempDir()
 	runGit(t, workspace, "init")
 	runGit(t, workspace, "config", "user.name", "AO Test")
@@ -313,6 +286,7 @@ func TestWorkspaceHooksLeaveTrackedAgentsMDUnchanged(t *testing.T) {
 }
 
 func TestWorkspaceHooksDoNotCreateAgentsMD(t *testing.T) {
+	t.Setenv(aoRunFileEnvVar, "")
 	workspace := t.TempDir()
 	p := &Plugin{}
 	dataDir := t.TempDir()
@@ -339,6 +313,34 @@ func TestWorkspaceHooksDoNotCreateAgentsMD(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workspace, "AGENTS.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("AGENTS.md stat err = %v, want not exist", err)
+	}
+}
+
+func TestManagedHookCommandsRestoreSanitizedAORoute(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data dir")
+	runFile := filepath.Join(t.TempDir(), "dev's running.json")
+	t.Setenv(aoRunFileEnvVar, runFile)
+	cfg := ports.WorkspaceHookConfig{DataDir: dataDir, SessionID: "sess-1"}
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	path, err := museManagedHooksPath(dataDir, cfg.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // test-owned path
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file museHooksFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatal(err)
+	}
+	command := file.Hooks["UserPromptSubmit"][0].Hooks[0].Command
+	want := "env AO_SESSION_ID='sess-1' AO_DATA_DIR=" + museShellQuote(dataDir) +
+		" AO_RUN_FILE=" + museShellQuote(runFile) + " ao hooks muse user-prompt-submit"
+	if command != want {
+		t.Fatalf("command = %q, want %q", command, want)
 	}
 }
 
@@ -379,7 +381,7 @@ func assertMuseManagedHooks(t *testing.T, path string) {
 			t.Fatalf("hooks[%q] = %#v, want one command", nativeEvent, groups)
 		}
 		hook := groups[0].Hooks[0]
-		if hook.Type != "command" || hook.Command != museHookCommandPrefix+aoEvent {
+		if hook.Type != "command" || !strings.HasSuffix(hook.Command, " "+museHookCommandPrefix+aoEvent) {
 			t.Fatalf("hooks[%q] = %#v, want AO %q command", nativeEvent, hook, aoEvent)
 		}
 	}
