@@ -1,20 +1,15 @@
-import type { ReactNode } from "react";
-
 /**
  * The normal Reverb routes that can own a workspace bar. The first-launch
  * welcome screen intentionally does not mount one.
  */
-export const reverbTopbarSurfaces = [
-	"global-board",
-	"project-board",
-	"worker-session",
-	"orchestrator-session",
-	"global-settings",
-	"project-settings",
-	"standalone-terminals",
-] as const;
-
-export type ReverbTopbarSurface = (typeof reverbTopbarSurfaces)[number];
+export type ReverbTopbarSurface =
+	| "global-board"
+	| "project-board"
+	| "worker-session"
+	| "orchestrator-session"
+	| "global-settings"
+	| "project-settings"
+	| "standalone-terminals";
 
 /**
  * A display-only breadcrumb. Navigation remains the responsibility of the
@@ -23,8 +18,6 @@ export type ReverbTopbarSurface = (typeof reverbTopbarSurfaces)[number];
 export interface ReverbTopbarBreadcrumb {
 	id: string;
 	label: string;
-	icon?: ReactNode;
-	current?: boolean;
 	title?: string;
 	onClick?: () => void;
 }
@@ -37,9 +30,5 @@ export interface ReverbTopbarBreadcrumb {
 export interface ReverbTopbarModel {
 	surface: ReverbTopbarSurface;
 	breadcrumbs: readonly ReverbTopbarBreadcrumb[];
-	ariaLabel?: string;
-	breadcrumbAriaLabel?: string;
 	contextAriaLabel?: string;
-	actionsAriaLabel?: string;
-	utilitiesAriaLabel?: string;
 }

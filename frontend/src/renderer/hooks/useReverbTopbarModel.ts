@@ -21,10 +21,8 @@ export interface ReverbTopbarScope {
 	orchestrator?: WorkspaceSession;
 	sessionId?: string;
 	projectId?: string;
-	projectLabel: string;
 	isSessionRoute: boolean;
 	isProjectBoardRoute: boolean;
-	isRootBoardRoute: boolean;
 	isOrchestrator: boolean;
 }
 
@@ -50,7 +48,6 @@ export function useReverbTopbarModel(surfaceOverride?: ReverbTopbarSurfaceOverri
 	const orchestrator = projectId ? findProjectOrchestrator(workspaces, projectId) : undefined;
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	const isProjectBoardRoute = !surfaceOverride && !isSessionRoute && Boolean(projectId);
-	const isRootBoardRoute = !surfaceOverride && !isSessionRoute && !isProjectBoardRoute;
 	const openHome = () => void navigate({ to: "/" });
 	const openProject = () => {
 		if (!projectId) return;
@@ -82,8 +79,8 @@ export function useReverbTopbarModel(surfaceOverride?: ReverbTopbarSurfaceOverri
 		};
 	} else if (isSessionRoute) {
 		const sessionContextLabel = isOrchestrator
-			? projectLabel || session?.workspaceName || t("shell.orchestrator")
-			: session?.title || projectLabel || session?.workspaceName || "Session unavailable";
+			? projectLabel || t("shell.orchestrator")
+			: session?.title || projectLabel || "Session unavailable";
 		model = {
 			surface: isOrchestrator ? "orchestrator-session" : "worker-session",
 			breadcrumbs: session
@@ -116,10 +113,8 @@ export function useReverbTopbarModel(surfaceOverride?: ReverbTopbarSurfaceOverri
 		orchestrator,
 		sessionId: params.sessionId,
 		projectId,
-		projectLabel,
 		isSessionRoute,
 		isProjectBoardRoute,
-		isRootBoardRoute,
 		isOrchestrator,
 	};
 }

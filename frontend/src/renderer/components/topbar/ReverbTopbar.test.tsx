@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { Folder, GitBranch } from "lucide-react";
+import { Folder } from "lucide-react";
 import { motionValue } from "motion/react";
 import { describe, expect, it, vi } from "vitest";
 import { ReverbTopbar } from "./ReverbTopbar";
@@ -34,25 +34,6 @@ describe("ReverbTopbar", () => {
 		expect(container.querySelector(".reverb-topbar__separator")).toHaveAttribute("aria-hidden", "true");
 	});
 
-	it("uses the explicitly current breadcrumb instead of defaulting to the last item", () => {
-		render(
-			<ReverbTopbar
-				model={{
-					...projectBoardModel,
-					breadcrumbs: [
-						{ id: "project", label: "acme-app", current: true },
-						{ id: "branch", label: "feature/topbar" },
-					],
-				}}
-			/>,
-		);
-
-		expect(screen.getByText("acme-app").closest(".reverb-topbar__breadcrumb")).toHaveAttribute("aria-current", "page");
-		expect(screen.getByText("feature/topbar").closest(".reverb-topbar__breadcrumb")).not.toHaveAttribute(
-			"aria-current",
-		);
-	});
-
 	it("renders a wired non-current breadcrumb as a semantic button", () => {
 		const openProject = vi.fn();
 
@@ -78,7 +59,7 @@ describe("ReverbTopbar", () => {
 		expect(screen.queryByRole("button", { name: "Board" })).not.toBeInTheDocument();
 	});
 
-	it("renders leading and breadcrumb icons as decorative presentation slots", () => {
+	it("renders the leading icon as a decorative presentation slot", () => {
 		const { container } = render(
 			<ReverbTopbar
 				leadingIcon={<Folder data-testid="leading-icon" />}
@@ -86,17 +67,13 @@ describe("ReverbTopbar", () => {
 					surface: "worker-session",
 					breadcrumbs: [
 						{ id: "project", label: "acme-app" },
-						{ id: "branch", label: "feature/topbar", icon: <GitBranch data-testid="branch-icon" /> },
+						{ id: "branch", label: "feature/topbar" },
 					],
 				}}
 			/>,
 		);
 
 		expect(screen.getByTestId("leading-icon").closest(".reverb-topbar__leading-icon")).toHaveAttribute(
-			"aria-hidden",
-			"true",
-		);
-		expect(screen.getByTestId("branch-icon").closest(".reverb-topbar__breadcrumb-icon")).toHaveAttribute(
 			"aria-hidden",
 			"true",
 		);
@@ -112,19 +89,17 @@ describe("ReverbTopbar", () => {
 				model={{
 					...projectBoardModel,
 					contextAriaLabel: "Session activity",
-					actionsAriaLabel: "Board actions",
-					utilitiesAriaLabel: "Workspace utilities",
 				}}
 				utilities={<button type="button">Notifications</button>}
 			/>,
 		);
 
 		expect(screen.getByRole("group", { name: "Session activity" })).toHaveClass("reverb-topbar__state");
-		expect(screen.getByRole("group", { name: "Board actions" })).toContainElement(
+		expect(screen.getByRole("group", { name: "Page actions" })).toContainElement(
 			screen.getByRole("button", { name: "New task" }),
 		);
 		expect(screen.getByRole("alert")).toHaveTextContent("Could not start");
-		expect(screen.getByRole("group", { name: "Workspace utilities" })).toContainElement(
+		expect(screen.getByRole("group", { name: "Global utilities" })).toContainElement(
 			screen.getByRole("button", { name: "Notifications" }),
 		);
 		expect(container.querySelector(".reverb-topbar__utility-separator")).toHaveAttribute("aria-hidden", "true");

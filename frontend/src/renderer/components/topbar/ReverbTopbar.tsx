@@ -44,14 +44,13 @@ export function ReverbTopbar({
 	dragStyle,
 	className,
 }: ReverbTopbarProps) {
-	const explicitCurrentIndex = model.breadcrumbs.findIndex((breadcrumb) => breadcrumb.current);
-	const currentIndex = explicitCurrentIndex >= 0 ? explicitCurrentIndex : model.breadcrumbs.length - 1;
+	const currentIndex = model.breadcrumbs.length - 1;
 	const noDragStyle = interactiveStyleFor(dragStyle);
 	const hasRouteControls = Boolean(error || actions);
 
 	return (
 		<motion.header
-			aria-label={model.ariaLabel ?? "Reverb workspace"}
+			aria-label="Reverb workspace"
 			className={cn(
 				"reverb-topbar center-panel-titlebar grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-border z-chrome",
 				className,
@@ -68,7 +67,7 @@ export function ReverbTopbar({
 
 				{model.breadcrumbs.length > 0 ? (
 					<nav
-						aria-label={model.breadcrumbAriaLabel ?? "Workspace breadcrumb"}
+						aria-label="Workspace breadcrumb"
 						className="reverb-topbar__breadcrumbs min-w-0"
 						style={noDragStyle}
 					>
@@ -81,15 +80,7 @@ export function ReverbTopbar({
 								);
 								const breadcrumbContent = (
 									<>
-										{breadcrumb.icon ? (
-											<span
-												aria-hidden="true"
-												className="reverb-topbar__breadcrumb-icon inline-flex shrink-0 items-center"
-											>
-												{breadcrumb.icon}
-											</span>
-										) : null}
-										<span className="reverb-topbar__breadcrumb-label truncate">{breadcrumb.label}</span>
+									<span className="reverb-topbar__breadcrumb-label truncate">{breadcrumb.label}</span>
 									</>
 								);
 
@@ -157,7 +148,7 @@ export function ReverbTopbar({
 
 				{actions ? (
 					<div
-						aria-label={model.actionsAriaLabel ?? "Page actions"}
+						aria-label="Page actions"
 						className="reverb-topbar__actions flex shrink-0 items-center"
 						role="group"
 						style={noDragStyle}
@@ -172,7 +163,7 @@ export function ReverbTopbar({
 
 				{utilities ? (
 					<div
-						aria-label={model.utilitiesAriaLabel ?? "Global utilities"}
+						aria-label="Global utilities"
 						className="reverb-topbar__utilities flex shrink-0 items-center"
 						role="group"
 						style={noDragStyle}

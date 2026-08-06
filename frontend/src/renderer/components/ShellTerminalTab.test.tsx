@@ -116,7 +116,6 @@ describe("ShellTerminalTab rename", () => {
 			"grid",
 			"session-pane-tab",
 		);
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("w-shell-tab-connected");
 	});
 
 	it("uses a neutral active surface with a subtle foreground selection line", () => {

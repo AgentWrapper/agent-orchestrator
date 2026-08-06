@@ -307,7 +307,6 @@ describe("CenterPane toolbar session label", () => {
 
 		const shellTab = screen.getByRole("tab", { name: shell.title });
 		expect(shellTab.parentElement).toHaveClass("min-w-shell-tab-min", "session-pane-tab");
-		expect(shellTab.parentElement).not.toHaveClass("w-shell-tab-connected");
 	});
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {

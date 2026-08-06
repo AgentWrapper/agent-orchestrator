@@ -104,7 +104,6 @@ export function CenterPane({
 	const lastWheelZoomAtRef = useRef(0);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const [isTabLauncherOpen, setIsTabLauncherOpen] = useState(false);
 	const [showAllSessions, setShowAllSessions] = useState(false);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const sessionTabs = projectSessions?.length ? projectSessions : session ? [session] : [];
@@ -274,9 +273,7 @@ export function CenterPane({
 						<ChevronRight aria-hidden="true" className="size-icon-md" />
 					</button>
 					<DropdownMenu
-						open={isTabLauncherOpen}
 						onOpenChange={(open) => {
-							setIsTabLauncherOpen(open);
 							if (!open) {
 								setShowAllSessions(false);
 								setSessionSearch("");

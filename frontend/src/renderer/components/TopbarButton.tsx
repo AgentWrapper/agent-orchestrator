@@ -13,15 +13,8 @@ const topbarButtonVariants = cva(
 				feature:
 					"reverb-topbar__control--feature reverb-topbar__control--labeled h-control-lg gap-1.5 rounded-md border px-3 text-control font-semibold leading-none",
 				icon: "reverb-topbar__control--icon grid size-topbar-control place-items-center rounded-md text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
-				featureIcon:
-					"reverb-topbar__control--icon reverb-topbar__control--feature grid size-topbar-control place-items-center rounded-md",
 				killIcon:
 					"reverb-topbar__control--icon reverb-topbar__control--danger-icon grid size-topbar-control place-items-center rounded-md text-error/80 hover:bg-error/10 hover:text-error",
-				kill: "reverb-topbar__control--danger h-control-lg gap-1.5 rounded-md border border-transparent bg-transparent px-3.5 text-sm font-semibold leading-none text-error/80 hover:border-error/50 hover:bg-error/10 hover:text-error",
-				killConfirm:
-					"reverb-topbar__control--danger h-control-lg gap-1.5 rounded-md border border-error/40 bg-error/10 px-3 text-control font-semibold leading-none text-error hover:bg-error/16",
-				killCancel:
-					"h-control-lg rounded-md px-2.5 text-control font-semibold leading-none text-muted-foreground hover:text-foreground",
 			},
 		},
 		defaultVariants: { variant: "primary" },
@@ -40,9 +33,3 @@ export function TopbarButton({
 export function TopbarKillError({ className, ...props }: React.HTMLAttributes<HTMLSpanElement>) {
 	return <span className={cn("text-caption text-destructive", className)} role="alert" {...props} />;
 }
-
-export const topbarHeaderClass =
-	"center-panel-titlebar flex h-toolbar shrink-0 items-center gap-3 border-b border-border pr-4 z-chrome";
-
-export const topbarProjectLabelClass =
-	"text-brand font-semibold tracking-tight leading-none text-foreground whitespace-nowrap";

@@ -130,7 +130,6 @@ describe("useReverbTopbarModel", () => {
 		expect(result.current.model.surface).toBe(surfaceOverride);
 		expect(result.current.model.breadcrumbs.map((crumb) => crumb.label)).toEqual(labels);
 		expect(result.current.isProjectBoardRoute).toBe(false);
-		expect(result.current.isRootBoardRoute).toBe(false);
 	});
 
 	it("wires only navigable route ancestors to their destinations", () => {
