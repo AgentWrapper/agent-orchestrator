@@ -1072,12 +1072,14 @@ func TestSessionRenameMissingSessionReturnsNotFound(t *testing.T) {
 type fakeCommander struct {
 	killed          []domain.SessionID
 	retired         []domain.SessionID
+	resumed         []domain.SessionID
 	sent            []domain.SessionID
 	sentMessages    []string
 	cleanupProjects []domain.ProjectID
 	killErr         error
 	retireErr       error
 	sendErr         error
+	sendFunc        func(domain.SessionID, string) error
 	cleanupErr      error
 	spawnErr        error
 	spawnRecord     domain.SessionRecord
@@ -1112,7 +1114,8 @@ func (f *fakeCommander) RestoreWithMode(context.Context, domain.SessionID) (sess
 	}
 	return f.restoreResult, nil
 }
-func (f *fakeCommander) ResumeAgentWithMode(context.Context, domain.SessionID) (sessionmanager.RestoreResult, error) {
+func (f *fakeCommander) ResumeAgentWithMode(_ context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error) {
+	f.resumed = append(f.resumed, id)
 	if f.restoreErr != nil {
 		return sessionmanager.RestoreResult{}, f.restoreErr
 	}
@@ -1133,6 +1136,9 @@ func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.Sessio
 	return nil
 }
 func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
+	if f.sendFunc != nil {
+		return f.sendFunc(id, message)
+	}
 	if f.sendErr != nil {
 		return f.sendErr
 	}

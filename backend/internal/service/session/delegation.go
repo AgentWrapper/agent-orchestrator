@@ -2,15 +2,22 @@ package session
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 )
 
-const delegatedTaskTitleLimit = 20
+const (
+	delegatedTaskTitleLimit             = 20
+	delegatedTaskTitleRefinementTimeout = time.Minute
+)
 
 // DelegateTaskInput describes a task AO should spawn as a worker session. Empty
 // RequestedAgent means the spawn uses the project's worker-agent default.
@@ -22,16 +29,18 @@ type DelegateTaskInput struct {
 	RequestedMode  domain.SessionMode
 }
 
-// DelegateTaskOutcome identifies the spawned worker and, when present, the
-// orchestrator that received the follow-up title request.
+// DelegateTaskOutcome identifies the spawned worker. OrchestratorID remains
+// optional for wire compatibility; asynchronous title refinement does not wait
+// to resolve the coordinator before returning.
 type DelegateTaskOutcome struct {
 	OrchestratorID domain.SessionID
 	WorkerID       domain.SessionID
 }
 
 // DelegateTask spawns the worker directly, matching `ao spawn`, with a
-// provisional display name derived from the task brief. If a running
-// orchestrator is available, AO best-effort asks it to refine that title.
+// provisional display name derived from the task brief. AO then best-effort
+// refines that title in the background through the project orchestrator,
+// resuming or creating the coordinator when necessary.
 func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (DelegateTaskOutcome, error) {
 	if _, err := s.requireProject(ctx, in.ProjectID); err != nil {
 		return DelegateTaskOutcome{}, err
@@ -59,31 +68,82 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 		return DelegateTaskOutcome{}, toAPIError(err)
 	}
 
-	out := DelegateTaskOutcome{WorkerID: worker.ID}
-	active := true
-	// The worker spawn is the commit point. Discovering a title-refinement
-	// recipient after that point is deliberately best effort.
-	orchestrators, _ := s.List(ctx, ListFilter{
-		ProjectID:        in.ProjectID,
-		Active:           &active,
-		OrchestratorOnly: true,
-	})
+	// The worker spawn is the commit point. Coordinator startup and title
+	// generation must never hold the new-task response open.
+	s.refineDelegatedTaskTitleInBackground(worker.ID, in)
+	return DelegateTaskOutcome{WorkerID: worker.ID}, nil
+}
 
-	running := orchestrators[:0]
+func (s *Service) refineDelegatedTaskTitleInBackground(workerID domain.SessionID, in DelegateTaskInput) {
+	work := func() {
+		base := s.backgroundContext
+		if base == nil {
+			base = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(base, delegatedTaskTitleRefinementTimeout)
+		defer cancel()
+
+		if err := s.refineDelegatedTaskTitle(ctx, workerID, in); err != nil && s.logger != nil {
+			s.logger.Warn("delegated task title refinement failed",
+				"projectID", in.ProjectID,
+				"workerID", workerID,
+				"error", err,
+			)
+		}
+	}
+	if s.runBackground != nil {
+		s.runBackground(work)
+		return
+	}
+	go work()
+}
+
+func (s *Service) refineDelegatedTaskTitle(ctx context.Context, workerID domain.SessionID, in DelegateTaskInput) error {
+	orchestratorID, err := s.taskTitleOrchestrator(ctx, in.ProjectID)
+	if err != nil {
+		return err
+	}
+	if err := s.manager.Send(ctx, orchestratorID, taskTitleDelegationMessage(workerID, in)); err != nil {
+		return fmt.Errorf("send title request to %s: %w", orchestratorID, err)
+	}
+	return nil
+}
+
+func (s *Service) taskTitleOrchestrator(ctx context.Context, projectID domain.ProjectID) (domain.SessionID, error) {
+	unlock := s.lockOrchestratorProject(projectID)
+	orchestrators, err := s.activeOrchestrators(ctx, projectID)
+	if err != nil {
+		unlock()
+		return "", fmt.Errorf("list project orchestrators: %w", err)
+	}
+
+	running := make([]domain.Session, 0, len(orchestrators))
 	for _, orchestrator := range orchestrators {
 		if orchestrator.Activity.State != domain.ActivityExited {
 			running = append(running, orchestrator)
 		}
 	}
-	if len(running) == 0 {
-		return out, nil
+	if len(running) > 0 {
+		orchestratorID := newestSession(running).ID
+		unlock()
+		return orchestratorID, nil
 	}
+	if len(orchestrators) > 0 {
+		orchestratorID := newestSession(orchestrators).ID
+		_, resumeErr := s.manager.ResumeAgentWithMode(ctx, orchestratorID)
+		unlock()
+		if resumeErr != nil && !errors.Is(resumeErr, sessionmanager.ErrAgentNotExited) {
+			return "", fmt.Errorf("resume project orchestrator %s: %w", orchestratorID, resumeErr)
+		}
+		return orchestratorID, nil
+	}
+	unlock()
 
-	orchestrator := newestSession(running)
-	if s.manager.Send(ctx, orchestrator.ID, taskTitleDelegationMessage(worker.ID, in)) == nil {
-		out.OrchestratorID = orchestrator.ID
+	orchestrator, err := s.SpawnOrchestrator(ctx, projectID, false, "")
+	if err != nil {
+		return "", fmt.Errorf("start project orchestrator: %w", err)
 	}
-	return out, nil
+	return orchestrator.ID, nil
 }
 
 func delegatedTaskDisplayName(brief string) string {
