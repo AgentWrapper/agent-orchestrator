@@ -10,7 +10,7 @@ import {
 	Terminal as TerminalIcon,
 	X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type DragEvent, type WheelEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
@@ -59,6 +59,10 @@ type CenterPaneProps = {
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Opens a new standalone shell tab (the "+" at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
+	/** Session interface actions consolidated into the terminal bar by SessionView. */
+	topbarActions?: ReactNode;
+	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
+	agentInputDisabled?: boolean;
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
@@ -121,6 +125,8 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	onNewShellTerminal,
+	topbarActions,
+	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -185,6 +191,36 @@ export function CenterPane({
 						? t("shell.orchestrator")
 						: session.title
 					: t("terminal.noSession");
+	const selectAdjacentTab = useCallback(
+		(direction: -1 | 1) => {
+			if (visibleTerminalTabs.length === 0) return;
+			const activeIndex = visibleTerminalTabs.findIndex((tab) =>
+				target.kind === "shell"
+					? tab.kind === "shell" && tab.shell.handleId === target.handleId
+					: tab.kind !== "shell" && tab.session.id === session?.id,
+			);
+			const normalizedIndex = activeIndex < 0 ? 0 : activeIndex;
+			const nextIndex =
+				(normalizedIndex + direction + visibleTerminalTabs.length) % visibleTerminalTabs.length;
+			const nextTab = visibleTerminalTabs[nextIndex];
+			if (!nextTab) return;
+			if (nextTab.kind === "shell") {
+				onSelectShellTerminal?.(nextTab.shell.handleId);
+			} else if (nextTab.session.id === session?.id) {
+				onSelectSessionTerminal?.();
+			} else {
+				onSelectProjectSession?.(nextTab.session);
+			}
+		},
+		[
+			onSelectProjectSession,
+			onSelectSessionTerminal,
+			onSelectShellTerminal,
+			session?.id,
+			target,
+			visibleTerminalTabs,
+		],
+	);
 
 	useEffect(() => {
 		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === paneRef.current);
@@ -199,6 +235,15 @@ export function CenterPane({
 			}),
 		[target, onCloseShellTerminal],
 	);
+
+	useEffect(() => {
+		const disposePrevious = aoBridge.app.onPreviousTabShortcut(() => selectAdjacentTab(-1));
+		const disposeNext = aoBridge.app.onNextTabShortcut(() => selectAdjacentTab(1));
+		return () => {
+			disposePrevious();
+			disposeNext();
+		};
+	}, [selectAdjacentTab]);
 
 	useEffect(() => {
 		aoBridge.app.setCloseShellTerminalShortcutEnabled(
@@ -541,6 +586,11 @@ export function CenterPane({
 								)}
 							</button>
 					</div>
+					{topbarActions ? (
+						<div className="ml-1.5 flex shrink-0 items-center border-l border-border/70 pl-1.5">
+							{topbarActions}
+						</div>
+					) : null}
 				</div>
 			</div>
 			{target.kind === "reviewer" ? (
@@ -565,6 +615,7 @@ export function CenterPane({
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					inputDisabled={agentInputDisabled && target.kind === "worker"}
 					session={session}
 					terminalTarget={target}
 					theme={theme}

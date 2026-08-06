@@ -26,6 +26,28 @@ type Store struct {
 	writeMu sync.Mutex
 }
 
+type conversationProjectionTxKey struct{}
+
+// conversationWriter returns the transaction-bound query set when a provider
+// event projection is in progress. Otherwise it acquires the ordinary single
+// writer lock. This makes the existing focused store methods composable inside
+// one archive+projection transaction without exposing SQLite transactions above
+// the adapter boundary.
+func (s *Store) conversationWriter(ctx context.Context) (*gen.Queries, func()) {
+	if q, ok := ctx.Value(conversationProjectionTxKey{}).(*gen.Queries); ok && q != nil {
+		return q, func() {}
+	}
+	s.writeMu.Lock()
+	return s.qw, s.writeMu.Unlock
+}
+
+func (s *Store) conversationReader(ctx context.Context) *gen.Queries {
+	if q, ok := ctx.Value(conversationProjectionTxKey{}).(*gen.Queries); ok && q != nil {
+		return q
+	}
+	return s.qr
+}
+
 // NewStore wraps an opened writer + reader *sql.DB (see Open) as a Store.
 func NewStore(writeDB, readDB *sql.DB) *Store {
 	return &Store{
@@ -48,6 +70,12 @@ func (s *Store) Close() error {
 // inTx runs fn inside a single write transaction on the writer connection,
 // rolling back on error. The caller must already hold writeMu.
 func (s *Store) inTx(ctx context.Context, what string, fn func(*gen.Queries) error) error {
+	if q, ok := ctx.Value(conversationProjectionTxKey{}).(*gen.Queries); ok && q != nil {
+		if err := fn(q); err != nil {
+			return fmt.Errorf("%s: %w", what, err)
+		}
+		return nil
+	}
 	tx, err := s.writeDB.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin %s: %w", what, err)

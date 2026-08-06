@@ -50,7 +50,7 @@ import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
 import { AgentAvatar } from "./AgentAvatar";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
@@ -108,6 +108,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
+	const [canCreateAsTui, setCanCreateAsTui] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const orchestratorStartupError = useUiStore((state) =>
 		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
@@ -128,7 +129,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				: t("shell.spawnOrchestratorLower");
 	// The board instance survives project-to-project navigation (same route,
 	// new param), so a spawn failure must not follow the user to another board.
-	useEffect(() => setSpawnError(null), [projectId]);
+	useEffect(() => {
+		setSpawnError(null);
+		setCanCreateAsTui(false);
+	}, [projectId]);
 	const previousProjectIdRef = useRef(projectId);
 	useEffect(() => {
 		const previousProjectId = previousProjectIdRef.current;
@@ -218,7 +222,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 	};
 
-	const openOrchestrator = async () => {
+	const openOrchestrator = async (mode?: "tui") => {
 		if (!projectId || isProjectRestarting) return;
 		if (orchestrator) {
 			void navigate({
@@ -234,10 +238,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			return;
 		}
 		setSpawnError(null);
+		setCanCreateAsTui(false);
 		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId, "board");
+			const sessionId = await spawnOrchestrator(projectId, "board", false, mode);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			setOrchestratorStartupError(projectId, null);
 			void navigate({
@@ -249,6 +254,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", err);
 			setSpawnError(err instanceof Error ? err.message : t("shell.couldNotSpawn"));
+			setCanCreateAsTui(isChatPreflightError(err));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -267,6 +273,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
+			{visibleSpawnError && canCreateAsTui && !showProjectEmpty ? (
+				<TopbarButton
+					disabled={isSpawning || isProjectRestarting}
+					onClick={() => void openOrchestrator("tui")}
+				>
+					{t("newTask.createAsTui")}
+				</TopbarButton>
+			) : null}
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<span className="inline-flex">
@@ -373,6 +387,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						isProjectRestarting={isProjectRestarting}
 						onNewTask={() => projectId && requestNewTask(projectId)}
 						onOpenOrchestrator={() => void openOrchestrator()}
+						onOpenOrchestratorAsTui={canCreateAsTui ? () => void openOrchestrator("tui") : undefined}
 						spawnError={visibleSpawnError}
 					/>
 				) : (

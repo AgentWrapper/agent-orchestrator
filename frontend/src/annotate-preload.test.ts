@@ -198,8 +198,7 @@ describe("annotate preload", () => {
 		expect(fontMocks.add).toHaveBeenCalledTimes(2);
 		expect(form).toHaveAttribute("aria-label", "Annotate selection");
 		expect(root.querySelector(".prompt__meta")).toBeNull();
-		expect(root.querySelector(".prompt__shortcuts")?.textContent).toContain("⌘/Ctrl+EnterSend");
-		expect(root.querySelector(".prompt__shortcuts")?.textContent).toContain("EscCancel");
+		expect(root.querySelector(".prompt__shortcuts")).toBeNull();
 		expect(root.querySelector('[data-action="cancel"]')).toBeNull();
 		expect(primaryAction).toBeTruthy();
 		expect(primaryAction).toHaveAttribute("aria-label", "Send annotation");
