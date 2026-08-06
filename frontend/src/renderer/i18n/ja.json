@@ -223,7 +223,7 @@
 	"inspector.review.run": "レビューを実行",
 	"inspector.reviewRequestFailed": "レビュー要求に失敗しました",
 	"inspector.reviewAlreadyRanForCommit": "このコミットはすでにレビュー済みです。別のレビューを実行するには新しいコミットをプッシュしてください。",
-	"inspector.reviewAlreadyRanShort": "レビュー済み",
+	"inspector.reviewAlreadyRanShort": "このコミットはすでにレビュー済みです",
 	"inspector.reviewBySource.ao": "AO レビュー",
 	"inspector.reviewBySource.github": "GitHub 上",
 	"inspector.unresolvedCount": "未解決 {{count}} 件",

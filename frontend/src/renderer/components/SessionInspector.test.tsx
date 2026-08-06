@@ -1688,7 +1688,7 @@ describe("SessionInspector summary reviews", () => {
 		const alreadyReviewed = await screen.findByRole("button", {
 			name: "This commit has already been reviewed. Push a new commit to run another review.",
 		});
-		expect(alreadyReviewed).toHaveTextContent("Already reviewed");
+		expect(alreadyReviewed).toHaveTextContent("This commit has already been reviewed");
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 

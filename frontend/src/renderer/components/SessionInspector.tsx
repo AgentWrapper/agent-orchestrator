@@ -1687,11 +1687,14 @@ function ReviewPanel({
 							<TooltipTrigger asChild>
 								<button
 									aria-label={notice}
-									className="mb-2 inline-flex max-w-full shrink-0 items-center gap-1 self-start rounded-sm text-2xs font-medium text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+									className="mb-2 flex max-w-full shrink-0 items-start gap-1 self-start rounded-sm text-left text-2xs font-medium leading-normal text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
 									type="button"
 								>
-									<Info aria-hidden="true" className="size-icon-2xs shrink-0" />
-									<span className="truncate">{t("inspector.reviewAlreadyRanShort")}</span>
+									<Info aria-hidden="true" className="mt-px size-icon-2xs shrink-0" />
+									{/* Wraps rather than truncates: this is a sentence now, and
+									    clipping it mid-word would hide the part that identifies
+									    which commit is meant. The rest still rides the tooltip. */}
+									<span className="min-w-0">{t("inspector.reviewAlreadyRanShort")}</span>
 								</button>
 							</TooltipTrigger>
 							<TooltipContent className="max-w-56 leading-normal">{notice}</TooltipContent>

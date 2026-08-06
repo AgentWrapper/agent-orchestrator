@@ -225,7 +225,7 @@
 	"inspector.review.run": "Executar revisão",
 	"inspector.reviewRequestFailed": "Falha na solicitação de revisão",
 	"inspector.reviewAlreadyRanForCommit": "Este commit já foi revisado. Envie um novo commit para executar outra revisão.",
-	"inspector.reviewAlreadyRanShort": "Já revisado",
+	"inspector.reviewAlreadyRanShort": "Este commit já foi revisado",
 	"inspector.reviewBySource.ao": "Revisão do AO",
 	"inspector.reviewBySource.github": "No GitHub",
 	"inspector.unresolvedCount": "{{count}} não resolvidos",
