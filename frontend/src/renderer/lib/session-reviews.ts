@@ -1,12 +1,13 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
+import { appI18n } from "../i18n";
 import { sortedPRs, type WorkspaceSession } from "../types/workspace";
 import { apiClient, apiErrorMessage } from "./api-client";
+import { usesPreviewWorkspaceData as usePreviewData } from "./preview-mode";
 
 export type PRReviewState = components["schemas"]["PRReviewState"];
 export type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
-
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
+export type ReviewRunFacts = components["schemas"]["ReviewRun"];
 
 /**
  * Shared query options for a session's AO review states. The query key is the
@@ -59,58 +60,136 @@ export function reviewRunDisabled(openReviewStates: PRReviewState[], isTriggerin
 
 export function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
 	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return "Reviewing...";
+		return appI18n.t("inspector.review.reviewing");
 	}
 	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
-		return "Re-run review";
+		return appI18n.t("inspector.review.rerun");
 	}
-	return "Run review";
+	return appI18n.t("inspector.review.run");
 }
 
+// Preview-only pins so the reviews section can be seen mid-run and with a verdict
+// left behind by an earlier commit — neither follows from a PR's review decision.
+const MOCK_RUNNING_PR = 322;
+const MOCK_STALE_PR = 324;
+
 function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
-	return {
-		reviewerHandleId: `${session.id}-reviewer`,
-		reviews: sortedPRs(session).map((pr, index) => {
-			const targetSha = `demo${pr.number}${index}`;
-			const reviewedAt = new Date(Date.now() - (index + 1) * 11 * 60 * 1000).toISOString();
-			const latestRun =
-				pr.review === "approved" || pr.review === "changes_requested"
-					? {
-							batchId: `demo-batch-${session.id}`,
-							body:
-								pr.review === "approved"
-									? "Demo review approved. The implementation is ready for the README screenshot flow."
-									: "Demo review found polish feedback for the terminal presentation.",
-							createdAt: reviewedAt,
-							githubReviewId: `${pr.number}01`,
-							harness: "codex",
-							id: `demo-review-run-${pr.number}`,
-							prUrl: pr.url,
-							reviewId: `demo-review-${pr.number}`,
-							sessionId: session.id,
-							status: "delivered",
-							targetSha,
-							verdict: pr.review === "approved" ? "approved" : "changes_requested",
-						}
-					: undefined;
+	const states: PRReviewState[] = sortedPRs(session).map((pr, index) => {
+		const targetSha = `demo${pr.number}${index}`;
+		const reviewedAt = new Date(Date.now() - (index + 1) * 11 * 60 * 1000).toISOString();
+		const latestRun =
+			pr.review === "approved" || pr.review === "changes_requested"
+				? {
+						batchId: `demo-batch-${session.id}`,
+						body:
+							pr.review === "approved"
+								? "Demo review **approved** the README screenshot flow.\n\n- Layout is stable\n- Browser preview opens cleanly"
+								: "Demo review found **polish feedback** for the terminal presentation.\n\n- Tighten toolbar density\n- Recheck contrast",
+						createdAt: reviewedAt,
+						githubReviewId: `${pr.number}01`,
+						harness: "codex",
+						id: `demo-review-run-${pr.number}`,
+						prUrl: pr.url,
+						reviewId: `demo-review-${pr.number}`,
+						sessionId: session.id,
+						status: "delivered",
+						targetSha,
+						verdict: pr.review === "approved" ? "approved" : "changes_requested",
+					}
+				: undefined;
+		const run = (over: Record<string, unknown>) => ({
+			batchId: `demo-batch-${session.id}`,
+			body: "",
+			createdAt: reviewedAt,
+			githubReviewId: "",
+			harness: "codex",
+			id: `demo-review-run-${pr.number}`,
+			prUrl: pr.url,
+			reviewId: `demo-review-${pr.number}`,
+			sessionId: session.id,
+			status: "complete",
+			targetSha,
+			verdict: "",
+			...over,
+		});
+		// A couple of PRs are pinned to states the review decision alone cannot
+		// produce, so the preview shows every shape the panel can render.
+		if (pr.number === MOCK_RUNNING_PR) {
 			return {
-				latestRun,
+				latestRun: run({ status: "running", id: `demo-review-run-${pr.number}-live` }),
 				prNumber: pr.number,
 				prUrl: pr.url,
-				status:
-					pr.review === "approved"
-						? "up_to_date"
-						: pr.review === "changes_requested"
-							? "changes_requested"
-							: pr.state === "draft"
-								? "ineligible"
-								: "needs_review",
+				status: "running",
 				targetSha,
 				title: mockReviewTitle(pr.number),
 			};
-		}),
-		runs: [],
-	};
+		}
+		if (pr.number === MOCK_STALE_PR) {
+			// Reviewed, then a new commit landed: the verdict is about code that
+			// has since changed, so the panel demotes it to "Previous".
+			return {
+				previousRun: run({
+					status: "delivered",
+					verdict: "changes_requested",
+					githubReviewId: `${pr.number}09`,
+					body: "Demo review asked for a tighter activity sample before the last commit.",
+					targetSha: `${targetSha}-old`,
+				}),
+				prNumber: pr.number,
+				prUrl: pr.url,
+				status: "needs_review",
+				targetSha,
+				title: mockReviewTitle(pr.number),
+			};
+		}
+		return {
+			latestRun,
+			prNumber: pr.number,
+			prUrl: pr.url,
+			status:
+				pr.review === "approved"
+					? "up_to_date"
+					: pr.review === "changes_requested"
+						? "changes_requested"
+						: pr.state === "draft"
+							? "ineligible"
+							: "needs_review",
+			targetSha,
+			title: mockReviewTitle(pr.number),
+		};
+	});
+	// Earlier passes, so the history control has something to open. Two reviewers
+	// on the same PR is the case the control exists for.
+	const runs: ReviewRunFacts[] = states.flatMap((state) => {
+		const base = {
+			batchId: `demo-batch-${session.id}`,
+			githubReviewId: "",
+			prUrl: state.prUrl,
+			reviewId: `demo-review-${state.prNumber}`,
+			sessionId: session.id,
+			status: "delivered",
+			targetSha: state.targetSha,
+		};
+		return [
+			{
+				...base,
+				id: `demo-hist-${state.prNumber}-a`,
+				harness: "codex",
+				verdict: "changes_requested",
+				body: "Earlier codex pass asked for tests around the discount edge cases.",
+				createdAt: new Date(Date.now() - 55 * 60 * 1000).toISOString(),
+			},
+			{
+				...base,
+				id: `demo-hist-${state.prNumber}-b`,
+				harness: "claude-code",
+				verdict: "approved",
+				body: "Earlier claude-code pass found nothing blocking.",
+				createdAt: new Date(Date.now() - 95 * 60 * 1000).toISOString(),
+			},
+		];
+	});
+	return { reviewerHandleId: `${session.id}-reviewer`, reviews: states, runs };
 }
 
 function mockReviewTitle(prNumber: number): string {

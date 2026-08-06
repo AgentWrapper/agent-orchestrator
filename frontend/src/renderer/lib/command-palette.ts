@@ -59,7 +59,13 @@ export type CommandPaletteContext = {
 	currentProjectId?: string;
 	currentSessionId?: string;
 	restartingProjectIds?: ReadonlySet<string>;
-	/** Live review states per session, injected by the palette's queries; absent sessions render enabled (the daemon validates on trigger). */
+	/**
+	 * Live review states per session, injected by the palette's queries. Omitting the
+	 * whole prop means "don't gate on review state" (callers that build items without
+	 * fetching, e.g. unit tests). Providing it but leaving a session's key absent means
+	 * that session's state is not known yet, and its review row is omitted entirely
+	 * rather than rendered with a guessed enabled state.
+	 */
 	reviewStatesBySessionId?: Readonly<Record<string, PRReviewState[]>>;
 };
 
@@ -314,7 +320,7 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 				items.push({
 					id: `pr-open:${session.id}:${pr.number}`,
 					group: "prs",
-					title: `Open PR #${pr.number}`,
+					title: t("command.openPr", { number: pr.number }),
 					subtitle,
 					keywords: [...prKeywords, "open", "open pr", "github", "browser"],
 					searchOnly: true,
@@ -323,14 +329,14 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 				items.push({
 					id: `pr-copy:${session.id}:${pr.number}`,
 					group: "prs",
-					title: `Copy PR URL #${pr.number}`,
+					title: t("command.copyPrUrl", { number: pr.number }),
 					subtitle,
 					keywords: [...prKeywords, "copy", "copy pr", "url", "link", "share"],
 					searchOnly: true,
 					action: { kind: "copy-pr-url", url: pr.url },
 				});
 				if (sessionIsActive(session) && dataLoadedForSession) {
-					items.push(prReviewCommand(session, pr, openReviewStates, sessionReviewRunning, subtitle, prKeywords));
+					items.push(prReviewCommand(session, pr, openReviewStates, sessionReviewRunning, subtitle, prKeywords, t));
 				}
 			}
 		}
@@ -364,9 +370,10 @@ export function buildCommands(ctx: CommandPaletteContext, t: TFunction = appI18n
 /**
  * Per-PR review command. The trigger endpoint is session-scoped (one run covers
  * all of the session's eligible open PRs, same as the Reviews tab button), so
- * the disabled state mirrors the shared ReviewPanel eligibility logic. When
- * review data has not loaded (or failed), the command stays enabled and the
- * daemon's response decides — its error surfaces via the palette error banner.
+ * the disabled state mirrors the shared ReviewPanel eligibility logic — both
+ * sides read it from `lib/session-reviews`, so the two can't drift. Callers only
+ * reach here once the session's review state is known; until then the row is
+ * omitted rather than shown with a guessed enabled state.
  */
 function prReviewCommand(
 	session: WorkspaceSession,
@@ -375,20 +382,23 @@ function prReviewCommand(
 	sessionReviewRunning: boolean,
 	subtitle: string,
 	keywords: string[],
+	t: TFunction,
 ): CommandItem {
 	const prReviewState = openReviewStates?.find((reviewState) => reviewState.prUrl === pr.url);
 	const ineligible = openReviewStates !== undefined && (!prReviewState || prReviewState.status === "ineligible");
 	const disabled = sessionReviewRunning || ineligible;
 	const disabledReason = sessionReviewRunning
-		? "Review already running"
+		? t("command.reviewAlreadyRunning")
 		: ineligible
-			? "Not eligible for review"
+			? t("command.notEligibleForReview")
 			: undefined;
-	const runLabel = prReviewState ? reviewSessionRunAction([prReviewState], false) : "Run review";
+	const runLabel = prReviewState
+		? reviewSessionRunAction([prReviewState], false)
+		: t("inspector.review.run");
 	return {
 		id: `pr-review:${session.id}:${pr.number}`,
 		group: "prs",
-		title: `${runLabel} #${pr.number}`,
+		title: t("command.reviewPr", { action: runLabel, number: pr.number }),
 		subtitle,
 		keywords: [...keywords, "review", "run review", "re-run review", "ao review"],
 		searchOnly: true,
