@@ -9,6 +9,12 @@ import (
 
 var codexTerminalEscape = regexp.MustCompile(`\x1b(?:\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|\][^\x07]*(?:\x07|\x1b\\))`)
 
+// codexIdleFooterMarker is the separator Codex renders between the active
+// model/effort and workspace in its idle composer footer. Unlike the splash
+// screen and MCP startup output, it is not present until the interactive
+// composer has been drawn.
+const codexIdleFooterMarker = " · "
+
 // DetectTerminalActivity reports idle only when Codex's composer and footer are visible.
 func (p *Plugin) DetectTerminalActivity(output string) (domain.ActivityState, bool) {
 	lines := terminalLines(output)
@@ -28,7 +34,7 @@ func (p *Plugin) DetectTerminalActivity(output string) (domain.ActivityState, bo
 		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "›") {
 			continue
 		}
-		if strings.Contains(lines[i+1], " · ") {
+		if strings.Contains(lines[i+1], codexIdleFooterMarker) {
 			return domain.ActivityIdle, true
 		}
 	}

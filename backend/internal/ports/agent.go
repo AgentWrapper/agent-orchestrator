@@ -163,7 +163,9 @@ type AgentExitDetector interface {
 
 // AgentPromptReadinessProvider is an optional capability for interactive
 // adapters that receive their first task after startup. It lets AO wait until a
-// terminal UI is ready before injecting text through the runtime.
+// terminal UI is ready before injecting text through the runtime. When the
+// adapter also implements TerminalActivityDetector, an authoritative idle
+// detection takes precedence over the fallback text patterns.
 type AgentPromptReadinessProvider interface {
 	PromptReadinessHints(ctx context.Context, cfg LaunchConfig) (PromptReadinessHints, error)
 }
@@ -173,8 +175,20 @@ type TerminalActivityDetector interface {
 	DetectTerminalActivity(output string) (domain.ActivityState, bool)
 }
 
+// EmptyComposerDetector is an opt-in safety capability for unsolicited
+// coordination sent to an already-running interactive agent. It must return
+// true only when current terminal evidence positively proves that the active
+// composer contains no human-authored draft. A stale activity=idle fact alone
+// is insufficient because typing into a composer does not emit a lifecycle
+// hook until the human submits it.
+type EmptyComposerDetector interface {
+	ComposerIsEmpty(output string) bool
+}
+
 // PromptReadinessHints describes when an after-start prompt should be sent.
-// Empty hints mean "send immediately" to preserve existing adapter behavior.
+// Empty patterns mean "send immediately" unless the adapter also implements
+// TerminalActivityDetector, in which case AO waits for an authoritative idle
+// detection. A non-positive timeout always preserves immediate delivery.
 type PromptReadinessHints struct {
 	InitialDelay time.Duration
 	Patterns     []string
@@ -193,8 +207,9 @@ type AgentResolver interface {
 
 // ActivitySignaler is an OPTIONAL capability an Agent adapter may implement to
 // describe which durable activity signals its harness actually produces under
-// AO's headless launch. The Session Manager gates best-effort post-send
-// confirmation on it — see the two methods.
+// AO's headless launch. The Session Manager gates bounded Enter re-submission
+// for both ordinary messages and switched-agent continuations on it — see the
+// two methods.
 //
 // EmitsSubmitActivity reports whether the harness emits a prompt-submit signal
 // (one that flips Activity.State to active). Without it the confirm loop could
@@ -292,6 +307,12 @@ type LaunchConfig struct {
 	Permissions PermissionMode
 	Prompt      string
 	SessionID   string
+	// NativeSessionID optionally asks an adapter that supports caller-assigned
+	// native identities to use this id for a fresh provider conversation. It is
+	// deliberately separate from SessionID: one stable AO session may create
+	// several provider-native conversations over its lifetime. Adapters whose
+	// CLI assigns native ids ignore this field and report the id through hooks.
+	NativeSessionID string
 	// AllowedTools and DisallowedTools scope the agent to a tool allowlist when
 	// it runs in a non-bypass permission mode (allow rules auto-approve, deny
 	// rules auto-reject). They are the enforced read-only guarantee the reviewer
@@ -307,13 +328,17 @@ type LaunchConfig struct {
 
 // WorkspaceHookConfig carries inputs needed to install workspace-local agent hooks.
 type WorkspaceHookConfig struct {
-	Config           AgentConfig
-	DataDir          string
-	Env              map[string]string
-	SessionID        string
-	SystemPrompt     string
-	SystemPromptFile string
-	WorkspacePath    string
+	Config    AgentConfig
+	DataDir   string
+	Env       map[string]string
+	SessionID string
+	// SessionStatePrepared tells an adapter that its optional provider-global
+	// launch state was already materialized during switch preflight. Workspace
+	// hooks must not repeat that fallible write after the source-stop boundary.
+	SessionStatePrepared bool
+	SystemPrompt         string
+	SystemPromptFile     string
+	WorkspacePath        string
 }
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
@@ -323,6 +348,11 @@ type RestoreConfig struct {
 	Kind        domain.SessionKind
 	Permissions PermissionMode
 	Session     SessionRef
+	// Prompt is an optional new user turn to submit while resuming the native
+	// conversation. Adapters whose CLI accepts a resume-time positional prompt
+	// should append it to the restore command; after-start adapters leave it
+	// empty and receive the turn through the interactive terminal instead.
+	Prompt string
 	// SystemPrompt carries the session's standing instructions (e.g. the
 	// orchestrator role). Agent CLIs rebuild their system prompt from flags on
 	// resume — it is not part of the transcript — so adapters whose CLI has a

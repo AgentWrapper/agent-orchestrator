@@ -42,8 +42,8 @@ func (Base) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	return ports.ConfigSpec{}, ctx.Err()
 }
 
-// GetPromptDeliveryStrategy reports that the agent receives its prompt in the
-// launch command itself, which is true for every shipped adapter.
+// GetPromptDeliveryStrategy is the default for CLIs that receive a prompt in
+// their launch command. Interactive-only adapters such as Kimi override it.
 func (Base) GetPromptDeliveryStrategy(ctx context.Context, _ ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err

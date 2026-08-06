@@ -7,9 +7,10 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
+    latest_user_prompt, latest_assistant_update, native_transcript_path,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
     created_at, updated_at, is_pinned, pinned_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
@@ -17,9 +18,18 @@ UPDATE sessions SET
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
+    latest_user_prompt = ?, latest_assistant_update = ?, native_transcript_path = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
     cleanup_generation = ?, updated_at = ?, is_pinned = ?, pinned_at = ?
 WHERE id = ?;
+
+-- name: RecordSessionLatestUserPrompt :execrows
+UPDATE sessions SET
+    latest_user_prompt = sqlc.arg(latest_user_prompt),
+    updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id)
+  AND is_terminated = 0
+  AND updated_at <= sqlc.arg(updated_at);
 
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
@@ -28,7 +38,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    reviewer_harness, is_pinned, pinned_at
+    reviewer_harness, is_pinned, pinned_at,
+    latest_user_prompt, latest_assistant_update, native_transcript_path
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -38,7 +49,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    reviewer_harness, is_pinned, pinned_at
+    reviewer_harness, is_pinned, pinned_at,
+    latest_user_prompt, latest_assistant_update, native_transcript_path
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -48,7 +60,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    reviewer_harness, is_pinned, pinned_at
+    reviewer_harness, is_pinned, pinned_at,
+    latest_user_prompt, latest_assistant_update, native_transcript_path
 FROM sessions ORDER BY project_id, num;
 
 
@@ -84,6 +97,9 @@ SELECT EXISTS(
       AND runtime_handle_id = ''
       AND agent_session_id = ''
       AND prompt = ''
+      AND latest_user_prompt = ''
+      AND latest_assistant_update = ''
+      AND native_transcript_path = ''
 ) AS is_seed;
 
 -- NOTE: the `DELETE FROM sessions WHERE id = ? AND <seed-state predicates>`

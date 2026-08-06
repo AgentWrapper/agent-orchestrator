@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	"github.com/aoagents/agent-orchestrator/backend/internal/sessionguard"
 )
 
 // EventSource is the session-state feed the "sessions" channel forwards. The CDC
@@ -57,6 +59,9 @@ type Manager struct {
 	// It arbitrates the single PTY's grid across clients (see reconcileLocked).
 	sharedMu sync.Mutex
 	shared   map[string]*sharedTerm
+
+	inputLeaseMu sync.RWMutex
+	inputLease   sessionguard.InputLease
 }
 
 // sharedTerm tracks every client currently viewing one terminal id (one PTY) so
@@ -84,6 +89,24 @@ type Option func(*Manager)
 
 // WithHeartbeat overrides the ping interval.
 func WithHeartbeat(d time.Duration) Option { return func(m *Manager) { m.heartbeat = d } }
+
+// SetSessionInputLease late-binds the mutation-aware input authority. The
+// terminal manager is created before the session manager during daemon boot.
+func (m *Manager) SetSessionInputLease(lease sessionguard.InputLease) {
+	m.inputLeaseMu.Lock()
+	m.inputLease = lease
+	m.inputLeaseMu.Unlock()
+}
+
+func (m *Manager) acquireSessionInput(id string) (func(), bool) {
+	m.inputLeaseMu.RLock()
+	lease := m.inputLease
+	m.inputLeaseMu.RUnlock()
+	if lease == nil {
+		return func() {}, true
+	}
+	return lease.AcquireSessionInput(domain.SessionID(id))
+}
 
 // NewManager builds a Manager. src opens attach Streams; events feeds the session
 // channel (may be nil to disable it). A nil logger falls back to slog.Default.
@@ -328,8 +351,15 @@ func (c *connState) handleTerminal(msg clientMsg) {
 		if err != nil {
 			return
 		}
+		release, ok := c.mgr.acquireSessionInput(msg.ID)
+		if !ok {
+			c.enqueue(serverMsg{Ch: chTerminal, ID: msg.ID, Type: msgError, Error: "session input is disabled while an exclusive session operation is in progress"})
+			return
+		}
 		if a := c.lookup(msg.ID); a != nil {
-			_ = a.write(raw)
+			_ = a.writeLeased(raw, release)
+		} else {
+			release()
 		}
 	case msgResize:
 		// The client reports the grid it fits to; the manager arbitrates the shared

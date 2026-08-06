@@ -21,6 +21,43 @@ type AgentModelCatalog struct {
 	FetchedAt     time.Time
 }
 
+type AgentNativeSession struct {
+	ID               domain.AgentNativeSessionID
+	AoSessionID      domain.SessionID
+	Harness          domain.AgentHarness
+	ConfigDir        string
+	NativeSessionID  string
+	TranscriptPath   string
+	LastGenerationID domain.AgentGenerationID
+	CreatedAt        time.Time
+	LastUsedAt       time.Time
+	UpdatedAt        time.Time
+}
+
+type AgentSwitch struct {
+	ID                     domain.AgentSwitchID
+	SessionID              domain.SessionID
+	IdempotencyKey         string
+	RequestFingerprint     domain.AgentSwitchRequestFingerprint
+	FromHarness            domain.AgentHarness
+	TargetHarness          domain.AgentHarness
+	SourceNativeSessionRef *domain.AgentNativeSessionID
+	TargetNativeSessionRef *domain.AgentNativeSessionID
+	TargetStartMode        domain.AgentSwitchTargetStartMode
+	State                  domain.AgentSwitchState
+	AgentHandoffStatus     domain.AgentHandoffStatus
+	AgentHandoffPath       string
+	AgentHandoffHash       string
+	SourceGenerationID     domain.AgentGenerationID
+	TargetGenerationID     domain.AgentGenerationID
+	TargetRuntimeHandleID  string
+	TargetAcknowledgedAt   sql.NullTime
+	ErrorCode              string
+	ErrorDetail            string
+	RequestedAt            time.Time
+	UpdatedAt              time.Time
+}
+
 type ChangeLog struct {
 	Seq       int64
 	ProjectID domain.ProjectID
@@ -187,35 +224,38 @@ type ReviewRun struct {
 }
 
 type Session struct {
-	ID                 domain.SessionID
-	ProjectID          domain.ProjectID
-	Num                int64
-	IssueID            domain.IssueID
-	Kind               domain.SessionKind
-	Harness            domain.AgentHarness
-	ActivityState      domain.ActivityState
-	ActivityLastAt     time.Time
-	IsTerminated       bool
-	Branch             string
-	WorkspacePath      string
-	RuntimeHandleID    string
-	AgentSessionID     string
-	Prompt             string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	DisplayName        string
-	FirstSignalAt      sql.NullTime
-	PreviewURL         string
-	PreviewRevision    int64
-	CleanupGeneration  int64
-	RuntimeLaunchID    string
-	WorkspaceRepoPath  string
-	TerminateOnPRMerge bool
-	DiffBaseSha        string
-	DiffBaseRef        string
-	ReviewerHarness    domain.ReviewerHarness
-	IsPinned           bool
-	PinnedAt           sql.NullTime
+	ID                    domain.SessionID
+	ProjectID             domain.ProjectID
+	Num                   int64
+	IssueID               domain.IssueID
+	Kind                  domain.SessionKind
+	Harness               domain.AgentHarness
+	ActivityState         domain.ActivityState
+	ActivityLastAt        time.Time
+	IsTerminated          bool
+	Branch                string
+	WorkspacePath         string
+	RuntimeHandleID       string
+	AgentSessionID        string
+	Prompt                string
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	DisplayName           string
+	FirstSignalAt         sql.NullTime
+	PreviewURL            string
+	PreviewRevision       int64
+	CleanupGeneration     int64
+	RuntimeLaunchID       string
+	WorkspaceRepoPath     string
+	TerminateOnPRMerge    bool
+	DiffBaseSha           string
+	DiffBaseRef           string
+	ReviewerHarness       domain.ReviewerHarness
+	IsPinned              bool
+	PinnedAt              sql.NullTime
+	LatestUserPrompt      string
+	LatestAssistantUpdate string
+	NativeTranscriptPath  string
 }
 
 type SessionCleanupFact struct {

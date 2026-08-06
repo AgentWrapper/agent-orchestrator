@@ -34,6 +34,17 @@ type SessionMetadata struct {
 	RuntimeLaunchID   string `json:"runtimeLaunchId,omitempty"`
 	AgentSessionID    string `json:"agentSessionId,omitempty"`
 	Prompt            string `json:"prompt,omitempty"`
+	// LatestUserPrompt is the latest real user-authored task direction observed
+	// for this AO session. Internal AO coordination messages (for example an
+	// agent-switch handoff request) must not replace it.
+	LatestUserPrompt string `json:"latestUserPrompt,omitempty"`
+	// LatestAssistantUpdate is the latest user-facing assistant update observed
+	// before any internal agent-switch coordination turn.
+	LatestAssistantUpdate string `json:"latestAssistantUpdate,omitempty"`
+	// NativeTranscriptPath is the read-only transcript path for the currently
+	// active native agent session when its provider exposes one. Retained
+	// provider-specific paths also live on AgentNativeSession records.
+	NativeTranscriptPath string `json:"nativeTranscriptPath,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
 	// it survives a daemon restart. Empty means no preview has been requested.

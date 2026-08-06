@@ -1,7 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import {
+	ArrowLeftRight,
+	GitBranch,
+	LayoutDashboard,
+	LoaderCircle,
+	PanelRightClose,
+	PanelRightOpen,
+	Plus,
+	Trash2,
+} from "lucide-react";
 import { useEffect, useState } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -27,7 +36,9 @@ import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
+import { findActiveAgentSwitch, useAgentSwitches } from "../hooks/useAgentSwitches";
 import { StatusPill } from "./StatusPill";
+import { agentLabel, canSwitchAgentHarness, SwitchAgentDialog } from "./SwitchAgentDialog";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 
@@ -268,6 +279,12 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 				) : null}
 				{isSessionRoute ? (
 					<>
+						{session &&
+						!isOrchestrator &&
+						!session.isTerminated &&
+						canSwitchAgentHarness(session.provider) ? (
+							<TopbarSwitchAgentButton key={`switch-agent:${session.id}`} session={session} />
+						) : null}
 						{isOrchestrator ? (
 							<>
 								<ProjectTerminationFeedback projectId={projectId} />
@@ -291,7 +308,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 						    moved here from the inspector's Summary "Danger zone". */}
 						{!isOrchestrator && session && sessionIsActive(session) ? (
 							<TopbarKillButton
-								key={session.id}
+								key={`kill-session:${session.id}`}
 								session={session}
 								orchestratorId={orchestrator?.id}
 								onKilled={(workspaceId, orchestratorId) => {
@@ -346,6 +363,40 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 			</div>
 		</motion.header>
 	</LayoutGroup>
+	);
+}
+
+function TopbarSwitchAgentButton({ session }: { session: WorkspaceSession }) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const switches = useAgentSwitches(session.id).data ?? [];
+	const activeSwitch = findActiveAgentSwitch(switches);
+	if (!activeSwitch && !sessionIsActive(session)) return null;
+
+	const label = activeSwitch
+		? t("switchAgent.inProgress", { target: agentLabel(activeSwitch.targetHarness) })
+		: t("switchAgent.action");
+
+	return (
+		<>
+			<TopbarButton
+				aria-busy={activeSwitch ? true : undefined}
+				aria-label={label}
+				onClick={() => setOpen(true)}
+				style={noDragStyle}
+				variant="accent"
+			>
+				{activeSwitch ? (
+					<LoaderCircle className="size-icon-lg animate-spin" aria-hidden="true" />
+				) : (
+					<ArrowLeftRight className="size-icon-lg" aria-hidden="true" />
+				)}
+				{label}
+			</TopbarButton>
+			{open ? (
+				<SwitchAgentDialog onOpenChange={setOpen} open session={session} />
+			) : null}
+		</>
 	);
 }
 

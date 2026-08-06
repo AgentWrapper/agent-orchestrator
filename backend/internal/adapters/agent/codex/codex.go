@@ -20,6 +20,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/terminalui"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
@@ -65,6 +66,14 @@ var _ ports.Agent = (*Plugin)(nil)
 var _ ports.ActiveTurnSteerer = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.TerminalActivityDetector = (*Plugin)(nil)
+var _ ports.EmptyComposerDetector = (*Plugin)(nil)
+
+// ComposerIsEmpty recognizes Codex's blank composer or its dim placeholder.
+// Normal text after the prompt marker is treated as a human draft and causes
+// optional semantic handoff collection to fail closed.
+func (p *Plugin) ComposerIsEmpty(output string) bool {
+	return terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "›")
+}
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -116,10 +125,8 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
 
-	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
-	} else if cfg.SystemPromptFile != "" {
-		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
+	if err := appendCodexStandingInstructions(&cmd, cfg.DataDir, cfg.SessionID, cfg.SystemPrompt, cfg.SystemPromptFile); err != nil {
+		return nil, err
 	}
 
 	if cfg.Prompt != "" {
@@ -157,12 +164,13 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
-	if cfg.SystemPrompt != "" {
-		cmd = append(cmd, "-c", "developer_instructions="+codexTOMLConfigString(cfg.SystemPrompt))
-	} else if cfg.SystemPromptFile != "" {
-		cmd = append(cmd, "-c", "model_instructions_file="+cfg.SystemPromptFile)
+	if err := appendCodexStandingInstructions(&cmd, cfg.DataDir, cfg.Session.ID, cfg.SystemPrompt, cfg.SystemPromptFile); err != nil {
+		return nil, false, err
 	}
 	cmd = append(cmd, agentSessionID)
+	if cfg.Prompt != "" {
+		cmd = append(cmd, "--", cfg.Prompt)
+	}
 	return cmd, true, nil
 }
 

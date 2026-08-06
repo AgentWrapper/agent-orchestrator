@@ -27,6 +27,41 @@ func livePID() int { return os.Getpid() }
 // ponytail: PID 2147483647 (MaxInt32) is never a real process; signal-0 returns ESRCH.
 func deadPID() int { return 2147483647 }
 
+func TestMaxInlinePromptBytesRespectsCreateProcessCommandLineLimit(t *testing.T) {
+	runtime := New(Options{})
+	base := ports.RuntimeConfig{
+		SessionID:     "session-1",
+		WorkspacePath: `C:\worktree`,
+		Argv:          []string{"ao.exe", "agent-process", "supervise", "--", "codex.exe", "resume", "thread-1"},
+	}
+	budget, err := runtime.MaxInlinePromptBytes(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if budget < minimumInlineContinuationBytesForTest {
+		t.Fatalf("ordinary inline prompt budget = %d, want at least %d", budget, minimumInlineContinuationBytesForTest)
+	}
+
+	large := base
+	large.Argv = append(append([]string(nil), base.Argv...), strings.Repeat("standing instructions ", 900))
+	largeBudget, err := runtime.MaxInlinePromptBytes(large)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if largeBudget >= budget {
+		t.Fatalf("large argv budget = %d, want less than ordinary budget %d", largeBudget, budget)
+	}
+}
+
+const minimumInlineContinuationBytesForTest = 8 << 10
+
+func TestRuntimeDoesNotAdvertiseStyledRenderedTerminalOutput(t *testing.T) {
+	var runtime any = New(Options{})
+	if _, ok := runtime.(ports.StyledTerminalOutputReader); ok {
+		t.Fatal("raw ConPTY history must not be used as rendered composer state")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test harness: in-process pty-host backed by a fakePTY.
 // ---------------------------------------------------------------------------
@@ -407,6 +442,7 @@ func TestSupervisedProcessExitKeepsHostAlive(t *testing.T) {
 		SessionID:     "sess-supervised",
 		WorkspacePath: "/tmp/w",
 		Argv:          []string{"ao", "agent-process", "supervise"},
+		Env:           map[string]string{runtimeLaunchIDEnv: "launch-current"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -416,6 +452,18 @@ func TestSupervisedProcessExitKeepsHostAlive(t *testing.T) {
 
 	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{}); err != nil || !alive {
 		t.Fatalf("supervised process before exit = (%v, %v), want (true, nil)", alive, err)
+	}
+	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-stale"}); err != nil || alive {
+		t.Fatalf("stale supervised generation = (%v, %v), want (false, nil)", alive, err)
+	}
+	if alive, err := rt.IsSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-current"}); err != nil || !alive {
+		t.Fatalf("current supervised generation = (%v, %v), want (true, nil)", alive, err)
+	}
+	if alive, err := rt.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-current"}); err != nil || !alive {
+		t.Fatalf("exact current supervised generation = (%v, %v), want (true, nil)", alive, err)
+	}
+	if alive, err := rt.IsExactSupervisedProcessAlive(ctx, handle, ports.SupervisedProcessRef{SessionID: "sess-supervised", LaunchID: "launch-stale"}); err != nil || alive {
+		t.Fatalf("exact stale supervised generation = (%v, %v), want (false, nil)", alive, err)
 	}
 	h.pty.signalExit(42)
 

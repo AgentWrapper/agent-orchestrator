@@ -635,6 +635,12 @@ func (f *fakeSessionLifecycle) RestoreAll(_ context.Context) error {
 
 func (f *fakeSessionLifecycle) SetShellTerminalCloser(sessionmanager.ShellTerminalCloser) {}
 
+func (f *fakeSessionLifecycle) AcquireSessionInput(domain.SessionID) (func(), bool) {
+	return func() {}, true
+}
+
+func (f *fakeSessionLifecycle) SessionMutationInProgress(domain.SessionID) bool { return false }
+
 // TestWiring_SessionLifecycleInterfaceInvokedByDaemon asserts the
 // sessionLifecycle interface is satisfied by *sessionmanager.Manager (compile
 // check) and that Reconcile and RestoreAll dispatch correctly through the

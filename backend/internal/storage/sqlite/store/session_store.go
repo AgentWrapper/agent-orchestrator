@@ -40,6 +40,51 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
+// UpdateSessionFromActivitySignal writes only lifecycle-hook-owned session
+// fields. The query atomically fences the owner generation observed by the
+// reducer and rejects callbacks from a source while an agent switch is tearing
+// that source down. This prevents a stale full-row write from resurrecting the
+// source or overwriting an already-activated target.
+func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.SessionRecord) (bool, error) {
+	activity := normalActivity(rec.Activity, rec.UpdatedAt)
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.UpdateSessionFromActivitySignal(ctx, gen.UpdateSessionFromActivitySignalParams{
+		ActivityState:           activity.State,
+		ActivityLastAt:          activity.LastActivityAt,
+		FirstSignalAt:           timeToNullTime(rec.FirstSignalAt),
+		AgentSessionID:          rec.Metadata.AgentSessionID,
+		LatestUserPrompt:        rec.Metadata.LatestUserPrompt,
+		LatestAssistantUpdate:   rec.Metadata.LatestAssistantUpdate,
+		NativeTranscriptPath:    rec.Metadata.NativeTranscriptPath,
+		UpdatedAt:               rec.UpdatedAt,
+		ID:                      rec.ID,
+		ExpectedHarness:         rec.Harness,
+		ExpectedRuntimeLaunchID: rec.Metadata.RuntimeLaunchID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("update session %s from activity signal: %w", rec.ID, err)
+	}
+	return rows > 0, nil
+}
+
+// RecordSessionLatestUserPrompt updates only the user prompt fact owned by the
+// outbound message path. The monotonic timestamp predicate prevents a delayed
+// post-delivery write from overwriting newer lifecycle or agent-switch facts.
+func (s *Store) RecordSessionLatestUserPrompt(ctx context.Context, id domain.SessionID, prompt string, updatedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.RecordSessionLatestUserPrompt(ctx, gen.RecordSessionLatestUserPromptParams{
+		LatestUserPrompt: prompt,
+		UpdatedAt:        updatedAt,
+		ID:               id,
+	})
+	if err != nil {
+		return false, fmt.Errorf("record latest user prompt for session %s: %w", id, err)
+	}
+	return rows > 0, nil
+}
+
 // RenameSession updates only the user-facing display name for an existing
 // session. It returns ok=false when the session id does not exist. The
 // sessions_cdc_update trigger fans out a session_updated CDC event when the
@@ -124,10 +169,11 @@ func (s *Store) SetSessionReviewerHarness(ctx context.Context, id domain.Session
 }
 
 // DeleteSession removes a session row, but only if it is still in seed state
-// (no workspace, no runtime handle, no agent session id, no prompt, and not
-// already terminated). Rows that have observable spawn output are immutable
-// to preserve the no-resurrection guarantee — for those, callers fall back to
-// MarkTerminated (lifecycle.Manager) instead.
+// (no workspace, runtime/native-session/transcript handles, prompt, recorded
+// user/assistant interaction, and not already terminated). Rows that have
+// observable spawn output are immutable to preserve the no-resurrection
+// guarantee — for those, callers fall back to MarkTerminated
+// (lifecycle.Manager) instead.
 //
 // The deletion runs in a transaction. It first probes seed state with
 // SessionIsSeed; only if that returns true does it clear the session's
@@ -183,7 +229,10 @@ WHERE id = ?
   AND workspace_path = ''
   AND runtime_handle_id = ''
   AND agent_session_id = ''
-  AND prompt = ''`, id)
+  AND prompt = ''
+  AND latest_user_prompt = ''
+  AND latest_assistant_update = ''
+  AND native_transcript_path = ''`, id)
 	if err != nil {
 		return false, fmt.Errorf("delete seed session %s: %w", id, err)
 	}
@@ -254,17 +303,20 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
 		TerminateOnPRMerge: row.TerminateOnPRMerge,
 		Metadata: domain.SessionMetadata{
-			Branch:            row.Branch,
-			WorkspacePath:     row.WorkspacePath,
-			WorkspaceRepoPath: row.WorkspaceRepoPath,
-			DiffBaseSHA:       row.DiffBaseSha,
-			DiffBaseRef:       row.DiffBaseRef,
-			RuntimeHandleID:   row.RuntimeHandleID,
-			RuntimeLaunchID:   row.RuntimeLaunchID,
-			AgentSessionID:    row.AgentSessionID,
-			Prompt:            row.Prompt,
-			PreviewURL:        row.PreviewURL,
-			PreviewRevision:   row.PreviewRevision,
+			Branch:                row.Branch,
+			WorkspacePath:         row.WorkspacePath,
+			WorkspaceRepoPath:     row.WorkspaceRepoPath,
+			DiffBaseSHA:           row.DiffBaseSha,
+			DiffBaseRef:           row.DiffBaseRef,
+			RuntimeHandleID:       row.RuntimeHandleID,
+			RuntimeLaunchID:       row.RuntimeLaunchID,
+			AgentSessionID:        row.AgentSessionID,
+			Prompt:                row.Prompt,
+			LatestUserPrompt:      row.LatestUserPrompt,
+			LatestAssistantUpdate: row.LatestAssistantUpdate,
+			NativeTranscriptPath:  row.NativeTranscriptPath,
+			PreviewURL:            row.PreviewURL,
+			PreviewRevision:       row.PreviewRevision,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
@@ -275,67 +327,73 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {
 	activity := normalActivity(rec.Activity, rec.CreatedAt)
 	return gen.InsertSessionParams{
-		ID:                 rec.ID,
-		ProjectID:          rec.ProjectID,
-		Num:                num,
-		IssueID:            rec.IssueID,
-		Kind:               rec.Kind,
-		Harness:            rec.Harness,
-		ReviewerHarness:    rec.ReviewerHarness,
-		DisplayName:        rec.DisplayName,
-		ActivityState:      activity.State,
-		ActivityLastAt:     activity.LastActivityAt,
-		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:       rec.IsTerminated,
-		IsPinned:           rec.IsPinned,
-		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
-		Branch:             rec.Metadata.Branch,
-		WorkspacePath:      rec.Metadata.WorkspacePath,
-		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
-		DiffBaseSha:        rec.Metadata.DiffBaseSHA,
-		DiffBaseRef:        rec.Metadata.DiffBaseRef,
-		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
-		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
-		AgentSessionID:     rec.Metadata.AgentSessionID,
-		Prompt:             rec.Metadata.Prompt,
-		PreviewURL:         rec.Metadata.PreviewURL,
-		PreviewRevision:    rec.Metadata.PreviewRevision,
-		TerminateOnPRMerge: rec.TerminateOnPRMerge,
-		CleanupGeneration:  rec.CleanupGeneration,
-		CreatedAt:          rec.CreatedAt,
-		UpdatedAt:          rec.UpdatedAt,
+		ID:                    rec.ID,
+		ProjectID:             rec.ProjectID,
+		Num:                   num,
+		IssueID:               rec.IssueID,
+		Kind:                  rec.Kind,
+		Harness:               rec.Harness,
+		ReviewerHarness:       rec.ReviewerHarness,
+		DisplayName:           rec.DisplayName,
+		ActivityState:         activity.State,
+		ActivityLastAt:        activity.LastActivityAt,
+		FirstSignalAt:         timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:          rec.IsTerminated,
+		IsPinned:              rec.IsPinned,
+		PinnedAt:              timePtrToNullTime(rec.PinnedAt),
+		Branch:                rec.Metadata.Branch,
+		WorkspacePath:         rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:     rec.Metadata.WorkspaceRepoPath,
+		DiffBaseSha:           rec.Metadata.DiffBaseSHA,
+		DiffBaseRef:           rec.Metadata.DiffBaseRef,
+		RuntimeHandleID:       rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:       rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:        rec.Metadata.AgentSessionID,
+		Prompt:                rec.Metadata.Prompt,
+		LatestUserPrompt:      rec.Metadata.LatestUserPrompt,
+		LatestAssistantUpdate: rec.Metadata.LatestAssistantUpdate,
+		NativeTranscriptPath:  rec.Metadata.NativeTranscriptPath,
+		PreviewURL:            rec.Metadata.PreviewURL,
+		PreviewRevision:       rec.Metadata.PreviewRevision,
+		TerminateOnPRMerge:    rec.TerminateOnPRMerge,
+		CleanupGeneration:     rec.CleanupGeneration,
+		CreatedAt:             rec.CreatedAt,
+		UpdatedAt:             rec.UpdatedAt,
 	}
 }
 
 func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	return gen.UpdateSessionParams{
-		ID:                 rec.ID,
-		IssueID:            rec.IssueID,
-		Kind:               rec.Kind,
-		Harness:            rec.Harness,
-		ReviewerHarness:    rec.ReviewerHarness,
-		DisplayName:        rec.DisplayName,
-		ActivityState:      activity.State,
-		ActivityLastAt:     activity.LastActivityAt,
-		FirstSignalAt:      timeToNullTime(rec.FirstSignalAt),
-		IsTerminated:       rec.IsTerminated,
-		IsPinned:           rec.IsPinned,
-		PinnedAt:           timePtrToNullTime(rec.PinnedAt),
-		Branch:             rec.Metadata.Branch,
-		WorkspacePath:      rec.Metadata.WorkspacePath,
-		WorkspaceRepoPath:  rec.Metadata.WorkspaceRepoPath,
-		DiffBaseSha:        rec.Metadata.DiffBaseSHA,
-		DiffBaseRef:        rec.Metadata.DiffBaseRef,
-		RuntimeHandleID:    rec.Metadata.RuntimeHandleID,
-		RuntimeLaunchID:    rec.Metadata.RuntimeLaunchID,
-		AgentSessionID:     rec.Metadata.AgentSessionID,
-		Prompt:             rec.Metadata.Prompt,
-		PreviewURL:         rec.Metadata.PreviewURL,
-		PreviewRevision:    rec.Metadata.PreviewRevision,
-		TerminateOnPRMerge: rec.TerminateOnPRMerge,
-		CleanupGeneration:  rec.CleanupGeneration,
-		UpdatedAt:          rec.UpdatedAt,
+		ID:                    rec.ID,
+		IssueID:               rec.IssueID,
+		Kind:                  rec.Kind,
+		Harness:               rec.Harness,
+		ReviewerHarness:       rec.ReviewerHarness,
+		DisplayName:           rec.DisplayName,
+		ActivityState:         activity.State,
+		ActivityLastAt:        activity.LastActivityAt,
+		FirstSignalAt:         timeToNullTime(rec.FirstSignalAt),
+		IsTerminated:          rec.IsTerminated,
+		IsPinned:              rec.IsPinned,
+		PinnedAt:              timePtrToNullTime(rec.PinnedAt),
+		Branch:                rec.Metadata.Branch,
+		WorkspacePath:         rec.Metadata.WorkspacePath,
+		WorkspaceRepoPath:     rec.Metadata.WorkspaceRepoPath,
+		DiffBaseSha:           rec.Metadata.DiffBaseSHA,
+		DiffBaseRef:           rec.Metadata.DiffBaseRef,
+		RuntimeHandleID:       rec.Metadata.RuntimeHandleID,
+		RuntimeLaunchID:       rec.Metadata.RuntimeLaunchID,
+		AgentSessionID:        rec.Metadata.AgentSessionID,
+		Prompt:                rec.Metadata.Prompt,
+		LatestUserPrompt:      rec.Metadata.LatestUserPrompt,
+		LatestAssistantUpdate: rec.Metadata.LatestAssistantUpdate,
+		NativeTranscriptPath:  rec.Metadata.NativeTranscriptPath,
+		PreviewURL:            rec.Metadata.PreviewURL,
+		PreviewRevision:       rec.Metadata.PreviewRevision,
+		TerminateOnPRMerge:    rec.TerminateOnPRMerge,
+		CleanupGeneration:     rec.CleanupGeneration,
+		UpdatedAt:             rec.UpdatedAt,
 	}
 }
 

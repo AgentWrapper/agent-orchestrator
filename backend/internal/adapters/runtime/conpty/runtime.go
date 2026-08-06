@@ -5,25 +5,39 @@ package conpty
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/conpty/ptyregistry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
+const (
+	runtimeLaunchIDEnv = "AO_RUNTIME_LAUNCH_ID"
+	// CreateProcessW includes the terminating NUL in its 32,767 UTF-16-unit
+	// command-line limit. Keep additional headroom for Go's command assembly
+	// and the provider's prompt separator.
+	windowsCommandLineUTF16Limit  = 32767
+	windowsCommandLineSafetyUnits = 512
+)
+
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
 var _ ports.Runtime = (*Runtime)(nil)
+var _ ports.InlinePromptBudgeter = (*Runtime)(nil)
 
 // validSessionID matches agent-orchestrator's assertValidSessionId.
 var validSessionID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // hostSession is the in-memory state for a live pty-host connection.
 type hostSession struct {
-	addr string
-	pid  int
+	addr     string
+	pid      int
+	launchID string
 }
 
 // Options configures the Runtime. All fields are optional; zero values use
@@ -87,7 +101,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		return ports.RuntimeHandle{}, fmt.Errorf("conpty: spawn pty-host for %q: %w", id, err)
 	}
 
-	sess := &hostSession{addr: addr, pid: pid}
+	sess := &hostSession{addr: addr, pid: pid, launchID: cfg.Env[runtimeLaunchIDEnv]}
 
 	r.mu.Lock()
 	r.sessions[id] = sess
@@ -98,6 +112,7 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 		SessionID:    id,
 		PtyHostPID:   pid,
 		PipePath:     addr, // ponytail: reuse PipePath field for loopback addr
+		LaunchID:     sess.launchID,
 		RegisteredAt: time.Now().UTC().Format(time.RFC3339),
 	})
 
@@ -164,10 +179,17 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 
 // IsSupervisedProcessAlive uses the pty-host's child status. For a supervised
 // launch that child is the AO supervisor, whose lifetime matches the managed
-// agent process.
-func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, _ ports.SupervisedProcessRef) (bool, error) {
+// agent process. When a generation ref is supplied, the launch id captured at
+// Create (and persisted in the recovery registry) must match exactly.
+func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
 	sess := r.resolve(handle.ID)
 	if sess == nil {
+		return false, nil
+	}
+	if ref.SessionID != "" && string(ref.SessionID) != handle.ID {
+		return false, nil
+	}
+	if ref.LaunchID != "" && (sess.launchID == "" || sess.launchID != ref.LaunchID) {
 		return false, nil
 	}
 	status, hostAlive, err := clientStatus(sess.addr)
@@ -178,6 +200,52 @@ func (r *Runtime) IsSupervisedProcessAlive(ctx context.Context, handle ports.Run
 		return false, nil
 	}
 	return status.Alive, nil
+}
+
+// IsExactSupervisedProcessAlive has the same implementation on ConPTY because
+// the pty-host registry already fences its one child by the exact launch id.
+func (r *Runtime) IsExactSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
+	if ref.SessionID == "" || ref.LaunchID == "" {
+		return false, errors.New("conpty: exact supervisor session and launch are required")
+	}
+	return r.IsSupervisedProcessAlive(ctx, handle, ref)
+}
+
+// MaxInlinePromptBytes returns a conservative UTF-8 byte budget for one prompt
+// appended to cfg.Argv. ConPTY starts an outer `ao pty-host` with CreateProcess;
+// unlike tmux, that makes the complete supervisor, provider flags, standing
+// instructions, and prompt share Windows' small command-line limit. Existing
+// args and the future prompt are charged at their worst-case Windows quoting
+// expansion. UTF-8 byte length is never smaller than the corresponding UTF-16
+// unit count, so the returned byte budget is safe for Unicode prompts too.
+func (r *Runtime) MaxInlinePromptBytes(cfg ports.RuntimeConfig) (int, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return 0, fmt.Errorf("conpty: resolve executable for inline prompt budget: %w", err)
+	}
+	_, argv := stripEnvAssignments(cfg.Argv)
+	args := make([]string, 0, 4+len(argv))
+	args = append(args, executable, "pty-host", string(cfg.SessionID), cfg.WorkspacePath)
+	args = append(args, argv...)
+
+	used := 1 + windowsCommandLineSafetyUnits // terminating NUL plus headroom
+	for _, arg := range args {
+		used += worstCaseWindowsQuotedUnits(arg)
+	}
+	remaining := windowsCommandLineUTF16Limit - used
+	if remaining <= 32 {
+		return 0, nil
+	}
+	// The provider adds a `--`-style separator, then Go may quote and escape
+	// every prompt unit. Charge two command-line units per UTF-8 byte.
+	return (remaining - 32) / 2, nil
+}
+
+func worstCaseWindowsQuotedUnits(value string) int {
+	units := len(utf16.Encode([]rune(value)))
+	// Two units per input unit covers escaping every backslash/quote; the extra
+	// three cover surrounding quotes and the separating space.
+	return 2*units + 3
 }
 
 // SendMessage chunks message and writes it to the pty-host followed by Enter.
@@ -230,7 +298,7 @@ func (r *Runtime) resolve(id string) *hostSession {
 			continue
 		}
 		// Re-populate the map so subsequent calls skip the file scan.
-		recovered := &hostSession{addr: e.PipePath, pid: e.PtyHostPID}
+		recovered := &hostSession{addr: e.PipePath, pid: e.PtyHostPID, launchID: e.LaunchID}
 		r.mu.Lock()
 		// Only store if another goroutine hasn't beaten us.
 		if r.sessions[id] == nil {
