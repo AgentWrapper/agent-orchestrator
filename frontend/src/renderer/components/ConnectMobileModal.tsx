@@ -56,7 +56,7 @@ interface ConnectMobileModalProps {
 }
 
 // ConnectMobileModal lets a user pair the mobile app with this desktop over
-// the LAN bridge. A single "Enable mobile" toggle sits at the top; flipping it
+// the LAN bridge. A single "Allow mobile pairing" toggle sits at the top; flipping it
 // on starts the bridge and reveals the pairing details below the toggle row —
 // a QR code (host/port/password), the plaintext address + password with a copy
 // affordance, and a Regenerate action. Flipping it off tears the bridge down.
@@ -231,7 +231,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 								)}
 								aria-hidden={!enabled}
 							>
-									<div className="overflow-hidden">
+					<div className="overflow-hidden">
 									<div
 										className={cn(
 											"mt-4 flex flex-col items-center transition-opacity duration-300 ease-out",
@@ -243,7 +243,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 										<ConnectMobileSetup port={status.port} enabled={enabled} />
 
 										<div className="mt-6 flex w-(--size-settings-mobile-qr) flex-col items-center">
-										<div className="rounded-md border border-(--color-border-settings-input) bg-white p-2">
+											<div className="rounded-md border border-(--color-border-settings-input) bg-white p-2">
 												<QRCodeSVG
 													value={pairingPayload(status.host, status.port, status.password)}
 													size={QR_CODE_SIZE}

@@ -363,7 +363,7 @@
 	/* Command palette */
 	--color-bg-command-palette: var(--popover);
 	--color-border-command-palette: var(--border);
-	--color-bg-command-item-active: var(--accent);
+	--color-bg-command-item-active: color-mix(in oklch, var(--popover) 88%, var(--foreground) 12%);
 	--color-text-command-item: var(--foreground);
 	--color-text-command-placeholder: var(--muted-foreground);
 	--color-text-command-muted: var(--muted-foreground);
@@ -740,7 +740,7 @@
 	/* Command palette */
 	--color-bg-command-palette: var(--popover);
 	--color-border-command-palette: var(--border);
-	--color-bg-command-item-active: var(--accent);
+	--color-bg-command-item-active: color-mix(in oklch, var(--popover) 88%, var(--foreground) 12%);
 	--color-text-command-item: var(--foreground);
 	--color-text-command-placeholder: var(--muted-foreground);
 	--color-text-command-muted: var(--muted-foreground);

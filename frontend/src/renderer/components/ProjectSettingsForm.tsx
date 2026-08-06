@@ -33,7 +33,6 @@ type TrackerIntakeConfig = components["schemas"]["TrackerIntakeConfig"];
 
 const PERMISSION_MODE_VALUES = ["default", "accept-edits", "auto", "bypass-permissions"] as const;
 
-
 const projectQueryKey = (id: string) => ["project", id] as const;
 
 export type ProjectSettingsSection = "general" | "agents" | "workflow" | "intake";
@@ -257,8 +256,8 @@ function SettingsBody({
 
 	useEffect(() => {
 		onSaveState?.({
-		isPending: mutation.isPending,
-		showSaving,
+			isPending: mutation.isPending,
+			showSaving,
 			validationError,
 			mutationError: mutation.isError ? (mutation.error instanceof Error ? mutation.error.message : t("settings.project.saveFailed")) : null,
 			saved: savedAt !== null && !mutation.isPending && !mutation.isError,
