@@ -715,10 +715,9 @@ type ListUsageSessionsQuery struct {
 
 // CompactSessionUsageResponse is one session card's token-only usage summary.
 type CompactSessionUsageResponse struct {
-	SessionID       domain.SessionID `json:"sessionId"`
-	TotalTokens     int64            `json:"totalTokens" minimum:"0"`
-	CollectionState string           `json:"collectionState" enum:"waiting,collecting,complete,partial,unavailable"`
-	Coverage        string           `json:"coverage" enum:"complete,partial,unavailable"`
+	SessionID   domain.SessionID `json:"sessionId"`
+	TotalTokens int64            `json:"totalTokens" minimum:"0"`
+	Incomplete  bool             `json:"incomplete"`
 }
 
 // ListCompactSessionUsageResponse is the batch dashboard usage response.
@@ -726,45 +725,35 @@ type ListCompactSessionUsageResponse struct {
 	Sessions []CompactSessionUsageResponse `json:"sessions"`
 }
 
-// UsageMetricResponse is one token metric plus its collection coverage.
-type UsageMetricResponse struct {
-	Value    *int64 `json:"value"`
-	Coverage string `json:"coverage" enum:"complete,partial,unavailable"`
-}
-
 // UsageTotalsResponse is the normalized telemetry aggregate for one scope.
 type UsageTotalsResponse struct {
-	InputTokens         UsageMetricResponse `json:"inputTokens"`
-	UncachedInputTokens UsageMetricResponse `json:"uncachedInputTokens"`
-	CacheReadTokens     UsageMetricResponse `json:"cacheReadTokens"`
-	CacheWriteTokens    UsageMetricResponse `json:"cacheWriteTokens"`
-	OutputTokens        UsageMetricResponse `json:"outputTokens"`
-	ReasoningTokens     UsageMetricResponse `json:"reasoningTokens"`
+	InputTokens         *int64 `json:"inputTokens"`
+	UncachedInputTokens *int64 `json:"uncachedInputTokens"`
+	CacheReadTokens     *int64 `json:"cacheReadTokens"`
+	CacheWriteTokens    *int64 `json:"cacheWriteTokens"`
+	OutputTokens        *int64 `json:"outputTokens"`
+	ReasoningTokens     *int64 `json:"reasoningTokens"`
 }
 
-// UsageModelResponse is telemetry grouped by exact provider model id.
+// UsageModelResponse is telemetry grouped by exact model id.
 type UsageModelResponse struct {
-	ModelID  string              `json:"modelId"`
-	Provider string              `json:"provider"`
-	Totals   UsageTotalsResponse `json:"totals"`
+	ModelID string              `json:"modelId"`
+	Totals  UsageTotalsResponse `json:"totals"`
 }
 
 // UsageHarnessResponse groups model telemetry under one AO harness.
 type UsageHarnessResponse struct {
-	Harness  string               `json:"harness"`
-	Provider string               `json:"provider"`
-	Totals   UsageTotalsResponse  `json:"totals"`
-	Models   []UsageModelResponse `json:"models"`
+	Harness string               `json:"harness"`
+	Totals  UsageTotalsResponse  `json:"totals"`
+	Models  []UsageModelResponse `json:"models"`
 }
 
 // SessionUsageResponse is detailed telemetry for the session inspector.
 type SessionUsageResponse struct {
-	SessionID       domain.SessionID       `json:"sessionId"`
-	CollectionState string                 `json:"collectionState" enum:"waiting,collecting,complete,partial,unavailable"`
-	LastObservedAt  *time.Time             `json:"lastObservedAt,omitempty"`
-	Warnings        []string               `json:"warnings"`
-	Totals          UsageTotalsResponse    `json:"totals"`
-	Harnesses       []UsageHarnessResponse `json:"harnesses"`
+	SessionID  domain.SessionID       `json:"sessionId"`
+	Incomplete bool                   `json:"incomplete"`
+	Totals     UsageTotalsResponse    `json:"totals"`
+	Harnesses  []UsageHarnessResponse `json:"harnesses"`
 }
 
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.

@@ -41,10 +41,7 @@ func (c *UsageController) listSessions(w http.ResponseWriter, r *http.Request) {
 	out := make([]CompactSessionUsageResponse, 0, len(items))
 	for _, item := range items {
 		out = append(out, CompactSessionUsageResponse{
-			SessionID:       item.SessionID,
-			TotalTokens:     item.TotalTokens,
-			CollectionState: string(item.CollectionState),
-			Coverage:        string(item.Coverage),
+			SessionID: item.SessionID, TotalTokens: item.TotalTokens, Incomplete: item.Incomplete,
 		})
 	}
 	envelope.WriteJSON(w, http.StatusOK, ListCompactSessionUsageResponse{Sessions: out})
@@ -69,39 +66,23 @@ func sessionUsageResponse(summary domain.SessionUsageSummary) SessionUsageRespon
 		models := make([]UsageModelResponse, 0, len(harness.Models))
 		for _, model := range harness.Models {
 			models = append(models, UsageModelResponse{
-				ModelID:  model.ModelID,
-				Provider: model.Provider,
-				Totals:   usageTotalsResponse(model.Totals),
+				ModelID: model.ModelID, Totals: usageTotalsResponse(model.Totals),
 			})
 		}
 		harnesses = append(harnesses, UsageHarnessResponse{
-			Harness:  string(harness.Harness),
-			Provider: harness.Provider,
-			Totals:   usageTotalsResponse(harness.Totals),
-			Models:   models,
+			Harness: string(harness.Harness), Totals: usageTotalsResponse(harness.Totals), Models: models,
 		})
 	}
 	return SessionUsageResponse{
-		SessionID:       summary.SessionID,
-		CollectionState: string(summary.Collection.State),
-		LastObservedAt:  summary.Collection.LastObservedAt,
-		Warnings:        summary.Collection.Warnings,
-		Totals:          usageTotalsResponse(summary.Totals),
-		Harnesses:       harnesses,
+		SessionID: summary.SessionID, Incomplete: summary.Incomplete,
+		Totals: usageTotalsResponse(summary.Totals), Harnesses: harnesses,
 	}
 }
 
 func usageTotalsResponse(totals domain.UsageMetricTotals) UsageTotalsResponse {
 	return UsageTotalsResponse{
-		InputTokens:         usageMetricResponse(totals.InputTokens),
-		UncachedInputTokens: usageMetricResponse(totals.UncachedInputTokens),
-		CacheReadTokens:     usageMetricResponse(totals.CacheReadTokens),
-		CacheWriteTokens:    usageMetricResponse(totals.CacheWriteTokens),
-		OutputTokens:        usageMetricResponse(totals.OutputTokens),
-		ReasoningTokens:     usageMetricResponse(totals.ReasoningTokens),
+		InputTokens: totals.InputTokens, UncachedInputTokens: totals.UncachedInputTokens,
+		CacheReadTokens: totals.CacheReadTokens, CacheWriteTokens: totals.CacheWriteTokens,
+		OutputTokens: totals.OutputTokens, ReasoningTokens: totals.ReasoningTokens,
 	}
-}
-
-func usageMetricResponse(metric domain.UsageMetricCoverage) UsageMetricResponse {
-	return UsageMetricResponse{Value: metric.Value, Coverage: string(metric.Coverage)}
 }

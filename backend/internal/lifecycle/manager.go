@@ -63,6 +63,10 @@ type sessionUsageFinalizer interface {
 	) error
 }
 
+type sessionUsageReactivator interface {
+	ReactivateSession(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string) error
+}
+
 type pendingLaunch struct {
 	launchID string
 	ready    chan struct{}
@@ -117,9 +121,10 @@ type Manager struct {
 	// usageFinalizer is late-bound because the usage pipeline is optional. It
 	// receives terminal intent before is_terminated makes the session ineligible
 	// for normal source discovery.
-	usageFinalizer sessionUsageFinalizer
-	containers     ports.ContainerReaper
-	projects       projectConfigLoader
+	usageFinalizer   sessionUsageFinalizer
+	usageReactivator sessionUsageReactivator
+	containers       ports.ContainerReaper
+	projects         projectConfigLoader
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -175,12 +180,13 @@ func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
 	m.completionTerminator = terminator
 }
 
-// SetUsageFinalizer wires termination to usage collection. Finalization is
-// best-effort and never blocks the lifecycle transition.
+// SetUsageFinalizer wires termination and relaunches to usage collection.
+// Telemetry failures never block the lifecycle transition.
 func (m *Manager) SetUsageFinalizer(finalizer sessionUsageFinalizer) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.usageFinalizer = finalizer
+	m.usageReactivator, _ = finalizer.(sessionUsageReactivator)
 }
 
 // PrepareLaunch registers a supervised generation before the runtime starts.
@@ -712,26 +718,37 @@ func (m *Manager) resolveNotifications(ctx context.Context, resolutions ...ports
 
 // MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.
 func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	defer m.finishLaunchLocked(id, strings.TrimSpace(metadata.RuntimeLaunchID))
-	rec, ok, err := m.store.GetSession(ctx, id)
+	launchID := strings.TrimSpace(metadata.RuntimeLaunchID)
+	reactivator, err := func() (sessionUsageReactivator, error) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		defer m.finishLaunchLocked(id, launchID)
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
+		}
+		now := m.clock()
+		rec.IsTerminated = false
+		rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+		// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
+		// a relaunch with broken hooks degrades to no_signal instead of inheriting
+		// a stale "signals worked once" fact.
+		rec.FirstSignalAt = time.Time{}
+		rec.Metadata = mergeMetadata(rec.Metadata, metadata)
+		rec.UpdatedAt = now
+		if err := m.store.UpdateSession(ctx, rec); err != nil {
+			return nil, err
+		}
+		return m.usageReactivator, nil
+	}()
 	if err != nil {
 		return err
 	}
-	if !ok {
-		return fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
-	}
-	now := m.clock()
-	rec.IsTerminated = false
-	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
-	// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
-	// a relaunch with broken hooks degrades to no_signal instead of inheriting
-	// a stale "signals worked once" fact.
-	rec.FirstSignalAt = time.Time{}
-	rec.Metadata = mergeMetadata(rec.Metadata, metadata)
-	rec.UpdatedAt = now
-	return m.store.UpdateSession(ctx, rec)
+	reactivateSessionUsage(ctx, id, launchID, reactivator)
+	return nil
 }
 
 // MarkTerminated marks a session terminated. Runtime/workspace teardown is the
@@ -819,6 +836,20 @@ func finalizeSessionUsage(
 	}
 	if err := finalizer.FinalizeSession(ctx, id, expectedRuntimeLaunchID, expectedSessionRevision); err != nil {
 		slog.Default().Warn("lifecycle: finalize session usage before termination", "session", id, "err", err)
+	}
+}
+
+func reactivateSessionUsage(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedRuntimeLaunchID string,
+	reactivator sessionUsageReactivator,
+) {
+	if reactivator == nil {
+		return
+	}
+	if err := reactivator.ReactivateSession(ctx, id, expectedRuntimeLaunchID); err != nil {
+		slog.Default().Warn("lifecycle: reactivate session usage after launch", "session", id, "err", err)
 	}
 }
 

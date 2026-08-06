@@ -1020,8 +1020,7 @@ function ArchiveSessionItem({
 function SessionUsageMetric({ usage }: { usage?: SessionUsageSummary }) {
 	const { t } = useTranslation();
 	if (!usage || usage.totalTokens <= 0) return null;
-	const incomplete = usage.coverage === "partial";
-	const tooltip = t(incomplete ? "shell.usageTokensIncomplete" : "shell.usageTokens", {
+	const tooltip = t("shell.usageTokens", {
 		count: usage.totalTokens.toLocaleString("en-US"),
 	});
 	return (
@@ -1031,7 +1030,6 @@ function SessionUsageMetric({ usage }: { usage?: SessionUsageSummary }) {
 					aria-label={tooltip}
 					className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-2xs text-muted-foreground"
 				>
-					{incomplete ? <AlertTriangle aria-hidden="true" className="size-3 text-warning" /> : null}
 					{formatTokenCount(usage.totalTokens)}
 				</span>
 			</TooltipTrigger>

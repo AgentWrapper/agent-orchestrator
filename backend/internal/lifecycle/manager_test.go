@@ -803,6 +803,48 @@ func (f *fakeUsageFinalizer) FinalizeSession(
 	return f.err
 }
 
+type fakeUsageLifecycle struct {
+	fakeUsageFinalizer
+	reactivateCalls  int
+	reactivateID     domain.SessionID
+	reactivateLaunch string
+	sawLive          bool
+}
+
+func (f *fakeUsageLifecycle) ReactivateSession(
+	_ context.Context,
+	id domain.SessionID,
+	launchID string,
+) error {
+	f.reactivateCalls++
+	f.reactivateID = id
+	f.reactivateLaunch = launchID
+	f.sawLive = !f.store.sessions[id].IsTerminated
+	return nil
+}
+
+func TestMarkSpawnedReactivatesUsageAfterLifecycleTransition(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+		Metadata:     domain.SessionMetadata{RuntimeLaunchID: "launch-old"},
+	}
+	usage := &fakeUsageLifecycle{fakeUsageFinalizer: fakeUsageFinalizer{store: st}}
+	m.SetUsageFinalizer(usage)
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{RuntimeLaunchID: "launch-new"}); err != nil {
+		t.Fatal(err)
+	}
+	if usage.reactivateCalls != 1 || usage.reactivateID != "mer-1" ||
+		usage.reactivateLaunch != "launch-new" || !usage.sawLive {
+		t.Fatalf("usage reactivation = calls:%d id:%q launch:%q live:%v",
+			usage.reactivateCalls, usage.reactivateID, usage.reactivateLaunch, usage.sawLive)
+	}
+}
+
 func TestMarkTerminatedFinalizesUsageBeforeLifecycleTransition(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")

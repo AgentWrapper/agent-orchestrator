@@ -1088,10 +1088,7 @@ export interface components {
             sessionId: string;
         };
         CompactSessionUsageResponse: {
-            /** @enum {string} */
-            collectionState: "waiting" | "collecting" | "complete" | "partial" | "unavailable";
-            /** @enum {string} */
-            coverage: "complete" | "partial" | "unavailable";
+            incomplete: boolean;
             sessionId: string;
             /** Format: int64 */
             totalTokens: number;
@@ -1608,14 +1605,10 @@ export interface components {
             session: components["schemas"]["ControllersSessionView"];
         };
         SessionUsageResponse: {
-            /** @enum {string} */
-            collectionState: "waiting" | "collecting" | "complete" | "partial" | "unavailable";
             harnesses: components["schemas"]["UsageHarnessResponse"][];
-            /** Format: date-time */
-            lastObservedAt?: null | string;
+            incomplete: boolean;
             sessionId: string;
             totals: components["schemas"]["UsageTotalsResponse"];
-            warnings: string[];
         };
         SetActivityRequest: {
             /** @description Native agent session identifier used to resume its transcript. */
@@ -1755,7 +1748,6 @@ export interface components {
         UsageHarnessResponse: {
             harness: string;
             models: components["schemas"]["UsageModelResponse"][];
-            provider: string;
             totals: components["schemas"]["UsageTotalsResponse"];
         };
         UsageHookMetadata: {
@@ -1766,23 +1758,17 @@ export interface components {
             subagentTranscriptPath?: string;
             transcriptPath?: string;
         };
-        UsageMetricResponse: {
-            /** @enum {string} */
-            coverage: "complete" | "partial" | "unavailable";
-            value: null | number;
-        };
         UsageModelResponse: {
             modelId: string;
-            provider: string;
             totals: components["schemas"]["UsageTotalsResponse"];
         };
         UsageTotalsResponse: {
-            cacheReadTokens: components["schemas"]["UsageMetricResponse"];
-            cacheWriteTokens: components["schemas"]["UsageMetricResponse"];
-            inputTokens: components["schemas"]["UsageMetricResponse"];
-            outputTokens: components["schemas"]["UsageMetricResponse"];
-            reasoningTokens: components["schemas"]["UsageMetricResponse"];
-            uncachedInputTokens: components["schemas"]["UsageMetricResponse"];
+            cacheReadTokens: null | number;
+            cacheWriteTokens: null | number;
+            inputTokens: null | number;
+            outputTokens: null | number;
+            reasoningTokens: null | number;
+            uncachedInputTokens: null | number;
         };
         WorkspaceFileResponse: {
             additions: number;

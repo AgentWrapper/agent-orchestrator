@@ -20,10 +20,13 @@ const (
 )
 
 // TranscriptEvent reports a transcript path whose contents or filesystem
-// identity may have changed.
+// identity may have changed. Discovery events may carry a directory path after
+// a recursive watch-set rebuild so the coordinator can reconcile files that
+// were created before the new directory became watched.
 type TranscriptEvent struct {
 	Path      string
 	Discovery bool
+	Topology  bool
 }
 
 // TranscriptWatcher recursively watches transcript roots while keeping all
@@ -125,12 +128,12 @@ func (w *TranscriptWatcher) run(ctx context.Context) {
 				w.close()
 				return
 			}
-			emit, discovery, rebuildErr := w.handleEvent(ctx, event)
+			emit, discovery, topology, rebuildErr := w.handleEvent(ctx, event)
 			if rebuildErr != nil && !w.sendError(ctx, rebuildErr) {
 				w.close()
 				return
 			}
-			if emit != "" && !w.sendEvent(ctx, TranscriptEvent{Path: emit, Discovery: discovery}) {
+			if emit != "" && !w.sendEvent(ctx, TranscriptEvent{Path: emit, Discovery: discovery, Topology: topology}) {
 				w.close()
 				return
 			}
@@ -158,9 +161,9 @@ func (w *TranscriptWatcher) close() {
 	clear(w.watched)
 }
 
-func (w *TranscriptWatcher) handleEvent(ctx context.Context, event fsnotify.Event) (string, bool, error) {
+func (w *TranscriptWatcher) handleEvent(ctx context.Context, event fsnotify.Event) (string, bool, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	path := filepath.Clean(event.Name)
 	emit := ""
@@ -175,12 +178,17 @@ func (w *TranscriptWatcher) handleEvent(ctx context.Context, event fsnotify.Even
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed || !w.directoryEventRequiresRebuildLocked(ctx, path, event.Op) {
-		return emit, discovery, nil
+		return emit, discovery, false, nil
 	}
 	if err := w.rebuildLocked(ctx); err != nil {
-		return emit, discovery, fmt.Errorf("rebuild transcript watcher after %s: %w", event.Op, err)
+		return emit, discovery, false, fmt.Errorf("rebuild transcript watcher after %s: %w", event.Op, err)
 	}
-	return emit, discovery, nil
+	if emit == "" {
+		emit = path
+		discovery = true
+		return emit, discovery, true, nil
+	}
+	return emit, discovery, false, nil
 }
 
 func (w *TranscriptWatcher) directoryEventRequiresRebuildLocked(ctx context.Context, path string, op fsnotify.Op) bool {

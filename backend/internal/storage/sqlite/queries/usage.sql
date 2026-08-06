@@ -1,8 +1,8 @@
 -- name: UpsertUsageBinding :one
 INSERT INTO usage_bindings (
     session_id, harness, native_root_id, initial_model_id, state,
-    last_error_code, first_seen_at, last_seen_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    last_error_code, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
     initial_model_id = CASE
         WHEN excluded.initial_model_id <> '' THEN excluded.initial_model_id
@@ -22,7 +22,6 @@ ON CONFLICT (session_id, harness, native_root_id) DO UPDATE SET
         THEN usage_bindings.last_error_code
         ELSE excluded.last_error_code
     END,
-    last_seen_at = excluded.last_seen_at,
     updated_at = excluded.updated_at
 RETURNING *;
 
@@ -35,7 +34,7 @@ WHERE session_id = ? AND harness = ? AND native_root_id = ?;
 SELECT *
 FROM usage_bindings
 WHERE session_id = ?
-ORDER BY first_seen_at, id;
+ORDER BY updated_at, id;
 
 -- name: FinalizeUsageBindingsForSessionLaunch :many
 UPDATE usage_bindings
@@ -45,7 +44,6 @@ SET state = 'finalizing',
         THEN usage_bindings.last_error_code
         ELSE ''
     END,
-    last_seen_at = sqlc.arg(finalized_at),
     updated_at = sqlc.arg(finalized_at)
 WHERE usage_bindings.session_id = sqlc.arg(session_id)
   AND EXISTS (
@@ -63,8 +61,8 @@ INSERT INTO usage_sources (
     binding_id, kind, native_session_id, subagent_id, artifact_path,
     file_identity, generation, byte_offset, parser_state_json,
     state, failure_count, anomaly_count, next_retry_at, last_error_code,
-    last_observed_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (binding_id, artifact_path, generation) DO UPDATE SET
     native_session_id = CASE
         WHEN excluded.native_session_id <> '' THEN excluded.native_session_id
@@ -82,13 +80,6 @@ SELECT *
 FROM usage_sources
 WHERE binding_id = ?
 ORDER BY generation, id;
-
--- name: ListUsageSourcesForSession :many
-SELECT us.*
-FROM usage_sources us
-JOIN usage_bindings ub ON ub.id = us.binding_id
-WHERE ub.session_id = ?
-ORDER BY ub.first_seen_at, ub.id, us.generation, us.id;
 
 -- name: ListWatchableUsageSources :many
 SELECT us.*
@@ -208,18 +199,14 @@ SELECT
     us.anomaly_count,
     us.next_retry_at,
     us.last_error_code AS source_last_error_code,
-    us.last_observed_at,
-    us.created_at AS source_created_at,
     us.updated_at AS source_updated_at,
     ub.session_id,
     ub.harness,
     ub.native_root_id,
     ub.initial_model_id,
-    ub.state AS binding_state,
-    s.project_id
+    ub.state AS binding_state
 FROM usage_sources us
 JOIN usage_bindings ub ON ub.id = us.binding_id
-JOIN sessions s ON s.id = ub.session_id
 WHERE us.id = ?;
 
 -- name: UpdateUsageSourceCursor :exec
@@ -231,56 +218,29 @@ UPDATE usage_sources SET
     anomaly_count = ?,
     next_retry_at = ?,
     last_error_code = ?,
-    last_observed_at = ?,
     updated_at = ?
 WHERE id = ?;
 
--- name: MarkUsageSourceState :execrows
+-- name: UpdateUsageSourceLifecycle :execrows
 UPDATE usage_sources SET
-    state = ?,
-    last_error_code = ?,
-    next_retry_at = ?,
-    updated_at = ?
-WHERE id = ?;
-
--- name: ReactivateUsageSource :execrows
-UPDATE usage_sources SET
-    state = 'active',
-    failure_count = 0,
-    next_retry_at = NULL,
-    last_error_code = '',
-    updated_at = ?
-WHERE id = ?;
-
--- name: MarkUsageSourceFailure :execrows
-UPDATE usage_sources SET
-    state = 'error',
-    failure_count = ?,
-    last_error_code = ?,
-    next_retry_at = ?,
-    updated_at = ?
-WHERE id = ?;
-
--- name: UpdateUsageBindingState :execrows
-UPDATE usage_bindings SET
     state = sqlc.arg(state),
-    last_error_code = CASE
-        WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
-        THEN usage_bindings.last_error_code
-        ELSE sqlc.arg(last_error_code)
-    END,
-    last_seen_at = sqlc.arg(last_seen_at),
+    failure_count = COALESCE(sqlc.narg(failure_count), failure_count),
+    last_error_code = sqlc.arg(last_error_code),
+    next_retry_at = sqlc.narg(next_retry_at),
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(id);
 
--- name: UpdateUsageBindingErrorCode :execrows
+-- name: UpdateUsageBinding :execrows
 UPDATE usage_bindings SET
+    state = CASE
+        WHEN sqlc.arg(state) = '' THEN usage_bindings.state
+        ELSE sqlc.arg(state)
+    END,
     last_error_code = CASE
         WHEN usage_bindings.last_error_code = 'codex_source_budget_exceeded'
         THEN usage_bindings.last_error_code
         ELSE sqlc.arg(last_error_code)
     END,
-    last_seen_at = sqlc.arg(last_seen_at),
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(id);
 
@@ -302,7 +262,6 @@ SET state = CASE
         THEN usage_bindings.last_error_code
         ELSE ''
     END,
-    last_seen_at = sqlc.arg(updated_at),
     updated_at = sqlc.arg(updated_at)
 WHERE id = sqlc.arg(usage_binding_id)
   AND state = 'finalizing'
@@ -343,90 +302,49 @@ WHERE id = sqlc.arg(usage_binding_id)
 
 -- name: GetModelUsageEventByKey :one
 SELECT
-    provider, model_id, observed_at, input_tokens, uncached_input_tokens,
+    model_id, input_tokens, uncached_input_tokens,
     cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens
 FROM model_usage_events
 WHERE binding_id = ? AND source_event_key = ?;
 
 -- name: InsertModelUsageEvent :exec
 INSERT INTO model_usage_events (
-    binding_id, usage_source_id, project_id, session_id, harness, provider,
-    model_id, observed_at, input_tokens, uncached_input_tokens,
+    binding_id, usage_source_id, model_id, input_tokens, uncached_input_tokens,
     cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens,
-    source_event_key, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    source_event_key
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: AggregateUsageBySessionHarnessModel :many
 SELECT
-    harness,
-    provider,
-    model_id,
-    CAST(SUM(input_tokens) AS INTEGER) AS input_tokens,
-    CAST(SUM(uncached_input_tokens) AS INTEGER) AS uncached_input_tokens,
-    CAST(SUM(cache_read_tokens) AS INTEGER) AS cache_read_tokens,
-    CAST(SUM(cache_write_tokens) AS INTEGER) AS cache_write_tokens,
-    CAST(SUM(output_tokens) AS INTEGER) AS output_tokens,
-    CAST(COALESCE(SUM(reasoning_tokens), 0) AS INTEGER) AS reasoning_tokens,
-    COUNT(*) AS event_count,
-    COUNT(reasoning_tokens) AS reasoning_event_count,
-    CAST(MAX(observed_at) AS TEXT) AS last_observed_at
-FROM model_usage_events
-WHERE session_id = ?
-GROUP BY harness, provider, model_id
-ORDER BY SUM(input_tokens + output_tokens) DESC, harness, provider, model_id;
+    ub.harness,
+    mue.model_id,
+    CAST(SUM(mue.input_tokens) AS INTEGER) AS input_tokens,
+    CAST(SUM(mue.uncached_input_tokens) AS INTEGER) AS uncached_input_tokens,
+    CAST(SUM(mue.cache_read_tokens) AS INTEGER) AS cache_read_tokens,
+    CAST(SUM(mue.cache_write_tokens) AS INTEGER) AS cache_write_tokens,
+    CAST(SUM(mue.output_tokens) AS INTEGER) AS output_tokens,
+    CAST(COALESCE(SUM(mue.reasoning_tokens), 0) AS INTEGER) AS reasoning_tokens,
+    COUNT(mue.reasoning_tokens) AS reasoning_event_count
+FROM model_usage_events mue
+JOIN usage_bindings ub ON ub.id = mue.binding_id
+WHERE ub.session_id = ?
+GROUP BY ub.harness, mue.model_id
+ORDER BY SUM(mue.input_tokens + mue.output_tokens) DESC, ub.harness, mue.model_id;
+
+-- name: GetUsageSessionIncomplete :one
+SELECT CAST(COALESCE((
+    SELECT incomplete FROM usage_session_integrity WHERE session_id = ?
+), 0) AS INTEGER);
 
 -- name: ListCompactSessionUsage :many
 SELECT
     s.id AS session_id,
-    s.harness,
-    COUNT(DISTINCT ub.id) AS binding_count,
-    COUNT(DISTINCT CASE
-        WHEN ub.state = 'complete' THEN ub.id
-    END) AS complete_binding_count,
-    COUNT(DISTINCT CASE
-        WHEN ub.state = 'partial'
-          OR ub.last_error_code IN (
-              'artifact_path_rejected',
-              'record_too_large',
-              'malformed_jsonl',
-              'unsupported_source_format',
-              'source_event_conflict',
-              'non_monotonic_cumulative_usage',
-              'invalid_parser_state',
-              'unresolved_spawn_call',
-              'codex_source_budget_exceeded'
-          ) THEN ub.id
-    END) AS partial_binding_count,
-    COUNT(DISTINCT CASE WHEN us.last_error_code <> 'artifact_replaced' THEN us.id END) AS source_count,
-    COUNT(DISTINCT CASE
-        WHEN us.last_error_code <> 'artifact_replaced' AND us.state = 'complete' THEN us.id
-    END) AS complete_source_count,
-    COUNT(DISTINCT CASE
-        WHEN us.last_error_code <> 'artifact_replaced' AND us.state = 'error' THEN us.id
-    END) AS error_source_count,
-    COUNT(DISTINCT CASE
-        WHEN us.last_error_code <> 'artifact_replaced'
-          AND (
-              us.anomaly_count > 0
-              OR us.last_error_code IN (
-                  'artifact_path_rejected',
-                  'record_too_large',
-                  'malformed_jsonl',
-                  'unsupported_source_format',
-                  'source_event_conflict',
-                  'non_monotonic_cumulative_usage',
-                  'invalid_parser_state',
-                  'unresolved_spawn_call',
-                  'codex_source_budget_exceeded'
-              )
-          ) THEN us.id
-    END) AS anomalous_source_count,
-    COUNT(DISTINCT mue.id) AS event_count,
-    CAST(COALESCE(SUM(mue.input_tokens + mue.output_tokens), 0) AS INTEGER) AS total_tokens
+    CAST(COALESCE(SUM(mue.input_tokens + mue.output_tokens), 0) AS INTEGER) AS total_tokens,
+    CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete
 FROM sessions s
 LEFT JOIN usage_bindings ub ON ub.session_id = s.id
-LEFT JOIN usage_sources us ON us.binding_id = ub.id
-LEFT JOIN model_usage_events mue ON mue.usage_source_id = us.id
+LEFT JOIN model_usage_events mue ON mue.binding_id = ub.id
+LEFT JOIN usage_session_integrity integrity ON integrity.session_id = s.id
 WHERE (sqlc.arg(project_id) = '' OR s.project_id = sqlc.arg(project_id))
-GROUP BY s.id, s.harness
+GROUP BY s.id
 ORDER BY s.project_id, s.num;

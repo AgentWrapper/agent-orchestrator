@@ -24,8 +24,6 @@ func (s *Store) UpsertUsageBinding(ctx context.Context, rec domain.UsageBindingR
 		InitialModelID: rec.InitialModelID,
 		State:          usageBindingStateOrDefault(rec.State),
 		LastErrorCode:  rec.LastErrorCode,
-		FirstSeenAt:    timeOrNow(rec.FirstSeenAt),
-		LastSeenAt:     timeOrNow(rec.LastSeenAt),
 		UpdatedAt:      timeOrNow(rec.UpdatedAt),
 	})
 	if err != nil {
@@ -95,11 +93,10 @@ func (s *Store) FinalizeUsageBindingsForSessionLaunch(
 func (s *Store) UpdateUsageBindingState(ctx context.Context, id int64, state domain.UsageBindingState, lastErrorCode string, at time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	n, err := s.qw.UpdateUsageBindingState(ctx, gen.UpdateUsageBindingStateParams{
+	n, err := s.qw.UpdateUsageBinding(ctx, gen.UpdateUsageBindingParams{
 		ID:            id,
 		State:         usageBindingStateOrDefault(state),
 		LastErrorCode: lastErrorCode,
-		LastSeenAt:    timeOrNow(at),
 		UpdatedAt:     timeOrNow(at),
 	})
 	if err != nil {
@@ -113,10 +110,10 @@ func (s *Store) UpdateUsageBindingState(ctx context.Context, id int64, state dom
 func (s *Store) UpdateUsageBindingErrorCode(ctx context.Context, id int64, lastErrorCode string, at time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	n, err := s.qw.UpdateUsageBindingErrorCode(ctx, gen.UpdateUsageBindingErrorCodeParams{
+	n, err := s.qw.UpdateUsageBinding(ctx, gen.UpdateUsageBindingParams{
 		ID:            id,
+		State:         "",
 		LastErrorCode: lastErrorCode,
-		LastSeenAt:    timeOrNow(at),
 		UpdatedAt:     timeOrNow(at),
 	})
 	if err != nil {
@@ -171,10 +168,12 @@ func (s *Store) ReplaceUsageSource(
 	defer s.writeMu.Unlock()
 	var replaced domain.UsageSourceRecord
 	err := s.inTx(ctx, "replace usage source", func(q *gen.Queries) error {
-		n, err := q.MarkUsageSourceState(ctx, gen.MarkUsageSourceStateParams{
+		n, err := q.UpdateUsageSourceLifecycle(ctx, gen.UpdateUsageSourceLifecycleParams{
 			ID:            oldSourceID,
 			State:         domain.UsageSourceComplete,
+			FailureCount:  sql.NullInt64{},
 			LastErrorCode: oldErrorCode,
+			NextRetryAt:   sql.NullTime{},
 			UpdatedAt:     timeOrNow(at),
 		})
 		if err != nil {
@@ -202,20 +201,6 @@ func (s *Store) ListUsageSourcesForBinding(ctx context.Context, bindingID int64)
 	rows, err := s.qr.ListUsageSourcesForBinding(ctx, bindingID)
 	if err != nil {
 		return nil, fmt.Errorf("list usage sources for binding %d: %w", bindingID, err)
-	}
-	out := make([]domain.UsageSourceRecord, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, usageSourceFromGen(row))
-	}
-	return out, nil
-}
-
-// ListUsageSourcesForSession returns all source generations attached to every
-// native usage binding for one AO session.
-func (s *Store) ListUsageSourcesForSession(ctx context.Context, sessionID domain.SessionID) ([]domain.UsageSourceRecord, error) {
-	rows, err := s.qr.ListUsageSourcesForSession(ctx, sessionID)
-	if err != nil {
-		return nil, fmt.Errorf("list usage sources for session %s: %w", sessionID, err)
 	}
 	out := make([]domain.UsageSourceRecord, 0, len(rows))
 	for _, row := range rows {
@@ -302,9 +287,10 @@ func (s *Store) GetUsageSourceForIngestion(ctx context.Context, id int64) (domai
 func (s *Store) MarkUsageSourceState(ctx context.Context, id int64, state domain.UsageSourceState, lastErrorCode string, nextRetryAt *time.Time, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	n, err := s.qw.MarkUsageSourceState(ctx, gen.MarkUsageSourceStateParams{
+	n, err := s.qw.UpdateUsageSourceLifecycle(ctx, gen.UpdateUsageSourceLifecycleParams{
 		ID:            id,
 		State:         usageSourceStateOrDefault(state),
+		FailureCount:  sql.NullInt64{},
 		LastErrorCode: lastErrorCode,
 		NextRetryAt:   ptrTimeToNullTime(nextRetryAt),
 		UpdatedAt:     timeOrNow(updatedAt),
@@ -320,9 +306,13 @@ func (s *Store) MarkUsageSourceState(ctx context.Context, id int64, state domain
 func (s *Store) ReactivateUsageSource(ctx context.Context, id int64, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	n, err := s.qw.ReactivateUsageSource(ctx, gen.ReactivateUsageSourceParams{
-		ID:        id,
-		UpdatedAt: timeOrNow(updatedAt),
+	n, err := s.qw.UpdateUsageSourceLifecycle(ctx, gen.UpdateUsageSourceLifecycleParams{
+		ID:            id,
+		State:         domain.UsageSourceActive,
+		FailureCount:  sql.NullInt64{Int64: 0, Valid: true},
+		LastErrorCode: "",
+		NextRetryAt:   sql.NullTime{},
+		UpdatedAt:     timeOrNow(updatedAt),
 	})
 	if err != nil {
 		return false, fmt.Errorf("reactivate usage source %d: %w", id, err)
@@ -335,9 +325,10 @@ func (s *Store) ReactivateUsageSource(ctx context.Context, id int64, updatedAt t
 func (s *Store) MarkUsageSourceFailure(ctx context.Context, id, failureCount int64, lastErrorCode string, nextRetryAt, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	n, err := s.qw.MarkUsageSourceFailure(ctx, gen.MarkUsageSourceFailureParams{
+	n, err := s.qw.UpdateUsageSourceLifecycle(ctx, gen.UpdateUsageSourceLifecycleParams{
 		ID:            id,
-		FailureCount:  failureCount,
+		State:         domain.UsageSourceError,
+		FailureCount:  sql.NullInt64{Int64: failureCount, Valid: true},
 		LastErrorCode: lastErrorCode,
 		NextRetryAt:   sql.NullTime{Time: nextRetryAt.UTC(), Valid: true},
 		UpdatedAt:     timeOrNow(updatedAt),
@@ -379,7 +370,7 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 				return err
 			}
 			if err == nil {
-				if !usageEventMatches(source.Kind, existing, ev) {
+				if !usageEventMatches(existing, ev) {
 					return fmt.Errorf("%w: binding %d event %q", domain.ErrUsageSourceEventConflict, source.BindingID, ev.SourceEventKey)
 				}
 				continue
@@ -397,7 +388,6 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 			AnomalyCount:    nextState.AnomalyCount,
 			NextRetryAt:     ptrTimeToNullTime(nextState.NextRetryAt),
 			LastErrorCode:   nextState.LastErrorCode,
-			LastObservedAt:  ptrTimeToNullTime(nextState.LastObservedAt),
 			UpdatedAt:       timeOrNow(nextState.UpdatedAt),
 		})
 	})
@@ -420,27 +410,26 @@ func (s *Store) ListUsageModelAggregates(ctx context.Context, sessionID domain.S
 	return out, nil
 }
 
+// GetUsageSessionIncomplete reports whether durable collection facts indicate missing usage.
+func (s *Store) GetUsageSessionIncomplete(ctx context.Context, sessionID domain.SessionID) (bool, error) {
+	incomplete, err := s.qr.GetUsageSessionIncomplete(ctx, string(sessionID))
+	if err != nil {
+		return false, fmt.Errorf("get usage integrity for session %s: %w", sessionID, err)
+	}
+	return incomplete != 0, nil
+}
+
 // ListCompactSessionUsage returns every session's usage facts in one grouped
 // read. projectID optionally limits the rows to one dashboard board.
-func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.ProjectID) ([]domain.UsageSessionAggregate, error) {
+func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.ProjectID) ([]domain.CompactSessionUsage, error) {
 	rows, err := s.qr.ListCompactSessionUsage(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("list compact session usage for project %s: %w", projectID, err)
 	}
-	out := make([]domain.UsageSessionAggregate, 0, len(rows))
+	out := make([]domain.CompactSessionUsage, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, domain.UsageSessionAggregate{
-			SessionID:            row.SessionID,
-			Harness:              row.Harness,
-			BindingCount:         row.BindingCount,
-			CompleteBindingCount: row.CompleteBindingCount,
-			PartialBindingCount:  row.PartialBindingCount,
-			SourceCount:          row.SourceCount,
-			CompleteSourceCount:  row.CompleteSourceCount,
-			ErrorSourceCount:     row.ErrorSourceCount,
-			AnomalousSourceCount: row.AnomalousSourceCount,
-			EventCount:           row.EventCount,
-			TotalTokens:          row.TotalTokens,
+		out = append(out, domain.CompactSessionUsage{
+			SessionID: row.SessionID, TotalTokens: row.TotalTokens, Incomplete: row.Incomplete != 0,
 		})
 	}
 	return out, nil
@@ -455,8 +444,6 @@ func usageBindingFromGen(row gen.UsageBinding) domain.UsageBindingRecord {
 		InitialModelID: row.InitialModelID,
 		State:          row.State,
 		LastErrorCode:  row.LastErrorCode,
-		FirstSeenAt:    row.FirstSeenAt,
-		LastSeenAt:     row.LastSeenAt,
 		UpdatedAt:      row.UpdatedAt,
 	}
 }
@@ -478,8 +465,6 @@ func usageSourceFromGen(row gen.UsageSource) domain.UsageSourceRecord {
 		AnomalyCount:    row.AnomalyCount,
 		NextRetryAt:     nullTimePtr(row.NextRetryAt),
 		LastErrorCode:   row.LastErrorCode,
-		LastObservedAt:  nullTimePtr(row.LastObservedAt),
-		CreatedAt:       row.CreatedAt,
 		UpdatedAt:       row.UpdatedAt,
 	}
 }
@@ -502,8 +487,6 @@ func usageSourceContextFromGen(row gen.GetUsageSourceWithBindingAndSessionRow) d
 			AnomalyCount:    row.AnomalyCount,
 			NextRetryAt:     nullTimePtr(row.NextRetryAt),
 			LastErrorCode:   row.SourceLastErrorCode,
-			LastObservedAt:  nullTimePtr(row.LastObservedAt),
-			CreatedAt:       row.SourceCreatedAt,
 			UpdatedAt:       row.SourceUpdatedAt,
 		},
 		SessionID:      row.SessionID,
@@ -529,8 +512,6 @@ func usageSourceInsertParams(rec domain.UsageSourceRecord) gen.InsertUsageSource
 		AnomalyCount:    rec.AnomalyCount,
 		NextRetryAt:     ptrTimeToNullTime(rec.NextRetryAt),
 		LastErrorCode:   rec.LastErrorCode,
-		LastObservedAt:  ptrTimeToNullTime(rec.LastObservedAt),
-		CreatedAt:       timeOrNow(rec.CreatedAt),
 		UpdatedAt:       timeOrNow(rec.UpdatedAt),
 	}
 }
@@ -539,12 +520,7 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 	return gen.InsertModelUsageEventParams{
 		BindingID:           source.BindingID,
 		UsageSourceID:       source.SourceID,
-		ProjectID:           source.ProjectID,
-		SessionID:           source.SessionID,
-		Harness:             source.Harness,
-		Provider:            ev.Provider,
 		ModelID:             ev.ModelID,
-		ObservedAt:          ev.ObservedAt,
 		InputTokens:         ev.Tokens.InputTokens,
 		UncachedInputTokens: ev.Tokens.UncachedInputTokens,
 		CacheReadTokens:     ev.Tokens.CacheReadTokens,
@@ -552,19 +528,12 @@ func usageEventInsertParams(source gen.GetUsageSourceWithBindingAndSessionRow, e
 		OutputTokens:        ev.Tokens.OutputTokens,
 		ReasoningTokens:     ptrInt64ToNull(ev.Tokens.ReasoningTokens),
 		SourceEventKey:      ev.SourceEventKey,
-		CreatedAt:           timeOrNow(ev.CreatedAt),
 	}
 }
 
-func usageEventMatches(sourceKind domain.UsageSourceKind, existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
+func usageEventMatches(existing gen.GetModelUsageEventByKeyRow, event domain.ModelUsageEvent) bool {
 	reasoning := ptrInt64ToNull(event.Tokens.ReasoningTokens)
-	observedAtMatches := existing.ObservedAt.Equal(event.ObservedAt)
-	if sourceKind == domain.UsageSourceClaudeMain || sourceKind == domain.UsageSourceClaudeSubagent {
-		observedAtMatches = true
-	}
-	return usageProviderMatches(sourceKind, existing.Provider, event.Provider) &&
-		existing.ModelID == event.ModelID &&
-		observedAtMatches &&
+	return existing.ModelID == event.ModelID &&
 		existing.InputTokens == event.Tokens.InputTokens &&
 		existing.UncachedInputTokens == event.Tokens.UncachedInputTokens &&
 		existing.CacheReadTokens == event.Tokens.CacheReadTokens &&
@@ -573,29 +542,10 @@ func usageEventMatches(sourceKind domain.UsageSourceKind, existing gen.GetModelU
 		existing.ReasoningTokens == reasoning
 }
 
-func usageProviderMatches(sourceKind domain.UsageSourceKind, existing, replayed string) bool {
-	if existing == replayed {
-		return true
-	}
-	if sourceKind != domain.UsageSourceClaudeMain && sourceKind != domain.UsageSourceClaudeSubagent {
-		return false
-	}
-	return unknownClaudeProvider(existing) && unknownClaudeProvider(replayed)
-}
-
-func unknownClaudeProvider(provider string) bool {
-	return provider == "" || provider == "unknown" || provider == "claude-code"
-}
-
 func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domain.UsageModelAggregate {
-	var last *time.Time
-	if t, ok := timeFromSQLiteValue(row.LastObservedAt); ok {
-		last = &t
-	}
 	return domain.UsageModelAggregate{
-		Harness:  row.Harness,
-		Provider: row.Provider,
-		ModelID:  row.ModelID,
+		Harness: row.Harness,
+		ModelID: row.ModelID,
 		Tokens: domain.UsageTokenMetrics{
 			InputTokens:         row.InputTokens,
 			UncachedInputTokens: row.UncachedInputTokens,
@@ -604,9 +554,7 @@ func usageAggregateFromGen(row gen.AggregateUsageBySessionHarnessModelRow) domai
 			OutputTokens:        row.OutputTokens,
 			ReasoningTokens:     int64PtrWhen(row.ReasoningTokens, row.ReasoningEventCount > 0),
 		},
-		EventCount:          row.EventCount,
 		ReasoningEventCount: row.ReasoningEventCount,
-		LastObservedAt:      last,
 	}
 }
 
@@ -676,33 +624,4 @@ func int64PtrWhen(v int64, ok bool) *int64 {
 		return nil
 	}
 	return &v
-}
-
-func timeFromSQLiteValue(v any) (time.Time, bool) {
-	switch x := v.(type) {
-	case time.Time:
-		return x, true
-	case string:
-		return parseSQLiteTimeString(x)
-	case []byte:
-		return parseSQLiteTimeString(string(x))
-	}
-	return time.Time{}, false
-}
-
-func parseSQLiteTimeString(s string) (time.Time, bool) {
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999999Z07:00",
-		"2006-01-02 15:04:05-07:00",
-		"2006-01-02 15:04:05Z07:00",
-		"2006-01-02 15:04:05.999999999 -0700 MST",
-		"2006-01-02 15:04:05 -0700 MST",
-	} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t, true
-		}
-	}
-	return time.Time{}, false
 }

@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -43,10 +42,7 @@ func newUsageTestServer(t *testing.T, svc *fakeUsageSummaryService) *httptest.Se
 
 func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 	svc := &fakeUsageSummaryService{items: []domain.CompactSessionUsage{{
-		SessionID:       "reverb-12",
-		TotalTokens:     12400,
-		CollectionState: domain.UsageCollectionCollecting,
-		Coverage:        domain.UsageCoveragePartial,
+		SessionID: "reverb-12", TotalTokens: 12400, Incomplete: true,
 	}}}
 	srv := newUsageTestServer(t, svc)
 
@@ -59,40 +55,30 @@ func TestUsageAPIListsCompactProjectUsage(t *testing.T) {
 	}
 	var got struct {
 		Sessions []struct {
-			SessionID       string `json:"sessionId"`
-			TotalTokens     int64  `json:"totalTokens"`
-			CollectionState string `json:"collectionState"`
-			Coverage        string `json:"coverage"`
+			SessionID   string `json:"sessionId"`
+			TotalTokens int64  `json:"totalTokens"`
+			Incomplete  bool   `json:"incomplete"`
 		} `json:"sessions"`
 	}
 	mustJSON(t, body, &got)
 	if len(got.Sessions) != 1 || got.Sessions[0].SessionID != "reverb-12" ||
-		got.Sessions[0].TotalTokens != 12400 || got.Sessions[0].CollectionState != "collecting" ||
-		got.Sessions[0].Coverage != "partial" {
+		got.Sessions[0].TotalTokens != 12400 || !got.Sessions[0].Incomplete {
 		t.Fatalf("response = %+v", got)
 	}
 }
 
 func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
-	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	input := int64(1000)
 	output := int64(200)
 	cacheRead := int64(400)
 	svc := &fakeUsageSummaryService{detail: domain.SessionUsageSummary{
-		SessionID: "reverb-12",
-		Collection: domain.UsageCollectionSummary{
-			State:          domain.UsageCollectionCollecting,
-			LastObservedAt: &now,
-		},
+		SessionID: "reverb-12", Incomplete: true,
 		Totals: domain.UsageMetricTotals{
-			InputTokens:     domain.UsageMetricCoverage{Value: &input, Coverage: domain.UsageCoveragePartial},
-			CacheReadTokens: domain.UsageMetricCoverage{Value: &cacheRead, Coverage: domain.UsageCoveragePartial},
-			OutputTokens:    domain.UsageMetricCoverage{Value: &output, Coverage: domain.UsageCoveragePartial},
+			InputTokens: &input, CacheReadTokens: &cacheRead, OutputTokens: &output,
 		},
 		Harnesses: []domain.HarnessUsageSummary{{
-			Harness:  domain.HarnessCodex,
-			Provider: "openai",
-			Models:   []domain.ModelUsageSummary{{ModelID: "gpt-5.6", Provider: "openai"}},
+			Harness: domain.HarnessCodex,
+			Models:  []domain.ModelUsageSummary{{ModelID: "gpt-5.6"}},
 		}},
 	}}
 	srv := newUsageTestServer(t, svc)
@@ -110,12 +96,10 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 		}
 	}
 	var got struct {
-		SessionID       string `json:"sessionId"`
-		CollectionState string `json:"collectionState"`
-		Totals          struct {
-			InputTokens struct {
-				Value int64 `json:"value"`
-			} `json:"inputTokens"`
+		SessionID  string `json:"sessionId"`
+		Incomplete bool   `json:"incomplete"`
+		Totals     struct {
+			InputTokens int64 `json:"inputTokens"`
 		} `json:"totals"`
 		Harnesses []struct {
 			Models []struct {
@@ -124,8 +108,7 @@ func TestUsageAPIShowsDetailedSessionTokenTelemetryWithoutCost(t *testing.T) {
 		} `json:"harnesses"`
 	}
 	mustJSON(t, body, &got)
-	if got.SessionID != "reverb-12" || got.CollectionState != "collecting" ||
-		got.Totals.InputTokens.Value != 1000 ||
+	if got.SessionID != "reverb-12" || !got.Incomplete || got.Totals.InputTokens != 1000 ||
 		len(got.Harnesses) != 1 || len(got.Harnesses[0].Models) != 1 ||
 		got.Harnesses[0].Models[0].ModelID != "gpt-5.6" {
 		t.Fatalf("response = %+v", got)

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -110,40 +110,36 @@ const prSummary = (
 
 const usageTelemetry = (overrides: Partial<SessionUsage> = {}): SessionUsage => ({
 	sessionId: "sess-1",
-	collectionState: "collecting",
-	lastObservedAt: "2026-06-15T12:00:00Z",
-	warnings: [],
+	incomplete: false,
 	totals: {
-		inputTokens: { value: 1000, coverage: "complete" },
-		uncachedInputTokens: { value: 600, coverage: "complete" },
-		cacheReadTokens: { value: 400, coverage: "complete" },
-		cacheWriteTokens: { value: 0, coverage: "complete" },
-		outputTokens: { value: 200, coverage: "complete" },
-		reasoningTokens: { value: 40, coverage: "complete" },
+		inputTokens: 1000,
+		uncachedInputTokens: 600,
+		cacheReadTokens: 400,
+		cacheWriteTokens: 0,
+		outputTokens: 200,
+		reasoningTokens: 40,
 	},
 	harnesses: [
 		{
 			harness: "codex",
-			provider: "openai",
 			totals: {
-				inputTokens: { value: 1000, coverage: "complete" },
-				uncachedInputTokens: { value: 600, coverage: "complete" },
-				cacheReadTokens: { value: 400, coverage: "complete" },
-				cacheWriteTokens: { value: 0, coverage: "complete" },
-				outputTokens: { value: 200, coverage: "complete" },
-				reasoningTokens: { value: 40, coverage: "complete" },
+				inputTokens: 1000,
+				uncachedInputTokens: 600,
+				cacheReadTokens: 400,
+				cacheWriteTokens: 0,
+				outputTokens: 200,
+				reasoningTokens: 40,
 			},
 			models: [
 				{
 					modelId: "gpt-5.6",
-					provider: "openai",
 					totals: {
-						inputTokens: { value: 1000, coverage: "complete" },
-						uncachedInputTokens: { value: 600, coverage: "complete" },
-						cacheReadTokens: { value: 400, coverage: "complete" },
-						cacheWriteTokens: { value: 0, coverage: "complete" },
-						outputTokens: { value: 200, coverage: "complete" },
-						reasoningTokens: { value: 40, coverage: "complete" },
+						inputTokens: 1000,
+						uncachedInputTokens: 600,
+						cacheReadTokens: 400,
+						cacheWriteTokens: 0,
+						outputTokens: 200,
+						reasoningTokens: 40,
 					},
 				},
 			],
@@ -914,21 +910,33 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
 	});
 
+	it("keeps API failures visible instead of silently hiding the section", async () => {
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/usage/sessions/{sessionId}") {
+				return { data: undefined, error: { message: "usage query failed" } };
+			}
+			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
+		});
+
+		renderWithQuery(<SessionInspector session={session([])} />);
+
+		const usageTitle = await screen.findByText("Usage & cost", undefined, { timeout: 2_500 });
+		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
+		expect(within(usageSection).getByRole("alert")).toHaveTextContent("Total tokens unavailable");
+	});
+
 	it("hides the section when no usage event or token value exists", async () => {
-		const unavailable = { value: null, coverage: "unavailable" as const };
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/usage/sessions/{sessionId}") {
 				return {
 					data: usageTelemetry({
-						collectionState: "waiting",
-						lastObservedAt: undefined,
 						totals: {
-							inputTokens: unavailable,
-							uncachedInputTokens: unavailable,
-							cacheReadTokens: unavailable,
-							cacheWriteTokens: unavailable,
-							outputTokens: unavailable,
-							reasoningTokens: unavailable,
+							inputTokens: null,
+							uncachedInputTokens: null,
+							cacheReadTokens: null,
+							cacheWriteTokens: null,
+							outputTokens: null,
+							reasoningTokens: null,
 						},
 						harnesses: [],
 					}),
@@ -942,22 +950,21 @@ describe("SessionInspector Usage & cost section", () => {
 
 		await waitFor(() =>
 			expect(queryClient.getQueryData(sessionUsageDetailQueryKey("sess-1"))).toEqual(
-				expect.objectContaining({ collectionState: "waiting", harnesses: [] }),
+				expect.objectContaining({ harnesses: [] }),
 			),
 		);
 		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
 	});
 
 	it("hides the section when an observed usage record has only zero token values", async () => {
-		const zero = { value: 0, coverage: "partial" as const };
 		const zeroUsage = usageTelemetry({
 			totals: {
-				inputTokens: zero,
-				uncachedInputTokens: zero,
-				cacheReadTokens: zero,
-				cacheWriteTokens: zero,
-				outputTokens: zero,
-				reasoningTokens: zero,
+				inputTokens: 0,
+				uncachedInputTokens: 0,
+				cacheReadTokens: 0,
+				cacheWriteTokens: 0,
+				outputTokens: 0,
+				reasoningTokens: 0,
 			},
 			harnesses: [],
 		});
@@ -976,37 +983,8 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(screen.queryByText("Usage & cost")).not.toBeInTheDocument();
 	});
 
-	it("always presents cost as coming soon even if a legacy payload contains numeric cost", async () => {
-		const usage = usageTelemetry();
-		const legacyCost = { valueNanos: 2_500_000_000, currency: "USD", coverage: "complete" };
-		const legacyUsage = {
-			...usage,
-			totals: { ...usage.totals, cost: legacyCost },
-			harnesses: usage.harnesses.map((harness) => ({
-				...harness,
-				totals: { ...harness.totals, cost: legacyCost },
-				models: harness.models.map((model) => ({
-					...model,
-					totals: { ...model.totals, cost: legacyCost },
-				})),
-			})),
-		} as unknown as SessionUsage;
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return { data: legacyUsage, error: undefined };
-			}
-			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-		});
-
-		renderWithQuery(<SessionInspector session={session([])} />);
-		const usageTitle = await screen.findByText("Usage & cost");
-		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
-
-		expect(within(usageSection).getAllByText("Coming soon").length).toBeGreaterThan(0);
-		expect(usageSection).not.toHaveTextContent("$2.50");
-	});
-
-	it("shows token telemetry and peeks agent and model details on hover", async () => {
+	it("shows token telemetry and expands agent and model details on click", async () => {
+		const user = userEvent.setup();
 		renderWithQuery(<SessionInspector session={session([])} />);
 
 		const usageTitle = await screen.findByText("Usage & cost");
@@ -1014,7 +992,8 @@ describe("SessionInspector Usage & cost section", () => {
 
 		expect(within(usageSection).getByText("Total tokens")).toBeInTheDocument();
 		expect(within(usageSection).getByText("Total cost")).toBeInTheDocument();
-		expect(within(usageSection).getAllByText("Coming soon")[0]).toHaveClass("text-success");
+		expect(within(usageSection).getAllByText("Coming soon")).toHaveLength(1);
+		expect(within(usageSection).getByText("Coming soon")).toHaveClass("text-settings-muted");
 		expect(within(usageSection).getAllByText("1.2K").length).toBeGreaterThan(0);
 		expect(within(usageSection).queryByText("1.2K tok")).not.toBeInTheDocument();
 		expect(within(usageSection).getByText("Input tokens")).toBeInTheDocument();
@@ -1034,26 +1013,37 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(within(usageSection).queryByText(/coverage|collecting/i)).not.toBeInTheDocument();
 		expect(within(usageSection).getByLabelText("Input tokens: 1,000 tokens")).toBeInTheDocument();
 		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
-		expect(within(usageSection).getByTitle("Cost coming soon")).toBeInTheDocument();
+		const providerTrigger = within(usageSection).getByRole("button", {
+			name: "Codex usage details",
+		});
+		expect(providerTrigger).toHaveAttribute("aria-expanded", "false");
+		expect(within(providerTrigger).getByLabelText("Cost telemetry unavailable")).toHaveTextContent("—");
 
-		await userEvent.hover(within(usageSection).getByLabelText(/Codex usage details/));
+		await user.click(providerTrigger);
+		expect(providerTrigger).toHaveAttribute("aria-expanded", "true");
 		const providerPeek = await screen.findByRole("region", { name: "Codex usage peek" });
 		expect(within(providerPeek).getByText("1 model")).toBeInTheDocument();
 		expect(within(providerPeek).getByText("gpt-5.6")).toBeInTheDocument();
 		expect(within(providerPeek).getByText("Input tokens")).toBeInTheDocument();
 		expect(within(providerPeek).getByText("Output tokens")).toBeInTheDocument();
-		expect(within(providerPeek).getByTitle("Cost coming soon")).toBeInTheDocument();
+		expect(within(providerPeek).queryByText("Coming soon")).not.toBeInTheDocument();
 
-		await userEvent.hover(within(providerPeek).getByLabelText(/gpt-5.6 usage details/));
+		const modelTrigger = within(providerPeek).getByRole("button", {
+			name: "gpt-5.6 usage details",
+		});
+		expect(modelTrigger).toHaveAttribute("aria-expanded", "false");
+		expect(within(modelTrigger).getByLabelText("Cost telemetry unavailable")).toHaveTextContent("—");
+		await user.click(modelTrigger);
+		expect(modelTrigger).toHaveAttribute("aria-expanded", "true");
 		const modelPeek = await screen.findByRole("region", { name: "gpt-5.6 usage peek" });
-		expect(providerPeek).not.toContainElement(modelPeek);
-		expect(modelPeek.parentElement).toHaveAttribute("data-side", "left");
+		expect(providerPeek).toContainElement(modelPeek);
 		expect(within(modelPeek).getByText("Input tokens")).toBeInTheDocument();
 		expect(within(modelPeek).getByText("Output tokens")).toBeInTheDocument();
 		expect(within(modelPeek).getByText("Cache read tokens")).toBeInTheDocument();
 		expect(within(modelPeek).getByText("Cache write tokens")).toBeInTheDocument();
 		expect(within(modelPeek).getByText("Reasoning tokens")).toBeInTheDocument();
 		expect(within(modelPeek).getByText("Uncached input tokens")).toBeInTheDocument();
+		expect(within(usageSection).getAllByText("Coming soon")).toHaveLength(1);
 
 		const sectionTitles = Array.from(
 			document.querySelectorAll("[data-testid='inspector-section']"),
@@ -1065,64 +1055,12 @@ describe("SessionInspector Usage & cost section", () => {
 		});
 	});
 
-	it("shows one generic warning for confirmed incomplete usage", async () => {
-		const usage = usageTelemetry();
-		const incompleteTotals: SessionUsage["totals"] = {
-			inputTokens: { value: 1000, coverage: "partial" },
-			uncachedInputTokens: { value: 600, coverage: "complete" },
-			cacheReadTokens: { value: 400, coverage: "complete" },
-			cacheWriteTokens: { value: 0, coverage: "complete" },
-			outputTokens: { value: 200, coverage: "partial" },
-			reasoningTokens: { value: 40, coverage: "partial" },
-		};
-		const harness = usage.harnesses[0];
-		const model = harness?.models[0];
-		if (!harness || !model) throw new Error("missing usage detail fixture");
+	it("does not expose backend integrity state as a usage warning", async () => {
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/usage/sessions/{sessionId}") {
 				return {
 					data: usageTelemetry({
-						collectionState: "complete",
-						warnings: ["source_event_conflict"],
-						totals: incompleteTotals,
-						harnesses: [{
-							...harness,
-							totals: incompleteTotals,
-							models: [{
-								...model,
-								totals: incompleteTotals,
-							}],
-						}],
-					}),
-					error: undefined,
-				};
-			}
-			return { data: { reviewerHandleId: "", reviews: [] }, error: undefined };
-		});
-
-		renderWithQuery(<SessionInspector session={session([])} />);
-		const usageTitle = await screen.findByText("Usage & cost");
-		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
-
-		expect(within(usageSection).getByText("Usage may be incomplete")).toBeInTheDocument();
-		expect(
-			within(usageSection).getByLabelText("Usage may be incomplete. Details: Source event conflict."),
-		).toBeInTheDocument();
-		expect(within(usageSection).queryByText(/source event conflict/i)).not.toBeInTheDocument();
-		expect(within(usageSection).queryByText(/partial coverage|collection complete/i)).not.toBeInTheDocument();
-	});
-
-	it("does not mark the session incomplete for reasoning-only coverage", async () => {
-		const usage = usageTelemetry();
-		getMock.mockImplementation(async (path: string) => {
-			if (path === "/api/v1/usage/sessions/{sessionId}") {
-				return {
-					data: usageTelemetry({
-						warnings: ["partial_reasoning_coverage"],
-						totals: {
-							...usage.totals,
-							reasoningTokens: { value: 40, coverage: "partial" },
-						},
+						incomplete: true,
 					}),
 					error: undefined,
 				};
@@ -1135,34 +1073,10 @@ describe("SessionInspector Usage & cost section", () => {
 		const usageSection = usageTitle.closest("[data-testid='inspector-section']") as HTMLElement;
 
 		expect(within(usageSection).queryByText("Usage may be incomplete")).not.toBeInTheDocument();
-		expect(within(usageSection).getByLabelText("Reasoning tokens: 40 tokens")).toBeInTheDocument();
+		expect(within(usageSection).queryByLabelText(/Usage may be incomplete/)).not.toBeInTheDocument();
 	});
 
-	it("preserves moved focus when pointer-opened provider detail closes", async () => {
-		renderWithQuery(<SessionInspector session={session([])} />);
-
-		const providerTrigger = await screen.findByRole("button", {
-			name: "Codex usage details",
-		});
-		vi.useFakeTimers();
-		fireEvent.pointerEnter(providerTrigger);
-		await act(async () => {
-			await vi.advanceTimersByTimeAsync(220);
-		});
-		expect(screen.getByRole("region", { name: "Codex usage peek" })).toBeInTheDocument();
-
-		fireEvent.pointerLeave(providerTrigger);
-		act(() => vi.advanceTimersByTime(120));
-		expect(screen.queryByRole("region", { name: "Codex usage peek" })).not.toBeInTheDocument();
-		const summaryTab = screen.getByRole("tab", { name: "Summary" });
-		summaryTab.focus();
-		expect(summaryTab).toHaveFocus();
-
-		act(() => vi.advanceTimersByTime(0));
-		expect(summaryTab).toHaveFocus();
-	});
-
-	it("opens provider and model detail with the keyboard and returns focus on escape", async () => {
+	it("opens and closes provider and model details with the keyboard", async () => {
 		const user = userEvent.setup();
 		renderWithQuery(<SessionInspector session={session([])} />);
 
@@ -1176,26 +1090,28 @@ describe("SessionInspector Usage & cost section", () => {
 		const modelTrigger = within(providerPeek).getByRole("button", {
 			name: "gpt-5.6 usage details",
 		});
-		await waitFor(() => expect(modelTrigger).toHaveFocus());
+		modelTrigger.focus();
+		await user.keyboard("{Enter}");
 		expect(await screen.findByRole("region", { name: "gpt-5.6 usage peek" })).toBeInTheDocument();
+		expect(modelTrigger).toHaveFocus();
 
-		await user.keyboard("{Escape}");
-		await waitFor(() => expect(providerTrigger).toHaveFocus());
-		await user.tab();
-		expect(providerTrigger).not.toHaveFocus();
+		await user.keyboard(" ");
+		expect(screen.queryByRole("region", { name: "gpt-5.6 usage peek" })).not.toBeInTheDocument();
+		expect(modelTrigger).toHaveFocus();
 	});
 
-	it("shows multiple agents as compact rows with independent hover peeks", async () => {
+	it("shows multiple agents as compact rows with independent disclosures", async () => {
+		const user = userEvent.setup();
 		const codex = usageTelemetry().harnesses[0];
 		if (!codex) throw new Error("missing Codex usage fixture");
 		const claude = {
 			...codex,
 			harness: "claude-code",
-			provider: "anthropic",
+			totals: { ...codex.totals, reasoningTokens: null },
 			models: codex.models.map((model) => ({
 				...model,
 				modelId: "claude-opus-4.1",
-				provider: "anthropic",
+				totals: { ...model.totals, reasoningTokens: null },
 			})),
 		};
 		getMock.mockImplementation(async (path: string) => {
@@ -1220,14 +1136,15 @@ describe("SessionInspector Usage & cost section", () => {
 		expect(within(usageSection).queryByText("gpt-5.6")).not.toBeInTheDocument();
 		expect(within(usageSection).queryByText("claude-opus-4.1")).not.toBeInTheDocument();
 
-		await userEvent.hover(codexRow);
+		await user.click(codexRow);
 		const codexPeek = await screen.findByRole("region", { name: "Codex usage peek" });
 		expect(within(codexPeek).getByText("gpt-5.6")).toBeInTheDocument();
 
-		await userEvent.unhover(codexRow);
-		await userEvent.hover(claudeRow);
+		await user.click(claudeRow);
 		const claudePeek = await screen.findByRole("region", { name: "Claude usage peek" });
 		expect(within(claudePeek).getByText("claude-opus-4.1")).toBeInTheDocument();
+		expect(within(claudePeek).getByLabelText("Reasoning tokens telemetry unavailable")).toHaveTextContent("—");
+		expect(codexPeek).toBeInTheDocument();
 	});
 });
 

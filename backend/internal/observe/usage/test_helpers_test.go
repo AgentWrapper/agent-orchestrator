@@ -38,14 +38,10 @@ func seedUsageTestSession(
 ) (*sqlite.Store, domain.SessionRecord) {
 	t.Helper()
 	store, err := sqlite.Open(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	ctx := context.Background()
-	if err := store.UpsertProject(ctx, domain.ProjectRecord{ID: string(projectID), Path: t.TempDir(), RegisteredAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, store.UpsertProject(ctx, domain.ProjectRecord{ID: string(projectID), Path: t.TempDir(), RegisteredAt: now}))
 	session, err := store.CreateSession(ctx, domain.SessionRecord{
 		ProjectID: projectID,
 		Kind:      domain.KindWorker,
@@ -55,9 +51,7 @@ func seedUsageTestSession(
 		CreatedAt: now,
 		UpdatedAt: now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	return store, session
 }
 
@@ -75,12 +69,18 @@ func seedUsageTestBinding(
 		Harness:      session.Harness,
 		NativeRootID: nativeID,
 		State:        state,
-		FirstSeenAt:  now,
-		LastSeenAt:   now,
 		UpdatedAt:    now,
 	})
+	mustNoError(t, err)
+	return binding
+}
+
+func mustNoError(t testing.TB, err error, context ...string) {
+	t.Helper()
 	if err != nil {
+		if len(context) > 0 {
+			t.Fatalf("%s: %v", context[0], err)
+		}
 		t.Fatal(err)
 	}
-	return binding
 }

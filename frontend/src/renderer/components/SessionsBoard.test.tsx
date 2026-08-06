@@ -286,8 +286,7 @@ describe("SessionsBoard", () => {
 					{
 						sessionId: "s-active",
 						totalTokens: 12_400,
-						collectionState: "collecting",
-						coverage: "complete",
+						incomplete: false,
 					},
 				],
 				[
@@ -295,8 +294,7 @@ describe("SessionsBoard", () => {
 					{
 						sessionId: "s-empty",
 						totalTokens: 0,
-						collectionState: "waiting",
-						coverage: "unavailable",
+						incomplete: false,
 					},
 				],
 				[
@@ -304,8 +302,7 @@ describe("SessionsBoard", () => {
 					{
 						sessionId: "s-dead",
 						totalTokens: 2_000,
-						collectionState: "complete",
-						coverage: "partial",
+						incomplete: true,
 					},
 				],
 			]),
@@ -323,7 +320,7 @@ describe("SessionsBoard", () => {
 		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		const archivedUsage = within(archive).getByText("2K tok");
-		expect(archivedUsage).toHaveAttribute("aria-label", "2,000 tokens · Usage may be incomplete");
+		expect(archivedUsage).toHaveAttribute("aria-label", "2,000 tokens");
 	});
 
 	it("pulses the shared activity indicator on an actively working session card", () => {

@@ -1,12 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
-	AlertTriangle,
 	ArrowUpRight,
 	ChevronDown,
 	ChevronRight,
@@ -49,8 +48,6 @@ import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
@@ -312,6 +309,7 @@ function SummaryView({
 		!usageQuery.isLoading &&
 		!usageQuery.isError &&
 		hasMeaningfulSessionUsage(usageQuery.data);
+	const showUsageError = developerMode && usageQuery.isError;
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
@@ -340,7 +338,13 @@ function SummaryView({
 				<ResumeAgentControl session={session} />
 			</Section>
 
-			{showUsage && usageQuery.data ? (
+			{showUsageError ? (
+				<Section title={t("inspector.usage.title")}>
+					<p className={inspectorEmptyClass} role="alert">
+						{t("inspector.usage.totalTokensUnavailable")}
+					</p>
+				</Section>
+			) : showUsage && usageQuery.data ? (
 				<Section title={t("inspector.usage.title")}>
 					<UsageCostTelemetry usage={usageQuery.data} />
 				</Section>
@@ -352,14 +356,6 @@ function SummaryView({
 function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 	const { t } = useTranslation();
 	const totalTokens = usageTokenTotal(usage.totals);
-	const warnings = usage.warnings
-		.filter(isUsageIntegrityWarning)
-		.map((warning) => formatUsageWarning(warning, t("inspector.usage.warningFallback")));
-	const incomplete = usageHasConfirmedIncomplete(usage, warnings.length > 0);
-	const warningLabel =
-		warnings.length > 0
-			? t("inspector.usage.incompleteWithDetails", { details: warnings.join("; ") })
-			: t("inspector.usage.incomplete");
 	const exactTotal = totalTokens?.toLocaleString("en-US");
 
 	return (
@@ -371,12 +367,7 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 						aria-label={
 							totalTokens === null
 								? t("inspector.usage.totalTokensUnavailable")
-								: t(
-									incomplete
-										? "inspector.usage.totalTokensIncompleteAria"
-										: "inspector.usage.totalTokensAria",
-									{ count: exactTotal },
-								)
+								: t("inspector.usage.totalTokensAria", { count: exactTotal })
 						}
 						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
 						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
@@ -386,13 +377,12 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 				</div>
 				<div className="min-w-0 text-right">
 					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalCost")}</p>
-					<Badge
-						className="mt-0.5 bg-success/10 px-1.5 py-0.5 text-[9px] leading-none"
+					<p
+						className="mt-0.5 truncate text-sm-md text-settings-muted"
 						title={t("inspector.usage.costComingSoon")}
-						variant="success"
 					>
 						{t("inspector.usage.comingSoon")}
-					</Badge>
+					</p>
 				</div>
 			</div>
 
@@ -420,256 +410,143 @@ function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
 					))}
 				</div>
 			) : null}
-
-			{incomplete ? (
-				<div
-					aria-label={warningLabel}
-					className="mt-2 flex items-start gap-1.5 border-t border-(--color-border-settings-input) pt-2 text-2xs text-settings-muted"
-					role="status"
-					title={warnings.length > 0 ? warnings.join("; ") : undefined}
-				>
-					<AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0 text-warning" />
-					<span>{t("inspector.usage.incomplete")}</span>
-				</div>
-			) : null}
 		</div>
 	);
-}
-
-function useHoverableUsagePopover() {
-	const [open, setOpen] = useState(false);
-	const openedByPointer = useRef(false);
-	const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-	const cancelOpen = () => {
-		if (openTimer.current !== null) clearTimeout(openTimer.current);
-		openTimer.current = null;
-	};
-	const cancelClose = () => {
-		if (closeTimer.current !== null) clearTimeout(closeTimer.current);
-		closeTimer.current = null;
-	};
-
-	useEffect(
-		() => () => {
-			if (openTimer.current !== null) clearTimeout(openTimer.current);
-			if (closeTimer.current !== null) clearTimeout(closeTimer.current);
-		},
-		[],
-	);
-
-	return {
-		open,
-		openedByPointer,
-		cancelClose,
-		markKeyboardOpen: () => {
-			openedByPointer.current = false;
-		},
-		markPointerOpen: () => {
-			openedByPointer.current = true;
-		},
-		onOpenChange: (nextOpen: boolean) => {
-			cancelOpen();
-			cancelClose();
-			setOpen(nextOpen);
-		},
-		scheduleClose: () => {
-			cancelOpen();
-			cancelClose();
-			closeTimer.current = setTimeout(() => setOpen(false), 120);
-		},
-		scheduleOpen: () => {
-			openedByPointer.current = true;
-			cancelOpen();
-			cancelClose();
-			openTimer.current = setTimeout(() => setOpen(true), 220);
-		},
-	};
 }
 
 function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
 	const { t } = useTranslation();
 	const harnessName = formatHarnessName(harness.harness);
-	const totalTokens = usageTokenTotal(harness.totals);
-	const peek = useHoverableUsagePopover();
-	const exactTotal = totalTokens?.toLocaleString("en-US");
 
 	return (
-		<Popover onOpenChange={peek.onOpenChange} open={peek.open}>
-			<PopoverTrigger asChild>
-				<button
-					aria-label={t("inspector.usage.providerDetails", { name: harnessName })}
-					className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
-					onKeyDown={peek.markKeyboardOpen}
-					onPointerDown={peek.markPointerOpen}
-					onPointerEnter={peek.scheduleOpen}
-					onPointerLeave={peek.scheduleClose}
-					type="button"
-				>
-					<span className="min-w-0 truncate text-sm-md text-settings-label">{harnessName}</span>
-					<span
-						className="text-right font-mono text-2xs text-settings-label"
-						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
-					>
-						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
-					</span>
-					<span
-						aria-label={t("inspector.usage.costAria")}
-						className="text-right text-2xs text-settings-muted"
-						title={t("inspector.usage.costComingSoonShort")}
-					>
-						{t("inspector.usage.comingSoon")}
-					</span>
-				</button>
-			</PopoverTrigger>
-			<PopoverContent
-				align="end"
-				aria-label={t("inspector.usage.providerPeek", { name: harnessName })}
-				className="w-80 max-w-[calc(100vw-1rem)] p-3"
-				onCloseAutoFocus={(event) => {
-					if (peek.openedByPointer.current) event.preventDefault();
-				}}
-				onOpenAutoFocus={(event) => {
-					if (peek.openedByPointer.current) event.preventDefault();
-				}}
-				onPointerEnter={peek.cancelClose}
-				onPointerLeave={peek.scheduleClose}
-				role="region"
-				side="left"
-			>
-				<ProviderUsagePeek harness={harness} onRequestClose={() => peek.onOpenChange(false)} />
-			</PopoverContent>
-		</Popover>
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.providerDetails", { name: harnessName })}
+			name={harnessName}
+			nameClassName="text-sm-md"
+			regionLabel={t("inspector.usage.providerPeek", { name: harnessName })}
+			totals={harness.totals}
+		>
+			<ProviderUsageDetails harness={harness} />
+		</UsageDisclosureRow>
 	);
 }
 
-function ProviderUsagePeek({
-	harness,
-	onRequestClose,
-}: {
-	harness: SessionUsage["harnesses"][number];
-	onRequestClose: () => void;
-}) {
+function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
 	const { t } = useTranslation();
-	const harnessName = formatHarnessName(harness.harness);
-	const totalTokens = usageTokenTotal(harness.totals);
-	const [activeModelKey, setActiveModelKey] = useState<string | null>(null);
 
 	return (
-		<div>
-			<div className="flex items-start justify-between gap-4">
-				<p className="min-w-0 truncate text-sm-md font-semibold text-settings-label">{harnessName}</p>
-				<div className="shrink-0 text-right text-2xs">
-					<p className="font-mono text-settings-label">
-						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
-					</p>
-					<p className="text-settings-muted">{t("inspector.usage.comingSoon")}</p>
-				</div>
-			</div>
-
-			<div className="mt-3 border-t border-border pt-3">
+		<>
+			<div className="pb-2">
 				<UsageMetrics totals={harness.totals} />
 			</div>
 
-			<div className="mt-3 border-t border-border pt-2">
+			<div className="border-t border-(--color-border-settings-input) pt-2">
 				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
 					<span>{t("inspector.usage.models", { count: harness.models.length })}</span>
 					<span className="text-right">{t("inspector.usage.tokens")}</span>
 					<span className="text-right">{t("inspector.usage.cost")}</span>
 				</div>
 				{harness.models.length > 0 ? (
-					harness.models.map((model, index) => {
-						const modelKey = `${model.modelId}:${index}`;
-						return (
-							<UsageModelRow
-								active={activeModelKey === modelKey}
-								key={modelKey}
-								model={model}
-								onActiveChange={(active) => setActiveModelKey(active ? modelKey : null)}
-								onRequestClose={onRequestClose}
-							/>
-						);
-					})
+					harness.models.map((model, index) => (
+						<UsageModelRow key={`${model.modelId}:${index}`} model={model} />
+					))
 				) : (
 					<p className="px-1 py-2 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
 				)}
 			</div>
-		</div>
+		</>
 	);
 }
 
 function UsageModelRow({
-	active,
 	model,
-	onActiveChange,
-	onRequestClose,
 }: {
-	active: boolean;
 	model: SessionUsage["harnesses"][number]["models"][number];
-	onActiveChange: (active: boolean) => void;
-	onRequestClose: () => void;
 }) {
 	const { t } = useTranslation();
 	const modelName = model.modelId;
-	const totalTokens = usageTokenTotal(model.totals);
+
+	return (
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.modelDetails", { name: modelName })}
+			name={modelName}
+			nameClassName="font-mono text-2xs"
+			regionLabel={t("inspector.usage.modelPeek", { name: modelName })}
+			totals={model.totals}
+		>
+			<UsageMetrics totals={model.totals} />
+		</UsageDisclosureRow>
+	);
+}
+
+function UsageDisclosureRow({
+	children,
+	detailsLabel,
+	name,
+	nameClassName,
+	regionLabel,
+	totals,
+}: {
+	children: ReactNode;
+	detailsLabel: string;
+	name: string;
+	nameClassName: string;
+	regionLabel: string;
+	totals: SessionUsage["totals"];
+}) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
 	const detailID = useId();
+	const totalTokens = usageTokenTotal(totals);
 	const exactTotal = totalTokens?.toLocaleString("en-US");
 
 	return (
-		<Tooltip delayDuration={0} onOpenChange={onActiveChange} open={active}>
-			<TooltipTrigger asChild>
-				<button
-					aria-controls={detailID}
-					aria-expanded={active}
-					aria-label={t("inspector.usage.modelDetails", { name: modelName })}
-					className="grid w-full cursor-default grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
-					type="button"
-				>
-					<span className="min-w-0 truncate font-mono text-2xs text-settings-label">{modelName}</span>
-					<span
-						className="text-right font-mono text-2xs text-settings-label"
-						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
-					>
-						{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
-					</span>
-					<span
-						aria-label={t("inspector.usage.costAria")}
-						className="text-right text-2xs text-settings-muted"
-						title={t("inspector.usage.costComingSoonShort")}
-					>
-						{t("inspector.usage.comingSoon")}
-					</span>
-				</button>
-			</TooltipTrigger>
-			<TooltipContent
-				align="start"
-				aria-label={t("inspector.usage.modelDetailed", { name: modelName })}
-				className="w-80 max-w-[calc(100vw-1rem)] p-3 text-left text-popover-foreground"
-				onEscapeKeyDown={onRequestClose}
-				side="left"
-				sideOffset={8}
+		<div>
+			<button
+				aria-controls={detailID}
+				aria-expanded={open}
+				aria-label={detailsLabel}
+				className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+				onClick={() => setOpen((current) => !current)}
+				type="button"
 			>
+				<span className={`flex min-w-0 items-center gap-1 text-settings-label ${nameClassName}`}>
+					{open ? (
+						<ChevronDown aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					) : (
+						<ChevronRight aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					)}
+					<span className="truncate">{name}</span>
+				</span>
+				<span
+					className="text-right font-mono text-2xs text-settings-label"
+					title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+				>
+					{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+				</span>
+				<UsageCostPlaceholder />
+			</button>
+			{open ? (
 				<div
-					aria-label={t("inspector.usage.modelPeek", { name: modelName })}
+					aria-label={regionLabel}
+					className="mx-1 mb-2 border-l border-(--color-border-settings-input) py-1.5 pl-2.5"
 					id={detailID}
 					role="region"
 				>
-					<div className="mb-3 flex items-start justify-between gap-4">
-						<p className="min-w-0 truncate font-mono text-sm-md font-semibold text-settings-label">{modelName}</p>
-						<div className="shrink-0 text-right text-2xs">
-							<p className="font-mono text-settings-label">
-								{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
-							</p>
-							<p className="text-settings-muted">{t("inspector.usage.comingSoon")}</p>
-						</div>
-					</div>
-					<div className="border-t border-border pt-3">
-						<UsageMetrics totals={model.totals} />
-					</div>
+					{children}
 				</div>
-			</TooltipContent>
-		</Tooltip>
+			) : null}
+		</div>
+	);
+}
+
+function UsageCostPlaceholder() {
+	const { t } = useTranslation();
+	const label = t("inspector.usage.metricUnavailable", { label: t("inspector.usage.cost") });
+	return (
+		<span aria-label={label} className="text-right font-mono text-2xs text-settings-muted" title={label}>
+			—
+		</span>
 	);
 }
 
@@ -695,9 +572,9 @@ function UsageMetric({
 	metric: SessionUsage["totals"]["inputTokens"];
 }) {
 	const { t } = useTranslation();
-	const exactValue = metric.value?.toLocaleString("en-US");
+	const exactValue = metric?.toLocaleString("en-US");
 	const accessibleLabel =
-		metric.value === null
+		metric === null
 			? t("inspector.usage.metricUnavailable", { label })
 			: t("inspector.usage.metricAria", { label, count: exactValue });
 	return (
@@ -707,12 +584,12 @@ function UsageMetric({
 				aria-label={accessibleLabel}
 				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
 				title={
-					metric.value === null
+					metric === null
 						? t("inspector.usage.metricUnavailable", { label })
 						: t("inspector.usage.tokensExact", { count: exactValue })
 				}
 			>
-				{metric.value === null ? "—" : formatTelemetryTokenValue(metric.value)}
+				{metric === null ? "—" : formatTelemetryTokenValue(metric)}
 			</dd>
 		</div>
 	);
@@ -740,32 +617,8 @@ function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
 function hasMeaningfulSessionUsage(usage?: SessionUsage): usage is SessionUsage {
 	if (!usage) return false;
 	return usageScopes(usage).some((totals) =>
-		usageMetricKeys.some((key) => (totals[key].value ?? 0) > 0),
+		usageMetricKeys.some((key) => (totals[key] ?? 0) > 0),
 	);
-}
-
-function usageHasConfirmedIncomplete(usage: SessionUsage, hasWarnings: boolean): boolean {
-	return (
-		hasWarnings ||
-		usage.totals.inputTokens.coverage === "partial" ||
-		usage.totals.outputTokens.coverage === "partial"
-	);
-}
-
-function isUsageIntegrityWarning(warning: string): boolean {
-	return ![
-		"source_discovery_pending",
-		"artifact_missing",
-		"artifact_replaced",
-		"source_read_failed",
-		"partial_reasoning_coverage",
-	].includes(warning);
-}
-
-function formatUsageWarning(warning: string, fallback: string): string {
-	const text = warning.replaceAll("_", " ").trim();
-	if (!text) return fallback;
-	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function formatTelemetryTokenValue(totalTokens: number): string {
@@ -773,8 +626,8 @@ function formatTelemetryTokenValue(totalTokens: number): string {
 }
 
 function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
-	if (totals.inputTokens.value === null && totals.outputTokens.value === null) return null;
-	return (totals.inputTokens.value ?? 0) + (totals.outputTokens.value ?? 0);
+	if (totals.inputTokens === null && totals.outputTokens === null) return null;
+	return (totals.inputTokens ?? 0) + (totals.outputTokens ?? 0);
 }
 
 function formatHarnessName(harness: string): string {

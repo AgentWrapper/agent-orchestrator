@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -161,6 +162,58 @@ func (c *Collector) FinalizeSession(
 	return nil
 }
 
+// ReactivateSession resumes collection for the native session relaunched by AO.
+// Existing cursors and events remain untouched; the source inventory is merely
+// made watchable again so hooks are not required for continued accounting.
+func (c *Collector) ReactivateSession(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	expectedRuntimeLaunchID string,
+) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	session, ok, err := c.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("usage session %s not found", sessionID)
+	}
+	if session.IsTerminated || session.Metadata.RuntimeLaunchID != expectedRuntimeLaunchID ||
+		!SupportedHarness(session.Harness) {
+		return nil
+	}
+
+	bindings, err := c.store.ListUsageBindingsForSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	nativeID := boundedUsageMetadata(session.Metadata.AgentSessionID)
+	var current *domain.UsageBindingRecord
+	for index := len(bindings) - 1; index >= 0; index-- {
+		binding := &bindings[index]
+		if binding.Harness != session.Harness || nativeID != "" && binding.NativeRootID != nativeID {
+			continue
+		}
+		current = binding
+		break
+	}
+	if current != nil {
+		if _, err := c.reactivateBinding(ctx, *current, c.now().UTC()); err != nil {
+			return err
+		}
+	} else if nativeID != "" && nativeUsageIDPattern.MatchString(nativeID) {
+		if err := c.backfillSession(ctx, session, nativeID); err != nil {
+			return err
+		}
+	} else {
+		return nil
+	}
+	c.notifySourceInventory(true)
+	return nil
+}
+
 // RecordHook registers transcript metadata and updates collection lifecycle for
 // one native hook callback.
 func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, signal HookSignal) error {
@@ -263,8 +316,6 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		InitialModelID: boundedUsageMetadata(signal.ModelID),
 		State:          state,
 		LastErrorCode:  lastErrorCode,
-		FirstSeenAt:    now,
-		LastSeenAt:     now,
 		UpdatedAt:      now,
 	})
 	if err != nil {
@@ -392,8 +443,21 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 	if err != nil {
 		return err
 	}
-	if exists && (existing.State == domain.UsageBindingComplete || existing.State == domain.UsageBindingPartial) {
+	if exists && session.Activity.State == domain.ActivityExited &&
+		(existing.State == domain.UsageBindingComplete || existing.State == domain.UsageBindingPartial) {
 		return nil
+	}
+	if exists && session.Activity.State != domain.ActivityExited {
+		budgetLimited := existing.LastErrorCode == domain.UsageErrorCodexSourceBudgetExceeded
+		if _, err := c.reactivateBinding(ctx, existing, now); err != nil {
+			return err
+		}
+		existing.State = domain.UsageBindingActive
+		existing.LastErrorCode = ""
+		if budgetLimited {
+			existing.State = domain.UsageBindingPartial
+			existing.LastErrorCode = domain.UsageErrorCodexSourceBudgetExceeded
+		}
 	}
 
 	state := existing.State
@@ -422,8 +486,6 @@ func (c *Collector) backfillSession(ctx context.Context, session domain.SessionR
 		InitialModelID: existing.InitialModelID,
 		State:          state,
 		LastErrorCode:  lastErrorCode,
-		FirstSeenAt:    now,
-		LastSeenAt:     now,
 		UpdatedAt:      now,
 	})
 	if err != nil {
@@ -1057,7 +1119,6 @@ func (c *Collector) registerValidatedSource(
 		FileIdentity:    identity,
 		Generation:      generation,
 		State:           domain.UsageSourcePending,
-		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
 	if kind == domain.UsageSourceCodexRollout {
@@ -1289,16 +1350,7 @@ func latestCodexSourcesByNativeSession(sources []domain.UsageSourceRecord) []dom
 
 func latestCodexSourceDiscovers(sources []domain.UsageSourceRecord, parentID, childID string) bool {
 	for _, source := range latestCodexSourcesByNativeSession(sources) {
-		if source.NativeSessionID == parentID && containsUsageString(discoveredCodexChildIDs(source.ParserStateJSON), childID) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsUsageString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
+		if source.NativeSessionID == parentID && slices.Contains(discoveredCodexChildIDs(source.ParserStateJSON), childID) {
 			return true
 		}
 	}

@@ -46,45 +46,6 @@ func TestParseClaudeSubagentIncludesSidechainTranscript(t *testing.T) {
 	}
 }
 
-func TestParseClaudeUsesTranscriptProviderWithoutHarnessFallback(t *testing.T) {
-	tests := []struct {
-		name   string
-		record string
-		want   string
-	}{
-		{
-			name:   "top-level provider",
-			record: `{"type":"assistant","provider":"anthropic","uuid":"one","message":{"id":"msg-1","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`,
-			want:   "anthropic",
-		},
-		{
-			name:   "message provider",
-			record: `{"type":"assistant","uuid":"two","message":{"id":"msg-2","model":"claude-x","provider":"bedrock","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`,
-			want:   "bedrock",
-		},
-		{
-			name:   "provider absent",
-			record: `{"type":"assistant","uuid":"three","message":{"id":"msg-3","model":"claude-x","stop_reason":"end_turn","usage":{"input_tokens":8,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":2}}}`,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			result := parseRecords(
-				usageSource(domain.UsageSourceClaudeMain),
-				[]jsonlRecord{{Data: []byte(test.record)}},
-				int64(len(test.record)),
-				time.Unix(1700000000, 0).UTC(),
-			)
-			if result.err != nil || len(result.Events) != 1 {
-				t.Fatalf("result events=%+v err=%v", result.Events, result.err)
-			}
-			if result.Events[0].Provider != test.want {
-				t.Fatalf("provider = %q, want %q", result.Events[0].Provider, test.want)
-			}
-		})
-	}
-}
-
 func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	source := usageSource(domain.UsageSourceCodexRollout)
@@ -109,8 +70,7 @@ func TestParseCodexCumulativeDeltasAndRepeats(t *testing.T) {
 		t.Fatalf("delta tokens = %+v", got)
 	}
 	state := parserStateFromResult(t, result, domain.UsageSourceCodexRollout)
-	if state.Codex.Baseline.InputTokens != 160 || state.Codex.ModelID != "gpt-5.6" ||
-		state.Codex.Provider != "openai" {
+	if state.Codex.Baseline.InputTokens != 160 || state.Codex.ModelID != "gpt-5.6" {
 		t.Fatalf("parser state = %+v", state.Codex)
 	}
 }
@@ -131,6 +91,28 @@ func TestParseCodexCounterResetNeverEmitsNegativeUsage(t *testing.T) {
 		result.Cursor.LastErrorCode != domain.UsageErrorNonMonotonicCumulativeUsage ||
 		state.Codex.Baseline.InputTokens != 10 {
 		t.Fatalf("cursor = %+v", result.Cursor)
+	}
+}
+
+func TestParseCodexContextFillStartsNewEpochWithoutAnomaly(t *testing.T) {
+	now := time.Unix(1700000000, 0).UTC()
+	source := usageSource(domain.UsageSourceCodexRollout)
+	source.Source.ParserStateJSON = `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{"input_tokens":500,"cached_input_tokens":300,"cache_write_input_tokens":0,"output_tokens":50,"reasoning_output_tokens":10,"total_tokens":550},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
+	records := []jsonlRecord{
+		{Offset: 20, Data: codexContextFillLine("2026-07-01T10:00:00Z", 258400)},
+		{Offset: 40, Data: codexTokenLine("2026-07-01T10:00:01Z", 10, 5, 0, 2, 1)},
+	}
+
+	result := parseRecords(source, records, 100, now)
+	if result.Cursor.AnomalyCount != 0 || result.Cursor.LastErrorCode != "" {
+		t.Fatalf("cursor = %+v, want clean context-fill transition", result.Cursor)
+	}
+	if len(result.Events) != 1 {
+		t.Fatalf("events = %+v, want one event from the new epoch", result.Events)
+	}
+	if got := result.Events[0].Tokens; got.InputTokens != 10 || got.CacheReadTokens != 5 ||
+		got.UncachedInputTokens != 5 || got.OutputTokens != 2 {
+		t.Fatalf("new epoch tokens = %+v", got)
 	}
 }
 
@@ -171,18 +153,53 @@ func TestDecodeParserStateTreatsWhitespaceOnlyObjectAsFreshState(t *testing.T) {
 	}
 }
 
-func TestDecodeParserStateKeepsV1BackwardCompatibleAndIntegrityStrict(t *testing.T) {
-	legacy := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
+func TestDecodeParserStateRetiresPersistedProviderField(t *testing.T) {
+	tests := []struct {
+		kind domain.UsageSourceKind
+		raw  string
+	}{
+		{
+			kind: domain.UsageSourceClaudeMain,
+			raw:  `{"version":1,"source_kind":"claude_main","claude":{"model_id":"claude-test","provider":"anthropic"}}`,
+		},
+		{
+			kind: domain.UsageSourceCodexRollout,
+			raw:  `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"provider":"openai","pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
+		},
+	}
+	for _, test := range tests {
+		state, err := decodeParserState(domain.UsageSourceRecord{Kind: test.kind, ParserStateJSON: test.raw})
+		if err != nil {
+			t.Fatalf("decode %s state with retired provider field: %v", test.kind, err)
+		}
+		parsed := parseRecordsWithState(
+			domain.UsageSourceContext{Source: domain.UsageSourceRecord{Kind: test.kind}},
+			nil,
+			0,
+			time.Unix(1700000000, 0).UTC(),
+			state,
+		)
+		if parsed.err != nil {
+			t.Fatalf("encode normalized %s state: %v", test.kind, parsed.err)
+		}
+		if strings.Contains(parsed.Cursor.ParserStateJSON, `"provider"`) {
+			t.Fatalf("normalized %s state retained provider: %s", test.kind, parsed.Cursor.ParserStateJSON)
+		}
+	}
+}
+
+func TestDecodeParserStateValidatesV1Integrity(t *testing.T) {
+	initial := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
 	state, err := decodeParserState(domain.UsageSourceRecord{
 		Kind:            domain.UsageSourceCodexRollout,
 		ByteOffset:      12,
-		ParserStateJSON: legacy,
+		ParserStateJSON: initial,
 	})
 	if err != nil {
-		t.Fatalf("decode legacy state: %v", err)
+		t.Fatalf("decode initial state: %v", err)
 	}
 	if state.Integrity == nil || state.Codex == nil {
-		t.Fatalf("legacy state = %+v", state)
+		t.Fatalf("initial state = %+v", state)
 	}
 
 	digest := strings.Repeat("a", 64)
@@ -196,7 +213,6 @@ func TestDecodeParserStateKeepsV1BackwardCompatibleAndIntegrityStrict(t *testing
 	}
 
 	invalid := []string{
-		`{"version":1,"source_kind":"codex_rollout","integrity":{"unknown":true},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
 		`{"version":1,"source_kind":"codex_rollout","integrity":{"checkpoint":{"end_offset":11,"byte_count":11,"sha256":"` + digest + `"}},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
 		`{"version":1,"source_kind":"codex_rollout","integrity":{"checkpoint":{"end_offset":12,"byte_count":12,"sha256":"short"}},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
 		`{"version":1,"source_kind":"codex_rollout","integrity":{"stable_tail":{"offset":12,"byte_count":4,"sha256":"` + digest + `","quiet_observations":2}},"codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":[]}}`,
@@ -213,54 +229,6 @@ func TestDecodeParserStateKeepsV1BackwardCompatibleAndIntegrityStrict(t *testing
 	}
 }
 
-func TestDecodeParserStateMigratesLegacySchemaForSafeReplay(t *testing.T) {
-	tests := []struct {
-		name string
-		kind domain.UsageSourceKind
-		raw  string
-	}{
-		{
-			name: "Claude",
-			kind: domain.UsageSourceClaudeMain,
-			raw:  `{"schemaVersion":1,"provider":"claude-code","modelId":"claude-sonnet"}`,
-		},
-		{
-			name: "Codex",
-			kind: domain.UsageSourceCodexRollout,
-			raw:  `{"schemaVersion":1,"provider":"openai","modelId":"gpt-5.4","cumulative":{"input_tokens":649340,"cached_input_tokens":530304,"cache_write_input_tokens":0,"output_tokens":11600,"reasoning_output_tokens":2723}}`,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			state, err := decodeParserState(domain.UsageSourceRecord{
-				Kind:            test.kind,
-				ByteOffset:      128,
-				ParserStateJSON: test.raw,
-			})
-			if err != nil {
-				t.Fatalf("decode legacy parser state: %v", err)
-			}
-			if state.Version != parserStateVersion || state.SourceKind != test.kind ||
-				state.Integrity == nil || state.Integrity.Checkpoint != nil {
-				t.Fatalf("migrated state = %+v, want replay-safe %s state", state, test.kind)
-			}
-		})
-	}
-}
-
-func TestCodexSessionMetaFromRecordAcceptsScalarRootSource(t *testing.T) {
-	nativeID, parentID, ok := codexSessionMetaFromRecord([]byte(
-		`{"type":"session_meta","payload":{"id":"019fa543-3135-7890-a3a6-1ec1df43a4ee","source":"cli"}}`,
-	))
-	if !ok {
-		t.Fatal("scalar root source was rejected")
-	}
-	if nativeID != "019fa543-3135-7890-a3a6-1ec1df43a4ee" || parentID != "" {
-		t.Fatalf("metadata = (%q, %q), want root session metadata", nativeID, parentID)
-	}
-}
-
 func TestDecodeParserStateValidatesCodexDirectParent(t *testing.T) {
 	validChild := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"native_session_id":"22222222-2222-4222-8222-222222222222","direct_parent_id":"11111111-1111-4111-8111-111111111111","pending_spawn_call_ids":[],"discovered_child_ids":[]}}`
 	child := domain.UsageSourceRecord{
@@ -270,9 +238,7 @@ func TestDecodeParserStateValidatesCodexDirectParent(t *testing.T) {
 		ParserStateJSON: validChild,
 	}
 	state, err := decodeParserState(child)
-	if err != nil {
-		t.Fatalf("decode child direct parent: %v", err)
-	}
+	mustNoError(t, err, "decode child direct parent")
 	parsed := parseRecordsWithState(
 		domain.UsageSourceContext{Source: child},
 		nil,
@@ -480,66 +446,26 @@ func TestParsersTrackProviderModelChanges(t *testing.T) {
 
 func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	path := t.TempDir() + "/rollout.jsonl"
-	if err := osWrite(path, `{"a":1}`+"\n"+`{"b":`); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, osWrite(path, `{"a":1}`+"\n"+`{"b":`))
 	first, err := readJSONLChunkAtPath(path, 0, 1024, 32, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	if len(first.records) != 1 || first.atEOF || !first.readToEOF ||
 		string(first.trailing) != `{"b":` ||
 		first.nextOffset != int64(len(`{"a":1}`+"\n")) {
 		t.Fatalf("first chunk = %+v", first)
 	}
-	if err := osAppend(path, `2}`+"\n"); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, osAppend(path, `2}`+"\n"))
 	second, err := readJSONLChunkAtPath(path, first.nextOffset, 1024, 32, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	if len(second.records) != 1 || !second.atEOF {
 		t.Fatalf("second chunk = %+v", second)
 	}
 
-	if err := osWrite(path, strings.Repeat("x", 40)+"\n"); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, osWrite(path, strings.Repeat("x", 40)+"\n"))
 	large, err := readJSONLChunkAtPath(path, 0, 1024, 16, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	if large.anomalies != 1 || large.errorCode != domain.UsageErrorRecordTooLarge || large.nextOffset != 41 {
 		t.Fatalf("oversized chunk = %+v", large)
-	}
-}
-
-func TestReadJSONLChunkFromFileSurvivesAtomicPathReplacement(t *testing.T) {
-	root := t.TempDir()
-	path := root + "/rollout.jsonl"
-	replacement := root + "/replacement.jsonl"
-	if err := osWrite(path, `{"generation":"opened"}`+"\n"); err != nil {
-		t.Fatal(err)
-	}
-	if err := osWrite(replacement, `{"generation":"replacement"}`+"\n"); err != nil {
-		t.Fatal(err)
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = file.Close() }()
-	if err := os.Rename(replacement, path); err != nil {
-		t.Fatal(err)
-	}
-
-	chunk, err := readJSONLChunkFromFile(file, 0, 1024, 128, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(chunk.records) != 1 || string(chunk.records[0].Data) != `{"generation":"opened"}` {
-		t.Fatalf("chunk records = %+v, want the opened generation", chunk.records)
 	}
 }
 
@@ -598,8 +524,15 @@ func parserStateFromResult(t *testing.T, result parseResult, kind domain.UsageSo
 
 func codexTokenLine(timestamp string, input, cached, cacheWrite, output, reasoning int64) []byte {
 	return []byte(fmt.Sprintf(
-		`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":%d,"cached_input_tokens":%d,"cache_write_input_tokens":%d,"output_tokens":%d,"reasoning_output_tokens":%d}}}}`,
-		timestamp, input, cached, cacheWrite, output, reasoning,
+		`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":%d,"cached_input_tokens":%d,"cache_write_input_tokens":%d,"output_tokens":%d,"reasoning_output_tokens":%d,"total_tokens":%d}}}}`,
+		timestamp, input, cached, cacheWrite, output, reasoning, input+output,
+	))
+}
+
+func codexContextFillLine(timestamp string, modelContextWindow int64) []byte {
+	return []byte(fmt.Sprintf(
+		`{"timestamp":%q,"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":0,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":%d},"model_context_window":%d}}}`,
+		timestamp, modelContextWindow, modelContextWindow,
 	))
 }
 

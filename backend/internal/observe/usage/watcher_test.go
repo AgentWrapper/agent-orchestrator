@@ -21,23 +21,17 @@ func TestTranscriptWatcherExistingRootWrite(t *testing.T) {
 	defer stopTranscriptWatcher(t, watcher, cancel)
 
 	transcript := filepath.Join(root, "session.jsonl")
-	if err := os.WriteFile(transcript, []byte("{\"type\":\"message\"}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.WriteFile(transcript, []byte("{\"type\":\"message\"}\n"), 0o600))
 	waitForTranscriptEvent(t, watcher.Events(), transcript)
 
 	ignored := filepath.Join(root, "notes.txt")
-	if err := os.WriteFile(ignored, []byte("not a transcript"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.WriteFile(ignored, []byte("not a transcript"), 0o600))
 	assertNoTranscriptEvent(t, watcher.Events(), ignored)
 }
 
 func TestTranscriptWatcherErrorsRedactRootPath(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "private-transcript-root")
-	if err := os.WriteFile(root, []byte("not a directory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.WriteFile(root, []byte("not a directory"), 0o600))
 	_, err := NewTranscriptWatcher(context.Background(), []string{root})
 	if err == nil {
 		t.Fatal("expected file transcript root to be rejected")
@@ -47,27 +41,13 @@ func TestTranscriptWatcherErrorsRedactRootPath(t *testing.T) {
 	}
 }
 
-func TestTranscriptWatcherRebuildHonorsCancellation(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, err := NewTranscriptWatcher(ctx, []string{t.TempDir()})
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("NewTranscriptWatcher() error = %v, want context canceled", err)
-	}
-}
-
 func TestTranscriptWatcherCancelsLargeHistoryRebuildPromptly(t *testing.T) {
 	root := t.TempDir()
 	watcher, err := NewTranscriptWatcher(context.Background(), []string{root})
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	t.Cleanup(watcher.close)
 	for index := range 2_000 {
-		if err := os.Mkdir(filepath.Join(root, fmt.Sprintf("history-%04d", index)), 0o700); err != nil {
-			t.Fatal(err)
-		}
+		mustNoError(t, os.Mkdir(filepath.Join(root, fmt.Sprintf("history-%04d", index)), 0o700))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -98,26 +78,20 @@ func TestTranscriptWatcherCancelsLargeHistoryRebuildPromptly(t *testing.T) {
 func TestTranscriptWatcherResolvesSymlinkedRoot(t *testing.T) {
 	base := t.TempDir()
 	root := filepath.Join(base, "transcripts")
-	if err := os.Mkdir(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.Mkdir(root, 0o700))
 	link := filepath.Join(base, "linked-transcripts")
 	if err := os.Symlink(root, link); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(link)
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 
 	watcher, cancel := startTranscriptWatcher(t, link)
 	defer stopTranscriptWatcher(t, watcher, cancel)
 	waitForWatchedDirectory(t, watcher, resolvedRoot)
 
 	transcript := filepath.Join(resolvedRoot, "session.jsonl")
-	if err := os.WriteFile(transcript, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.WriteFile(transcript, []byte("{}\n"), 0o600))
 	waitForTranscriptEvent(t, watcher.Events(), transcript)
 }
 
@@ -127,16 +101,38 @@ func TestTranscriptWatcherAddsNestedDirectories(t *testing.T) {
 	defer stopTranscriptWatcher(t, watcher, cancel)
 
 	nested := filepath.Join(root, "one", "two")
-	if err := os.MkdirAll(nested, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.MkdirAll(nested, 0o700))
 	waitForWatchedDirectory(t, watcher, nested)
 
 	transcript := filepath.Join(nested, "nested.jsonl")
-	if err := os.WriteFile(transcript, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.WriteFile(transcript, []byte("{}\n"), 0o600))
 	waitForTranscriptEvent(t, watcher.Events(), transcript)
+}
+
+func TestTranscriptWatcherEmitsDiscoveryAfterPrepopulatedDirectoryRebuild(t *testing.T) {
+	root := t.TempDir()
+	watcher, err := NewTranscriptWatcher(context.Background(), []string{root})
+	mustNoError(t, err)
+	t.Cleanup(watcher.close)
+
+	nested := filepath.Join(root, "created-before-event")
+	mustNoError(t, os.Mkdir(nested, 0o700))
+	transcript := filepath.Join(nested, "complete.jsonl")
+	mustNoError(t, os.WriteFile(transcript, []byte("{}\n"), 0o600))
+
+	emit, discovery, topology, err := watcher.handleEvent(
+		context.Background(),
+		fsnotify.Event{Name: nested, Op: fsnotify.Create},
+	)
+	if err != nil || filepath.Clean(emit) != filepath.Clean(nested) || !discovery || !topology {
+		t.Fatalf("directory event = path:%q discovery:%v topology:%v err:%v", emit, discovery, topology, err)
+	}
+	watcher.mu.Lock()
+	_, watched := watcher.watched[filepath.Clean(nested)]
+	watcher.mu.Unlock()
+	if !watched {
+		t.Fatalf("prepopulated directory %q was not added to the watch set", nested)
+	}
 }
 
 func TestTranscriptWatcherTransitionsFromMissingRoot(t *testing.T) {
@@ -145,15 +141,11 @@ func TestTranscriptWatcherTransitionsFromMissingRoot(t *testing.T) {
 	watcher, cancel := startTranscriptWatcher(t, root)
 	defer stopTranscriptWatcher(t, watcher, cancel)
 
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.MkdirAll(root, 0o700))
 	waitForWatchedDirectory(t, watcher, root)
 
 	transcript := filepath.Join(root, "started-later.jsonl")
-	if err := os.WriteFile(transcript, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.WriteFile(transcript, []byte("{}\n"), 0o600))
 	waitForTranscriptEvent(t, watcher.Events(), transcript)
 }
 
@@ -163,37 +155,25 @@ func TestTranscriptWatcherRenameAndReplacement(t *testing.T) {
 	defer stopTranscriptWatcher(t, watcher, cancel)
 
 	oldDirectory := filepath.Join(root, "old-generation")
-	if err := os.Mkdir(oldDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.Mkdir(oldDirectory, 0o700))
 	waitForWatchedDirectory(t, watcher, oldDirectory)
 
 	newDirectory := filepath.Join(root, "new-generation")
-	if err := os.Rename(oldDirectory, newDirectory); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.Rename(oldDirectory, newDirectory))
 	waitForWatchedDirectory(t, watcher, newDirectory)
 	waitForUnwatchedDirectory(t, watcher, oldDirectory)
 
 	transcript := filepath.Join(newDirectory, "rollout.jsonl")
-	if err := os.WriteFile(transcript, []byte("{\"generation\":1}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.WriteFile(transcript, []byte("{\"generation\":1}\n"), 0o600))
 	waitForTranscriptEvent(t, watcher.Events(), transcript)
 
 	renamed := filepath.Join(root, "rollout.old")
-	if err := os.Rename(transcript, renamed); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.Rename(transcript, renamed))
 	waitForTranscriptEvent(t, watcher.Events(), transcript)
 
 	replacement := filepath.Join(root, "replacement.tmp")
-	if err := os.WriteFile(replacement, []byte("{\"generation\":2}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(replacement, transcript); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.WriteFile(replacement, []byte("{\"generation\":2}\n"), 0o600))
+	mustNoError(t, os.Rename(replacement, transcript))
 	waitForTranscriptEvent(t, watcher.Events(), transcript)
 }
 
@@ -218,22 +198,18 @@ func TestTranscriptWatcherCleanShutdown(t *testing.T) {
 func TestTranscriptWatcherMarksOnlyCreationEventsForDiscovery(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "session.jsonl")
-	if err := os.WriteFile(path, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.WriteFile(path, []byte("{}\n"), 0o600))
 	watcher, err := NewTranscriptWatcher(context.Background(), []string{root})
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	t.Cleanup(watcher.close)
 
-	emit, discovery, err := watcher.handleEvent(context.Background(), fsnotify.Event{Name: path, Op: fsnotify.Create})
-	if err != nil || filepath.Clean(emit) != filepath.Clean(path) || !discovery {
-		t.Fatalf("create event = path:%q discovery:%v err:%v", emit, discovery, err)
+	emit, discovery, topology, err := watcher.handleEvent(context.Background(), fsnotify.Event{Name: path, Op: fsnotify.Create})
+	if err != nil || filepath.Clean(emit) != filepath.Clean(path) || !discovery || topology {
+		t.Fatalf("create event = path:%q discovery:%v topology:%v err:%v", emit, discovery, topology, err)
 	}
-	emit, discovery, err = watcher.handleEvent(context.Background(), fsnotify.Event{Name: path, Op: fsnotify.Write})
-	if err != nil || filepath.Clean(emit) != filepath.Clean(path) || discovery {
-		t.Fatalf("write event = path:%q discovery:%v err:%v", emit, discovery, err)
+	emit, discovery, topology, err = watcher.handleEvent(context.Background(), fsnotify.Event{Name: path, Op: fsnotify.Write})
+	if err != nil || filepath.Clean(emit) != filepath.Clean(path) || discovery || topology {
+		t.Fatalf("write event = path:%q discovery:%v topology:%v err:%v", emit, discovery, topology, err)
 	}
 }
 

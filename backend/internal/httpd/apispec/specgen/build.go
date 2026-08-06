@@ -227,7 +227,6 @@ var schemaNames = map[string]string{
 	"ControllersListUsageSessionsQuery":           "ListUsageSessionsQuery",
 	"ControllersCompactSessionUsageResponse":      "CompactSessionUsageResponse",
 	"ControllersListCompactSessionUsageResponse":  "ListCompactSessionUsageResponse",
-	"ControllersUsageMetricResponse":              "UsageMetricResponse",
 	"ControllersUsageTotalsResponse":              "UsageTotalsResponse",
 	"ControllersUsageModelResponse":               "UsageModelResponse",
 	"ControllersUsageHarnessResponse":             "UsageHarnessResponse",

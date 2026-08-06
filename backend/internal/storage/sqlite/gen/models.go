@@ -34,12 +34,7 @@ type ModelUsageEvent struct {
 	ID                  int64
 	BindingID           int64
 	UsageSourceID       int64
-	ProjectID           domain.ProjectID
-	SessionID           domain.SessionID
-	Harness             domain.AgentHarness
-	Provider            string
 	ModelID             string
-	ObservedAt          time.Time
 	InputTokens         int64
 	UncachedInputTokens int64
 	CacheReadTokens     int64
@@ -47,7 +42,6 @@ type ModelUsageEvent struct {
 	OutputTokens        int64
 	ReasoningTokens     sql.NullInt64
 	SourceEventKey      string
-	CreatedAt           time.Time
 }
 
 type Notification struct {
@@ -219,9 +213,9 @@ type Session struct {
 	TerminateOnPRMerge bool
 	DiffBaseSha        string
 	DiffBaseRef        string
+	ReviewerHarness    domain.ReviewerHarness
 	IsPinned           bool
 	PinnedAt           sql.NullTime
-	ReviewerHarness    domain.ReviewerHarness
 }
 
 type SessionCleanupFact struct {
@@ -275,8 +269,6 @@ type UsageBinding struct {
 	InitialModelID string
 	State          domain.UsageBindingState
 	LastErrorCode  string
-	FirstSeenAt    time.Time
-	LastSeenAt     time.Time
 	UpdatedAt      time.Time
 }
 
@@ -291,6 +283,11 @@ type UsageCodexSourceDiscovery struct {
 	NativeSessionID        string
 	DiscoveredChildIdsJson string
 	HasMixedChildTypes     int64
+}
+
+type UsageSessionIntegrity struct {
+	SessionID  string
+	Incomplete int64
 }
 
 type UsageSource struct {
@@ -309,8 +306,6 @@ type UsageSource struct {
 	AnomalyCount    int64
 	NextRetryAt     sql.NullTime
 	LastErrorCode   string
-	LastObservedAt  sql.NullTime
-	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
 

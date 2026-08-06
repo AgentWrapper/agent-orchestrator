@@ -327,6 +327,10 @@ func (c *Coordinator) run(ctx context.Context) {
 				return
 			}
 			path := canonicalTranscriptPath(event.Path)
+			if event.Topology {
+				refreshInventory(true)
+				continue
+			}
 			sourceIDs := paths[path]
 			if len(sourceIDs) == 0 {
 				if c.reconcilePath != nil {

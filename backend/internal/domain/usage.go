@@ -40,29 +40,6 @@ const (
 	UsageSourceError    UsageSourceState = "error"
 )
 
-// UsageCollectionState is the user-facing summary state for a session's usage
-// collection pipeline. It is independent from per-metric coverage.
-type UsageCollectionState string
-
-// UsageCollectionState values summarize session-level usage collection.
-const (
-	UsageCollectionWaiting     UsageCollectionState = "waiting"
-	UsageCollectionCollecting  UsageCollectionState = "collecting"
-	UsageCollectionComplete    UsageCollectionState = "complete"
-	UsageCollectionPartial     UsageCollectionState = "partial"
-	UsageCollectionUnavailable UsageCollectionState = "unavailable"
-)
-
-// UsageCoverage reports whether a metric represents the full known scope.
-type UsageCoverage string
-
-// UsageCoverage values describe metric completeness over a scope.
-const (
-	UsageCoverageComplete    UsageCoverage = "complete"
-	UsageCoveragePartial     UsageCoverage = "partial"
-	UsageCoverageUnavailable UsageCoverage = "unavailable"
-)
-
 // Usage error code constants are safe storage/display identifiers for
 // transcript discovery and ingestion failures.
 const (
@@ -79,7 +56,6 @@ const (
 	UsageErrorInvalidParserState          = "invalid_parser_state"
 	UsageErrorUnresolvedSpawnCall         = "unresolved_spawn_call"
 	UsageErrorCodexSourceBudgetExceeded   = "codex_source_budget_exceeded"
-	UsageErrorPartialReasoningCoverage    = "partial_reasoning_coverage"
 )
 
 // Usage ingestion sentinel errors report replay and cursor conflicts.
@@ -97,8 +73,6 @@ type UsageBindingRecord struct {
 	InitialModelID string
 	State          UsageBindingState
 	LastErrorCode  string
-	FirstSeenAt    time.Time
-	LastSeenAt     time.Time
 	UpdatedAt      time.Time
 }
 
@@ -120,8 +94,6 @@ type UsageSourceRecord struct {
 	AnomalyCount    int64
 	NextRetryAt     *time.Time
 	LastErrorCode   string
-	LastObservedAt  *time.Time
-	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
 
@@ -148,94 +120,55 @@ type UsageTokenMetrics struct {
 
 // ModelUsageEvent is one append-only normalized usage fact.
 type ModelUsageEvent struct {
-	Provider       string
 	ModelID        string
-	ObservedAt     time.Time
 	Tokens         UsageTokenMetrics
 	SourceEventKey string
-	CreatedAt      time.Time
-}
-
-// UsageMetricCoverage summarizes whether a metric is available over an
-// aggregate scope.
-type UsageMetricCoverage struct {
-	Value    *int64
-	Coverage UsageCoverage
 }
 
 // UsageModelAggregate is the raw model-level aggregate read from storage before
 // the service applies user-facing coverage rules.
 type UsageModelAggregate struct {
 	Harness             AgentHarness
-	Provider            string
 	ModelID             string
 	Tokens              UsageTokenMetrics
-	EventCount          int64
 	ReasoningEventCount int64
-	LastObservedAt      *time.Time
-}
-
-// UsageSessionAggregate is the storage-level batch row used to derive compact
-// dashboard usage without issuing one query per session card.
-type UsageSessionAggregate struct {
-	SessionID            SessionID
-	Harness              AgentHarness
-	BindingCount         int64
-	CompleteBindingCount int64
-	PartialBindingCount  int64
-	SourceCount          int64
-	CompleteSourceCount  int64
-	ErrorSourceCount     int64
-	AnomalousSourceCount int64
-	EventCount           int64
-	TotalTokens          int64
 }
 
 // CompactSessionUsage is the token-only dashboard read model.
 type CompactSessionUsage struct {
-	SessionID       SessionID
-	TotalTokens     int64
-	CollectionState UsageCollectionState
-	Coverage        UsageCoverage
+	SessionID   SessionID
+	TotalTokens int64
+	Incomplete  bool
 }
 
 // UsageMetricTotals is the aggregate metric block used by session, harness,
 // and model summaries.
 type UsageMetricTotals struct {
-	InputTokens         UsageMetricCoverage
-	UncachedInputTokens UsageMetricCoverage
-	CacheReadTokens     UsageMetricCoverage
-	CacheWriteTokens    UsageMetricCoverage
-	OutputTokens        UsageMetricCoverage
-	ReasoningTokens     UsageMetricCoverage
-}
-
-// UsageCollectionSummary is the collection-state header for session usage.
-type UsageCollectionSummary struct {
-	State          UsageCollectionState
-	LastObservedAt *time.Time
-	Warnings       []string
+	InputTokens         *int64
+	UncachedInputTokens *int64
+	CacheReadTokens     *int64
+	CacheWriteTokens    *int64
+	OutputTokens        *int64
+	ReasoningTokens     *int64
 }
 
 // ModelUsageSummary is a per-exact-model aggregate.
 type ModelUsageSummary struct {
-	ModelID  string
-	Provider string
-	Totals   UsageMetricTotals
+	ModelID string
+	Totals  UsageMetricTotals
 }
 
-// HarnessUsageSummary groups model summaries by harness and provider.
+// HarnessUsageSummary groups model summaries by AO harness.
 type HarnessUsageSummary struct {
-	Harness  AgentHarness
-	Provider string
-	Totals   UsageMetricTotals
-	Models   []ModelUsageSummary
+	Harness AgentHarness
+	Totals  UsageMetricTotals
+	Models  []ModelUsageSummary
 }
 
 // SessionUsageSummary is the read model returned by the session usage service.
 type SessionUsageSummary struct {
 	SessionID  SessionID
-	Collection UsageCollectionSummary
+	Incomplete bool
 	Totals     UsageMetricTotals
 	Harnesses  []HarnessUsageSummary
 }
@@ -250,6 +183,5 @@ type SourceCursorState struct {
 	AnomalyCount    int64
 	NextRetryAt     *time.Time
 	LastErrorCode   string
-	LastObservedAt  *time.Time
 	UpdatedAt       time.Time
 }

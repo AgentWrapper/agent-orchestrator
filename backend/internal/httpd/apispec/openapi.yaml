@@ -3211,20 +3211,8 @@ components:
       type: object
     CompactSessionUsageResponse:
       properties:
-        collectionState:
-          enum:
-          - waiting
-          - collecting
-          - complete
-          - partial
-          - unavailable
-          type: string
-        coverage:
-          enum:
-          - complete
-          - partial
-          - unavailable
-          type: string
+        incomplete:
+          type: boolean
         sessionId:
           type: string
         totalTokens:
@@ -3234,8 +3222,7 @@ components:
       required:
       - sessionId
       - totalTokens
-      - collectionState
-      - coverage
+      - incomplete
       type: object
     ContainerReapConfig:
       properties:
@@ -4597,35 +4584,19 @@ components:
       type: object
     SessionUsageResponse:
       properties:
-        collectionState:
-          enum:
-          - waiting
-          - collecting
-          - complete
-          - partial
-          - unavailable
-          type: string
         harnesses:
           items:
             $ref: '#/components/schemas/UsageHarnessResponse'
           type: array
-        lastObservedAt:
-          format: date-time
-          type:
-          - "null"
-          - string
+        incomplete:
+          type: boolean
         sessionId:
           type: string
         totals:
           $ref: '#/components/schemas/UsageTotalsResponse'
-        warnings:
-          items:
-            type: string
-          type: array
       required:
       - sessionId
-      - collectionState
-      - warnings
+      - incomplete
       - totals
       - harnesses
       type: object
@@ -4950,13 +4921,10 @@ components:
           items:
             $ref: '#/components/schemas/UsageModelResponse'
           type: array
-        provider:
-          type: string
         totals:
           $ref: '#/components/schemas/UsageTotalsResponse'
       required:
       - harness
-      - provider
       - totals
       - models
       type: object
@@ -4978,49 +4946,42 @@ components:
       required:
       - harness
       type: object
-    UsageMetricResponse:
-      properties:
-        coverage:
-          enum:
-          - complete
-          - partial
-          - unavailable
-          type: string
-        value:
-          type:
-          - "null"
-          - integer
-      required:
-      - value
-      - coverage
-      type: object
     UsageModelResponse:
       properties:
         modelId:
-          type: string
-        provider:
           type: string
         totals:
           $ref: '#/components/schemas/UsageTotalsResponse'
       required:
       - modelId
-      - provider
       - totals
       type: object
     UsageTotalsResponse:
       properties:
         cacheReadTokens:
-          $ref: '#/components/schemas/UsageMetricResponse'
+          type:
+          - "null"
+          - integer
         cacheWriteTokens:
-          $ref: '#/components/schemas/UsageMetricResponse'
+          type:
+          - "null"
+          - integer
         inputTokens:
-          $ref: '#/components/schemas/UsageMetricResponse'
+          type:
+          - "null"
+          - integer
         outputTokens:
-          $ref: '#/components/schemas/UsageMetricResponse'
+          type:
+          - "null"
+          - integer
         reasoningTokens:
-          $ref: '#/components/schemas/UsageMetricResponse'
+          type:
+          - "null"
+          - integer
         uncachedInputTokens:
-          $ref: '#/components/schemas/UsageMetricResponse'
+          type:
+          - "null"
+          - integer
       required:
       - inputTokens
       - uncachedInputTokens

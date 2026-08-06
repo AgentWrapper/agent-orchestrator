@@ -215,10 +215,16 @@ func TestCoordinatorRunsDiscoveryOnlyForDiscoveryEvents(t *testing.T) {
 	}
 
 	watcher.events <- TranscriptEvent{
-		Path:      filepath.Join(t.TempDir(), "created.jsonl"),
+		Path:      filepath.Join(t.TempDir(), "created-directory"),
 		Discovery: true,
+		Topology:  true,
 	}
 	waitForCoordinatorCalls(t, reconciled, 1)
+	select {
+	case got := <-pathReconciled:
+		t.Fatalf("topology discovery incorrectly used exact-path reconciliation for %q", got)
+	default:
+	}
 	cancel()
 	waitForCoordinatorSignal(t, done, "coordinator did not stop")
 	if got := reconciles.Load(); got != 2 {

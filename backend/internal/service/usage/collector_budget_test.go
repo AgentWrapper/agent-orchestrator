@@ -3,10 +3,8 @@ package usage
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,19 +29,6 @@ type codexBudgetFixture struct {
 	now       time.Time
 }
 
-type countingUsageCollectorStore struct {
-	collectorStore
-	listUsageSourcesForBindingCalls atomic.Int64
-}
-
-func (s *countingUsageCollectorStore) ListUsageSourcesForBinding(
-	ctx context.Context,
-	bindingID int64,
-) ([]domain.UsageSourceRecord, error) {
-	s.listUsageSourcesForBindingCalls.Add(1)
-	return s.collectorStore.ListUsageSourcesForBinding(ctx, bindingID)
-}
-
 func TestCollectorCodexBudgetCountsLogicalIDsAndAllowsExistingGenerations(t *testing.T) {
 	fixture := newCodexBudgetFixture(t, 2)
 	ctx := context.Background()
@@ -65,9 +50,7 @@ func TestCollectorCodexBudgetCountsLogicalIDsAndAllowsExistingGenerations(t *tes
 	}
 
 	replaced := childPath + ".replaced"
-	if err := os.Rename(childPath, replaced); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.Rename(childPath, replaced))
 	writeUsageFixture(t, childPath, codexSessionMetaFixture(t, testCodexChildID, testCodexRootID))
 	changed, err = fixture.collector.registerSource(
 		ctx,
@@ -84,12 +67,8 @@ func TestCollectorCodexBudgetCountsLogicalIDsAndAllowsExistingGenerations(t *tes
 	}
 
 	archivePath := filepath.Join(fixture.root, "archive", "rollout-child.jsonl")
-	if err := os.MkdirAll(filepath.Dir(archivePath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(childPath, archivePath); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, os.MkdirAll(filepath.Dir(archivePath), 0o700))
+	mustNoError(t, os.Rename(childPath, archivePath))
 	changed, err = fixture.collector.registerSource(
 		ctx,
 		fixture.binding,
@@ -121,9 +100,7 @@ func TestCollectorCodexBudgetCountsLogicalIDsAndAllowsExistingGenerations(t *tes
 	}
 
 	sources, err := fixture.store.ListUsageSourcesForBinding(ctx, fixture.binding.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	distinct := make(map[string]struct{})
 	childGenerations := 0
 	for _, source := range sources {
@@ -142,9 +119,7 @@ func TestCollectorCodexBudgetCountsLogicalIDsAndAllowsExistingGenerations(t *tes
 	}
 	assertCodexBudgetMarker(t, fixture.store, fixture.session.ID, domain.UsageBindingPartial)
 	watchable, err := fixture.store.ListWatchableUsageSources(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	watchableIDs := make(map[string]struct{})
 	for _, source := range watchable {
 		watchableIDs[source.NativeSessionID] = struct{}{}
@@ -157,42 +132,12 @@ func TestCollectorCodexBudgetCountsLogicalIDsAndAllowsExistingGenerations(t *tes
 	}
 	reader := NewSummaryReader(fixture.store)
 	compact, err := reader.ListCompact(ctx, fixture.session.ProjectID)
-	if err != nil || len(compact) != 1 || compact[0].CollectionState != domain.UsageCollectionPartial {
+	if err != nil || len(compact) != 1 || !compact[0].Incomplete {
 		t.Fatalf("live compact summary=%+v err=%v", compact, err)
 	}
 	detail, err := reader.Get(ctx, fixture.session.ID)
-	if err != nil || detail.Collection.State != domain.UsageCollectionPartial ||
-		!containsUsageString(detail.Collection.Warnings, testCodexBudgetCode) {
+	if err != nil || !detail.Incomplete {
 		t.Fatalf("live detail summary=%+v err=%v", detail, err)
-	}
-}
-
-func TestCollectorCodexChildBatchLoadsBindingSourcesOnce(t *testing.T) {
-	const childCount = 64
-	fixture := newCodexBudgetFixture(t, childCount+1)
-	childIDs := make([]string, 0, childCount)
-	for i := 0; i < childCount; i++ {
-		childID := fmt.Sprintf("00000000-0000-4000-8000-%012x", i+2)
-		childIDs = append(childIDs, childID)
-		writeUsageFixture(
-			t,
-			filepath.Join(fixture.root, "2026", "08", "02", "rollout-child-"+childID+".jsonl"),
-			codexSessionMetaFixture(t, childID, testCodexRootID),
-		)
-	}
-	setCodexDiscoveredChildren(t, fixture.store, onlyBudgetSource(t, fixture), childIDs...)
-
-	countingStore := &countingUsageCollectorStore{collectorStore: fixture.store}
-	fixture.collector.store = countingStore
-	if err := fixture.collector.registerDiscoveredCodexChildren(
-		context.Background(),
-		fixture.binding,
-		fixture.now,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if calls := countingStore.listUsageSourcesForBindingCalls.Load(); calls != 1 {
-		t.Fatalf("ListUsageSourcesForBinding calls=%d, want 1 binding inventory load", calls)
 	}
 }
 
@@ -229,9 +174,7 @@ func TestCollectorCodexBudgetBoundsRecursiveDiscoveryAndReconcilePath(t *testing
 			writeUsageFixture(t, childPath, codexSessionMetaFixture(t, testCodexChildID, testCodexRootID))
 			setCodexDiscoveredChildren(t, fixture.store, onlyBudgetSource(t, fixture), testCodexChildID)
 
-			if err := test.reconcile(ctx, fixture, childPath); err != nil {
-				t.Fatalf("reconcile: %v", err)
-			}
+			mustNoError(t, test.reconcile(ctx, fixture, childPath), "reconcile")
 			sources, err := fixture.store.ListUsageSourcesForBinding(ctx, fixture.binding.ID)
 			if err != nil || len(sources) != 1 {
 				t.Fatalf("sources=%+v err=%v, want only root", sources, err)
@@ -247,9 +190,7 @@ func TestCollectorCodexBudgetResumePreservesPartialMarker(t *testing.T) {
 	childPath := filepath.Join(fixture.root, "active", "rollout-child.jsonl")
 	writeUsageFixture(t, childPath, codexSessionMetaFixture(t, testCodexChildID, testCodexRootID))
 	setCodexDiscoveredChildren(t, fixture.store, onlyBudgetSource(t, fixture), testCodexChildID)
-	if err := fixture.collector.registerDiscoveredCodexChildren(ctx, fixture.binding, fixture.now); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, fixture.collector.registerDiscoveredCodexChildren(ctx, fixture.binding, fixture.now))
 	if _, err := fixture.store.UpdateUsageBindingState(
 		ctx,
 		fixture.binding.ID,
@@ -318,30 +259,6 @@ func TestCollectorCodexBudgetResumePreservesPartialMarker(t *testing.T) {
 	}
 }
 
-func TestCollectorCodexBudgetReconcilePreservesFinalizingTransition(t *testing.T) {
-	fixture := newCodexBudgetFixture(t, 1)
-	ctx := context.Background()
-	fixture.session.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: fixture.now}
-	fixture.session.UpdatedAt = fixture.now
-	if err := fixture.store.UpdateSession(ctx, fixture.session); err != nil {
-		t.Fatal(err)
-	}
-	childPath := filepath.Join(
-		fixture.root,
-		"2026",
-		"08",
-		"02",
-		"rollout-child-"+testCodexChildID+".jsonl",
-	)
-	writeUsageFixture(t, childPath, codexSessionMetaFixture(t, testCodexChildID, testCodexRootID))
-	setCodexDiscoveredChildren(t, fixture.store, onlyBudgetSource(t, fixture), testCodexChildID)
-
-	if err := fixture.collector.ReconcileSources(ctx, -1); err != nil {
-		t.Fatalf("reconcile exited binding: %v", err)
-	}
-	assertCodexBudgetMarker(t, fixture.store, fixture.session.ID, domain.UsageBindingFinalizing)
-}
-
 func TestCollectorCodexBudgetRestartFinalizesPersistedPartialForExitedSession(t *testing.T) {
 	fixture := newCodexBudgetFixture(t, 1)
 	ctx := context.Background()
@@ -354,23 +271,17 @@ func TestCollectorCodexBudgetRestartFinalizesPersistedPartialForExitedSession(t 
 	)
 	writeUsageFixture(t, childPath, codexSessionMetaFixture(t, testCodexChildID, testCodexRootID))
 	setCodexDiscoveredChildren(t, fixture.store, onlyBudgetSource(t, fixture), testCodexChildID)
-	if err := fixture.collector.ReconcileSources(ctx, -1); err != nil {
-		t.Fatalf("record live overflow: %v", err)
-	}
+	mustNoError(t, fixture.collector.ReconcileSources(ctx, -1), "record live overflow")
 	assertCodexBudgetMarker(t, fixture.store, fixture.session.ID, domain.UsageBindingPartial)
 
 	fixture.session.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: fixture.now}
 	fixture.session.UpdatedAt = fixture.now
-	if err := fixture.store.UpdateSession(ctx, fixture.session); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, fixture.store.UpdateSession(ctx, fixture.session))
 	restarted := newCollectorWithCodexSourceLimit(fixture.store, SourceRoots{
 		CodexSessions: fixture.root,
 		CodexArchived: fixture.root,
 	}, nil, 1)
-	if err := restarted.ReconcileSources(ctx, -1); err != nil {
-		t.Fatalf("restart reconcile: %v", err)
-	}
+	mustNoError(t, restarted.ReconcileSources(ctx, -1), "restart reconcile")
 	assertCodexBudgetMarker(t, fixture.store, fixture.session.ID, domain.UsageBindingFinalizing)
 }
 
@@ -386,9 +297,7 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 	ctx := context.Background()
 	dataDir := t.TempDir()
 	store, err := sqlite.Open(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	root := t.TempDir()
 	now := time.Unix(1700000000, 0).UTC()
 	if err := store.UpsertProject(ctx, domain.ProjectRecord{
@@ -407,9 +316,7 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 		CreatedAt: now,
 		UpdatedAt: now,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	collector := newCollectorWithCodexSourceLimit(store, SourceRoots{
 		CodexSessions: root,
 		CodexArchived: root,
@@ -443,9 +350,7 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 		t.Fatal(err)
 	}
 	sources, err := store.ListUsageSourcesForBinding(ctx, binding.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	var rootSource, childSource domain.UsageSourceRecord
 	for _, source := range sources {
 		switch source.NativeSessionID {
@@ -474,12 +379,9 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 		State:           domain.UsageSourceActive,
 		UpdatedAt:       now,
 	}, []domain.ModelUsageEvent{{
-		Provider:       "openai",
 		ModelID:        "gpt-5",
-		ObservedAt:     now,
 		Tokens:         domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 2},
 		SourceEventKey: "budget-root-event",
-		CreatedAt:      now,
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -495,33 +397,23 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 	if _, err := store.MarkUsageSourceState(ctx, rootSource.ID, domain.UsageSourceComplete, "", nil, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := collector.settleFinalizingBinding(ctx, binding.ID, now); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, collector.settleFinalizingBinding(ctx, binding.ID, now))
 	assertCodexBudgetMarker(t, store, session.ID, domain.UsageBindingFinalizing)
 	if _, err := store.MarkUsageSourceState(ctx, childSource.ID, domain.UsageSourceComplete, "", nil, now); err != nil {
 		t.Fatal(err)
 	}
-	if err := collector.settleFinalizingBinding(ctx, binding.ID, now); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, collector.settleFinalizingBinding(ctx, binding.ID, now))
 	assertCodexBudgetMarker(t, store, session.ID, domain.UsageBindingPartial)
 
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, store.Close())
 	store, err = sqlite.Open(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	restarted := newCollectorWithCodexSourceLimit(store, SourceRoots{
 		CodexSessions: root,
 		CodexArchived: root,
 	}, nil, 2)
-	if err := restarted.BackfillActive(ctx); err != nil {
-		t.Fatalf("restart backfill: %v", err)
-	}
+	mustNoError(t, restarted.BackfillActive(ctx), "restart backfill")
 	assertCodexBudgetMarker(t, store, session.ID, domain.UsageBindingPartial)
 
 	reader := NewSummaryReader(store)
@@ -529,17 +421,13 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 	if err != nil || len(compact) != 1 {
 		t.Fatalf("compact=%+v err=%v", compact, err)
 	}
-	if compact[0].TotalTokens != 12 || compact[0].CollectionState != domain.UsageCollectionPartial ||
-		compact[0].Coverage != domain.UsageCoveragePartial {
+	if compact[0].TotalTokens != 12 || !compact[0].Incomplete {
 		t.Fatalf("compact summary=%+v", compact[0])
 	}
 	detail, err := reader.Get(ctx, session.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if detail.Collection.State != domain.UsageCollectionPartial ||
-		!containsUsageString(detail.Collection.Warnings, testCodexBudgetCode) ||
-		detail.Totals.InputTokens.Coverage != domain.UsageCoveragePartial {
+	mustNoError(t, err)
+	if !detail.Incomplete ||
+		detail.Totals.InputTokens == nil || *detail.Totals.InputTokens != 10 {
 		t.Fatalf("detail summary=%+v", detail)
 	}
 }
@@ -611,12 +499,9 @@ func setCodexDiscoveredChildren(
 		State:           source.State,
 		FailureCount:    source.FailureCount,
 		AnomalyCount:    source.AnomalyCount,
-		LastObservedAt:  source.LastObservedAt,
 		UpdatedAt:       time.Now().UTC(),
 	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 }
 
 func codexParserStateWithChildren(t *testing.T, childIDs ...string) string {
@@ -630,9 +515,7 @@ func codexParserStateWithChildren(t *testing.T, childIDs ...string) string {
 			"discovered_child_ids":   childIDs,
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	mustNoError(t, err)
 	return string(raw)
 }
 

@@ -518,7 +518,6 @@ func (i *Ingestor) replaceSource(
 			FileIdentity:    identity,
 			Generation:      source.Source.Generation + 1,
 			State:           domain.UsageSourcePending,
-			CreatedAt:       now,
 			UpdatedAt:       now,
 		},
 		now,
