@@ -861,6 +861,8 @@ describe("SessionView", () => {
 		rerender(<SessionView sessionId="sess-1" />);
 
 		expect(panelSizes("inspector")[0]).toMatch(/^[1-9]\d*(\.\d+)?%$/);
+		expect(screen.getByTestId("panel-inspector")).toHaveAttribute("aria-hidden", "false");
+		expect(document.querySelector(".session-inspector-motion")).toHaveAttribute("data-motion-state", "open");
 		const handle = panels.get("inspector")!.handle;
 		expect(handle.expand).not.toHaveBeenCalled();
 		expect(handle.collapse).not.toHaveBeenCalled();

@@ -310,7 +310,7 @@ export function ShellTopbar({
 		isSessionRoute && session ? (
 			<div className="reverb-topbar__state-content">
 				{isOrchestrator ? (
-					<AgentAvatar className="size-icon-2xs" decorative provider={session.provider} />
+					<AgentAvatar className="size-icon-xs" decorative provider={session.provider} />
 				) : (
 					<GitBranch className="size-icon-md shrink-0" aria-hidden="true" />
 				)}

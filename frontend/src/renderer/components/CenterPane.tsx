@@ -324,7 +324,7 @@ export function CenterPane({
 												onSelect={() => onAddProjectSession?.(candidate)}
 											>
 												<AgentAvatar
-													className="size-icon-2xs"
+													className="size-icon-xs"
 													decorative
 													provider={candidate.provider}
 												/>
@@ -467,7 +467,7 @@ function SessionPaneTab({ label, provider, isActive, onSelect, onClose }: Sessio
 				title={isTruncated ? label : t("terminal.sessionAria")}
 				type="button"
 			>
-				<AgentAvatar className="size-icon-2xs" decorative provider={provider} />
+				<AgentAvatar className="size-icon-xs" decorative provider={provider} />
 				<span className="truncate">{label}</span>
 			</button>
 			{onClose ? (

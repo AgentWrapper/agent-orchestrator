@@ -431,11 +431,21 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	// replay remain imperative-free; later store changes can safely drive the
 	// registered panel.
 	const inspectorImperativeReadyRef = useRef(false);
-	useEffect(() => {
+	// A route change from Orchestrator to a worker mounts the inspector into an
+	// already-live SessionView. Synchronize the content state before paint while
+	// the panel handle is still being registered; otherwise the panel can have an
+	// open width while its contents remain hidden as "closed".
+	useLayoutEffect(() => {
 		if (!hasInspector) {
 			setInspectorMotionState("closed");
 			return;
 		}
+		if (!inspectorImperativeReadyRef.current) {
+			setInspectorMotionState(isInspectorOpen ? "open" : "closed");
+		}
+	}, [hasInspector, isInspectorOpen]);
+	useEffect(() => {
+		if (!hasInspector) return;
 		if (!inspectorImperativeReadyRef.current) return;
 		const panel = inspectorRef.current;
 		if (!panel) return;
