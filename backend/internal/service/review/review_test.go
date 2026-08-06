@@ -254,6 +254,36 @@ func TestSubmitDeliveryFailureLeavesCompletedUndeliveredForRetry(t *testing.T) {
 	}
 }
 
+func TestSubmitSuppressedDeliveryStampsRunSoEnableDoesNotReplay(t *testing.T) {
+	now := time.Unix(200, 0).UTC()
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
+	}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySuppressed}
+	svc := New(nil, st, WithLifecycleReducer(reducer), WithClock(func() time.Time { return now }))
+
+	run, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "987")
+	if err != nil {
+		t.Fatalf("Submit while auto-inject disabled: %v", err)
+	}
+	if reducer.batchCalls != 1 || st.markCalls != 1 {
+		t.Fatalf("disabled delivery should still account for run: batchCalls=%d markCalls=%d", reducer.batchCalls, st.markCalls)
+	}
+	if run.Status != domain.ReviewRunDelivered || run.DeliveredAt == nil || !run.DeliveredAt.Equal(now) {
+		t.Fatalf("suppressed run not stamped delivered: %+v", run)
+	}
+
+	reducer.outcome = lifecycle.ReviewDeliverySent
+	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "987"); err != nil {
+		t.Fatalf("retry after enabling auto-inject: %v", err)
+	}
+	if reducer.batchCalls != 1 || st.markCalls != 1 {
+		t.Fatalf("delivered suppressed run should not replay after enabling: batchCalls=%d markCalls=%d", reducer.batchCalls, st.markCalls)
+	}
+}
+
 func TestSubmitCompletedRetryRejectsDifferentRecordedFields(t *testing.T) {
 	tests := []struct {
 		name           string
