@@ -220,15 +220,12 @@ describe("SessionInspector tabs", () => {
 		for (const label of ["Summary", "Reviews", "Browser", "Files"]) {
 			const tab = screen.getByRole("tab", { name: label });
 			expect(tab).not.toHaveClass("text-sm-md");
-			expect(within(tab).getByText(label)).toHaveClass("text-caption", "@max-[315px]/inspector:hidden");
+			expect(within(tab).getByText(label)).toHaveClass("text-2xs", "@max-[359px]/inspector:hidden");
 		}
 		expect(summaryTab).not.toHaveClass("flex-1");
 		expect(summaryTab).toHaveClass("h-control-md", "px-1.5");
 		expect(summaryTab).toHaveAttribute("title", "Summary");
-		expect(within(summaryTab).getByText("Summary").previousElementSibling).toHaveClass(
-			"@min-[316px]/inspector:hidden",
-			"[&_svg]:size-icon-md",
-		);
+		expect(within(summaryTab).getByText("Summary").previousElementSibling).toHaveClass("[&_svg]:size-icon-md");
 	});
 
 	it("renders the supplied files view when the Files tab opens", async () => {

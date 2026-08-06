@@ -276,7 +276,7 @@ describe("ShellTopbar activity status", () => {
 		try {
 			renderTopbar(sessionWith());
 
-			expect(screen.getByText("do the thing")).toBeInTheDocument();
+			expect(screen.getByText("my-app")).toBeInTheDocument();
 			expect(screen.getByRole("button", { name: "结束会话" })).toBeInTheDocument();
 			expect(screen.getByRole("button", { name: "启动编排器" })).toBeInTheDocument();
 		} finally {
@@ -323,6 +323,7 @@ describe("ShellTopbar orchestrator actions", () => {
 		expect(separator?.nextElementSibling).toBe(screen.getByRole("group", { name: "Global utilities" }));
 
 		await userEvent.hover(screen.getByRole("button", { name: "Open Kanban" }));
+		expect(screen.getByRole("button", { name: "Open Kanban" })).toHaveClass("reverb-topbar__control--feature");
 		expect(await screen.findByRole("tooltip")).toHaveTextContent("Open Kanban");
 	});
 
@@ -335,9 +336,10 @@ describe("ShellTopbar orchestrator actions", () => {
 				.getAllByRole("button")
 				.map((button) => button.getAttribute("aria-label")),
 		).toEqual(["New task", "Orchestrator"]);
-		for (const button of within(actions).getAllByRole("button")) {
-			expect(button).toHaveClass("reverb-topbar__control--icon");
-		}
+		expect(within(actions).getByRole("button", { name: "New task" })).toHaveClass("reverb-topbar__control--icon");
+		expect(within(actions).getByRole("button", { name: "Orchestrator" })).toHaveClass(
+			"reverb-topbar__control--feature",
+		);
 		expect(actions.nextElementSibling).toHaveClass("reverb-topbar__utility-separator");
 		expect(screen.getByRole("group", { name: "Global utilities" })).toContainElement(
 			screen.getByRole("button", { name: "Notifications" }),

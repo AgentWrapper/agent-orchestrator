@@ -202,7 +202,7 @@ export function CenterPane({
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col px-px"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-inspector-tabs shrink-0 items-center border-b border-border px-1.5">
+			<div className="flex h-inspector-tabs shrink-0 items-center px-1.5">
 				<div className="flex min-w-flex-min flex-1 items-center gap-3">
 					<button
 						aria-label={t("terminal.scrollTabsLeft")}
@@ -282,7 +282,7 @@ export function CenterPane({
 						<DropdownMenuTrigger asChild>
 							<button
 								aria-label={t("terminal.addTab")}
-								className="inline-flex h-control-sm shrink-0 items-center gap-px rounded-sm px-1 text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-md bg-interactive-active text-muted-foreground transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 								title={t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
 								type="button"
 							>
@@ -292,7 +292,7 @@ export function CenterPane({
 						<DropdownMenuContent align="start" className="w-72">
 							<DropdownMenuItem onSelect={onNewShellTerminal}>
 								<TerminalIcon aria-hidden="true" />
-								{t("workbench.terminal")}
+								{t("shortcut.new-shell-terminal")}
 							</DropdownMenuItem>
 							<DropdownMenuSeparator />
 							{hasMoreSessions ? (
@@ -349,6 +349,49 @@ export function CenterPane({
 							) : null}
 						</DropdownMenuContent>
 					</DropdownMenu>
+						<span aria-hidden="true" className="h-4 w-px shrink-0 bg-border" />
+						<div className="flex shrink-0 items-center gap-1 font-mono text-passive/70">
+							<button
+								aria-label={t("terminal.decreaseFontSize")}
+								className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+								disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
+								onClick={() => updateFontSize(-1)}
+								title={t("terminal.decreaseFontSize")}
+								type="button"
+							>
+								-
+							</button>
+							<span
+								aria-label={t("terminal.fontSizeAria", { size: fontSize })}
+								className="w-font-size-label text-center text-xs font-semibold text-muted-foreground"
+							>
+								{fontSize}px
+							</span>
+							<button
+								aria-label={t("terminal.increaseFontSize")}
+								className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
+								disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
+								onClick={() => updateFontSize(1)}
+								title={t("terminal.increaseFontSize")}
+								type="button"
+							>
+								+
+							</button>
+							<button
+								aria-label={isFullscreen ? t("terminal.exitFullscreenAria") : t("terminal.openFullscreenAria")}
+								aria-pressed={isFullscreen}
+								className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+								onClick={() => void toggleFullscreen()}
+								title={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
+								type="button"
+							>
+								{isFullscreen ? (
+									<Minimize2 className="size-icon-md" aria-hidden="true" />
+								) : (
+									<Maximize2 className="size-icon-md" aria-hidden="true" />
+								)}
+							</button>
+					</div>
 				</div>
 			</div>
 			{target.kind === "reviewer" ? (
@@ -377,50 +420,6 @@ export function CenterPane({
 					terminalTarget={target}
 					theme={theme}
 				/>
-				{/* Display controls float over the terminal's top-right corner with no
-				    chrome of their own, so they read as part of the terminal itself. */}
-				<div className="absolute right-3 top-2 z-10 flex shrink-0 items-center gap-3 font-mono text-passive/70">
-					<button
-						aria-label={t("terminal.decreaseFontSize")}
-						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
-						disabled={fontSize <= TERMINAL_FONT_SIZE_MIN}
-						onClick={() => updateFontSize(-1)}
-						title={t("terminal.decreaseFontSize")}
-						type="button"
-					>
-						-
-					</button>
-					<span
-						aria-label={t("terminal.fontSizeAria", { size: fontSize })}
-						className="w-font-size-label text-center text-xs font-semibold text-muted-foreground"
-					>
-						{fontSize}px
-					</span>
-					<button
-						aria-label={t("terminal.increaseFontSize")}
-						className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
-						disabled={fontSize >= TERMINAL_FONT_SIZE_MAX}
-						onClick={() => updateFontSize(1)}
-						title={t("terminal.increaseFontSize")}
-						type="button"
-					>
-						+
-					</button>
-					<button
-						aria-label={isFullscreen ? t("terminal.exitFullscreenAria") : t("terminal.openFullscreenAria")}
-						aria-pressed={isFullscreen}
-						className="ml-1.5 inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-						onClick={() => void toggleFullscreen()}
-						title={isFullscreen ? t("terminal.exitFullscreen") : t("terminal.fullscreen")}
-						type="button"
-					>
-						{isFullscreen ? (
-							<Minimize2 className="size-icon-md" aria-hidden="true" />
-						) : (
-							<Maximize2 className="size-icon-md" aria-hidden="true" />
-						)}
-					</button>
-				</div>
 			</div>
 		</div>
 	);

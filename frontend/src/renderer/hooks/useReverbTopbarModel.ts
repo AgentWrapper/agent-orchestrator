@@ -81,14 +81,16 @@ export function useReverbTopbarModel(surfaceOverride?: ReverbTopbarSurfaceOverri
 			],
 		};
 	} else if (isSessionRoute) {
+		const sessionContextLabel =
+			projectLabel || session?.workspaceName || (isOrchestrator ? t("shell.orchestrator") : session?.title) || "Session unavailable";
 		model = {
 			surface: isOrchestrator ? "orchestrator-session" : "worker-session",
 			breadcrumbs: session
 				? [
 						{
 							id: "session",
-							label: isOrchestrator ? t("shell.orchestrator") : session.title,
-							title: isOrchestrator ? t("shell.orchestrator") : session.title,
+							label: sessionContextLabel,
+							title: sessionContextLabel,
 						},
 					]
 				: [{ id: "session-unavailable", label: "Session unavailable" }],

@@ -5,6 +5,7 @@ import {
 	ChevronRight,
 	Folder,
 	FolderOpen,
+	LayoutDashboard,
 	MoreVertical,
 	Pencil,
 	Pin,
@@ -81,7 +82,7 @@ import { isMacPlatform } from "../lib/platform";
 const isMac = isMacPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// Shared styling for the per-project hover action buttons (orchestrator, kebab):
+// Shared styling for the per-project action buttons (board, orchestrator, kebab):
 // a 20px square icon button that tints on hover, matching the old
 // SidebarMenuAction footprint.
 const HOVER_ACTION_CLASS =
@@ -703,7 +704,7 @@ function ProjectItem({
 		type="button"
 	/>
 		</div>{/* end scale wrapper */}
-		{/* Per-project actions: orchestrator and kebab menu. Outside scale wrapper
+		{/* Per-project actions: board, orchestrator, and kebab menu. Outside scale wrapper
 		so clicking them doesn't trigger the press animation. Always visible
 		(not hover-gated) to avoid CSS :hover group propagation in Chromium. */}
 		<div
@@ -713,6 +714,20 @@ function ProjectItem({
 			)}
 			data-project-actions=""
 		>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-current={dashboardActive ? "page" : undefined}
+						aria-label={t("shell.openProjectDashboard", { name: workspace.name })}
+						className={cn(HOVER_ACTION_CLASS, dashboardActive && "text-foreground")}
+						onClick={() => selection.goProject(workspace.id)}
+						type="button"
+					>
+						<LayoutDashboard aria-hidden="true" strokeWidth={dashboardActive ? 2.5 : 2} />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent>{t("shell.openKanban")}</TooltipContent>
+			</Tooltip>
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<button

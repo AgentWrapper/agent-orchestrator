@@ -193,7 +193,7 @@ export function ShellTopbar({
 								aria-label={orchestrator ? t("shell.orchestrator") : orchestratorActionLabel}
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
-								variant="icon"
+								variant="featureIcon"
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 							</TopbarButton>
@@ -227,7 +227,12 @@ export function ShellTopbar({
 						</Tooltip>
 						<Tooltip>
 							<TooltipTrigger asChild>
-								<TopbarButton aria-label={t("shell.openKanban")} onClick={openBoard} style={noDragStyle} variant="icon">
+								<TopbarButton
+									aria-label={t("shell.openKanban")}
+									onClick={openBoard}
+									style={noDragStyle}
+									variant="featureIcon"
+								>
 									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
 								</TopbarButton>
 							</TooltipTrigger>
@@ -265,7 +270,7 @@ export function ShellTopbar({
 									aria-label={orchestratorActionLabel}
 									disabled={isSpawning || isProjectRestarting}
 									onClick={() => void openOrchestrator()}
-									variant="icon"
+									variant="featureIcon"
 								>
 									<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
 								</TopbarButton>
@@ -329,10 +334,8 @@ export function ShellTopbar({
 		) : null;
 
 	const leadingIcon =
-		model.surface === "worker-session" ? (
-			<GitBranch className="size-icon-md" />
-		) : model.surface === "orchestrator-session" ? (
-			<OrchestratorIcon className="size-icon-md" />
+		model.surface === "worker-session" || model.surface === "orchestrator-session" ? (
+			<FolderGit2 className="size-icon-md" />
 		) : model.surface === "global-settings" || model.surface === "project-settings" ? (
 			<Settings2 className="size-icon-md" />
 		) : model.surface === "standalone-terminals" ? (

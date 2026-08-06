@@ -304,7 +304,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 			<PopoverContent
 				align="end"
 				aria-label={t("notify.title")}
-				className="w-notification-width max-w-[calc(100vw-1rem)] overflow-hidden rounded-panel border-border-strong p-0 shadow-xl"
+				className="notification-popover w-notification-width max-w-[calc(100vw-1rem)] overflow-hidden rounded-panel border-border-strong p-0 shadow-xl"
 				sideOffset={8}
 			>
 				<div className="border-b border-border bg-[var(--color-overlay-subtle)] px-4 py-3.5">

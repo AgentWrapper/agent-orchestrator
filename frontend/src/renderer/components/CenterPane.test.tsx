@@ -154,7 +154,7 @@ describe("CenterPane toolbar session label", () => {
 		expect(onAddProjectSession).toHaveBeenCalledWith(secondWorker);
 
 		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
-		fireEvent.click(screen.getByRole("menuitem", { name: "Terminal" }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "New terminal" }));
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
 	});
 
@@ -176,7 +176,7 @@ describe("CenterPane toolbar session label", () => {
 
 		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
 		const search = screen.getByRole("textbox", { name: "Search sessions" });
-		const terminal = screen.getByRole("menuitem", { name: "Terminal" });
+		const terminal = screen.getByRole("menuitem", { name: "New terminal" });
 		expect(terminal.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 		expect(screen.getByRole("menuitem", { name: /Worker 5/ })).toBeInTheDocument();
 		expect(screen.queryByRole("menuitem", { name: /Worker 6/ })).not.toBeInTheDocument();
@@ -234,11 +234,12 @@ describe("CenterPane toolbar session label", () => {
 		expect(rightScrollButton).toBeDisabled();
 		expect(rightScrollButton).toHaveClass("hidden");
 
-		// The display controls float over the terminal body, not the tab bar,
-		// so tabs and controls can never overlap.
+		// The display controls share the fixed trailing toolbar area and never
+		// overlap the independently scrolling tab strip.
 		const tabBarRow = screen.getByRole("tab", { name: "do the thing" }).closest("div")?.parentElement;
 		expect(tabBarRow).not.toBeNull();
-		expect(tabBarRow?.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(false);
+		expect(tabBarRow?.contains(screen.getByRole("button", { name: /fullscreen/i }))).toBe(true);
+		expect(screen.getByRole("button", { name: "Add tab" })).toHaveClass("bg-interactive-active");
 	});
 
 	it("reveals scroll chevrons only when the tab strip actually overflows", () => {

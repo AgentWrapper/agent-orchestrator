@@ -11,6 +11,8 @@ const topbarButtonVariants = cva(
 				accent:
 					"reverb-topbar__control--accent h-control-lg gap-1.5 rounded-md border border-border px-3.5 text-sm font-semibold leading-none bg-raised text-muted-foreground hover:bg-surface hover:text-foreground",
 				icon: "reverb-topbar__control--icon grid size-topbar-control place-items-center rounded-md text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+				featureIcon:
+					"reverb-topbar__control--icon reverb-topbar__control--feature grid size-topbar-control place-items-center rounded-md",
 				killIcon:
 					"reverb-topbar__control--icon reverb-topbar__control--danger-icon grid size-topbar-control place-items-center rounded-md text-error/80 hover:bg-error/10 hover:text-error",
 				kill: "reverb-topbar__control--danger h-control-lg gap-1.5 rounded-md border border-transparent bg-transparent px-3.5 text-sm font-semibold leading-none text-error/80 hover:border-error/50 hover:bg-error/10 hover:text-error",

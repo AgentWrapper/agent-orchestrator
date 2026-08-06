@@ -90,7 +90,7 @@ describe("useReverbTopbarModel", () => {
 
 		expect(result.current.projectId).toBe("project-1");
 		expect(result.current.model.surface).toBe("worker-session");
-		expect(result.current.model.breadcrumbs.map((crumb) => crumb.label)).toEqual(["Refine the top bar"]);
+		expect(result.current.model.breadcrumbs.map((crumb) => crumb.label)).toEqual(["reverb-app"]);
 		expect(result.current.model.breadcrumbs[0]?.onClick).toBeUndefined();
 	});
 
@@ -101,7 +101,7 @@ describe("useReverbTopbarModel", () => {
 
 		expect(result.current.isOrchestrator).toBe(true);
 		expect(result.current.model.surface).toBe("orchestrator-session");
-		expect(result.current.model.breadcrumbs.map((crumb) => crumb.label)).toEqual(["Orchestrator"]);
+		expect(result.current.model.breadcrumbs.map((crumb) => crumb.label)).toEqual(["reverb-app"]);
 	});
 
 	it("describes a missing session without exposing the stale route id", () => {
@@ -170,7 +170,7 @@ describe("useReverbTopbarModel", () => {
 			]);
 
 			paramsMock.sessionId = "orchestrator-1";
-			expect(renderModel().current.model.breadcrumbs.map((crumb) => crumb.label)).toEqual(["编排器"]);
+			expect(renderModel().current.model.breadcrumbs.map((crumb) => crumb.label)).toEqual(["reverb-app"]);
 		} finally {
 			await appI18n.changeLanguage("en");
 		}

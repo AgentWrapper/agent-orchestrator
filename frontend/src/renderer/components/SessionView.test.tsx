@@ -649,19 +649,14 @@ describe("SessionView", () => {
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
-	// (numbers were percentages in the older API the shadcn examples use).
-	// defaultSize={28}/maxSize={45} clamped the inspector rail to a 45px sliver.
-	// Every size must be an explicit percentage string.
-	it("sizes the terminal/inspector split in percentages, not pixels", () => {
+	// (numbers were percentages in the older API the shadcn examples use). Every
+	// constraint needs an explicit unit; the compact inspector minimum is the one
+	// intentional pixel constraint so it can reach icon-only mode on wide windows.
+	it("gives every terminal/inspector split size an explicit unit", () => {
 		render(<SessionView sessionId="sess-1" />);
 
-		for (const panelId of ["terminal", "inspector"]) {
-			const sizes = panelSizes(panelId);
-			expect(sizes.length).toBeGreaterThan(0);
-			for (const size of sizes) {
-				expect(size, `${panelId} size ${String(size)} must be a percentage string`).toMatch(/^\d+(\.\d+)?%$/);
-			}
-		}
+		expect(panelSizes("terminal")).toEqual(["72%", "45%"]);
+		expect(panelSizes("inspector")).toEqual(["30%", "240px", "45%"]);
 	});
 
 	it("opens the Summary inspector alongside the terminal by default", () => {

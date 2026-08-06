@@ -376,7 +376,7 @@
 	--font-size-command-input: 16px;
 	--leading-command-item: 22px;
 	--size-branch-chip: 13rem;
-	--size-inspector-min: 280px;
+	--size-inspector-min: 240px;
 	--size-textarea-min: 112px;
 	/* Three 20px actions + two 1px gaps + the 2px right inset. */
 	--size-sidebar-project-actions: 64px;

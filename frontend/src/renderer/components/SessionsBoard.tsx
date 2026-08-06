@@ -285,7 +285,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							}
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
-							variant="icon"
+							variant="featureIcon"
 						>
 							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 						</TopbarButton>

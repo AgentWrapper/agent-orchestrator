@@ -215,7 +215,7 @@ export function SessionInspector({
 				)}
 			>
 				{isInspectorVisible ? (
-					<div className="flex min-w-0 flex-1 items-center gap-1" role="tablist">
+					<div className="flex min-w-0 flex-1 items-center gap-0.5" role="tablist">
 						{views.map((entry) => (
 							<button
 								aria-label={entry.label}
@@ -224,16 +224,16 @@ export function SessionInspector({
 								role="tab"
 								aria-selected={view === entry.id}
 								className={cn(
-									"relative inline-flex h-control-md shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
+									"session-inspector__tab-button relative inline-flex h-control-md shrink-0 items-center justify-center rounded-md px-1.5 font-semibold text-passive transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground",
 									view === entry.id && "bg-interactive-active text-foreground",
 								)}
 								onClick={() => setView(entry.id)}
 								title={entry.label}
 							>
-								<span className="inline-flex shrink-0 @min-[316px]/inspector:hidden [&_svg]:size-icon-md">
+								<span className="inline-flex shrink-0 [&_svg]:size-icon-md">
 									{entry.icon}
 								</span>
-								<span className="truncate text-caption @max-[315px]/inspector:hidden">
+								<span className="session-inspector__responsive-label whitespace-nowrap text-2xs">
 									{entry.id === "files" && filesChangedCount !== undefined
 										? t("files.tabCount", { count: filesChangedCount })
 										: entry.label}

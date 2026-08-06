@@ -788,6 +788,18 @@
 	color: var(--color-text-topbar);
 }
 
+.reverb-topbar .reverb-topbar__control--feature {
+	border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-topbar));
+	background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-topbar-raised));
+	color: color-mix(in srgb, var(--color-accent) 58%, var(--color-text-topbar));
+}
+
+.reverb-topbar .reverb-topbar__control--feature:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border-topbar-strong));
+	background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-topbar-raised));
+	color: var(--color-text-topbar);
+}
+
 .reverb-topbar .reverb-topbar__control--primary {
 	border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
 	background: var(--color-accent-strong);
@@ -1898,19 +1910,63 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Do not animate the inspector's flex-grow. The sibling is a live xterm WebGL
- * surface: interpolating this value makes ResizeObserver fit the terminal at
- * every intermediate width, reallocating the renderer and eventually causing
- * a PTY/SIGWINCH repaint. The inspector still opens and closes atomically, and
- * direct separator drags remain interactive. */
-.session-split #inspector[data-panel] {
+/* Match the left sidebar's spring-like reveal: both split columns participate
+ * in the geometry change so the inspector does not snap at either edge. Drag
+ * resizing remains unanimated and therefore stays directly under the pointer. */
+.session-split > [data-panel] {
+	transition: flex-grow 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.session-split:has([data-separator="active"]) > [data-panel] {
 	transition: none;
+}
+
+.session-inspector-motion {
+	opacity: 1;
+	transform: translateX(0);
+	transition:
+		opacity 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+	will-change: opacity, transform;
+}
+
+.session-inspector-motion[data-motion-state="opening"],
+.session-inspector-motion[data-motion-state="closing"],
+.session-inspector-motion[data-motion-state="closed"] {
+	opacity: 0;
+	transform: translateX(12px);
 }
 
 .session-inspector__topbar {
 	background: var(--color-bg-topbar);
 	color: var(--color-text-topbar);
 	user-select: none;
+}
+
+.session-inspector__tab-button {
+	gap: 0;
+}
+
+.session-inspector__responsive-label {
+	max-width: 5.5rem;
+	margin-left: var(--space-1);
+	overflow: hidden;
+	opacity: 1;
+	transform: translateX(0);
+	transition:
+		max-width 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		margin-left 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		opacity 120ms ease-out,
+		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@container inspector (max-width: 359px) {
+	.session-inspector__responsive-label {
+		max-width: 0;
+		margin-left: 0;
+		opacity: 0;
+		transform: translateX(-4px);
+	}
 }
 
 .session-inspector__toggle {
@@ -2813,9 +2869,45 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	animation: notification-row-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
 }
 
+@keyframes notification-popover-in {
+	from {
+		opacity: 0;
+		transform: translateY(-5px) scale(0.985);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes notification-popover-out {
+	from {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+	to {
+		opacity: 0;
+		transform: translateY(-3px) scale(0.99);
+	}
+}
+
+.notification-popover[data-state="open"] {
+	animation: notification-popover-in 170ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.notification-popover[data-state="closed"] {
+	pointer-events: none;
+	animation: notification-popover-out 120ms ease-in both;
+}
+
 @media (prefers-reduced-motion: reduce) {
-	.notification-row-enter {
+	.notification-popover[data-state],
+	.notification-row-enter,
+	.session-inspector-motion,
+	.session-inspector__responsive-label,
+	.session-split > [data-panel] {
 		animation: none;
+		transition: none;
 	}
 }
 
