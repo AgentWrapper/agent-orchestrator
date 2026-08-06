@@ -61,6 +61,7 @@ type store interface {
 	RedeemProjectShareLink(context.Context, string, string) (cloudpostgres.SharedProjectGrant, error)
 	ListSharedProjectGrants(context.Context, string) ([]cloudpostgres.SharedProjectGrant, error)
 	ListProjectShareAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID) (cloudpostgres.ProjectShareAccess, error)
+	UpdateProjectShareCommandGuard(context.Context, clouddomain.OrgID, clouddomain.ProjectID, bool) error
 	UpdateProjectShareGrantAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, string, clouddomain.SessionID, string, []cloudpostgres.ProjectShareGrantSessionRole, bool) (cloudpostgres.ProjectShareGrant, error)
 	CreateProjectSharePolicy(context.Context, cloudpostgres.CreateProjectSharePolicyInput) (cloudpostgres.ProjectSharePolicy, error)
 	UpdateProjectSharePolicy(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, cloudpostgres.UpdateProjectSharePolicyInput) (cloudpostgres.ProjectSharePolicy, error)
@@ -221,10 +222,12 @@ type orgContextKey struct{}
 type sharedProjectAccessContextKey struct{}
 
 type sharedProjectAccess struct {
-	ProjectIDs   map[clouddomain.ProjectID]struct{}
-	Roles        map[clouddomain.ProjectID]string
-	SessionRoles map[clouddomain.ProjectID]map[clouddomain.SessionID]string
-	AllSessions  map[clouddomain.ProjectID]struct{}
+	ProjectIDs              map[clouddomain.ProjectID]struct{}
+	Roles                   map[clouddomain.ProjectID]string
+	SessionRoles            map[clouddomain.ProjectID]map[clouddomain.SessionID]string
+	SessionCommandGuards    map[clouddomain.ProjectID]map[clouddomain.SessionID]bool
+	AllSessions             map[clouddomain.ProjectID]struct{}
+	AllSessionsCommandGuard map[clouddomain.ProjectID]bool
 }
 
 func (access sharedProjectAccess) allowsProject(projectID clouddomain.ProjectID) bool {
@@ -273,7 +276,13 @@ func (access sharedProjectAccess) canManageProject(projectID clouddomain.Project
 }
 
 func (access sharedProjectAccess) requiresDangerousCommandGuard(session clouddomain.Session) bool {
-	return access.canEditSession(session) && !access.canManageProject(session.ProjectID)
+	if !access.canEditSession(session) {
+		return false
+	}
+	if access.allowsAllProjectSessions(session.ProjectID) {
+		return access.AllSessionsCommandGuard[session.ProjectID]
+	}
+	return access.SessionCommandGuards[session.ProjectID][session.ID]
 }
 
 func accountFromContext(ctx context.Context) (clouddomain.Account, bool) {
@@ -404,6 +413,7 @@ func (s *Server) routes() http.Handler {
 				org.With(s.requireOrgRole("admin")).Delete("/projects/{projectId}", s.deleteProject)
 				org.With(s.requireOrgRole("member")).Get("/projects/{projectId}/shares", s.listProjectShareAccess)
 				org.With(s.requireOrgRole("member")).Post("/projects/{projectId}/shares", s.createProjectShareLink)
+				org.With(s.requireOrgRole("member")).Patch("/projects/{projectId}/shares/settings", s.updateProjectShareSettings)
 				org.With(s.requireOrgRole("member")).Post("/projects/{projectId}/shares/policies", s.createProjectSharePolicy)
 				org.With(s.requireOrgRole("member")).Patch("/projects/{projectId}/shares/policies/{policyId}", s.updateProjectSharePolicy)
 				org.With(s.requireOrgRole("member")).Delete("/projects/{projectId}/shares/policies/{policyId}", s.archiveProjectSharePolicy)
@@ -1030,10 +1040,12 @@ func (s *Server) sharedAccessForOrg(
 		return sharedProjectAccess{}, false, err
 	}
 	access := sharedProjectAccess{
-		ProjectIDs:   map[clouddomain.ProjectID]struct{}{},
-		Roles:        map[clouddomain.ProjectID]string{},
-		SessionRoles: map[clouddomain.ProjectID]map[clouddomain.SessionID]string{},
-		AllSessions:  map[clouddomain.ProjectID]struct{}{},
+		ProjectIDs:              map[clouddomain.ProjectID]struct{}{},
+		Roles:                   map[clouddomain.ProjectID]string{},
+		SessionRoles:            map[clouddomain.ProjectID]map[clouddomain.SessionID]string{},
+		SessionCommandGuards:    map[clouddomain.ProjectID]map[clouddomain.SessionID]bool{},
+		AllSessions:             map[clouddomain.ProjectID]struct{}{},
+		AllSessionsCommandGuard: map[clouddomain.ProjectID]bool{},
 	}
 	for _, grant := range grants {
 		if grant.OrgID != orgID {
@@ -1046,6 +1058,16 @@ func (s *Server) sharedAccessForOrg(
 
 func addSharedProjectGrant(access *sharedProjectAccess, grant cloudpostgres.SharedProjectGrant) {
 	projectID := grant.Project.ID
+	if access.SessionCommandGuards == nil {
+		access.SessionCommandGuards = map[clouddomain.ProjectID]map[clouddomain.SessionID]bool{}
+	}
+	if access.AllSessionsCommandGuard == nil {
+		access.AllSessionsCommandGuard = map[clouddomain.ProjectID]bool{}
+	}
+	if _, ok := access.SessionCommandGuards[projectID]; !ok {
+		access.SessionCommandGuards[projectID] = map[clouddomain.SessionID]bool{}
+	}
+	policyCommandGuard := grant.ProjectCommandGuard || grant.PolicyCommandGuard
 	access.ProjectIDs[projectID] = struct{}{}
 	access.Roles[projectID] = grant.Role
 	if len(grant.SessionRoles) > 0 {
@@ -1054,6 +1076,11 @@ func addSharedProjectGrant(access *sharedProjectAccess, grant cloudpostgres.Shar
 		}
 		for _, sessionRole := range grant.SessionRoles {
 			access.SessionRoles[projectID][sessionRole.SessionID] = sessionRole.Role
+			commandGuard := policyCommandGuard
+			if !grant.ProjectCommandGuard && sessionRole.CommandGuardEnabled != nil {
+				commandGuard = *sessionRole.CommandGuardEnabled
+			}
+			access.SessionCommandGuards[projectID][sessionRole.SessionID] = commandGuard
 		}
 		return
 	}
@@ -1065,12 +1092,14 @@ func addSharedProjectGrant(access *sharedProjectAccess, grant cloudpostgres.Shar
 	}
 	if grant.Session == nil || grant.Session.ID == "" {
 		access.AllSessions[projectID] = struct{}{}
+		access.AllSessionsCommandGuard[projectID] = policyCommandGuard
 		return
 	}
 	if _, ok := access.SessionRoles[projectID]; !ok {
 		access.SessionRoles[projectID] = map[clouddomain.SessionID]string{}
 	}
 	access.SessionRoles[projectID][grant.Session.ID] = grant.Role
+	access.SessionCommandGuards[projectID][grant.Session.ID] = policyCommandGuard
 }
 
 func (s *Server) requireOrgRole(required string) func(http.Handler) http.Handler {
@@ -1644,6 +1673,40 @@ func (s *Server) listProjectShareAccess(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{"access": access})
 }
 
+func (s *Server) updateProjectShareSettings(w http.ResponseWriter, r *http.Request) {
+	account, _ := accountFromContext(r.Context())
+	org, _ := orgFromContext(r.Context())
+	projectID := clouddomain.ProjectID(strings.TrimSpace(chi.URLParam(r, "projectId")))
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && !shared.canManageProject(projectID) {
+		writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can manage sharing.")
+		return
+	}
+	var input struct {
+		CommandGuardEnforced bool `json:"commandGuardEnforced"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if !s.validateStandaloneShareProject(w, r, account.ID, projectID) {
+		return
+	}
+	if err := s.store.UpdateProjectShareCommandGuard(
+		r.Context(),
+		org.Organization.ID,
+		projectID,
+		input.CommandGuardEnforced,
+	); errors.Is(err, cloudpostgres.ErrProjectNotFound) {
+		writeError(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "The cloud project does not exist.")
+		return
+	} else if err != nil {
+		s.internalError(w, r, "update project share command guard", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{
+		"commandGuardEnforced": input.CommandGuardEnforced,
+	})
+}
+
 func (s *Server) createProjectSharePolicy(w http.ResponseWriter, r *http.Request) {
 	account, _ := accountFromContext(r.Context())
 	org, _ := orgFromContext(r.Context())
@@ -1654,9 +1717,10 @@ func (s *Server) createProjectSharePolicy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var input struct {
-		Name         string                                       `json:"name"`
-		SandboxType  string                                       `json:"sandboxType"`
-		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
+		Name                string                                       `json:"name"`
+		SandboxType         string                                       `json:"sandboxType"`
+		CommandGuardEnabled *bool                                        `json:"commandGuardEnabled"`
+		SessionRoles        []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -1677,12 +1741,17 @@ func (s *Server) createProjectSharePolicy(w http.ResponseWriter, r *http.Request
 		writeError(w, r, http.StatusBadRequest, "INVALID_SANDBOX_TYPE", "Sandbox type must be read-only, standard, or trusted.")
 		return
 	}
+	commandGuard := sandboxType == "standard"
+	if input.CommandGuardEnabled != nil {
+		commandGuard = *input.CommandGuardEnabled
+	}
 	policy, err := s.store.CreateProjectSharePolicy(r.Context(), cloudpostgres.CreateProjectSharePolicyInput{
 		OrgID:           org.Organization.ID,
 		ProjectID:       projectID,
 		CreatedByUserID: clouddomain.UserID(principal.UserID),
 		Name:            name,
 		SandboxType:     sandboxType,
+		CommandGuard:    commandGuard,
 		SessionRoles:    input.SessionRoles,
 	})
 	if err != nil {
@@ -1702,9 +1771,10 @@ func (s *Server) updateProjectSharePolicy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var input struct {
-		Name         string                                       `json:"name"`
-		SandboxType  string                                       `json:"sandboxType"`
-		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
+		Name                string                                       `json:"name"`
+		SandboxType         string                                       `json:"sandboxType"`
+		CommandGuardEnabled *bool                                        `json:"commandGuardEnabled"`
+		SessionRoles        []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -1725,9 +1795,14 @@ func (s *Server) updateProjectSharePolicy(w http.ResponseWriter, r *http.Request
 		writeError(w, r, http.StatusBadRequest, "INVALID_SANDBOX_TYPE", "Sandbox type must be read-only, standard, or trusted.")
 		return
 	}
+	commandGuard := sandboxType == "standard"
+	if input.CommandGuardEnabled != nil {
+		commandGuard = *input.CommandGuardEnabled
+	}
 	policy, err := s.store.UpdateProjectSharePolicy(r.Context(), org.Organization.ID, projectID, policyID, cloudpostgres.UpdateProjectSharePolicyInput{
 		Name:         name,
 		SandboxType:  sandboxType,
+		CommandGuard: commandGuard,
 		SessionRoles: input.SessionRoles,
 	})
 	if errors.Is(err, cloudpostgres.ErrProjectSharePolicyNotFound) {
@@ -2326,7 +2401,7 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && shared.requiresDangerousCommandGuard(session) {
 		if containsDangerousShellCommand(input.Text) {
-			writeError(w, r, http.StatusForbidden, "COMMAND_NOT_PERMITTED", "That command is not permitted for Standard policy collaborators.")
+			writeError(w, r, http.StatusForbidden, "COMMAND_NOT_PERMITTED", "Command guard blocked that command.")
 			return
 		}
 	}
@@ -4688,7 +4763,7 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 					_ = s.workerHub.Send(ticket.SessionID, clearCommand)
 					_ = writeTerminalMessage(ctx, socket, terminalServerMessage{
 						Type:    "error",
-						Message: "That command is not permitted for Standard policy collaborators.",
+						Message: "Command guard blocked that command.",
 					})
 					continue
 				}

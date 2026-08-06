@@ -1517,7 +1517,11 @@ export default function CloudAppPage() {
       role: "viewer" | "editor";
       sessionId?: string;
       policyId?: string;
-      sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
+      sessionRoles?: Array<{
+        sessionId: string;
+        role: "viewer" | "editor";
+        commandGuardEnabled?: boolean;
+      }>;
     },
   ) => {
     if (!api || !selectedOrgId || !shareProject) return false;
@@ -1529,6 +1533,7 @@ export default function CloudAppPage() {
 
   const createSharePolicy = async (input: {
     name: string;
+    commandGuardEnabled: boolean;
     sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
   }) => {
     if (!api || !selectedOrgId || !shareProject) return;
@@ -1549,6 +1554,7 @@ export default function CloudAppPage() {
       await api.createProjectSharePolicy(selectedOrgId, shareProject.id, {
         name,
         sandboxType: "standard",
+        commandGuardEnabled: input.commandGuardEnabled,
         sessionRoles: input.sessionRoles,
       });
       await loadProjectShareAccess();
@@ -1581,6 +1587,7 @@ export default function CloudAppPage() {
     const result = await api.createProjectSharePolicy(selectedOrgId, shareProject.id, {
       name,
       sandboxType,
+      commandGuardEnabled: sandboxType !== "trusted",
       sessionRoles: policySessionRolesForType(sandboxType),
     });
     return result.policy;
@@ -1620,6 +1627,7 @@ export default function CloudAppPage() {
     input: {
       name: string;
       sandboxType: SharePolicySandboxType;
+      commandGuardEnabled: boolean;
       sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) => {
@@ -1639,6 +1647,17 @@ export default function CloudAppPage() {
     await run(async () => {
       await api.archiveProjectSharePolicy(selectedOrgId, shareProject.id, policyId);
       setEditingSharePolicy(null);
+      await loadProjectShareAccess();
+      await refresh();
+    });
+  };
+
+  const updateProjectShareCommandGuard = async (enabled: boolean) => {
+    if (!api || !selectedOrgId || !shareProject) return false;
+    return run(async () => {
+      await api.updateProjectShareSettings(selectedOrgId, shareProject.id, {
+        commandGuardEnforced: enabled,
+      });
       await loadProjectShareAccess();
       await refresh();
     });
@@ -3058,6 +3077,32 @@ export default function CloudAppPage() {
             </div>
 
             {isStandaloneProject(shareProject) ? (
+              <div className="border-t border-white/[0.06] pt-4">
+                <label className="flex items-start gap-3 rounded-lg border border-white/[0.07] bg-white/[0.018] px-3 py-2.5">
+                  <input
+                    className="mt-1"
+                    type="checkbox"
+                    checked={shareAccess?.commandGuardEnforced ?? false}
+                    disabled={loading || shareAccessLoading}
+                    onChange={(event) =>
+                      void updateProjectShareCommandGuard(event.target.checked)
+                    }
+                    aria-label="Enforce command guard for everyone"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm text-white/70">
+                      Enforce command guard for everyone
+                    </span>
+                    <span className="mt-0.5 block text-[11px] leading-4 text-white/30">
+                      Applies to every shared person and agent, overriding policy
+                      and per-agent choices.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            ) : null}
+
+            {isStandaloneProject(shareProject) ? (
               <div className="space-y-3 border-t border-white/[0.06] pt-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -3165,7 +3210,8 @@ export default function CloudAppPage() {
                           {policy.sessionRoles?.length ?? 0} agent
                           {(policy.sessionRoles?.length ?? 0) === 1 ? "" : "s"} ·{" "}
                           {policy.grants?.length ?? 0} member
-                          {(policy.grants?.length ?? 0) === 1 ? "" : "s"}
+                          {(policy.grants?.length ?? 0) === 1 ? "" : "s"} · Command
+                          guard {policy.commandGuardEnabled ? "on" : "off"}
                         </div>
                       </div>
                       <button
@@ -3461,13 +3507,18 @@ export default function CloudAppPage() {
           sessions={shareProjectSessions}
           loading={loading}
           onClose={() => setEditingSharePolicy(null)}
-          onSave={async (name, sessionRoles) => {
+          onSave={async (name, commandGuardEnabled, sessionRoles) => {
             const saved =
               editingSharePolicy === "new"
-                ? await createSharePolicy({ name, sessionRoles })
+                ? await createSharePolicy({
+                    name,
+                    commandGuardEnabled,
+                    sessionRoles,
+                  })
                 : await updateSharePolicy(editingSharePolicy.id, {
                     name,
                     sandboxType: "standard",
+                    commandGuardEnabled,
                     sessionRoles,
                   });
             if (saved) setEditingSharePolicy(null);
@@ -3480,6 +3531,7 @@ export default function CloudAppPage() {
           grant={managedShareGrantRow.grant}
           policy={managedShareGrantRow.policy}
           sessions={shareProjectSessions}
+          commandGuardEnforced={shareAccess?.commandGuardEnforced ?? false}
           loading={loading}
           onClose={() => setManagedShareGrantId(null)}
           onSave={async (sessionRoles) => {
@@ -5494,10 +5546,14 @@ function SharePolicyEditorDialog({
   onClose: () => void;
   onSave: (
     name: string,
+    commandGuardEnabled: boolean,
     sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>,
   ) => Promise<void>;
 }) {
   const [name, setName] = useState(policy?.name ?? "");
+  const [commandGuardEnabled, setCommandGuardEnabled] = useState(
+    policy?.commandGuardEnabled ?? true,
+  );
   const initialRoles = new Map(
     (policy?.sessionRoles ?? []).map((entry) => [entry.sessionId, entry.role]),
   );
@@ -5527,7 +5583,7 @@ function SharePolicyEditorDialog({
               ? []
               : [{ sessionId: session.id, role }];
           });
-          void onSave(trimmedName, sessionRoles);
+          void onSave(trimmedName, commandGuardEnabled, sessionRoles);
         }}
       >
         <label className="block text-xs text-white/45">
@@ -5541,6 +5597,22 @@ function SharePolicyEditorDialog({
             autoFocus
             disabled={loading}
           />
+        </label>
+        <label className="flex items-start gap-3 rounded-lg border border-white/[0.07] bg-white/[0.018] px-3 py-2.5">
+          <input
+            className="mt-1"
+            type="checkbox"
+            checked={commandGuardEnabled}
+            onChange={(event) => setCommandGuardEnabled(event.target.checked)}
+            disabled={loading}
+            aria-label="Enable command guard for this policy"
+          />
+          <span>
+            <span className="block text-sm text-white/70">Command guard</span>
+            <span className="mt-0.5 block text-[11px] leading-4 text-white/30">
+              Block destructive commands for people assigned to this policy.
+            </span>
+          </span>
         </label>
         <div>
           <div className="mb-2 text-xs font-medium text-white/50">
@@ -5601,6 +5673,7 @@ function ShareGrantAgentAccessDialog({
   grant,
   policy,
   sessions,
+  commandGuardEnforced,
   loading,
   onClose,
   onSave,
@@ -5609,15 +5682,26 @@ function ShareGrantAgentAccessDialog({
   grant: CloudProjectShareGrant;
   policy?: CloudProjectSharePolicy;
   sessions: CloudSession[];
+  commandGuardEnforced: boolean;
   loading: boolean;
   onClose: () => void;
   onSave: (
-    sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>,
+    sessionRoles: Array<{
+      sessionId: string;
+      role: "viewer" | "editor";
+      commandGuardEnabled: boolean;
+    }>,
   ) => Promise<void>;
   onReset?: () => Promise<void>;
 }) {
+  const grantEntries = new Map(
+    (grant.sessionRoles ?? []).map((entry) => [entry.sessionId, entry]),
+  );
   const grantRoles = new Map(
-    (grant.sessionRoles ?? []).map((entry) => [entry.sessionId, entry.role]),
+    Array.from(grantEntries.entries()).map(([sessionId, entry]) => [
+      sessionId,
+      entry.role,
+    ]),
   );
   const policyRoles = new Map(
     (policy?.sessionRoles ?? []).map((entry) => [entry.sessionId, entry.role]),
@@ -5638,6 +5722,17 @@ function ShareGrantAgentAccessDialog({
           (projectWide ? grant.role : "none"),
       ]),
     ),
+  );
+  const [commandGuards, setCommandGuards] = useState<Record<string, boolean>>(
+    () =>
+      Object.fromEntries(
+        sessions.map((session) => [
+          session.id,
+          grantEntries.get(session.id)?.commandGuardEnabled ??
+            policy?.commandGuardEnabled ??
+            true,
+        ]),
+      ),
   );
   const readOnly = policy?.sandboxType === "read_only";
   const policyName = policy
@@ -5669,7 +5764,7 @@ function ShareGrantAgentAccessDialog({
           {sessions.map((session) => (
             <label
               key={session.id}
-              className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-3 px-3 py-2.5"
+              className="grid grid-cols-[minmax(0,1fr)_120px_110px] items-center gap-3 px-3 py-2.5"
             >
               <span className="min-w-0 truncate text-sm text-white/65">
                 {session.displayName}
@@ -5692,6 +5787,27 @@ function ShareGrantAgentAccessDialog({
                   Edit
                 </option>
               </select>
+              <span className="flex items-center justify-end gap-2 text-[11px] text-white/40">
+                <input
+                  type="checkbox"
+                  checked={
+                    commandGuardEnforced || (commandGuards[session.id] ?? false)
+                  }
+                  disabled={
+                    loading ||
+                    commandGuardEnforced ||
+                    (roles[session.id] ?? "none") !== "editor"
+                  }
+                  onChange={(event) =>
+                    setCommandGuards((current) => ({
+                      ...current,
+                      [session.id]: event.target.checked,
+                    }))
+                  }
+                  aria-label={`Command guard for ${session.displayName} and ${grant.user.email}`}
+                />
+                Guard
+              </span>
             </label>
           ))}
           {sessions.length === 0 ? (
@@ -5700,6 +5816,12 @@ function ShareGrantAgentAccessDialog({
             </div>
           ) : null}
         </div>
+        {commandGuardEnforced ? (
+          <p className="text-[11px] text-white/35">
+            The project-wide command guard is on, so per-agent guard choices
+            cannot be disabled.
+          </p>
+        ) : null}
         <div className="flex items-center justify-between gap-3 border-t border-white/[0.07] pt-4">
           <div>
             {onReset ? (
@@ -5726,7 +5848,14 @@ function ShareGrantAgentAccessDialog({
                   const role = roles[session.id] ?? "none";
                   return role === "none"
                     ? []
-                    : [{ sessionId: session.id, role }];
+                    : [
+                        {
+                          sessionId: session.id,
+                          role,
+                          commandGuardEnabled:
+                            commandGuards[session.id] ?? false,
+                        },
+                      ];
                 });
                 void onSave(sessionRoles);
               }}

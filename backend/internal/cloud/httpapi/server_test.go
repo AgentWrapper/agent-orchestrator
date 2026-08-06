@@ -116,10 +116,11 @@ func TestSharedProjectPolicyCapabilities(t *testing.T) {
 	projectID := clouddomain.ProjectID("project-one")
 	session := clouddomain.Session{ID: "session-one", ProjectID: projectID}
 	standard := sharedProjectAccess{
-		ProjectIDs:   map[clouddomain.ProjectID]struct{}{projectID: {}},
-		Roles:        map[clouddomain.ProjectID]string{projectID: "editor"},
-		SessionRoles: map[clouddomain.ProjectID]map[clouddomain.SessionID]string{projectID: {session.ID: "editor"}},
-		AllSessions:  map[clouddomain.ProjectID]struct{}{},
+		ProjectIDs:           map[clouddomain.ProjectID]struct{}{projectID: {}},
+		Roles:                map[clouddomain.ProjectID]string{projectID: "editor"},
+		SessionRoles:         map[clouddomain.ProjectID]map[clouddomain.SessionID]string{projectID: {session.ID: "editor"}},
+		SessionCommandGuards: map[clouddomain.ProjectID]map[clouddomain.SessionID]bool{projectID: {session.ID: true}},
+		AllSessions:          map[clouddomain.ProjectID]struct{}{},
 	}
 	if !standard.canEditSession(session) {
 		t.Fatal("standard policy should edit selected sessions")
@@ -131,10 +132,12 @@ func TestSharedProjectPolicyCapabilities(t *testing.T) {
 		t.Fatal("standard policy should require dangerous command guard")
 	}
 	trusted := sharedProjectAccess{
-		ProjectIDs:   map[clouddomain.ProjectID]struct{}{projectID: {}},
-		Roles:        map[clouddomain.ProjectID]string{projectID: "editor"},
-		SessionRoles: map[clouddomain.ProjectID]map[clouddomain.SessionID]string{},
-		AllSessions:  map[clouddomain.ProjectID]struct{}{projectID: {}},
+		ProjectIDs:              map[clouddomain.ProjectID]struct{}{projectID: {}},
+		Roles:                   map[clouddomain.ProjectID]string{projectID: "editor"},
+		SessionRoles:            map[clouddomain.ProjectID]map[clouddomain.SessionID]string{},
+		SessionCommandGuards:    map[clouddomain.ProjectID]map[clouddomain.SessionID]bool{},
+		AllSessions:             map[clouddomain.ProjectID]struct{}{projectID: {}},
+		AllSessionsCommandGuard: map[clouddomain.ProjectID]bool{projectID: false},
 	}
 	if !trusted.canManageProject(projectID) {
 		t.Fatal("trusted policy should manage project-level sharing")
@@ -188,6 +191,67 @@ func TestAddSharedProjectGrantKeepsEmptyAgentScopesRestricted(t *testing.T) {
 	})
 	if !trustedDefault.canManageProject(projectID) {
 		t.Fatal("trusted policy without an override should remain project-wide")
+	}
+}
+
+func TestAddSharedProjectGrantCommandGuardHierarchy(t *testing.T) {
+	projectID := clouddomain.ProjectID("project-one")
+	session := clouddomain.Session{ID: "session-one", ProjectID: projectID}
+	newAccess := func() sharedProjectAccess {
+		return sharedProjectAccess{
+			ProjectIDs:   map[clouddomain.ProjectID]struct{}{},
+			Roles:        map[clouddomain.ProjectID]string{},
+			SessionRoles: map[clouddomain.ProjectID]map[clouddomain.SessionID]string{},
+			AllSessions:  map[clouddomain.ProjectID]struct{}{},
+		}
+	}
+
+	policyGuard := newAccess()
+	addSharedProjectGrant(&policyGuard, cloudpostgres.SharedProjectGrant{
+		Project:            clouddomain.Project{ID: projectID},
+		PolicyID:           "standard-policy",
+		PolicyCommandGuard: true,
+		Role:               "editor",
+		SessionRoles: []cloudpostgres.ProjectShareGrantSessionRole{{
+			SessionID: session.ID,
+			Role:      "editor",
+		}},
+	})
+	if !policyGuard.requiresDangerousCommandGuard(session) {
+		t.Fatal("policy command guard should apply when an agent has no override")
+	}
+
+	disabled := false
+	personOverride := newAccess()
+	addSharedProjectGrant(&personOverride, cloudpostgres.SharedProjectGrant{
+		Project:            clouddomain.Project{ID: projectID},
+		PolicyID:           "standard-policy",
+		PolicyCommandGuard: true,
+		Role:               "editor",
+		SessionRoles: []cloudpostgres.ProjectShareGrantSessionRole{{
+			SessionID:           session.ID,
+			Role:                "editor",
+			CommandGuardEnabled: &disabled,
+		}},
+	})
+	if personOverride.requiresDangerousCommandGuard(session) {
+		t.Fatal("per-person agent override should disable the policy command guard")
+	}
+
+	globalOverride := newAccess()
+	addSharedProjectGrant(&globalOverride, cloudpostgres.SharedProjectGrant{
+		Project:             clouddomain.Project{ID: projectID},
+		PolicyID:            "trusted-policy",
+		ProjectCommandGuard: true,
+		Role:                "editor",
+		SessionRoles: []cloudpostgres.ProjectShareGrantSessionRole{{
+			SessionID:           session.ID,
+			Role:                "editor",
+			CommandGuardEnabled: &disabled,
+		}},
+	})
+	if !globalOverride.requiresDangerousCommandGuard(session) {
+		t.Fatal("project-wide command guard should override a disabled agent setting")
 	}
 }
 

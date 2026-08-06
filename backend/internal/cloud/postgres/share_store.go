@@ -65,6 +65,8 @@ type SharedProjectGrant struct {
 	SessionRoles          []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
 	PolicyID              string                         `json:"policyId,omitempty"`
 	SandboxType           string                         `json:"sandboxType,omitempty"`
+	ProjectCommandGuard   bool                           `json:"projectCommandGuard"`
+	PolicyCommandGuard    bool                           `json:"policyCommandGuard"`
 	AgentAccessOverridden bool                           `json:"agentAccessOverridden"`
 	Role                  string                         `json:"role"`
 	SharedByEmail         string                         `json:"sharedByEmail"`
@@ -74,9 +76,10 @@ type SharedProjectGrant struct {
 
 // ProjectShareAccess is the owner/admin management view for a project's shares.
 type ProjectShareAccess struct {
-	Links    []ProjectShareLink   `json:"links"`
-	Grants   []ProjectShareGrant  `json:"grants"`
-	Policies []ProjectSharePolicy `json:"policies,omitempty"`
+	CommandGuardEnforced bool                 `json:"commandGuardEnforced"`
+	Links                []ProjectShareLink   `json:"links"`
+	Grants               []ProjectShareGrant  `json:"grants"`
+	Policies             []ProjectSharePolicy `json:"policies,omitempty"`
 }
 
 // ProjectShareGrant is an active redeemed share for one user.
@@ -95,8 +98,9 @@ type ProjectShareGrant struct {
 
 // ProjectShareGrantSessionRole grants one user access to one session.
 type ProjectShareGrantSessionRole struct {
-	SessionID clouddomain.SessionID `json:"sessionId"`
-	Role      string                `json:"role"`
+	SessionID           clouddomain.SessionID `json:"sessionId"`
+	Role                string                `json:"role"`
+	CommandGuardEnabled *bool                 `json:"commandGuardEnabled,omitempty"`
 }
 
 // ProjectSharePolicy is a named reusable access policy for standalone projects.
@@ -107,6 +111,7 @@ type ProjectSharePolicy struct {
 	CreatedByUserID clouddomain.UserID             `json:"createdByUserId"`
 	Name            string                         `json:"name"`
 	SandboxType     string                         `json:"sandboxType"`
+	CommandGuard    bool                           `json:"commandGuardEnabled"`
 	Status          string                         `json:"status"`
 	SessionRoles    []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
 	Links           []ProjectShareLink             `json:"links,omitempty"`
@@ -122,6 +127,7 @@ type CreateProjectSharePolicyInput struct {
 	CreatedByUserID clouddomain.UserID
 	Name            string
 	SandboxType     string
+	CommandGuard    bool
 	SessionRoles    []ProjectShareGrantSessionRole
 }
 
@@ -129,6 +135,7 @@ type CreateProjectSharePolicyInput struct {
 type UpdateProjectSharePolicyInput struct {
 	Name         string
 	SandboxType  string
+	CommandGuard bool
 	SessionRoles []ProjectShareGrantSessionRole
 }
 
@@ -419,12 +426,47 @@ func syncGrantSessionsFromPolicy(ctx context.Context, tx pgx.Tx, grantID string,
 	return nil
 }
 
+// UpdateProjectShareCommandGuard controls whether every shared collaborator is
+// guarded on every session in one standalone project.
+func (s *Store) UpdateProjectShareCommandGuard(
+	ctx context.Context,
+	orgID clouddomain.OrgID,
+	projectID clouddomain.ProjectID,
+	enabled bool,
+) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE ao_projects
+		SET share_command_guard_enforced = $3,
+			updated_at = now()
+		WHERE org_id = $1 AND id = $2
+	`, orgID, projectID, enabled)
+	if err != nil {
+		return fmt.Errorf("update project share command guard: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrProjectNotFound
+	}
+	return nil
+}
+
 // ListProjectShareAccess returns active links and redeemed grants for one project.
 func (s *Store) ListProjectShareAccess(
 	ctx context.Context,
 	orgID clouddomain.OrgID,
 	projectID clouddomain.ProjectID,
 ) (ProjectShareAccess, error) {
+	access := ProjectShareAccess{
+		Links:    []ProjectShareLink{},
+		Grants:   []ProjectShareGrant{},
+		Policies: []ProjectSharePolicy{},
+	}
+	if err := s.pool.QueryRow(ctx, `
+		SELECT share_command_guard_enforced
+		FROM ao_projects
+		WHERE org_id = $1 AND id = $2
+	`, orgID, projectID).Scan(&access.CommandGuardEnforced); err != nil {
+		return ProjectShareAccess{}, fmt.Errorf("load project share command guard: %w", err)
+	}
 	linkRows, err := s.pool.Query(ctx, `
 		SELECT id, org_id, project_id, COALESCE(session_id::text, ''), COALESCE(policy_id::text, ''),
 			created_by_user_id, role, status, expires_at, created_at, updated_at, access_scope
@@ -436,7 +478,6 @@ func (s *Store) ListProjectShareAccess(
 		return ProjectShareAccess{}, fmt.Errorf("list project share links: %w", err)
 	}
 	defer linkRows.Close()
-	access := ProjectShareAccess{Links: []ProjectShareLink{}, Grants: []ProjectShareGrant{}, Policies: []ProjectSharePolicy{}}
 	for linkRows.Next() {
 		var link ProjectShareLink
 		if err := linkRows.Scan(
@@ -568,7 +609,7 @@ func (s *Store) listProjectSharePolicies(
 ) ([]ProjectSharePolicy, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, org_id, project_id, created_by_user_id, name,
-			sandbox_type, status, created_at, updated_at
+			sandbox_type, command_guard_enabled, status, created_at, updated_at
 		FROM ao_project_share_policies
 		WHERE org_id = $1 AND project_id = $2 AND status = 'active'
 		ORDER BY created_at DESC
@@ -587,6 +628,7 @@ func (s *Store) listProjectSharePolicies(
 			&policy.CreatedByUserID,
 			&policy.Name,
 			&policy.SandboxType,
+			&policy.CommandGuard,
 			&policy.Status,
 			&policy.CreatedAt,
 			&policy.UpdatedAt,
@@ -643,7 +685,7 @@ func (s *Store) projectShareGrantSessionRoles(
 	out := make(map[string][]ProjectShareGrantSessionRole, len(grantIDs))
 	for _, grantID := range grantIDs {
 		rows, err := s.pool.Query(ctx, `
-			SELECT session_id, role
+			SELECT session_id, role, command_guard_enabled
 			FROM ao_project_share_grant_sessions
 			WHERE grant_id = $1
 			ORDER BY created_at
@@ -653,7 +695,11 @@ func (s *Store) projectShareGrantSessionRoles(
 		}
 		for rows.Next() {
 			var sessionRole ProjectShareGrantSessionRole
-			if err := rows.Scan(&sessionRole.SessionID, &sessionRole.Role); err != nil {
+			if err := rows.Scan(
+				&sessionRole.SessionID,
+				&sessionRole.Role,
+				&sessionRole.CommandGuardEnabled,
+			); err != nil {
 				rows.Close()
 				return nil, fmt.Errorf("scan project share grant session: %w", err)
 			}
@@ -781,10 +827,10 @@ func (s *Store) UpdateProjectShareGrantAccess(
 			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO ao_project_share_grant_sessions (
-					grant_id, org_id, project_id, session_id, role
+					grant_id, org_id, project_id, session_id, role, command_guard_enabled
 				)
-				VALUES ($1, $2, $3, $4, $5)
-			`, grantID, orgID, projectID, sessionRole.SessionID, effectiveRole); err != nil {
+				VALUES ($1, $2, $3, $4, $5, $6)
+			`, grantID, orgID, projectID, sessionRole.SessionID, effectiveRole, sessionRole.CommandGuardEnabled); err != nil {
 				return ProjectShareGrant{}, fmt.Errorf("insert project share grant session: %w", err)
 			}
 		}
@@ -828,18 +874,19 @@ func (s *Store) CreateProjectSharePolicy(
 	var policy ProjectSharePolicy
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO ao_project_share_policies (
-			org_id, project_id, created_by_user_id, name, sandbox_type
+			org_id, project_id, created_by_user_id, name, sandbox_type, command_guard_enabled
 		)
-		VALUES ($1, $2, $3, $4, $5)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, org_id, project_id, created_by_user_id, name,
-			sandbox_type, status, created_at, updated_at
-	`, input.OrgID, input.ProjectID, input.CreatedByUserID, strings.TrimSpace(input.Name), sandboxType).Scan(
+			sandbox_type, command_guard_enabled, status, created_at, updated_at
+	`, input.OrgID, input.ProjectID, input.CreatedByUserID, strings.TrimSpace(input.Name), sandboxType, input.CommandGuard).Scan(
 		&policy.ID,
 		&policy.OrgID,
 		&policy.ProjectID,
 		&policy.CreatedByUserID,
 		&policy.Name,
 		&policy.SandboxType,
+		&policy.CommandGuard,
 		&policy.Status,
 		&policy.CreatedAt,
 		&policy.UpdatedAt,
@@ -878,17 +925,19 @@ func (s *Store) UpdateProjectSharePolicy(
 		UPDATE ao_project_share_policies
 		SET name = $4,
 			sandbox_type = $5,
+			command_guard_enabled = $6,
 			updated_at = now()
 		WHERE org_id = $1 AND project_id = $2 AND id = $3 AND status = 'active'
 		RETURNING id, org_id, project_id, created_by_user_id, name,
-			sandbox_type, status, created_at, updated_at
-	`, orgID, projectID, policyID, strings.TrimSpace(input.Name), sandboxType).Scan(
+			sandbox_type, command_guard_enabled, status, created_at, updated_at
+	`, orgID, projectID, policyID, strings.TrimSpace(input.Name), sandboxType, input.CommandGuard).Scan(
 		&policy.ID,
 		&policy.OrgID,
 		&policy.ProjectID,
 		&policy.CreatedByUserID,
 		&policy.Name,
 		&policy.SandboxType,
+		&policy.CommandGuard,
 		&policy.Status,
 		&policy.CreatedAt,
 		&policy.UpdatedAt,
@@ -1094,6 +1143,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			project.id, project.account_id, project.org_id, project.display_name,
 			project.repository_url, project.default_branch, project.github_repository_id,
 			project.config, project.created_at, project.updated_at,
+			project.share_command_guard_enforced,
 			COALESCE(session.id::text, ''), COALESCE(session.account_id::text, ''),
 			COALESCE(session.org_id::text, ''), COALESCE(session.project_id::text, ''),
 			COALESCE(session.kind, ''), COALESCE(session.harness, ''),
@@ -1103,6 +1153,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			COALESCE(session.updated_at, now()),
 			COALESCE(share_grant.policy_id::text, ''),
 			COALESCE(policy.sandbox_type, ''),
+			COALESCE(policy.command_guard_enabled, false),
 			share_grant.agent_access_overridden,
 			share_grant.role,
 			shared_by.email,
@@ -1143,6 +1194,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			&grant.Project.Config,
 			&grant.Project.CreatedAt,
 			&grant.Project.UpdatedAt,
+			&grant.ProjectCommandGuard,
 			&sessionID,
 			&sessionAccountID,
 			&sessionOrgID,
@@ -1158,6 +1210,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			&session.UpdatedAt,
 			&grant.PolicyID,
 			&grant.SandboxType,
+			&grant.PolicyCommandGuard,
 			&grant.AgentAccessOverridden,
 			&grant.Role,
 			&grant.SharedByEmail,

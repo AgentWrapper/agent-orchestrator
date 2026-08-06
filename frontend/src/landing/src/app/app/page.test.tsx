@@ -43,6 +43,7 @@ const apiMocks = vi.hoisted(() => ({
   createProjectShareLink: vi.fn(),
   redeemProjectShareLink: vi.fn(),
   projectShareAccess: vi.fn(),
+  updateProjectShareSettings: vi.fn(),
   updateProjectShareGrant: vi.fn(),
   createProjectSharePolicy: vi.fn(),
   updateProjectSharePolicy: vi.fn(),
@@ -104,6 +105,7 @@ vi.mock("@/lib/cloud-api", () => ({
     createProjectShareLink = apiMocks.createProjectShareLink;
     redeemProjectShareLink = apiMocks.redeemProjectShareLink;
     projectShareAccess = apiMocks.projectShareAccess;
+    updateProjectShareSettings = apiMocks.updateProjectShareSettings;
     updateProjectShareGrant = apiMocks.updateProjectShareGrant;
     createProjectSharePolicy = apiMocks.createProjectSharePolicy;
     updateProjectSharePolicy = apiMocks.updateProjectSharePolicy;
@@ -304,7 +306,10 @@ beforeEach(() => {
     shareLink: { id: "link-one" },
   });
   apiMocks.projectShareAccess.mockResolvedValue({
-    access: { links: [], grants: [] },
+    access: { commandGuardEnforced: false, links: [], grants: [] },
+  });
+  apiMocks.updateProjectShareSettings.mockResolvedValue({
+    commandGuardEnforced: false,
   });
   apiMocks.updateProjectShareGrant.mockResolvedValue({ grant: { id: "grant-one" } });
   apiMocks.createProjectSharePolicy.mockResolvedValue({ policy: { id: "policy-one" } });
@@ -1011,6 +1016,7 @@ it("creates custom standalone policies and manages one person's agents", async (
     createdByUserId: "user-one",
     name: "Reviewers",
     sandboxType: "standard" as const,
+    commandGuardEnabled: true,
     status: "active" as const,
     sessionRoles: [{ sessionId: standaloneAgent.id, role: "viewer" as const }],
     grants: [
@@ -1035,7 +1041,12 @@ it("creates custom standalone policies and manages one person's agents", async (
   apiMocks.projects.mockResolvedValue({ projects: [standaloneProject] });
   apiMocks.sessions.mockResolvedValue({ sessions: [standaloneAgent] });
   apiMocks.projectShareAccess.mockResolvedValue({
-    access: { links: [], grants: [], policies: [customPolicy] },
+    access: {
+      commandGuardEnforced: false,
+      links: [],
+      grants: [],
+      policies: [customPolicy],
+    },
   });
 
   render(<CloudAppPage />);
@@ -1050,11 +1061,29 @@ it("creates custom standalone policies and manages one person's agents", async (
   const sharePolicy = await screen.findByLabelText("Share policy");
   expect(within(sharePolicy).getByRole("option", { name: "Reviewers" })).toBeVisible();
 
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Enforce command guard for everyone",
+    }),
+  );
+  await waitFor(() =>
+    expect(apiMocks.updateProjectShareSettings).toHaveBeenCalledWith(
+      "org-one",
+      standaloneProject.id,
+      { commandGuardEnforced: true },
+    ),
+  );
+
   fireEvent.click(screen.getByRole("button", { name: "Manage agents" }));
   const agentAccess = await screen.findByLabelText(
     "Access to Research agent for reviewer@example.com",
   );
   fireEvent.change(agentAccess, { target: { value: "editor" } });
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Command guard for Research agent and reviewer@example.com",
+    }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Save access" }));
 
   await waitFor(() =>
@@ -1065,7 +1094,13 @@ it("creates custom standalone policies and manages one person's agents", async (
       {
         role: "editor",
         policyId: "policy-reviewers",
-        sessionRoles: [{ sessionId: standaloneAgent.id, role: "editor" }],
+        sessionRoles: [
+          {
+            sessionId: standaloneAgent.id,
+            role: "editor",
+            commandGuardEnabled: false,
+          },
+        ],
       },
     ),
   );
@@ -1077,6 +1112,11 @@ it("creates custom standalone policies and manages one person's agents", async (
   fireEvent.change(screen.getByLabelText("Policy access to Research agent"), {
     target: { value: "viewer" },
   });
+  fireEvent.click(
+    screen.getByRole("checkbox", {
+      name: "Enable command guard for this policy",
+    }),
+  );
   fireEvent.click(screen.getByRole("button", { name: "Create policy" }));
 
   await waitFor(() =>
@@ -1086,6 +1126,7 @@ it("creates custom standalone policies and manages one person's agents", async (
       {
         name: "Design team",
         sandboxType: "standard",
+        commandGuardEnabled: false,
         sessionRoles: [{ sessionId: standaloneAgent.id, role: "viewer" }],
       },
     ),

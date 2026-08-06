@@ -194,7 +194,11 @@ export interface CloudProjectShareGrant {
   id: string;
   user: CloudUser;
   sessionId?: string;
-  sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
+  sessionRoles?: Array<{
+    sessionId: string;
+    role: "viewer" | "editor";
+    commandGuardEnabled?: boolean;
+  }>;
   policyId?: string;
   agentAccessOverridden?: boolean;
   role: "viewer" | "editor";
@@ -204,6 +208,7 @@ export interface CloudProjectShareGrant {
 }
 
 export interface CloudProjectShareAccess {
+  commandGuardEnforced: boolean;
   links: CloudProjectShareLink[];
   grants: CloudProjectShareGrant[];
   policies?: CloudProjectSharePolicy[];
@@ -216,6 +221,7 @@ export interface CloudProjectSharePolicy {
   createdByUserId: string;
   name: string;
   sandboxType: "read_only" | "standard" | "trusted";
+  commandGuardEnabled: boolean;
   status: "active" | "archived";
   sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
   links?: CloudProjectShareLink[];
@@ -704,7 +710,11 @@ export class CloudAPI {
       role: "viewer" | "editor";
       sessionId?: string;
       policyId?: string;
-      sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
+      sessionRoles?: Array<{
+        sessionId: string;
+        role: "viewer" | "editor";
+        commandGuardEnabled?: boolean;
+      }>;
     },
   ) {
     return this.request<{ grant: CloudProjectShareGrant }>(
@@ -716,12 +726,27 @@ export class CloudAPI {
     );
   }
 
+  async updateProjectShareSettings(
+    orgId: string,
+    projectId: string,
+    input: { commandGuardEnforced: boolean },
+  ) {
+    return this.request<{ commandGuardEnforced: boolean }>(
+      this.orgPath(
+        orgId,
+        `/projects/${encodeURIComponent(projectId)}/shares/settings`,
+      ),
+      { method: "PATCH", body: input },
+    );
+  }
+
   async createProjectSharePolicy(
     orgId: string,
     projectId: string,
     input: {
       name: string;
       sandboxType: "read_only" | "standard" | "trusted";
+      commandGuardEnabled: boolean;
       sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) {
@@ -741,6 +766,7 @@ export class CloudAPI {
     input: {
       name: string;
       sandboxType: "read_only" | "standard" | "trusted";
+      commandGuardEnabled: boolean;
       sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) {
