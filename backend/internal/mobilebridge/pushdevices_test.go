@@ -1,6 +1,8 @@
 package mobilebridge
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -263,5 +265,204 @@ func TestDeleteByTokenAndByInstallID(t *testing.T) {
 	}
 	if err := reg.Delete("missing"); err != nil {
 		t.Fatalf("deleting unknown install id must be a no-op, got %v", err)
+	}
+}
+
+func TestRemovedDeviceReturnsMuted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	dev := PushDevice{InstallID: "inst-1", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := reg.Delete("inst-1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	got := reg.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %d, want 1", len(got))
+	}
+	if !got[0].Muted {
+		t.Fatalf("device returned after removal is not muted: %+v", got[0])
+	}
+}
+
+func TestRemovedDeviceMatchedByTokenReturnsMuted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	dev := PushDevice{InstallID: "inst-1", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := reg.Delete("inst-1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	// A reinstall looks like the same push token under a brand new install ID.
+	reinstalled := PushDevice{InstallID: "inst-2", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now}
+	if err := reg.Upsert(reinstalled); err != nil {
+		t.Fatalf("upsert reinstalled: %v", err)
+	}
+	got := reg.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %d, want 1", len(got))
+	}
+	if !got[0].Muted {
+		t.Fatalf("reinstalled device matched by token is not muted: %+v", got[0])
+	}
+}
+
+func TestTombstoneConsumedOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	dev := PushDevice{InstallID: "inst-1", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := reg.Delete("inst-1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	if got := reg.List(); len(got) != 1 || !got[0].Muted {
+		t.Fatalf("expected device muted after removal, got %+v", got)
+	}
+	if err := reg.SetMuted("inst-1", false); err != nil {
+		t.Fatalf("unmute: %v", err)
+	}
+	// A further registration must NOT be re-muted: the tombstone was already
+	// consumed by the previous match. A surviving tombstone would silently
+	// override the user's deliberate unmute.
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("upsert again: %v", err)
+	}
+	got := reg.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %d, want 1", len(got))
+	}
+	if got[0].Muted {
+		t.Fatalf("tombstone re-muted a device the user had unmuted: %+v", got[0])
+	}
+}
+
+func TestDeleteByTokenWritesNoTombstone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	dev := PushDevice{InstallID: "inst-1", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := reg.DeleteByToken("ExponentPushToken[a]"); err != nil {
+		t.Fatalf("delete by token: %v", err)
+	}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	got := reg.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %d, want 1", len(got))
+	}
+	if got[0].Muted {
+		t.Fatalf("DeleteByToken must not write a tombstone, but device came back muted: %+v", got[0])
+	}
+}
+
+func TestTombstonesPersistAcrossReload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	dev := PushDevice{InstallID: "inst-1", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := reg.Delete("inst-1"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+
+	reloaded, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if err := reloaded.Upsert(dev); err != nil {
+		t.Fatalf("re-upsert after reload: %v", err)
+	}
+	got := reloaded.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %d, want 1", len(got))
+	}
+	if !got[0].Muted {
+		t.Fatalf("tombstone did not survive reload: %+v", got[0])
+	}
+}
+
+func TestTombstonesAreCapped(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	const total = 60
+	for i := 0; i < total; i++ {
+		installID := fmt.Sprintf("inst-%03d", i)
+		token := fmt.Sprintf("ExponentPushToken[%03d]", i)
+		if err := reg.Upsert(PushDevice{InstallID: installID, Token: token, CreatedAt: now, LastSeenAt: now}); err != nil {
+			t.Fatalf("upsert %d: %v", i, err)
+		}
+		if err := reg.Delete(installID); err != nil {
+			t.Fatalf("delete %d: %v", i, err)
+		}
+	}
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var file pushDevicesFile
+	if err := json.Unmarshal(b, &file); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(file.Removed) != maxTombstones {
+		t.Fatalf("tombstones = %d, want %d", len(file.Removed), maxTombstones)
+	}
+	// The oldest (inst-000..inst-009) must have been dropped; the newest
+	// (inst-050..inst-059) must remain.
+	seen := map[string]bool{}
+	for _, r := range file.Removed {
+		seen[r.InstallID] = true
+	}
+	for i := 0; i < total-maxTombstones; i++ {
+		installID := fmt.Sprintf("inst-%03d", i)
+		if seen[installID] {
+			t.Fatalf("oldest tombstone %q should have been dropped", installID)
+		}
+	}
+	for i := total - maxTombstones; i < total; i++ {
+		installID := fmt.Sprintf("inst-%03d", i)
+		if !seen[installID] {
+			t.Fatalf("newest tombstone %q should have been kept", installID)
+		}
 	}
 }

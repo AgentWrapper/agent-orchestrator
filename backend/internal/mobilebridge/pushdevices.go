@@ -30,11 +30,27 @@ type PushDevice struct {
 	LastSeenAt time.Time `json:"lastSeenAt"`
 }
 
+// removedDevice is a tombstone recording a device the desktop explicitly
+// removed. If that device (matched by InstallID or Token) ever registers
+// again, it comes back muted rather than silently active, since there is no
+// per-device credential to revoke — every phone shares the same connection
+// password, so removal cannot stop it from reconnecting.
+type removedDevice struct {
+	InstallID string    `json:"installId"`
+	Token     string    `json:"token,omitempty"`
+	RemovedAt time.Time `json:"removedAt"`
+}
+
 // pushDevicesFile is the on-disk shape, wrapped in a struct (rather than a bare
 // array) so future fields can be added without breaking older files.
 type pushDevicesFile struct {
-	Devices []PushDevice `json:"devices"`
+	Devices []PushDevice    `json:"devices"`
+	Removed []removedDevice `json:"removed,omitempty"`
 }
+
+// maxTombstones caps how many removal tombstones persist, so the file cannot
+// grow without bound. Oldest tombstones are dropped first.
+const maxTombstones = 50
 
 // expoPushTokenRE matches the two Expo push-token spellings with a non-empty body.
 var expoPushTokenRE = regexp.MustCompile(`^Expo(nent)?PushToken\[[^\]]+\]$`)
@@ -58,6 +74,7 @@ type DeviceRegistry struct {
 	mu      sync.RWMutex
 	path    string
 	devices map[string]PushDevice // keyed by Token
+	removed []removedDevice       // tombstones from explicit Delete calls, newest last
 }
 
 // LoadRegistry reads the registry at path into memory, keyed by install ID. A
@@ -88,6 +105,7 @@ func LoadRegistry(path string) (*DeviceRegistry, error) {
 		}
 		reg.devices[d.InstallID] = d
 	}
+	reg.removed = file.Removed
 	if migrated {
 		reg.mu.Lock()
 		err := reg.persistLocked()
@@ -116,6 +134,7 @@ func (r *DeviceRegistry) Upsert(dev PushDevice) error {
 
 	if existing, ok := r.devices[dev.InstallID]; ok {
 		dev.CreatedAt, dev.Muted = carryOver(existing, dev)
+		r.consumeTombstoneLocked(&dev)
 		r.devices[dev.InstallID] = dev
 		return r.persistLocked()
 	}
@@ -125,11 +144,27 @@ func (r *DeviceRegistry) Upsert(dev PushDevice) error {
 		}
 		dev.CreatedAt, dev.Muted = carryOver(existing, dev)
 		delete(r.devices, key) // re-key from the legacy/synthesized id
+		r.consumeTombstoneLocked(&dev)
 		r.devices[dev.InstallID] = dev
 		return r.persistLocked()
 	}
+	r.consumeTombstoneLocked(&dev)
 	r.devices[dev.InstallID] = dev
 	return r.persistLocked()
+}
+
+// consumeTombstoneLocked mutes dev and removes the first matching tombstone
+// (by InstallID or Token) if one exists. The match is consumed so a device
+// the user later unmutes is never re-muted by a stale tombstone. Callers
+// must hold r.mu.
+func (r *DeviceRegistry) consumeTombstoneLocked(dev *PushDevice) {
+	for i, t := range r.removed {
+		if t.InstallID == dev.InstallID || (dev.Token != "" && t.Token == dev.Token) {
+			dev.Muted = true
+			r.removed = append(r.removed[:i], r.removed[i+1:]...)
+			return
+		}
+	}
 }
 
 // carryOver preserves the fields an incoming registration must never reset.
@@ -141,15 +176,26 @@ func carryOver(existing, incoming PushDevice) (time.Time, bool) {
 	return created, existing.Muted
 }
 
-// Delete removes a device by install ID (the desktop's remove action). Deleting
-// an unknown id is a no-op.
+// Delete removes a device by install ID (the desktop's remove action) and
+// records a tombstone so a re-registration comes back muted instead of
+// silently active — there is no per-device credential to actually revoke.
+// Deleting an unknown id is a no-op.
 func (r *DeviceRegistry) Delete(installID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, ok := r.devices[installID]; !ok {
+	dev, ok := r.devices[installID]
+	if !ok {
 		return nil
 	}
 	delete(r.devices, installID)
+	r.removed = append(r.removed, removedDevice{
+		InstallID: dev.InstallID,
+		Token:     dev.Token,
+		RemovedAt: time.Now().UTC(),
+	})
+	if len(r.removed) > maxTombstones {
+		r.removed = r.removed[len(r.removed)-maxTombstones:]
+	}
 	return r.persistLocked()
 }
 
@@ -209,7 +255,7 @@ func (r *DeviceRegistry) persistLocked() error {
 	}
 	sort.Slice(devices, func(i, j int) bool { return devices[i].Token < devices[j].Token })
 
-	b, err := json.MarshalIndent(pushDevicesFile{Devices: devices}, "", "  ")
+	b, err := json.MarshalIndent(pushDevicesFile{Devices: devices, Removed: r.removed}, "", "  ")
 	if err != nil {
 		return err
 	}

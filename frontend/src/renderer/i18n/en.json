@@ -299,7 +299,7 @@
 	"mobile.copyPassword": "Copy password",
 	"mobile.description": "Pair the Agent Orchestrator mobile app with this desktop over your LAN.",
 	"mobile.devices.confirmRemove": "Confirm remove",
-	"mobile.devices.description": "Phones paired with this desktop. Muted devices stay paired but receive no notifications.",
+	"mobile.devices.description": "Phones paired with this desktop. Muted devices stay paired but receive no notifications. A removed phone that reconnects comes back muted; regenerate the password to block it for good.",
 	"mobile.devices.empty": "No devices paired yet.",
 	"mobile.devices.live": "Live",
 	"mobile.devices.loading": "Loading devices…",

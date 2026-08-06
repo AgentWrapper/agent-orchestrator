@@ -274,7 +274,7 @@
 	"mobile.copyPassword": "Copiar senha",
 	"mobile.description": "Emparelhe o app mobile do Agent Orchestrator com este desktop pela sua LAN.",
 	"mobile.devices.confirmRemove": "Confirmar remoção",
-	"mobile.devices.description": "Telefones emparelhados com este desktop. Dispositivos silenciados continuam emparelhados, mas não recebem notificações.",
+	"mobile.devices.description": "Telefones emparelhados com este desktop. Dispositivos silenciados continuam emparelhados, mas não recebem notificações. Um telefone removido que se reconectar volta silenciado; gere uma nova senha para bloqueá-lo definitivamente.",
 	"mobile.devices.empty": "Nenhum dispositivo emparelhado ainda.",
 	"mobile.devices.live": "Online",
 	"mobile.devices.loading": "Carregando dispositivos…",
