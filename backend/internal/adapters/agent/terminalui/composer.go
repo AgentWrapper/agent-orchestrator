@@ -67,6 +67,76 @@ func LastPromptIsEmptyOrDimPlaceholder(output, marker string) bool {
 	return false
 }
 
+// LastBorderedPromptIsEmptyOrDimPlaceholder recognizes providers that render
+// the composer between matching full-width horizontal rules and place normal,
+// non-dim status chrome below the lower rule. Only rows inside the bordered
+// composer are considered input. Requiring both matching rules keeps the check
+// fail-closed when a capture is partial or the provider changes its layout.
+func LastBorderedPromptIsEmptyOrDimPlaceholder(output, marker string) bool {
+	marker = strings.TrimSpace(marker)
+	if marker == "" {
+		return false
+	}
+	lines := styledTerminalLines(output)
+	markerRunes := []rune(marker)
+	start := len(lines) - composerLookbackLines
+	if start < 0 {
+		start = 0
+	}
+	for i := len(lines) - 1; i >= start; i-- {
+		line := trimLeftStyledSpace(lines[i])
+		if len(line) < len(markerRunes) || styledString(line[:len(markerRunes)]) != marker {
+			continue
+		}
+		for _, r := range line[len(markerRunes):] {
+			if !unicode.IsSpace(r.value) && !r.dim {
+				return false
+			}
+		}
+		upperWidth := 0
+		for j := i - 1; j >= 0 && upperWidth == 0; j-- {
+			upperWidth = horizontalRuleWidth(lines[j])
+		}
+		lowerIndex, lowerWidth := -1, 0
+		for j := len(lines) - 1; j > i; j-- {
+			if lowerWidth = horizontalRuleWidth(lines[j]); lowerWidth > 0 {
+				lowerIndex = j
+				break
+			}
+		}
+		if upperWidth == 0 || lowerIndex < 0 || upperWidth != lowerWidth {
+			return false
+		}
+		for _, continuation := range lines[i+1 : lowerIndex] {
+			for _, r := range continuation {
+				if !unicode.IsSpace(r.value) && !r.dim {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func horizontalRuleWidth(line []styledRune) int {
+	for len(line) > 0 && unicode.IsSpace(line[0].value) {
+		line = line[1:]
+	}
+	for len(line) > 0 && unicode.IsSpace(line[len(line)-1].value) {
+		line = line[:len(line)-1]
+	}
+	if len(line) < 16 {
+		return 0
+	}
+	for _, r := range line {
+		if r.value != '─' {
+			return 0
+		}
+	}
+	return len(line)
+}
+
 func styledTerminalLines(output string) [][]styledRune {
 	output = strings.ReplaceAll(output, "\r", "\n")
 	lines := make([][]styledRune, 0, 1)

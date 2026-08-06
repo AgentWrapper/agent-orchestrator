@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -903,8 +904,14 @@ func TestGetLaunchCommandOmitsToolFlagsWhenUnset(t *testing.T) {
 }
 
 func TestComposerIsEmptyUsesClaudePromptMarker(t *testing.T) {
-	if !(&Plugin{}).ComposerIsEmpty("\x1b[39m❯\u00a0") {
+	plugin := &Plugin{}
+	if !plugin.ComposerIsEmpty("\x1b[39m❯\u00a0") {
 		t.Fatal("blank Claude composer was not recognized")
+	}
+	rule := "\x1b[38;5;244m" + strings.Repeat("─", 48) + "\x1b[39m"
+	footer := "\x1b[38;5;220mUpdate available!\x1b[39m\n\x1b[38;5;211m⏵⏵ bypass permissions on\x1b[39m"
+	if !plugin.ComposerIsEmpty(rule + "\n\x1b[39m❯\u00a0\x1b[7m \x1b[0m\n" + rule + "\n" + footer) {
+		t.Fatal("blank bordered Claude composer above status footer was not recognized")
 	}
 }
 

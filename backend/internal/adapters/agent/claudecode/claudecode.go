@@ -82,9 +82,12 @@ var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.EmptyComposerDetector = (*Plugin)(nil)
 
 // ComposerIsEmpty recognizes Claude Code's blank composer or its dim
-// placeholder. A permission-menu selection and normal typed text are rejected.
+// placeholder. Claude renders normal, non-dim status chrome below a bordered
+// composer, so inspect that bounded region before using the footer-free fallback.
+// A permission-menu selection and normal typed text are rejected.
 func (p *Plugin) ComposerIsEmpty(output string) bool {
-	return terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "❯")
+	return terminalui.LastBorderedPromptIsEmptyOrDimPlaceholder(output, "❯") ||
+		terminalui.LastPromptIsEmptyOrDimPlaceholder(output, "❯")
 }
 
 // Manifest returns the adapter's static self-description.
