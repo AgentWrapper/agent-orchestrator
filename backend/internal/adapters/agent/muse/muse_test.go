@@ -370,9 +370,7 @@ func assertMuseManagedHooks(t *testing.T, path string) {
 	want := map[string]string{
 		"SessionStart":      "session-start",
 		"UserPromptSubmit":  "user-prompt-submit",
-		"PreToolUse":        "pre-tool-use",
 		"PermissionRequest": "permission-request",
-		"PostToolUse":       "post-tool-use",
 		"Stop":              "stop",
 	}
 	for nativeEvent, aoEvent := range want {

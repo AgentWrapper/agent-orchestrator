@@ -25,12 +25,14 @@ type museHooksFile struct {
 }
 
 func museManagedHooks(cfg ports.WorkspaceHookConfig) map[string][]hooksjson.MatcherGroup {
+	// Muse runs background subagents after the main turn has stopped. Their
+	// tool hooks share this managed configuration but do not emit a matching
+	// Stop, so installing PreToolUse/PostToolUse can incorrectly reactivate an
+	// otherwise idle AO session. Track the top-level turn lifecycle instead.
 	return map[string][]hooksjson.MatcherGroup{
 		"SessionStart":      {museHookGroup(cfg, "session-start")},
 		"UserPromptSubmit":  {museHookGroup(cfg, "user-prompt-submit")},
-		"PreToolUse":        {museHookGroup(cfg, "pre-tool-use")},
 		"PermissionRequest": {museHookGroup(cfg, "permission-request")},
-		"PostToolUse":       {museHookGroup(cfg, "post-tool-use")},
 		"Stop":              {museHookGroup(cfg, "stop")},
 	}
 }
