@@ -51,11 +51,17 @@ import { Switch } from "./ui/switch";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
 import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
+import {
+	openReviewStatesFor,
+	reviewIsRunning,
+	reviewRunDisabled,
+	reviewSessionRunAction,
+	sessionReviewsQueryOptions,
+	type PRReviewState,
+	type ReviewRunFacts,
+} from "../lib/session-reviews";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
-type PRReviewState = components["schemas"]["PRReviewState"];
-type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
-type ReviewRunFacts = components["schemas"]["ReviewRun"];
 type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
 export type InspectorView = "summary" | "browser" | "files";
@@ -1124,23 +1130,7 @@ function ReviewsSection({
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
-	const reviewsQuery = useQuery({
-		queryKey: ["session-reviews", session.id],
-		enabled: hasPr,
-		refetchInterval: (query) => {
-			const data = query.state.data as ReviewsResponse | undefined;
-			const reviews = data?.reviews ?? [];
-			return reviews.some((review) => review.status === "running") ? 2500 : false;
-		},
-		queryFn: async () => {
-			if (usePreviewData) return mockReviewsResponse(session);
-			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
-				params: { path: { sessionId: session.id } },
-			});
-			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
-			return data ?? ({ reviewerHandleId: "", reviews: [], runs: [] } satisfies ReviewsResponse);
-		},
-	});
+	const reviewsQuery = useQuery(sessionReviewsQueryOptions(session, hasPr));
 	const agentsQuery = useQuery(agentsQueryOptions);
 	const projectConfigQuery = useQuery({
 		queryKey: ["project-config", session.workspaceId],
@@ -1349,147 +1339,6 @@ function mockProjectConfig(): ProjectConfig {
 	};
 }
 
-// Preview-only pins so the reviews section can be seen mid-run and with a verdict
-// left behind by an earlier commit — neither follows from a PR's review decision.
-const MOCK_RUNNING_PR = 322;
-const MOCK_STALE_PR = 324;
-
-function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
-	const states: PRReviewState[] = sortedPRs(session).map((pr, index) => {
-			const targetSha = `demo${pr.number}${index}`;
-			const reviewedAt = new Date(Date.now() - (index + 1) * 11 * 60 * 1000).toISOString();
-			const latestRun =
-				pr.review === "approved" || pr.review === "changes_requested"
-					? {
-							batchId: `demo-batch-${session.id}`,
-							body:
-								pr.review === "approved"
-									? "Demo review **approved** the README screenshot flow.\n\n- Layout is stable\n- Browser preview opens cleanly"
-									: "Demo review found **polish feedback** for the terminal presentation.\n\n- Tighten toolbar density\n- Recheck contrast",
-							createdAt: reviewedAt,
-							githubReviewId: `${pr.number}01`,
-							harness: "codex",
-							id: `demo-review-run-${pr.number}`,
-							prUrl: pr.url,
-							reviewId: `demo-review-${pr.number}`,
-							sessionId: session.id,
-							status: "delivered",
-							targetSha,
-							verdict: pr.review === "approved" ? "approved" : "changes_requested",
-						}
-					: undefined;
-			const run = (over: Record<string, unknown>) => ({
-				batchId: `demo-batch-${session.id}`,
-				body: "",
-				createdAt: reviewedAt,
-				githubReviewId: "",
-				harness: "codex",
-				id: `demo-review-run-${pr.number}`,
-				prUrl: pr.url,
-				reviewId: `demo-review-${pr.number}`,
-				sessionId: session.id,
-				status: "complete",
-				targetSha,
-				verdict: "",
-				...over,
-			});
-			// A couple of PRs are pinned to states the review decision alone cannot
-			// produce, so the preview shows every shape the panel can render.
-			if (pr.number === MOCK_RUNNING_PR) {
-				return {
-					latestRun: run({ status: "running", id: `demo-review-run-${pr.number}-live` }),
-					prNumber: pr.number,
-					prUrl: pr.url,
-					status: "running",
-					targetSha,
-					title: mockReviewTitle(pr.number),
-				};
-			}
-			if (pr.number === MOCK_STALE_PR) {
-				// Reviewed, then a new commit landed: the verdict is about code that
-				// has since changed, so the panel demotes it to "Previous".
-				return {
-					previousRun: run({
-						status: "delivered",
-						verdict: "changes_requested",
-						githubReviewId: `${pr.number}09`,
-						body: "Demo review asked for a tighter activity sample before the last commit.",
-						targetSha: `${targetSha}-old`,
-					}),
-					prNumber: pr.number,
-					prUrl: pr.url,
-					status: "needs_review",
-					targetSha,
-					title: mockReviewTitle(pr.number),
-				};
-			}
-			return {
-				latestRun,
-				prNumber: pr.number,
-				prUrl: pr.url,
-				status:
-					pr.review === "approved"
-						? "up_to_date"
-						: pr.review === "changes_requested"
-							? "changes_requested"
-							: pr.state === "draft"
-								? "ineligible"
-								: "needs_review",
-				targetSha,
-				title: mockReviewTitle(pr.number),
-			};
-	});
-	// Earlier passes, so the history control has something to open. Two reviewers
-	// on the same PR is the case the control exists for.
-	const runs: ReviewRunFacts[] = states.flatMap((state) => {
-		const base = {
-			batchId: `demo-batch-${session.id}`,
-			githubReviewId: "",
-			prUrl: state.prUrl,
-			reviewId: `demo-review-${state.prNumber}`,
-			sessionId: session.id,
-			status: "delivered",
-			targetSha: state.targetSha,
-		};
-		return [
-			{
-				...base,
-				id: `demo-hist-${state.prNumber}-a`,
-				harness: "codex",
-				verdict: "changes_requested",
-				body: "Earlier codex pass asked for tests around the discount edge cases.",
-				createdAt: new Date(Date.now() - 55 * 60 * 1000).toISOString(),
-			},
-			{
-				...base,
-				id: `demo-hist-${state.prNumber}-b`,
-				harness: "claude-code",
-				verdict: "approved",
-				body: "Earlier claude-code pass found nothing blocking.",
-				createdAt: new Date(Date.now() - 95 * 60 * 1000).toISOString(),
-			},
-		];
-	});
-	return { reviewerHandleId: `${session.id}-reviewer`, reviews: states, runs };
-}
-
-function mockReviewTitle(prNumber: number): string {
-	switch (prNumber) {
-		case 319:
-			return "Browser preview rail renders inside AO";
-		case 320:
-			return "Review tab keeps stacked PR rows visible";
-		case 321:
-			return "Draft child PR waits for parent review";
-		case 318:
-			return "Terminal polish feedback";
-		case 323:
-			return "README screenshot assets ready";
-		default:
-			return `Demo pull request ${prNumber}`;
-	}
-}
-
 function ReviewPanel({
 	session,
 	config,
@@ -1533,12 +1382,7 @@ function ReviewPanel({
 		return <p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>;
 	}
 
-	const openPRURLs = new Set(
-		sortedPRs(session)
-			.filter((pr) => pr.state === "open")
-			.map((pr) => pr.url),
-	);
-	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
+	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	// Whichever PR happens to come first is not the reviewer to name. With one PR
 	// reviewed earlier by claude-code and another running under codex, taking the
 	// first run reported the wrong agent as the one working. Prefer the run
@@ -1552,7 +1396,7 @@ function ReviewPanel({
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const projectDefaultLabel = t("newTask.projectDefault");
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
-	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
+	const reviewRunning = reviewIsRunning(openReviewStates);
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
@@ -1586,10 +1430,7 @@ function ReviewPanel({
 			reviewState.status === "up_to_date" ||
 			reviewState.status === "changes_requested",
 	);
-	const runDisabled =
-		isTriggering ||
-		openReviewStates.length === 0 ||
-		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
+	const runDisabled = reviewRunDisabled(openReviewStates, isTriggering);
 	const primaryReviewActionLabel = reviewRunning
 		? isCancelling
 			? t("inspector.review.cancelling")
@@ -1990,16 +1831,6 @@ function reviewVerdict(reviewState: PRReviewState): {
 			return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
 	}
 	return { label: appI18n.t("inspector.review.notRun"), tone: "neutral" };
-}
-
-function reviewSessionRunAction(reviewStates: PRReviewState[], isTriggering: boolean): string {
-	if (isTriggering || reviewStates.some((reviewState) => reviewState.status === "running")) {
-		return appI18n.t("inspector.review.reviewing");
-	}
-	if (reviewStates.some((reviewState) => reviewState.status === "changes_requested" || reviewState.latestRun)) {
-		return appI18n.t("inspector.review.rerun");
-	}
-	return appI18n.t("inspector.review.run");
 }
 
 function BrowserView({
