@@ -9,7 +9,7 @@ import {
 	Terminal as TerminalIcon,
 	X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type WheelEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
@@ -67,6 +67,17 @@ const COMPACT_SESSION_LIMIT = 5;
 const isMac = isMacPlatform();
 const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
 
+function orderedShells(shellTerminals: ShellTerminal[], order: string[]): ShellTerminal[] {
+	const byHandle = new Map(shellTerminals.map((shell) => [shell.handleId, shell]));
+	const ordered = order.flatMap((handleId) => {
+		const shell = byHandle.get(handleId);
+		if (!shell) return [];
+		byHandle.delete(handleId);
+		return [shell];
+	});
+	return [...ordered, ...byHandle.values()];
+}
+
 function clampTerminalFontSize(size: number): number {
 	return Math.min(TERMINAL_FONT_SIZE_MAX, Math.max(TERMINAL_FONT_SIZE_MIN, size));
 }
@@ -102,8 +113,11 @@ export function CenterPane({
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const wheelZoomRemainderRef = useRef(0);
 	const lastWheelZoomAtRef = useRef(0);
+	const draggedShellTerminalIdRef = useRef<string | null>(null);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
+	const [shellTerminalOrder, setShellTerminalOrder] = useState<string[]>([]);
+	const [draggedShellTerminalId, setDraggedShellTerminalId] = useState<string | null>(null);
 	const [showAllSessions, setShowAllSessions] = useState(false);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const sessionTabs = projectSessions?.length ? projectSessions : session ? [session] : [];
@@ -117,6 +131,7 @@ export function CenterPane({
 		: availableProjectSessions;
 	const expandedSessionList = showAllSessions || normalizedSessionSearch.length > 0;
 	const visibleSessions = expandedSessionList ? filteredSessions : filteredSessions.slice(0, COMPACT_SESSION_LIMIT);
+	const orderedShellTerminals = orderedShells(shellTerminals, shellTerminalOrder);
 	const tabOverflowWatch = `${sessionTabs.map((item) => item.id).join("|")}|${shellTerminals
 		.map((terminal) => terminal.handleId)
 		.join("|")}`;
@@ -198,6 +213,32 @@ export function CenterPane({
 		[updateFontSize],
 	);
 
+	const moveShellTerminal = (targetHandleId: string) => {
+		const sourceHandleId = draggedShellTerminalIdRef.current;
+		if (!sourceHandleId || sourceHandleId === targetHandleId) return;
+		setShellTerminalOrder((currentOrder) => {
+			const nextOrder = orderedShells(shellTerminals, currentOrder).map((shell) => shell.handleId);
+			const sourceIndex = nextOrder.indexOf(sourceHandleId);
+			const targetIndex = nextOrder.indexOf(targetHandleId);
+			if (sourceIndex < 0 || targetIndex < 0) return currentOrder;
+			nextOrder.splice(sourceIndex, 1);
+			nextOrder.splice(targetIndex, 0, sourceHandleId);
+			return nextOrder;
+		});
+	};
+
+	const beginShellTerminalDrag = (event: DragEvent<HTMLSpanElement>, handleId: string) => {
+		event.dataTransfer.effectAllowed = "move";
+		event.dataTransfer.setData("text/plain", handleId);
+		draggedShellTerminalIdRef.current = handleId;
+		setDraggedShellTerminalId(handleId);
+	};
+
+	const endShellTerminalDrag = () => {
+		draggedShellTerminalIdRef.current = null;
+		setDraggedShellTerminalId(null);
+	};
+
 	return (
 		<div
 			ref={paneRef}
@@ -247,12 +288,23 @@ export function CenterPane({
 									);
 								})
 							: !session && <span className="font-mono text-control text-passive">{t("terminal.noSession")}</span>}
-						{shellTerminals.map((shell) => (
+						{orderedShellTerminals.map((shell) => (
 							<ShellTerminalTab
 								key={shell.handleId}
 								appearance="connected"
+								draggable
 								isActive={target.kind === "shell" && target.handleId === shell.handleId}
+								isDragging={draggedShellTerminalId === shell.handleId}
 								onClose={() => onCloseShellTerminal?.(shell.handleId)}
+								onDragEnd={endShellTerminalDrag}
+								onDragEnter={() => moveShellTerminal(shell.handleId)}
+								onDragOver={(event) => {
+									if (!draggedShellTerminalIdRef.current) return;
+									event.preventDefault();
+									event.dataTransfer.dropEffect = "move";
+								}}
+								onDragStart={(event) => beginShellTerminalDrag(event, shell.handleId)}
+								onDrop={(event) => event.preventDefault()}
 								onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(shell.handleId, title) : undefined}
 								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
 								shell={shell}

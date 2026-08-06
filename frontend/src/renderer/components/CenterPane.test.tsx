@@ -309,6 +309,30 @@ describe("CenterPane toolbar session label", () => {
 		expect(shellTab.parentElement).toHaveClass("min-w-shell-tab-min", "session-pane-tab");
 	});
 
+	it("reorders added shell terminal tabs by dragging them", () => {
+		const shells = makeShells(3);
+		renderCenterPane({ session: worker, shellTerminals: shells });
+		const firstShell = screen.getByRole("tab", { name: shells[0].title }).parentElement as HTMLElement;
+		const lastShell = screen.getByRole("tab", { name: shells[2].title }).parentElement as HTMLElement;
+		const dataTransfer = {
+			dropEffect: "none",
+			effectAllowed: "none",
+			setData: vi.fn(),
+		};
+
+		fireEvent.dragStart(firstShell, { dataTransfer });
+		fireEvent.dragEnter(lastShell, { dataTransfer });
+		fireEvent.dragEnd(firstShell, { dataTransfer });
+
+		expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+			"do the thing",
+			"agent-orchestrator-1",
+			"agent-orchestrator-2",
+			"agent-orchestrator-0",
+		]);
+		expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", shells[0].handleId);
+	});
+
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {
 		const [shell] = makeShells(1);
 		const onCloseShellTerminal = vi.fn();

@@ -1,5 +1,5 @@
 import { SquareTerminal, X } from "lucide-react";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { type DragEvent, type MouseEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
@@ -15,6 +15,13 @@ type ShellTerminalTabProps = {
 	appearance?: "pill" | "connected";
 	/** Commit a new tab title. Omitted where rename is not wired. */
 	onRename?: (title: string) => void;
+	draggable?: boolean;
+	isDragging?: boolean;
+	onDragStart?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDragEnter?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDragOver?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDrop?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDragEnd?: (event: DragEvent<HTMLSpanElement>) => void;
 };
 
 // One standalone-shell tab, shared by the session pane's tab strip (CenterPane)
@@ -35,6 +42,13 @@ export function ShellTerminalTab({
 	onClose,
 	appearance = "pill",
 	onRename,
+	draggable = false,
+	isDragging = false,
+	onDragStart,
+	onDragEnter,
+	onDragOver,
+	onDrop,
+	onDragEnd,
 }: ShellTerminalTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
@@ -106,6 +120,8 @@ export function ShellTerminalTab({
 		<span
 			className={cn(
 				"group relative min-w-shell-tab-min items-center transition-colors",
+				draggable && "cursor-grab active:cursor-grabbing",
+				isDragging && "opacity-45",
 				appearance === "connected"
 					? "session-pane-tab grid grid-cols-[auto_minmax(0,1fr)_auto] self-stretch rounded-md border-x border-transparent"
 					: "inline-flex gap-1 rounded-md px-2 py-1",
@@ -117,6 +133,12 @@ export function ShellTerminalTab({
 						? "bg-interactive-active"
 						: "hover:bg-interactive-hover/60",
 			)}
+			draggable={draggable && !isEditing}
+			onDragEnd={onDragEnd}
+			onDragEnter={onDragEnter}
+			onDragOver={onDragOver}
+			onDragStart={onDragStart}
+			onDrop={onDrop}
 			{...containerRenameHandlers}
 		>
 			{appearance === "connected" ? (

@@ -709,8 +709,13 @@
 }
 
 .reverb-topbar__trailing {
+	gap: var(--space-2);
 	justify-content: flex-end;
 	overflow: hidden;
+}
+
+.reverb-topbar__actions {
+	gap: var(--space-2);
 }
 
 .reverb-topbar__error {
@@ -729,7 +734,7 @@
 }
 
 .reverb-topbar__utility-separator {
-	margin-inline: var(--space-1_5);
+	margin-inline: 0;
 }
 
 .reverb-topbar .reverb-topbar__control {
