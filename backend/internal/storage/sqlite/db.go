@@ -130,6 +130,9 @@ func migrate(db *sql.DB) error {
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
+	if err := repairRenumberedChatMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered chat migration history: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -138,6 +141,93 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// repairRenumberedChatMigrationHistory preserves databases opened by this
+// feature branch before its Chat migrations moved from 0052-0065 to 0066-0079.
+// The files are byte-for-byte identical after the rename, so recording the new
+// numbers is safer than replaying their ALTER/CREATE statements over an already
+// upgraded schema. Version 0052 now belongs to model usage on main; if that
+// physical schema is absent, release the burned ledger entry so goose can apply
+// the real 0052 migration below.
+func repairRenumberedChatMigrationHistory(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var gooseTable, chatColumn, conversationsTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return tx.Commit()
+	}
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'session_mode'`,
+	).Scan(&chatColumn); err != nil {
+		return err
+	}
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'conversations'`,
+	).Scan(&conversationsTable); err != nil {
+		return err
+	}
+	if chatColumn == 0 || conversationsTable == 0 {
+		return tx.Commit()
+	}
+
+	legacyApplied := false
+	for oldVersion := int64(52); oldVersion <= 65; oldVersion++ {
+		var applied int
+		if err := tx.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = ? ORDER BY id DESC LIMIT 1
+), 0)`, oldVersion).Scan(&applied); err != nil {
+			return err
+		}
+		if applied == 0 {
+			continue
+		}
+		legacyApplied = true
+		newVersion := oldVersion + 14
+		var alreadyMapped int
+		if err := tx.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = ? ORDER BY id DESC LIMIT 1
+), 0)`, newVersion).Scan(&alreadyMapped); err != nil {
+			return err
+		}
+		if alreadyMapped == 0 {
+			if _, err := tx.Exec(
+				`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`,
+				newVersion,
+			); err != nil {
+				return err
+			}
+		}
+	}
+	if !legacyApplied {
+		return tx.Commit()
+	}
+
+	var modelUsageTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'model_usage_events'`,
+	).Scan(&modelUsageTable); err != nil {
+		return err
+	}
+	if modelUsageTable == 0 {
+		if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = 52`); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // schemaRepairs lists the column-level effects of migrations that real
@@ -227,6 +317,16 @@ BEGIN
         ),
         NEW.updated_at);
 END`,
+		}},
+	// A pre-renumbered chat-mode branch created conversations before the
+	// current_session_id controller binding existed, then later builds recorded
+	// 0052 as applied. Generated chat queries require the column on startup.
+	{table: "conversations", column: "current_session_id",
+		addDDL: `ALTER TABLE conversations ADD COLUMN current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
+		postAdd: []string{
+			`UPDATE conversations SET current_session_id = session_id WHERE current_session_id IS NULL AND session_id IS NOT NULL`,
+			`CREATE INDEX IF NOT EXISTS idx_conversations_current_session ON conversations(current_session_id)
+    WHERE current_session_id IS NOT NULL`,
 		}},
 }
 

@@ -34,6 +34,21 @@ type sessionStore interface {
 	UpdatePRLastNudgeSignature(ctx context.Context, prURL, payload string) error
 }
 
+// controllerEpochStore is the atomic persistence primitive used by
+// CommitControllerEpoch. It stays optional on the broad lifecycle store so
+// focused reducer fakes do not need controller-transition methods; production
+// SQLite implements it.
+type controllerEpochStore interface {
+	CommitSessionControllerEpoch(
+		context.Context,
+		domain.SessionID,
+		domain.SessionMode,
+		domain.SessionMode,
+		string,
+		time.Time,
+	) (bool, error)
+}
+
 // notificationSink is the optional lifecycle-to-notification-producer boundary.
 type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
@@ -52,6 +67,19 @@ type projectConfigLoader interface {
 
 type sessionTerminator interface {
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
+}
+
+type sessionUsageFinalizer interface {
+	FinalizeSession(
+		ctx context.Context,
+		id domain.SessionID,
+		expectedRuntimeLaunchID string,
+		expectedSessionRevision time.Time,
+	) error
+}
+
+type sessionUsageReactivator interface {
+	ReactivateSession(ctx context.Context, id domain.SessionID, expectedRuntimeLaunchID string) error
 }
 
 type pendingLaunch struct {
@@ -105,8 +133,13 @@ type Manager struct {
 	// completionTerminator is late-bound because Session Manager itself depends
 	// on this lifecycle reducer. It is required before the SCM observer starts.
 	completionTerminator sessionTerminator
-	containers           ports.ContainerReaper
-	projects             projectConfigLoader
+	// usageFinalizer is late-bound because the usage pipeline is optional. It
+	// receives terminal intent before is_terminated makes the session ineligible
+	// for normal source discovery.
+	usageFinalizer   sessionUsageFinalizer
+	usageReactivator sessionUsageReactivator
+	containers       ports.ContainerReaper
+	projects         projectConfigLoader
 
 	mu        sync.Mutex
 	window    time.Duration
@@ -160,6 +193,15 @@ func (m *Manager) SetCompletionTerminator(terminator sessionTerminator) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.completionTerminator = terminator
+}
+
+// SetUsageFinalizer wires termination and relaunches to usage collection.
+// Telemetry failures never block the lifecycle transition.
+func (m *Manager) SetUsageFinalizer(finalizer sessionUsageFinalizer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.usageFinalizer = finalizer
+	m.usageReactivator, _ = finalizer.(sessionUsageReactivator)
 }
 
 // PrepareLaunch registers a supervised generation before the runtime starts.
@@ -249,15 +291,21 @@ func needsInputResolutions(prev, next domain.SessionRecord, now time.Time) []por
 // existing recent-activity guard; supervised workload death is independently
 // fenced by the launch generation and never terminates the runtime.
 func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.SessionID, f ports.RuntimeFacts) error {
-	terminated := false
-	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated {
+	matchesLaunch := func(cur domain.SessionRecord) bool {
+		currentLaunch := cur.Metadata.RuntimeLaunchID
+		return currentLaunch == "" || f.LaunchID == currentLaunch
+	}
+	var (
+		finalizer           sessionUsageFinalizer
+		terminationLaunch   string
+		terminationRevision time.Time
+		shouldTerminate     bool
+	)
+	if err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated || !matchesLaunch(cur) {
 			return cur, false
 		}
 		currentLaunch := cur.Metadata.RuntimeLaunchID
-		if currentLaunch != "" && f.LaunchID != currentLaunch {
-			return cur, false
-		}
 		if currentLaunch != "" && f.Runtime == ports.ProbeAlive && f.Workload == ports.ProbeDead {
 			if cur.Activity.State == domain.ActivityExited {
 				return cur, false
@@ -268,6 +316,24 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 			return next, true
 		}
 		if !runtimeClearlyDead(f, cur.Activity, now, m.window) {
+			return cur, false
+		}
+		finalizer = m.usageFinalizer
+		terminationLaunch = currentLaunch
+		terminationRevision = cur.UpdatedAt
+		shouldTerminate = true
+		return cur, false
+	}); err != nil || !shouldTerminate {
+		return err
+	}
+
+	finalizeSessionUsage(ctx, id, terminationLaunch, terminationRevision, finalizer)
+
+	terminated := false
+	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+		if cur.IsTerminated || !cur.UpdatedAt.Equal(terminationRevision) ||
+			cur.Metadata.RuntimeLaunchID != terminationLaunch || !matchesLaunch(cur) ||
+			!runtimeClearlyDead(f, cur.Activity, now, m.window) {
 			return cur, false
 		}
 		next := cur
@@ -301,6 +367,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
 	s.LaunchID = strings.TrimSpace(s.LaunchID)
+	s.ControllerGeneration = strings.TrimSpace(s.ControllerGeneration)
 	if !s.Valid && s.AgentSessionID == "" {
 		return nil
 	}
@@ -336,6 +403,12 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return nil
 	}
 	if s.LaunchID != "" && s.LaunchID != rec.Metadata.RuntimeLaunchID {
+		m.mu.Unlock()
+		return nil
+	}
+	if s.ControllerGeneration != "" &&
+		(domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
+			s.ControllerGeneration != rec.Metadata.ControllerGeneration) {
 		m.mu.Unlock()
 		return nil
 	}
@@ -667,26 +740,114 @@ func (m *Manager) resolveNotifications(ctx context.Context, resolutions ...ports
 
 // MarkSpawned marks a newly spawned or restored session live and stores runtime/workspace handles.
 func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	defer m.finishLaunchLocked(id, strings.TrimSpace(metadata.RuntimeLaunchID))
-	rec, ok, err := m.store.GetSession(ctx, id)
+	launchID := strings.TrimSpace(metadata.RuntimeLaunchID)
+	reactivator, err := func() (sessionUsageReactivator, error) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		defer m.finishLaunchLocked(id, launchID)
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
+		}
+		now := m.clock()
+		rec.IsTerminated = false
+		rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+		// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
+		// a relaunch with broken hooks degrades to no_signal instead of inheriting
+		// a stale "signals worked once" fact.
+		rec.FirstSignalAt = time.Time{}
+		rec.Metadata = mergeMetadata(rec.Metadata, metadata)
+		rec.UpdatedAt = now
+		if err := m.store.UpdateSession(ctx, rec); err != nil {
+			return nil, err
+		}
+		return m.usageReactivator, nil
+	}()
 	if err != nil {
 		return err
 	}
+	reactivateSessionUsage(ctx, id, launchID, reactivator)
+	return nil
+}
+
+// CommitControllerEpoch atomically changes which controller owns a live
+// session. Session Manager coordinates the external-process saga, but only
+// Lifecycle Manager is allowed to write the durable controller/activity facts.
+// A false result means the expected source controller no longer owns the row.
+// startFresh is accepted only with an empty native id; Session Manager sets it
+// after an adapter proved the reserved id has no persisted conversation.
+func (m *Manager) CommitControllerEpoch(
+	ctx context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	startFresh bool,
+) (bool, error) {
+	if !source.Valid() || !target.Valid() || source == target {
+		return false, fmt.Errorf("lifecycle: invalid controller epoch %q -> %q", source, target)
+	}
+	nativeConversationID = strings.TrimSpace(nativeConversationID)
+	if nativeConversationID == "" && !startFresh {
+		return false, fmt.Errorf("lifecycle: controller epoch for %q has no native conversation id", id)
+	}
+	if nativeConversationID != "" && startFresh {
+		return false, fmt.Errorf("lifecycle: fresh controller epoch for %q also supplied a native conversation id", id)
+	}
+	writer, ok := m.store.(controllerEpochStore)
 	if !ok {
-		return fmt.Errorf("lifecycle: MarkSpawned for unknown session %q", id)
+		return false, fmt.Errorf("lifecycle: controller epoch persistence is unavailable")
+	}
+
+	m.mu.Lock()
+	previous, found, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		m.mu.Unlock()
+		return false, err
+	}
+	if !found {
+		m.mu.Unlock()
+		return false, fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
+	}
+	if previous.IsTerminated || domain.NormalizeSessionMode(previous.Mode) != source {
+		m.mu.Unlock()
+		return false, nil
 	}
 	now := m.clock()
-	rec.IsTerminated = false
-	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
-	// Each spawn/restore must re-prove its hook pipeline: clear the receipt so
-	// a relaunch with broken hooks degrades to no_signal instead of inheriting
-	// a stale "signals worked once" fact.
-	rec.FirstSignalAt = time.Time{}
-	rec.Metadata = mergeMetadata(rec.Metadata, metadata)
-	rec.UpdatedAt = now
-	return m.store.UpdateSession(ctx, rec)
+	changed, err := writer.CommitSessionControllerEpoch(
+		ctx, id, source, target, nativeConversationID, now,
+	)
+	if err != nil || !changed {
+		m.mu.Unlock()
+		return changed, err
+	}
+
+	// Mirror the atomic store write for lifecycle side effects. MarkSpawned will
+	// clear FirstSignalAt and attach the target's process generation once the new
+	// controller is actually live.
+	next := previous
+	next.Mode = target
+	next.Metadata.RuntimeHandleID = ""
+	next.Metadata.RuntimeLaunchID = ""
+	next.Metadata.AgentSessionID = nativeConversationID
+	next.Metadata.ProviderConversationID = nativeConversationID
+	next.Metadata.ControllerGeneration = ""
+	next.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	next.UpdatedAt = now
+	delete(m.flights, id)
+	resolutions := needsInputResolutions(previous, next, now)
+	waitingEvents := m.waitingInputEvents(
+		next, previous.Activity.State, previous.Activity.LastActivityAt, now,
+	)
+	m.mu.Unlock()
+
+	for _, ev := range waitingEvents {
+		m.emitTelemetry(ctx, ev)
+	}
+	m.resolveNotifications(ctx, resolutions...)
+	return true, nil
 }
 
 // MarkTerminated marks a session terminated. Runtime/workspace teardown is the
@@ -694,20 +855,67 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 // session's Docker containers via the optional ContainerReaper (#2652) as its one
 // built-in external side effect.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
-	err := m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated {
-			return cur, false
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		cur.IsTerminated = true
-		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
-		delete(m.flights, id) // runs under m.mu (mutate holds it)
-		return cur, true
-	})
-	if err != nil {
-		return err
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil || !ok {
+			return err
+		}
+		if rec.IsTerminated {
+			m.reapSessionContainers(ctx, id)
+			return nil
+		}
+
+		launchID := rec.Metadata.RuntimeLaunchID
+		sessionRevision := rec.UpdatedAt
+		m.mu.Lock()
+		finalizer := m.usageFinalizer
+		m.mu.Unlock()
+		finalizeSessionUsage(ctx, id, launchID, sessionRevision, finalizer)
+
+		const (
+			terminationChanged = iota
+			terminationApplied
+			terminationAlreadyApplied
+			terminationLaunchChanged
+		)
+		outcome := terminationChanged
+		err = m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+			switch {
+			case cur.IsTerminated:
+				outcome = terminationAlreadyApplied
+				return cur, false
+			case cur.Metadata.RuntimeLaunchID != launchID:
+				outcome = terminationLaunchChanged
+				return cur, false
+			case !cur.UpdatedAt.Equal(sessionRevision):
+				return cur, false
+			default:
+				cur.IsTerminated = true
+				cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
+				delete(m.flights, id) // runs under m.mu (mutate holds it)
+				outcome = terminationApplied
+				return cur, true
+			}
+		})
+		if err != nil {
+			return err
+		}
+		switch outcome {
+		case terminationApplied, terminationAlreadyApplied:
+			m.reapSessionContainers(ctx, id)
+			return nil
+		case terminationLaunchChanged:
+			return fmt.Errorf("lifecycle: runtime launch changed while terminating session %q", id)
+		default:
+			// A same-launch activity transition changed UpdatedAt after usage was
+			// finalized. Retry from a fresh snapshot so termination and usage
+			// finalization commit against the same durable revision.
+			continue
+		}
 	}
-	m.reapSessionContainers(ctx, id)
-	return nil
 }
 
 // reapSessionContainers is the container leg of #2652 (the container-owning
@@ -748,6 +956,35 @@ func (m *Manager) reapSessionContainers(ctx context.Context, id domain.SessionID
 	}
 }
 
+func finalizeSessionUsage(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedRuntimeLaunchID string,
+	expectedSessionRevision time.Time,
+	finalizer sessionUsageFinalizer,
+) {
+	if finalizer == nil {
+		return
+	}
+	if err := finalizer.FinalizeSession(ctx, id, expectedRuntimeLaunchID, expectedSessionRevision); err != nil {
+		slog.Default().Warn("lifecycle: finalize session usage before termination", "session", id, "err", err)
+	}
+}
+
+func reactivateSessionUsage(
+	ctx context.Context,
+	id domain.SessionID,
+	expectedRuntimeLaunchID string,
+	reactivator sessionUsageReactivator,
+) {
+	if reactivator == nil {
+		return
+	}
+	if err := reactivator.ReactivateSession(ctx, id, expectedRuntimeLaunchID); err != nil {
+		slog.Default().Warn("lifecycle: reactivate session usage after launch", "session", id, "err", err)
+	}
+}
+
 // sameActivity reports whether two activity signals describe the same state.
 // LastActivityAt is intentionally ignored: same-state repeats (e.g. a stream
 // of idle notifications) must not rewrite UpdatedAt or fan out a CDC event.
@@ -770,5 +1007,13 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
+	// The chat controller's resume handle. Without this a restart has no thread to
+	// resume and the conversation is stranded — the provider still holds it, but
+	// AO no longer knows its id.
+	set(&base.ProviderConversationID, in.ProviderConversationID)
+	// Assigned rather than set: a relaunch rotates the generation, and the whole
+	// point is that the new value replaces the old one so events from the
+	// controller this one superseded can be told apart.
+	base.ControllerGeneration = in.ControllerGeneration
 	return base
 }

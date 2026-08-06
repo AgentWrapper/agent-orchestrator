@@ -15,6 +15,8 @@ import {
 	sanitizeRendererProperties,
 	startDailyActiveHeartbeat,
 	withTelemetryContext,
+	releaseChannelFrom,
+	versionChannelFrom,
 } from "./telemetry";
 import { ORCHESTRATOR_SPAWN_SOURCES } from "./orchestrator-spawn-sources";
 
@@ -59,6 +61,25 @@ describe("telemetry sanitizers", () => {
 		expect(isDeniedEvent("ao.app.active", ["", "  ", "*"])).toBe(false);
 	});
 
+	it("allowlists only counts and the fixed agent-id list on agent inventory", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.agents_available", {
+			installed_count: 2,
+			authorized_count: 1,
+			supported_count: 23,
+			authorized_agents: "claude-code,codex",
+			// Must be dropped: never part of the contract, and a future caller could
+			// pass a path or a label by mistake.
+			binary_path: "/Users/someone/.local/bin/codex",
+			label: "Codex (someone's machine)",
+		});
+		expect(safe).toEqual({
+			installed_count: 2,
+			authorized_count: 1,
+			supported_count: 23,
+			authorized_agents: "claude-code,codex",
+		});
+	});
+
 	it("allowlists only enum-like fields on update events", async () => {
 		const safe = await sanitizeRendererProperties("ao.renderer.update_failed", {
 			to_version: "0.11.2",
@@ -79,6 +100,64 @@ describe("telemetry sanitizers", () => {
 		// An unrecognized phase is not passed through as-is.
 		const bogus = await sanitizeRendererProperties("ao.renderer.update_failed", { phase: "sideload" });
 		expect(bogus.phase).toBeUndefined();
+	});
+
+	it("reports a support submission with only the destination and outcome", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.support_submitted", {
+			destination: "discord",
+			outcome: "succeeded",
+			// Everything the dialog collects is passed in deliberately: the user's own
+			// bug report, and the diagnostics block that carries machine state.
+			summary: "crashes when I open my repo",
+			details: "stack trace from /Users/me/work/secret-client",
+			diagnostics: { platform: "darwin", appVersion: "0.11.2" },
+		});
+		expect(safe).toEqual({ destination: "discord", outcome: "succeeded" });
+	});
+
+	it("drops an unrecognised support destination rather than forwarding it", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.support_submitted", {
+			destination: "mailto:founder@example.com",
+			outcome: "failed",
+		});
+		expect(safe).toEqual({ outcome: "failed" });
+	});
+
+	it("reports the support open with no properties at all", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.support_opened", {
+			summary: "everything is broken",
+		});
+		expect(safe).toEqual({});
+	});
+
+	it("reports the mobile connect open with only the bridge state", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.mobile_connect_opened", {
+			bridge_enabled: true,
+			// Everything the QR encodes is in scope for leaking here, so it is all
+			// passed in deliberately and must all be dropped.
+			host: "192.168.1.20",
+			port: 3011,
+			password: "hunter2secret",
+		});
+		expect(safe).toEqual({ bridge_enabled: true });
+	});
+
+	it("reports the bridge toggle without the pairing payload", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.mobile_bridge_toggled", {
+			enabled: true,
+			outcome: "succeeded",
+			password: "hunter2secret",
+			host: "192.168.1.20",
+		});
+		expect(safe).toEqual({ enabled: true, outcome: "succeeded" });
+	});
+
+	it("drops an unrecognised toggle outcome rather than forwarding it", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.mobile_bridge_toggled", {
+			enabled: false,
+			outcome: "kind-of-worked",
+		});
+		expect(safe).toEqual({ enabled: false });
 	});
 
 	it("disables every billable PostHog product AO does not consume", () => {
@@ -431,19 +510,83 @@ describe("reserveCapture", () => {
 });
 
 describe("daily active heartbeat", () => {
-	it("reserves one active capture per six-hour UTC slot", () => {
-		const storage = memoryStorage();
+	it("derives the running channel from the version string", () => {
+		expect(versionChannelFrom("0.11.3")).toBe("stable");
+		expect(versionChannelFrom("0.11.3-nightly.5")).toBe("nightly");
+		expect(versionChannelFrom("0.12.0-NIGHTLY.1")).toBe("nightly");
+		// A pinned feature build is not nightly, and an absent version is unknown.
+		expect(versionChannelFrom("0.11.3-feature.42")).toBe("stable");
+		expect(versionChannelFrom("")).toBe("unknown");
+		expect(versionChannelFrom("unknown")).toBe("unknown");
+	});
 
+	it("carries intent and reality as separate context properties", () => {
+		const ctx = buildTelemetryContext("0.11.3", "darwin", "nightly");
+		// opted into nightly, still running a stable binary: the gap is the signal.
+		expect(ctx.release_channel).toBe("nightly");
+		expect(ctx.version_channel).toBe("stable");
+	});
+
+	it("maps the Updates setting to a release channel, not the version string", () => {
+		expect(releaseChannelFrom({ channel: "latest", feature: null })).toBe("stable");
+		expect(releaseChannelFrom({ channel: "nightly", feature: null })).toBe("nightly");
+		// A pinned feature build wins regardless of the underlying channel, which
+		// is what version-string parsing got wrong.
+		expect(releaseChannelFrom({ channel: "latest", feature: 1234 })).toBe("feature");
+		expect(releaseChannelFrom({ channel: "nightly", feature: 1234 })).toBe("feature");
+		expect(releaseChannelFrom(null)).toBe("unknown");
+		expect(releaseChannelFrom({})).toBe("unknown");
+	});
+
+	it("reports only the two channel names on a switch", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.update_channel_changed", {
+			from_channel: "stable",
+			to_channel: "nightly",
+			feature: 1234,
+			branch: "feat/secret-thing",
+		});
+		expect(safe).toEqual({ from_channel: "stable", to_channel: "nightly" });
+	});
+
+	it("drops an unrecognised channel value", async () => {
+		const safe = await sanitizeRendererProperties("ao.renderer.update_channel_changed", {
+			from_channel: "canary",
+			to_channel: "nightly",
+		});
+		expect(safe).toEqual({ to_channel: "nightly" });
+	});
+
+	it("reserves one active capture per UTC day, not per six-hour slot", () => {
+		const storage = memoryStorage();
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T00:05:00.000Z"))).toBe(true);
+		// Every later hour of the same UTC day is refused. Under the old
+		// six-hour slotting, 06:00, 12:00 and 18:00 each reserved again, so one
+		// install could report four times a day.
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T05:59:59.000Z"))).toBe(false);
-		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T06:00:00.000Z"))).toBe(true);
-		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T12:00:00.000Z"))).toBe(true);
-		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T18:00:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T06:00:00.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T12:00:00.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T18:00:00.000Z"))).toBe(false);
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T23:59:59.000Z"))).toBe(false);
 		expect(reserveDailyActiveCapture(storage, new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
 	});
 
-	it("emits at startup and then only after a later UTC slot is observed on user activity", () => {
+	it("treats a slot record left by an older build as today already reported", () => {
+		// The upgrade path: a build that emitted per slot wrote { date, slots }.
+		// Reading it must not hand out a fresh reservation for the same day.
+		const storage = memoryStorage();
+		storage.setItem("ao.telemetry.activeSlotsByDate", JSON.stringify({ date: "2026-07-12", slots: [0] }));
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-12T14:00:00.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(storage, new Date("2026-07-13T00:00:00.000Z"))).toBe(true);
+	});
+
+	it("reserves once per day without storage, so a private-mode window still reports once", () => {
+		expect(reserveDailyActiveCapture(undefined, new Date("2026-07-12T01:00:00.000Z"))).toBe(true);
+		expect(reserveDailyActiveCapture(undefined, new Date("2026-07-12T19:00:00.000Z"))).toBe(false);
+		expect(reserveDailyActiveCapture(undefined, new Date("2026-07-13T01:00:00.000Z"))).toBe(true);
+	});
+
+
+	it("emits once at startup and stays silent for the rest of the UTC day", () => {
 		const storage = memoryStorage();
 		const captured: string[] = [];
 		let now = new Date("2026-07-12T08:00:00.000Z");
@@ -464,21 +607,30 @@ describe("daily active heartbeat", () => {
 			document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
 			expect(captured).toHaveLength(1);
 
+			// Later the same day, focus no longer produces a second event. This is
+			// the four-per-day reduction, and it is the whole point of the change.
 			now = new Date("2026-07-12T12:00:00.000Z");
 			window.dispatchEvent(new Event("focus"));
-			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-12T12:00:00.000Z"]);
+			now = new Date("2026-07-12T20:00:00.000Z");
+			window.dispatchEvent(new Event("focus"));
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z"]);
+
+			// The next UTC day reports again.
+			now = new Date("2026-07-13T09:00:00.000Z");
+			window.dispatchEvent(new Event("focus"));
+			expect(captured).toEqual(["2026-07-12T08:00:00.000Z", "2026-07-13T09:00:00.000Z"]);
 		} finally {
 			stop();
 		}
 	});
 
-	it("retries the same six-hour UTC slot when PostHog rejects the first capture", async () => {
+	it("retries the same UTC day when PostHog rejects the first capture", async () => {
 		const storage = memoryStorage();
 		let attempts = 0;
-		const slotTime = new Date("2026-07-23T08:00:00.000Z");
+		const dayTime = new Date("2026-07-23T08:00:00.000Z");
 		const stop = startDailyActiveHeartbeat({
 			storage,
-			now: () => slotTime,
+			now: () => dayTime,
 			capture: () => {
 				attempts += 1;
 				return attempts > 1;

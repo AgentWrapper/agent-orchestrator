@@ -535,6 +535,14 @@ function daemonEnv(): NodeJS.ProcessEnv {
 		AO_OWNER,
 		AO_APP_RUN_ID: appRunId,
 		AO_BROWSER_RUNTIME_TOKEN: browserRuntimeToken,
+		// Claude Code Chat uses AO's packaged ACP adapter + Node runtime. The
+		// provider executable itself is resolved by the daemon from the user's PATH
+		// and passed through CLAUDE_CODE_EXECUTABLE; it is not part of this resource.
+		AO_ACP_RUNTIME_DIR:
+			process.env.AO_ACP_RUNTIME_DIR ??
+			(app.isPackaged
+				? path.join(process.resourcesPath, "acp-runtime")
+				: path.join(app.getAppPath(), "resources", "acp-runtime")),
 	};
 	// In dev mode, inject isolation defaults so the dev daemon never collides with
 	// the installed app. User-set env vars take priority (checked first).

@@ -8,8 +8,9 @@ INSERT INTO sessions (
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    session_mode, provider_conversation_id, controller_generation,
     created_at, updated_at, is_pinned, pinned_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: UpdateSession :exec
 UPDATE sessions SET
@@ -18,8 +19,35 @@ UPDATE sessions SET
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, updated_at = ?, is_pinned = ?, pinned_at = ?
+    cleanup_generation = ?,
+    provider_conversation_id = ?, controller_generation = ?, updated_at = ?,
+    is_pinned = ?, pinned_at = ?
 WHERE id = ?;
+
+-- name: ClaimChatControllerGeneration :execrows
+-- A Chat controller claims ownership before its event goroutine starts. Provider
+-- projections compare against this value in the same transaction as their write,
+-- so an older controller cannot mutate a session after a replacement takes over.
+UPDATE sessions
+SET controller_generation = ?, updated_at = ?
+WHERE id = ? AND session_mode = 'chat';
+
+-- name: CommitSessionControllerEpoch :execrows
+-- Lifecycle Manager owns this controller-epoch fact. The source-mode CAS keeps
+-- a stale transition from replacing a newer controller, while clearing every
+-- process-specific handle prevents either interface from inheriting the
+-- other's writer identity.
+UPDATE sessions
+SET session_mode = ?,
+    runtime_handle_id = '',
+    runtime_launch_id = '',
+    agent_session_id = ?,
+    provider_conversation_id = ?,
+    controller_generation = '',
+    activity_state = 'idle',
+    activity_last_at = ?,
+    updated_at = ?
+WHERE id = ? AND session_mode = ? AND is_terminated = 0;
 
 -- name: GetSession :one
 SELECT id, project_id, num, issue_id, kind, harness,
@@ -28,7 +56,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    is_pinned, pinned_at, reviewer_harness
+    reviewer_harness, is_pinned, pinned_at,
+    session_mode, provider_conversation_id, controller_generation
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -38,7 +67,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    is_pinned, pinned_at, reviewer_harness
+    reviewer_harness, is_pinned, pinned_at,
+    session_mode, provider_conversation_id, controller_generation
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -48,7 +78,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    is_pinned, pinned_at, reviewer_harness
+    reviewer_harness, is_pinned, pinned_at,
+    session_mode, provider_conversation_id, controller_generation
 FROM sessions ORDER BY project_id, num;
 
 

@@ -1,9 +1,12 @@
 import { create } from "zustand";
 import type { TerminalTarget } from "../types/terminal";
 import {
+	applyDocumentTheme,
+	applyDocumentThemeStyle,
 	readStoredThemePreference,
 	readStoredThemeStyle,
 	resolveTheme,
+	runThemeTransition,
 	systemTheme,
 	themeStorageKey,
 	themeStyleStorageKey,
@@ -61,7 +64,7 @@ type UiState = {
 	/** When true, developer-only surfaces (e.g. Feature Releases) are revealed. Default off. */
 	developerMode: boolean;
 	restartingProjectIds: ReadonlySet<string>;
-	orchestratorReplacementErrors: Record<string, string>;
+	orchestratorReplacementErrors: Record<string, OrchestratorReplacementFailure>;
 	orchestratorStartupErrors: Record<string, string>;
 	// Transient "open the New Task dialog for this project" signal. The nonce
 	// bumps on every request so a repeat press (even for the same project) still
@@ -107,7 +110,7 @@ type UiState = {
 	setBrowserUnseen: (sessionId: string, unseen: boolean) => void;
 	setCommandPaletteOpen: (open: boolean) => void;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
-	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
+	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	setOrchestratorStartupError: (projectId: string, message: string | null) => void;
 	requestNewTask: (projectId: string) => void;
 	requestCreateProject: () => void;
@@ -115,6 +118,12 @@ type UiState = {
 	setActiveShellTerminal: (handleId: string | null) => void;
 	setVisibleTerminalKind: (sessionId: string, kind: TerminalTarget["kind"]) => void;
 	clearVisibleTerminalKind: (sessionId: string) => void;
+};
+
+export type OrchestratorReplacementFailure = {
+	message: string;
+	code?: string;
+	requestId?: string;
 };
 
 const sidebarStorageKey = "ao.sidebar.open";
@@ -156,7 +165,7 @@ function inspectorState(sessions: Record<string, InspectorSessionState>, session
 const initialThemePreference = readStoredThemePreference();
 const initialThemeStyle = readStoredThemeStyle();
 
-export const useUiStore = create<UiState>((set) => ({
+export const useUiStore = create<UiState>((set, get) => ({
 	workbenchTab: "changes",
 	isSidebarOpen: initialSidebarOpen(),
 	inspectorSessions: {},
@@ -177,12 +186,21 @@ export const useUiStore = create<UiState>((set) => ({
 	devSettings: initialDevSettings(),
 	setWorkbenchTab: (workbenchTab) => set({ workbenchTab }),
 	setThemePreference: (themePreference) => {
-		getLocalStorage()?.setItem(themeStorageKey, themePreference);
-		set({ themePreference, resolvedTheme: resolveTheme(themePreference) });
+		if (get().themePreference === themePreference) return;
+		runThemeTransition(() => {
+			const resolvedTheme = resolveTheme(themePreference);
+			getLocalStorage()?.setItem(themeStorageKey, themePreference);
+			applyDocumentTheme(resolvedTheme);
+			set({ themePreference, resolvedTheme });
+		});
 	},
 	setThemeStyle: (themeStyle) => {
-		getLocalStorage()?.setItem(themeStyleStorageKey, themeStyle);
-		set({ themeStyle });
+		if (get().themeStyle === themeStyle) return;
+		runThemeTransition(() => {
+			getLocalStorage()?.setItem(themeStyleStorageKey, themeStyle);
+			applyDocumentThemeStyle(themeStyle);
+			set({ themeStyle });
+		});
 	},
 	openGlobalSettings: () => set({ settingsModal: { scope: "global" } }),
 	openProjectSettings: (projectId) => set({ settingsModal: { scope: "project", projectId } }),
@@ -195,12 +213,16 @@ export const useUiStore = create<UiState>((set) => ({
 		getLocalStorage()?.setItem(developerModeStorageKey, String(developerMode));
 		set({ developerMode });
 	},
-	syncSystemTheme: () =>
-		set((state) => {
-			if (state.themePreference !== "system") return state;
-			const next = systemTheme();
-			return next === state.resolvedTheme ? state : { resolvedTheme: next };
-		}),
+	syncSystemTheme: () => {
+		const { themePreference, resolvedTheme } = get();
+		if (themePreference !== "system") return;
+		const next = systemTheme();
+		if (next === resolvedTheme) return;
+		runThemeTransition(() => {
+			applyDocumentTheme(next);
+			set({ resolvedTheme: next });
+		});
+	},
 	toggleSidebar: () =>
 		set((state) => {
 			const isSidebarOpen = !state.isSidebarOpen;
@@ -271,11 +293,11 @@ export const useUiStore = create<UiState>((set) => ({
 			}
 			return { restartingProjectIds };
 		}),
-	setOrchestratorReplacementError: (projectId, message) =>
+	setOrchestratorReplacementError: (projectId, failure) =>
 		set((state) => {
 			const orchestratorReplacementErrors = { ...state.orchestratorReplacementErrors };
-			if (message) {
-				orchestratorReplacementErrors[projectId] = message;
+			if (failure) {
+				orchestratorReplacementErrors[projectId] = failure;
 			} else {
 				delete orchestratorReplacementErrors[projectId];
 			}

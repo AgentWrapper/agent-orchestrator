@@ -23,6 +23,8 @@ export function AgentPickerSheet({
 	onRefresh,
 	refreshing = false,
 	error,
+	title = "Agent",
+	subtitle = "The CLI that runs this session.",
 }: {
 	/** Dismisses the sheet route. */
 	onClose: () => void;
@@ -32,6 +34,8 @@ export function AgentPickerSheet({
 	onRefresh: () => void;
 	refreshing?: boolean;
 	error?: string | null;
+	title?: string;
+	subtitle?: string;
 }) {
 	const t = useTheme();
 	const s = useThemedStyles(makeStyles);
@@ -48,8 +52,8 @@ export function AgentPickerSheet({
 			ListHeaderComponent={
 				<>
 					<SheetHeader
-						title="Agent"
-						subtitle="The CLI that runs this session."
+						title={title}
+						subtitle={subtitle}
 						right={
 							<Pressable
 								accessibilityRole="button"

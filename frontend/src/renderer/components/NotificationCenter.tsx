@@ -360,6 +360,12 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 						{notifications.map((notification) => {
 							const sessionId = notification.target.sessionId || notification.sessionId;
 							const terminated = Boolean(sessionId) && terminatedIds.has(sessionId);
+							// Restoring only makes sense when an agent is actually paused waiting
+							// on input. PR outcomes (ready_to_merge, pr_merged, pr_closed_unmerged)
+							// describe work that already finished — there is nothing to resume, so
+							// a terminated session behind one of these should stay viewable, not
+							// gated behind a restore action.
+							const offerRestore = terminated && notification.type === "needs_input";
 							return (
 								<NotificationItem
 									highlighted={highlightedIds.has(notification.id) || notification.status === "unread"}
@@ -372,6 +378,7 @@ export function NotificationCenter({ style }: NotificationCenterProps) {
 									restoreDisabled={restoringSessionId !== undefined}
 									sessionsReady={sessionsReady}
 									terminated={terminated}
+									offerRestore={offerRestore}
 								/>
 							);
 						})}
@@ -419,14 +426,18 @@ function NotificationEmpty({ icon: Icon, message }: { icon: typeof Bell; message
 }
 
 /**
- * The whole row is the click target for live sessions. Terminated sessions are
- * not navigable — restore is the only session action. PR titles stay a real
+ * The whole row is the click target for live sessions. A terminated session
+ * behind a `needs_input` notification is not navigable — restore is the only
+ * action, since there is a paused agent to resume. PR-outcome notifications
+ * (`offerRestore` false) describe finished work, so a terminated session stays
+ * viewable there instead of being gated behind restore. PR titles stay a real
  * link so a PR row can open the PR without a separate icon button.
  */
 function NotificationItem({
 	highlighted,
 	meta,
 	notification,
+	offerRestore,
 	onOpenSession,
 	onRestore,
 	restoring,
@@ -437,6 +448,7 @@ function NotificationItem({
 	highlighted: boolean;
 	meta?: { projectName: string; sessionName: string };
 	notification: NotificationDTO;
+	offerRestore: boolean;
 	onOpenSession: (notification: NotificationDTO) => void;
 	onRestore: () => void;
 	restoring: boolean;
@@ -447,7 +459,7 @@ function NotificationItem({
 	const { t } = useTranslation();
 	const Icon = notificationIcon(notification.type);
 	const sessionId = notification.target.sessionId || notification.sessionId;
-	const canOpenSession = Boolean(sessionId) && sessionsReady && !terminated;
+	const canOpenSession = Boolean(sessionId) && sessionsReady && (!terminated || !offerRestore);
 	const copy = notificationCopy(notification, meta?.sessionName);
 	const titleLink = notificationPRTitleLink(notification, copy.title);
 	const showSessionMeta = Boolean(meta?.sessionName) && !notificationMentions(copy, meta?.sessionName ?? "");
@@ -540,7 +552,7 @@ function NotificationItem({
 					<time className="shrink-0 font-mono text-[9px] leading-none text-passive" dateTime={notification.createdAt}>
 						{formatTimeCompact(notification.createdAt)}
 					</time>
-					{terminated && sessionId ? (
+					{offerRestore && sessionId ? (
 						<Tooltip delayDuration={0}>
 							<TooltipTrigger asChild>
 								<button

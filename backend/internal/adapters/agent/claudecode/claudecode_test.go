@@ -11,8 +11,64 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hooksjson"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestNativeConversationIDUsesTheSameClaudeUUIDAcrossInterfaces(t *testing.T) {
+	p := &Plugin{}
+	tuiID, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{
+		ID: "ao-session-1", Metadata: map[string]string{},
+	}, domain.SessionModeTUI, "")
+	if err != nil || !ok || tuiID != claudeSessionUUID("ao-session-1") {
+		t.Fatalf("TUI native id = %q ok=%v err=%v", tuiID, ok, err)
+	}
+	chatID, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{
+		ID: "ao-session-1", Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "stale"},
+	}, domain.SessionModeChat, tuiID)
+	if err != nil || !ok || chatID != tuiID {
+		t.Fatalf("Chat native id = %q ok=%v err=%v", chatID, ok, err)
+	}
+}
+
+func TestNativeConversationExistsRequiresPersistedClaudeTranscript(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+	p := &Plugin{}
+	id := claudeSessionUUID("ao-session-1")
+
+	exists, err := p.NativeConversationExists(context.Background(), ports.SessionRef{}, id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("reserved id without a transcript reported as persisted")
+	}
+
+	projectDir := filepath.Join(configDir, "projects", "-tmp-worktree")
+	if err := os.MkdirAll(projectDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, id+".jsonl"), []byte("{\"type\":\"user\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = p.NativeConversationExists(context.Background(), ports.SessionRef{}, id, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("persisted transcript was not found")
+	}
+
+	// Project/session env is the environment Claude itself receives and must win
+	// over the daemon's ambient configuration directory.
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	exists, err = p.NativeConversationExists(context.Background(), ports.SessionRef{}, id,
+		map[string]string{"CLAUDE_CONFIG_DIR": configDir})
+	if err != nil || !exists {
+		t.Fatalf("session env transcript lookup: exists=%v err=%v", exists, err)
+	}
+}
 
 func TestGetLaunchCommandBypassWithPrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "claude"}
