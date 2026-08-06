@@ -267,7 +267,7 @@ export function Sidebar({
 			overlay={isOverlay}
 			className={cn(
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
-				isOverlay && "z-sidebar-preview shadow-2xl",
+				isOverlay && "z-sidebar-preview opacity-90 shadow-2xl",
 				isOverlay || !underTopbar
 					? "top-0 h-svh!"
 					: "top-(--sidebar-chrome-offset) h-[calc(100svh-var(--sidebar-chrome-offset))]!",

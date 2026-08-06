@@ -81,6 +81,7 @@ const isWindows = isWindowsPlatform();
 const isLinux = isLinuxPlatform();
 const framedAppTopbar = usesFramedAppTopbar();
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
+const SIDEBAR_PEEK_CLOSE_DELAY_MS = 80;
 
 // Persistent app shell: the Sidebar + shared state survive route changes; only
 // the <Outlet> content (board / session / settings / …) swaps. Lifted out of
@@ -189,13 +190,12 @@ function ShellLayout() {
 	}, [cancelSidebarPeekClose, isSidebarOpen]);
 
 	const scheduleSidebarPeekClose = useCallback(() => {
-		if (isSidebarOpen) return;
-		cancelSidebarPeekClose();
+		if (isSidebarOpen || sidebarPeekCloseTimerRef.current !== undefined) return;
 		sidebarPeekCloseTimerRef.current = window.setTimeout(() => {
 			setIsSidebarPeekOpen(false);
 			sidebarPeekCloseTimerRef.current = undefined;
-		}, 140);
-	}, [cancelSidebarPeekClose, isSidebarOpen]);
+		}, SIDEBAR_PEEK_CLOSE_DELAY_MS);
+	}, [isSidebarOpen]);
 
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
