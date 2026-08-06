@@ -1157,7 +1157,11 @@ func (m *Manager) collectOptionalAgentHandoff(ctx context.Context, store ports.A
 		}
 		return settled, settleErr
 	}
-	request := buildSourceHandoffRequest(sw, candidatePath)
+	aoExecutable := hookBinaryName
+	if executable, executableErr := m.executable(); executableErr == nil && filepath.IsAbs(executable) {
+		aoExecutable = executable
+	}
+	request := buildSourceHandoffRequest(sw, candidatePath, aoExecutable)
 	if safe, safeErr := m.sourceGenerationCanReceiveCoordination(handoffCtx, rec); safeErr != nil || !safe {
 		updated, settleErr := m.settleOptionalAgentHandoff(ctx, store, sw, domain.AgentHandoffUnavailable)
 		if settleErr != nil {
@@ -1372,12 +1376,26 @@ func (m *Manager) composerIsEmpty(ctx context.Context, handle ports.RuntimeHandl
 	return detector.ComposerIsEmpty(output), nil
 }
 
-func buildSourceHandoffRequest(sw domain.AgentSwitch, candidatePath string) string {
+func buildSourceHandoffRequest(sw domain.AgentSwitch, candidatePath, aoExecutable string) string {
+	arguments := []string{
+		"session", "handoff", "submit",
+		"--switch", string(sw.ID),
+		"--source-generation", string(sw.SourceGenerationID),
+		"--file", candidatePath,
+	}
 	params, _ := json.MarshalIndent(struct {
-		SwitchID         string `json:"switch"`
-		SourceGeneration string `json:"sourceGeneration"`
-		CandidateFile    string `json:"candidateFile"`
-	}{SwitchID: string(sw.ID), SourceGeneration: string(sw.SourceGenerationID), CandidateFile: candidatePath}, "", "  ")
+		SwitchID         string   `json:"switch"`
+		SourceGeneration string   `json:"sourceGeneration"`
+		CandidateFile    string   `json:"candidateFile"`
+		AOExecutable     string   `json:"aoExecutable"`
+		Arguments        []string `json:"arguments"`
+	}{
+		SwitchID:         string(sw.ID),
+		SourceGeneration: string(sw.SourceGenerationID),
+		CandidateFile:    candidatePath,
+		AOExecutable:     aoExecutable,
+		Arguments:        arguments,
+	}, "", "  ")
 	return fmt.Sprintf(`<ao-handoff-request switch-id=%s source-generation=%s>
 AO is preparing to switch this session to %s. This is internal coordination, not a new human request. Do not start new implementation work and do not modify the repository.
 
@@ -1389,7 +1407,7 @@ If you can respond, write exactly one JSON object (schemaVersion 1, maximum 64 K
 %s
 </ao-handoff-submission-parameters>
 
-Then run ao session handoff submit with the JSON values as --switch, --source-generation, and --file respectively. Decode standard JSON Unicode escapes such as \u003c and \u003e to their literal characters.
+Then invoke the exact executable in aoExecutable with the arguments array in order. Do not substitute a bare ao command: older sessions may not have AO on PATH. Decode standard JSON Unicode escapes such as \u003c and \u003e to their literal characters.
 
 The switch will continue with AO's deterministic continuation if you cannot provide this optional semantic handoff.
 </ao-handoff-request>`, coordinationQuotedAttribute(string(sw.ID)), coordinationQuotedAttribute(string(sw.SourceGenerationID)), escapeAOCoordinationTags(string(sw.TargetHarness)), params)
