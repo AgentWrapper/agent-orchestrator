@@ -9,8 +9,6 @@ export function buildWindowsAppMenuTemplate(): MenuItemConstructorOptions[] {
 				{ role: "redo" },
 				{ type: "separator" },
 				{ role: "cut" },
-				{ role: "copy" },
-				{ role: "paste" },
 				{ role: "selectAll" },
 			],
 		},
