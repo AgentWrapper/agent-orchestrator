@@ -33,6 +33,119 @@ paths:
       summary: Return cached supported and locally installed agent adapters
       tags:
       - agents
+  /api/v1/agents/{agent}/models:
+    get:
+      operationId: getAgentModels
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      - description: Optional project identifier used as the model-catalog cache scope.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project identifier used as the model-catalog cache
+            scope.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the cached model picker for one agent, discovering it on first
+        use
+      tags:
+      - agents
+  /api/v1/agents/{agent}/models/refresh:
+    post:
+      operationId: refreshAgentModels
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      - description: Optional project identifier used as the model-catalog cache scope.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project identifier used as the model-catalog cache
+            scope.
+          type: string
+      - description: When true, compare executable and config metadata before running
+          discovery.
+        in: query
+        name: revalidate
+        schema:
+          description: When true, compare executable and config metadata before running
+            discovery.
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Refresh and cache the model picker for one agent
+      tags:
+      - agents
   /api/v1/agents/{agent}/probe:
     post:
       operationId: probeAgent
@@ -730,6 +843,55 @@ paths:
       summary: Fetch one orchestrator session
       tags:
       - sessions
+  /api/v1/orchestrators/delegate:
+    post:
+      operationId: delegateTask
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DelegateTaskRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegateTaskResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start a worker task and ask the orchestrator to title it
+      tags:
+      - sessions
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -993,6 +1155,12 @@ paths:
         schema:
           description: PR number.
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MergePRRequest'
+        required: true
       responses:
         "200":
           content:
@@ -1000,6 +1168,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/MergePRResponse'
           description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
         "404":
           content:
             application/json:
@@ -1452,6 +1626,83 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Configure whether PR completion terminates the session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/pin:
+    delete:
+      operationId: unpinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Unpin a session
+      tags:
+      - sessions
+    post:
+      operationId: pinSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Pin a session
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/pr:
@@ -2689,6 +2940,8 @@ components:
       type: object
     AgentConfig:
       properties:
+        mode:
+          type: string
         model:
           type: string
         permissions:
@@ -2711,6 +2964,61 @@ components:
       required:
       - id
       - label
+      type: object
+    AgentModelInfo:
+      properties:
+        id:
+          type: string
+        isDefault:
+          type: boolean
+        label:
+          type: string
+        provider:
+          type: string
+      required:
+      - id
+      - label
+      type: object
+    AgentModelsResponse:
+      properties:
+        agentId:
+          type: string
+        allowCustom:
+          type: boolean
+        binaryVersion:
+          type: string
+        fetchedAt:
+          format: date-time
+          type: string
+        models:
+          items:
+            $ref: '#/components/schemas/AgentModelInfo'
+          type: array
+        refreshRecommended:
+          type: boolean
+        selectionMode:
+          enum:
+          - catalog
+          - text
+          - mode
+          type: string
+        source:
+          type: string
+        stale:
+          type: boolean
+        validatedAt:
+          format: date-time
+          type: string
+        warning:
+          type: string
+      required:
+      - agentId
+      - selectionMode
+      - models
+      - allowCustom
+      - source
+      - fetchedAt
+      - stale
       type: object
     BrowserCommandRequest:
       properties:
@@ -2850,12 +3158,19 @@ components:
           type: string
         id:
           type: string
+        isPinned:
+          type: boolean
         isTerminated:
           type: boolean
         issueId:
           type: string
         kind:
           type: string
+        pinnedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         previewRevision:
           format: int64
           type: integer
@@ -2917,6 +3232,7 @@ components:
       - terminateOnPrMerge
       - createdAt
       - updatedAt
+      - isPinned
       - status
       - prs
       type: object
@@ -2951,6 +3267,59 @@ components:
       - kind
       - path
       - resolveError
+      type: object
+    DelegateTaskRequest:
+      properties:
+        agent:
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          - fake
+          type: string
+        brief:
+          maxLength: 4096
+          type: string
+        model:
+          maxLength: 256
+          type: string
+        projectId:
+          type: string
+      required:
+      - projectId
+      - brief
+      type: object
+    DelegateTaskResponse:
+      properties:
+        ok:
+          type: boolean
+        orchestratorId:
+          type: string
+        workerId:
+          type: string
+      required:
+      - ok
+      - workerId
       type: object
     DevImportProjectsConflict:
       properties:
@@ -3248,6 +3617,18 @@ components:
           type: string
       required:
       - status
+      type: object
+    MergePRRequest:
+      properties:
+        expectedHeadSha:
+          minLength: 40
+          type: string
+        prUrl:
+          minLength: 1
+          type: string
+      required:
+      - prUrl
+      - expectedHeadSha
       type: object
     MergePRResponse:
       properties:

@@ -8,6 +8,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
@@ -396,6 +397,26 @@ type SendSessionMessageResponse struct {
 	Message   string           `json:"message"`
 }
 
+// DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
+// An omitted agent tells the orchestrator to use the project's worker default.
+// Attachments are intentionally absent from this MVP contract: delegation uses
+// the string-only guarded messenger and cannot safely hand image bytes to a
+// worker that does not exist yet without a durable attachment store.
+type DelegateTaskRequest struct {
+	ProjectID domain.ProjectID    `json:"projectId"`
+	Brief     string              `json:"brief" maxLength:"4096"`
+	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
+	Model     string              `json:"model,omitempty" maxLength:"256"`
+}
+
+// DelegateTaskResponse confirms which worker was spawned and, when available,
+// which orchestrator received the follow-up title request.
+type DelegateTaskResponse struct {
+	OK             bool             `json:"ok"`
+	WorkerID       domain.SessionID `json:"workerId"`
+	OrchestratorID domain.SessionID `json:"orchestratorId,omitempty"`
+}
+
 // SessionPRFacts is the pull-request read shape returned under session PR routes.
 type SessionPRFacts struct {
 	URL            string                `json:"url"`
@@ -652,6 +673,25 @@ type RefreshAgentsResponse = agentsvc.Inventory
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
 
+// AgentModelsQuery scopes a model catalog to a project where providers may be
+// configured per workspace.
+type AgentModelsQuery struct {
+	ProjectID string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+}
+
+// AgentModelsRefreshQuery controls forced refresh versus cheap background
+// revalidation for a project-scoped model catalog.
+type AgentModelsRefreshQuery struct {
+	ProjectID  string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+	Revalidate bool   `query:"revalidate,omitempty" description:"When true, compare executable and config metadata before running discovery."`
+}
+
+// AgentModelsResponse is the normalized model picker for one agent.
+type AgentModelsResponse = ports.AgentModelCatalog
+
+// AgentModelInfo is one selectable model or agent-owned mode.
+type AgentModelInfo = ports.AgentModelInfo
+
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
 
@@ -794,6 +834,12 @@ type DevImportProjectsResponse struct {
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.
 type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`
+}
+
+// MergePRRequest is the body of POST /api/v1/prs/{id}/merge.
+type MergePRRequest struct {
+	PRURL           string `json:"prUrl" minLength:"1"`
+	ExpectedHeadSHA string `json:"expectedHeadSha" minLength:"40"`
 }
 
 // MergePRResponse is the body of POST /api/v1/prs/{id}/merge (200).

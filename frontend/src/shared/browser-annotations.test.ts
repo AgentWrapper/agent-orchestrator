@@ -72,26 +72,29 @@ describe("formatBrowserAnnotationMessage", () => {
 		const message = formatBrowserAnnotationMessage({
 			viewId: "42:sess-1",
 			instruction: "Make the save button blue and larger.",
-			context: {
-				url: "http://localhost:5173/settings",
-				title: "Settings",
-				tag: "button",
-				id: "save",
-				classes: ["primary"],
-				selector: "button#save",
-				rect: { x: 16, y: 24, width: 140, height: 36 },
-				visibleText: "Save changes",
-				ariaLabel: "Save profile",
-				nearbyText: ["Profile settings"],
-				computedStyle: {
-					display: "inline-flex",
-					position: "static",
-					color: "rgb(255, 255, 255)",
-					backgroundColor: "rgb(0, 0, 0)",
-					fontSize: "14px",
-					fontWeight: "600",
-					padding: "8px 12px",
-					margin: "0px",
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/settings",
+					title: "Settings",
+					tag: "button",
+					id: "save",
+					classes: ["primary"],
+					selector: "button#save",
+					rect: { x: 16, y: 24, width: 140, height: 36 },
+					visibleText: "Save changes",
+					ariaLabel: "Save profile",
+					nearbyText: ["Profile settings"],
+					computedStyle: {
+						display: "inline-flex",
+						position: "static",
+						color: "rgb(255, 255, 255)",
+						backgroundColor: "rgb(0, 0, 0)",
+						fontSize: "14px",
+						fontWeight: "600",
+						padding: "8px 12px",
+						margin: "0px",
+					},
 				},
 			},
 		});
@@ -108,20 +111,77 @@ describe("formatBrowserAnnotationMessage", () => {
 		const message = formatBrowserAnnotationMessage({
 			viewId: "42:sess-1",
 			instruction: "Change this. ".repeat(800),
-			context: {
-				url: "http://localhost:5173/",
-				title: "Preview",
-				tag: "div",
-				classes: [],
-				selector: "body > div:nth-of-type(1)",
-				rect: { x: 0, y: 0, width: 100, height: 100 },
-				visibleText: "Long visible text ".repeat(500),
-				nearbyText: ["Nearby copy ".repeat(500)],
-				computedStyle: {},
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					title: "Preview",
+					tag: "div",
+					classes: [],
+					selector: "body > div:nth-of-type(1)",
+					rect: { x: 0, y: 0, width: 100, height: 100 },
+					visibleText: "Long visible text ".repeat(500),
+					nearbyText: ["Nearby copy ".repeat(500)],
+					computedStyle: {},
+				},
 			},
 		});
 
 		expect(message.length).toBeLessThanOrEqual(MAX_BROWSER_ANNOTATION_MESSAGE_LENGTH);
 		expect(message).toContain("[truncated]");
+	});
+
+	it("lists every element for a multi-element selection", () => {
+		const elementContext = (overrides: Record<string, unknown>) => ({
+			url: "http://localhost:5173/",
+			tag: "button",
+			classes: [],
+			selector: "button",
+			rect: { x: 10, y: 20, width: 80, height: 30 },
+			nearbyText: [],
+			computedStyle: {},
+			...overrides,
+		});
+		const message = formatBrowserAnnotationMessage({
+			viewId: "1:sess-1",
+			instruction: "Align these two buttons.",
+			selection: {
+				kind: "elements",
+				contexts: [
+					elementContext({ id: "save", selector: "button#save" }),
+					elementContext({ id: "cancel", selector: "button#cancel" }),
+				],
+			},
+		});
+
+		expect(message).toContain("The user selected 2 elements in the AO browser preview and asked for a change.");
+		expect(message).toContain("Selected elements (2) at http://localhost:5173/:");
+		expect(message).toContain("1. button#save (selector: button#save, bounds: x=10, y=20, width=80, height=30)");
+		expect(message).toContain("2. button#cancel (selector: button#cancel, bounds: x=10, y=20, width=80, height=30)");
+	});
+
+	it("pluralizes correctly for a single-element multi-selection", () => {
+		const message = formatBrowserAnnotationMessage({
+			viewId: "1:sess-1",
+			instruction: "Fix this element.",
+			selection: {
+				kind: "elements",
+				contexts: [
+					{
+						url: "http://localhost:5173/",
+						tag: "button",
+						classes: [],
+						selector: "button#fix-me",
+						rect: { x: 10, y: 20, width: 80, height: 30 },
+						nearbyText: [],
+						computedStyle: {},
+					},
+				],
+			},
+		});
+
+		expect(message).toContain("The user selected 1 element in the AO browser preview and asked for a change.");
+		expect(message).toContain("Selected element (1) at http://localhost:5173/:");
+		expect(message).not.toContain("1 elements");
 	});
 });

@@ -303,12 +303,18 @@ export function prCardPresentation(pr: SessionPRSummary): PRCardPresentation {
 		primary = cardStatus("review", "pr.card.changesRequested", "warning", reviewSummary(pr), reviewLinks(pr));
 	} else if (pr.review.decision === "review_required") {
 		primary = cardStatus("review", "pr.card.reviewRequired", "review", appI18n.t("pr.card.reviewRequiredDetail"));
-	} else if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		primary = cardStatus("merge", "pr.card.mergeBlocked", "warning", mergeSummary(pr), mergeLinks(pr));
 	} else if (pr.ci.state === "pending") {
 		primary = cardStatus("ci", "pr.card.checksPending", "neutral", undefined, [], prChecksUrl(pr), true);
 	} else if (pr.ci.state === "unknown") {
 		primary = cardStatus("ci", "pr.card.checksLoading", "passive", undefined, [], prChecksUrl(pr), true);
+	} else if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
+		primary = cardStatus(
+			"merge",
+			visibleMergeReasons(pr).length === 0 ? "pr.card.mergeUnavailable" : "pr.card.mergeBlocked",
+			"warning",
+			mergeSummary(pr),
+			mergeLinks(pr),
+		);
 	} else if (pr.state === "draft") {
 		primary = cardStatus("lifecycle", "pr.card.draft", "neutral");
 	} else if (pr.mergeability.state === "mergeable") {
@@ -342,6 +348,7 @@ function cardStatus(
 		| "pr.card.changesRequested"
 		| "pr.card.reviewRequired"
 		| "pr.card.mergeBlocked"
+		| "pr.card.mergeUnavailable"
 		| "pr.card.checksPending"
 		| "pr.card.checksLoading"
 		| "pr.card.draft"
@@ -498,7 +505,7 @@ function mergeOverflowLabel(pr: SessionPRSummary): string | undefined {
 		return overflowLabel(pr.mergeability.conflictFiles?.length ?? 0, 3, "file");
 	}
 	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		return overflowLabel(pr.mergeability.reasons.length, 3, "reason");
+		return overflowLabel(visibleMergeReasons(pr).length, 3, "reason");
 	}
 	return undefined;
 }
@@ -512,7 +519,7 @@ function mergeLinkTotal(pr: SessionPRSummary): number {
 		return conflictFileCount > 0 ? conflictFileCount : mergeLinks(pr).length;
 	}
 	if (pr.mergeability.state === "blocked" || pr.mergeability.state === "unstable") {
-		return pr.mergeability.reasons.length;
+		return visibleMergeReasons(pr).length;
 	}
 	return 0;
 }
@@ -667,7 +674,7 @@ function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "mer
 	const reasonLinks =
 		fileLinks.length > 0 || kind === "merge_conflict"
 			? []
-			: pr.mergeability.reasons.slice(0, 3).map((reason) => ({
+			: visibleMergeReasons(pr).slice(0, 3).map((reason) => ({
 					label: mergeReasonLabel(reason),
 					href,
 				}));
@@ -676,6 +683,13 @@ function mergeAttentionLinks(pr: SessionPRSummary, kind: "merge_conflict" | "mer
 			? [{ label: appI18n.t("pr.merge.conflicts"), href, title: openConflicts }]
 			: [];
 	return fileLinks.length > 0 ? fileLinks : reasonLinks.length > 0 ? reasonLinks : fallbackLink;
+}
+
+// `blocked_by_provider` is an internal fallback for a host verdict AO cannot
+// explain more precisely. It is not an actionable reason, so cards summarize
+// it as merge availability instead of exposing implementation terminology.
+function visibleMergeReasons(pr: SessionPRSummary): string[] {
+	return pr.mergeability.reasons.filter((reason) => reason !== "blocked_by_provider");
 }
 
 function mergeConflictUrl(pr: SessionPRSummary): string | undefined {

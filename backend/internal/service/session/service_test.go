@@ -143,6 +143,18 @@ func (f *fakeStore) RenameSession(_ context.Context, id domain.SessionID, displa
 	return true, nil
 }
 
+func (f *fakeStore) SetSessionPinned(_ context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error) {
+	r, ok := f.sessions[id]
+	if !ok {
+		return false, nil
+	}
+	r.IsPinned = isPinned
+	r.PinnedAt = pinnedAt
+	r.UpdatedAt = updatedAt
+	f.sessions[id] = r
+	return true, nil
+}
+
 func (f *fakeStore) SetSessionPreviewURL(_ context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error) {
 	r, ok := f.sessions[id]
 	if !ok {
@@ -260,6 +272,45 @@ func TestSessionRenameUpdatesDisplayName(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"].DisplayName; got != "Fix issue #90" {
 		t.Fatalf("display name = %q, want trimmed rename", got)
+	}
+}
+
+func TestSessionPinAndUnpin(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer"}
+
+	sess, err := (&Service{store: st, clock: time.Now}).Pin(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.IsPinned || sess.PinnedAt == nil {
+		t.Fatalf("pin was not persisted: session=%+v", sess)
+	}
+	if !st.sessions["mer-1"].IsPinned || st.sessions["mer-1"].PinnedAt == nil {
+		t.Fatalf("pin was not stored: session=%+v", st.sessions["mer-1"])
+	}
+
+	sess, err = (&Service{store: st, clock: time.Now}).Unpin(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.IsPinned || sess.PinnedAt != nil {
+		t.Fatalf("unpin was not persisted: session=%+v", sess)
+	}
+	if st.sessions["mer-1"].IsPinned || st.sessions["mer-1"].PinnedAt != nil {
+		t.Fatalf("unpin was not stored: session=%+v", st.sessions["mer-1"])
+	}
+}
+
+func TestSessionPinUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).Pin(context.Background(), "ghost-1"); err == nil {
+		t.Fatal("expected missing session error")
+	}
+}
+
+func TestSessionUnpinUnknownSession(t *testing.T) {
+	if _, err := (&Service{store: newFakeStore()}).Unpin(context.Background(), "ghost-1"); err == nil {
+		t.Fatal("expected missing session error")
 	}
 }
 
@@ -705,8 +756,8 @@ func TestWorkspaceFilesIncludeWorkspaceProjectChildRepoDiffs(t *testing.T) {
 	if detail.CompareMode != WorkspaceCompareBase || detail.CompareBaseSHA != childBase {
 		t.Fatalf("child detail compare = mode:%q sha:%q, want base %s", detail.CompareMode, detail.CompareBaseSHA, childBase)
 	}
-	if detail.CompareBaseRef != "" {
-		t.Fatalf("child detail compare ref = %q, want empty because worktree rows store only a SHA", detail.CompareBaseRef)
+	if detail.CompareBaseRef != "main" {
+		t.Fatalf("child detail compare ref = %q, want main", detail.CompareBaseRef)
 	}
 }
 
@@ -834,6 +885,11 @@ func TestWorkspaceBaseRefCandidatesPreferRemoteDefault(t *testing.T) {
 	want := []string{"origin/main", "refs/remotes/origin/main", "main"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("workspace base candidates = %#v, want %#v", got, want)
+	}
+
+	got = workspaceBaseRefCandidates("")
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("empty workspace base candidates = %#v, want %#v", got, want)
 	}
 }
 

@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionInspector } from "./SessionInspector";
-import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
+import { sessionScmSummaryQueryKey, type SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { sessionWorkspaceFilesQueryKey } from "../hooks/useSessionWorkspaceFiles";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import type { PRState, PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
@@ -19,6 +19,10 @@ const { getMock, navigateMock, patchMock, putMock, postMock } = vi.hoisted(() =>
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
+}));
+
+vi.mock("../lib/preview-mode", () => ({
+	usesPreviewWorkspaceData: false,
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -284,19 +288,74 @@ describe("SessionInspector PR section", () => {
 	});
 
 	it("uses the singular heading and shows enriched facts for a single PR", () => {
-		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />);
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />, undefined, (client) => {
+			client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [prSummary(7, "open")]);
+		});
 
 		expect(screen.getByText("Pull request")).toBeInTheDocument();
 		expect(screen.queryByText(/Pull requests \(/)).not.toBeInTheDocument();
 		expect(prSection("Pull request").getByText("PR #7")).toBeInTheDocument();
 		expect(prSection("Pull request").getByText("Ready to merge")).toBeInTheDocument();
 		expect(prSection("Pull request").getByText("Checks passing")).toBeInTheDocument();
-		expect(prSection("Pull request").getByRole("link", { name: "do the thing" })).toHaveClass("text-sm");
-		expect(prSection("Pull request").getByRole("link", { name: "do the thing" })).toHaveAttribute(
+		expect(prSection("Pull request").getByRole("link", { name: "PR 7" })).toHaveClass("text-sm");
+		expect(prSection("Pull request").getByRole("link", { name: "PR 7" })).toHaveAttribute(
 			"href",
-			"https://example.com/pr/7",
+			"https://github.com/acme/repo/pull/7",
 		);
 		expect(prSection("Pull request").getByText("open")).toHaveClass("text-[9px]", "leading-none");
+		expect(prSection("Pull request").getByRole("button", { name: "Merge PR #7" })).toBeInTheDocument();
+	});
+
+	it("merges a ready pull request directly through the daemon", async () => {
+		const readyPR = prSummary(7, "open", {
+			url: "https://example.com/pr/7",
+			headSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		});
+		renderWithQuery(<SessionInspector session={session([pr(7, "open")])} />, undefined, (client) => {
+			client.setQueryData(sessionScmSummaryQueryKey("sess-1"), [readyPR]);
+		});
+
+		const mergeButton = screen.getByRole("button", { name: "Merge PR #7" });
+		expect(mergeButton).toBeEnabled();
+		fireEvent.click(mergeButton);
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/prs/{id}/merge", {
+				params: { path: { id: "7" } },
+				body: {
+					prUrl: "https://example.com/pr/7",
+					expectedHeadSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				},
+			}),
+		);
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	});
+
+	it("does not offer Merge when the pull request is not ready", () => {
+		renderWithQuery(
+			<SessionInspector
+				session={session([
+					pr(7, "open", {
+						ci: "failing",
+						mergeability: "blocked",
+					}),
+				])}
+			/>,
+		);
+
+		expect(screen.queryByRole("button", { name: "Merge PR #7" })).not.toBeInTheDocument();
+	});
+
+	it("uses the state chip as the single merged-state indicator", () => {
+		renderWithQuery(<SessionInspector session={session([pr(7, "merged")], { status: "merged" })} />);
+
+		const card = prSection("Pull request").getByText("PR #7").closest("article") as HTMLElement;
+		expect(within(card).getByText("merged", { exact: true })).toHaveClass(
+			"border-border-strong",
+			"bg-overlay",
+			"text-success",
+		);
+		expect(within(card).queryByText("Pull request merged")).not.toBeInTheDocument();
 	});
 
 	it("shows the empty state when there are no PRs", () => {
@@ -851,15 +910,36 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("reviewer")).not.toBeInTheDocument();
 	});
 
-	it("places not-run status beside the PR number without an aggregate status chip", async () => {
+	it("hides review summary sections when no review data exists", async () => {
+		mockCommonGets([], "", []);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByRole("button", { name: "Run review" })).toBeInTheDocument();
+		expect(screen.queryByText("AO code reviews")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reviews on the pull request")).not.toBeInTheDocument();
+	});
+
+	it("hides AO code reviews until a review run has been triggered", async () => {
 		mockCommonGets([], "", [reviewState(3, "needs_review", "abc123")]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
+		expect(await screen.findByRole("button", { name: "Run review" })).toBeInTheDocument();
+		expect(screen.queryByText("AO code reviews")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
+	});
+
+	it("shows AO code reviews for verdict-only review states", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "changes_requested", "abc123")]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
 		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
-		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
-		expect(screen.getAllByText("Not run")).toHaveLength(1);
+		expect(screen.getByText("Changes requested")).toBeInTheDocument();
 	});
 
 	it("shows eligible and up-to-date open PR review rows", async () => {
@@ -873,16 +953,14 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(screen.getByRole("button", { name: /Select reviewer agent/ })).toHaveTextContent("codex");
-		expect(await screen.findByText("Reviewable change 3")).toBeInTheDocument();
-		expect(screen.getByText("#3 · Not run")).toBeInTheDocument();
-		expect(screen.getByText("Reviewable change 4")).toBeInTheDocument();
+		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
+		expect(await screen.findByText("Reviewable change 4")).toBeInTheDocument();
 		expect(
 			within(screen.getByText("Reviewable change 4").closest("[data-testid='review-pr-row']") as HTMLElement).getByText(
 				"Approved",
 			),
 		).toBeInTheDocument();
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
-		expect(screen.getAllByText("Not run")).not.toHaveLength(0);
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
@@ -922,6 +1000,23 @@ describe("SessionInspector summary reviews", () => {
 
 		expect(await screen.findByTestId("review-run-summary")).not.toHaveClass("line-clamp-4");
 		expect(screen.queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
+	});
+
+	it("renders AO review summaries as Markdown", async () => {
+		mockCommonGets([], "reviewer-pane", [
+			{
+				...reviewState(3, "up_to_date", "abc123"),
+				latestRun: { ...approvedReview, body: "Fix **auth validation**.\n\n- Add tests" },
+			},
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		const summary = await screen.findByTestId("review-run-summary");
+		expect(within(summary).getByText("auth validation").tagName).toBe("STRONG");
+		expect(within(summary).getByText("Add tests").tagName).toBe("LI");
+		expect(summary).not.toHaveTextContent("**auth validation**");
 	});
 
 	// An AO pass only gets a review-comment anchor once it is submitted to
@@ -1046,10 +1141,63 @@ describe("SessionInspector summary reviews", () => {
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
 
-		// Both sources sit in one panel now, so the PR reviews need no navigation.
+		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
 		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
+		expect(screen.getByText("Reviews on the pull request")).toBeInTheDocument();
 		expect(screen.queryByText("No one has reviewed this pull request yet.")).not.toBeInTheDocument();
+	});
+
+	it("renders PR review summaries as Markdown", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "up_to_date", "sha-1")]);
+		const previous = getMock.getMockImplementation()!;
+		getMock.mockImplementation(async (path: string, opts?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/pr") {
+				return {
+					data: {
+						prs: [
+							{
+								number: 3,
+								title: "Reviewable change 3",
+								url: "https://example.com/pr/3",
+								htmlUrl: "https://example.com/pr/3",
+								state: "open",
+								ci: { state: "passing", failingChecks: [], prUrl: "https://example.com/pr/3" },
+								mergeability: {
+									state: "mergeable",
+									reasons: [],
+									prUrl: "https://example.com/pr/3",
+									conflictFiles: [],
+								},
+								review: {
+									decision: "approved",
+									hasUnresolvedHumanComments: false,
+									reviews: [
+										{
+											reviewerId: "maya",
+											verdict: "approved",
+											submittedAt: "2026-06-16T11:00:00Z",
+											body: "Looks **ready**.\n\n1. Ship it",
+											reviewUrl: "https://example.com/pr/3#pullrequestreview-456",
+										},
+									],
+									unresolvedBy: [],
+								},
+							},
+						],
+					},
+				};
+			}
+			return previous(path, opts);
+		});
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		const summary = await screen.findByTestId("github-review-summary");
+		expect(within(summary).getByText("ready").tagName).toBe("STRONG");
+		expect(within(summary).getByText("Ship it").tagName).toBe("LI");
+		expect(summary).not.toHaveTextContent("**ready**");
 	});
 
 	it("persists the chosen reviewer for the session and uses it for the run", async () => {
@@ -1250,7 +1398,12 @@ describe("SessionInspector summary reviews", () => {
 	});
 
 	it("shows the reviewer identity and aggregate verdict", async () => {
-		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "changes_requested", "abc123")]);
+		mockCommonGets([], "reviewer-pane", [
+			{
+				...reviewState(3, "changes_requested", "abc123"),
+				latestRun: { ...approvedReview, verdict: "changes_requested", body: "Please fix auth." },
+			},
+		]);
 
 		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
 		await openReviewsSection();
