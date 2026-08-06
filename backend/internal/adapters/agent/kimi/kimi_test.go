@@ -404,6 +404,78 @@ default_model = "kimi-code/kimi-for-coding"
 	}
 }
 
+func TestGetAgentHooksSeedsAOManagedCredentialsFromUserKimiHome(t *testing.T) {
+	workspace := t.TempDir()
+	userHome := t.TempDir()
+	aoHome := t.TempDir()
+	t.Setenv(kimiCodeHomeEnv, userHome)
+	userCredentials := []byte(`{"access_token":"user-token","refresh_token":"refresh-token"}`)
+	userCredentialsPath := filepath.Join(userHome, "credentials", "kimi-code.json")
+	if err := os.MkdirAll(filepath.Dir(userCredentialsPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userCredentialsPath, userCredentials, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{kimiCodeHomeEnv: aoHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	targetPath := filepath.Join(aoHome, "credentials", "kimi-code.json")
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read AO credentials: %v", err)
+	}
+	if string(got) != string(userCredentials) {
+		t.Fatalf("AO credentials = %s, want %s", got, userCredentials)
+	}
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
+		t.Fatalf("AO credentials permissions = %o, want %o", got, want)
+	}
+}
+
+func TestGetAgentHooksPreservesExistingAOManagedCredentials(t *testing.T) {
+	workspace := t.TempDir()
+	userHome := t.TempDir()
+	aoHome := t.TempDir()
+	t.Setenv(kimiCodeHomeEnv, userHome)
+	for path, data := range map[string][]byte{
+		filepath.Join(userHome, "credentials", "kimi-code.json"): []byte(`{"access_token":"user-token"}`),
+		filepath.Join(aoHome, "credentials", "kimi-code.json"):   []byte(`{"access_token":"ao-token"}`),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
+		WorkspacePath: workspace,
+		Env:           map[string]string{kimiCodeHomeEnv: aoHome},
+	}); err != nil {
+		t.Fatalf("GetAgentHooks err = %v", err)
+	}
+
+	targetPath := filepath.Join(aoHome, "credentials", "kimi-code.json")
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("read AO credentials: %v", err)
+	}
+	if want := `{"access_token":"ao-token"}`; string(got) != want {
+		t.Fatalf("AO credentials = %s, want %s", got, want)
+	}
+}
+
 func TestGetAgentHooksReseedsAOManagedConfigWithoutAuth(t *testing.T) {
 	workspace := t.TempDir()
 	userHome := t.TempDir()
