@@ -1,5 +1,5 @@
-import { SquareTerminal, X } from "lucide-react";
-import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { Pin, SquareTerminal, X } from "lucide-react";
+import { type DragEvent, type MouseEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
@@ -15,12 +15,21 @@ type ShellTerminalTabProps = {
 	appearance?: "pill" | "connected";
 	/** Commit a new tab title. Omitted where rename is not wired. */
 	onRename?: (title: string) => void;
+	draggable?: boolean;
+	isDragging?: boolean;
+	isPinned?: boolean;
+	onTogglePinned?: () => void;
+	onDragStart?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDragEnter?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDragOver?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDrop?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDragEnd?: (event: DragEvent<HTMLSpanElement>) => void;
 };
 
 // One standalone-shell tab, shared by the session pane's tab strip (CenterPane)
 // and the standalone /terminals screen (ShellTerminalsView) so the two never
-// drift. Session-pane tabs use a connected treatment that visually continues
-// into xterm below; the standalone terminals screen keeps its compact pill.
+// drift. Session-pane tabs share the compact frame used by pinned session tabs;
+// the standalone terminals screen keeps its compact pill.
 // The full title only becomes the hover tooltip when the strip truncates it.
 //
 // Renaming happens inline with the platform's native gesture: double-click on
@@ -35,6 +44,15 @@ export function ShellTerminalTab({
 	onClose,
 	appearance = "pill",
 	onRename,
+	draggable = false,
+	isDragging = false,
+	isPinned = false,
+	onTogglePinned,
+	onDragStart,
+	onDragEnter,
+	onDragOver,
+	onDrop,
+	onDragEnd,
 }: ShellTerminalTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(shell.title);
@@ -106,21 +124,29 @@ export function ShellTerminalTab({
 		<span
 			className={cn(
 				"group relative min-w-shell-tab-min items-center transition-colors",
+				draggable && "cursor-grab active:cursor-grabbing",
+				isDragging && "opacity-45",
 				appearance === "connected"
-					? "grid w-shell-tab-connected grid-cols-[auto_minmax(0,1fr)_auto] self-stretch border-x border-transparent pl-2 pr-0"
+					? "session-pane-tab grid grid-cols-[auto_minmax(0,1fr)_auto_auto] self-stretch rounded-md border-x border-transparent"
 					: "inline-flex gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
-						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+						? "border-border-strong bg-interactive-active text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-foreground/65"
 						: "border-transparent text-passive hover:bg-interactive-hover/60 hover:text-foreground"
 					: isActive
 						? "bg-interactive-active"
 						: "hover:bg-interactive-hover/60",
 			)}
+			draggable={draggable && !isEditing}
+			onDragEnd={onDragEnd}
+			onDragEnter={onDragEnter}
+			onDragOver={onDragOver}
+			onDragStart={onDragStart}
+			onDrop={onDrop}
 			{...containerRenameHandlers}
 		>
 			{appearance === "connected" ? (
-				<SquareTerminal aria-hidden="true" className="mr-1 size-icon-sm shrink-0 translate-y-px" />
+				<SquareTerminal aria-hidden="true" className="size-icon-xs shrink-0 translate-y-px" />
 			) : null}
 			{isEditing ? (
 				<input
@@ -149,9 +175,11 @@ export function ShellTerminalTab({
 					aria-current={isActive}
 					aria-selected={isActive}
 					className={cn(
-						"select-none truncate text-control transition-colors",
+						"select-none truncate transition-colors",
 						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
-						appearance === "connected" ? "font-normal" : "font-mono font-semibold",
+						appearance === "connected"
+							? "session-pane-tab__label font-mono font-semibold"
+							: "text-control font-mono font-semibold",
 						isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 					)}
 					role="tab"
@@ -168,6 +196,32 @@ export function ShellTerminalTab({
 					{shell.title}
 				</button>
 			)}
+			{onTogglePinned ? (
+				<button
+					aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
+					className={cn(
+						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+						appearance === "connected"
+							? isPinned
+								? "ml-1 w-control-xs opacity-100"
+								: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-xs group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-xs group-focus-within:opacity-100"
+							: isPinned
+								? "w-control-xs opacity-100"
+								: "w-control-xs opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+					)}
+					draggable={false}
+					onClick={(event) => {
+						event.stopPropagation();
+						onTogglePinned();
+					}}
+					onContextMenu={(event) => event.stopPropagation()}
+					onDoubleClick={(event) => event.stopPropagation()}
+					title={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
+					type="button"
+				>
+					<Pin aria-hidden="true" className={cn("size-icon-xs", isPinned && "fill-current")} />
+				</button>
+			) : null}
 			<button
 				aria-label={t("terminal.closeNamed", { title: shell.title })}
 				className={cn(
@@ -184,6 +238,7 @@ export function ShellTerminalTab({
 				}}
 				onDoubleClick={(event) => event.stopPropagation()}
 				onContextMenu={(event) => event.stopPropagation()}
+				draggable={false}
 				title={t("terminal.close")}
 				type="button"
 			>

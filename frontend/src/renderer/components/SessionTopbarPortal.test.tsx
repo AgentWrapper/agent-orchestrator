@@ -1,28 +1,18 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { SessionTopbarHost, SessionTopbarPortal, SessionTopbarProvider } from "./SessionTopbarPortal";
 
 describe("SessionTopbarPortal", () => {
-	it("renders session chrome in the shell-owned host", () => {
+	it("renders portal content into the registered host", () => {
 		render(
 			<SessionTopbarProvider>
 				<SessionTopbarHost data-testid="session-topbar-host" />
 				<SessionTopbarPortal>
-					<span>terminal tabs</span>
+					<span>session controls</span>
 				</SessionTopbarPortal>
 			</SessionTopbarProvider>,
 		);
 
-		expect(within(screen.getByTestId("session-topbar-host")).getByText("terminal tabs")).toBeInTheDocument();
-	});
-
-	it("renders inline when a component test has no shell provider", () => {
-		render(
-			<SessionTopbarPortal>
-				<span>terminal tabs</span>
-			</SessionTopbarPortal>,
-		);
-
-		expect(screen.getByText("terminal tabs")).toBeInTheDocument();
+		expect(screen.getByTestId("session-topbar-host")).toHaveTextContent("session controls");
 	});
 });

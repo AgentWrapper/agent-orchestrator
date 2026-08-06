@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
@@ -32,21 +33,29 @@ import { apiErrorMessage } from "../lib/api-client";
 import { hidesShellTopbar } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
-import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
+import { isOrchestratorSession, sessionIsActive, workerSessions, type WorkspaceSession } from "../types/workspace";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 
-const INSPECTOR_MIN_PERCENT = 30;
-const INSPECTOR_MAX_PERCENT = 45;
-const inspectorSplitStorageKey = "ao.inspector.split";
+// Inspector labels hide below 360px, so this is the smallest initial width
+// that presents both each destination icon and its name.
+const INSPECTOR_DEFAULT_PX = 360;
+const INSPECTOR_DEFAULT_SIZE = `${INSPECTOR_DEFAULT_PX}px`;
+const INSPECTOR_MIN_PX = 240;
+const INSPECTOR_MIN_SIZE = `${INSPECTOR_MIN_PX}px`;
+const INSPECTOR_MAX_PERCENT = 50;
+const INSPECTOR_COLLAPSED_SIZE = "0%";
+const INSPECTOR_MOTION_MS = 240;
+const inspectorWidthStorageKey = "ao.inspector.widthPx";
+const emptySessionTabIds: string[] = [];
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
-function initialSplitPercent(): number {
-	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
+function initialInspectorSize(): string {
+	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorWidthStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
-	if (!Number.isFinite(parsed)) return INSPECTOR_MIN_PERCENT;
-	return Math.min(INSPECTOR_MAX_PERCENT, Math.max(INSPECTOR_MIN_PERCENT, parsed));
+	if (!Number.isFinite(parsed)) return INSPECTOR_DEFAULT_SIZE;
+	return `${Math.max(INSPECTOR_MIN_PX, Math.round(parsed))}px`;
 }
 
 function previewRevealKey(previewUrl?: string, previewRevision?: number): string {
@@ -58,27 +67,26 @@ function previewRevealKey(previewUrl?: string, previewRevision?: number): string
 
 type SessionViewProps = {
 	sessionId: string;
+	tabOwnerSessionId?: string;
 };
 
-// The session detail screen: terminal + git rail. On Win/Linux the shell owns
-// ShellTopbar above this view; when the platform hides the shell topbar
-// (macOS), the same topbar mounts here so the outer panel stays full-height.
+// The session detail screen: terminal + inspector rail. Its top chrome is
+// column-owned on every platform: ShellTopbar ends at the inspector divider,
+// while SessionInspector owns its tabs and persistent collapse control.
 // Rendered by both the project-scoped and cross-project session routes.
-// The persistent shell cache owns terminal lifetime by logical session + handle:
-// route switches retain the xterm instance and latest output, while a replacement
-// handle gets a clean xterm/mux binding.
+// TerminalPane owns the terminal lifetime and remounts by terminal handle so
+// each session gets a clean xterm/mux binding.
 //
 // The split is shadcn's resizable (react-resizable-panels v4) with a fully
-// collapsible inspector driven to 0% via the imperative API from the ui-store
-// (topbar button / ⌘⇧B), animated by the flex-grow transition in styles.css.
-// The panel is `collapsible` only while closed: rrp snaps a collapsible panel
-// to 0% when a drag crosses minSize, so an always-collapsible inspector let a
-// drag vanish the rail. While open the panel is non-collapsible and a drag
-// hard-stops at INSPECTOR_MIN_PERCENT; only the explicit controls collapse it.
-// Content keeps a stable min-width inside the clipped panel so nothing reflows
-// mid-animation; split width persists.
-export function SessionView({ sessionId }: SessionViewProps) {
+// collapsible inspector: the panel is `collapsible` and driven to 0% via the
+// imperative API from the ui-store (topbar button / ⌘⇧B), animated by the
+// flex-grow transition in styles.css. The closed-only reopen button lives in
+// ShellTopbar so a full-height rail is not required. Content keeps a stable
+// min-width inside the clipped panel so nothing reflows mid-animation; split
+// width persists.
+export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) {
 	const { t } = useTranslation();
+	const navigate = useNavigate();
 	const workspaceQuery = useWorkspaceQuery();
 	const workspaces = workspaceQuery.data ?? [];
 	const theme = useResolvedTheme();
@@ -92,7 +100,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
-	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
+	const [inspectorMotionState, setInspectorMotionState] = useState<"closed" | "closing" | "open" | "opening">(
+		isInspectorOpen ? "open" : "closed",
+	);
+	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({
+		kind: "worker",
+	});
 	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
@@ -100,14 +113,66 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const isNativeFullScreen = useWindowFullScreen();
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
+	const allSessions = workspaces.flatMap((workspace) => workspace.sessions);
+	const tabOwnerSession = allSessions.find((candidate) => candidate.id === tabOwnerSessionId) ?? session;
+	const ownerSessionId = tabOwnerSession?.id ?? sessionId;
+	const storedSessionTabIds = useUiStore((state) => state.sessionTabsByOwner[ownerSessionId] ?? emptySessionTabIds);
+	const addSessionTab = useUiStore((state) => state.addSessionTab);
+	const removeSessionTab = useUiStore((state) => state.removeSessionTab);
+	const availableSessions = workspaces.flatMap((workspace) =>
+		workerSessions(workspace.sessions).filter((candidate) => candidate.isTerminated !== true),
+	);
+	const projectSessions = tabOwnerSession
+		? [
+				tabOwnerSession,
+				...storedSessionTabIds
+					.map((tabId) => allSessions.find((candidate) => candidate.id === tabId))
+					.filter((projectSession): projectSession is WorkspaceSession =>
+						Boolean(projectSession && projectSession.isTerminated !== true && projectSession.id !== tabOwnerSession.id),
+					),
+			]
+		: [];
+	if (session && !projectSessions.some((projectSession) => projectSession.id === session.id)) {
+		projectSessions.push(session);
+	}
+	const selectProjectSession = useCallback(
+		(projectSession: WorkspaceSession) => {
+			void navigate({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: {
+					projectId: projectSession.workspaceId,
+					sessionId: projectSession.id,
+				},
+				search: projectSession.id === ownerSessionId ? {} : { tabOwner: ownerSessionId },
+			});
+		},
+		[navigate, ownerSessionId],
+	);
+	const addProjectSession = useCallback(
+		(projectSession: WorkspaceSession) => {
+			addSessionTab(ownerSessionId, projectSession.id);
+			selectProjectSession(projectSession);
+		},
+		[addSessionTab, ownerSessionId, selectProjectSession],
+	);
+	const closeProjectSession = useCallback(
+		(projectSession: WorkspaceSession) => {
+			removeSessionTab(ownerSessionId, projectSession.id);
+			if (projectSession.id === sessionId && tabOwnerSession) selectProjectSession(tabOwnerSession);
+		},
+		[ownerSessionId, removeSessionTab, selectProjectSession, sessionId, tabOwnerSession],
+	);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
 
-	// Shell terminals opened inside a session live beside its pane as extra tabs,
-	// scoped to the session on screen so each session has its own shell set.
+	// Shell terminals opened inside a session live beside its pane as extra tabs.
+	//
+	// Scope shells to the tab layout's originating session. Navigating to a
+	// pinned worker keeps the owner's shell tabs; opening that worker directly
+	// from the sidebar uses its own separate shell set.
 	const allShellTerminals = useShellTerminals().data ?? [];
 	const shellTerminals = useMemo(
-		() => allShellTerminals.filter((shell) => shell.sessionId === sessionId),
-		[allShellTerminals, sessionId],
+		() => allShellTerminals.filter((shell) => shell.sessionId === ownerSessionId),
+		[allShellTerminals, ownerSessionId],
 	);
 	const openShellTerminal = useOpenShellTerminal();
 	const closeShellTerminal = useCloseShellTerminal();
@@ -121,12 +186,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[renameShellTerminal],
 	);
 
-	// Scoped to the session on screen so the daemon roots the shell in that
-	// session's worktree (the project id is only the fallback when the session's
-	// workspace can no longer be resolved).
 	const addShellTerminal = useCallback(() => {
 		openShellTerminal.mutate(
-			{ projectId: session?.workspaceId, sessionId },
+			{ projectId: tabOwnerSession?.workspaceId, sessionId: ownerSessionId },
 			{
 				onSuccess: (shell) => {
 					setActiveShellTerminal(shell.handleId);
@@ -134,13 +196,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						generation: shell.createdAt,
 						kind: "shell",
 						handleId: shell.handleId,
-						sessionId,
+						sessionId: ownerSessionId,
 						title: shell.title,
 					});
 				},
 			},
 		);
-	}, [openShellTerminal, sessionId, session?.workspaceId, setActiveShellTerminal]);
+	}, [openShellTerminal, ownerSessionId, setActiveShellTerminal, tabOwnerSession?.workspaceId]);
 
 	const selectShellTerminal = useCallback(
 		(handleId: string) => {
@@ -151,7 +213,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				generation: shell.createdAt,
 				kind: "shell",
 				handleId: shell.handleId,
-				sessionId,
+				sessionId: ownerSessionId,
 				title: shell.title,
 			});
 		},
@@ -162,9 +224,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		(handleId: string) => {
 			if (terminalTarget.kind === "shell" && terminalTarget.handleId === handleId) {
 				const closingIndex = shellTerminals.findIndex((shell) => shell.handleId === handleId);
-				// Match browser-tab ergonomics: closing the selected auxiliary terminal
-				// reveals its nearest predecessor, then the next tab when the first one
-				// closes. The permanent agent terminal is only the final fallback.
 				const nextShell = shellTerminals[closingIndex - 1] ?? shellTerminals[closingIndex + 1];
 				if (nextShell) {
 					setActiveShellTerminal(nextShell.handleId);
@@ -172,7 +231,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						generation: nextShell.createdAt,
 						kind: "shell",
 						handleId: nextShell.handleId,
-						sessionId,
+						sessionId: ownerSessionId,
 						title: nextShell.title,
 					});
 				} else {
@@ -187,8 +246,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[
 			activeShellTerminalHandleId,
 			closeShellTerminal,
+			ownerSessionId,
 			setActiveShellTerminal,
-			sessionId,
 			shellTerminals,
 			terminalTarget,
 		],
@@ -202,7 +261,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
-	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
+	// and Ctrl+Shift+` work everywhere); this view only follows the result. When a new
 	// shell becomes active while a session is on screen, switch the pane to it —
 	// that is what makes the shortcut feel like it opened a terminal *here*.
 	useEffect(() => {
@@ -219,11 +278,11 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						generation: shell.createdAt,
 						kind: "shell",
 						handleId: shell.handleId,
-						sessionId,
+						sessionId: ownerSessionId,
 						title: shell.title,
 					},
 		);
-	}, [activeShellTerminalHandleId, sessionId, shellTerminals]);
+	}, [activeShellTerminalHandleId, ownerSessionId, shellTerminals]);
 
 	// If the pane is pointed at a shell that is not in THIS session's strip — e.g.
 	// after navigating to a different session whose globally-active shell belongs
@@ -292,12 +351,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			}}
 		/>
 	) : null;
-	const sessionHeaderActions = (
-		<SessionInterfaceActionGroup>
-			{interfaceSwitchAction}
-			<ShellTopbar embedded />
-		</SessionInterfaceActionGroup>
-	);
+	// Our route-level Reverb topbar remains the owner of navigation and session
+	// controls. Only the newly introduced interface switch belongs in the
+	// secondary terminal/chat strip.
+	const sessionHeaderActions = interfaceSwitchAction ? (
+		<SessionInterfaceActionGroup>{interfaceSwitchAction}</SessionInterfaceActionGroup>
+	) : null;
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -322,12 +381,17 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setFilesPoppedOut(false);
 	}, [sessionId]);
 
-	// Route props change one render before the passive reset above. Reject the
-	// previous session's shell/reviewer synchronously so its handle can never be
-	// cached under the destination session.
-	const routedTerminalTarget = terminalTargetBelongsToSession(terminalTarget, sessionId)
-		? terminalTarget
-		: ({ kind: "worker" } satisfies TerminalTarget);
+	// Shell tabs belong to the tab layout owner, while reviewer terminals belong
+	// to the worker currently selected inside that layout. Reject stale handles
+	// synchronously during route changes so the cache cannot cross-wire sessions.
+	const routedTerminalTarget =
+		terminalTarget.kind === "shell"
+			? terminalTargetBelongsToSession(terminalTarget, ownerSessionId)
+				? terminalTarget
+				: ({ kind: "worker" } satisfies TerminalTarget)
+			: terminalTargetBelongsToSession(terminalTarget, sessionId)
+				? terminalTarget
+				: ({ kind: "worker" } satisfies TerminalTarget);
 	const showChatSurface = session?.mode === "chat" && routedTerminalTarget.kind === "worker";
 
 	// The pane shows one terminal at a time, so selecting a shell or the reviewer
@@ -405,7 +469,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,
 	// among others) whenever this prop's identity changes, and the imperative
-	// collapse()/resize() below can race that re-registration within the same
+	// collapse()/expand() below can race that re-registration within the same
 	// commit — rrp then throws "Panel constraints not found for Panel
 	// inspector", which unwinds the whole route to the router's CatchBoundary
 	// (the toggle button looks dead and the session view is torn down).
@@ -418,9 +482,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	if (!hasInspector) {
 		inspectorDefaultSizeRef.current = null;
 	} else if (inspectorDefaultSizeRef.current === null) {
-		inspectorDefaultSizeRef.current = isInspectorOpen ? `${initialSplitPercent()}%` : "0%";
+		inspectorDefaultSizeRef.current = isInspectorOpen ? initialInspectorSize() : INSPECTOR_COLLAPSED_SIZE;
 	}
-	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? "0%";
+	const inspectorDefaultSize = inspectorDefaultSizeRef.current ?? INSPECTOR_COLLAPSED_SIZE;
 
 	useEffect(() => {
 		if (!hasInspector) return;
@@ -433,36 +497,55 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		return () => window.removeEventListener("keydown", handleKeyDown);
 	}, [hasInspector, sessionId, toggleInspector]);
 
-	// Drive the collapsible panel from the store so the topbar button, ⌘⇧B, and
-	// drag-to-reopen all stay in sync. When the inspector panel mounts into
+	// Drive the collapsible panel from the store so the topbar button and ⌘⇧B
+	// stay in sync. The panel itself still resizes once at each edge of the
+	// transition. This now mirrors the left sidebar's spring-like layout motion;
+	// styles.css disables that motion while the separator is actively dragged so
+	// the resize handle remains exactly under the pointer.
+	// When the inspector panel mounts into
 	// the already-live group (orchestrator/loading → worker), rrp only derives
 	// the new panel's constraints in the next commit. This effect intentionally
 	// runs before the readiness effect below, so mount and StrictMode's effect
 	// replay remain imperative-free; later store changes can safely drive the
 	// registered panel.
 	const inspectorImperativeReadyRef = useRef(false);
+	// A route change from Orchestrator to a worker mounts the inspector into an
+	// already-live SessionView. Synchronize the content state before paint while
+	// the panel handle is still being registered; otherwise the panel can have an
+	// open width while its contents remain hidden as "closed".
+	useLayoutEffect(() => {
+		if (!hasInspector) {
+			setInspectorMotionState("closed");
+			return;
+		}
+		if (!inspectorImperativeReadyRef.current) {
+			setInspectorMotionState(isInspectorOpen ? "open" : "closed");
+		}
+	}, [hasInspector, isInspectorOpen]);
 	useEffect(() => {
-		if (!hasInspector || !inspectorImperativeReadyRef.current) return;
+		if (!hasInspector) return;
+		if (!inspectorImperativeReadyRef.current) return;
 		const panel = inspectorRef.current;
 		if (!panel) return;
 		if (isInspectorOpen) {
-			// resize(), not expand(): by the time this effect runs the panel has
-			// re-registered as non-collapsible (open panels refuse drag-collapse),
-			// and rrp's expand() no-ops on a non-collapsible panel. resize() also
-			// restores the persisted split regardless of what "most recent size"
-			// rrp remembers, which is 0 when the panel mounted collapsed.
-			panel.resize(`${initialSplitPercent()}%`);
-			return;
+			setInspectorMotionState("opening");
+			panel.resize(initialInspectorSize());
+			const frame = window.requestAnimationFrame(() => setInspectorMotionState("open"));
+			return () => window.cancelAnimationFrame(frame);
 		}
-		// Closing flips `collapsible` back on in this same commit, but rrp only
-		// re-derives the group's constraints in the follow-up commit its
-		// registration effect schedules — so this first collapse() still sees the
-		// open panel's non-collapsible constraints and no-ops. Repeat it on the
-		// next frame, when the fresh constraints have landed; collapse() is
-		// idempotent, so the double call is safe wherever the derivation lands.
+		setInspectorMotionState("closing");
+		// Closing flips `collapsible` back on in this same commit, while rrp
+		// refreshes its constraints in a follow-up commit. Repeat on the next
+		// frame so the explicit top-bar control reaches a true zero-width rail.
+		// The flex transition starts immediately; content remains mounted until
+		// its clipped closing motion has finished.
 		panel.collapse();
-		const frame = window.requestAnimationFrame(() => panel.collapse());
-		return () => window.cancelAnimationFrame(frame);
+		const collapseFrame = window.requestAnimationFrame(() => panel.collapse());
+		const timer = window.setTimeout(() => setInspectorMotionState("closed"), INSPECTOR_MOTION_MS);
+		return () => {
+			window.clearTimeout(timer);
+			window.cancelAnimationFrame(collapseFrame);
+		};
 	}, [hasInspector, isInspectorOpen]);
 	useEffect(() => {
 		if (!hasInspector || !inspectorRef.current) {
@@ -475,14 +558,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		};
 	}, [hasInspector]);
 
-	// Persist drags and mirror a drag-reopen (dragging the separator of a
-	// collapsed inspector past the snap point) back into the store. Dragging an
-	// open inspector can never collapse it — the panel is non-collapsible while
-	// open, so rrp clamps the drag at minSize instead of snapping to 0%.
-	// Read the store imperatively to avoid a stale closure.
+	// Persist explicit resizes in pixels so the same inspector width is restored
+	// when the window or left sidebar changes. Open panels are non-collapsible,
+	// so dragging can never leave a residual collapsed rail or fight the top-bar
+	// toggle.
 	// Gated on an actively dragged separator: rrp v4 derives sizes from the
 	// observed DOM layout, so the flex-grow transition that animates
-	// resize()/collapse() (styles.css) fires onResize with transient
+	// expand()/collapse() (styles.css) fires onResize with transient
 	// mid-animation sizes too. Writing those back turned the imperative
 	// collapse into a feedback loop — a mid-collapse size read as "dragged
 	// back open", re-toggled the store, and the panel bounced back (the
@@ -493,33 +575,43 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	// Also wrapped in useCallback: rrp v4's panel registration useLayoutEffect
 	// includes onResize in its dep array, so an unstable reference would
 	// de-register/re-register the inspector panel on every render and race
-	// with the resize()/collapse() effect above.
+	// with the expand()/collapse() effect above.
 	const handleInspectorResize = useCallback(
 		(size: PanelSize) => {
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
-			if (size.asPercentage <= 0) return;
-			window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
+			if (size.inPixels <= 0) return;
+			window.localStorage?.setItem(inspectorWidthStorageKey, String(Math.round(size.inPixels)));
 			const currentOpen = useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? true;
 			if (!currentOpen) toggleInspector(sessionId);
 		},
 		[sessionId, toggleInspector],
 	);
+	const inspectorPanelVisible = inspectorMotionState !== "closed";
 
 	if (!session && !workspaceQuery.isLoading) {
 		return (
-			<div className="grid h-full place-items-center p-6 text-center font-mono text-xs text-passive">
-				{t("session.notFound")}
+			<div className="flex h-full min-h-0 flex-col bg-background text-foreground">
+				<ShellTopbar />
+				<div className="grid min-h-0 flex-1 place-items-center p-6 text-center font-mono text-xs text-passive">
+					{t("session.notFound")}
+				</div>
 			</div>
 		);
 	}
 
 	return (
 		<div className="relative flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="session-detail">
-			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
+			<ResizablePanelGroup
+				className="session-split min-h-0 flex-1"
+				id="session-workspace"
+				orientation="horizontal"
+				style={{ "--session-inspector-max-width": `${INSPECTOR_MAX_PERCENT}%` } as CSSProperties}
+			>
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
-				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
-					<div className="relative h-full min-h-0">
+				<ResizablePanel defaultSize="72%" id="terminal" minSize={`${100 - INSPECTOR_MAX_PERCENT}%`}>
+					<div className="flex h-full min-h-0 flex-col">
+						<ShellTopbar />
 						{/* The committed mode owns the agent surface. Auxiliary shell and
 						    reviewer targets remain terminal surfaces in either mode. */}
 						{showChatSurface ? (
@@ -538,15 +630,23 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								agentInputDisabled={
 									(interfaceSwitch.starting || activeInterfaceTransition) && session?.mode === "tui"
 								}
+								availableProjectSessions={availableSessions.filter(
+									(candidate) => candidate.id !== tabOwnerSession?.id,
+								)}
 								daemonReady={daemonStatus.state === "ready"}
+								onAddProjectSession={addProjectSession}
+								onCloseProjectSession={closeProjectSession}
 								onCloseShellTerminal={closeShellTerminalByHandle}
 								onNewShellTerminal={addShellTerminal}
 								onRenameShellTerminal={renameShellTerminalByHandle}
+								onSelectProjectSession={selectProjectSession}
 								onSelectSessionTerminal={selectSessionTerminal}
 								onSelectShellTerminal={selectShellTerminal}
 								onSelectWorkerTerminal={selectSessionTerminal}
+								projectSessions={projectSessions}
 								session={session}
 								shellTerminals={shellTerminals}
+								tabOwnerSessionId={ownerSessionId}
 								terminalTarget={routedTerminalTarget}
 								theme={theme}
 								topbarActions={sessionHeaderActions}
@@ -563,43 +663,51 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				{hasInspector ? (
 					<>
 						<ResizableHandle
-							className="w-1.75 cursor-col-resize touch-none bg-transparent after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border"
+							aria-hidden={!inspectorPanelVisible}
+							className={cn(
+								"w-1.75 cursor-col-resize touch-none bg-transparent transition-[width] duration-200 ease-out after:w-px after:bg-border-strong hover:after:bg-border focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:after:bg-border data-[separator=active]:after:bg-border",
+								!inspectorPanelVisible && "pointer-events-none w-0 after:hidden",
+							)}
+							disabled={!isInspectorOpen}
 							elementRef={inspectorSeparatorRef}
 						/>
 						<ResizablePanel
-							aria-hidden={!isInspectorOpen}
+							aria-hidden={!inspectorPanelVisible}
+							className="session-inspector-panel"
 							collapsible={!isInspectorOpen}
 							defaultSize={inspectorDefaultSize}
 							id="inspector"
 							inert={!isInspectorOpen}
 							maxSize={`${INSPECTOR_MAX_PERCENT}%`}
-							minSize={`${INSPECTOR_MIN_PERCENT}%`}
+							minSize={INSPECTOR_MIN_SIZE}
 							onResize={handleInspectorResize}
 							panelRef={inspectorRef}
 							style={{ overflow: "hidden" }}
 						>
 							{/* Stable content width while the panel animates (yyork pattern):
                   the pane clips instead of reflowing the inspector mid-collapse. */}
-							<div className="h-full min-w-inspector-min">
+							<div
+								className="session-inspector-motion h-full min-w-inspector-min"
+								data-motion-state={inspectorMotionState}
+							>
 								<SessionInspector
 									browserAnnotationQueue={browserAnnotationQueue}
 									browserPoppedOut={browserPoppedOut}
 									filesView={
 										session ? (
-											<SessionFilesView onToggleMaximized={handleToggleFilesPopOut} sessionId={session.id} />
+											<SessionFilesView
+												onToggleMaximized={handleToggleFilesPopOut}
+												sessionId={session.id}
+											/>
 										) : null
 									}
-									isInspectorVisible={isInspectorOpen}
+									isInspectorVisible={inspectorPanelVisible}
 									onOpenFiles={handleOpenFiles}
-								onOpenReviewerTerminal={({ handleId, harness }) =>
-									setTerminalTarget({
-										kind: "reviewer",
-											handleId,
-											harness,
-											sessionId,
-										})
+									onOpenReviewerTerminal={({ handleId, harness }) =>
+										setTerminalTarget({ kind: "reviewer", handleId, harness, sessionId })
 									}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
+									onToggleVisibility={() => toggleInspector(sessionId)}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}
 									browserView={browserView}

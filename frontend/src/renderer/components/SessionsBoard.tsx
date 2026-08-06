@@ -8,6 +8,7 @@ import {
 	Check,
 	Copy,
 	GitBranch,
+	LayoutDashboard,
 	LoaderCircle,
 	Plus,
 	RotateCcw,
@@ -47,9 +48,8 @@ import { useWorkspaceQuery, workspaceQueryKey } from "../hooks/useWorkspaceQuery
 import { NotificationCenter } from "./NotificationCenter";
 import { BoardWelcome, ProjectBoardEmpty } from "./BoardEmptyStates";
 import { OrchestratorIcon } from "./icons";
-import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { AgentAvatar } from "./AgentAvatar";
-import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
+import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
@@ -65,6 +65,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
+import { ReverbTopbar } from "./topbar/ReverbTopbar";
+import { TopbarActivityStatus } from "./topbar/TopbarActivityStatus";
+import type { ReverbTopbarModel } from "./topbar/topbar-model";
 
 type SessionsBoardProps = {
 	/** When set, the board shows only this project's sessions. */
@@ -83,7 +86,6 @@ function isArchivedSession(session: WorkspaceSession): boolean {
 
 const isMac = isMacPlatform();
 const dragStyle = isMac ? ({ WebkitAppRegion: "drag" } as React.CSSProperties) : undefined;
-const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
 export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const { t } = useTranslation();
@@ -101,8 +103,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const all = workspaceQuery.data ?? [];
 	const workspaces = projectId ? all.filter((w) => w.id === projectId) : all;
 	const workspace = projectId ? workspaces[0] : undefined;
-	// Same crumb as ShellTopbar: project name in scope, else root-board "Board".
-	const boardLabel = workspace?.name ?? (projectId ? "" : t("shell.board"));
 	const sessions = workspaces.flatMap((w) => workerSessions(w.sessions));
 	const orchestrator = projectId ? newestActiveOrchestrator(workspaces[0]?.sessions ?? []) : undefined;
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
@@ -120,6 +120,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const isProjectRestarting = projectId ? restartingProjectIds.has(projectId) : false;
 	const health = workspace ? orchestratorHealth(workspace, isProjectRestarting) : { state: "ok" as const };
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
+	const orchestratorTooltip = isProjectRestarting
+		? t("shell.restartingDots")
+		: isSpawning
+			? t("shell.spawningDots")
+			: orchestrator
+				? t("shell.openOrchestrator")
+				: t("shell.spawnOrchestratorLower");
 	// The board instance survives project-to-project navigation (same route,
 	// new param), so a spawn failure must not follow the user to another board.
 	useEffect(() => {
@@ -266,71 +273,92 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 	const actions = projectId ? (
 		<>
-			{visibleSpawnError && !showProjectEmpty && (
-				<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
-					{visibleSpawnError}
-				</TopbarKillError>
-			)}
 			{visibleSpawnError && canCreateAsTui && !showProjectEmpty ? (
-				<TopbarButton disabled={isSpawning || isProjectRestarting} onClick={() => void openOrchestrator("tui")}>
+				<TopbarButton
+					disabled={isSpawning || isProjectRestarting}
+					onClick={() => void openOrchestrator("tui")}
+				>
 					{t("newTask.createAsTui")}
 				</TopbarButton>
 			) : null}
-			<TopbarButton
-				aria-label={t("shell.newTask")}
-				disabled={isProjectRestarting}
-				onClick={() => projectId && requestNewTask(projectId)}
-				variant="accent"
-			>
-				<Plus className="size-icon-md" aria-hidden="true" />
-				{t("shell.newTask")}
-			</TopbarButton>
-			<TopbarButton
-				aria-label={
-					orchestratorActivityLabel
-						? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
-						: t("shell.spawnOrchestrator")
-				}
-				disabled={isSpawning || isProjectRestarting}
-				onClick={() => void openOrchestrator()}
-				variant="primary"
-			>
-				<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
-				{orchestrator ? <OrchestratorActivityIndicator session={orchestrator} /> : null}
-				{isProjectRestarting
-					? t("shell.restartingDots")
-					: isSpawning
-						? t("shell.spawningDots")
-						: orchestrator
-							? t("shell.orchestrator")
-							: t("shell.spawnOrchestrator")}
-			</TopbarButton>
-			{boardOwnsNotificationCenter ? <NotificationCenter /> : null}
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex">
+						<TopbarButton
+							aria-label={t("shell.newTask")}
+							className="reverb-topbar__control--labeled"
+							data-priority="primary"
+							disabled={isProjectRestarting}
+							onClick={() => projectId && requestNewTask(projectId)}
+							variant="accent"
+						>
+							<Plus className="size-icon-md" aria-hidden="true" />
+							<span data-compact-label>{t("newTask.task")}</span>
+						</TopbarButton>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">{t("shell.newTask")}</TooltipContent>
+			</Tooltip>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<span className="inline-flex">
+						<TopbarButton
+							aria-label={
+								orchestratorActivityLabel
+									? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
+									: t("shell.spawnOrchestrator")
+							}
+							data-priority="secondary"
+							disabled={isSpawning || isProjectRestarting}
+							onClick={() => void openOrchestrator()}
+							variant="primary"
+						>
+							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+							<span data-compact-label>{t("shell.orchestrator")}</span>
+						</TopbarButton>
+					</span>
+				</TooltipTrigger>
+				<TooltipContent side="bottom">{orchestratorTooltip}</TooltipContent>
+			</Tooltip>
 		</>
-	) : boardOwnsNotificationCenter ? (
-		<NotificationCenter />
 	) : undefined;
+	const model: ReverbTopbarModel = projectId
+		? {
+				surface: "project-board",
+				breadcrumbs: [{ id: "board", label: t("shell.board") }],
+			}
+		: {
+				surface: "global-board",
+				breadcrumbs: [{ id: "board", label: t("shell.board") }],
+			};
+	const orchestratorContext = orchestrator ? (
+		<div className="reverb-topbar__state-content">
+			<OrchestratorIcon className="size-icon-md shrink-0" aria-hidden="true" />
+			<span className="reverb-topbar__state-label">{t("shell.orchestrator")}</span>
+			<TopbarActivityStatus activity={orchestrator.activity} />
+		</div>
+	) : null;
 
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
-			{/* macOS: shell topbar is hidden on board routes, so the project/"Board"
-			    crumb + New task / Orchestrator / bell live in this in-panel row.
-			    Win/Linux keep the crumb and actions in the framed ShellTopbar.
-			    Welcome skips the row — a dangling "Board" above the import
-			    chooser was review feedback on #2432. */}
-			{!showWelcome && !showStartup && boardActionsInPanel && (boardLabel || actions) ? (
-				<div
-					className="center-panel-titlebar flex h-toolbar shrink-0 items-center gap-2 border-b border-border-strong pr-4"
-					style={dragStyle}
-				>
-					{boardLabel ? <span className={topbarProjectLabelClass}>{boardLabel}</span> : null}
-					<div className="min-w-0 flex-1" />
-					{actions ? (
-						<div className="flex shrink-0 items-center gap-2" style={noDragStyle}>
-							{actions}
-						</div>
-					) : null}
-				</div>
+			{/* macOS/Linux keep board actions inside the center panel. Welcome
+			    and daemon startup intentionally skip the workspace bar. */}
+			{!showWelcome && !showStartup && boardActionsInPanel ? (
+				<ReverbTopbar
+					actions={actions}
+					context={orchestratorContext}
+					dragStyle={dragStyle}
+					error={
+						visibleSpawnError && !showProjectEmpty ? (
+							<TopbarKillError className="max-w-content-max truncate" title={visibleSpawnError}>
+								{visibleSpawnError}
+							</TopbarKillError>
+						) : null
+					}
+					leadingIcon={<LayoutDashboard className="size-icon-md" />}
+					model={model}
+					utilities={boardOwnsNotificationCenter ? <NotificationCenter /> : null}
+				/>
 			) : null}
 
 			<div className="min-h-0 flex-1 overflow-hidden">

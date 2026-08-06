@@ -5,6 +5,7 @@ import {
 	ChevronRight,
 	Folder,
 	FolderOpen,
+	LayoutDashboard,
 	MoreVertical,
 	Pencil,
 	Pin,
@@ -81,7 +82,7 @@ import { isMacPlatform } from "../lib/platform";
 const isMac = isMacPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// Shared styling for the per-project hover action buttons (orchestrator, kebab):
+// Shared styling for the per-project action buttons (board, orchestrator, kebab):
 // a 20px square icon button that tints on hover, matching the old
 // SidebarMenuAction footprint.
 const HOVER_ACTION_CLASS =
@@ -188,6 +189,8 @@ export function Sidebar({
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	const [expandedChromeVisible, setExpandedChromeVisible] = useState(!isCollapsed);
+	const [preserveOverlayChrome, setPreserveOverlayChrome] = useState(isOverlay);
+	const overlayChromeVisible = isOverlay || preserveOverlayChrome;
 	// One IPC subscription for both footer variants of the restart-to-update prompt.
 	const updateStatus = useUpdateStatus();
 	// Daemon status for the smoke suite's sr-only mirror in the footer. Null when
@@ -203,6 +206,11 @@ export function Sidebar({
 			setExpandedChromeVisible(true);
 		}
 	}, [isCollapsed]);
+
+	useLayoutEffect(() => {
+		if (isOverlay) setPreserveOverlayChrome(true);
+		else if (!isCollapsed) setPreserveOverlayChrome(false);
+	}, [isCollapsed, isOverlay]);
 
 	// Disclosure state: projects are expanded by default; a project id present in
 	// this set is collapsed (sessions hidden).
@@ -266,8 +274,8 @@ export function Sidebar({
 			overlay={isOverlay}
 			className={cn(
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
-				isOverlay && "z-sidebar-preview shadow-2xl",
-				isOverlay || !underTopbar
+				overlayChromeVisible && "z-sidebar-preview opacity-[0.97] shadow-2xl",
+				overlayChromeVisible || !underTopbar
 					? "top-0 h-svh!"
 					: "top-(--sidebar-chrome-offset) h-[calc(100svh-var(--sidebar-chrome-offset))]!",
 			)}
@@ -275,7 +283,7 @@ export function Sidebar({
 			<SidebarHeader
 				className={cn(
 					"gap-0 p-0 px-3 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
-					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
+					overlayChromeVisible && underTopbar && "pt-(--sidebar-chrome-offset)!",
 				)}
 			>
 				{/* Brand (project-sidebar__brand); in the icon rail it becomes the old
@@ -703,7 +711,7 @@ function ProjectItem({
 		type="button"
 	/>
 		</div>{/* end scale wrapper */}
-		{/* Per-project actions: orchestrator and kebab menu. Outside scale wrapper
+		{/* Per-project actions: board, orchestrator, and kebab menu. Outside scale wrapper
 		so clicking them doesn't trigger the press animation. Always visible
 		(not hover-gated) to avoid CSS :hover group propagation in Chromium. */}
 		<div
@@ -713,6 +721,20 @@ function ProjectItem({
 			)}
 			data-project-actions=""
 		>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-current={dashboardActive ? "page" : undefined}
+						aria-label={t("shell.openProjectDashboard", { name: workspace.name })}
+						className={cn(HOVER_ACTION_CLASS, dashboardActive && "text-foreground")}
+						onClick={() => selection.goProject(workspace.id)}
+						type="button"
+					>
+						<LayoutDashboard aria-hidden="true" strokeWidth={dashboardActive ? 2.5 : 2} />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent>{t("shell.openKanban")}</TooltipContent>
+			</Tooltip>
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<button

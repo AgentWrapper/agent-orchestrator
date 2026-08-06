@@ -6,12 +6,15 @@ import { useOverflowScroll } from "../hooks/useOverflowScroll";
 import { useCloseShellTerminal, useRenameShellTerminal, useShellTerminals } from "../hooks/useShellTerminals";
 import { useShell } from "../lib/shell-context";
 import { aoBridge } from "../lib/bridge";
-import { isMacPlatform } from "../lib/platform";
+import { hidesShellTopbar, isMacPlatform } from "../lib/platform";
 import { cn } from "../lib/utils";
 import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
 import { useResolvedTheme, useUiStore } from "../stores/ui-store";
 import { ShellTerminalTab } from "./ShellTerminalTab";
+import { ShellTopbar } from "./ShellTopbar";
 import { TerminalPane } from "./TerminalPane";
+
+const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
 // The standalone terminals screen: shells with no agent session behind them,
 // reachable from anywhere via the + at the end of a tab strip or ⌘T / Ctrl+T.
@@ -83,6 +86,7 @@ export function ShellTerminalsView() {
 
 	return (
 		<div className="flex h-full min-h-0 flex-col text-foreground">
+			{shellTopbarHiddenByPlatform ? <ShellTopbar surfaceOverride="standalone-terminals" /> : null}
 			<div className="flex h-inspector-tabs shrink-0 items-center gap-3 border-b border-border px-5">
 				<span className="shrink-0 font-mono text-caption font-semibold uppercase tracking-wide-lg text-muted-foreground">
 					{t("workbench.terminals")}

@@ -404,10 +404,10 @@ describe("Sidebar", () => {
 		expect(await screen.findByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
 	});
 
-	it("reveals orchestrator and kebab buttons on the project row (no dashboard button)", () => {
+	it("reveals board, orchestrator, and kebab buttons on the project row", () => {
 		renderSidebar();
 
-		expect(screen.queryByLabelText("Open Project One dashboard")).not.toBeInTheDocument();
+		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
 	});

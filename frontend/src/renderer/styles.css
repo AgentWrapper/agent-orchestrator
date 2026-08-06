@@ -185,6 +185,9 @@
 	/* Layout — toolbar offset for fixed sidebar below topbar */
 	--spacing-toolbar: var(--size-toolbar);
 	--spacing-window-titlebar: var(--size-window-titlebar);
+	--spacing-topbar-primary: var(--size-topbar-primary);
+	--spacing-topbar-secondary: var(--size-topbar-secondary);
+	--spacing-topbar-control: var(--size-topbar-control);
 	--spacing-titlebar-content-offset: var(--size-titlebar-content-offset);
 	--spacing-titlebar-cluster-left: var(--size-titlebar-cluster-left);
 	/* Fullscreen has no traffic lights — align the cluster to sidebar content. */
@@ -208,7 +211,6 @@
 	--spacing-content-max: var(--size-content-max);
 	--spacing-flex-min: var(--size-flex-min);
 	--spacing-shell-tab-min: var(--size-shell-tab-min);
-	--spacing-shell-tab-connected: var(--size-shell-tab-connected);
 	--spacing-shell-tab-max: var(--size-shell-tab-max);
 	--spacing-board-empty: var(--size-board-empty);
 	--spacing-preview-content: var(--size-preview-content);
@@ -424,6 +426,8 @@
 }
 
 @utility center-panel-surface {
+	container-name: center-panel;
+	container-type: inline-size;
 	display: flex;
 	min-height: 0;
 	flex: 1 1 0%;
@@ -455,63 +459,18 @@
 	padding: 0;
 }
 
-/* Sidebar closed on mac: content panel expands to fill the full window.
- * Remove all padding and strip the surface border + radius so it's flush. */
-.sidebar-hidden .center-panel-shell.center-panel-shell--mac {
+/* Board and session routes are workspaces rather than cards: the center pane
+ * meets the sidebar directly and the single left border becomes the column
+ * separator. Settings and first-run surfaces keep the inset frame above. */
+.center-panel-shell.center-panel-shell--workspace {
 	padding: 0;
+	background: var(--color-bg-primary);
 }
 
-.sidebar-hidden .center-panel-shell--mac .center-panel-surface {
-	border-color: transparent;
+.center-panel-shell--workspace .center-panel-surface {
+	border-width: 0 0 0 1px;
 	border-radius: 0;
 }
-
-/* Session topbar now lives inside .center-panel-surface. When it's rendered
- * there, drop the outer border and radius (the surface provides both) and keep
- * only a bottom divider separating the tabs from the terminal below.
- * When it's rendered in-place (native fullscreen), keep the legacy surface
- * treatment so the topbar still looks like a standalone panel header. */
-.session-topbar-surface {
-	overflow: hidden;
-	border: 1px solid var(--color-border-strong);
-	border-radius: var(--radius-center-panel) var(--radius-center-panel) 0 0;
-	background-color: var(--color-bg-primary);
-}
-
-.center-panel-surface .session-topbar-surface {
-	border: none;
-	border-bottom: 1px solid var(--color-border-strong);
-	border-radius: 0;
-}
-
-/* When the sidebar is off-canvas, clear only the fixed navigation cluster.
- * Native macOS fullscreen removes the traffic lights, so the cluster moves to
- * the compact panel inset instead of retaining the windowed 79px reserve. */
-.session-topbar-titlebar-clearance-mac {
-	padding-left: var(--size-titlebar-content-offset);
-}
-
-.native-fullscreen .session-topbar-titlebar-clearance-mac {
-	padding-left: calc(
-		var(--space-2) + var(--size-titlebar-cluster-width) + var(--size-titlebar-content-gap)
-	);
-}
-
-.session-topbar-titlebar-clearance-linux {
-	padding-left: var(--size-titlebar-content-offset-linux);
-}
-
-.center-panel-shell.center-panel-shell--session {
-	/* No padding override: session pages use the same inset as other pages now
-	 * that SessionTopbarHost lives inside the surface. Class is kept for
-	 * identification (e.g. tests). */
-}
-
-.center-panel-shell--session > .center-panel-surface {
-	/* Session surface uses standard border-radius; topbar clips to rounded corners
-	 * inside the surface. No override needed. */
-}
-
 .center-panel-titlebar {
 	padding-left: 1.125rem; /* matches former px-4.5 */
 }
@@ -574,6 +533,421 @@
 .platform-windows .center-panel-surface,
 .platform-linux .center-panel-surface {
 	border-radius: 0;
+}
+
+/* ── Reverb workspace bar ────────────────────────────────────────────────
+ * Route-aware app chrome. The 40px bar is intentionally independent from
+ * the 36px Electron/native titlebar contract below. Mount sites may retain
+ * `center-panel-titlebar` while they migrate; this prefixed layer wins only
+ * for the new component. */
+.reverb-topbar {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+	width: 100%;
+	height: var(--size-topbar-primary);
+	min-height: var(--size-topbar-primary);
+	flex: 0 0 var(--size-topbar-primary);
+	align-items: center;
+	gap: var(--space-topbar-zone);
+	overflow: hidden;
+	border-bottom: 1px solid var(--color-border-topbar);
+	background: var(--color-bg-topbar);
+	padding-inline: var(--space-topbar-x);
+	color: var(--color-text-topbar);
+	font-size: var(--font-size-base);
+	line-height: 1;
+	user-select: none;
+}
+
+/* macOS/Linux retain their traffic-light/navigation clearance, and the
+ * route-level bar uses the same compact 40px Reverb height. */
+.center-panel-shell--mac .center-panel-titlebar.reverb-topbar {
+	height: var(--size-topbar-primary);
+	min-height: var(--size-topbar-primary);
+}
+
+.reverb-topbar__context {
+	display: flex;
+	min-width: 0;
+	max-width: var(--size-topbar-context-max);
+	align-items: center;
+	gap: var(--space-topbar-group);
+	overflow: hidden;
+}
+
+.reverb-topbar__leading-icon {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	color: var(--color-text-topbar-passive);
+}
+
+.reverb-topbar__breadcrumbs {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: var(--space-topbar-group);
+	overflow: hidden;
+	white-space: nowrap;
+}
+
+.reverb-topbar__breadcrumb-list {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: var(--space-topbar-group);
+	overflow: hidden;
+}
+
+.reverb-topbar__breadcrumb {
+	display: inline-flex;
+	min-width: 0;
+	align-items: center;
+	gap: var(--space-1_5);
+	overflow: hidden;
+	color: var(--color-text-topbar-muted);
+	font-size: var(--font-size-sm-md);
+	font-weight: var(--font-weight-medium);
+	white-space: nowrap;
+}
+
+.reverb-topbar__breadcrumb[aria-current="page"] {
+	color: var(--color-text-topbar);
+	font-weight: var(--font-weight-semibold);
+}
+
+.reverb-topbar__breadcrumb--interactive {
+	-webkit-app-region: no-drag;
+	border-radius: var(--radius-sm);
+	cursor: pointer;
+	transition:
+		background-color var(--duration-fast) ease,
+		color var(--duration-fast) ease;
+}
+
+.reverb-topbar__breadcrumb--interactive:hover {
+	background: var(--color-bg-topbar-raised);
+	color: var(--color-text-topbar);
+}
+
+.reverb-topbar__breadcrumb-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.reverb-topbar__separator {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	color: var(--color-text-topbar-passive);
+}
+
+.reverb-topbar__state {
+	display: flex;
+	width: clamp(9rem, 34cqi, 24rem);
+	min-width: 9rem;
+	height: var(--size-topbar-control);
+	flex: 0 1 24rem;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	overflow: hidden;
+	border: 1px solid var(--color-border-topbar-strong);
+	border-radius: var(--radius-md);
+	background: var(--color-bg-topbar-raised);
+	padding-inline: var(--space-3);
+	color: var(--color-text-topbar-muted);
+	white-space: nowrap;
+}
+
+.reverb-topbar__state--empty {
+	width: 0;
+	min-width: 0;
+	border: 0;
+	padding: 0;
+	box-shadow: none;
+	visibility: hidden;
+}
+
+.reverb-topbar__state-content {
+	display: flex;
+	min-width: 0;
+	width: 100%;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+}
+
+.reverb-topbar__state-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-size: var(--font-size-sm-md);
+	white-space: nowrap;
+}
+
+.reverb-topbar__status-dot {
+	width: var(--size-dot-sm);
+	height: var(--size-dot-sm);
+	flex: 0 0 var(--size-dot-sm);
+	border-radius: var(--radius-full);
+	background: currentColor;
+}
+
+.reverb-topbar__state-divider {
+	width: 1px;
+	height: calc(var(--size-topbar-control) - var(--space-3));
+	flex: 0 0 1px;
+	margin-inline-start: var(--space-1);
+	margin-inline-end: var(--space-2);
+	background: color-mix(in srgb, var(--color-text-topbar) 18%, transparent);
+}
+
+.reverb-topbar__activity {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: var(--space-1_5);
+	font-size: var(--font-size-sm-md);
+	font-weight: var(--font-weight-medium);
+	line-height: 1;
+	white-space: nowrap;
+}
+
+.reverb-topbar__trailing,
+.reverb-topbar__actions,
+.reverb-topbar__utilities {
+	display: flex;
+	min-width: 0;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: var(--space-topbar-group);
+}
+
+.reverb-topbar__trailing {
+	gap: var(--space-2);
+	justify-content: flex-end;
+	overflow: hidden;
+}
+
+.reverb-topbar__actions {
+	gap: var(--space-2);
+}
+
+.reverb-topbar__error {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.reverb-topbar__utility-separator,
+.reverb-topbar__zone-divider {
+	width: 1px;
+	height: calc(var(--size-topbar-control) - var(--space-3));
+	flex: 0 0 1px;
+	background: color-mix(in srgb, var(--color-text-topbar) 18%, transparent);
+}
+
+.reverb-topbar__utility-separator {
+	margin-inline: 0;
+}
+
+.reverb-topbar .reverb-topbar__control {
+	-webkit-app-region: no-drag;
+	display: inline-flex;
+	height: var(--size-topbar-control);
+	min-width: var(--size-topbar-control);
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-1_5);
+	border: 1px solid transparent;
+	border-radius: var(--radius-topbar-control);
+	background: transparent;
+	color: var(--color-text-topbar-muted);
+	cursor: pointer;
+	font-family: inherit;
+	white-space: nowrap;
+	transition:
+		background-color var(--duration-fast) ease,
+		border-color var(--duration-fast) ease,
+		color var(--duration-fast) ease,
+		filter var(--duration-fast) ease,
+		gap var(--duration-normal) ease,
+		padding-inline var(--duration-normal) ease;
+}
+
+.reverb-topbar .reverb-topbar__control--labeled,
+.reverb-topbar .reverb-topbar__control--feature {
+	padding-inline: var(--space-2_5);
+	font-size: var(--font-size-sm-md);
+}
+
+.reverb-topbar [data-compact-label] {
+	display: inline-block;
+	max-width: 12rem;
+	overflow: hidden;
+	opacity: 1;
+	transform: translateX(0);
+	transition:
+		max-width var(--duration-normal) ease,
+		opacity var(--duration-fast) ease,
+		transform var(--duration-normal) ease;
+}
+
+.reverb-topbar .reverb-topbar__control:hover:not(:disabled) {
+	border-color: var(--color-border-topbar);
+	background: var(--color-bg-topbar-raised);
+	color: var(--color-text-topbar);
+}
+
+.reverb-topbar .reverb-topbar__control:focus-visible,
+.reverb-topbar a:focus-visible,
+.reverb-topbar button:focus-visible {
+	outline: 2px solid var(--color-accent);
+	outline-offset: -2px;
+}
+
+.reverb-topbar .reverb-topbar__control:disabled,
+.reverb-topbar .reverb-topbar__control[aria-disabled="true"] {
+	cursor: not-allowed;
+	opacity: 0.5;
+}
+
+.reverb-topbar .reverb-topbar__control--icon {
+	width: var(--size-topbar-control);
+	padding-inline: 0;
+}
+
+.reverb-topbar .reverb-topbar__control--accent {
+	border-color: var(--color-border-topbar-strong);
+	background: var(--color-bg-topbar-raised);
+	color: var(--color-text-topbar);
+}
+
+.reverb-topbar .reverb-topbar__control--feature {
+	border-color: color-mix(in srgb, var(--color-accent) 24%, var(--color-border-topbar));
+	background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-topbar-raised));
+	color: color-mix(in srgb, var(--color-accent) 58%, var(--color-text-topbar));
+}
+
+.reverb-topbar .reverb-topbar__control--feature:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border-topbar-strong));
+	background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-topbar-raised));
+	color: var(--color-text-topbar);
+}
+
+.reverb-topbar .reverb-topbar__control--primary {
+	border-color: color-mix(in srgb, var(--color-accent) 70%, transparent);
+	background: var(--color-accent-strong);
+	color: var(--color-accent-foreground);
+}
+
+.reverb-topbar .reverb-topbar__control--primary:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--color-accent) 90%, transparent);
+	background: var(--color-accent-strong);
+	color: var(--color-accent-foreground);
+	filter: brightness(1.08);
+}
+
+.reverb-topbar .reverb-topbar__control--danger {
+	border-color: color-mix(in srgb, var(--color-danger) 42%, transparent);
+	background: color-mix(in srgb, var(--color-danger) 8%, transparent);
+	color: var(--color-danger);
+}
+
+.reverb-topbar .reverb-topbar__control--danger-icon {
+	color: color-mix(in srgb, var(--color-danger) 82%, var(--color-text-topbar-muted));
+}
+
+.reverb-topbar .reverb-topbar__control--danger-icon:hover:not(:disabled) {
+	border-color: transparent;
+	background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+	color: var(--color-danger);
+}
+
+.reverb-topbar .reverb-topbar__control--danger:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--color-danger) 68%, transparent);
+	background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+	color: var(--color-danger);
+}
+
+/* Responsive behavior follows the framed center panel, not the viewport:
+ * inspector/sidebar resizing therefore produces the same collapse priorities
+ * as a narrower application window. */
+@container center-panel (max-width: 759px) {
+	.reverb-topbar {
+		gap: var(--space-2);
+		padding-inline: var(--space-topbar-x);
+	}
+
+	.reverb-topbar__context {
+		max-width: 100%;
+	}
+
+	.reverb-topbar__state {
+		width: clamp(7rem, 28cqi, 13rem);
+		min-width: 7rem;
+		padding-inline: var(--space-2);
+	}
+
+	.reverb-topbar [data-priority="secondary"] [data-compact-label] {
+		max-width: 0;
+		opacity: 0;
+		transform: translateX(-2px);
+	}
+
+	.reverb-topbar [data-priority="secondary"].reverb-topbar__control {
+		padding-inline: 0;
+		gap: 0;
+	}
+}
+
+@container center-panel (max-width: 639px) {
+	.reverb-topbar [data-priority] [data-compact-label] {
+		max-width: 0;
+		opacity: 0;
+		transform: translateX(-2px);
+	}
+
+	.reverb-topbar [data-priority].reverb-topbar__control {
+		padding-inline: 0;
+		gap: 0;
+	}
+}
+
+@container center-panel (max-width: 559px) {
+	.reverb-topbar__breadcrumb-group:not(:last-child),
+	.reverb-topbar__breadcrumb-group:last-child .reverb-topbar__separator {
+		display: none;
+	}
+
+	.reverb-topbar__context {
+		max-width: none;
+		flex-basis: auto;
+	}
+
+	.reverb-topbar__state {
+		width: auto;
+		max-width: 9rem;
+		min-width: 0;
+		flex-basis: auto;
+	}
+
+	.reverb-topbar__utility-separator {
+		margin-inline: var(--space-1);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.reverb-topbar__breadcrumb--interactive,
+	.reverb-topbar__control,
+	.reverb-topbar [data-compact-label] {
+		transition: none;
+	}
 }
 
 @utility settings-row-bar {
@@ -1139,6 +1513,19 @@ textarea,
 .terminal-surface .xterm-screen,
 .terminal-surface .xterm-helpers {
 	background-color: var(--color-bg-terminal-opaque) !important;
+}
+
+.session-pane-tab {
+	box-sizing: border-box;
+	height: var(--size-control-md);
+	min-width: var(--size-shell-tab-min);
+	max-width: var(--size-session-pane-tab-max);
+	gap: var(--space-0_5);
+	padding-inline: var(--space-2);
+}
+
+.session-pane-tab__label {
+	font-size: var(--font-size-sm-md);
 }
 
 @keyframes status-pulse {
@@ -1777,7 +2164,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	align-items: center;
 	gap: 8px;
 	padding: 0 10px;
-	border-bottom: 1px solid var(--border);
+	border-bottom: 1px solid var(--color-border);
 	/* Matches the shell chrome (bg-sidebar) and the Window Controls Overlay
 	   color pushed in WindowTitlebar/main.ts, so the native min/max/close
 	   strip blends into the bar instead of reading as a separate box. */
@@ -1792,7 +2179,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	width: 28px;
 	height: 28px;
 	border-radius: 6px;
-	color: var(--fg-muted);
+	color: var(--color-text-muted);
 	-webkit-app-region: no-drag;
 	transition:
 		background-color 0.12s ease,
@@ -1800,8 +2187,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 .window-titlebar__toggle:hover {
-	background: color-mix(in srgb, var(--fg) 8%, transparent);
-	color: var(--fg);
+	background: var(--color-interactive-hover);
+	color: var(--color-text-primary);
 }
 
 .window-titlebar__toggle-icon {
@@ -1822,7 +2209,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	border-radius: 6px;
 	font-size: 12.5px;
 	line-height: 1;
-	color: var(--fg-muted);
+	color: var(--color-text-muted);
 	transition:
 		background-color 0.12s ease,
 		color 0.12s ease;
@@ -1830,62 +2217,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 
 .window-titlebar__menu-btn:hover,
 .window-titlebar__menu-btn[data-active] {
-	background: color-mix(in srgb, var(--fg) 8%, transparent);
-	color: var(--fg);
+	background: var(--color-interactive-hover);
+	color: var(--color-text-primary);
 }
 
 .window-titlebar__menu {
 	min-width: 200px;
-}
-
-.topbar-project-pills-group {
-	display: inline-flex;
-	min-width: 0;
-	align-items: center;
-	gap: 8px;
-}
-
-.topbar-identity-sep {
-	font-size: 12px;
-	line-height: 1;
-	color: var(--fg-passive);
-}
-
-.session-detail-mode-badge {
-	display: inline-flex;
-	height: 24px;
-	align-items: center;
-	gap: 4px;
-	border: 1px solid var(--border);
-	border-radius: 6px;
-	padding: 0 8px;
-	font-size: 10px;
-	font-weight: 600;
-	line-height: 1;
-	letter-spacing: 0.05em;
-}
-
-.session-detail-mode-badge--neutral {
-	background: var(--surface);
-	color: var(--fg-muted);
-}
-
-.session-topbar__identity {
-	display: flex;
-	min-width: 0;
-	align-items: center;
-	gap: 11px;
-}
-
-.session-topbar__branch {
-	display: inline-flex;
-	min-width: 0;
-	align-items: center;
-	gap: 5px;
-	font-family: var(--font-mono);
-	font-size: 10.5px;
-	line-height: 1;
-	color: var(--fg-passive);
 }
 
 /* ── Session inspector rail (agent-orchestrator SessionInspector) ───────── */
@@ -2077,13 +2414,76 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	color: var(--fg);
 }
 
-/* Do not animate the inspector's flex-grow. The sibling is a live xterm WebGL
- * surface: interpolating this value makes ResizeObserver fit the terminal at
- * every intermediate width, reallocating the renderer and eventually causing
- * a PTY/SIGWINCH repaint. The inspector still opens and closes atomically, and
- * direct separator drags remain interactive. */
-.session-split #inspector[data-panel] {
+/* Match the left sidebar's spring-like reveal: both split columns participate
+ * in the geometry change so the inspector does not snap at either edge. Drag
+ * resizing remains unanimated and therefore stays directly under the pointer. */
+.session-split > [data-panel] {
+	transition: flex-grow 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* react-resizable-panels enforces this during pointer movement; the CSS cap is
+ * the second guard while the parent workspace itself is changing width (for
+ * example, during the left-sidebar spring). The inspector can never cross the
+ * center line, even for a frame. */
+.session-split > .session-inspector-panel[data-panel] {
+	max-width: var(--session-inspector-max-width, 50%);
+}
+
+.session-split:has([data-separator="active"]) > [data-panel] {
 	transition: none;
+}
+
+.session-inspector-motion {
+	opacity: 1;
+	transform: translateX(0);
+	transition:
+		opacity 150ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		transform 150ms cubic-bezier(0.2, 0.8, 0.2, 1);
+	will-change: opacity, transform;
+}
+
+.session-inspector-motion[data-motion-state="opening"],
+.session-inspector-motion[data-motion-state="closing"],
+.session-inspector-motion[data-motion-state="closed"] {
+	opacity: 0;
+	transform: translateX(12px);
+}
+
+.session-inspector__topbar {
+	background: var(--color-bg-topbar);
+	color: var(--color-text-topbar);
+	user-select: none;
+}
+
+.session-inspector__tab-button {
+	gap: 0;
+}
+
+.session-inspector__responsive-label {
+	max-width: 5.5rem;
+	margin-left: var(--space-1);
+	overflow: hidden;
+	opacity: 1;
+	transform: translateX(0);
+	transition:
+		max-width 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		margin-left 170ms cubic-bezier(0.2, 0.8, 0.2, 1),
+		opacity 120ms ease-out,
+		transform 170ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@container inspector (max-width: 359px) {
+	.session-inspector__responsive-label {
+		max-width: 0;
+		margin-left: 0;
+		opacity: 0;
+		transform: translateX(-4px);
+	}
+}
+
+.session-inspector__toggle {
+	-webkit-app-region: no-drag;
+	margin-right: var(--space-topbar-x);
 }
 
 .inspector-section {
@@ -2981,9 +3381,45 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	animation: notification-row-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
 }
 
+@keyframes notification-popover-in {
+	from {
+		opacity: 0;
+		transform: translateY(-5px) scale(0.985);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+}
+
+@keyframes notification-popover-out {
+	from {
+		opacity: 1;
+		transform: translateY(0) scale(1);
+	}
+	to {
+		opacity: 0;
+		transform: translateY(-3px) scale(0.99);
+	}
+}
+
+.notification-popover[data-state="open"] {
+	animation: notification-popover-in 170ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.notification-popover[data-state="closed"] {
+	pointer-events: none;
+	animation: notification-popover-out 120ms ease-in both;
+}
+
 @media (prefers-reduced-motion: reduce) {
-	.notification-row-enter {
+	.notification-popover[data-state],
+	.notification-row-enter,
+	.session-inspector-motion,
+	.session-inspector__responsive-label,
+	.session-split > [data-panel] {
 		animation: none;
+		transition: none;
 	}
 }
 

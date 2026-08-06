@@ -63,10 +63,28 @@ describe("shell index route", () => {
 		);
 	});
 
-	it("does not redirect when another project exists", async () => {
+	it("redirects to the only real project when Scratch also exists", async () => {
 		routeMocks.workspaces = [
 			{ id: "scratch", name: "Scratch", kind: "scratch", path: "/scratch", sessions: [] },
 			{ id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", sessions: [] },
+		];
+
+		await renderIndex();
+
+		await waitFor(() =>
+			expect(routeMocks.navigate).toHaveBeenCalledWith({
+				to: "/projects/$projectId",
+				params: { projectId: "proj-1" },
+				replace: true,
+			}),
+		);
+	});
+
+	it("keeps the global board when multiple real projects exist", async () => {
+		routeMocks.workspaces = [
+			{ id: "scratch", name: "Scratch", kind: "scratch", path: "/scratch", sessions: [] },
+			{ id: "proj-1", name: "Project One", kind: "single_repo", path: "/repo/project-one", sessions: [] },
+			{ id: "proj-2", name: "Project Two", kind: "single_repo", path: "/repo/project-two", sessions: [] },
 		];
 
 		await renderIndex();

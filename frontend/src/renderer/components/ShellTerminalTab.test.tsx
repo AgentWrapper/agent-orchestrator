@@ -96,7 +96,7 @@ describe("ShellTerminalTab rename", () => {
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
-	it("uses a compact fixed width and shrinks its title around the sibling close affordance", () => {
+	it("uses the same compact frame as a pinned session tab", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
 		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass(
@@ -106,31 +106,39 @@ describe("ShellTerminalTab rename", () => {
 			"group-hover:opacity-100",
 		);
 		expect(screen.getByRole("button", { name: "Close terminal ao" })).not.toHaveClass("absolute");
-		expect(screen.getByRole("tab", { name: "ao" })).toHaveClass("w-full", "min-w-0", "text-left");
+		expect(screen.getByRole("tab", { name: "ao" })).toHaveClass(
+			"w-full",
+			"min-w-0",
+			"text-left",
+			"session-pane-tab__label",
+		);
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
 			"grid",
-			"w-shell-tab-connected",
+			"session-pane-tab",
 		);
 	});
 
-	it("uses a neutral active surface with a strong foreground selection line", () => {
+	it("uses a neutral active surface with a subtle foreground selection line", () => {
 		renderTab({ appearance: "connected", isActive: true });
 
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
 			"self-stretch",
-			"bg-overlay",
-			"after:h-0.5",
-			"after:bg-foreground/80",
+			"bg-interactive-active",
+			"after:h-px",
+			"after:bg-foreground/65",
 		);
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("rounded-md");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass("rounded-md");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("before:bg-accent");
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("after:h-px");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("after:h-0.5");
 	});
 
 	it("optically centers the auxiliary terminal glyph with its label", () => {
 		renderTab({ appearance: "connected" });
 
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement?.querySelector("svg")).toHaveClass("translate-y-px");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement?.querySelector("svg")).toHaveClass(
+			"size-icon-xs",
+			"translate-y-px",
+		);
 	});
 });
 

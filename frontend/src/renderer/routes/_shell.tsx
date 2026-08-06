@@ -11,7 +11,6 @@ import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
-import { SessionTopbarHost, SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
@@ -82,6 +81,7 @@ const isWindows = isWindowsPlatform();
 const isLinux = isLinuxPlatform();
 const framedAppTopbar = usesFramedAppTopbar();
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
+const SIDEBAR_PEEK_CLOSE_DELAY_MS = 80;
 
 // Persistent app shell: the Sidebar + shared state survive route changes; only
 // the <Outlet> content (board / session / settings / …) swaps. Lifted out of
@@ -161,11 +161,13 @@ function ShellLayout() {
 	const isSettingsRoute =
 		Boolean(matchRoute({ to: "/settings", fuzzy: true })) ||
 		Boolean(matchRoute({ to: "/projects/$projectId/settings", fuzzy: true }));
-	// Welcome/settings always self-frame. Platforms that hide the shell-owned
-	// topbar (macOS) use the same full-height inset; session actions mount
-	// inside SessionView.
+	const isTerminalsRoute = Boolean(matchRoute({ to: "/terminals", fuzzy: true }));
+	const isSessionRoute = Boolean(routeParams.sessionId);
+	const isWorkspaceCanvas = isSessionRoute || (!isWelcomeBoard && !isSettingsRoute && !isTerminalsRoute);
+	// Welcome/settings always self-frame. Sessions own their header inside the
+	// terminal column on every platform so it ends at the inspector divider.
 	const selfFramedCenterPanel = isWelcomeBoard || isSettingsRoute;
-	const hideShellTopbar = selfFramedCenterPanel || shellTopbarHiddenByPlatform;
+	const hideShellTopbar = selfFramedCenterPanel || isSessionRoute || shellTopbarHiddenByPlatform;
 	const setProjectRestarting = useUiStore((state) => state.setProjectRestarting);
 	const orchestratorReplacementErrors = useUiStore((state) => state.orchestratorReplacementErrors);
 	const setOrchestratorReplacementError = useUiStore((state) => state.setOrchestratorReplacementError);
@@ -188,13 +190,12 @@ function ShellLayout() {
 	}, [cancelSidebarPeekClose, isSidebarOpen]);
 
 	const scheduleSidebarPeekClose = useCallback(() => {
-		if (isSidebarOpen) return;
-		cancelSidebarPeekClose();
+		if (isSidebarOpen || sidebarPeekCloseTimerRef.current !== undefined) return;
 		sidebarPeekCloseTimerRef.current = window.setTimeout(() => {
 			setIsSidebarPeekOpen(false);
 			sidebarPeekCloseTimerRef.current = undefined;
-		}, 140);
-	}, [cancelSidebarPeekClose, isSidebarOpen]);
+		}, SIDEBAR_PEEK_CLOSE_DELAY_MS);
+	}, [isSidebarOpen]);
 
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
@@ -617,7 +618,6 @@ function ShellLayout() {
 
 	return (
 		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
-			<SessionTopbarProvider>
 				<NotificationRuntime />
 				<TrayRuntime />
 				<GlobalNewTaskDialog />
@@ -655,7 +655,9 @@ function ShellLayout() {
             macOS/Linux. */}
 				<WindowTitlebar onSidebarPreviewEnter={previewSidebar} />
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
-				{!framedAppTopbar && !hideShellTopbar && !routeParams.sessionId ? <ShellTopbar /> : null}
+				{!framedAppTopbar && !hideShellTopbar ? (
+					<ShellTopbar surfaceOverride={isTerminalsRoute ? "standalone-terminals" : undefined} />
+				) : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
@@ -684,7 +686,7 @@ function ShellLayout() {
 					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
 					onPreviewLeave={scheduleSidebarPeekClose}
 					underTopbar={isMac || isWindows || isLinux}
-					topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
+					topbarOffset={isWindows ? "titlebar" : isMac && hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
@@ -693,51 +695,33 @@ function ShellLayout() {
 					/>
 					<main className={cn("flex min-w-0 flex-1 flex-col overflow-x-hidden", !isSidebarOpen && "sidebar-hidden")}>
 						<div className="min-h-0 flex-1 overflow-x-hidden">
-							{/* Board/session routes render inside the same inset box the welcome board and settings paint for themselves, so every screen sits within the app's outer boundary. */}
+							{/* Sessions own their top bar inside the terminal column. Other app
+							    routes keep the same framed workspace boundary. */}
 							{hideShellTopbar ? (
 								selfFramedCenterPanel ? (
 									<Outlet />
 								) : (
-							// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
-							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-								{routeParams.sessionId ? (
-									<SessionTopbarHost
-										className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
-										data-testid="session-topbar-host"
-									/>
-								) : null}
-								<div className="flex min-h-0 flex-1 flex-col">
-									<Outlet />
-								</div>
-							</CenterPanelShell>
-						)
-					) : framedAppTopbar ? (
-						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							{routeParams.sessionId ? (
-								<SessionTopbarHost
-									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
-									data-testid="session-topbar-host"
-								/>
+									<CenterPanelShell
+										className={isSessionRoute ? "center-panel-shell--session" : undefined}
+										variant={isWorkspaceCanvas ? "workspace" : "framed"}
+									>
+										<div className="flex min-h-0 flex-1 flex-col">
+											<Outlet />
+										</div>
+									</CenterPanelShell>
+								)
+							) : framedAppTopbar ? (
+								<CenterPanelShell variant={isWorkspaceCanvas ? "workspace" : "framed"}>
+									<ShellTopbar surfaceOverride={isTerminalsRoute ? "standalone-terminals" : undefined} />
+									<div className="flex min-h-0 flex-1 flex-col">
+										<Outlet />
+									</div>
+								</CenterPanelShell>
 							) : (
-								<ShellTopbar />
+								<CenterPanelShell variant={isWorkspaceCanvas ? "workspace" : "framed"}>
+									<Outlet />
+								</CenterPanelShell>
 							)}
-							<div className="flex min-h-0 flex-1 flex-col">
-								<Outlet />
-							</div>
-						</CenterPanelShell>
-					) : (
-						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
-							{routeParams.sessionId ? (
-								<SessionTopbarHost
-									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
-									data-testid="session-topbar-host"
-								/>
-							) : null}
-							<div className="flex min-h-0 flex-1 flex-col">
-								<Outlet />
-							</div>
-						</CenterPanelShell>
-					)}
 						</div>
 					</main>
 					</div>
@@ -785,7 +769,6 @@ function ShellLayout() {
 					<CommandPalette />
 				</div>
 				</TerminalCacheProvider>
-			</SessionTopbarProvider>
 		</ShellProvider>
 	);
 }
