@@ -111,7 +111,7 @@ export function ShellTerminalTab({
 					: "inline-flex gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
-						? "border-border-strong bg-interactive-active text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+						? "border-border-strong bg-interactive-active text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-foreground/65"
 						: "border-transparent text-passive hover:bg-interactive-hover/60 hover:text-foreground"
 					: isActive
 						? "bg-interactive-active"
@@ -120,7 +120,7 @@ export function ShellTerminalTab({
 			{...containerRenameHandlers}
 		>
 			{appearance === "connected" ? (
-				<SquareTerminal aria-hidden="true" className="mr-1 size-icon-sm shrink-0 translate-y-px" />
+				<SquareTerminal aria-hidden="true" className="size-icon-xs shrink-0 translate-y-px" />
 			) : null}
 			{isEditing ? (
 				<input
@@ -149,9 +149,11 @@ export function ShellTerminalTab({
 					aria-current={isActive}
 					aria-selected={isActive}
 					className={cn(
-						"select-none truncate text-control transition-colors",
+						"select-none truncate transition-colors",
 						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
-						appearance === "connected" ? "font-normal" : "font-mono font-semibold",
+						appearance === "connected"
+							? "session-pane-tab__label font-mono font-semibold"
+							: "text-control font-mono font-semibold",
 						isActive ? "text-foreground" : "text-passive group-hover:text-foreground",
 					)}
 					role="tab"

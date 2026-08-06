@@ -85,8 +85,8 @@ describe("CenterPane toolbar session label", () => {
 		expect(sessionTab.parentElement).toHaveClass(
 			"session-pane-tab",
 			"bg-interactive-active",
-			"after:h-0.5",
-			"after:bg-foreground/80",
+			"after:h-px",
+			"after:bg-foreground/65",
 		);
 		expect(sessionTab.closest(".h-inspector-tabs")).toHaveClass("px-1.5");
 		expect(document.querySelector('button[aria-label="Scroll tabs left"]')).toHaveClass("hidden");
@@ -163,6 +163,19 @@ describe("CenterPane toolbar session label", () => {
 		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
 		fireEvent.click(screen.getByRole("menuitem", { name: "New terminal" }));
 		expect(onNewShellTerminal).toHaveBeenCalledOnce();
+	});
+
+	it("presents the tab launcher as a compact, sectioned popover", () => {
+		renderCenterPane({ session: worker, availableProjectSessions: [secondWorker] });
+
+		fireEvent.pointerDown(screen.getByRole("button", { name: "Add tab" }), { button: 0, ctrlKey: false });
+
+		const menu = screen.getByRole("menu");
+		const newTerminal = screen.getByRole("menuitem", { name: /New terminal/ });
+		expect(menu).toHaveClass("w-64", "rounded-xl", "backdrop-blur-xl");
+		expect(newTerminal).toHaveClass("min-h-10", "bg-interactive-active/60");
+		expect(newTerminal.querySelector("svg")).toHaveClass("size-icon-sm!");
+		expect(screen.getByText("Sessions")).toBeInTheDocument();
 	});
 
 	it("limits a large session list, then expands it into a searchable scroll area", () => {

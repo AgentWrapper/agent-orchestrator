@@ -31,6 +31,8 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuShortcut,
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
@@ -284,28 +286,43 @@ export function CenterPane({
 						<DropdownMenuTrigger asChild>
 							<button
 								aria-label={t("terminal.addTab")}
-								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-md bg-interactive-active text-muted-foreground transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-md bg-interactive-active text-muted-foreground transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground"
 								title={t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
 								type="button"
 							>
 								<Plus aria-hidden="true" className="size-icon-md" />
 							</button>
 						</DropdownMenuTrigger>
-						<DropdownMenuContent align="start" className="w-72">
-							<DropdownMenuItem onSelect={onNewShellTerminal}>
-								<TerminalIcon aria-hidden="true" />
-								{t("shortcut.new-shell-terminal")}
+						<DropdownMenuContent
+							align="end"
+							className="w-64 rounded-xl border-border-strong/80 bg-popover/95 p-1.5 shadow-(--shadow-popover) backdrop-blur-xl"
+							sideOffset={8}
+						>
+							<DropdownMenuItem
+								className="min-h-10 rounded-lg border border-border/70 bg-interactive-active/60 px-2.5 py-2 text-foreground focus:border-border-strong focus:bg-interactive-hover"
+								onSelect={onNewShellTerminal}
+							>
+								<span className="grid size-control-sm shrink-0 place-items-center rounded-md bg-background/60 text-muted-foreground shadow-xs">
+									<TerminalIcon aria-hidden="true" className="size-icon-sm! text-muted-foreground!" />
+								</span>
+								<span className="min-w-0 flex-1 font-semibold">{t("shortcut.new-shell-terminal")}</span>
+								<DropdownMenuShortcut className="rounded bg-background/60 px-1.5 py-0.5 font-mono tracking-normal">
+									{newTerminalShortcutLabel}
+								</DropdownMenuShortcut>
 							</DropdownMenuItem>
-							<DropdownMenuSeparator />
+							<DropdownMenuSeparator className="mx-0.5 my-1.5" />
+							<DropdownMenuLabel className="px-2 pt-0.5 pb-1 text-2xs font-semibold tracking-wide text-passive uppercase">
+								{t("command.group.sessions")}
+							</DropdownMenuLabel>
 							{hasMoreSessions ? (
-								<div className="relative px-1 pb-1">
+								<div className="relative px-0.5 pb-1">
 									<Search
 										aria-hidden="true"
-										className="pointer-events-none absolute top-1/2 left-3 size-icon-md -translate-y-[calc(50%+2px)] text-passive"
+										className="pointer-events-none absolute top-1/2 left-2.5 size-icon-sm -translate-y-[calc(50%+2px)] text-passive"
 									/>
 									<Input
 										aria-label={t("terminal.searchSessions")}
-										className="h-control-board pl-8"
+										className="h-control-md rounded-md border-border/70 bg-background/50 pl-7 text-control"
 										onChange={(event) => setSessionSearch(event.target.value)}
 										onKeyDown={(event) => event.stopPropagation()}
 										placeholder={t("terminal.searchSessions")}
@@ -320,6 +337,7 @@ export function CenterPane({
 										return (
 											<DropdownMenuItem
 												key={candidate.id}
+												className="min-h-8 rounded-lg px-2 py-1.5"
 												disabled={isOpen}
 												onSelect={() => onAddProjectSession?.(candidate)}
 											>
@@ -333,15 +351,15 @@ export function CenterPane({
 											{isOpen ? t("inspector.open") : candidate.workspaceName}
 												</span>
 											</DropdownMenuItem>
-										);
-									})
-								) : (
+											);
+										})
+									) : (
 									<DropdownMenuItem disabled>{t("terminal.noSessionsFound")}</DropdownMenuItem>
-								)}
+									)}
 							</div>
 							{hasMoreSessions && !expandedSessionList ? (
 								<>
-									<DropdownMenuSeparator />
+									<DropdownMenuSeparator className="mx-0.5 my-1.5" />
 									<DropdownMenuItem
 										className="justify-center text-foreground"
 										onSelect={(event) => {
@@ -451,7 +469,7 @@ function SessionPaneTab({ label, provider, isActive, onSelect, onClose }: Sessio
 			className={cn(
 				"session-pane-tab group relative inline-flex items-center rounded-md transition-colors",
 				isActive
-					? "bg-interactive-active after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+					? "bg-interactive-active after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-foreground/65"
 					: "hover:bg-interactive-hover/60",
 			)}
 		>
