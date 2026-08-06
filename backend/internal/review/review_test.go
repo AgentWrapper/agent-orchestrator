@@ -17,7 +17,7 @@ import (
 
 type fakeStore struct {
 	review               *domain.Review
-	reviewSessions       map[domain.ReviewerHarness]domain.ReviewSession
+	reviews              map[domain.ReviewerHarness]domain.Review
 	runs                 []domain.ReviewRun
 	listAllReviewRunHits int
 	// insertErr, when set, makes the next InsertReviewRun model a concurrent
@@ -31,6 +31,18 @@ type fakeStore struct {
 func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
 	cp := r
 	f.review = &cp
+	if f.reviews == nil {
+		f.reviews = make(map[domain.ReviewerHarness]domain.Review)
+	}
+	if existing, ok := f.reviews[r.Harness]; ok {
+		cp.ID = existing.ID
+		cp.CreatedAt = existing.CreatedAt
+		if cp.AgentSessionID == "" {
+			cp.AgentSessionID = existing.AgentSessionID
+		}
+		f.review = &cp
+	}
+	f.reviews[r.Harness] = cp
 	return nil
 }
 func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (domain.Review, bool, error) {
@@ -39,39 +51,53 @@ func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (d
 	}
 	return *f.review, true, nil
 }
+func (f *fakeStore) GetReviewBySessionAndHarness(_ context.Context, _ domain.SessionID, harness domain.ReviewerHarness) (domain.Review, bool, error) {
+	if f.reviews != nil {
+		review, ok := f.reviews[harness]
+		return review, ok, nil
+	}
+	if f.review != nil && f.review.Harness == harness {
+		return *f.review, true, nil
+	}
+	return domain.Review{}, false, nil
+}
+func (f *fakeStore) ListReviewsBySession(_ context.Context, _ domain.SessionID) ([]domain.Review, error) {
+	if f.reviews != nil {
+		out := make([]domain.Review, 0, len(f.reviews))
+		for _, review := range f.reviews {
+			out = append(out, review)
+		}
+		return out, nil
+	}
+	if f.review == nil {
+		return nil, nil
+	}
+	return []domain.Review{*f.review}, nil
+}
 func (f *fakeStore) ClearReviewerHandle(_ context.Context, id domain.SessionID) error {
 	if f.review != nil && f.review.SessionID == id {
 		f.review.ReviewerHandleID = ""
 	}
+	for harness, review := range f.reviews {
+		if review.SessionID == id {
+			review.ReviewerHandleID = ""
+			f.reviews[harness] = review
+		}
+	}
 	return nil
 }
-func (f *fakeStore) UpsertReviewSession(_ context.Context, r domain.ReviewSession) error {
-	if f.reviewSessions == nil {
-		f.reviewSessions = make(map[domain.ReviewerHarness]domain.ReviewSession)
+func (f *fakeStore) ClearReviewerHandleByHarness(_ context.Context, _ domain.SessionID, harness domain.ReviewerHarness) error {
+	if f.review != nil && f.review.Harness == harness {
+		f.review.ReviewerHandleID = ""
 	}
-	if existing, ok := f.reviewSessions[r.Harness]; ok && r.AgentSessionID == "" {
-		r.AgentSessionID = existing.AgentSessionID
+	if f.reviews != nil {
+		review, ok := f.reviews[harness]
+		if !ok {
+			return nil
+		}
+		review.ReviewerHandleID = ""
+		f.reviews[harness] = review
 	}
-	f.reviewSessions[r.Harness] = r
-	return nil
-}
-func (f *fakeStore) GetReviewSession(_ context.Context, _ domain.SessionID, harness domain.ReviewerHarness) (domain.ReviewSession, bool, error) {
-	if f.reviewSessions == nil {
-		return domain.ReviewSession{}, false, nil
-	}
-	session, ok := f.reviewSessions[harness]
-	return session, ok, nil
-}
-func (f *fakeStore) ClearReviewSessionHandle(_ context.Context, _ domain.SessionID, harness domain.ReviewerHarness) error {
-	if f.reviewSessions == nil {
-		return nil
-	}
-	session, ok := f.reviewSessions[harness]
-	if !ok {
-		return nil
-	}
-	session.ReviewerHandleID = ""
-	f.reviewSessions[harness] = session
 	return nil
 }
 func (f *fakeStore) InsertReviewRun(_ context.Context, r domain.ReviewRun) error {
@@ -141,7 +167,7 @@ func (f *fakeStore) CancelRunningReviewRunsBySession(_ context.Context, sessionI
 func (f *fakeStore) CancelRunningReviewRunsBySessionAndHarness(_ context.Context, sessionID domain.SessionID, harness domain.ReviewerHarness, body string) (int64, error) {
 	var n int64
 	for i := range f.runs {
-		if f.runs[i].SessionID == sessionID && f.runs[i].Harness == harness && f.runs[i].Status == domain.ReviewRunRunning && f.runs[i].Verdict == domain.VerdictNone {
+		if f.runs[i].SessionID == sessionID && (f.runs[i].Harness == harness || f.runs[i].Harness == "") && f.runs[i].Status == domain.ReviewRunRunning && f.runs[i].Verdict == domain.VerdictNone {
 			f.runs[i].Status = domain.ReviewRunCancelled
 			f.runs[i].Body = body
 			n++
@@ -414,6 +440,41 @@ func TestCancelInterruptsReviewerAndCancelsRunningRuns(t *testing.T) {
 	}
 }
 
+func TestCancelTargetsRunningReviewerHarness(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "codex-pane"},
+		reviews: map[domain.ReviewerHarness]domain.Review{
+			domain.ReviewerCodex:    {ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "codex-pane"},
+			domain.ReviewerOpenCode: {ID: "rev-open", SessionID: "mer-1", Harness: domain.ReviewerOpenCode, ReviewerHandleID: "opencode-pane"},
+		},
+		runs: []domain.ReviewRun{
+			{ID: "run-open", ReviewID: "rev-open", SessionID: "mer-1", Harness: domain.ReviewerOpenCode, PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+			{ID: "run-codex", ReviewID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, PRURL: "https://github.com/o/r/pull/2", TargetSHA: "sha2", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved},
+		},
+	}
+	worker := liveWorker()
+	worker.ReviewerHarness = domain.ReviewerCodex
+	launcher := &fakeLauncher{}
+	eng := newEngineForTest(store, fakeSessions{rec: worker, ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	res, err := eng.Cancel(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if launcher.cancelledHandle != "opencode-pane" || launcher.cancelledHarness != domain.ReviewerOpenCode {
+		t.Fatalf("cancelled handle=%q harness=%q, want opencode pane", launcher.cancelledHandle, launcher.cancelledHarness)
+	}
+	if len(res.CancelledRuns) != 1 || res.CancelledRuns[0].ID != "run-open" {
+		t.Fatalf("cancelled runs = %+v", res.CancelledRuns)
+	}
+	if store.runs[0].Status != domain.ReviewRunCancelled {
+		t.Fatalf("opencode run not cancelled: %+v", store.runs[0])
+	}
+	if store.runs[1].Status != domain.ReviewRunComplete {
+		t.Fatalf("codex run was changed: %+v", store.runs[1])
+	}
+}
+
 func TestCancelMarksRunsCancelledWhenReviewerHandleIsGone(t *testing.T) {
 	store := &fakeStore{
 		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "review-mer-1"},
@@ -461,15 +522,10 @@ func TestCancelKeepsRunsRunningWhenReviewerCancelFailsAndHandleIsAlive(t *testin
 
 func TestRestoreReviewerUsesSelectedHarnessSessionAndKillsOtherActivePane(t *testing.T) {
 	store := &fakeStore{
-		review: &domain.Review{
-			ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex,
-			ReviewerHandleID: "codex-pane", AgentSessionID: "codex-native",
-		},
-		reviewSessions: map[domain.ReviewerHarness]domain.ReviewSession{
-			domain.ReviewerOpenCode: {
-				SessionID: "mer-1", ProjectID: "mer", Harness: domain.ReviewerOpenCode,
-				AgentSessionID: "opencode-native",
-			},
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "codex-pane", AgentSessionID: "codex-native"},
+		reviews: map[domain.ReviewerHarness]domain.Review{
+			domain.ReviewerCodex:    {ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, ReviewerHandleID: "codex-pane", AgentSessionID: "codex-native"},
+			domain.ReviewerOpenCode: {ID: "rev-open", SessionID: "mer-1", ProjectID: "mer", Harness: domain.ReviewerOpenCode, AgentSessionID: "opencode-native"},
 		},
 		runs: []domain.ReviewRun{
 			{ID: "codex-run", ReviewID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerCodex, PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved},

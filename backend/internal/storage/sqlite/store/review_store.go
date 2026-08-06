@@ -11,8 +11,8 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/gen"
 )
 
-// UpsertReview inserts the per-worker review row, or reuses the existing one
-// (session_id is unique) by refreshing its harness/pr_url/updated_at.
+// UpsertReview inserts the per-worker, per-harness review row, or reuses the
+// existing one by refreshing its handle/native-session state.
 func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -29,7 +29,8 @@ func (s *Store) UpsertReview(ctx context.Context, r domain.Review) error {
 	})
 }
 
-// GetReviewBySession returns the review row for a worker session, ok=false if none.
+// GetReviewBySession returns the latest review row for a worker session,
+// ok=false if none.
 func (s *Store) GetReviewBySession(ctx context.Context, id domain.SessionID) (domain.Review, bool, error) {
 	row, err := s.qr.GetReviewBySession(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -41,48 +42,47 @@ func (s *Store) GetReviewBySession(ctx context.Context, id domain.SessionID) (do
 	return reviewFromGetReviewBySessionRow(row), true, nil
 }
 
-// ClearReviewerHandle removes the persisted terminal handle after a hard
-// reviewer pane teardown.
+// GetReviewBySessionAndHarness returns the review row for one reviewer harness
+// on a worker session, ok=false if none.
+func (s *Store) GetReviewBySessionAndHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Review, bool, error) {
+	row, err := s.qr.GetReviewBySessionAndHarness(ctx, gen.GetReviewBySessionAndHarnessParams{SessionID: id, Harness: harness})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Review{}, false, nil
+	}
+	if err != nil {
+		return domain.Review{}, false, fmt.Errorf("get review by session %s harness %s: %w", id, harness, err)
+	}
+	return reviewFromGetReviewBySessionAndHarnessRow(row), true, nil
+}
+
+// ListReviewsBySession returns every harness-specific review row for a worker
+// session, newest first.
+func (s *Store) ListReviewsBySession(ctx context.Context, id domain.SessionID) ([]domain.Review, error) {
+	rows, err := s.qr.ListReviewsBySession(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("list reviews for session %s: %w", id, err)
+	}
+	out := make([]domain.Review, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, reviewFromListReviewsBySessionRow(row))
+	}
+	return out, nil
+}
+
+// ClearReviewerHandle removes all persisted terminal handles for a worker
+// after a hard reviewer pane teardown.
 func (s *Store) ClearReviewerHandle(ctx context.Context, id domain.SessionID) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.ClearReviewerHandle(ctx, id)
 }
 
-// UpsertReviewSession records the live/restorable reviewer session for one
-// harness on a worker session.
-func (s *Store) UpsertReviewSession(ctx context.Context, r domain.ReviewSession) error {
+// ClearReviewerHandleByHarness removes only the runtime handle for one
+// reviewer harness, preserving its native agent session id for later restore.
+func (s *Store) ClearReviewerHandleByHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return s.qw.UpsertReviewSession(ctx, gen.UpsertReviewSessionParams{
-		SessionID:        string(r.SessionID),
-		ProjectID:        string(r.ProjectID),
-		Harness:          string(r.Harness),
-		ReviewerHandleID: r.ReviewerHandleID,
-		AgentSessionID:   r.AgentSessionID,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
-	})
-}
-
-// GetReviewSession returns the saved reviewer session for one harness.
-func (s *Store) GetReviewSession(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.ReviewSession, bool, error) {
-	row, err := s.qr.GetReviewSession(ctx, gen.GetReviewSessionParams{SessionID: string(id), Harness: string(harness)})
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.ReviewSession{}, false, nil
-	}
-	if err != nil {
-		return domain.ReviewSession{}, false, fmt.Errorf("get review session %s harness %s: %w", id, harness, err)
-	}
-	return reviewSessionFromRow(row), true, nil
-}
-
-// ClearReviewSessionHandle removes only the runtime handle for one harness'
-// reviewer pane, preserving its native agent session id for later restore.
-func (s *Store) ClearReviewSessionHandle(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	return s.qw.ClearReviewSessionHandle(ctx, gen.ClearReviewSessionHandleParams{SessionID: string(id), Harness: string(harness)})
+	return s.qw.ClearReviewerHandleByHarness(ctx, gen.ClearReviewerHandleByHarnessParams{SessionID: id, Harness: harness})
 }
 
 // InsertReviewRun records a new review pass. A unique-constraint hit on the
@@ -260,7 +260,7 @@ func (s *Store) ListReviewRunsByBatch(ctx context.Context, id domain.SessionID, 
 	return out, nil
 }
 
-func reviewFromGetReviewBySessionRow(r gen.GetReviewBySessionRow) domain.Review {
+func reviewFromGetReviewBySessionRow(r gen.Review) domain.Review {
 	return domain.Review{
 		ID:               r.ID,
 		SessionID:        r.SessionID,
@@ -274,11 +274,27 @@ func reviewFromGetReviewBySessionRow(r gen.GetReviewBySessionRow) domain.Review 
 	}
 }
 
-func reviewSessionFromRow(r gen.ReviewSession) domain.ReviewSession {
-	return domain.ReviewSession{
-		SessionID:        domain.SessionID(r.SessionID),
-		ProjectID:        domain.ProjectID(r.ProjectID),
-		Harness:          domain.ReviewerHarness(r.Harness),
+func reviewFromGetReviewBySessionAndHarnessRow(r gen.Review) domain.Review {
+	return domain.Review{
+		ID:               r.ID,
+		SessionID:        r.SessionID,
+		ProjectID:        r.ProjectID,
+		Harness:          r.Harness,
+		PRURL:            r.PRURL,
+		ReviewerHandleID: r.ReviewerHandleID,
+		AgentSessionID:   r.AgentSessionID,
+		CreatedAt:        r.CreatedAt,
+		UpdatedAt:        r.UpdatedAt,
+	}
+}
+
+func reviewFromListReviewsBySessionRow(r gen.Review) domain.Review {
+	return domain.Review{
+		ID:               r.ID,
+		SessionID:        r.SessionID,
+		ProjectID:        r.ProjectID,
+		Harness:          r.Harness,
+		PRURL:            r.PRURL,
 		ReviewerHandleID: r.ReviewerHandleID,
 		AgentSessionID:   r.AgentSessionID,
 		CreatedAt:        r.CreatedAt,

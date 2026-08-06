@@ -29,11 +29,11 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 		} else {
 			switch h {
 			case domain.ReviewerCodex:
-				if spec.Mode != ports.ReviewCancelMessage {
-					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelMessage)
+				if spec.Mode != ports.ReviewCancelInput {
+					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInput)
 				}
-				if spec.Message == "" {
-					t.Errorf("reviewer harness %q cancel message is empty", h)
+				if spec.Input != "\x1b" || len(spec.Inputs) != 0 {
+					t.Errorf("reviewer harness %q cancel input = %q inputs=%#v, want single escape", h, spec.Input, spec.Inputs)
 				}
 			case domain.ReviewerClaudeCode, domain.ReviewerOpenCode:
 				if spec.Mode != ports.ReviewCancelInput {

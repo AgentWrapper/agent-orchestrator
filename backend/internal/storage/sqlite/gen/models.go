@@ -269,9 +269,9 @@ type Review struct {
 	Harness          domain.ReviewerHarness
 	PRURL            string
 	ReviewerHandleID string
+	AgentSessionID   string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
-	AgentSessionID   string
 }
 
 type ReviewRun struct {
@@ -288,16 +288,6 @@ type ReviewRun struct {
 	GithubReviewID string
 	DeliveredAt    sql.NullTime
 	BatchID        string
-}
-
-type ReviewSession struct {
-	SessionID        string
-	ProjectID        string
-	Harness          string
-	ReviewerHandleID string
-	AgentSessionID   string
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
 }
 
 type Session struct {

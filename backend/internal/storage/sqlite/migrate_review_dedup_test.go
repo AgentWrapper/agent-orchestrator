@@ -128,3 +128,92 @@ func TestMigration0044BackfillsBatchlessReviewRuns(t *testing.T) {
 		t.Fatalf("batch_id = %q, want run id", batchID)
 	}
 }
+
+func TestMigration0049MovesReviewerSessionsIntoPerHarnessReviewRows(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 48)
+	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
+		t.Fatalf("disable foreign keys for review-only fixture: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO review (
+	id, session_id, project_id, harness, pr_url, reviewer_handle_id,
+	agent_session_id, created_at, updated_at
+) VALUES (
+	'review-codex', 'session-1', 'project-1', 'codex', 'pr-1',
+	'codex-handle', 'codex-agent-session', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z'
+);
+INSERT INTO review_session (
+	session_id, project_id, harness, reviewer_handle_id,
+	agent_session_id, created_at, updated_at
+) VALUES (
+	'session-1', 'project-1', 'opencode', 'opencode-handle',
+	'opencode-agent-session', '2026-08-02T00:00:00Z', '2026-08-02T00:00:00Z'
+);`); err != nil {
+		t.Fatalf("seed 0048 review state: %v", err)
+	}
+
+	upTo(t, db, 49)
+
+	rows, err := db.Query(`
+SELECT harness, reviewer_handle_id, agent_session_id
+FROM review
+WHERE session_id = 'session-1'
+ORDER BY harness`)
+	if err != nil {
+		t.Fatalf("query migrated reviews: %v", err)
+	}
+	defer rows.Close()
+
+	got := map[string][2]string{}
+	for rows.Next() {
+		var harness, handleID, agentSessionID string
+		if err := rows.Scan(&harness, &handleID, &agentSessionID); err != nil {
+			t.Fatalf("scan migrated review: %v", err)
+		}
+		got[harness] = [2]string{handleID, agentSessionID}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("migrated review rows: %v", err)
+	}
+	if len(got) != 2 || got["codex"] != [2]string{"codex-handle", "codex-agent-session"} || got["opencode"] != [2]string{"opencode-handle", "opencode-agent-session"} {
+		t.Fatalf("migrated reviews = %#v", got)
+	}
+
+	// Prove the generated upsert conflict target now matches a physical unique
+	// constraint and that a second harness can coexist for one worker.
+	if _, err := db.Exec(`
+INSERT INTO review (
+	id, session_id, project_id, harness, pr_url, reviewer_handle_id,
+	agent_session_id, created_at, updated_at
+) VALUES (
+	'ignored', 'session-1', 'project-1', 'codex', 'pr-1',
+	'new-codex-handle', '', '2026-08-03T00:00:00Z', '2026-08-03T00:00:00Z'
+)
+ON CONFLICT (session_id, harness) DO UPDATE SET
+	reviewer_handle_id = excluded.reviewer_handle_id,
+	updated_at = excluded.updated_at;`); err != nil {
+		t.Fatalf("per-harness upsert: %v", err)
+	}
+
+	var handleID string
+	if err := db.QueryRow(`SELECT reviewer_handle_id FROM review WHERE session_id = 'session-1' AND harness = 'codex'`).Scan(&handleID); err != nil {
+		t.Fatalf("query updated codex row: %v", err)
+	}
+	if handleID != "new-codex-handle" {
+		t.Fatalf("codex handle = %q, want new-codex-handle", handleID)
+	}
+
+	var reviewSessionTableCount int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'review_session'`).Scan(&reviewSessionTableCount); err != nil {
+		t.Fatalf("query review_session table: %v", err)
+	}
+	if reviewSessionTableCount != 0 {
+		t.Fatalf("review_session table count = %d, want 0", reviewSessionTableCount)
+	}
+}

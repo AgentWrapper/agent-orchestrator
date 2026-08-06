@@ -231,7 +231,7 @@ func (s *Store) GetSession(ctx context.Context, id domain.SessionID) (domain.Ses
 	if err != nil {
 		return domain.SessionRecord{}, false, fmt.Errorf("get session %s: %w", id, err)
 	}
-	return rowToRecord(row), true, nil
+	return getSessionRowToRecord(row), true, nil
 }
 
 // ListSessions returns every session in a project, ordered by num.
@@ -240,7 +240,7 @@ func (s *Store) ListSessions(ctx context.Context, project domain.ProjectID) ([]d
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for %s: %w", project, err)
 	}
-	return mapSessionRows(rows), nil
+	return mapListSessionsByProjectRows(rows), nil
 }
 
 // ListAllSessions returns every session across all projects.
@@ -249,13 +249,21 @@ func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, er
 	if err != nil {
 		return nil, fmt.Errorf("list all sessions: %w", err)
 	}
-	return mapSessionRows(rows), nil
+	return mapListAllSessionsRows(rows), nil
 }
 
-func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
+func mapListSessionsByProjectRows(rows []gen.ListSessionsByProjectRow) []domain.SessionRecord {
 	out := make([]domain.SessionRecord, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, rowToRecord(r))
+		out = append(out, listSessionsByProjectRowToRecord(r))
+	}
+	return out
+}
+
+func mapListAllSessionsRows(rows []gen.ListAllSessionsRow) []domain.SessionRecord {
+	out := make([]domain.SessionRecord, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, listAllSessionsRowToRecord(r))
 	}
 	return out
 }
@@ -294,6 +302,117 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 
 			ProviderConversationID: row.ProviderConversationID,
 			ControllerGeneration:   row.ControllerGeneration,
+		},
+		CleanupGeneration: row.CleanupGeneration,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+	}
+}
+
+func getSessionRowToRecord(row gen.GetSessionRow) domain.SessionRecord {
+	return domain.SessionRecord{
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		IssueID:         row.IssueID,
+		Kind:            row.Kind,
+		Harness:         row.Harness,
+		ReviewerHarness: row.ReviewerHarness,
+		DisplayName:     row.DisplayName,
+		Activity: domain.Activity{
+			State:          row.ActivityState,
+			LastActivityAt: row.ActivityLastAt,
+		},
+		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
+		IsTerminated:       row.IsTerminated,
+		IsPinned:           row.IsPinned,
+		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
+		TerminateOnPRMerge: row.TerminateOnPRMerge,
+		Metadata: domain.SessionMetadata{
+			Branch:            row.Branch,
+			WorkspacePath:     row.WorkspacePath,
+			WorkspaceRepoPath: row.WorkspaceRepoPath,
+			DiffBaseSHA:       row.DiffBaseSha,
+			DiffBaseRef:       row.DiffBaseRef,
+			RuntimeHandleID:   row.RuntimeHandleID,
+			RuntimeLaunchID:   row.RuntimeLaunchID,
+			AgentSessionID:    row.AgentSessionID,
+			Prompt:            row.Prompt,
+			PreviewURL:        row.PreviewURL,
+			PreviewRevision:   row.PreviewRevision,
+		},
+		CleanupGeneration: row.CleanupGeneration,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+	}
+}
+
+func listSessionsByProjectRowToRecord(row gen.ListSessionsByProjectRow) domain.SessionRecord {
+	return domain.SessionRecord{
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		IssueID:         row.IssueID,
+		Kind:            row.Kind,
+		Harness:         row.Harness,
+		ReviewerHarness: row.ReviewerHarness,
+		DisplayName:     row.DisplayName,
+		Activity: domain.Activity{
+			State:          row.ActivityState,
+			LastActivityAt: row.ActivityLastAt,
+		},
+		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
+		IsTerminated:       row.IsTerminated,
+		IsPinned:           row.IsPinned,
+		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
+		TerminateOnPRMerge: row.TerminateOnPRMerge,
+		Metadata: domain.SessionMetadata{
+			Branch:            row.Branch,
+			WorkspacePath:     row.WorkspacePath,
+			WorkspaceRepoPath: row.WorkspaceRepoPath,
+			DiffBaseSHA:       row.DiffBaseSha,
+			DiffBaseRef:       row.DiffBaseRef,
+			RuntimeHandleID:   row.RuntimeHandleID,
+			RuntimeLaunchID:   row.RuntimeLaunchID,
+			AgentSessionID:    row.AgentSessionID,
+			Prompt:            row.Prompt,
+			PreviewURL:        row.PreviewURL,
+			PreviewRevision:   row.PreviewRevision,
+		},
+		CleanupGeneration: row.CleanupGeneration,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+	}
+}
+
+func listAllSessionsRowToRecord(row gen.ListAllSessionsRow) domain.SessionRecord {
+	return domain.SessionRecord{
+		ID:              row.ID,
+		ProjectID:       row.ProjectID,
+		IssueID:         row.IssueID,
+		Kind:            row.Kind,
+		Harness:         row.Harness,
+		ReviewerHarness: row.ReviewerHarness,
+		DisplayName:     row.DisplayName,
+		Activity: domain.Activity{
+			State:          row.ActivityState,
+			LastActivityAt: row.ActivityLastAt,
+		},
+		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
+		IsTerminated:       row.IsTerminated,
+		IsPinned:           row.IsPinned,
+		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
+		TerminateOnPRMerge: row.TerminateOnPRMerge,
+		Metadata: domain.SessionMetadata{
+			Branch:            row.Branch,
+			WorkspacePath:     row.WorkspacePath,
+			WorkspaceRepoPath: row.WorkspaceRepoPath,
+			DiffBaseSHA:       row.DiffBaseSha,
+			DiffBaseRef:       row.DiffBaseRef,
+			RuntimeHandleID:   row.RuntimeHandleID,
+			RuntimeLaunchID:   row.RuntimeLaunchID,
+			AgentSessionID:    row.AgentSessionID,
+			Prompt:            row.Prompt,
+			PreviewURL:        row.PreviewURL,
+			PreviewRevision:   row.PreviewRevision,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,

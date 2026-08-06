@@ -82,6 +82,19 @@ func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
 	}
 }
 
+func TestReviewCancelSendsSingleEscapeInput(t *testing.T) {
+	spec, err := (&Reviewer{}).ReviewCancel(context.Background())
+	if err != nil {
+		t.Fatalf("ReviewCancel: %v", err)
+	}
+	if spec.Mode != ports.ReviewCancelInput {
+		t.Fatalf("cancel mode = %q, want %q", spec.Mode, ports.ReviewCancelInput)
+	}
+	if spec.Input != "\x1b" || len(spec.Inputs) != 0 {
+		t.Fatalf("input = %q inputs = %#v, want single escape input", spec.Input, spec.Inputs)
+	}
+}
+
 func TestReviewCommandUsesHiddenSystemPromptFile(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}

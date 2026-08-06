@@ -11,9 +11,9 @@ import (
 // instead of surfacing a raw storage error after a reviewer may have launched.
 var ErrDuplicateReviewRun = errors.New("domain: review run already exists for session and target sha")
 
-// Review is the per-worker code-review record: one row per worker session
-// (SessionID is unique). A repeat trigger reuses this row; the per-pass facts
-// live on ReviewRun.
+// Review is the per-worker, per-reviewer-harness code-review record. A repeat
+// trigger for the same harness reuses this row; the per-pass facts live on
+// ReviewRun.
 type Review struct {
 	ID        string          `json:"id"`
 	SessionID SessionID       `json:"sessionId"`
@@ -26,20 +26,6 @@ type Review struct {
 	AgentSessionID   string    `json:"agentSessionId"`
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
-}
-
-// ReviewSession remembers the live/restorable terminal state for one reviewer
-// harness on one worker session. Review remains the active visible reviewer;
-// this table lets switching back to a previous harness restore its own native
-// conversation instead of reusing another harness' terminal.
-type ReviewSession struct {
-	SessionID        SessionID       `json:"sessionId"`
-	ProjectID        ProjectID       `json:"projectId"`
-	Harness          ReviewerHarness `json:"harness"`
-	ReviewerHandleID string          `json:"reviewerHandleId"`
-	AgentSessionID   string          `json:"agentSessionId"`
-	CreatedAt        time.Time       `json:"createdAt"`
-	UpdatedAt        time.Time       `json:"updatedAt"`
 }
 
 // ReviewRun is one review pass against a worker's PR.

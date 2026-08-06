@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1819,6 +1819,57 @@ describe("SessionInspector summary reviews", () => {
 			runs: [approvedReview],
 		});
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
+	});
+
+	it("does not show an already-reviewed notice when no review history exists", async () => {
+		mockCommonGets([], "reviewer-pane", [reviewState(3, "needs_review")]);
+		postMock.mockResolvedValue({
+			response: { status: 200 },
+			data: {
+				reviewerHandleId: "reviewer-pane",
+				reviews: [reviewState(3, "needs_review")],
+				runs: [],
+			},
+		});
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
+
+		await waitFor(() => expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/trigger", expect.anything()));
+		expect(
+			screen.queryByText("This commit has already been reviewed. Push a new commit to run another review."),
+		).not.toBeInTheDocument();
+	});
+
+	it("dismisses the already-reviewed notice after ten seconds", async () => {
+		mockCommonGets([approvedReview], "reviewer-pane", [reviewState(3, "up_to_date")]);
+		postMock.mockResolvedValue({
+			response: { status: 200 },
+			data: {
+				reviewerHandleId: "reviewer-pane",
+				reviews: [reviewState(3, "up_to_date")],
+				runs: [approvedReview],
+			},
+		});
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+		const rerunButton = await screen.findByRole("button", { name: /re-run review/i });
+
+		vi.useFakeTimers();
+		await act(async () => {
+			fireEvent.click(rerunButton);
+		});
+
+		expect(
+			screen.getByText("This commit has already been reviewed. Push a new commit to run another review."),
+		).toBeInTheDocument();
+		await act(async () => {
+			vi.advanceTimersByTime(10_000);
+		});
+		expect(
+			screen.queryByText("This commit has already been reviewed. Push a new commit to run another review."),
+		).not.toBeInTheDocument();
 	});
 
 	it("cancels the running review instead of allowing rerun", async () => {

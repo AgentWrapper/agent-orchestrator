@@ -143,6 +143,31 @@ function reviewerHarnessFallback(session: WorkspaceSession, config: ProjectConfi
 	return "claude-code";
 }
 
+function hasReviewedOpenPRForHarness(data: ReviewsResponse, session: WorkspaceSession, harness: string): boolean {
+	const openPRURLs = new Set(
+		sortedPRs(session)
+			.filter((pr) => pr.state === "open")
+			.map((pr) => pr.url),
+	);
+	const isSelectedHarness = (run: ReviewRunFacts | undefined): boolean => {
+		if (!run) return false;
+		return run.harness === harness || run.harness === "";
+	};
+	const isCompletedReview = (run: ReviewRunFacts | undefined): boolean => {
+		if (!run) return false;
+		return run.status === "complete" || run.status === "delivered";
+	};
+	return (
+		(data.runs ?? []).some((run) => openPRURLs.has(run.prUrl) && isSelectedHarness(run) && isCompletedReview(run)) ||
+		(data.reviews ?? []).some(
+			(review) =>
+				openPRURLs.has(review.prUrl) &&
+				((isSelectedHarness(review.latestRun) && isCompletedReview(review.latestRun)) ||
+					(isSelectedHarness(review.previousRun) && isCompletedReview(review.previousRun))),
+		)
+	);
+}
+
 /**
  * Tabbed inspector rail beside the terminal (Summary · Browser · Files).
  */
@@ -1134,6 +1159,11 @@ function ReviewsSection({
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+	useEffect(() => {
+		if (!reviewNotice) return;
+		const timer = window.setTimeout(() => setReviewNotice(null), 10_000);
+		return () => window.clearTimeout(timer);
+	}, [reviewNotice]);
 	const reviewsQuery = useQuery({
 		queryKey: ["session-reviews", session.id],
 		enabled: hasPr,
@@ -1234,7 +1264,12 @@ function ReviewsSection({
 			}
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			const started = data?.reviews?.find((review) => review.status === "running" && review.latestRun);
-			if (reused || !started?.latestRun) {
+			const selectedHarness = reviewerOverride || reviewerHarnessFallback(session, projectConfigQuery.data);
+			if (
+				(reused || !started?.latestRun) &&
+				data &&
+				hasReviewedOpenPRForHarness(data, session, selectedHarness)
+			) {
 				setReviewNotice(t("inspector.reviewAlreadyRanForCommit"));
 			}
 		},
@@ -1663,6 +1698,11 @@ function ReviewPanel({
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
 	const killDisabled = isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
+	const primaryReviewActionLabel = reviewRunning
+		? isCancelling
+			? t("inspector.review.cancelling")
+			: t("inspector.review.cancel")
+		: runAction;
 
 	return (
 		<div className="mb-2.5 flex flex-col">
@@ -1698,31 +1738,30 @@ function ReviewPanel({
 						/>
 						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
 							<Button
+								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
 								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled}
 								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
+								title={primaryReviewActionLabel}
 								type="button"
 								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 							>
 								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-								{reviewRunning
-									? isCancelling
-										? t("inspector.review.cancelling")
-										: t("inspector.review.cancel")
-									: runAction}
+								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
 							{hasReviewerSession ? (
 								<Button
-									className="shrink-0 gap-1 px-1.5 text-error [&_svg]:size-icon-sm"
+									aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+									className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
 									disabled={killDisabled}
 									onClick={onKill}
 									size="sm"
+									title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
 									type="button"
 									variant="ghost"
 								>
 									<Trash2 aria-hidden="true" />
-									{isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
 								</Button>
 							) : null}
 						</div>

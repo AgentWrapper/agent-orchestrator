@@ -1,35 +1,30 @@
 -- name: UpsertReview :exec
 INSERT INTO review (id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (session_id) DO UPDATE SET
-    harness = excluded.harness,
+ON CONFLICT (session_id, harness) DO UPDATE SET
+    project_id = excluded.project_id,
     pr_url = excluded.pr_url,
     reviewer_handle_id = excluded.reviewer_handle_id,
-    agent_session_id = excluded.agent_session_id,
+    agent_session_id = CASE WHEN excluded.agent_session_id != '' THEN excluded.agent_session_id ELSE review.agent_session_id END,
     updated_at = excluded.updated_at;
 
 -- name: GetReviewBySession :one
 SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at
-FROM review WHERE session_id = ?;
+FROM review WHERE session_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1;
+
+-- name: GetReviewBySessionAndHarness :one
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at
+FROM review WHERE session_id = ? AND harness = ?;
+
+-- name: ListReviewsBySession :many
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at
+FROM review WHERE session_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC;
 
 -- name: ClearReviewerHandle :exec
 UPDATE review SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE session_id = ?;
 
--- name: UpsertReviewSession :exec
-INSERT INTO review_session (session_id, project_id, harness, reviewer_handle_id, agent_session_id, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (session_id, harness) DO UPDATE SET
-    project_id = excluded.project_id,
-    reviewer_handle_id = excluded.reviewer_handle_id,
-    agent_session_id = CASE WHEN excluded.agent_session_id != '' THEN excluded.agent_session_id ELSE review_session.agent_session_id END,
-    updated_at = excluded.updated_at;
-
--- name: GetReviewSession :one
-SELECT session_id, project_id, harness, reviewer_handle_id, agent_session_id, created_at, updated_at
-FROM review_session WHERE session_id = ? AND harness = ?;
-
--- name: ClearReviewSessionHandle :exec
-UPDATE review_session SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE session_id = ? AND harness = ?;
+-- name: ClearReviewerHandleByHarness :exec
+UPDATE review SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE session_id = ? AND harness = ?;
 
 -- name: InsertReviewRun :exec
 INSERT INTO review_run (id, review_id, session_id, batch_id, harness, pr_url, target_sha, status, verdict, body, github_review_id, created_at)
