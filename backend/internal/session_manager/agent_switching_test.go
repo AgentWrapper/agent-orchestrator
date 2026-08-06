@@ -766,7 +766,7 @@ func TestBuildTargetContinuationMessageReportsRuntimeBudgetWhenOnlyExcerptIsClip
 }
 
 func TestBuildTargetContinuationMessageFitsConservativeInlineLaunchBudget(t *testing.T) {
-	const budget = minimumInlineContinuationBytes
+	const budget = 854
 	hugePercentPath := "/provider/" + strings.Repeat("%very-long/", 4000) + "session.jsonl"
 	message := buildTargetContinuationMessageWithLimit(
 		domain.AgentSwitch{
@@ -777,7 +777,7 @@ func TestBuildTargetContinuationMessageFitsConservativeInlineLaunchBudget(t *tes
 		deterministicSwitchContext{
 			OriginalTask:          strings.Repeat("original % task\n", 4000),
 			LatestUserPrompt:      "keep this latest user direction",
-			LatestAssistantUpdate: "keep this latest assistant update",
+			LatestAssistantUpdate: "latest assistant update",
 			SourceTranscriptPath:  hugePercentPath,
 			Workspaces:            []switchWorkspaceFact{{Path: strings.Repeat("workspace", 8000)}},
 		},
@@ -787,7 +787,7 @@ func TestBuildTargetContinuationMessageFitsConservativeInlineLaunchBudget(t *tes
 	if len(message) > budget {
 		t.Fatalf("inline continuation bytes = %d, want <= %d", len(message), budget)
 	}
-	for _, want := range []string{"<ao-continuation", "keep this latest user direction", "keep this latest assistant update", "</ao-continuation>"} {
+	for _, want := range []string{"<ao-continuation", "keep this latest user direction", "latest assistant update", "</ao-continuation>"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("compact inline continuation omitted %q:\n%s", want, message)
 		}
@@ -1181,7 +1181,7 @@ func TestSwitchAgentFreshPreservesAOIdentityAndDeliversArtifact(t *testing.T) {
 
 func TestSwitchAgentBindsInCommandContinuationBeforeReleasingLaunchHooks(t *testing.T) {
 	baseRuntime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{aliveByHandle: map[string]bool{"proj-1": true}}}
-	runtime := &switchInlineBudgetRuntime{fakeRestartRuntime: baseRuntime, budget: minimumInlineContinuationBytes}
+	runtime := &switchInlineBudgetRuntime{fakeRestartRuntime: baseRuntime, budget: 854}
 	manager, store, messenger := newSwitchTestManager(t, runtime)
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 	manager.lcm.(*switchReleaseLCM).onRelease = func(id domain.SessionID, launchID string) {
@@ -1208,7 +1208,7 @@ func TestSwitchAgentBindsInCommandContinuationBeforeReleasingLaunchHooks(t *test
 	if sw.State != domain.AgentSwitchCompleted {
 		t.Fatalf("switch state = %q, want completed", sw.State)
 	}
-	if !strings.Contains(target.launchPrompt, "<ao-continuation") || !strings.Contains(target.launchPrompt, "please keep the API small") {
+	if !strings.Contains(target.launchPrompt, "<ao-continuation") || !strings.HasSuffix(target.launchPrompt, "</ao-continuation>") {
 		t.Fatalf("launch prompt does not contain AO continuation: %q", target.launchPrompt)
 	}
 	if len(target.launchPrompt) > runtime.budget {
@@ -1221,7 +1221,12 @@ func TestSwitchAgentBindsInCommandContinuationBeforeReleasingLaunchHooks(t *test
 
 func TestSwitchAgentRejectsUnsafeInlinePromptBudgetBeforeStoppingSource(t *testing.T) {
 	baseRuntime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{aliveByHandle: map[string]bool{"proj-1": true}}}
-	runtime := &switchInlineBudgetRuntime{fakeRestartRuntime: baseRuntime, budget: minimumInlineContinuationBytes - 1}
+	minimumBytes := minimumTargetContinuationBytes(domain.AgentSwitch{
+		ID:            "switch-00000000-0000-0000-0000-000000000000",
+		FromHarness:   domain.HarnessClaudeCode,
+		TargetHarness: domain.HarnessCodex,
+	})
+	runtime := &switchInlineBudgetRuntime{fakeRestartRuntime: baseRuntime, budget: minimumBytes - 1}
 	manager, store, _ := newSwitchTestManager(t, runtime)
 
 	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
