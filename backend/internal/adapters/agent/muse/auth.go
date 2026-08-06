@@ -25,7 +25,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	return ports.AgentAuthStatusUnknown, nil
 }
 
-const museAPIKeyEnvVar = "META_API_KEY"
+const museAPIKeyEnvVar = "META_API_KEY" //nolint:gosec // environment variable name, not a credential
 
 func museLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
 	if err := ctx.Err(); err != nil {
