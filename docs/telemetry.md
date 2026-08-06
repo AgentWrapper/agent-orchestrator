@@ -18,6 +18,14 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
 - Renderer exceptions, reduced to error name and coarse context
 - Daemon operational events: CLI invocation, session spawn/failure, waiting-input
   transitions, HTTP 5xx, and daemon panics
+- Code review outcomes: `ao.review.triggered`, `ao.review.submitted`,
+  `ao.review.cancelled`, and `ao.review.trigger_failed`. These carry the reviewer
+  `harness`, the `verdict` (`approved` / `changes_requested`), how long the pass
+  took, whether the review reached the provider, and a coarse `error_kind` on
+  failure. The review body is never sent: it is reviewer prose about a user's
+  source code. The PR URL and target SHA are also withheld, because both identify
+  the repository. `ao.review.submitted` fires only on the real running-to-complete
+  transition, so a reviewer retrying a submit cannot double-count a verdict
 - Desktop update outcomes: `ao.renderer.update_failed`,
   `ao.renderer.update_downloaded`, and `ao.renderer.update_unsupported`. These
   carry a coarse `error_category`, the `phase` (`check` or `download`), whether

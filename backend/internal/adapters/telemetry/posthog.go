@@ -150,6 +150,23 @@ var remotePayloadAllowlist = map[string]map[string]struct{}{
 		"kind":                   {},
 		"since_first_project_ms": {},
 	},
+	"ao.review.triggered": {
+		"created_runs": {},
+		"harness":      {},
+		"reused":       {},
+	},
+	"ao.review.trigger_failed": {
+		"error_kind": {},
+	},
+	"ao.review.submitted": {
+		"duration_ms":        {},
+		"harness":            {},
+		"posted_to_provider": {},
+		"verdict":            {},
+	},
+	"ao.review.cancelled": {
+		"cancelled_runs": {},
+	},
 	"ao.projects.created": {
 		"has_git_remote": {},
 		"kind":           {},
