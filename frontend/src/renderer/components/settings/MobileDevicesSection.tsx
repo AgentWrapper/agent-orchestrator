@@ -1,0 +1,183 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import { Loader2, Smartphone, X } from "lucide-react";
+import { apiClient, apiErrorCode, apiErrorMessage } from "../../lib/api-client";
+import { cn } from "../../lib/utils";
+import { Switch } from "../ui/switch";
+
+export const mobileDevicesQueryKey = ["mobile-devices"] as const;
+
+/**
+ * Error code the daemon returns from all three roster routes (list/mute/remove)
+ * when the on-disk device registry (~/.ao/data/mobile/push-devices.json) failed
+ * to load — e.g. it's corrupt. This is distinct from "you have no devices": an
+ * unreadable registry must be surfaced explicitly, never rendered as the empty
+ * state.
+ */
+const DEVICE_REGISTRY_UNAVAILABLE_CODE = "DEVICE_REGISTRY_UNAVAILABLE";
+
+interface MobileDevice {
+	installId: string;
+	deviceName?: string;
+	platform?: string;
+	muted: boolean;
+	live: boolean;
+	lastSeenAt: string;
+}
+
+class MobileDevicesQueryError extends Error {
+	code?: string;
+
+	constructor(message: string, code?: string) {
+		super(message);
+		this.code = code;
+	}
+}
+
+// Relative time is rendered here, on the desktop, and must stay here: Hermes has
+// no Intl.RelativeTimeFormat, so reusing this in the mobile app crashes at runtime
+// and vitest would not catch it.
+const relative = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+function lastSeenLabel(iso: string): string {
+	const seconds = Math.round((Date.parse(iso) - Date.now()) / 1000);
+	const units: [Intl.RelativeTimeFormatUnit, number][] = [
+		["second", 60],
+		["minute", 60],
+		["hour", 24],
+		["day", 30],
+		["month", 12],
+	];
+	let value = seconds;
+	for (const [unit, size] of units) {
+		if (Math.abs(value) < size) return relative.format(Math.round(value), unit);
+		value /= size;
+	}
+	return relative.format(Math.round(value), "year");
+}
+
+async function fetchDevices(): Promise<MobileDevice[]> {
+	const { data, error } = await apiClient.GET("/api/v1/mobile/devices");
+	if (error || !data) throw new MobileDevicesQueryError(apiErrorMessage(error), apiErrorCode(error));
+	return data.devices as MobileDevice[];
+}
+
+// MobileDevicesSection lists every paired phone with whether its app is open right
+// now, a per-device mute switch, and a remove action. Live status comes from the
+// daemon's presence tracker, which is fed by each phone's own REST poll.
+export function MobileDevicesSection() {
+	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const [confirmingRemoval, setConfirmingRemoval] = useState<string | null>(null);
+
+	const query = useQuery({
+		queryKey: mobileDevicesQueryKey,
+		queryFn: fetchDevices,
+		refetchInterval: 3000,
+	});
+
+	const invalidate = () => {
+		void queryClient.invalidateQueries({ queryKey: mobileDevicesQueryKey });
+	};
+
+	const mute = useMutation({
+		mutationFn: async ({ installId, muted }: { installId: string; muted: boolean }) => {
+			const { error } = await apiClient.PATCH("/api/v1/mobile/devices/{installId}", {
+				params: { path: { installId } },
+				body: { muted },
+			});
+			if (error) throw new Error(apiErrorMessage(error));
+		},
+		onSuccess: invalidate,
+	});
+
+	const remove = useMutation({
+		mutationFn: async (installId: string) => {
+			const { error } = await apiClient.DELETE("/api/v1/mobile/devices/{installId}", {
+				params: { path: { installId } },
+			});
+			if (error) throw new Error(apiErrorMessage(error));
+		},
+		onSuccess: () => {
+			setConfirmingRemoval(null);
+			invalidate();
+		},
+	});
+
+	const devices = query.data ?? [];
+	const queryError = query.error as MobileDevicesQueryError | null;
+	const registryUnavailable = queryError?.code === DEVICE_REGISTRY_UNAVAILABLE_CODE;
+
+	return (
+		<section className="mt-6">
+			<h3 className="text-sm font-medium">{t("mobile.devices.title")}</h3>
+			<p className="mt-1 text-xs text-muted-foreground">{t("mobile.devices.description")}</p>
+
+			{query.isLoading ? (
+				<div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+					<Loader2 className="size-3 animate-spin" /> {t("mobile.devices.loading")}
+				</div>
+			) : registryUnavailable ? (
+				<p className="mt-3 text-xs text-error">{t("mobile.devices.registryUnavailable")}</p>
+			) : queryError ? (
+				<p className="mt-3 text-xs text-error">{queryError.message}</p>
+			) : devices.length === 0 ? (
+				<p className="mt-3 text-xs text-muted-foreground">{t("mobile.devices.empty")}</p>
+			) : (
+				<ul className="mt-3 space-y-2">
+					{devices.map((device) => {
+						const name = device.deviceName || t("mobile.devices.unnamed");
+						return (
+							<li key={device.installId} className="flex items-center gap-3 rounded-md border p-3">
+								<Smartphone className="size-4 shrink-0 text-muted-foreground" />
+								<div className="min-w-0 flex-1">
+									<div className="truncate text-sm">{name}</div>
+									<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+										{device.live ? (
+											<>
+												<span className={cn("size-1.5 rounded-full bg-success")} aria-hidden />
+												<span>{t("mobile.devices.live")}</span>
+											</>
+										) : (
+											<span>{lastSeenLabel(device.lastSeenAt)}</span>
+										)}
+									</div>
+								</div>
+
+								<Switch
+									checked={!device.muted}
+									disabled={mute.isPending}
+									aria-label={t("mobile.devices.notificationsFor", { name })}
+									onCheckedChange={(next) =>
+										mute.mutate({ installId: device.installId, muted: !next })
+									}
+								/>
+
+								{confirmingRemoval === device.installId ? (
+									<button
+										type="button"
+										className="text-xs text-error"
+										disabled={remove.isPending}
+										onClick={() => remove.mutate(device.installId)}
+									>
+										{t("mobile.devices.confirmRemove")}
+									</button>
+								) : (
+									<button
+										type="button"
+										aria-label={t("mobile.devices.removeAria", { name })}
+										className="text-muted-foreground hover:text-foreground"
+										onClick={() => setConfirmingRemoval(device.installId)}
+									>
+										<X className="size-4" />
+									</button>
+								)}
+							</li>
+						);
+					})}
+				</ul>
+			)}
+		</section>
+	);
+}
