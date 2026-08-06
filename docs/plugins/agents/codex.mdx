@@ -1,0 +1,89 @@
+---
+title: "Using OpenAI Codex as Your Agent in Agent Orchestrator"
+sidebarTitle: "Codex"
+description: "Set up OpenAI Codex CLI as your AO agent. Covers install, thread ID session resume, PATH wrapper PR tracking, and activity from date-sharded JSONL logs."
+---
+
+OpenAI Codex CLI is a terminal coding agent from OpenAI that AO integrates with through a combination of PATH wrappers and native session JSONL reading. Unlike Claude Code, Codex doesn't have a hook system — so AO intercepts `gh` and `git` calls via lightweight shell wrappers to capture PR metadata, and reads Codex's own date-sharded session logs for activity and state.
+
+- **Slot:** `agent`
+- **Config name:** `codex`
+- **Binary:** `codex`
+- **Platforms:** macOS · Linux · Windows
+
+## Install
+
+```bash
+npm install -g @openai/codex
+```
+
+Your OpenAI API credentials come from wherever `codex` normally reads them — environment variables or your OpenAI config. AO doesn't manage credentials for you.
+
+## Configure
+
+```yaml
+agent: codex
+```
+
+No additional plugin-level keys are required. To change the model Codex uses, add a `model` key under `agentConfig`:
+
+```yaml
+agentConfig:
+  model: o3
+```
+
+## How AO Integrates with Codex
+
+<Accordion title="Launch">
+  AO starts `codex` inside the worktree and injects the following environment variables automatically:
+
+  | Variable | Set by AO | Purpose |
+  |---|---|---|
+  | `AO_SESSION_ID` | ✓ | Unique AO session identifier |
+  | `AO_ISSUE_ID` | ✓ | Issue identifier (when spawned from an issue) |
+  | `PATH` | ✓ | Prepends `~/.ao/bin` so wrappers take priority |
+  | `GH_PATH` | ✓ | Absolute path to the real `gh` binary, used inside the wrapper |
+  | `CODEX_DISABLE_UPDATE_CHECK` | ✓ (`1`) | Suppresses version-check output mid-session |
+</Accordion>
+
+<Accordion title="Activity tracking">
+  Codex writes session events to a date-sharded path:
+
+  ```
+  ~/.codex/sessions/YYYY/MM/DD/<id>.jsonl
+  ```
+
+  AO reads the most recent entry from this file on each poll cycle to determine whether the agent is `active`, `ready`, `idle`, `waiting_input`, or `blocked`. No additional config is needed — AO discovers the correct file automatically.
+</Accordion>
+
+<Accordion title="PR and git tracking">
+  AO installs PATH wrappers at `~/.ao/bin/gh` and `~/.ao/bin/git`. When Codex runs `gh pr create`, the wrapper records the PR number and branch in session metadata before passing the command through to the real `gh` binary. The dashboard stays in sync automatically.
+</Accordion>
+
+<Accordion title="Session resume">
+  Codex supports resuming a previous thread with:
+
+  ```bash
+  codex resume <threadId>
+  ```
+
+  AO stores the thread ID in session metadata when a session is first created. On daemon restart, AO replays the thread ID so Codex picks up the existing conversation.
+</Accordion>
+
+## Troubleshooting
+
+<Accordion title="`codex` not found after install">
+  npm global installs sometimes miss `PATH`. Run `which codex` — if it returns nothing, find your global bin directory with `npm config get prefix` and append `/bin` to it, then add that to your `PATH`.
+</Accordion>
+
+<Accordion title="Dashboard activity stuck on `idle`">
+  AO reads the date-sharded session path at `~/.codex/sessions/`. If your system clock is mismatched — for example inside a Docker container with an incorrect timezone — the session file ends up in a directory that doesn't match today's date and AO reads stale data. Align the container clock with the host to fix this.
+</Accordion>
+
+<Accordion title="PR created but dashboard doesn't know about it">
+  The PATH wrapper only fires when Codex invokes `gh` through the standard PATH resolution. If `gh` was called with an absolute path (bypassing the wrapper), AO won't intercept it. Fix this retroactively with:
+
+  ```bash
+  ao session claim-pr <pr-number> <sessionId>
+  ```
+</Accordion>

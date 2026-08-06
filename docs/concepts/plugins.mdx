@@ -1,0 +1,219 @@
+---
+title: "AO Plugin System: Slots, Defaults, and Custom Plugins"
+sidebarTitle: "Plugins"
+description: "AO's 8-slot plugin system covers the full agent lifecycle. Browse available plugins per slot, understand loading order, and create your own."
+---
+
+Everything in Agent Orchestrator is a plugin. The default setup — Claude Code, tmux, git worktrees, GitHub for issues and PRs, desktop notifications, iTerm2 — works out of the box for common GitHub workflows. When your setup is different, you swap the relevant plugin rather than reconfiguring the whole system. Eight named slots cover every moving part of the agent execution lifecycle, from where the code is checked out to where you get notified when a session needs attention.
+
+## The 8 Plugin Slots
+
+Only one plugin is active per slot at a time. Seven slots are pluggable at runtime; the Lifecycle slot is built into core and cannot be replaced — it is the state machine, poll loop, and reaction engine that connects all other plugins.
+
+| Slot | Available plugins | Default |
+|---|---|---|
+| **Agent** | claude-code, codex, cursor, opencode, aider, + 18 more | `claude-code` |
+| **Runtime** | tmux, process | `tmux` (macOS/Linux), `process` (Windows) |
+| **Workspace** | worktree, clone | `worktree` |
+| **Tracker** | github, gitlab, linear | `github` |
+| **SCM** | github, gitlab | `github` |
+| **Notifier** | desktop, slack, discord, webhook, composio, openclaw, dashboard | `desktop` |
+| **Terminal** | iterm2, web | `iterm2` (macOS) |
+| **Lifecycle** | core (built-in, non-pluggable) | — |
+
+---
+
+## Agents
+
+The Agent slot controls which AI coding tool is launched inside each worker session. AO ships with 23 harnesses. You can set a default agent for all sessions or override it per project.
+
+<CardGroup cols={2}>
+  <Card title="Claude Code" icon="robot" href="/plugins/agents/claude-code">
+    Anthropic's CLI coding agent. Supports session resume via `--resume`. Uses PostToolUse hooks for PR tracking — no PATH wrappers needed.
+  </Card>
+  <Card title="Codex" icon="robot" href="/plugins/agents/codex">
+    OpenAI Codex CLI. Supports session resume via `codex resume <threadId>`. Uses PATH wrappers for PR tracking.
+  </Card>
+  <Card title="Cursor" icon="robot" href="/plugins/agents/cursor">
+    Cursor Agent CLI. One-shot per session — no resume support. Uses PATH wrappers for PR tracking.
+  </Card>
+  <Card title="Aider" icon="robot" href="/plugins/agents/aider">
+    Aider pair-programming CLI. No native resume. Uses PATH wrappers and AO activity JSONL for tracking.
+  </Card>
+  <Card title="OpenCode" icon="robot" href="/plugins/agents/opencode">
+    OpenCode terminal agent. Session discovery and restore via the OpenCode session API.
+  </Card>
+  <Card title="18 more harnesses" icon="grid-2-plus" href="/plugins/agents/overview">
+    Copilot, Grok, Kimi, Kiro, Kilo Code, Mistral Vibe, Pi, Amp, Cline, Antigravity, Auggie, Autohand, Goose, Continue, Devin, Droid, Crush, Qwen.
+  </Card>
+</CardGroup>
+
+---
+
+## Runtimes
+
+The Runtime slot controls where agent processes execute. It determines how sessions are created, attached to, and cleaned up.
+
+<CardGroup cols={2}>
+  <Card title="tmux" icon="terminal" href="/plugins/runtimes/tmux">
+    Default on macOS and Linux. Each agent gets its own tmux window you can attach to directly. Sessions survive terminal disconnects and daemon restarts.
+  </Card>
+  <Card title="process" icon="microchip" href="/plugins/runtimes/process">
+    Cross-platform child-process runtime. Required on Windows. No tmux dependency — sessions run as managed child processes of the AO daemon.
+  </Card>
+</CardGroup>
+
+---
+
+## Workspaces
+
+The Workspace slot controls how code is isolated for each session. Each session always gets its own checkout — the question is how that checkout is created.
+
+<CardGroup cols={2}>
+  <Card title="worktree" icon="code-branch" href="/plugins/workspaces/worktree">
+    Git worktree per session. Fast — shares the object database with your main checkout. Recommended for most setups.
+  </Card>
+  <Card title="clone" icon="copy" href="/plugins/workspaces/clone">
+    Full repository clone per session. Use when your tooling doesn't work correctly with a shared `.git` directory.
+  </Card>
+</CardGroup>
+
+---
+
+## Trackers
+
+The Tracker slot controls where AO fetches issues. It provides the issue title, body, and metadata that seed each worker session's initial prompt.
+
+<CardGroup cols={3}>
+  <Card title="GitHub" icon="github" href="/plugins/trackers/github">
+    Issues and PRs via the `gh` CLI.
+  </Card>
+  <Card title="GitLab" icon="gitlab" href="/plugins/trackers/gitlab">
+    Issues and MRs via the `glab` CLI. Self-hosted instances supported.
+  </Card>
+  <Card title="Linear" icon="circle-dot" href="/plugins/trackers/linear">
+    Linear issues via direct API or Composio-mediated access.
+  </Card>
+</CardGroup>
+
+---
+
+## SCM
+
+The SCM slot controls how AO reads PR state, CI results, review decisions, and merge readiness. It is separate from the Tracker slot — a project can use GitHub for issues and GitLab for SCM if needed.
+
+<CardGroup cols={2}>
+  <Card title="GitHub" icon="github" href="/plugins/scm/github">
+    PRs, reviews, and CI status via the `gh` CLI and GitHub's GraphQL API.
+  </Card>
+  <Card title="GitLab" icon="gitlab" href="/plugins/scm/gitlab">
+    Merge requests, discussions, and pipeline status via `glab`.
+  </Card>
+</CardGroup>
+
+---
+
+## Notifiers
+
+The Notifier slot controls where AO sends updates when sessions change status. You can configure multiple notifiers — for example, `desktop` for immediate local alerts and `slack` for team-wide visibility.
+
+<CardGroup cols={2}>
+  <Card title="Desktop" icon="bell" href="/plugins/notifiers/desktop">
+    Native macOS and Linux notifications. No-op on Windows. The default for all platforms.
+  </Card>
+  <Card title="Slack" icon="slack" href="/plugins/notifiers/slack">
+    Incoming webhook messages to a Slack channel of your choice.
+  </Card>
+  <Card title="Discord" icon="discord" href="/plugins/notifiers/discord">
+    Webhook-based Discord messages with rich embeds for session and PR events.
+  </Card>
+  <Card title="Webhook" icon="webhook" href="/plugins/notifiers/webhook">
+    Generic HTTP POST with configurable retry logic and exponential backoff.
+  </Card>
+  <Card title="Composio" icon="plug" href="/plugins/notifiers/overview">
+    Route through the Composio toolkit to reach Slack, Discord, Gmail, and other destinations.
+  </Card>
+  <Card title="OpenClaw" icon="paw" href="/plugins/notifiers/overview">
+    Local OpenClaw gateway for personal push notifications.
+  </Card>
+  <Card title="Dashboard" icon="layout-dashboard" href="/plugins/notifiers/overview">
+    Retained notifications inside the AO dashboard UI. Useful as a secondary notifier.
+  </Card>
+</CardGroup>
+
+---
+
+## Terminals
+
+The Terminal slot controls how you attach to and view running sessions from outside the dashboard. The dashboard always shows sessions via its built-in xterm.js view — this slot adds a second access path.
+
+<CardGroup cols={2}>
+  <Card title="iTerm2" icon="terminal" href="/plugins/runtimes/tmux">
+    Opens attached tabs in iTerm2 via AppleScript. macOS only. Requires tmux runtime.
+  </Card>
+  <Card title="Web" icon="globe" href="/dashboard">
+    Dashboard xterm.js session URL. Works on all platforms without any native terminal installed.
+  </Card>
+</CardGroup>
+
+---
+
+## Plugin Loading Order
+
+When AO resolves a plugin name, it searches in this order and uses the first match:
+
+1. **Bundled plugins** — shipped with the AO desktop app or npm package
+2. **Registry / npm** — packages installed via `ao plugin install` or found in `node_modules`
+3. **Local path** — a relative or absolute filesystem path in `agent-orchestrator.yaml`
+4. **Inline shortcut** — a short name alias defined directly in the config
+
+---
+
+## Managing Plugins
+
+### List installed plugins
+
+```bash
+ao plugin list
+```
+
+### Install a plugin from the registry
+
+```bash
+ao plugin install <plugin-name>
+```
+
+---
+
+## Creating a Plugin
+
+Every plugin is a small Node package that exports a `manifest` object and a `create()` function. The fastest path to a working plugin is the scaffold command:
+
+```bash
+ao plugin create --slot notifier --name pagerduty
+```
+
+This generates a starter package in the current directory with the correct manifest structure, TypeScript types, and example `create()` implementation for the specified slot. From there you fill in the integration logic and reference the local path in `agent-orchestrator.yaml`.
+
+<Tip>
+  The scaffold command works for all seven pluggable slots. Pass `--slot agent`, `--slot runtime`, `--slot workspace`, `--slot tracker`, `--slot scm`, `--slot notifier`, or `--slot terminal` to generate the right starter template.
+</Tip>
+
+---
+
+## Learn More
+
+<CardGroup cols={2}>
+  <Card title="Authoring a Plugin" icon="code" href="/plugins/authoring">
+    Full contract, loading paths, core utilities available to plugins, and a complete walkthrough.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how plugin slots wire into the core state machine and event bus.
+  </Card>
+  <Card title="Agents" icon="robot" href="/plugins/agents/overview">
+    Detailed docs for every supported agent harness including resume support and activity detection.
+  </Card>
+  <Card title="Integrations" icon="plug" href="/plugins/trackers/overview">
+    Configure GitHub, GitLab, and Linear as your issue tracker and SCM source.
+  </Card>
+</CardGroup>

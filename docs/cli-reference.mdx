@@ -1,0 +1,169 @@
+---
+title: "AO CLI Command Reference: Commands, Subcommands, and Flags"
+sidebarTitle: "CLI Reference"
+description: "Complete reference for every ao CLI command, subcommand, and flag, plus environment variables that control AO's behavior across all commands."
+---
+
+The `ao` CLI is a thin Go/Cobra client that communicates with the local Agent Orchestrator daemon via loopback HTTP routes and the `running.json` handshake. Every command supports a `--help` flag that prints usage inline.
+
+When using the CLI directly from a shell, make sure the daemon is running first with `ao start` or by opening the desktop app. Product commands such as `ao agent ls` and `ao spawn` call the loopback daemon and will fail with a "daemon is not running" error if no `running.json` points at a live process.
+
+## Command Tree
+
+Here is the full tree of available commands:
+
+```
+ao
+├── start                    Start the daemon in the background and wait for readiness
+├── stop                     Gracefully stop the daemon via loopback POST /shutdown
+├── status                   Report daemon state, process liveness, healthz, and readyz
+├── doctor                   Check config, data directory, DB-file presence, daemon state, git, and tmux/conpty
+├── completion <shell>       Generate completions for bash, zsh, fish, or powershell
+├── version                  Print build metadata
+│
+├── project                  Manage projects (subcommands below)
+│   ├── add                  Add a new project
+│   ├── ls                   List all registered projects
+│   ├── get <id>             Get details of a specific project
+│   ├── set-config <id>      Update configuration for a project
+│   └── rm <id>              Remove a project from tracking
+│
+├── agent                    Manage agents (subcommands below)
+│   └── ls                   List the supported agent catalog with local install/auth readiness
+│
+├── spawn                    Spawn a new parallel agent session for an issue or workspace
+│
+├── session                  Manage sessions (subcommands below)
+│   ├── ls                   List all active and terminated sessions
+│   ├── get <id>             Get details of a specific session
+│   ├── kill <id>            Kill a session and remove its worktree
+│   ├── restore <id>         Restore a terminated or crashed session
+│   ├── rename <id> <name>   Rename a session
+│   ├── cleanup              Clean up terminated sessions
+│   └── claim-pr <id> <ref>  Link an existing PR to a session
+│
+├── orchestrator             Manage orchestrators (subcommands below)
+│   └── ls                   List all active orchestrator sessions
+│
+├── send                     Send a message or input to a running session
+│
+├── preview                  Manage browser-displayable previews (subcommands below)
+│   ├── [url]                Preview static files or custom URLs in the Browser panel
+│   ├── start                Start a session-owned supervisor dev server
+│   ├── status               Report supervisor dev server logs/status
+│   └── stop                 Stop the supervisor dev server
+│
+├── browser                  Control the session-owned live Electron browser
+│
+└── hooks                    Send activity hooks from agents to the daemon
+```
+
+---
+
+## Daemon Control Commands
+
+### `ao start`
+Starts the local daemon in the background and waits for the readiness probe (`/readyz`) to complete.
+
+### `ao stop`
+Gracefully stops the daemon via a loopback `POST /shutdown` request. It verifies the daemon's identity before shutting down.
+
+### `ao status`
+Reports daemon liveness, handshake details, process state, and HTTP endpoint readiness.
+- Pass `--json` to print raw status JSON.
+
+### `ao doctor`
+Checks your environment setup: configuration health, data directory permissions, database connectivity, and presence of critical binaries (`git`, `tmux`).
+- Pass `--json` for machine-readable output.
+
+---
+
+## Project Commands
+
+### `ao project add`
+Registers a new project repository with the daemon.
+
+### `ao project ls`
+Lists all registered projects.
+
+### `ao project get <id>`
+Retrieves the details and configuration of a registered project.
+
+### `ao project set-config <id>`
+Updates configuration settings for a project.
+
+### `ao project rm <id>`
+Unregisters a project and removes it from the daemon's tracking.
+
+---
+
+## Agent Commands
+
+### `ao agent ls`
+Lists daemon-supported agent plugins (e.g. `claude-code`, `aider`, `cursor`, `opencode`) and prints whether they are installed and ready.
+- Pass `--refresh` to rerun local agent capability checks.
+- Pass `--json` for structured agent capabilities list.
+
+---
+
+## Session Commands
+
+### `ao spawn`
+Spawns a new worker session. The project is auto-detected from the current directory or can be specified with flags.
+- Pass `--project <id>` to override project context.
+- Pass `--agent <harness>` to select the agent runtime explicitly.
+- Pass `--claim-pr <pr-ref>` to immediately associate an existing PR.
+- Pass `--skip-agent-check` to skip preflight local check.
+
+### `ao session ls`
+Lists all active and terminated sessions.
+- Pass `--json` for structured data output.
+
+### `ao session get <id>`
+Retrieves detailed information for a specific session.
+
+### `ao session kill <id>`
+Kills a session's workspace runner and removes the associated Git worktree.
+
+### `ao session restore <id>`
+Restores a terminated or crashed session, re-registering it with the lifecycle manager.
+
+### `ao session rename <id> <name>`
+Renames a session's display label.
+
+### `ao session cleanup`
+Sweeps and cleans up terminated or completed sessions.
+
+### `ao session claim-pr <id> <pr-ref>`
+Links a pull request to a session.
+
+---
+
+## Interactive & Terminal Commands
+
+### `ao send`
+Sends a message/input into the running session terminal.
+- Uses `context.Context` to wait for the session's terminal buffer to become idle.
+
+### `ao preview [url]`
+Opens a browser-displayable path or localhost URL inside the Electron-based Supervisor Browser panel.
+- Subcommands: `ao preview start`, `ao preview status`, `ao preview stop` command process execution defined in `.ao/launch.json`.
+
+### `ao browser <command>`
+Commands the session-owned live Electron browser: click, fill, snapshot, hover, tab new, tab select, etc.
+- Scoped to tab isolation profiles so sessions don't leak cookies or local storage.
+
+---
+
+## Environment Variables
+
+These variables control AO's CLI and daemon configuration:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AO_PORT` | `3001` | Loopback daemon HTTP bind port |
+| `AO_RUN_FILE` | `~/.ao/running.json` | JSON metadata handshake file path |
+| `AO_DATA_DIR` | `~/.ao/data` | SQLite database and session workspaces directory |
+| `AO_SESSION_ID` | (unset) | Set automatically by the daemon inside spawned worker sessions |
+| `AO_CONFIG_PATH`| (unset) | Absolute path to custom `agent-orchestrator.yaml` |
+| `AO_LOG_LEVEL` | `info` | Log verbosity: `error`, `warn`, `info`, `debug`, `trace` |

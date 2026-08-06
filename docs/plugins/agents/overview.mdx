@@ -1,0 +1,129 @@
+---
+title: "Coding Agent Plugins Supported by Agent Orchestrator"
+sidebarTitle: "Overview"
+description: "AO supports multiple AI coding agent plugins. Learn which agents support session resume and how to switch agents globally, per project, or at spawn time."
+---
+
+The agent plugin is the piece that actually writes code. Everything else in Agent Orchestrator — worktrees, runtimes, notifiers — is plumbing around it. Each agent plugin tells AO which binary to launch, what environment variables to inject, and how to read activity signals back from the running process. You can switch between agents at any level of granularity without changing your workflow.
+
+## What an Agent Plugin Does
+
+Every agent plugin is responsible for three things:
+
+- **Launch command** — the exact binary and flags AO uses to start the agent inside the worktree
+- **Environment** — variables like `AO_SESSION_ID`, `AO_ISSUE_ID`, and any agent-specific flags (e.g. `CODEX_DISABLE_UPDATE_CHECK=1`) injected at spawn time
+- **Activity tracking** — how AO knows whether the agent is actively working, waiting for input, or idle so the dashboard stays accurate
+
+## PR Metadata Capture
+
+AO captures pull request metadata automatically regardless of which agent you use — you don't need to configure anything.
+
+<Tabs>
+  <Tab title="Claude Code">
+    Claude Code has a native hook system. AO registers a **PostToolUse hook** in `.claude/settings.json` during workspace setup. Each time Claude calls a tool, the hook writes an activity entry to AO's JSONL and records PR metadata when `gh pr create` is invoked.
+  </Tab>
+  <Tab title="All Other Agents">
+    Codex, Cursor, OpenCode, and Aider don't have a hook system. AO installs lightweight **PATH wrappers** at `~/.ao/bin/gh` and `~/.ao/bin/git`. When an agent runs `gh pr create` or `git commit`, the wrapper intercepts the call, records the PR number and branch in session metadata, then passes the command through to the real binary.
+  </Tab>
+</Tabs>
+
+## Session Resume
+
+Some agents can resume a previous conversation after a daemon restart — picking up context, tool history, and file state from where they left off. Others start fresh every time.
+
+| Agent | Config name | Binary | Session resume |
+|---|---|---|---|
+| Claude Code | `claude-code` | `claude` | ✅ `--resume <sessionId>` |
+| OpenAI Codex | `codex` | `codex` | ✅ `codex resume <threadId>` |
+| Cursor | `cursor` | `agent` | ❌ |
+| OpenCode | `opencode` | `opencode` | ✅ via OpenCode session API |
+| Aider | `aider` | `aider` | ❌ |
+
+<Tip>
+  If you need continuity across restarts — for long-running tasks or multi-hour coding sessions — choose **Claude Code**, **Codex**, or **OpenCode**. All three can rehydrate a previous session automatically.
+</Tip>
+
+## Choosing an Agent
+
+<CardGroup cols={2}>
+  <Card title="Need session resume?" icon="rotate-right">
+    Choose **Claude Code**, **Codex**, or **OpenCode** to pick up exactly where you left off after a restart.
+  </Card>
+  <Card title="One-shot sessions are fine?" icon="bolt">
+    Any of the five featured agents work. One-shot means a clean slate on every spawn.
+  </Card>
+  <Card title="Pair-programming style?" icon="code">
+    **Aider** is built around explicit file edits with a confirm-before-apply workflow that feels like pair programming.
+  </Card>
+  <Card title="Native IDE behaviour in the terminal?" icon="terminal">
+    **Cursor Agent CLI** brings Cursor's editing model to a headless terminal session.
+  </Card>
+</CardGroup>
+
+## Configuring Your Agent
+
+You can set the active agent at three levels of specificity — each narrower level overrides the one above it.
+
+<Steps>
+  <Step title="Set a global default">
+    In `agent-orchestrator.yaml`, set the agent used for every project unless overridden:
+
+    ```yaml
+    defaults:
+      agent: claude-code
+    ```
+  </Step>
+  <Step title="Override per project">
+    In the project config block, specify a different agent for that repo:
+
+    ```yaml
+    agent: claude-code  # global default
+    projects:
+      api:
+        repo: myorg/api
+        agent: codex
+      web:
+        repo: myorg/web
+        agent: cursor
+    ```
+  </Step>
+  <Step title="Override at spawn time">
+    Pass `--agent` when spawning a session to use a one-off agent without touching your config:
+
+    ```bash
+    ao spawn 42 --agent codex
+    ```
+
+    This is useful for A/B testing which agent performs better on a specific type of issue.
+  </Step>
+</Steps>
+
+## Listing Available Agents
+
+To see all agent plugins available in your current AO installation, run:
+
+```bash
+ao plugin list --type agent
+```
+
+Add `--installed` to show only agents that are already active in your config.
+
+## Agent Pages
+
+<CardGroup cols={2}>
+  <Card title="Claude Code" icon="c" href="/plugins/agents/claude-code">
+    Anthropic's CLI coding agent. AO's default — first-class session resume, rich JSONL logs, and native hook support.
+  </Card>
+  <Card title="Codex" icon="openai" href="/plugins/agents/codex">
+    OpenAI's Codex CLI. Session resume via thread IDs and date-sharded JSONL activity logs.
+  </Card>
+  <Card title="Cursor" icon="arrow-pointer" href="/plugins/agents/cursor">
+    Cursor Agent CLI. Brings Cursor's editing model to a headless terminal session.
+  </Card>
+  <Card title="OpenCode" icon="brackets-curly" href="/plugins/agents/opencode">
+    Open-source terminal coding agent with a structured session API for reliable resume and discovery.
+  </Card>
+  <Card title="Aider" icon="users" href="/plugins/agents/aider">
+    Pair-programming CLI built around explicit file edits. Great for small, focused issues.
+  </Card>
+</CardGroup>

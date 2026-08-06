@@ -1,0 +1,65 @@
+---
+title: "GitHub Issues Tracker Integration for Agent Orchestrator"
+sidebarTitle: "GitHub"
+description: "Use GitHub Issues as your AO tracker. Powered by the gh CLI — no personal access token required. Supports issue fetch, create, comment, and close."
+---
+
+The GitHub tracker is the default tracker plugin for Agent Orchestrator. It uses the official [`gh` CLI](https://cli.github.com) for every GitHub Issues operation, which means you authenticate once with `gh auth login` and AO never needs a separate personal access token.
+
+## Prerequisites
+
+Install and authenticate the GitHub CLI before using this tracker:
+
+```bash
+gh auth login
+```
+
+When prompted, choose **GitHub.com → HTTPS → Login with a web browser**. Once complete, AO can issue `gh` commands on your behalf automatically.
+
+## Configuration
+
+Add `tracker: github` and a `repo` field to your project config:
+
+```yaml
+tracker: github
+
+projects:
+  my-app:
+    repo: owner/my-app
+```
+
+<Note>
+The `repo` value must be in `owner/name` format — not a full URL. This is the format the `gh` CLI expects.
+</Note>
+
+No plugin-level config keys are required beyond `tracker: github`. Your `gh` auth credentials are the only dependency.
+
+## How AO uses GitHub Issues
+
+AO maps each agent operation to a specific `gh` CLI command:
+
+| Operation | Command used |
+|-----------|-------------|
+| Fetch issue | `gh issue view <num> --json title,body,...` |
+| Create issue | `gh issue create` |
+| Comment on issue | `gh issue comment` |
+| Close issue | `gh issue close` |
+| List issues | `gh issue list` |
+
+## Issue intake
+
+AO can automatically start a worker session for each GitHub issue assigned to you. When issue intake is enabled for a project, AO polls for newly assigned issues and spawns an agent session per issue without any manual `ao spawn` call.
+
+## Troubleshooting
+
+<Accordion title="gh: authentication required">
+  Run `gh auth login` and complete the browser flow. AO delegates all GitHub API calls to the `gh` CLI, so valid auth is required before any tracker operation.
+</Accordion>
+
+<Accordion title="could not resolve to an Issue">
+  The issue number is wrong, or the `repo` value in your config doesn't match the actual repository. Double-check that `repo` is `owner/name` with no trailing slash or `.git` suffix.
+</Accordion>
+
+<Accordion title="Rate limit errors">
+  AO batches and paces issue lookups to stay under GitHub's rate limits, but large bursts can still trigger them. The `gh` CLI reports rate-limit errors clearly in the logs. If you see them consistently, reduce the number of concurrent sessions or add a delay between spawns.
+</Accordion>

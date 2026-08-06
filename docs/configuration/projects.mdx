@@ -1,0 +1,417 @@
+---
+title: "Per-Project Configuration Reference for Agent Orchestrator"
+sidebarTitle: "Projects"
+description: "Complete reference for agent-orchestrator.yaml: agents, runtimes, workspaces, rules, symlinks, trackers, SCM, reactions, and session recovery options."
+---
+
+A project in AO is one repository that agents run against. The global registry holds its identity — path, storage key, SCM coordinates — while `agent-orchestrator.yaml` in the repo root controls everything about how sessions behave. This page covers every field you can set in that local config file.
+
+## Minimal Starting Config
+
+Most teams only need these fields to get going:
+
+```yaml
+agent: claude-code
+runtime: tmux
+workspace: worktree
+
+symlinks:
+  - .env
+
+postCreate:
+  - pnpm install
+
+agentRules: |
+  Use pnpm.
+  Run pnpm test before pushing.
+  Keep PRs focused.
+```
+
+---
+
+## Choosing an Agent
+
+The `agent` field selects which coding agent AO launches for worker sessions.
+
+```yaml
+agent: claude-code
+```
+
+| Agent | Best for |
+|---|---|
+| `claude-code` | Default and most tested path |
+| `codex` | OpenAI Codex CLI sessions |
+| `aider` | Teams already using Aider workflows |
+| `opencode` | OpenCode session discovery and resume support |
+| `cursor` | Cursor-based sessions |
+
+### Agent Config
+
+Fine-grained agent settings go under `agentConfig`:
+
+```yaml
+agentConfig:
+  permissions: permissionless
+  model: claude-sonnet-4-5
+```
+
+**`permissions`** controls how much the agent can do without asking:
+
+| Value | Behavior |
+|---|---|
+| `permissionless` | Agent edits files and runs commands without prompting |
+| `default` | Uses the agent tool's normal permission behavior |
+| `auto-edit` | Auto-approves edits; asks for other actions |
+| `suggest` | Suggests changes but does not apply them |
+
+<Note>
+  The legacy value `skip` is still accepted and treated as `permissionless`.
+</Note>
+
+---
+
+## Choosing a Runtime
+
+`runtime` controls where the agent process runs.
+
+```yaml
+runtime: tmux
+```
+
+| Runtime | Best for |
+|---|---|
+| `tmux` | Persistent sessions that survive dashboard reloads and can be attached from a terminal |
+| `process` | A lighter direct-process runtime when tmux persistence is not needed |
+
+Most users should keep `tmux`. Use `process` on Windows (where tmux is not available) or in container environments.
+
+---
+
+## Choosing a Workspace
+
+`workspace` controls how AO isolates each session's code from other sessions.
+
+```yaml
+workspace: worktree
+```
+
+| Workspace | Best for |
+|---|---|
+| `worktree` | Default — fast, disk-efficient, creates a git worktree per session |
+| `clone` | Slower but gives each session a completely separate clone |
+
+Use `worktree` unless your repository has tooling that behaves badly with git worktrees.
+
+---
+
+## Preparing Each Session
+
+### Symlinks
+
+Use `symlinks` for files agents need but should not be copied or committed — secrets, tool configs, and environment files:
+
+```yaml
+symlinks:
+  - .env
+  - .claude
+```
+
+Paths are relative to the project root. Missing paths are skipped with a warning rather than failing the session.
+
+### Post-Create Commands
+
+Use `postCreate` for setup commands that must run inside each new workspace before the agent starts:
+
+```yaml
+postCreate:
+  - pnpm install
+  - cp .env.example .env
+```
+
+<Warning>
+  If a `postCreate` command fails, AO does not start the agent for that session. Keep these commands deterministic — avoid anything that can fail intermittently.
+</Warning>
+
+---
+
+## Giving Agents Project Rules
+
+Rules are injected into the agent's context so it understands your project's conventions.
+
+Use `agentRules` for short inline instructions:
+
+```yaml
+agentRules: |
+  Use conventional commits.
+  Do not touch database migrations unless the issue asks for it.
+  Run pnpm lint and pnpm test before pushing.
+```
+
+Use `agentRulesFile` when rules are long or already versioned in your repo:
+
+```yaml
+agentRulesFile: AGENTS.md
+```
+
+If both are set, AO includes both. Use `orchestratorRules` for instructions that should only apply to the orchestrator session (not workers):
+
+```yaml
+orchestratorRules: |
+  Split large issues into small, independent worker tasks.
+  Review worker output before asking for a merge.
+```
+
+---
+
+## Split Orchestrator and Worker Roles
+
+You can run one agent or model for orchestration and a different one for implementation work. This is useful when planning and review benefit from a stronger model but routine coding tasks can use a faster or cheaper option.
+
+```yaml
+orchestrator:
+  agent: claude-code
+  agentConfig:
+    model: claude-opus-4
+
+worker:
+  agent: codex
+  agentConfig:
+    model: gpt-5.4
+    permissions: permissionless
+```
+
+<Note>
+  Project-level agent settings fully replace global defaults — there is no deep merge. If you set `agentConfig` at the project level, it entirely replaces the global `agentConfig` rather than merging keys.
+</Note>
+
+---
+
+## Tracker and SCM
+
+AO usually infers the tracker and SCM from the registered repository. Override these only when you need non-default behavior.
+
+```yaml
+tracker:
+  plugin: github
+
+scm:
+  plugin: github
+```
+
+**Built-in trackers:**
+
+| Plugin | Purpose |
+|---|---|
+| `github` | GitHub Issues |
+| `gitlab` | GitLab Issues |
+| `linear` | Linear Issues |
+
+**Built-in SCM plugins:**
+
+| Plugin | Purpose |
+|---|---|
+| `github` | GitHub PRs, checks, reviews, merge state |
+| `gitlab` | GitLab merge requests |
+
+Extra keys under `tracker` and `scm` are passed to the plugin. For example, a Linear project with a team ID and a GitHub webhook:
+
+```yaml
+tracker:
+  plugin: linear
+  teamId: ENG
+
+scm:
+  plugin: github
+  webhook:
+    enabled: true
+    path: /api/webhooks/github
+    secretEnvVar: GITHUB_WEBHOOK_SECRET
+```
+
+For external or community plugins, use `package` or `path`:
+
+```yaml
+tracker:
+  package: "@acme/ao-plugin-tracker-jira"
+  projectKey: APP
+```
+
+---
+
+## Example Configs
+
+<Tabs>
+  <Tab title="Minimal GitHub">
+    ```yaml
+    agent: claude-code
+    runtime: tmux
+    workspace: worktree
+
+    symlinks:
+      - .env
+
+    postCreate:
+      - pnpm install
+
+    agentRules: |
+      Use pnpm, not npm.
+      Run pnpm test before opening a PR.
+    ```
+  </Tab>
+  <Tab title="Linear + GitHub">
+    ```yaml
+    agent: claude-code
+    runtime: tmux
+    workspace: worktree
+
+    tracker:
+      plugin: linear
+      teamId: ENG
+
+    scm:
+      plugin: github
+
+    symlinks:
+      - .env
+
+    postCreate:
+      - pnpm install
+
+    agentRules: |
+      Reference the Linear issue number in commit messages.
+      Keep PRs small and focused on a single task.
+    ```
+  </Tab>
+  <Tab title="Per-Role Agents">
+    ```yaml
+    # Orchestrator uses Opus for planning
+    # Workers use Sonnet for implementation
+    orchestrator:
+      agent: claude-code
+      agentConfig:
+        model: claude-opus-4
+
+    worker:
+      agent: claude-code
+      agentConfig:
+        model: claude-sonnet-4-5
+        permissions: permissionless
+
+    runtime: tmux
+    workspace: worktree
+
+    postCreate:
+      - pnpm install
+
+    agentRules: |
+      Keep PRs small and independently mergeable.
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Tuning Automation Per Project
+
+Reaction overrides in a local project config affect only that project:
+
+```yaml
+reactions:
+  ci-failed:
+    retries: 3
+  approved-and-green:
+    auto: false
+```
+
+See [Reactions](/configuration/reactions) for the full event list and action behavior.
+
+---
+
+## Session Recovery
+
+Use these options only when you need explicit control over how AO handles duplicate or stale sessions.
+
+```yaml
+orchestratorSessionStrategy: reuse
+opencodeIssueSessionStrategy: reuse
+```
+
+**`orchestratorSessionStrategy`** options:
+
+| Value | Behavior |
+|---|---|
+| `reuse` | Attach to the existing orchestrator session |
+| `delete` | Delete the old session and start a new one |
+| `ignore` | Leave the old session running and start another |
+| `delete-new` | Delete any newly detected duplicate |
+| `ignore-new` | Ignore any newly detected duplicate |
+| `kill-previous` | Kill the previous session before starting the new one |
+
+**`opencodeIssueSessionStrategy`** accepts `reuse`, `delete`, or `ignore`.
+
+---
+
+## Full Field Reference
+
+These fields are valid in a local project config (`agent-orchestrator.yaml`):
+
+| Field | Type | Purpose |
+|---|---|---|
+| `repo` | `string` | Optional legacy repo slug (rarely needed) |
+| `agent` | `string` | Default worker agent |
+| `runtime` | `string` | Runtime plugin (`tmux` or `process`) |
+| `workspace` | `string` | Workspace plugin (`worktree` or `clone`) |
+| `agentConfig` | `object` | Agent permissions, model, and options |
+| `orchestrator` | `object` | Orchestrator role override (agent + agentConfig) |
+| `worker` | `object` | Worker role override (agent + agentConfig) |
+| `tracker` | `object` | Issue tracker plugin config |
+| `scm` | `object` | Source control plugin config |
+| `symlinks` | `string[]` | Files or directories linked into each workspace |
+| `postCreate` | `string[]` | Commands run after workspace creation |
+| `agentRules` | `string` | Inline worker instructions |
+| `agentRulesFile` | `string` | Path to a rules file |
+| `orchestratorRules` | `string` | Orchestrator-only instructions |
+| `reactions` | `object` | Per-project automation overrides |
+| `orchestratorSessionStrategy` | `string` | Duplicate orchestrator recovery behavior |
+| `opencodeIssueSessionStrategy` | `string` | Duplicate OpenCode issue-session behavior |
+| `decomposer` | `object` | Advanced decomposition settings |
+| `defaultBranch` | `string` | Branch PRs target (usually `main`) |
+
+<Note>
+  Identity fields such as `projectId`, `path`, `storageKey`, `originUrl`, and `sessionPrefix` belong to the global registry, not the local config. Do not add them to `agent-orchestrator.yaml`.
+</Note>
+
+---
+
+## Common Problems
+
+<AccordionGroup>
+  <Accordion title="Project does not appear in the dashboard">
+    Run `ao start` from the repository root so AO can register the project. If the repo has moved, remove and re-add or relink the project through the dashboard or CLI instead of editing `storageKey` manually.
+  </Accordion>
+  <Accordion title="Agent starts without environment variables">
+    Add `.env` or the relevant tool config directory to `symlinks`. AO does not copy secrets into worktrees by default — they must be explicitly symlinked.
+  </Accordion>
+  <Accordion title="Setup fails before the agent starts">
+    Check your `postCreate` commands. A failing command stops the session before the agent launches. Run each command manually in a worktree to verify it succeeds.
+  </Accordion>
+  <Accordion title="Two projects have confusing session names">
+    Set `sessionPrefix` in the global project registry or through project settings. Session prefixes must use letters, numbers, underscores, or hyphens only.
+  </Accordion>
+  <Accordion title="GitHub or GitLab calls fail">
+    Make sure the corresponding CLI or token is authenticated for the plugin you use (`gh auth login` for GitHub, `glab auth login` for GitLab). AO does not store provider tokens in project config — it relies on the CLI's own credential storage.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Reactions" icon="bolt" href="/configuration/reactions">
+    Configure what AO does when CI, reviews, or agent state changes need attention.
+  </Card>
+  <Card title="Remote Access" icon="globe" href="/configuration/remote-access">
+    Open the dashboard from another machine without exposing it publicly.
+  </Card>
+</CardGroup>

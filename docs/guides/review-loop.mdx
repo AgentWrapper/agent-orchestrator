@@ -1,0 +1,133 @@
+---
+title: "Code Review Feedback Loop: Route Comments Back to Agents"
+sidebarTitle: "Review Loop"
+description: "AO watches your PRs for review comments and routes them to the agent session that owns the branch, so feedback is addressed without manual copy-pasting."
+---
+
+Most agents treat code review as a one-shot interaction — you leave comments, nothing happens, you repeat yourself. AO closes that loop. When a reviewer requests changes, the agent sees the review body and every unresolved inline comment in context, pushes a fix, and the cycle repeats until the reviewer is satisfied. You stop being the messenger between your reviewer and your agent.
+
+## What triggers the review loop
+
+The SCM plugin continuously watches each tracked PR for:
+
+- A new review with state `CHANGES_REQUESTED`
+- New comments added to an existing review
+- Line-level inline comments
+
+When any of these appear, the session transitions to `changes_requested` and the agent is woken with the full review context.
+
+## What the agent sees
+
+AO assembles a single structured prompt containing:
+
+- **Reviewer's top-level message** — the overall review summary
+- **Each unresolved inline comment**, formatted as `path:line — comment`
+- **The PR head SHA** — so the agent knows exactly which commit the review is against
+
+Once you resolve a thread on GitHub or GitLab, it drops out of the next nudge automatically. Marking a thread resolved is the signal to AO that it's been addressed — so you can tick off the ones the agent handled and only the remaining threads make it back in the next cycle.
+
+## Configurable behavior
+
+```yaml
+reactions:
+  changes-requested:
+    auto: true
+    retries: 2
+```
+
+| Field | Default | Description |
+|---|---|---|
+| `auto` | `true` | Whether AO sends review feedback to the agent automatically |
+| `retries` | unlimited | Stop the loop after this many agent response cycles |
+
+<Warning>
+  Setting `retries` is important. Occasionally a reviewer and an agent will disagree about the right fix and get stuck in a loop. A `retries` limit ensures you're brought in when that happens rather than watching the cycle spin indefinitely.
+</Warning>
+
+## Manually replay a review
+
+Trigger an immediate check outside the normal polling cadence:
+
+```bash
+ao review-check             # check all tracked PRs right now
+ao review-check myproject   # one project only
+ao review-check --dry-run   # show who would be nudged, don't send
+```
+
+## Best practices
+
+<CardGroup cols={3}>
+  <Card title="Inline comments for mechanics" icon="code">
+    "Rename this variable", "extract this into a helper" — agents handle precise, located feedback very well. Put mechanical changes in inline comments.
+  </Card>
+  <Card title="Top-level message for design" icon="message">
+    A coherent paragraph in the review summary is easier for the agent to reason about than a dozen scattered nits. Use the top-level review message for architecture and design feedback.
+  </Card>
+  <Card title="Resolve threads as you go" icon="circle-check">
+    Resolve threads as the agent addresses them. This keeps the agent's next nudge focused on what's actually still open.
+  </Card>
+</CardGroup>
+
+## Approvals
+
+An `APPROVED` review does **not** trigger the agent. Instead, the session transitions toward `mergeable`. AO never auto-merges — that decision is always yours.
+
+## Review polling throttle
+
+To avoid hammering the GitHub or GitLab API, AO throttles review-check calls to **at most once every 2 minutes per session**. The throttle is in-memory and resets on daemon restart.
+
+<Info>
+  After a review comment lands on a PR, there can be **up to a 2-minute delay** before AO reacts. This is expected and by design. If you need an immediate check, run `ao review-check` — it calls the API directly and is not subject to the in-process throttle.
+</Info>
+
+## Bot detection
+
+Not every review comment is from a human. AO recognises known automation accounts and routes their comments to the separate `bugbot-comments` reaction rather than `changes-requested`. This lets you handle advisory bot feedback differently from human review requests.
+
+<Tabs>
+  <Tab title="GitHub bots">
+    | Login | Tool |
+    |---|---|
+    | `cursor[bot]` | Cursor AI |
+    | `github-actions[bot]` | GitHub Actions |
+    | `codecov[bot]` | Codecov |
+    | `sonarcloud[bot]` | SonarCloud |
+    | `dependabot[bot]` | Dependabot |
+    | `renovate[bot]` | Renovate |
+    | `codeclimate[bot]` | Code Climate |
+    | `deepsource-autofix[bot]` | DeepSource |
+    | `snyk-bot` | Snyk |
+    | `lgtm-com[bot]` | LGTM |
+  </Tab>
+  <Tab title="GitLab bots">
+    | Login | Tool |
+    |---|---|
+    | `gitlab-bot` | GitLab built-in |
+    | `ghost` | Deleted / system user |
+    | `dependabot[bot]` | Dependabot |
+    | `renovate[bot]` | Renovate |
+    | `sast-bot` | GitLab SAST |
+    | `codeclimate[bot]` | Code Climate |
+    | `sonarcloud[bot]` | SonarCloud |
+    | `snyk-bot` | Snyk |
+
+    GitLab also auto-detects any username matching `project_\d+_bot` or ending in `[bot]`.
+  </Tab>
+</Tabs>
+
+A typical configuration that treats human reviews as actionable and bot feedback as informational:
+
+```yaml
+reactions:
+  changes-requested:
+    auto: true
+    priority: "action"   # human review comment — act immediately
+
+  bugbot-comments:
+    auto: true
+    priority: "info"     # advisory bot feedback — log and proceed
+```
+
+<Note>
+  The bot list is hardcoded in each SCM plugin and is not currently configurable via `agent-orchestrator.yaml`.
+</Note>

@@ -1,0 +1,78 @@
+---
+title: "Agent Orchestrator: Parallel AI Coding Agents"
+sidebarTitle: "Home"
+description: "Agent Orchestrator supervises parallel AI coding agents in isolated git worktrees with automatic CI, review, and merge conflict feedback loops."
+---
+
+Agent Orchestrator (AO) is the orchestration layer for parallel AI coding agents. It runs multiple coding agents — Claude Code, Codex, Cursor, Aider, OpenCode, and 18 more — in isolated git worktrees and tracks each one through a pull request lifecycle, automatically routing CI failures, review comments, and merge conflicts back to the right agent.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install the desktop app or CLI and connect your first project in minutes.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Spawn your first agent session and watch AO manage the workflow end-to-end.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/overview">
+    Configure projects, agents, reactions, and notification routing.
+  </Card>
+  <Card title="Plugins" icon="puzzle-piece" href="/plugins/agents/overview">
+    Explore 23 agent harnesses, trackers, SCM providers, and notifiers.
+  </Card>
+</CardGroup>
+
+## How Agent Orchestrator works
+
+AO wraps your existing AI coding agent CLIs with a supervision layer. When you add a project and spawn a session, AO:
+
+1. Creates an isolated git worktree for that session
+2. Launches the selected coding agent inside a terminal runtime (tmux or process)
+3. Watches session state, terminal activity, pull requests, CI status, and review feedback
+4. Automatically sends CI failures, requested changes, and merge conflicts back to the right session
+5. Notifies you when a session needs attention or a PR is ready to merge
+
+The result is a local control layer — agents still do the coding, AO keeps their workspaces, status, terminals, and feedback loops organized.
+
+## Key capabilities
+
+<CardGroup cols={3}>
+  <Card title="Parallel Sessions" icon="layer-group">
+    Run multiple agents on the same project without mixing files, branches, or PR state — each session gets its own worktree.
+  </Card>
+  <Card title="CI Recovery" icon="rotate">
+    Failing CI checks are automatically routed back to the session that owns that PR, with check names, status, and log links.
+  </Card>
+  <Card title="Review Loop" icon="code-pull-request">
+    Requested changes and inline comments from code review are forwarded directly to the responsible agent.
+  </Card>
+  <Card title="23 Agent Harnesses" icon="robot">
+    Claude Code, Codex, Cursor, OpenCode, Aider, Copilot, Grok, Kimi, Kiro, and 14 more — switch per project or per session.
+  </Card>
+  <Card title="Kanban Dashboard" icon="table-columns">
+    See every session in a board view: Working, Pending, Review, Respond, Merge. Live terminal access in one click.
+  </Card>
+  <Card title="Mobile Companion" icon="mobile">
+    Pair your phone over LAN or Tailscale to monitor sessions and receive push notifications on iOS and Android.
+  </Card>
+</CardGroup>
+
+## Get started
+
+<Steps>
+  <Step title="Download Agent Orchestrator">
+    Download the desktop app from [aoagents.dev/download](https://aoagents.dev/download) for macOS, Windows, or Linux. See [Installation](/installation) for prerequisites.
+  </Step>
+  <Step title="Add your project">
+    Open AO, add your repository, and let AO start the orchestrator session automatically.
+  </Step>
+  <Step title="Spawn a session">
+    Use the dashboard or run `ao spawn 42` to start an agent session for a GitHub issue.
+  </Step>
+  <Step title="Watch the board">
+    Monitor progress on the Kanban board. AO handles CI failures and review feedback automatically — you step in only when needed.
+  </Step>
+</Steps>
+
+<Note>
+  AO is open-source under the Apache 2.0 license. Your code never leaves your machine — all agent sessions run locally.
+</Note>

@@ -1,0 +1,85 @@
+---
+title: "Using Aider as Your Coding Agent in Agent Orchestrator"
+sidebarTitle: "Aider"
+description: "Set up Aider in Agent Orchestrator. AO tracks activity via terminal output and captures PRs via PATH wrappers. No session resume; cost data is unavailable."
+---
+
+Aider is a pair-programming CLI built around explicit file edits. Rather than streaming changes autonomously, it shows you diffs and asks for confirmation before applying them — making it a natural fit for smaller, focused issues where you want a tighter review loop. AO integrates with Aider through terminal output classification and PATH wrappers, with a few limitations to be aware of: session resume is not supported, and cost tracking is not available through AO's dashboard.
+
+- **Slot:** `agent`
+- **Config name:** `aider`
+- **Binary:** `aider`
+- **Platforms:** macOS · Linux · Windows
+
+## Install
+
+```bash
+pip install aider-install && aider-install
+```
+
+Set your API key using Aider's standard config file (`~/.aider.conf.yml`) or environment variables. AO doesn't manage credentials for any agent.
+
+## Configure
+
+```yaml
+agent: aider
+```
+
+No additional plugin-level config keys are available for Aider.
+
+## How AO Integrates with Aider
+
+<Accordion title="Launch">
+  AO runs `aider` inside the worktree and pipes the issue prompt in through Aider's normal input interface. The following environment variables are injected automatically:
+
+  | Variable | Set by AO | Purpose |
+  |---|---|---|
+  | `AO_SESSION_ID` | ✓ | Unique AO session identifier |
+  | `AO_ISSUE_ID` | ✓ | Issue identifier (when spawned from an issue) |
+  | `PATH` | ✓ | Prepends `~/.ao/bin` so wrappers take priority |
+  | `GH_PATH` | ✓ | Absolute path to the real `gh` binary |
+</Accordion>
+
+<Accordion title="Activity tracking">
+  Aider doesn't emit a structured event log. AO classifies agent state by analyzing terminal output on each poll cycle, writing results to:
+
+  ```
+  {workspace}/.ao/activity.jsonl
+  ```
+
+  The classifier recognises Aider's common terminal patterns — diff review prompts, confirm-apply prompts, file edit confirmations — to determine `active`, `ready`, `idle`, and `waiting_input` states accurately.
+</Accordion>
+
+<Accordion title="PR and git tracking">
+  PATH wrappers at `~/.ao/bin/gh` and `~/.ao/bin/git` intercept PR creation and commit commands. When Aider runs `gh pr create`, the wrapper captures the PR number and branch before forwarding to the real binary, keeping the dashboard in sync.
+</Accordion>
+
+<Accordion title="Session resume">
+  Session resume is **not supported** for Aider. Every `ao spawn` starts a completely fresh Aider session with no memory of previous conversations or file context.
+</Accordion>
+
+<Warning>
+  Aider does not support session resume. If the AO daemon restarts or the session is respawned, Aider starts from scratch with no context from the previous run. For tasks that require continuity across restarts, use **Claude Code**, **Codex**, or **OpenCode** instead.
+</Warning>
+
+## Cost Tracking
+
+<Note>
+  AO does not parse Aider's cost output. The cost column on the dashboard will remain empty for Aider sessions. Aider prints cumulative cost to the terminal at the end of a session — check there for spend information.
+</Note>
+
+## Troubleshooting
+
+<Accordion title="Aider hangs on file-edit confirmation">
+  Aider prompts for confirmation before applying diffs by default. This is expected behavior — Aider is pair-programming-oriented rather than fully autonomous. If you want Aider to apply changes without prompting, add `--yes-always` to your `~/.aider.conf.yml`:
+
+  ```yaml
+  yes-always: true
+  ```
+
+  AO deliberately does not inject this flag — whether the agent auto-applies changes is your decision.
+</Accordion>
+
+<Accordion title="Dashboard cost shows $0 or is blank">
+  AO doesn't parse Aider's cost output from the terminal. The cost column stays empty for all Aider sessions — this is a known limitation. Check the terminal output from your Aider session directly for cost information.
+</Accordion>

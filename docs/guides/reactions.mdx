@@ -1,0 +1,121 @@
+---
+title: "Reaction Recipes: Customize AO Automation Workflows"
+sidebarTitle: "Reactions"
+description: "Copy-paste YAML recipes to tune how AO responds to CI failures, review comments, stuck sessions, and more — globally or per project."
+---
+
+Reactions are the rules that govern what AO does automatically when something happens to a session — CI goes red, a reviewer requests changes, the agent goes quiet. Every reaction can be configured globally under `reactions:` or scoped to a specific project under `projects.*.reactions:`. The recipes below cover the most common customisation needs; each uses the correct schema field names.
+
+## Recipe: Watch-only mode
+
+Disable all automated agent messages while keeping notifications active. Useful during onboarding or in sensitive projects where you want to observe before letting AO act:
+
+```yaml
+reactions:
+  ci-failed:
+    auto: false
+  changes-requested:
+    auto: false
+  bugbot-comments:
+    auto: false
+  agent-idle:
+    auto: false
+```
+
+<Note>
+  `auto: false` suppresses the `send-to-agent` action but does **not** silence notifiers. Reactions whose default action is `notify` — such as `agent-stuck`, `agent-exited`, and `all-complete` — continue to fire their notifications regardless of this flag.
+</Note>
+
+## Recipe: Enable auto-merge
+
+The `approved-and-green` reaction defaults to notify-only. Opt in explicitly to signal merge readiness:
+
+```yaml
+reactions:
+  approved-and-green:
+    auto: true
+    action: auto-merge
+```
+
+<Warning>
+  The `auto-merge` action currently calls `notifyHuman()` internally — it does **not** perform a real merge. Actual merging still depends on your repository's branch protection rules and the "Allow auto-merge" setting on GitHub. AO does not bypass these gates. Treat this as an opt-in signal for when the SCM plugin adds real merge support.
+</Warning>
+
+## Recipe: Custom CI failure message
+
+Override the default nudge to give the agent more precise recovery instructions. This affects the **first-pass message only**:
+
+```yaml
+reactions:
+  ci-failed:
+    message: |
+      CI is failing. Run `pnpm test` locally and fix the failing tests before pushing again.
+      Prioritise type errors first.
+```
+
+<Note>
+  The two-pass CI behavior still applies. AO sends your custom `message` on the first pass (state transition), then follows up in the next poll cycle (~30 seconds later) with a second message listing every failing check by name and direct URL. Your `message` override affects only the first pass — the structured check list fires regardless.
+</Note>
+
+## Recipe: Aggressive escalation
+
+Tighten retry and escalation windows for urgent projects where you want fast human handoff:
+
+```yaml
+reactions:
+  ci-failed:
+    retries: 1
+    escalateAfter: "5m"
+  changes-requested:
+    retries: 1
+    escalateAfter: "5m"
+```
+
+With `retries: 1` and `escalateAfter: "5m"`, AO escalates after one failed recovery attempt **or** five minutes — whichever comes first.
+
+## Recipe: Ignore bugbot noise
+
+Keep human `changes-requested` reactions fully active, but silence nudges from automated bot reviewers:
+
+```yaml
+reactions:
+  bugbot-comments:
+    auto: false
+```
+
+AO identifies bot comments by author login. The current hardcoded bot list includes `cursor[bot]`, `github-actions[bot]`, `codecov[bot]`, and `sonarcloud[bot]`. Any review comment from these accounts triggers `bugbot-comments` rather than `changes-requested`. Setting `auto: false` here stops AO from nudging the agent about bot feedback while leaving human review comments fully active.
+
+## Recipe: Per-project overrides
+
+Suppress a noisy notification for one project while leaving everything default for others. Per-project values win over global defaults for every field that is specified:
+
+```yaml
+reactions:
+  all-complete:
+    auto: true
+    action: notify
+
+projects:
+  api:
+    repo: org/api
+    path: ~/code/api
+    reactions:
+      ci-failed:
+        retries: 5   # this project needs more attempts — it has a flaky test suite
+```
+
+<Tip>
+  Per-project reaction blocks are **merged** with the global config (unlike `orchestrator`/`worker` blocks, which fully replace). Only the fields you specify are overridden; everything else inherits from the global default.
+</Tip>
+
+## Recipe: Stuck session threshold
+
+Extend the `agent-stuck` threshold for projects with long-running builds where 10 minutes of inactivity is normal:
+
+```yaml
+reactions:
+  agent-stuck:
+    threshold: "30m"
+```
+
+A session must be continuously idle for longer than `threshold` before the `agent-stuck` reaction fires and the session status transitions to `stuck`. The `threshold` field is used exclusively by this reaction.

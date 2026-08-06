@@ -1,0 +1,273 @@
+---
+title: "Authoring Custom AO Plugins for Any Integration Slot"
+sidebarTitle: "Authoring"
+description: "Create custom AO plugins for any slot — notifier, tracker, runtime, agent, workspace, SCM, or terminal — using the ao-core SDK and scaffold command."
+---
+
+AO's plugin system lets you extend every part of the orchestration layer. You can add a new agent harness, a custom notifier that routes alerts to your on-call platform, a tracker that talks to your internal ticketing system, a new workspace type, or any other integration. Plugins are npm packages that export a manifest, a `create()` factory, and an optional `detect()` probe. AO resolves them at startup from a registry and wires them into the session lifecycle automatically.
+
+## Quick start: scaffold a plugin
+
+The fastest way to create a plugin is with the scaffold command:
+
+```bash
+ao plugin create --slot notifier --name pagerduty
+```
+
+You can also run `ao plugin create` interactively and answer the prompts, or pass all flags to skip them:
+
+```bash
+ao plugin create ./my-plugins/pagerduty \
+  --slot notifier \
+  --name "PagerDuty" \
+  --description "Route urgent alerts to PagerDuty" \
+  --author "Alice" \
+  --package-name "ao-plugin-notifier-pagerduty"
+```
+
+Add `--non-interactive` to require all fields via flags (useful in CI).
+
+### What gets generated
+
+The scaffold writes a ready-to-build package to `./{normalized-name}/`:
+
+```
+pagerduty/
+├── package.json      # type: module, main: dist/index.js, exports map
+├── tsconfig.json     # ES2022 + Node16 modules, strict mode
+├── README.md         # AO config snippets for local and npm installs
+├── .gitignore        # dist/, node_modules/
+└── src/
+    └── index.ts      # manifest + stub create() + default export
+```
+
+## The plugin contract
+
+Every plugin must satisfy `PluginModule<T>`, where `T` is the interface for its slot:
+
+```typescript
+import type { PluginModule } from '@aoagents/ao-core';
+
+const plugin: PluginModule<MyConfig> = {
+  manifest: {
+    name: 'pagerduty',
+    slot: 'notifier',        // use "as const" to preserve the literal type
+    version: '1.0.0',
+    description: 'Route urgent alerts to PagerDuty',
+  },
+  async create(config) {
+    // Validate config here. Return an object implementing the slot interface.
+    return {
+      async notify(event) {
+        // Send to PagerDuty
+      },
+    };
+  },
+  async detect() {
+    // Optional: return true if this plugin should be auto-selected.
+    // Use this to check for a binary on PATH or a required env var.
+    return Boolean(process.env['PAGERDUTY_ROUTING_KEY']);
+  },
+};
+
+export default plugin;
+```
+
+### The three exports
+
+**`manifest`** — static description of your plugin. `name` must match the suffix of your package name (e.g. `ao-plugin-notifier-pagerduty` → `name: "pagerduty"`). Use `"notifier" as const` for `slot` to preserve the literal type. `displayName` is optional.
+
+**`create(config?)`** — called once at startup. `config` contains the key-value pairs from your plugin's YAML block. Validate everything here and store validated values in a closure. Return an object that implements the slot interface.
+
+**`detect()` (optional)** — return `true` when the system has what your plugin needs. AO uses this to warn about missing dependencies at startup rather than at first use.
+
+## Slot interfaces
+
+All interfaces are exported from `@aoagents/ao-core`. Here's what each slot requires:
+
+<AccordionGroup>
+  <Accordion title="Notifier">
+    | Method | Required |
+    |---|---|
+    | `notify(event)` | Yes |
+    | `notifyWithActions(event, actions)` | Optional |
+    | `post(message, context?)` | Optional |
+  </Accordion>
+
+  <Accordion title="Agent">
+    **Required:** `getLaunchCommand`, `getEnvironment`, `detectActivity`, `getActivityState`, `isProcessRunning`, `getSessionInfo`
+
+    **Optional:** `getRestoreCommand`, `setupWorkspaceHooks`, `postLaunchSetup`, `recordActivity`
+
+    <Note>
+    `setupWorkspaceHooks` is marked optional in TypeScript but is critical in practice. Without it, PRs created by your agent will never appear in the dashboard.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Tracker">
+    **Required:** `getIssue`, `isCompleted`, `issueUrl`, `branchName`, `generatePrompt`
+
+    **Optional:** `issueLabel`, `listIssues`, `createIssue`, `updateIssue`
+  </Accordion>
+
+  <Accordion title="Runtime">
+    **Required:** `create`, `destroy`, `sendMessage`, `getOutput`, `isAlive`
+
+    **Optional:** `getMetrics`, `getAttachInfo`
+  </Accordion>
+
+  <Accordion title="Workspace">
+    **Required:** `create`, `destroy`, `list`
+
+    **Optional:** `postCreate`, `exists`, `restore`
+  </Accordion>
+
+  <Accordion title="SCM">
+    **Required (11 methods):** `detectPR`, `getPRState`, `mergePR`, `closePR`, `getCIChecks`, `getCISummary`, `getReviews`, `getReviewDecision`, `getPendingComments`, `getAutomatedComments`, `getMergeability`
+
+    **Optional (7 methods):** `verifyWebhook`, `parseWebhook`, `resolvePR`, `assignPRToCurrentUser`, `checkoutPR`, `getPRSummary`, `enrichSessionsPRBatch`
+  </Accordion>
+
+  <Accordion title="Terminal">
+    | Method | Required |
+    |---|---|
+    | `openSession(session)` | Yes |
+    | `openAll(sessions)` | Yes |
+    | `isSessionOpen(session)` | Optional |
+  </Accordion>
+</AccordionGroup>
+
+## Installing your plugin
+
+<Steps>
+  <Step title="Build the plugin">
+    ```bash
+    npm install
+    npm run build
+    ```
+  </Step>
+
+  <Step title="Register it locally (development)">
+    Add a `plugins` entry in `agent-orchestrator.yaml` pointing to your local path:
+
+    ```yaml
+    plugins:
+      - name: pagerduty
+        source: local
+        path: ./pagerduty
+
+    notifiers:
+      pagerduty-urgent:
+        plugin: pagerduty
+        routing_key: "your-integration-key"
+
+    notificationRouting:
+      urgent: [pagerduty-urgent]
+    ```
+  </Step>
+
+  <Step title="Publish to npm (optional)">
+    Once ready, publish your package and switch to `source: registry`:
+
+    ```yaml
+    plugins:
+      - name: pagerduty
+        source: registry
+        package: "ao-plugin-notifier-pagerduty"
+        version: "^1.0.0"
+    ```
+
+    Or use the CLI shortcut:
+
+    ```bash
+    ao plugin install ao-plugin-notifier-pagerduty
+    ```
+  </Step>
+</Steps>
+
+## `ao plugin` subcommands
+
+| Command | Description |
+|---|---|
+| `ao plugin list` | List plugins from the marketplace catalog. Add `--installed` to show only what's in your config. Filter by `--type <slot>`. Add `--refresh` to pull the latest catalog. |
+| `ao plugin search <query>` | Search the catalog by name, package, description, or slot. |
+| `ao plugin create [dir]` | Scaffold a new plugin package interactively. |
+| `ao plugin install <reference>` | Install by marketplace ID, package name, or local path. Writes the entry to `agent-orchestrator.yaml`. |
+| `ao plugin update [reference]` | Update an installer-managed plugin. Pass `--all` to update everything. |
+| `ao plugin uninstall <reference>` | Remove a plugin from the config. |
+
+## Core utilities from `@aoagents/ao-core`
+
+These helpers are available to all plugins and save significant boilerplate:
+
+**Shell safety and HTTP:**
+- `shellEscape` — safely escape command-line arguments. Use for every argument passed to child processes.
+- `validateUrl` — validate a webhook URL and throw a descriptive error on failure.
+
+**Activity detection (agent plugins):**
+- `readLastJsonlEntry` — efficiently read the last entry from an agent's native JSONL log.
+- `readLastActivityEntry` — read the last entry from the AO activity JSONL.
+- `checkActivityLogState` — extract `waiting_input` or `blocked` from an activity entry.
+- `getActivityFallbackState` — age-based fallback: converts an activity entry into `active` / `ready` / `idle`.
+- `recordTerminalActivity` — shared `recordActivity` implementation.
+- `classifyTerminalActivity` — classify terminal output via a `detectActivity` function.
+- `appendActivityEntry` — low-level JSONL append for activity entries.
+
+**Workspace setup (agent plugins):**
+- `setupPathWrapperWorkspace` — install `~/.ao/bin/gh` and `~/.ao/bin/git` PATH wrappers and write `.ao/AGENTS.md`.
+- `buildAgentPath` — prepend `~/.ao/bin` to a PATH string.
+- `normalizeAgentPermissionMode` — normalize legacy permission mode aliases.
+
+**Constants:**
+- `DEFAULT_READY_THRESHOLD_MS` = `300_000` (5 min) — ready → idle threshold
+- `DEFAULT_ACTIVE_WINDOW_MS` = `30_000` (30 s) — active → ready window
+
+## Testing
+
+Tests live in `src/__tests__/index.test.ts` and run with Vitest. Minimum coverage for every plugin:
+
+- Manifest values (`name`, `slot`, `version`)
+- Shape of the object returned by `create()`
+- Every public method: happy path, not-found case (returns `null`), error path (throws)
+- Config validation: missing required field, invalid value
+
+```typescript
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import pluginModule from '../index.js';
+
+vi.mock('node:fs/promises', () => ({ readFile: vi.fn() }));
+
+describe('manifest', () => {
+  it('has correct slot and name', () => {
+    expect(pluginModule.manifest.slot).toBe('notifier');
+    expect(pluginModule.manifest.name).toBe('pagerduty');
+  });
+});
+
+describe('create()', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('throws when routing_key is missing', () => {
+    expect(() => pluginModule.create({})).toThrow('routing_key');
+  });
+
+  it('returns a notifier with notify()', () => {
+    const notifier = pluginModule.create({ routing_key: 'test-key' });
+    expect(typeof notifier.notify).toBe('function');
+  });
+});
+```
+
+## Common pitfalls
+
+<Warning>
+Avoid these mistakes — they're the most common source of production bugs in community plugins.
+</Warning>
+
+| Pitfall | Correct approach |
+|---|---|
+| Hardcoded secrets (API keys, tokens) | Read from `process.env`; throw if required and missing |
+| Shell injection | Use `shellEscape()` for every argument passed to child processes |
+| Reading large log files in full | Use `readLastJsonlEntry()` or stream the tail |
+| Config validation inside individual methods | Validate once in `create()`, capture values in a closure |
+| Silently swallowing errors | Either throw with `{ cause: err }` or return `null` — never no-op |

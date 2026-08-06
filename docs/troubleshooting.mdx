@@ -1,0 +1,240 @@
+---
+title: "Troubleshooting Agent Orchestrator Issues and Errors"
+sidebarTitle: "Troubleshooting"
+description: "Fix common AO issues: installation, PATH, agent startup, session recovery, GitHub auth, CI reactions, notifications, and Windows-specific problems."
+---
+
+Most AO issues can be diagnosed in seconds with a single command. Run `ao doctor` first — it checks your install health, plugin resolution, notifier connectivity, and stale temp files, and will auto-repair some problems for you.
+
+```bash
+ao doctor
+ao doctor --fix           # auto-repair safe issues
+ao doctor --test-notify   # send a test through each configured notifier
+```
+
+If `ao doctor` doesn't surface the problem, find the relevant category below.
+
+---
+
+## Install & Environment
+
+<AccordionGroup>
+  <Accordion title="`ao: command not found`">
+    The npm global bin directory is not on your `PATH`. Find the correct path with:
+
+    ```bash
+    npm config get prefix
+    ```
+
+    Then add `<prefix>/bin` to your shell's `PATH` in `~/.zshrc`, `~/.bashrc`, or equivalent, and reload:
+
+    ```bash
+    source ~/.zshrc
+    ```
+
+    Alternatively, use the desktop download from [aoagents.dev](/installation), which installs a system-level binary.
+  </Accordion>
+  <Accordion title="tmux missing on macOS">
+    tmux is not bundled with macOS. Install it with Homebrew:
+
+    ```bash
+    brew install tmux
+    ```
+
+    On Windows, tmux is not available at all. Use `runtime: process` in your project config instead.
+  </Accordion>
+  <Accordion title="Port 3000 is already in use">
+    AO auto-picks the next free port and prints the actual URL in the `ao start` output — check there first. To use a specific port:
+
+    ```bash
+    PORT=3001 ao start
+    ```
+
+    To find what is holding port 3000:
+
+    ```bash
+    lsof -i :3000
+    ```
+  </Accordion>
+  <Accordion title="Dashboard crashes with 'vendor-chunks not found'">
+    This is caused by stale Next.js build artifacts from a previous version. Rebuild the dashboard:
+
+    ```bash
+    ao dashboard --rebuild
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Agents & Sessions
+
+<AccordionGroup>
+  <Accordion title="`ao spawn` hangs at 'waiting for idle'">
+    The agent never reached an idle state. Run `ao status --watch` to see what's happening in real time. If the agent is actively working (for example, running a large install step), wait it out. If it appears stuck:
+
+    ```bash
+    ao session kill <session-id>
+    ```
+
+    Then spawn again. The most common causes are the agent binary not being installed, not being on `PATH`, or not being authenticated with its provider.
+  </Accordion>
+  <Accordion title="Dashboard activity stuck on 'active' or 'idle'">
+    AO reads activity state from the agent's JSONL activity log. If that file is missing or stale, the displayed state will be wrong. Run `ao doctor` — it flags this condition. See the agent's individual plugin page under Plugins › Agents for recovery steps.
+  </Accordion>
+  <Accordion title="Session won't restore">
+    Run `ao session restore <session-id>` to relaunch the agent in the same worktree. If restore keeps failing, note that some agents (Cursor, Aider) do not support resume at all — check the agent plugin docs. For OpenCode specifically:
+
+    ```bash
+    ao session remap <session-id>          # re-discover the OpenCode mapping
+    ao session remap <session-id> --force  # clear a stale stuck mapping
+    ```
+
+    To forcibly clean up a broken session:
+
+    ```bash
+    ao session kill <session-id>
+    ao session cleanup
+    ```
+  </Accordion>
+  <Accordion title="Agent opened a PR but the dashboard doesn't know about it">
+    The PATH wrapper didn't record the PR (this can happen if the agent called `gh` by absolute path instead of through the wrapper). Link the PR retroactively:
+
+    ```bash
+    ao session claim-pr <pr-number> <session-id>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## GitHub / SCM
+
+<AccordionGroup>
+  <Accordion title="`gh: authentication required`">
+    AO uses the `gh` CLI for every GitHub interaction. Authenticate it:
+
+    ```bash
+    gh auth login
+    ```
+
+    Verify your current auth status with:
+
+    ```bash
+    gh auth status
+    ```
+
+    Note that unauthenticated calls have much lower API rate limits than authenticated ones.
+  </Accordion>
+  <Accordion title="PR not linked to a session">
+    Use `--claim-pr` when spawning to link a PR directly:
+
+    ```bash
+    ao spawn --claim-pr 123
+    ```
+
+    Or link an existing PR to a running session retroactively:
+
+    ```bash
+    ao session claim-pr 123 <session-id>
+    ```
+  </Accordion>
+  <Accordion title="GitHub API rate limit errors">
+    AO paces its API calls and backs off automatically when it hits rate limits. Sustained errors usually mean you're running as an unauthenticated user — verify with `gh auth status`. If you're authenticated and still hitting limits, the lifecycle manager will back off; wait a few minutes and the issue resolves itself.
+  </Accordion>
+  <Accordion title="CI recovery never fires">
+    Check two things:
+
+    1. Verify `reactions.ci-failed.auto` is `true` (or not explicitly set to `false`) in your config.
+    2. Confirm the PR is not in **draft** state — AO does not run CI recovery on draft PRs.
+
+    If both look correct, run `ao doctor` to check for broader reaction config issues.
+  </Accordion>
+  <Accordion title="Review loop never fires">
+    Review reactions only fire on `CHANGES_REQUESTED` reviews — not on plain `COMMENTED` reviews. Also note the two-minute throttle per session. To force an immediate check:
+
+    ```bash
+    ao review-check <session-id>
+    ```
+  </Accordion>
+  <Accordion title="Webhook delivers but nothing happens (HMAC failure)">
+    The webhook signature check is failing. Verify that:
+
+    - The `secretEnvVar` value in your `agent-orchestrator.yaml` is exported in the environment where AO runs.
+    - The secret matches exactly what you configured on the GitHub webhook settings page.
+
+    ```yaml
+    scm:
+      plugin: github
+      webhook:
+        enabled: true
+        path: /api/webhooks/github
+        secretEnvVar: GITHUB_WEBHOOK_SECRET
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Notifications
+
+<AccordionGroup>
+  <Accordion title="macOS desktop notifications are silent">
+    macOS requires explicit notification permission per app. Go to **System Settings → Notifications** and enable notifications for your terminal application (Terminal, iTerm2, Warp, etc.).
+
+    Test your notifier config with:
+
+    ```bash
+    ao doctor --test-notify
+    ```
+  </Accordion>
+  <Accordion title="Slack webhook 429 rate limit errors">
+    The Slack notifier does not honor the `Retry-After` header from Slack's API. Under high volume, Slack incoming webhooks can hit burst limits. Switch to the generic [webhook notifier](/plugins/notifiers/webhook) with `retries` tuned up, or reduce notification volume by setting lower-priority events to `info` routing.
+  </Accordion>
+  <Accordion title="Desktop notifier warning on Windows">
+    This is expected — the desktop notifier no-ops on Windows. Add a Discord, Slack, or webhook notifier to your `notifiers` list as a replacement.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Windows
+
+<AccordionGroup>
+  <Accordion title="tmux is not available on Windows">
+    tmux does not run on Windows. Use `runtime: process` in your project config:
+
+    ```yaml
+    runtime: process
+    ```
+
+    This switches AO to a direct process runtime that works without tmux.
+  </Accordion>
+  <Accordion title="Dashboard terminal is blank">
+    With `runtime: process`, the dashboard terminal uses the direct PTY backend (port 14801) instead of the tmux mux. A blank terminal pane is normal until an agent session is active — the direct PTY connection is made on-demand.
+  </Accordion>
+  <Accordion title="`ao open` prints a URL instead of opening a tab">
+    The iTerm2 auto-open helper only runs on macOS. On Windows, AO prints the URL instead. Copy and paste it into your browser — the dashboard works the same once open.
+  </Accordion>
+  <Accordion title="Child process exits immediately on spawn">
+    This is usually a shell quoting issue with long prompts. Pass prompts via `--prompt` using simple ASCII characters, or use a file:
+
+    ```bash
+    ao send --file prompt.txt <session-id>
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Still Stuck?
+
+Check the [FAQ](/faq) for common questions about AO behavior, platform support, and privacy.
+
+To open an issue, include:
+
+- Output of `ao --version`
+- Contents of `~/.agent-orchestrator/{hash}-observability/processes/` (one JSON snapshot per process; each contains traces, health, and metrics)
+- Your `agent-orchestrator.yaml` with any secrets redacted
+
+Open issues at [github.com/Untrivial-ai/agent-orchestrator](https://github.com/Untrivial-ai/agent-orchestrator/issues).

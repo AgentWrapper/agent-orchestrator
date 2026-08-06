@@ -1,0 +1,227 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Agent Orchestrator",
+  "theme": "luma",
+  "logo": {
+    "light": "/docs/logo/ao-logo.svg",
+    "dark": "/docs/logo/ao-logo.svg"
+  },
+  "favicon": "/docs/logo/ao-logo.svg",
+  "colors": {
+    "primary": "#7bb1d9",
+    "light": "#a8ccec",
+    "dark": "#4a7fa5"
+  },
+  "fonts": {
+    "heading": { "family": "Geist" },
+    "body": { "family": "Geist" }
+  },
+  "search": {
+    "prompt": "Search Agent Orchestrator docs..."
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Untrivial-ai/agent-orchestrator"
+    },
+    "links": [
+      {
+        "label": "Discord",
+        "href": "https://discord.com/invite/UZv7JjxbwG"
+      }
+    ]
+  },
+  "footerSocials": {
+    "github": "https://github.com/Untrivial-ai/agent-orchestrator",
+    "x": "https://x.com/aoagents"
+  },
+  "navigation": {
+    "anchors": [
+      {
+        "anchor": "GitHub",
+        "icon": "github",
+        "href": "https://github.com/Untrivial-ai/agent-orchestrator"
+      },
+      {
+        "anchor": "Discord",
+        "icon": "discord",
+        "href": "https://discord.com/invite/UZv7JjxbwG"
+      },
+      {
+        "anchor": "Changelog",
+        "icon": "list",
+        "href": "/docs/changelog/overview"
+      }
+    ],
+    "tabs": [
+      {
+        "tab": "Docs",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "docs/introduction",
+              "docs/installation",
+              "docs/quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "docs/concepts/architecture",
+              "docs/concepts/session-lifecycle",
+              "docs/concepts/plugins"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "docs/configuration/overview",
+              "docs/configuration/projects",
+              "docs/configuration/reactions",
+              "docs/configuration/remote-access"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "docs/guides/parallel-issues",
+              "docs/guides/per-role-agents",
+              "docs/guides/ci-recovery",
+              "docs/guides/review-loop",
+              "docs/guides/reactions",
+              "docs/guides/multi-project"
+            ]
+          },
+          {
+            "group": "Dashboard & CLI",
+            "pages": [
+              "docs/dashboard",
+              "docs/cli-reference",
+              "docs/platforms",
+              "docs/migration"
+            ]
+          },
+          {
+            "group": "Support",
+            "pages": [
+              "docs/troubleshooting",
+              "docs/faq"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Plugins",
+        "groups": [
+          {
+            "group": "Agents",
+            "pages": [
+              "docs/plugins/agents/overview",
+              "docs/plugins/agents/claude-code",
+              "docs/plugins/agents/codex",
+              "docs/plugins/agents/cursor",
+              "docs/plugins/agents/opencode",
+              "docs/plugins/agents/aider"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "docs/plugins/trackers/overview",
+              "docs/plugins/trackers/github",
+              "docs/plugins/trackers/gitlab",
+              "docs/plugins/trackers/linear",
+              "docs/plugins/scm/overview",
+              "docs/plugins/scm/github",
+              "docs/plugins/scm/gitlab"
+            ]
+          },
+          {
+            "group": "Notifications",
+            "pages": [
+              "docs/plugins/notifiers/overview",
+              "docs/plugins/notifiers/slack",
+              "docs/plugins/notifiers/discord",
+              "docs/plugins/notifiers/webhook",
+              "docs/plugins/notifiers/desktop"
+            ]
+          },
+          {
+            "group": "Runtimes & Workspaces",
+            "pages": [
+              "docs/plugins/runtimes/overview",
+              "docs/plugins/runtimes/tmux",
+              "docs/plugins/runtimes/process",
+              "docs/plugins/workspaces/overview",
+              "docs/plugins/workspaces/worktree",
+              "docs/plugins/workspaces/clone"
+            ]
+          },
+          {
+            "group": "Extending AO",
+            "pages": [
+              "docs/plugins/authoring"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Developer & Architecture",
+        "groups": [
+          {
+            "group": "Backend Architecture",
+            "pages": [
+              "docs/developer/overview",
+              "docs/developer/architecture",
+              "docs/developer/backend-code-structure",
+              "docs/developer/stack",
+              "docs/developer/daemon-environment"
+            ]
+          },
+          {
+            "group": "Development & Status",
+            "pages": [
+              "docs/developer/development",
+              "docs/developer/status",
+              "docs/developer/telemetry",
+              "docs/developer/posthog-cost-controls",
+              "docs/developer/ao-start-bootstrapper-and-npm-deprecation"
+            ]
+          },
+          {
+            "group": "ADRs & Design Plans",
+            "pages": [
+              "docs/adr/0001-lan-listener-for-mobile",
+              "docs/plans/session-lifecycle-persistence",
+              "docs/plans/chinese-ui-i18n",
+              "docs/plans/2026-06-26-import-offer"
+            ]
+          },
+          {
+            "group": "Superpowers",
+            "pages": [
+              "docs/superpowers/plans/2026-07-07-connect-mobile-lan-listener",
+              "docs/superpowers/plans/2026-07-25-kill-state-isolation",
+              "docs/superpowers/specs/2026-07-25-kill-state-isolation-design"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Changelog",
+        "groups": [
+          {
+            "group": "Releases",
+            "pages": [
+              "docs/changelog/overview",
+              "docs/changelog/v0-11-x",
+              "docs/changelog/v0-10-x",
+              "docs/changelog/v0-7-to-9"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

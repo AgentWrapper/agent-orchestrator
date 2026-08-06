@@ -1,0 +1,175 @@
+{
+  "projectType": "saas",
+  "projectName": "Agent Orchestrator",
+  "projectDescription": "A desktop orchestration layer that supervises parallel AI coding agents in isolated git worktrees, with automatic feedback loops from CI failures, review comments, and merge conflicts.",
+  "theme": "luma",
+  "primaryColor": "#7bb1d9",
+  "lightColor": "#30456d",
+  "darkColor": "#cdd9e6",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Docs",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/session-lifecycle",
+              "concepts/plugins"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/projects",
+              "configuration/reactions",
+              "configuration/remote-access"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/parallel-issues",
+              "guides/per-role-agents",
+              "guides/ci-recovery",
+              "guides/review-loop",
+              "guides/reactions",
+              "guides/multi-project"
+            ]
+          },
+          {
+            "group": "Dashboard & CLI",
+            "pages": [
+              "dashboard",
+              "cli-reference",
+              "platforms",
+              "migration"
+            ]
+          },
+          {
+            "group": "Support",
+            "pages": [
+              "troubleshooting",
+              "faq"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Plugins",
+        "groups": [
+          {
+            "group": "Agents",
+            "pages": [
+              "plugins/agents/overview",
+              "plugins/agents/claude-code",
+              "plugins/agents/codex",
+              "plugins/agents/cursor",
+              "plugins/agents/opencode",
+              "plugins/agents/aider"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "plugins/trackers/overview",
+              "plugins/trackers/github",
+              "plugins/trackers/gitlab",
+              "plugins/trackers/linear",
+              "plugins/scm/overview",
+              "plugins/scm/github",
+              "plugins/scm/gitlab"
+            ]
+          },
+          {
+            "group": "Notifications",
+            "pages": [
+              "plugins/notifiers/overview",
+              "plugins/notifiers/slack",
+              "plugins/notifiers/discord",
+              "plugins/notifiers/webhook",
+              "plugins/notifiers/desktop"
+            ]
+          },
+          {
+            "group": "Runtimes & Workspaces",
+            "pages": [
+              "plugins/runtimes/overview",
+              "plugins/runtimes/tmux",
+              "plugins/runtimes/process",
+              "plugins/workspaces/overview",
+              "plugins/workspaces/worktree",
+              "plugins/workspaces/clone"
+            ]
+          },
+          {
+            "group": "Extending AO",
+            "pages": [
+              "plugins/authoring"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Changelog",
+        "groups": [
+          {
+            "group": "Releases",
+            "pages": [
+              "changelog/overview",
+              "changelog/v0-11-x",
+              "changelog/v0-10-x",
+              "changelog/v0-7-to-9"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Parallel AI coding agents in isolated git worktrees",
+    "23 supported agent harnesses (Claude Code, Codex, Cursor, OpenCode, Aider, and more)",
+    "Automatic CI failure routing back to the owning agent session",
+    "Code review feedback loop — requested changes forwarded to the right worker",
+    "Kanban dashboard showing session state, PRs, CI checks, and review status",
+    "Orchestrator + worker model for supervised multi-agent workflows",
+    "Mobile companion app for monitoring sessions and receiving push notifications",
+    "Plugin system with 8 configurable slots (agent, runtime, workspace, tracker, SCM, notifier, terminal)",
+    "CLI (`ao`) for spawning, monitoring, and managing sessions",
+    "GitHub and GitLab SCM integration with webhook support",
+    "Linear, GitHub, and GitLab issue tracker support",
+    "Session resumption after restarts"
+  ],
+  "publicApiSurface": [
+    "ao start [project]",
+    "ao stop [project]",
+    "ao status",
+    "ao spawn [issue]",
+    "ao batch-spawn <issues...>",
+    "ao send <session> [message]",
+    "ao review-check [project]",
+    "ao dashboard",
+    "ao open [target]",
+    "ao verify [issue]",
+    "ao doctor",
+    "ao update",
+    "ao session ls|attach|kill|cleanup|restore|claim-pr|remap",
+    "ao setup dashboard|desktop|webhook|slack|discord",
+    "ao plugin list|search|create|install|update|uninstall",
+    "POST /api/webhooks",
+    "GET /api/sessions",
+    "GET /api/events (SSE)",
+    "agent-orchestrator.yaml (project config)",
+    "~/.agent-orchestrator/config.yaml (global config)"
+  ]
+}

@@ -1,0 +1,100 @@
+---
+title: "Agent Orchestrator v0.10.x Release Notes and Changes"
+sidebarTitle: "v0.10.x"
+description: "v0.10.1, v0.10.2, and v0.10.3 release notes — multi-PR reviews, GitHub issue intake, design system, agent catalog, mobile, and browser previews."
+---
+
+The v0.10 series launched in late June 2026, immediately following the v0.10.0 ground-up rewrite (Go daemon, tmux session layer, Electron shell). These three patch releases layered in the features and fixes that transformed the rewrite from a working skeleton into a daily-driver tool. Many of the highlights here — browser previews, mobile, issue intake — were finished in v0.10.3 and are also covered in the v0.11.0 "The Floor" summary.
+
+<AccordionGroup>
+
+  <Accordion title="v0.10.3 — July 12, 2026">
+
+    The largest v0.10 patch, shipping GitHub issue intake, agent-driven browser previews, Connect Mobile, the token-based design system, and a large batch of reliability fixes.
+
+    **Features**
+    - **GitHub issue intake:** Projects can now automatically start a worker session per assigned GitHub issue — polling, deduplication, pagination, and per-project backoff (#2325)
+    - **Agent catalog and auth API:** Browse available agents, check install status and authentication, and switch orchestrators safely (#2309)
+    - **Agent-driven browser previews + Markdown rendering:** Agents can render Markdown and drive an embedded browser preview panel (#2455); browser preview can be maximized over the full app window (#2440); in-preview annotations let you direct an agent to a specific UI element (#2548)
+    - **Connect Mobile:** Password-authenticated LAN bridge for pairing a phone to the AO daemon (#2533); mobile supervisor app ported to current main (#2522)
+    - **Token-based design system:** Renderer migrated from ~1.4k lines of legacy CSS to a token-based design system (#2535)
+    - **First-run onboarding:** Empty board shells replaced with guided onboarding states (#2432); minimal welcome empty state (#2536)
+    - **Context-aware `ao spawn`:** CLI now resolves project context and checks agent catalog and auth before spawning (#2411)
+    - Safe orchestrator replacement through a canonical branch handoff (#2338)
+    - Kiro agent enhanced with custom AO agent prompts (#2444); Pi agent updated with interactive session support (#2480)
+    - Kimi and Qwen adapters refactored for improved prompt delivery (#2497)
+    - Workspace project stack combined in the UI (#2460)
+
+    **Bug fixes**
+    - Fixed restored terminal reconnect (#2313)
+    - Refactored agent adapter layer, cutting ~3,100 lines of redundancy (#2355)
+    - Fixed Windows NSIS installer shortcut pointing at the wrong binary (#2467)
+    - Fixed OpenCode wheel scroll and enabled native Windows notifications (#2422)
+    - Fixed Codex transcript wheel-scroll via terminal scrollback (#2499)
+    - Fixed startup state showing a blank terminal pane while launching (#2512)
+    - Fixed Ctrl+Arrow / Ctrl+Backspace / Ctrl+V double-firing in terminals (#2586)
+    - Fixed UTF-8 client mode forced on tmux attach (#2602)
+    - Fixed stale orchestrator worktrees being recovered during replacement (#2600)
+    - Fixed multiline prompt submission; AO no longer nudges a session paused on a permission dialog (#2357)
+    - Fixed Grok prompts launching interactively (#2518)
+    - Fixed Vibe worker output streaming (#2521)
+    - Fixed Amp prompt delivery after startup (#2565)
+    - Fixed SCM observer dispatch stability (#2531)
+    - Fixed sidebar collapse and expand smoothness (#2426)
+    - Fixed browser preview staying live and correctly positioned under modal dialogs (#2618)
+
+    **New contributors:** @mukesher4, @Pulkit7070, @deepakmodidev, @akshitj11, @Prasad-D-Ware, @somewherelostt, @Lucifer4255, @axisrow, @Pyasma, @Aditya8840
+
+    **Full changelog:** [v0.10.2...v0.10.3](https://github.com/AgentWrapper/agent-orchestrator/compare/v0.10.2...v0.10.3)
+
+  </Accordion>
+
+  <Accordion title="v0.10.2 — July 3, 2026">
+
+    A broad feature and reliability release covering PR review improvements, design system foundations, session management, cross-fork PR detection, and Windows fixes.
+
+    **Features**
+    - **Multi-PR review status:** Review panel now shows status across multiple PRs simultaneously (#2193)
+    - **Reviewer read-only enforcement:** Reviewer harness is now constrained via a tool allowlist to prevent unintended writes (#2194)
+    - **Additional reviewer harnesses:** Support for reviewer agents beyond the default Claude Code (#2306)
+    - **Default reviewer:** Always Claude Code out of the box (#2241)
+    - **Cross-fork PR detection:** SCM now scans all project remotes to detect PRs created from forks (#2368)
+    - **macOS runtime app icon** applied correctly (#2296)
+    - **`ao spawn --name`:** Required `--name` flag for sidebar display name added to the spawn command (#2302)
+    - **Inline session rename:** Hover over a session name in the sidebar to rename it via a pencil icon (#2307)
+    - **Nightly channel badge** shown on the wordmark when running a nightly build (#2379)
+    - **Using-AO skill** installed under the data dir and wired into session prompts (#2365)
+    - Killed sessions now stay dead across daemon restarts (stale restore marker cleared) (#2320)
+    - Test added proving agent sessions survive daemon restart and upgrade (#2350)
+
+    **Bug fixes**
+    - Fixed duplicate migration version 20 collision (#2294)
+    - Fixed tmux terminal attach (#2312)
+    - Fixed stale preview URL causing a white screen on preview clear (#2358)
+    - Fixed `--name` flag not showing the session display name in the terminal toolbar header (#2382)
+    - Fixed raw activity state not rendering in the inspector (#2278)
+    - Fixed New Task dialog not defaulting to the project's default agent (#2291)
+    - Fixed deep-link PR attention actions (#2200)
+    - Fixed failing fast when tmux is missing — now shows a clear error message (#2259)
+    - Various landing site, CI, and Prettier formatting fixes
+
+    **New contributors:** @PradeepSahhu, @areycruzer, @dushyant-hada-90, @nikhilachale, @aprv10, @codebanditssss, @laxmanclo, @VenkataSakethDakuri, @anirudh5harma
+
+    **Full changelog:** [v0.10.1...v0.10.2](https://github.com/AgentWrapper/agent-orchestrator/compare/v0.10.1...v0.10.2)
+
+  </Accordion>
+
+  <Accordion title="v0.10.1 — June 29, 2026">
+
+    A targeted hotfix release addressing three regressions found immediately after the v0.10.0 rewrite shipped.
+
+    **Bug fixes**
+    - Fixed nightly channel never resolving updates due to a missing `allowPrerelease` flag (#2265)
+    - Added retry logic for transient macOS code-signing and notarization failures in the publish step (#2266)
+    - Fixed Windows publish shell script and added a fresh-install smoke check (#2269)
+
+    **Full changelog:** [v0.10.0...v0.10.1](https://github.com/AgentWrapper/agent-orchestrator/compare/v0.10.0...v0.10.1)
+
+  </Accordion>
+
+</AccordionGroup>

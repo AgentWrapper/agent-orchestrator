@@ -1,0 +1,80 @@
+---
+title: "tmux Runtime: Persistent Agent Sessions on macOS and Linux"
+sidebarTitle: "tmux"
+description: "Run AO agent sessions inside tmux windows on macOS and Linux. Requires tmux 3.2+, enables interactive attach, and survives daemon restarts."
+---
+
+The tmux runtime is the default on macOS and Linux. Each agent session lives in its own tmux window inside a single AO-managed tmux session, so you can observe or interact with any running agent directly from the terminal — not just through the dashboard.
+
+## Requirements
+
+You need **tmux 3.2 or newer**. To check your version:
+
+```bash
+tmux -V
+```
+
+## Installation
+
+<Tabs>
+  <Tab title="macOS">
+    ```bash
+    brew install tmux
+    ```
+  </Tab>
+  <Tab title="Debian / Ubuntu">
+    ```bash
+    sudo apt install tmux
+    ```
+  </Tab>
+  <Tab title="Arch Linux">
+    ```bash
+    sudo pacman -S tmux
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration
+
+Add the following to your `agent-orchestrator.yaml`:
+
+```yaml
+runtime: tmux
+```
+
+No further plugin-level configuration is required. Because tmux is the default on macOS and Linux, you can omit this line entirely on those platforms.
+
+## How it works
+
+- Every AO-managed process runs in a dedicated tmux window inside a per-project tmux session.
+- Agents are started via `tmux send-keys` so their output is captured in the scrollback buffer.
+- For commands longer than 200 characters, AO writes a temporary bash script and sources it instead of sending the command directly — this avoids truncation limits in `tmux send-keys` paste buffers.
+- Default terminal port: **14800**.
+
+## Attaching to a live session
+
+You can drop into any running agent's terminal at any time:
+
+```bash
+ao session attach <sessionId>
+```
+
+You can also switch tmux windows manually if you're already inside a tmux session. Detach at any time with `Ctrl-b d` — AO continues running in the background.
+
+<Tip>
+Use `ao session ls` to see session IDs. The `--json` flag makes it easy to pipe into other tools.
+</Tip>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title='"tmux server not running"'>
+    `ao start` launches the tmux server for you. If you killed it manually, run `ao start` again and AO will restart it.
+  </Accordion>
+  <Accordion title="Window disappears after agent exits">
+    This is intentional — AO cleans up finished tmux windows. Session metadata is archived under `~/.agent-orchestrator/.../archive/` and remains accessible through the dashboard.
+  </Accordion>
+  <Accordion title="Non-ASCII characters appear garbled">
+    AO forces UTF-8 client mode on attach. If you're seeing garbled output, make sure your terminal emulator is set to UTF-8 and re-attach with `ao session attach`.
+  </Accordion>
+</AccordionGroup>

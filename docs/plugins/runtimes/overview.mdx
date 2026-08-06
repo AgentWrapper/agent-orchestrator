@@ -1,0 +1,41 @@
+---
+title: "Session Runtimes: tmux and Process in Agent Orchestrator"
+sidebarTitle: "Overview"
+description: "Choose between tmux and process runtimes for your AO sessions. tmux offers interactive attach; process runs everywhere including Windows and Docker."
+---
+
+The runtime is the environment where each agent session actually executes. When AO spawns an agent, it hands it off to the configured runtime, which manages the process, captures its output, and makes the terminal available in the dashboard's built-in xterm.js viewer. Both runtimes provide the same dashboard experience — the difference is in what extra capabilities you get and which platforms each supports.
+
+## Comparing runtimes
+
+| Feature | tmux | process |
+|---|---|---|
+| Platform | macOS, Linux | All (including Windows, Docker) |
+| Interactive attach | Yes (`ao session attach`) | No |
+| Session recovery after `ao stop` | Yes | No |
+| Requirement | tmux 3.2+ installed | None |
+| Default terminal port | 14800 | 14801 |
+
+<Note>
+Both runtimes stream the agent's terminal output to the dashboard over the same WebSocket connection. You can monitor any session from the browser regardless of which runtime it uses.
+</Note>
+
+## Choosing a runtime
+
+- **Use `tmux`** if you're on macOS or Linux and want the ability to drop into a live agent terminal interactively. tmux is the default on those platforms — if you don't specify a runtime, you already have it.
+- **Use `process`** if you're on Windows, running inside a Docker container or CI environment, or simply prefer fewer external dependencies. `process` is the only runtime that works on Windows.
+
+## Default behavior
+
+AO selects a runtime automatically if you don't configure one. On macOS and Linux the default is `tmux`; on Windows it falls back to `process`.
+
+## Runtime pages
+
+<CardGroup cols={2}>
+  <Card title="tmux Runtime" icon="terminal" href="/plugins/runtimes/tmux">
+    Persistent sessions on macOS and Linux with interactive attach support.
+  </Card>
+  <Card title="Process Runtime" icon="gear" href="/plugins/runtimes/process">
+    Cross-platform child process runtime for Windows, Docker, and CI.
+  </Card>
+</CardGroup>

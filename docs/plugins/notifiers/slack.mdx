@@ -1,0 +1,82 @@
+---
+title: "Slack Notifications from Agent Orchestrator Sessions"
+sidebarTitle: "Slack"
+description: "Send AO session events to Slack via incoming webhook. Block Kit formatting with header, section, and context blocks. Setup takes under two minutes."
+---
+
+The Slack notifier delivers Agent Orchestrator events to a Slack channel using Slack's incoming webhooks integration. There is no bot token or OAuth flow to manage — just a webhook URL tied to the channel you choose. Setup takes under two minutes with the `ao setup slack` command.
+
+## Setup
+
+Run the interactive setup command:
+
+```bash
+ao setup slack
+```
+
+The command walks you through the following steps:
+
+<Steps>
+  <Step title="Create a Slack incoming webhook">
+    If you don't already have a webhook URL, the command shows you the Slack apps URL and waits while you create one:
+
+    1. Open [api.slack.com/apps](https://api.slack.com/apps).
+    2. Create a new app (or select an existing one).
+    3. Open **Incoming Webhooks** and turn on **Activate Incoming Webhooks**.
+    4. Select **Add New Webhook to Workspace**.
+    5. Pick the channel AO should post to, authorize, and copy the webhook URL.
+  </Step>
+  <Step title="Paste the webhook URL">
+    Paste the URL when prompted. AO sends a test message to verify it works before saving.
+  </Step>
+  <Step title="Choose a routing preset">
+    Select which notification priorities Slack should receive: `urgent-only`, `urgent-action`, or `all`. Pass `--routing-preset <preset>` to skip this prompt in CI or scripted environments.
+  </Step>
+</Steps>
+
+To check or refresh an existing Slack configuration:
+
+```bash
+ao setup slack --status
+ao setup slack --refresh
+```
+
+## Configuration
+
+```yaml
+notifiers:
+  slack:
+    plugin: slack
+    webhookUrl: https://hooks.slack.com/services/...
+    channel: "#agents"             # informational only
+    username: "Agent Orchestrator"
+```
+
+| Key | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `webhookUrl` | ✓ | — | Slack incoming webhook URL |
+| `channel` | Optional | Webhook default | Informational label; must match the channel the webhook was created for |
+| `username` | Optional | `Agent Orchestrator` | Display name shown in Slack |
+
+<Warning>
+The `channel` field is informational only — it does not reroute messages to a different channel. Slack incoming webhooks are bound to the channel selected at creation time. To post to a different channel, create a new webhook for that channel.
+</Warning>
+
+## Message format
+
+AO uses Slack Block Kit to format messages. Each notification includes:
+
+- A **header block** with the event type and session ID.
+- A **section block** with the event description (e.g. the PR title or reason the agent is stuck).
+- A **context block** with project name, priority level, and timestamp.
+- A **section block** with a link to the relevant issue, PR, or dashboard page.
+
+## Notes
+
+<Note>
+This notifier does not handle `Retry-After` headers. If you're sending at high volume or need retry guarantees, use the [generic webhook notifier](/plugins/notifiers/webhook) with `retries` configured instead.
+</Note>
+
+- Treat the webhook URL as a secret — do not commit it to source control. Use an environment variable reference such as `${SLACK_WEBHOOK_URL}` in your config file.
+- For private channels, the Slack user creating the webhook must already be a member of the channel.
+- Incoming webhooks are the simplest Slack integration available — no ongoing token management required.

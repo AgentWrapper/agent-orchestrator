@@ -1,0 +1,137 @@
+---
+title: "Migrating Agent Orchestrator: npm CLI to Desktop App"
+sidebarTitle: "Migration"
+description: "Move from the npm CLI to the desktop app, switch from the old package scope, update spawn syntax, and safely upgrade AO before and after major releases."
+---
+
+Agent Orchestrator follows semver pre-1.0, which means breaking changes can appear between minor versions. This page documents every breaking change with clear before-and-after steps so you can move forward without surprises. The most important migration for most users is switching from the npm CLI to the desktop app — start there if you're not sure what applies to you.
+
+## Migrations
+
+<Accordion title="npm CLI → Desktop App (recommended for all users)">
+
+The `@aoagents/ao` npm package is **frozen at version 0.10.0** and will not receive further updates. All new features, bug fixes, and agent support are only available in the desktop app.
+
+**Why switch?**
+- The desktop app auto-updates — no more manual `npm install -g` steps
+- It owns the AO daemon and manages restarts for you
+- A toolbar indicator shows when updates are ready
+
+**How to migrate:**
+
+<Steps>
+  <Step title="Download the desktop app">
+    Go to [aoagents.dev/download](https://aoagents.dev/download) and install the app for your OS.
+  </Step>
+  <Step title="Use the CLI bridge (optional)">
+    Your existing npm `ao` command still works as a one-time bridge. Running `ao start` from the npm install will fetch and open the desktop build automatically.
+  </Step>
+  <Step title="Confirm your data carried over">
+    Your config files and data directory (`~/.agent-orchestrator/`) are unchanged. All registered projects, session history, and settings transfer automatically — no data migration required.
+  </Step>
+</Steps>
+
+<Note>
+The npm package remains installable for legacy setups, but it will not receive new features or fixes. Use the desktop app going forward.
+</Note>
+
+</Accordion>
+
+<Accordion title="@composio/agent-orchestrator → @aoagents/ao">
+
+If you installed AO under the original Composio npm scope, uninstall it and install the new package under the `@aoagents` scope.
+
+```bash
+npm uninstall -g @composio/agent-orchestrator
+npm install -g @aoagents/ao
+```
+
+Your config and data directory (`~/.agent-orchestrator/`) are completely unchanged — no data migration is needed. Update any bookmarks or documentation references to use the current GitHub repo at `Untrivial-ai/agent-orchestrator`.
+
+<Tip>
+After switching to `@aoagents/ao`, consider migrating to the desktop app as well, since the npm package is now frozen at 0.10.0.
+</Tip>
+
+</Accordion>
+
+<Accordion title="ao spawn <project> <issue> → ao spawn <issue>">
+
+The old two-argument form of `ao spawn` is **rejected with an error** in current versions. The project must now be specified with the `-p` flag or inferred from your current working directory.
+
+```bash
+# Old form — no longer works
+ao spawn myproject 42
+
+# New form — use the -p flag
+ao spawn 42 -p myproject
+
+# Or run from inside the project's worktree
+cd /path/to/myproject
+ao spawn 42
+```
+
+Running from inside the project worktree is the most ergonomic approach for day-to-day use.
+
+</Accordion>
+
+<Accordion title="ao init → ao start">
+
+The `ao init` command has been removed. Use `ao start` instead.
+
+```bash
+# Old command — removed
+ao init
+
+# New command
+ao start
+```
+
+`ao start` does everything `ao init` did and more: it auto-creates `agent-orchestrator.yaml` on first run in a directory with no config, then starts the orchestrator and opens the dashboard in one step.
+
+</Accordion>
+
+## Upgrading AO
+
+For routine version upgrades, run:
+
+```bash
+ao update
+```
+
+This command detects how AO was installed — desktop app, npm-global, pnpm-global, or git — and takes the right upgrade path automatically. For git installs, you can pass `--skip-smoke` or `--smoke-only` to control whether smoke tests run after the rebuild.
+
+**Desktop app users:** when an update is available, a restart-to-update prompt appears in the toolbar. No terminal command is needed.
+
+## Before a Major Upgrade
+
+Before upgrading to a new major or minor version, take a few minutes to clean up running state:
+
+<Steps>
+  <Step title="Check what's running">
+    ```bash
+    ao status
+    ```
+    Review all active sessions and their PR state. Note anything that's mid-flight.
+  </Step>
+  <Step title="Archive finished sessions">
+    ```bash
+    ao session cleanup
+    ```
+    This removes sessions whose PRs are merged or issues are closed, keeping the board clean.
+  </Step>
+  <Step title="Stop all AO instances">
+    ```bash
+    ao stop --all
+    ```
+    Halt every running AO instance on the machine before upgrading.
+  </Step>
+  <Step title="Upgrade">
+    Install the new desktop app version, or run `ao update` if you're on the npm path.
+  </Step>
+  <Step title="Run a health check">
+    ```bash
+    ao doctor
+    ```
+    Confirm the new version is healthy, all plugins resolve correctly, and notifiers are reachable.
+  </Step>
+</Steps>
