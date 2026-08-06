@@ -42,6 +42,12 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
   silent-failure case these exist to diagnose. Owning it in main also makes
   `phase` and `to_version` authoritative, since only main knows which operation
   was running and what it was fetching
+- Agent inventory: `ao.renderer.agents_available`, reported once per app launch
+  with `installed_count`, `authorized_count`, `supported_count`, and a sorted list
+  of authorized agent ids. Agent ids are a fixed vocabulary from AO's own
+  registry, never user input. This exists because `ao.session.spawned` only shows
+  which harness *ran*, so an install with six authorized agents that always picks
+  one was indistinguishable from an install that only had that one
 - AO version context (`app_version` / `ao_version`), platform, and build mode
 
 PostHog session recording is disabled in the client via

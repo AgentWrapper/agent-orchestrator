@@ -40,7 +40,7 @@ func newTelemetrySink(cfg config.Config, store *sqlite.Store, log *slog.Logger) 
 		return local
 	}
 	remote, err := telemetryadapter.NewPostHogSink(cfg.DataDir, cfg.Telemetry.PostHogKey, cfg.Telemetry.PostHogHost,
-		cfg.Telemetry.AppVersion, nil, log)
+		cfg.Telemetry.AppVersion, cfg.Agent, nil, log)
 	if err != nil {
 		log.Warn("telemetry remote sink disabled", "remote", cfg.Telemetry.Remote, "error", err)
 		return local
