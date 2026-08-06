@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -132,6 +133,9 @@ func (Discoverer) Manual(agentID string) ports.AgentModelCatalog { return Manual
 // Discover executes model catalog discovery for an agent binary.
 func Discover(ctx context.Context, agentID, binary, workingDir string, env map[string]string) (ports.AgentModelCatalog, error) {
 	base := Base(agentID)
+	if agentID == "claude-code" {
+		return withClaudeCodeDefault(base, workingDir, env), nil
+	}
 	spec, ok := commandSpecs[agentID]
 	if !ok {
 		return base, nil
@@ -158,6 +162,88 @@ func Discover(ctx context.Context, agentID, binary, workingDir string, env map[s
 	base.Source = "cli"
 	base.FetchedAt = time.Now().UTC()
 	return base, nil
+}
+
+// claudeCodeSettingsReadLimit bounds how much of a settings file AO parses. The
+// documented files are small; a pathological one must not stall discovery.
+const claudeCodeSettingsReadLimit = 1 << 20
+
+// withClaudeCodeDefault flags the model Claude Code will actually run with.
+// Claude Code exposes no non-interactive command that reports its resolved
+// model, but the value it resolves is readable: AO passes no --model, so the
+// choice comes from ANTHROPIC_MODEL or the "model" key in the settings files,
+// nearest scope first. When none of them set a model the CLI picks internally
+// and AO must not guess, so the catalog keeps no default and the picker keeps
+// showing "Agent default".
+func withClaudeCodeDefault(base ports.AgentModelCatalog, workingDir string, env map[string]string) ports.AgentModelCatalog {
+	resolved := claudeCodeResolvedModel(workingDir, env)
+	if resolved == "" {
+		return base
+	}
+	models := make([]ports.AgentModelInfo, len(base.Models))
+	copy(models, base.Models)
+	base.Models = models
+	for i := range base.Models {
+		if strings.EqualFold(base.Models[i].ID, resolved) {
+			base.Models[i].IsDefault = true
+			return base
+		}
+	}
+	// A configured model that is not one of the published aliases (an explicit
+	// snapshot id, or an alias variant such as "opus[1m]") still has to be
+	// selectable, otherwise the picker would show a default it cannot round-trip.
+	base.Models = append(base.Models, model(resolved, resolved, true))
+	return base
+}
+
+// claudeCodeResolvedModel returns the configured Claude Code model, or "" when
+// no scope sets one. Order mirrors Claude Code's own precedence, narrowed to the
+// sources AO can read without running the CLI.
+func claudeCodeResolvedModel(workingDir string, env map[string]string) string {
+	if fromEnv := strings.TrimSpace(env["ANTHROPIC_MODEL"]); fromEnv != "" {
+		return fromEnv
+	}
+	if fromEnv := strings.TrimSpace(os.Getenv("ANTHROPIC_MODEL")); fromEnv != "" {
+		return fromEnv
+	}
+	var candidates []string
+	if dir := strings.TrimSpace(workingDir); dir != "" {
+		candidates = append(candidates,
+			filepath.Join(dir, ".claude", "settings.local.json"),
+			filepath.Join(dir, ".claude", "settings.json"),
+		)
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".claude", "settings.json"))
+	}
+	for _, candidate := range candidates {
+		if configured := claudeCodeSettingsModel(candidate); configured != "" {
+			return configured
+		}
+	}
+	return ""
+}
+
+// claudeCodeSettingsModel reads one settings file's "model". An unreadable or
+// malformed file is not an error worth surfacing: the picker degrades to no
+// default, exactly as if the key were absent.
+func claudeCodeSettingsModel(path string) string {
+	file, err := os.Open(path) //nolint:gosec // path is derived from the project dir and the user's home
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = file.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(file, claudeCodeSettingsReadLimit))
+	if err != nil {
+		return ""
+	}
+	var settings struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(settings.Model)
 }
 
 func hasDiscoverySource(agentID string) bool {
