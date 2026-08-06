@@ -115,7 +115,7 @@ func TestGetLaunchCommandInjectsSystemPromptWithoutProjectFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"env", museSystemPromptEnvVar + "=follow AO rules",
+		"env", museDeveloperPromptEnvVar + "=follow AO rules",
 		"muse", "--trust-workspace", "fix it",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -164,7 +164,7 @@ func TestGetLaunchCommandCombinesSystemPromptAndManagedHooksEnvironment(t *testi
 	}
 	want := []string{
 		"env",
-		museSystemPromptEnvVar + "=follow AO rules",
+		museDeveloperPromptEnvVar + "=follow AO rules",
 		museManagedHooksEnvVar + "=" + hooksPath,
 		"muse", "--trust-workspace",
 	}
@@ -183,7 +183,7 @@ func TestGetLaunchCommandReadsSystemPromptFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"env", museSystemPromptEnvVar + "=file rules", "muse", "--trust-workspace"}
+	want := []string{"env", museDeveloperPromptEnvVar + "=file rules", "muse", "--trust-workspace"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}

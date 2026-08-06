@@ -15,7 +15,7 @@ export type BackdropPolarity = "neutral" | "needs-dark" | "needs-light";
 export const LOGO_KEYS: ReadonlySet<string> = new Set([
 	"agy", "aider", "amp", "auggie", "autohand", "claude-code", "cline", "codex",
 	"continue", "copilot", "crush", "cursor", "devin", "droid", "goose", "grok",
-	"kilocode", "kimi", "kiro", "opencode", "pi", "qwen", "vibe",
+	"kilocode", "kimi", "kiro", "muse", "opencode", "pi", "qwen", "vibe",
 ]);
 
 /** Normalised lookup key, or "" when there is no usable harness. */
