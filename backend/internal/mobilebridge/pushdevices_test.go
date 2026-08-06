@@ -57,8 +57,8 @@ func TestUpsertListDeleteRoundTrip(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 	now := time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)
-	a := PushDevice{Token: "ExpoPushToken[a]", Platform: "android", DeviceName: "Pixel", CreatedAt: now, LastSeenAt: now}
-	b := PushDevice{Token: "ExpoPushToken[b]", Platform: "ios", DeviceName: "iPhone", CreatedAt: now, LastSeenAt: now}
+	a := PushDevice{InstallID: "inst-a", Token: "ExpoPushToken[a]", Platform: "android", DeviceName: "Pixel", CreatedAt: now, LastSeenAt: now}
+	b := PushDevice{InstallID: "inst-b", Token: "ExpoPushToken[b]", Platform: "ios", DeviceName: "iPhone", CreatedAt: now, LastSeenAt: now}
 	if err := reg.Upsert(a); err != nil {
 		t.Fatalf("upsert a: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestUpsertListDeleteRoundTrip(t *testing.T) {
 		t.Fatalf("reloaded list len = %d, want 2", len(got))
 	}
 
-	if err := reg.Delete("ExpoPushToken[a]"); err != nil {
+	if err := reg.Delete("inst-a"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	got := reg.List()
@@ -94,13 +94,13 @@ func TestUpsertPreservesCreatedAt(t *testing.T) {
 	}
 	created := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	later := time.Date(2026, 7, 13, 0, 0, 0, 0, time.UTC)
-	first := PushDevice{Token: "ExpoPushToken[a]", Platform: "android", CreatedAt: created, LastSeenAt: created}
+	first := PushDevice{InstallID: "inst-a", Token: "ExpoPushToken[a]", Platform: "android", CreatedAt: created, LastSeenAt: created}
 	if err := reg.Upsert(first); err != nil {
 		t.Fatalf("upsert first: %v", err)
 	}
 	// Re-register the same token (e.g. foreground refresh) with a fresh CreatedAt;
 	// the store must keep the ORIGINAL CreatedAt and only advance LastSeenAt.
-	again := PushDevice{Token: "ExpoPushToken[a]", Platform: "android", DeviceName: "renamed", CreatedAt: later, LastSeenAt: later}
+	again := PushDevice{InstallID: "inst-a", Token: "ExpoPushToken[a]", Platform: "android", DeviceName: "renamed", CreatedAt: later, LastSeenAt: later}
 	if err := reg.Upsert(again); err != nil {
 		t.Fatalf("upsert again: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestRegistryFileMode(t *testing.T) {
 	path := PushDevicesPath(t.TempDir())
 	reg, _ := LoadRegistry(path)
 	now := time.Now().UTC()
-	if err := reg.Upsert(PushDevice{Token: "ExpoPushToken[a]", CreatedAt: now, LastSeenAt: now}); err != nil {
+	if err := reg.Upsert(PushDevice{InstallID: "inst-a", Token: "ExpoPushToken[a]", CreatedAt: now, LastSeenAt: now}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	info, err := os.Stat(path)
@@ -152,7 +152,116 @@ func TestRegistryFileMode(t *testing.T) {
 
 func TestDeleteMissingTokenIsNoop(t *testing.T) {
 	reg, _ := LoadRegistry(PushDevicesPath(t.TempDir()))
-	if err := reg.Delete("ExpoPushToken[nope]"); err != nil {
-		t.Fatalf("delete missing token should be a no-op, got %v", err)
+	if err := reg.Delete("missing-install-id"); err != nil {
+		t.Fatalf("delete missing install id should be a no-op, got %v", err)
+	}
+}
+
+func TestUpsertKeysByInstallIDAndPreservesMute(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := reg.Upsert(PushDevice{
+		InstallID: "inst-1", Token: "ExponentPushToken[a]", DeviceName: "Phone",
+		CreatedAt: created, LastSeenAt: created,
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := reg.SetMuted("inst-1", true); err != nil {
+		t.Fatalf("mute: %v", err)
+	}
+
+	// The phone reinstalls: same install ID, brand new push token.
+	later := created.Add(48 * time.Hour)
+	if err := reg.Upsert(PushDevice{
+		InstallID: "inst-1", Token: "ExponentPushToken[b]", DeviceName: "Phone",
+		CreatedAt: later, LastSeenAt: later,
+	}); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+
+	devices := reg.List()
+	if len(devices) != 1 {
+		t.Fatalf("devices = %d, want 1 (reinstall must not duplicate)", len(devices))
+	}
+	got := devices[0]
+	if got.Token != "ExponentPushToken[b]" {
+		t.Fatalf("token = %q, want the new one", got.Token)
+	}
+	if !got.Muted {
+		t.Fatalf("mute did not survive re-registration")
+	}
+	if !got.CreatedAt.Equal(created) {
+		t.Fatalf("CreatedAt = %v, want original %v", got.CreatedAt, created)
+	}
+}
+
+func TestUpsertAdoptsLegacyRowByToken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	legacy := `{"devices":[{"token":"ExponentPushToken[a]","platform":"ios","deviceName":"iPhone","createdAt":"2026-01-01T00:00:00Z","lastSeenAt":"2026-01-02T00:00:00Z"}]}`
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	reg, err := LoadRegistry(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	migrated := reg.List()
+	if len(migrated) != 1 || migrated[0].InstallID == "" {
+		t.Fatalf("migration did not synthesize an install ID: %+v", migrated)
+	}
+	if err := reg.SetMuted(migrated[0].InstallID, true); err != nil {
+		t.Fatalf("mute: %v", err)
+	}
+
+	// That same phone now registers with its real install ID and same token.
+	if err := reg.Upsert(PushDevice{
+		InstallID: "real-inst", Token: "ExponentPushToken[a]", DeviceName: "iPhone",
+		CreatedAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	devices := reg.List()
+	if len(devices) != 1 {
+		t.Fatalf("devices = %d, want 1 (adoption must not duplicate)", len(devices))
+	}
+	if devices[0].InstallID != "real-inst" {
+		t.Fatalf("InstallID = %q, want the adopted real one", devices[0].InstallID)
+	}
+	if !devices[0].Muted {
+		t.Fatalf("adoption lost the mute flag")
+	}
+	want := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if !devices[0].CreatedAt.Equal(want) {
+		t.Fatalf("CreatedAt = %v, want preserved %v", devices[0].CreatedAt, want)
+	}
+}
+
+func TestDeleteByTokenAndByInstallID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "push-devices.json")
+	reg, _ := LoadRegistry(path)
+	now := time.Now().UTC()
+	_ = reg.Upsert(PushDevice{InstallID: "i1", Token: "ExponentPushToken[a]", CreatedAt: now, LastSeenAt: now})
+	_ = reg.Upsert(PushDevice{InstallID: "i2", Token: "ExponentPushToken[b]", CreatedAt: now, LastSeenAt: now})
+
+	if err := reg.DeleteByToken("ExponentPushToken[a]"); err != nil {
+		t.Fatalf("delete by token: %v", err)
+	}
+	if err := reg.Delete("i2"); err != nil {
+		t.Fatalf("delete by install id: %v", err)
+	}
+	if got := reg.List(); len(got) != 0 {
+		t.Fatalf("devices = %+v, want empty", got)
+	}
+	if err := reg.Delete("missing"); err != nil {
+		t.Fatalf("deleting unknown install id must be a no-op, got %v", err)
 	}
 }
