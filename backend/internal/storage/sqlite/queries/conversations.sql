@@ -173,7 +173,7 @@ WHERE id = ?;
 
 -- name: SettleConversationTurn :exec
 UPDATE conversation_turns
-SET state = ?, error_message = ?, completed_at = ?
+SET state = ?, error_message = ?, completed_at = COALESCE(completed_at, ?)
 WHERE id = ?;
 
 -- A provider can acknowledge an interrupted/failed turn without first emitting
@@ -182,7 +182,7 @@ WHERE id = ?;
 -- name: SettleRunningConversationActivitiesForTurn :exec
 UPDATE conversation_activities
 SET status = sqlc.arg(status), revision = revision + 1, updated_at = sqlc.arg(updated_at)
-WHERE conversation_id = sqlc.arg(conversation_id)
+WHERE conversation_activities.conversation_id = sqlc.arg(conversation_id)
   AND turn_id = sqlc.arg(turn_id)
   AND status = 'running';
 
@@ -294,6 +294,45 @@ SET state = 'interrupted', completed_at = ?
 WHERE conversation_id = ?
   AND state IN ('queued', 'running')
   AND rolled_back_at IS NOT NULL;
+
+-- Older AO builds stored compaction boundaries without their provider turn.
+-- Correlate those at or after the rollback anchor so the normal rolled-back-turn
+-- filter hides facts the provider has now forgotten.
+-- name: AttachLegacyCompactionsToRollbackAnchor :exec
+UPDATE conversation_activities
+SET turn_id = sqlc.arg(anchor_turn_id),
+    revision = revision + 1,
+    updated_at = sqlc.arg(updated_at)
+WHERE conversation_activities.conversation_id = sqlc.arg(target_conversation_id)
+  AND turn_id IS NULL
+  AND kind = 'system'
+  AND json_extract(detail_json, '$.event') = 'compaction'
+  AND sequence >= COALESCE((
+      SELECT MIN(sequence) FROM (
+          SELECT sequence FROM conversation_messages WHERE turn_id = sqlc.arg(anchor_turn_id)
+          UNION ALL
+          SELECT sequence FROM conversation_activities WHERE turn_id = sqlc.arg(anchor_turn_id)
+      )
+  ), 0);
+
+-- Conversation state must describe the latest compaction that still exists in
+-- provider history after rollback, not the latest one AO ever observed.
+-- name: RecomputeConversationCompactedAt :exec
+UPDATE conversations
+SET compacted_at = (
+      SELECT MAX(activity.created_at)
+      FROM conversation_activities AS activity
+      WHERE activity.conversation_id = conversations.id
+        AND activity.kind = 'system'
+        AND json_extract(activity.detail_json, '$.event') = 'compaction'
+        AND (activity.turn_id IS NULL OR activity.turn_id NOT IN (
+            SELECT discarded.id FROM conversation_turns AS discarded
+            WHERE discarded.conversation_id = conversations.id
+              AND discarded.rolled_back_at IS NOT NULL
+        ))
+    ),
+    updated_at = sqlc.arg(updated_at)
+WHERE conversations.id = sqlc.arg(target_conversation_id);
 
 -- An approval inside a discarded turn can never be answered: the provider call it
 -- was blocking belongs to history the provider has dropped. A rollback is refused

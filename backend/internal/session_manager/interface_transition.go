@@ -12,12 +12,13 @@ import (
 )
 
 const (
-	interfaceTransitionPoll      = 150 * time.Millisecond
-	interfaceInterruptSettle     = 2 * time.Second
-	interfaceTransitionStopLimit = 15 * time.Second
-	interfaceTransitionStepLimit = 45 * time.Second
-	interfaceDeliveryRetry       = 2 * time.Second
-	interfaceDeliveryIdlePoll    = 30 * time.Second
+	interfaceTransitionPoll       = 150 * time.Millisecond
+	interfaceTransitionIdleSettle = 750 * time.Millisecond
+	interfaceInterruptSettle      = 2 * time.Second
+	interfaceTransitionStopLimit  = 15 * time.Second
+	interfaceTransitionStepLimit  = 45 * time.Second
+	interfaceDeliveryRetry        = 2 * time.Second
+	interfaceDeliveryIdlePoll     = 30 * time.Second
 )
 
 // interfaceTransitionStore is optional so the existing narrow Manager Store
@@ -273,7 +274,7 @@ func (m *Manager) runInterfaceTransition(
 	// observation. Without this gate a mux client can submit work after the TUI is
 	// observed idle but before Destroy, and that accepted work is then killed by
 	// the handoff. Chat intake has its equivalent gate in BeginHandoff below.
-	releaseTerminalInput := m.beginTerminalInputDrain(rec)
+	lastTerminalInputAt, releaseTerminalInput := m.beginTerminalInputDrain(rec)
 	if releaseTerminalInput != nil {
 		defer releaseTerminalInput()
 	}
@@ -285,7 +286,7 @@ func (m *Manager) runInterfaceTransition(
 		fail("TRANSITION_STATE_FAILED", err)
 		return
 	}
-	if err := m.prepareSourceHandoff(ctx, rec, transition.Policy); err != nil {
+	if err := m.prepareSourceHandoff(ctx, rec, transition.Policy, lastTerminalInputAt); err != nil {
 		fail("SOURCE_QUIESCE_FAILED", err)
 		return
 	}
@@ -461,6 +462,7 @@ func (m *Manager) prepareSourceHandoff(
 	ctx context.Context,
 	rec domain.SessionRecord,
 	policy domain.SessionInterfaceTransitionPolicy,
+	lastTerminalInputAt time.Time,
 ) error {
 	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
 		handoff, ok := m.chat.(chatHandoffLauncher)
@@ -477,15 +479,17 @@ func (m *Manager) prepareSourceHandoff(
 		return ErrIncompleteHandle
 	}
 	if policy == domain.SessionInterfaceTransitionInterrupt {
-		if rec.Activity.State == domain.ActivityIdle || rec.Activity.State == domain.ActivityExited {
+		if rec.Activity.State == domain.ActivityExited {
 			return nil
 		}
-		interrupter, ok := m.runtime.(runtimeInterrupter)
-		if !ok {
-			return fmt.Errorf("runtime cannot interrupt a live terminal controller")
-		}
-		if err := interrupter.Interrupt(ctx, handle); err != nil {
-			return err
+		if !tuiIdleAfterInput(rec, lastTerminalInputAt) {
+			interrupter, ok := m.runtime.(runtimeInterrupter)
+			if !ok {
+				return fmt.Errorf("runtime cannot interrupt a live terminal controller")
+			}
+			if err := interrupter.Interrupt(ctx, handle); err != nil {
+				return err
+			}
 		}
 		// Give the provider a short, bounded window to flush its native transcript
 		// after Ctrl-C. The subsequent Destroy is still authoritative, so a stale
@@ -502,7 +506,7 @@ func (m *Manager) prepareSourceHandoff(
 			if !found {
 				return ErrNotFound
 			}
-			if current.Activity.State == domain.ActivityIdle || current.Activity.State == domain.ActivityExited {
+			if current.Activity.State == domain.ActivityExited || tuiIdleAfterInput(current, lastTerminalInputAt) {
 				return nil
 			}
 			select {
@@ -517,6 +521,7 @@ func (m *Manager) prepareSourceHandoff(
 
 	ticker := time.NewTicker(interfaceTransitionPoll)
 	defer ticker.Stop()
+	idleSince := time.Time{}
 	for {
 		current, ok, err := m.store.GetSession(ctx, rec.ID)
 		if err != nil {
@@ -525,8 +530,17 @@ func (m *Manager) prepareSourceHandoff(
 		if !ok {
 			return ErrNotFound
 		}
-		if current.Activity.State == domain.ActivityIdle || current.Activity.State == domain.ActivityExited {
+		if current.Activity.State == domain.ActivityExited {
 			return nil
+		}
+		if tuiIdleAfterInput(current, lastTerminalInputAt) {
+			if idleSince.IsZero() {
+				idleSince = time.Now()
+			} else if time.Since(idleSince) >= interfaceTransitionIdleSettle {
+				return nil
+			}
+		} else {
+			idleSince = time.Time{}
 		}
 		alive, probeErr := m.runtime.IsAlive(ctx, handle)
 		if probeErr == nil && !alive {
@@ -538,6 +552,16 @@ func (m *Manager) prepareSourceHandoff(
 		case <-ticker.C:
 		}
 	}
+}
+
+// tuiIdleAfterInput proves that the idle fact was written after every terminal
+// frame accepted before the drain gate closed. Merely observing an old idle row
+// is unsafe: the PTY may still be processing input that arrived afterward.
+func tuiIdleAfterInput(rec domain.SessionRecord, lastInputAt time.Time) bool {
+	if rec.Activity.State != domain.ActivityIdle {
+		return false
+	}
+	return lastInputAt.IsZero() || !rec.Activity.LastActivityAt.Before(lastInputAt)
 }
 
 func (m *Manager) abortSourceHandoff(transition domain.SessionInterfaceTransition) {
@@ -706,6 +730,22 @@ func (m *Manager) deliverTransitionMessages(
 	if err != nil {
 		return fmt.Errorf("read transition %s messages: %w", transition.ID, err)
 	}
+	if len(messages) == 0 {
+		return nil
+	}
+	rec, err := m.waitForTransitionDeliveryReady(ctx, transition.SessionID, time.Time{})
+	if err != nil {
+		return fmt.Errorf("wait to deliver transition %s messages: %w", transition.ID, err)
+	}
+	lastTerminalInputAt, releaseTerminalInput := m.beginTerminalInputDrain(rec)
+	if releaseTerminalInput != nil {
+		defer releaseTerminalInput()
+		// Closing the raw-input gate and rechecking readiness makes queued AO
+		// delivery the next instruction accepted by the TUI controller.
+		if _, err := m.waitForTransitionDeliveryReady(ctx, transition.SessionID, lastTerminalInputAt); err != nil {
+			return fmt.Errorf("recheck transition %s delivery readiness: %w", transition.ID, err)
+		}
+	}
 	for _, message := range messages {
 		if err := m.send(ctx, transition.SessionID, message.Message, message.ClientMessageID); err != nil {
 			return fmt.Errorf("deliver transition %s message %d: %w", transition.ID, message.ID, err)
@@ -715,6 +755,49 @@ func (m *Manager) deliverTransitionMessages(
 		}
 	}
 	return nil
+}
+
+func (m *Manager) waitForTransitionDeliveryReady(
+	ctx context.Context,
+	id domain.SessionID,
+	lastTerminalInputAt time.Time,
+) (domain.SessionRecord, error) {
+	ticker := time.NewTicker(interfaceTransitionPoll)
+	defer ticker.Stop()
+	idleSince := time.Time{}
+	for {
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil {
+			return domain.SessionRecord{}, err
+		}
+		if !ok {
+			return domain.SessionRecord{}, ErrNotFound
+		}
+		if rec.IsTerminated || rec.Activity.State == domain.ActivityExited {
+			return domain.SessionRecord{}, ErrTerminated
+		}
+		ready := rec.Activity.State == domain.ActivityIdle
+		if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeTUI {
+			// MarkSpawned intentionally clears FirstSignalAt. Waiting for a signal
+			// prevents replaying a queued prompt into the TUI before its native
+			// initialization/resume sequence has reached an input-ready state.
+			ready = ready && !rec.FirstSignalAt.IsZero() && tuiIdleAfterInput(rec, lastTerminalInputAt)
+		}
+		if ready {
+			if idleSince.IsZero() {
+				idleSince = time.Now()
+			} else if time.Since(idleSince) >= interfaceTransitionIdleSettle {
+				return rec, nil
+			}
+		} else {
+			idleSince = time.Time{}
+		}
+		select {
+		case <-ctx.Done():
+			return domain.SessionRecord{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (m *Manager) queueDuringInterfaceTransition(

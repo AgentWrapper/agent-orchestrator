@@ -549,6 +549,11 @@ export default function TerminalScreen() {
 	}, [router]);
 
 	const xtermRef = useRef<XtermWebViewHandle | null>(null);
+	// The PTY remains attached while xterm remounts for a font/theme change. Bytes
+	// arriving between the old WebView unmount and the new onInitialized used to
+	// disappear; retain them in wire order until the replacement can accept writes.
+	const xtermReadyRef = useRef(false);
+	const pendingOutputRef = useRef<Uint8Array[]>([]);
 	const muxRef = useRef<MuxClient | null>(null);
 	const openedRef = useRef(false);
 	// Last grid size reported by the WebView's FitAddon, so we can send it to the
@@ -702,7 +707,12 @@ export default function TerminalScreen() {
 			const mux = new MuxClient(config, {
 				onStatus: (s) => setStatus(s),
 				onTerminalData: (tid, bytes) => {
-					if (tid === id) xtermRef.current?.write(bytes);
+					if (tid !== id) return;
+					if (!xtermReadyRef.current || !xtermRef.current) {
+						pendingOutputRef.current.push(bytes.slice());
+						return;
+					}
+					xtermRef.current.write(bytes);
 				},
 				onTerminalExited: (tid, code) => {
 					if (tid === id) {
@@ -734,8 +744,14 @@ export default function TerminalScreen() {
 			disposed = true;
 			muxRef.current?.disconnect();
 			muxRef.current = null;
+			xtermReadyRef.current = false;
+			pendingOutputRef.current = [];
 		};
 	}, [id]);
+
+	useLayoutEffect(() => {
+		xtermReadyRef.current = false;
+	}, [fontSize, scheme]);
 
 	// Poll the daemon's on-demand preview detector while the terminal is open, just
 	// to keep `preview` current for the globe button. We never auto-open the overlay
@@ -799,6 +815,10 @@ export default function TerminalScreen() {
 	);
 
 	const onInitialized = useCallback(() => {
+		xtermReadyRef.current = true;
+		const pending = pendingOutputRef.current;
+		pendingOutputRef.current = [];
+		for (const bytes of pending) xtermRef.current?.write(bytes);
 		// A fresh xterm (first mount, or a remount after a font-zoom) starts at its
 		// default grid — restore the daemon's authoritative grid onto it so it keeps
 		// mirroring the shared PTY rather than snapping to the default.

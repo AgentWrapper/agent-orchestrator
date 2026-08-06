@@ -215,6 +215,38 @@ func (q *Queries) ApplyConversationTitleToSession(ctx context.Context, arg Apply
 	return result.RowsAffected()
 }
 
+const attachLegacyCompactionsToRollbackAnchor = `-- name: AttachLegacyCompactionsToRollbackAnchor :exec
+UPDATE conversation_activities
+SET turn_id = ?1,
+    revision = revision + 1,
+    updated_at = ?2
+WHERE conversation_activities.conversation_id = ?3
+  AND turn_id IS NULL
+  AND kind = 'system'
+  AND json_extract(detail_json, '$.event') = 'compaction'
+  AND sequence >= COALESCE((
+      SELECT MIN(sequence) FROM (
+          SELECT sequence FROM conversation_messages WHERE turn_id = ?1
+          UNION ALL
+          SELECT sequence FROM conversation_activities WHERE turn_id = ?1
+      )
+  ), 0)
+`
+
+type AttachLegacyCompactionsToRollbackAnchorParams struct {
+	AnchorTurnID         sql.NullString
+	UpdatedAt            time.Time
+	TargetConversationID string
+}
+
+// Older AO builds stored compaction boundaries without their provider turn.
+// Correlate those at or after the rollback anchor so the normal rolled-back-turn
+// filter hides facts the provider has now forgotten.
+func (q *Queries) AttachLegacyCompactionsToRollbackAnchor(ctx context.Context, arg AttachLegacyCompactionsToRollbackAnchorParams) error {
+	_, err := q.db.ExecContext(ctx, attachLegacyCompactionsToRollbackAnchor, arg.AnchorTurnID, arg.UpdatedAt, arg.TargetConversationID)
+	return err
+}
+
 const bindConversationTurnProviderID = `-- name: BindConversationTurnProviderID :exec
 UPDATE conversation_turns
 SET provider_turn_id = ?, started_at = COALESCE(started_at, ?)
@@ -650,6 +682,36 @@ func (q *Queries) NextConversationSequence(ctx context.Context, arg NextConversa
 	var latest_sequence int64
 	err := row.Scan(&latest_sequence)
 	return latest_sequence, err
+}
+
+const recomputeConversationCompactedAt = `-- name: RecomputeConversationCompactedAt :exec
+UPDATE conversations
+SET compacted_at = (
+      SELECT MAX(activity.created_at)
+      FROM conversation_activities AS activity
+      WHERE activity.conversation_id = conversations.id
+        AND activity.kind = 'system'
+        AND json_extract(activity.detail_json, '$.event') = 'compaction'
+        AND (activity.turn_id IS NULL OR activity.turn_id NOT IN (
+            SELECT discarded.id FROM conversation_turns AS discarded
+            WHERE discarded.conversation_id = conversations.id
+              AND discarded.rolled_back_at IS NOT NULL
+        ))
+    ),
+    updated_at = ?1
+WHERE conversations.id = ?2
+`
+
+type RecomputeConversationCompactedAtParams struct {
+	UpdatedAt            time.Time
+	TargetConversationID string
+}
+
+// Conversation state must describe the latest compaction that still exists in
+// provider history after rollback, not the latest one AO ever observed.
+func (q *Queries) RecomputeConversationCompactedAt(ctx context.Context, arg RecomputeConversationCompactedAtParams) error {
+	_, err := q.db.ExecContext(ctx, recomputeConversationCompactedAt, arg.UpdatedAt, arg.TargetConversationID)
+	return err
 }
 
 const resolveConversationApproval = `-- name: ResolveConversationApproval :exec
@@ -1532,7 +1594,7 @@ func (q *Queries) SettleConversationMessage(ctx context.Context, arg SettleConve
 
 const settleConversationTurn = `-- name: SettleConversationTurn :exec
 UPDATE conversation_turns
-SET state = ?, error_message = ?, completed_at = ?
+SET state = ?, error_message = ?, completed_at = COALESCE(completed_at, ?)
 WHERE id = ?
 `
 
@@ -1577,7 +1639,7 @@ func (q *Queries) SettleOrphanedConversationTurns(ctx context.Context, arg Settl
 const settleRunningConversationActivitiesForTurn = `-- name: SettleRunningConversationActivitiesForTurn :exec
 UPDATE conversation_activities
 SET status = ?1, revision = revision + 1, updated_at = ?2
-WHERE conversation_id = ?3
+WHERE conversation_activities.conversation_id = ?3
   AND turn_id = ?4
   AND status = 'running'
 `

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -153,6 +154,47 @@ func TestRollbackDiscardsTheTurnAndEverythingAfterIt(t *testing.T) {
 	for _, msg := range snapshot.Messages {
 		if strings.Contains(msg.Text, "second") {
 			t.Errorf("discarded message still in the timeline: %q", msg.Text)
+		}
+	}
+}
+
+func TestRollbackRemovesLaterLegacyCompactionState(t *testing.T) {
+	recorder := newHistoryRecorder()
+	h := newHarnessWithConversation(t, recorder)
+	ctx := context.Background()
+
+	completeTurn(t, h, "first", "provider-turn-1")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 2 })
+	second := completeTurn(t, h, "second", "provider-turn-2")
+	h.awaitSnapshot(t, func(s store.ConversationSnapshot) bool { return len(s.Messages) == 4 })
+
+	// Builds before compaction turn correlation shipped stored this boundary with
+	// no turn_id. It still belongs to the history after the second prompt.
+	compactedAt := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	if err := h.st.UpsertActivity(ctx, h.ctrl.ConversationID(), "", domain.ConversationActivity{
+		ID: "legacy-compaction", Kind: domain.ActivityKindSystem,
+		Status: domain.ActivityStatusCompleted, Summary: "Compacted history",
+		Detail: []byte(`{"event":"compaction"}`), ProviderItemID: "legacy-compaction-item",
+	}, compactedAt); err != nil {
+		t.Fatalf("seed legacy compaction: %v", err)
+	}
+	if err := h.st.MarkCompacted(ctx, h.ctrl.ConversationID(), compactedAt); err != nil {
+		t.Fatalf("mark compacted: %v", err)
+	}
+
+	if _, err := h.svc.Rollback(ctx, testSession, second); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	snapshot, err := h.st.LoadConversationSnapshot(ctx, h.ctrl.ConversationID())
+	if err != nil {
+		t.Fatalf("load snapshot: %v", err)
+	}
+	if snapshot.Conversation.CompactedAt != nil {
+		t.Fatalf("compactedAt = %v, want cleared after its history was rolled back", snapshot.Conversation.CompactedAt)
+	}
+	for _, activity := range snapshot.Activities {
+		if activity.ID == "legacy-compaction" {
+			t.Fatal("rolled-back legacy compaction remained visible")
 		}
 	}
 }

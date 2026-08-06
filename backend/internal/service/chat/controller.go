@@ -1513,17 +1513,16 @@ func (c *Controller) apply(ctx context.Context, event ports.ChatEvent) error {
 		return c.applyMCPServers(ctx, event.MCPServers)
 
 	case ports.ChatEventCompacted:
-		// A fact about the conversation, not about a turn: the provider ran it in a
-		// turn of its own that AO never dispatched, so binding the row to that turn
-		// would file the entry under work the user never asked for. Passing no
-		// provider turn id leaves turn_id NULL, which puts it in the timeline between
-		// the turns it separates rather than inside one of them.
+		// A fact about the conversation, emitted from a provider-owned turn that AO
+		// did not dispatch. Keep that native turn correlation even though the UI
+		// renders it as a boundary between user turns: rollback needs to hide the
+		// compaction when the provider forgets the turn that produced it.
 		//
 		// Recorded because it is the one thing the timeline cannot show without a
 		// row: after a restart the reclaim figures are gone from memory, and a
 		// conversation that silently lost half its history with nothing to mark where
 		// reads as if the agent simply forgot.
-		if err := c.store.UpsertActivity(ctx, c.conversation.ID, "",
+		if err := c.store.UpsertActivity(ctx, c.conversation.ID, event.ProviderTurnID,
 			domain.ConversationActivity{
 				ID:     c.newID(),
 				Kind:   domain.ActivityKindSystem,

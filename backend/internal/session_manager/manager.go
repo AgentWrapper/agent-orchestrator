@@ -147,7 +147,11 @@ type ShellTerminalCloser interface {
 // transition drains and stops a TUI controller. It is separate from Messenger:
 // xterm keystrokes travel over the terminal mux and never pass through Send.
 type TerminalInputGate interface {
-	BeginInputDrain(terminalID string) (release func())
+	// BeginInputDrain atomically blocks later writes and returns the time of the
+	// newest write that was accepted before the block. Session Manager uses that
+	// barrier to avoid trusting an idle hook which predates already-buffered PTY
+	// input.
+	BeginInputDrain(terminalID string) (lastInputAt time.Time, release func())
 }
 
 type runtimeController interface {
@@ -293,19 +297,19 @@ func (m *Manager) SetTerminalInputGate(gate TerminalInputGate) {
 	m.terminalInputGate = gate
 }
 
-func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (release func()) {
+func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (lastInputAt time.Time, release func()) {
 	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI {
-		return nil
+		return time.Time{}, nil
 	}
 	handle := runtimeHandle(rec.Metadata)
 	if handle.ID == "" {
-		return nil
+		return time.Time{}, nil
 	}
 	m.terminalInputGateMu.Lock()
 	gate := m.terminalInputGate
 	m.terminalInputGateMu.Unlock()
 	if gate == nil {
-		return nil
+		return time.Time{}, nil
 	}
 	return gate.BeginInputDrain(handle.ID)
 }

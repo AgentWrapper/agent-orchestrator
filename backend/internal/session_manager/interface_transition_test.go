@@ -271,14 +271,33 @@ func (c *transitionChat) PrepareChatHandoff(_ context.Context, _ domain.SessionI
 func (*transitionChat) AbortChatHandoff(domain.SessionID) {}
 
 type transitionInputGate struct {
-	acquired chan string
-	released chan string
+	acquired    chan string
+	released    chan string
+	lastInputAt time.Time
 }
 
-func (g *transitionInputGate) BeginInputDrain(terminalID string) func() {
+func (g *transitionInputGate) BeginInputDrain(terminalID string) (time.Time, func()) {
 	g.acquired <- terminalID
 	var once sync.Once
-	return func() { once.Do(func() { g.released <- terminalID }) }
+	return g.lastInputAt, func() { once.Do(func() { g.released <- terminalID }) }
+}
+
+func TestTUIIdleAfterInputRequiresANewerIdleFact(t *testing.T) {
+	inputAt := time.Date(2026, 8, 6, 12, 0, 0, 0, time.UTC)
+	rec := domain.SessionRecord{Activity: domain.Activity{
+		State: domain.ActivityIdle, LastActivityAt: inputAt.Add(-time.Millisecond),
+	}}
+	if tuiIdleAfterInput(rec, inputAt) {
+		t.Fatal("an idle fact older than accepted terminal input was treated as drained")
+	}
+	rec.Activity.LastActivityAt = inputAt
+	if !tuiIdleAfterInput(rec, inputAt) {
+		t.Fatal("an idle fact at the terminal input barrier was not accepted")
+	}
+	rec.Activity.State = domain.ActivityActive
+	if tuiIdleAfterInput(rec, inputAt) {
+		t.Fatal("active work was treated as drained")
+	}
 }
 
 func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *transitionStore, *transitionRuntime, *transitionChat, *[]string) {
@@ -299,7 +318,8 @@ func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *tra
 	store.sessions["session-1"] = domain.SessionRecord{
 		ID: "session-1", ProjectID: "proj", Kind: domain.KindWorker,
 		Harness: domain.HarnessClaudeCode, Mode: mode, Metadata: metadata,
-		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+		Activity:      domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()},
+		FirstSignalAt: time.Now(),
 	}
 	log := &[]string{}
 	runtime := &transitionRuntime{fakeRuntime: &fakeRuntime{}, log: log}
@@ -626,6 +646,30 @@ func TestTransitionMessageRetryUsesStableChatIdempotencyKey(t *testing.T) {
 	pending, err := store.ListPendingSessionInterfaceTransitionMessages(context.Background(), transition.ID)
 	if err != nil || len(pending) != 0 {
 		t.Fatalf("pending after retry = %+v err=%v", pending, err)
+	}
+}
+
+func TestTransitionDeliveryWaitsForFirstTUISignal(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeTUI)
+	rec := store.sessions["session-1"]
+	rec.FirstSignalAt = time.Time{}
+	store.sessions["session-1"] = rec
+
+	// Longer than the normal idle-settle window: without the first-signal check,
+	// this would incorrectly return ready.
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+	defer cancel()
+	_, err := manager.waitForTransitionDeliveryReady(ctx, "session-1", time.Time{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("readiness error = %v, want deadline while target has not signalled", err)
+	}
+
+	rec.FirstSignalAt = time.Now()
+	store.sessions["session-1"] = rec
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer readyCancel()
+	if _, err := manager.waitForTransitionDeliveryReady(readyCtx, "session-1", time.Time{}); err != nil {
+		t.Fatalf("readiness after first signal: %v", err)
 	}
 }
 

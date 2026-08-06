@@ -37,7 +37,8 @@ export type FileAttachmentPayload = {
 // (backend/internal/httpd/controllers/sessions.go attachmentExtByMime).
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp"]);
 
-const isImageType = (type: string) => SUPPORTED_IMAGE_TYPES.has(type.toLowerCase().trim());
+export const isSupportedImageAttachment = (type: string) =>
+	SUPPORTED_IMAGE_TYPES.has(type.toLowerCase().trim());
 
 const readFileAsBase64 = (file: File): Promise<{ dataUrl: string; data: string }> =>
 	new Promise((resolve, reject) => {
@@ -117,7 +118,7 @@ export function useFileAttachments() {
 				errors.add(`Some files couldn't be read and were skipped.`);
 				continue;
 			}
-			const isImage = file.type.startsWith("image/") && isImageType(file.type);
+			const isImage = file.type.startsWith("image/") && isSupportedImageAttachment(file.type);
 			fresh.push({
 				id:
 					typeof crypto !== "undefined" && "randomUUID" in crypto

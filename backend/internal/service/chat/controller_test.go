@@ -369,6 +369,9 @@ func TestResumeImportsNativeHistoryBeforeTheChatControllerStarts(t *testing.T) {
 	if snapshot.Turns[0].ProviderTurnID != "native-turn-1" {
 		t.Fatalf("provider turn = %q, want durable native-turn-1", snapshot.Turns[0].ProviderTurnID)
 	}
+	if snapshot.Turns[0].CompletedAt == nil || !snapshot.Turns[0].CompletedAt.Equal(now) {
+		t.Fatalf("replayed completion = %v, want original %s", snapshot.Turns[0].CompletedAt, now)
+	}
 }
 
 func TestSlowNativeHistoryDoesNotBlockOtherControllerLookups(t *testing.T) {

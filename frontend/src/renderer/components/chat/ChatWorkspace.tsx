@@ -25,6 +25,7 @@ import {
 	type WheelEvent as ReactWheelEvent,
 } from "react";
 import {
+	Archive,
 	ArrowDown,
 	Loader2,
 	MessageSquare,
@@ -35,6 +36,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
+import type { SessionKind } from "../../types/workspace";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import {
@@ -85,7 +87,7 @@ export interface ChatWorkspaceProps {
 	/** The session title from the sidebar (matches what users see in the left sidebar) */
 	sessionTitle?: string;
 	/** The AO role using this shared conversation surface. */
-	sessionRole?: "worker" | "orchestrator";
+	sessionRole?: SessionKind;
 	/** Session-level actions owned above the conversation surface. */
 	interfaceAction?: ReactNode;
 	/** A kill control for worker sessions, rendered in the chat header. */
@@ -198,6 +200,9 @@ export function ChatWorkspace({
 	onChooseConfigOption,
 	configOptionPending,
 	configOptionError,
+	onCompact,
+	compacting,
+	compactUnavailable,
 	onRollback,
 	rollbackPending,
 	rollbackError,
@@ -241,6 +246,10 @@ export function ChatWorkspace({
 				sessionRole={sessionRole}
 				interfaceAction={interfaceAction}
 				killAction={killAction}
+				onCompact={onCompact}
+				compacting={compacting}
+				compactUnavailable={compactUnavailable}
+				turnInFlight={Boolean(turn)}
 			/>
 			{/* Ordered by what blocks what. A session that needs credentials cannot make
 			    progress at all, so it is stated first; the controller's own health next;
@@ -473,12 +482,20 @@ function ChatHeader({
 	interfaceAction,
 	killAction,
 	sessionRole,
+	onCompact,
+	compacting,
+	compactUnavailable,
+	turnInFlight,
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
 	interfaceAction?: ReactNode;
 	killAction?: ReactNode;
-	sessionRole: "worker" | "orchestrator";
+	sessionRole: SessionKind;
+	onCompact?: () => void;
+	compacting?: boolean;
+	compactUnavailable?: string;
+	turnInFlight?: boolean;
 }) {
 	const RoleIcon = sessionRole === "orchestrator" ? Workflow : MessageSquare;
 	const roleLabel = sessionRole === "orchestrator" ? "Orchestrator" : "Worker";
@@ -500,7 +517,13 @@ function ChatHeader({
 				</span>
 			</div>
 			<div className="ml-auto flex shrink-0 items-center gap-2">
-				{/* Context meter removed per user request */}
+				<CompactButton
+					onCompact={onCompact}
+					compacting={compacting}
+					unavailable={compactUnavailable}
+					turnInFlight={turnInFlight}
+					compactedAt={snapshot.compactedAt}
+				/>
 				{interfaceAction}
 				{killAction}
 				{/* Current mode indicator - active chat icon */}
@@ -509,6 +532,51 @@ function ChatHeader({
 				</div>
 			</div>
 		</header>
+	);
+}
+
+function CompactButton({
+	onCompact,
+	compacting,
+	unavailable,
+	turnInFlight,
+	compactedAt,
+}: {
+	onCompact?: () => void;
+	compacting?: boolean;
+	unavailable?: string;
+	turnInFlight?: boolean;
+	compactedAt?: string;
+}) {
+	if (!onCompact) return null;
+	if (unavailable === "This agent cannot compact its history") {
+		return <span className="text-[11px] text-muted-foreground">{unavailable}</span>;
+	}
+
+	const title = turnInFlight
+		? "Finish or stop the current turn before compacting"
+		: compactedAt
+			? `Summarize earlier history to reclaim context. Last compacted ${new Date(compactedAt).toLocaleString()}.`
+			: "Summarize earlier history to reclaim context";
+
+	return (
+		<Button
+			type="button"
+			size="sm"
+			variant="ghost"
+			onClick={onCompact}
+			disabled={compacting || turnInFlight}
+			title={title}
+			aria-label="Compact conversation history"
+			className="h-5 gap-1 px-1.5 text-[11px]"
+		>
+			{compacting ? (
+				<Loader2 aria-hidden="true" className="size-3 animate-spin" />
+			) : (
+				<Archive aria-hidden="true" className="size-3" />
+			)}
+			{compacting ? "Compacting…" : "Compact"}
+		</Button>
 	);
 }
 

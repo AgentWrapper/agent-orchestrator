@@ -55,6 +55,7 @@ import {
 	type Suggestion,
 } from "./composerSuggest";
 import {
+	isSupportedImageAttachment,
 	useFileAttachments,
 	type FileAttachmentPayload,
 } from "../../hooks/useFileAttachments";
@@ -263,7 +264,10 @@ export function ChatComposer({
 			}
 			try {
 				const message = withAttachmentReferences(body, paths);
-				if (nativeImages) await onSend(message, fileAttachments.toPayload());
+				const nativePayloads = fileAttachments
+					.toPayload()
+					.filter((attachment) => isSupportedImageAttachment(attachment.mimeType));
+				if (nativeImages && nativePayloads.length > 0) await onSend(message, nativePayloads);
 				else await onSend(message);
 			} catch {
 				setSendError("Message not sent. Your draft and attachments were kept so you can retry.");

@@ -107,7 +107,7 @@ describe("TaskComposer", () => {
 	it("offers an explicit Terminal UI retry after Chat preflight fails", async () => {
 		h.post
 			.mockResolvedValueOnce({ error: { code: "CHAT_DRIVER_UNAVAILABLE" } })
-			.mockResolvedValueOnce({ data: { session: { id: "sess-tui" } } });
+			.mockResolvedValueOnce({ data: { workerId: "sess-tui" } });
 		const onCreated = vi.fn();
 
 		render(
@@ -115,15 +115,14 @@ describe("TaskComposer", () => {
 				<TaskComposer projectId="proj-1" onCreated={onCreated} />
 			</Wrap>,
 		);
-		fireEvent.change(title(), { target: { value: "T" } });
-		fireEvent.change(brief(), { target: { value: "B" } });
+		fireEvent.change(task(), { target: { value: "Do the thing" } });
 		fireEvent.click(screen.getByText("Start task"));
 
 		const fallback = await screen.findByRole("button", { name: "Create as Terminal UI" });
 		fireEvent.click(fallback);
 		await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sess-tui"));
 		expect(h.post).toHaveBeenLastCalledWith(
-			"/api/v1/sessions",
+			"/api/v1/orchestrators/delegate",
 			expect.objectContaining({ body: expect.objectContaining({ mode: "tui" }) }),
 		);
 	});

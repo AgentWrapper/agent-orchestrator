@@ -63,6 +63,7 @@ type Manager struct {
 	// refused until the matching release runs.
 	inputMu      sync.Mutex
 	inputBlocked map[string]int
+	lastInputAt  map[string]time.Time
 }
 
 // sharedTerm tracks every client currently viewing one terminal id (one PTY) so
@@ -108,6 +109,7 @@ func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option
 		attachments:  map[*attachment]struct{}{},
 		shared:       map[string]*sharedTerm{},
 		inputBlocked: map[string]int{},
+		lastInputAt:  map[string]time.Time{},
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -117,13 +119,14 @@ func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option
 
 // BeginInputDrain blocks new user input for one terminal while Session Manager
 // hands its controller to another interface. The returned release is idempotent.
-func (m *Manager) BeginInputDrain(terminalID string) (release func()) {
+func (m *Manager) BeginInputDrain(terminalID string) (lastInputAt time.Time, release func()) {
 	m.inputMu.Lock()
 	m.inputBlocked[terminalID]++
+	lastInputAt = m.lastInputAt[terminalID]
 	m.inputMu.Unlock()
 
 	var once sync.Once
-	return func() {
+	return lastInputAt, func() {
 		once.Do(func() {
 			m.inputMu.Lock()
 			defer m.inputMu.Unlock()
@@ -142,6 +145,7 @@ func (m *Manager) writeInput(terminalID string, a *attachment, raw []byte) {
 	if m.inputBlocked[terminalID] > 0 {
 		return
 	}
+	m.lastInputAt[terminalID] = time.Now()
 	_ = a.write(raw)
 }
 

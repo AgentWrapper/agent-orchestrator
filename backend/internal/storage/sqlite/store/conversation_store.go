@@ -1231,6 +1231,23 @@ func (s *Store) RollbackTurns(
 			return fmt.Errorf("interrupt rolled back queued turns: %w", err)
 		}
 
+		if err := q.AttachLegacyCompactionsToRollbackAnchor(ctx,
+			gen.AttachLegacyCompactionsToRollbackAnchorParams{
+				AnchorTurnID:         sql.NullString{String: turnID, Valid: true},
+				UpdatedAt:            now,
+				TargetConversationID: conversationID,
+			}); err != nil {
+			return fmt.Errorf("correlate legacy compactions with rollback: %w", err)
+		}
+
+		if err := q.RecomputeConversationCompactedAt(ctx,
+			gen.RecomputeConversationCompactedAtParams{
+				UpdatedAt:            now,
+				TargetConversationID: conversationID,
+			}); err != nil {
+			return fmt.Errorf("recompute compacted conversation state: %w", err)
+		}
+
 		if err := q.FailRolledBackConversationApprovals(ctx,
 			gen.FailRolledBackConversationApprovalsParams{
 				UpdatedAt:        now,

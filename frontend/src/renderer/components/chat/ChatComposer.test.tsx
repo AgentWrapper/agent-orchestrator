@@ -24,6 +24,7 @@ function renderComposer(props: Partial<Parameters<typeof ChatComposer>[0]> = {})
 
 const png = (name = "shot.png") =>
 	new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
+const textFile = (name = "notes.txt") => new File(["hello"], name, { type: "text/plain" });
 
 /* ---- the keyboard contract the composer already had ---------------------- */
 
@@ -38,7 +39,7 @@ describe("send keys", () => {
 		);
 
 		const tools = screen.getByRole("group", { name: "Message tools" });
-		expect(within(tools).getByRole("button", { name: "Attach an image" })).toBeInTheDocument();
+		expect(within(tools).getByRole("button", { name: "Attach a file" })).toBeInTheDocument();
 		expect(within(tools).getByRole("button", { name: "Model" })).toBeInTheDocument();
 
 		const actions = screen.getByRole("group", { name: "Send message controls" });
@@ -252,12 +253,12 @@ describe("attachments", () => {
 	// worktree to write into.
 	it("offers no attach control when there is nowhere to put the bytes", () => {
 		renderComposer();
-		expect(screen.queryByLabelText("Attach an image")).toBeNull();
+		expect(screen.queryByLabelText("Attach a file")).toBeNull();
 	});
 
 	it("offers the attach control when staging is wired", () => {
 		renderComposer({ onStageAttachments: vi.fn() });
-		expect(screen.getByLabelText("Attach an image")).toBeTruthy();
+		expect(screen.getByLabelText("Attach a file")).toBeTruthy();
 	});
 
 	it("shows a removable chip per pasted image", async () => {
@@ -265,9 +266,9 @@ describe("attachments", () => {
 		fireEvent.paste(field, { clipboardData: { files: [png("a.png"), png("b.png")], items: [] } });
 
 		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
-		expect(screen.getByLabelText("Remove image 1")).toBeTruthy();
+		expect(screen.getByLabelText("Remove a.png")).toBeTruthy();
 
-		await userEvent.click(screen.getByLabelText("Remove image 1"));
+		await userEvent.click(screen.getByLabelText("Remove a.png"));
 		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(1));
 	});
 
@@ -295,7 +296,7 @@ describe("attachments", () => {
 		]);
 		await waitFor(() =>
 			expect(onSend).toHaveBeenCalledWith(
-				"what is wrong here\n\nAttached images (read these files in the workspace for visual context):\n- .ao/attachments/image-ab12cd34ef.png",
+				"what is wrong here\n\nAttached files (read these files in the workspace):\n- .ao/attachments/image-ab12cd34ef.png",
 			),
 		);
 		// Consumed, so the next message does not silently resend them.
@@ -313,7 +314,7 @@ describe("attachments", () => {
 
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 		expect(onSend.mock.calls[0]?.[0]).toBe(
-			"Attached images (read these files in the workspace for visual context):\n- .ao/attachments/image-1.png",
+			"Attached files (read these files in the workspace):\n- .ao/attachments/image-1.png",
 		);
 	});
 
@@ -327,6 +328,26 @@ describe("attachments", () => {
 
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/image-native.png");
+		expect(onSend.mock.calls[0]?.[1]).toEqual([
+			{ mimeType: "image/png", data: expect.any(String) },
+		]);
+	});
+
+	it("stages non-images by path without sending them as native image blocks", async () => {
+		const stage = vi.fn().mockResolvedValue([
+			".ao/attachments/image-native.png",
+			".ao/attachments/notes.txt",
+		]);
+		const { onSend, field } = renderComposer({ onStageAttachments: stage, nativeImages: true });
+
+		fireEvent.drop(field, {
+			dataTransfer: { files: [png(), textFile()], items: [{ kind: "file" }, { kind: "file" }] },
+		});
+		await waitFor(() => expect(screen.getAllByRole("listitem")).toHaveLength(2));
+		await userEvent.type(field, "inspect these{Enter}");
+
+		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/notes.txt");
 		expect(onSend.mock.calls[0]?.[1]).toEqual([
 			{ mimeType: "image/png", data: expect.any(String) },
 		]);
