@@ -120,9 +120,20 @@ func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command, opts 
 }
 
 // resolveApp returns the path to a usable desktop bundle, or "" when none is
-// found (spec §6.2). Resolution order is fixed: marker path -> stat -> known
-// location scan. It never compares versions (invariant 5).
+// found (spec §6.2). Resolution order is marker path -> stat -> known location
+// scan, with one exception: on macOS a real bundle in /Applications outranks
+// the marker. It still never compares versions (invariant 5).
+//
+// The exception exists because the marker is not authoritative about which copy
+// the user wants. The app rewrites it on every launch, so a stale copy (the
+// original download, one on a dmg) that got launched leaves the marker pointing
+// at itself, and `ao start` would then keep reopening that copy instead of the
+// install. /Applications is the one location the updater maintains, so prefer
+// it and let the marker cover the rest (~/Applications, unusual layouts).
 func (c *commandContext) resolveApp() string {
+	if p := preferredAppPath(); p != "" && isUsableBundle(p) {
+		return p
+	}
 	if p := c.markerAppPath(); p != "" && isUsableBundle(p) {
 		return p
 	}
@@ -132,6 +143,22 @@ func (c *commandContext) resolveApp() string {
 		}
 	}
 	return ""
+}
+
+// preferredAppPath is the location that outranks the marker, or "" when the
+// platform has none. A package var for the same reason as appScanLocations:
+// tests point it at a temp bundle instead of the real system path.
+var preferredAppPath = darwinApplicationsBundle
+
+// darwinApplicationsBundle is /Applications/<bundle> on macOS, "" elsewhere.
+// That is where Squirrel installs updates, so it is the copy actually kept
+// current. Windows and Linux have no equivalent single maintained location, so
+// they keep the original marker-first order.
+func darwinApplicationsBundle() string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	return filepath.Join("/Applications", appBundleName)
 }
 
 // appScanLocations is the known-location scan source. It is a package var so
