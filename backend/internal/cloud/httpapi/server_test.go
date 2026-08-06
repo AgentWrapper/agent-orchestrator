@@ -12,6 +12,7 @@ import (
 	"time"
 
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
+	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 )
@@ -140,6 +141,53 @@ func TestSharedProjectPolicyCapabilities(t *testing.T) {
 	}
 	if trusted.requiresDangerousCommandGuard(session) {
 		t.Fatal("trusted policy should not require dangerous command guard")
+	}
+}
+
+func TestAddSharedProjectGrantKeepsEmptyAgentScopesRestricted(t *testing.T) {
+	projectID := clouddomain.ProjectID("project-one")
+	session := clouddomain.Session{ID: "session-one", ProjectID: projectID}
+	newAccess := func() sharedProjectAccess {
+		return sharedProjectAccess{
+			ProjectIDs:   map[clouddomain.ProjectID]struct{}{},
+			Roles:        map[clouddomain.ProjectID]string{},
+			SessionRoles: map[clouddomain.ProjectID]map[clouddomain.SessionID]string{},
+			AllSessions:  map[clouddomain.ProjectID]struct{}{},
+		}
+	}
+
+	customPolicy := newAccess()
+	addSharedProjectGrant(&customPolicy, cloudpostgres.SharedProjectGrant{
+		Project:     clouddomain.Project{ID: projectID},
+		PolicyID:    "custom-policy",
+		SandboxType: "standard",
+		Role:        "editor",
+	})
+	if customPolicy.allowsSession(session) || customPolicy.canManageProject(projectID) {
+		t.Fatal("an empty custom policy must not become project-wide access")
+	}
+
+	trustedOverride := newAccess()
+	addSharedProjectGrant(&trustedOverride, cloudpostgres.SharedProjectGrant{
+		Project:               clouddomain.Project{ID: projectID},
+		PolicyID:              "trusted-policy",
+		SandboxType:           "trusted",
+		AgentAccessOverridden: true,
+		Role:                  "editor",
+	})
+	if trustedOverride.allowsSession(session) || trustedOverride.canManageProject(projectID) {
+		t.Fatal("an explicit empty per-person override must not become trusted project-wide access")
+	}
+
+	trustedDefault := newAccess()
+	addSharedProjectGrant(&trustedDefault, cloudpostgres.SharedProjectGrant{
+		Project:     clouddomain.Project{ID: projectID},
+		PolicyID:    "trusted-policy",
+		SandboxType: "trusted",
+		Role:        "editor",
+	})
+	if !trustedDefault.canManageProject(projectID) {
+		t.Fatal("trusted policy without an override should remain project-wide")
 	}
 }
 

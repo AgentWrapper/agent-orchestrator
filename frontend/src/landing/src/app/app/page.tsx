@@ -60,6 +60,8 @@ import {
   type CloudOrgInvitation,
   type CloudProject,
   type CloudProjectShareAccess,
+  type CloudProjectShareGrant,
+  type CloudProjectSharePolicy,
   type CloudRepository,
   type CloudSession,
   type CloudSessionSCM,
@@ -139,86 +141,67 @@ const sandboxTypeOptions = [
   },
 ] as const;
 type SharePolicySandboxType = (typeof sandboxTypeOptions)[number]["value"];
+type SharePolicySelection =
+  | `preset:${SharePolicySandboxType}`
+  | `policy:${string}`;
 
-function SharePolicyTypePicker({
+function fixedSharePolicyType(
+  policy: CloudProjectSharePolicy,
+): SharePolicySandboxType | null {
+  const preset = sandboxTypeOptions.find(
+    (option) =>
+      option.value === policy.sandboxType &&
+      option.label.toLowerCase() === policy.name.trim().toLowerCase(),
+  );
+  return preset?.value ?? null;
+}
+
+function policySelection(policy: CloudProjectSharePolicy): SharePolicySelection {
+  const preset = fixedSharePolicyType(policy);
+  return preset ? `preset:${preset}` : `policy:${policy.id}`;
+}
+
+function SharePolicyPicker({
   value,
+  policies,
   disabled,
   onChange,
-  label = "Policy type",
-  compact = false,
+  label = "Policy",
 }: {
-  value: SharePolicySandboxType;
+  value: SharePolicySelection;
+  policies: CloudProjectSharePolicy[];
   disabled?: boolean;
-  onChange: (value: SharePolicySandboxType) => void;
+  onChange: (value: SharePolicySelection) => void;
   label?: string;
-  compact?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const selected =
-    sandboxTypeOptions.find((option) => option.value === value) ??
-    sandboxTypeOptions[1];
+  const customPolicies = policies.filter((policy) => !fixedSharePolicyType(policy));
   return (
-    <div className="relative">
-      <button
-        type="button"
-        className={`flex w-full items-center justify-between gap-3 rounded-md border border-border bg-background px-3 text-left outline-none transition hover:border-white/[0.16] focus:border-[#4d8dff] disabled:cursor-not-allowed disabled:opacity-60 ${
-          compact ? "h-8" : "min-h-9 py-2"
-        }`}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-        aria-label={label}
-        aria-expanded={open}
-      >
-        <span className="min-w-0">
-          <span className="block text-sm text-foreground">{selected.label}</span>
-          {!compact ? (
-            <span className="mt-0.5 block truncate text-[11px] text-white/35">
-              {selected.description}
-            </span>
-          ) : null}
-        </span>
-        <ChevronDown className="size-3.5 shrink-0 text-white/35" />
-      </button>
-      {open ? (
-        <div
-          className={`absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-white/[0.08] bg-[#101216] p-1 shadow-2xl shadow-black/40 ${
-            compact ? "min-w-[150px]" : ""
-          }`}
-        >
-          {sandboxTypeOptions.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={`flex w-full items-center gap-2 rounded-md px-2.5 text-left hover:bg-white/[0.05] ${
-                compact ? "h-8" : "items-start py-2"
-              }`}
-              onClick={() => {
-                onChange(option.value);
-                setOpen(false);
-              }}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-white/75">
-                  {option.label}
-                </span>
-                {!compact ? (
-                  <span className="mt-0.5 block text-[11px] leading-4 text-white/35">
-                    {option.description}
-                  </span>
-                ) : null}
-              </span>
-              {option.value === value ? (
-                <Check
-                  className={`size-3.5 shrink-0 text-[#4d8dff] ${
-                    compact ? "" : "mt-0.5"
-                  }`}
-                />
-              ) : null}
-            </button>
+    <select
+      className="h-8 w-full rounded-md border border-border bg-background px-2.5 text-sm text-foreground outline-none transition-colors focus:border-[#4d8dff] disabled:cursor-not-allowed disabled:opacity-60"
+      value={value}
+      disabled={disabled}
+      aria-label={label}
+      onChange={(event) =>
+        onChange(event.target.value as SharePolicySelection)
+      }
+    >
+      <optgroup label="Built-in">
+        {sandboxTypeOptions.map((option) => (
+          <option key={option.value} value={`preset:${option.value}`}>
+            {option.label}
+          </option>
+        ))}
+      </optgroup>
+      {customPolicies.length > 0 ? (
+        <optgroup label="Custom policies">
+          {customPolicies.map((policy) => (
+            <option key={policy.id} value={`policy:${policy.id}`}>
+              {policy.name}
+            </option>
           ))}
-        </div>
+        </optgroup>
       ) : null}
-    </div>
+    </select>
   );
 }
 
@@ -439,11 +422,8 @@ export default function CloudAppPage() {
   const [shareProject, setShareProject] = useState<CloudProject | null>(null);
   const [shareSessionId, setShareSessionId] = useState("");
   const [shareRole, setShareRole] = useState<"viewer" | "editor">("viewer");
-  const [sharePolicyType, setSharePolicyType] =
-    useState<SharePolicySandboxType>("standard");
-  const [sharePolicyFilter, setSharePolicyFilter] = useState<
-    "all" | SharePolicySandboxType
-  >("all");
+  const [sharePolicySelection, setSharePolicySelection] =
+    useState<SharePolicySelection>("preset:standard");
   const [shareAccessScope, setShareAccessScope] = useState<
     "anyone" | "restricted"
   >("anyone");
@@ -455,13 +435,12 @@ export default function CloudAppPage() {
   const [shareAccessLoading, setShareAccessLoading] = useState(false);
   const [shareLink, setShareLink] = useState("");
   const [shareCopied, setShareCopied] = useState(false);
-  const [newPolicyName, setNewPolicyName] = useState("");
-  const [newPolicySandboxType, setNewPolicySandboxType] =
-    useState<SharePolicySandboxType>("standard");
-  const [policyInviteEmails, setPolicyInviteEmails] = useState<
-    Record<string, string>
-  >({});
-  const [policyLinks, setPolicyLinks] = useState<Record<string, string>>({});
+  const [editingSharePolicy, setEditingSharePolicy] = useState<
+    CloudProjectSharePolicy | "new" | null
+  >(null);
+  const [managedShareGrantId, setManagedShareGrantId] = useState<string | null>(
+    null,
+  );
   const [settingsPanelTarget, setSettingsPanelTarget] = useState<SettingsPanelName>(() =>
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("settings") === "github"
@@ -1052,6 +1031,21 @@ export default function CloudAppPage() {
           cloudSession.projectId === shareProject.id && !cloudSession.isTerminated,
       )
     : [];
+  const sharePolicies = shareAccess?.policies ?? [];
+  const customSharePolicies = sharePolicies.filter(
+    (policy) => !fixedSharePolicyType(policy),
+  );
+  const shareGrantRows: Array<{
+    grant: CloudProjectShareGrant;
+    policy?: CloudProjectSharePolicy;
+  }> = [
+    ...sharePolicies.flatMap((policy) =>
+      (policy.grants ?? []).map((grant) => ({ grant, policy })),
+    ),
+    ...(shareAccess?.grants ?? []).map((grant) => ({ grant })),
+  ];
+  const managedShareGrantRow =
+    shareGrantRows.find(({ grant }) => grant.id === managedShareGrantId) ?? null;
   const visibleSessionSCMKey = visibleSessions
     .map(({ id, status }) => `${id}:${status}`)
     .sort()
@@ -1485,7 +1479,7 @@ export default function CloudAppPage() {
     await run(async () => {
       const standaloneShare = isStandaloneProject(shareProject);
       const policy = standaloneShare
-        ? await ensureFixedSharePolicy(sharePolicyType)
+        ? await resolveSharePolicySelection(sharePolicySelection)
         : null;
       if (standaloneShare && !policy) return;
       const result = await api.createProjectShareLink(
@@ -1498,7 +1492,9 @@ export default function CloudAppPage() {
               ? { sessionId: shareSessionId }
               : {}),
           role: standaloneShare
-            ? fixedPolicyRoleForType(sharePolicyType)
+            ? policy?.sandboxType === "read_only"
+              ? "viewer"
+              : "editor"
             : shareRole,
           accessScope: shareAccessScope,
           recipientEmails,
@@ -1524,27 +1520,37 @@ export default function CloudAppPage() {
       sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) => {
-    if (!api || !selectedOrgId || !shareProject) return;
-    await run(async () => {
+    if (!api || !selectedOrgId || !shareProject) return false;
+    return run(async () => {
       await api.updateProjectShareGrant(selectedOrgId, shareProject.id, grantId, input);
       await loadProjectShareAccess();
     });
   };
 
-  const createSharePolicy = async () => {
+  const createSharePolicy = async (input: {
+    name: string;
+    sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
+  }) => {
     if (!api || !selectedOrgId || !shareProject) return;
-    const name = newPolicyName.trim();
+    const name = input.name.trim();
     if (!name) {
       setError("Name the security policy first.");
-      return;
+      return false;
     }
-    await run(async () => {
+    if (
+      sandboxTypeOptions.some(
+        (option) => option.label.toLowerCase() === name.toLowerCase(),
+      )
+    ) {
+      setError("Choose a name other than Read-only, Standard, or Trusted.");
+      return false;
+    }
+    return run(async () => {
       await api.createProjectSharePolicy(selectedOrgId, shareProject.id, {
         name,
-        sandboxType: newPolicySandboxType,
-        sessionRoles: policySessionRolesForType(newPolicySandboxType),
+        sandboxType: "standard",
+        sessionRoles: input.sessionRoles,
       });
-      setNewPolicyName("");
       await loadProjectShareAccess();
     });
   };
@@ -1563,21 +1569,14 @@ export default function CloudAppPage() {
     sandboxTypeOptions.find((option) => option.value === sandboxType)?.label ??
     "Standard";
 
-  const fixedPolicyRoleForType = (
-    sandboxType: SharePolicySandboxType,
-  ): "viewer" | "editor" =>
-    sandboxType === "read_only" ? "viewer" : "editor";
-
   const ensureFixedSharePolicy = async (sandboxType: SharePolicySandboxType) => {
     if (!api || !selectedOrgId || !shareProject) return null;
     const name = fixedPolicyNameForType(sandboxType);
-    const existing =
-      shareAccess?.policies?.find(
-        (policy) => policy.sandboxType === sandboxType && policy.name === name,
-      ) ??
-      shareAccess?.policies?.find(
-        (policy) => policy.sandboxType === sandboxType,
-      );
+    const existing = sharePolicies.find(
+      (policy) =>
+        policy.sandboxType === sandboxType &&
+        policy.name.trim().toLowerCase() === name.toLowerCase(),
+    );
     if (existing) return existing;
     const result = await api.createProjectSharePolicy(selectedOrgId, shareProject.id, {
       name,
@@ -1587,18 +1586,29 @@ export default function CloudAppPage() {
     return result.policy;
   };
 
+  const resolveSharePolicySelection = async (
+    selection: SharePolicySelection,
+  ) => {
+    if (selection.startsWith("policy:")) {
+      const policyID = selection.slice("policy:".length);
+      return sharePolicies.find((policy) => policy.id === policyID) ?? null;
+    }
+    return ensureFixedSharePolicy(
+      selection.slice("preset:".length) as SharePolicySandboxType,
+    );
+  };
+
   const updateShareGrantPolicy = async (
     grantId: string,
-    sandboxType: SharePolicySandboxType,
+    selection: SharePolicySelection,
   ) => {
-    if (!api || !selectedOrgId || !shareProject) return;
-    await run(async () => {
-      const policy = await ensureFixedSharePolicy(sandboxType);
+    if (!api || !selectedOrgId || !shareProject) return false;
+    return run(async () => {
+      const policy = await resolveSharePolicySelection(selection);
       if (!policy) return;
       await api.updateProjectShareGrant(selectedOrgId, shareProject.id, grantId, {
-        role: fixedPolicyRoleForType(sandboxType),
+        role: policy.sandboxType === "read_only" ? "viewer" : "editor",
         policyId: policy.id,
-        sessionRoles: policySessionRolesForType(sandboxType),
       });
       await loadProjectShareAccess();
       await refresh();
@@ -1613,53 +1623,22 @@ export default function CloudAppPage() {
       sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>;
     },
   ) => {
-    if (!api || !selectedOrgId || !shareProject) return;
-    await run(async () => {
+    if (!api || !selectedOrgId || !shareProject) return false;
+    return run(async () => {
       await api.updateProjectSharePolicy(selectedOrgId, shareProject.id, policyId, input);
       await loadProjectShareAccess();
       await refresh();
     });
   };
 
-  const createSharePolicyLink = async (policyId: string, restricted: boolean) => {
+  const archiveSharePolicy = async (policyId: string) => {
     if (!api || !selectedOrgId || !shareProject) return;
-    const policy = shareAccess?.policies?.find(({ id }) => id === policyId);
-    const role = policy?.sandboxType === "read_only" ? "viewer" : "editor";
-    const recipientEmails = (policyInviteEmails[policyId] ?? "")
-      .split(/[\n,]/)
-      .map((email) => email.trim())
-      .filter(Boolean);
-    if (restricted && recipientEmails.length === 0) {
-      setError("Add at least one email for the policy invite.");
+    if (!window.confirm("Delete this custom policy and revoke its active access?")) {
       return;
     }
     await run(async () => {
-      const result = await api.createProjectShareLink(
-        selectedOrgId,
-        shareProject.id,
-        {
-          policyId,
-          role,
-          accessScope: restricted ? "restricted" : "anyone",
-          recipientEmails,
-          recipientOrgIds: [],
-        },
-      );
-      const url = new URL(window.location.href);
-      url.pathname = "/app";
-      url.search = "";
-      url.searchParams.set("share", result.token);
-      setPolicyLinks((current) => ({ ...current, [policyId]: url.toString() }));
-      setPolicyInviteEmails((current) => ({ ...current, [policyId]: "" }));
-      await navigator.clipboard?.writeText(url.toString()).catch(() => undefined);
-      await loadProjectShareAccess();
-    });
-  };
-
-  const archiveSharePolicy = async (policyId: string) => {
-    if (!api || !selectedOrgId || !shareProject) return;
-    await run(async () => {
       await api.archiveProjectSharePolicy(selectedOrgId, shareProject.id, policyId);
+      setEditingSharePolicy(null);
       await loadProjectShareAccess();
       await refresh();
     });
@@ -1692,10 +1671,9 @@ export default function CloudAppPage() {
     setShareAccess(null);
     setShareLink("");
     setShareCopied(false);
-    setNewPolicyName("");
-    setNewPolicySandboxType("standard");
-    setPolicyInviteEmails({});
-    setPolicyLinks({});
+    setSharePolicySelection("preset:standard");
+    setEditingSharePolicy(null);
+    setManagedShareGrantId(null);
   };
 
   const toggleSidebar = () => {
@@ -2941,11 +2919,12 @@ export default function CloudAppPage() {
                 {isStandaloneProject(shareProject) ? "Policy" : "Permission"}
               </div>
               {isStandaloneProject(shareProject) ? (
-                <SharePolicyTypePicker
-                  value={sharePolicyType}
+                <SharePolicyPicker
+                  value={sharePolicySelection}
+                  policies={sharePolicies}
                   disabled={loading}
                   onChange={(value) => {
-                    setSharePolicyType(value);
+                    setSharePolicySelection(value);
                     setShareLink("");
                     setShareCopied(false);
                   }}
@@ -3080,55 +3059,24 @@ export default function CloudAppPage() {
 
             {isStandaloneProject(shareProject) ? (
               <div className="space-y-3 border-t border-white/[0.06] pt-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-xs font-medium text-white/55">
                       Manage access
                     </div>
                     <div className="mt-0.5 text-[11px] text-white/30">
-                      Change each person&apos;s policy.
+                      Assign a policy or customize one person&apos;s agents.
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <select
-                      className="h-8 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70 outline-none focus:border-[#4d8dff]"
-                      value={sharePolicyFilter}
-                      onChange={(event) =>
-                        setSharePolicyFilter(
-                          event.target.value as "all" | SharePolicySandboxType,
-                        )
-                      }
-                      aria-label="Filter shared people by policy"
-                    >
-                      <option value="all">All</option>
-                      {sandboxTypeOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    {shareAccessLoading ? (
-                      <LoaderCircle className="ml-1 size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
-                    ) : null}
-                  </div>
+                  {shareAccessLoading ? (
+                    <LoaderCircle className="size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
+                  ) : null}
                 </div>
                 <div className="space-y-2">
-                  {shareAccess?.policies
-                    ?.flatMap((policy) =>
-                      (policy.grants ?? []).map((grant) => ({
-                        grant,
-                        policyType: policy.sandboxType,
-                      })),
-                    )
-                    .filter(
-                      ({ policyType }) =>
-                        sharePolicyFilter === "all" ||
-                        policyType === sharePolicyFilter,
-                    )
-                    .map(({ grant, policyType }) => (
+                  {shareGrantRows.map(({ grant, policy }) => (
                       <div
                         key={grant.id}
-                        className="grid gap-2 rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-2 text-xs text-white/55 sm:grid-cols-[minmax(0,1fr)_150px_auto]"
+                        className="grid items-center gap-2 rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-2 text-xs text-white/55 sm:grid-cols-[minmax(0,1fr)_150px_auto_auto]"
                       >
                         <div className="min-w-0">
                           <div className="truncate text-white/70">
@@ -3138,10 +3086,16 @@ export default function CloudAppPage() {
                             {grant.user.email}
                           </div>
                         </div>
-                        <SharePolicyTypePicker
-                          value={policyType}
+                        <SharePolicyPicker
+                          value={
+                            policy
+                              ? policySelection(policy)
+                              : grant.role === "viewer"
+                                ? "preset:read_only"
+                                : "preset:standard"
+                          }
+                          policies={sharePolicies}
                           disabled={loading}
-                          compact
                           onChange={(value) =>
                             void updateShareGrantPolicy(grant.id, value)
                           }
@@ -3151,7 +3105,15 @@ export default function CloudAppPage() {
                         />
                         <button
                           type="button"
-                          className="h-9 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
+                          className="h-8 whitespace-nowrap rounded-md px-2 text-xs text-white/50 hover:bg-white/[0.05] hover:text-white/80"
+                          disabled={loading}
+                          onClick={() => setManagedShareGrantId(grant.id)}
+                        >
+                          Manage agents
+                        </button>
+                        <button
+                          type="button"
+                          className="h-8 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
                           disabled={loading}
                           onClick={() => void revokeShareGrant(grant.id)}
                         >
@@ -3159,25 +3121,9 @@ export default function CloudAppPage() {
                         </button>
                       </div>
                     ))}
-                  {(shareAccess?.policies ?? []).flatMap(
-                    (policy) => policy.grants ?? [],
-                  ).length === 0 ? (
+                  {shareGrantRows.length === 0 ? (
                     <div className="rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-3 text-xs text-white/30">
                       No shared people yet.
-                    </div>
-                  ) : null}
-                  {(shareAccess?.policies ?? []).flatMap(
-                    (policy) =>
-                      sharePolicyFilter === "all" ||
-                      policy.sandboxType === sharePolicyFilter
-                        ? (policy.grants ?? [])
-                        : [],
-                  ).length === 0 &&
-                  (shareAccess?.policies ?? []).flatMap(
-                    (policy) => policy.grants ?? [],
-                  ).length > 0 ? (
-                    <div className="rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-3 text-xs text-white/30">
-                      No people match this filter.
                     </div>
                   ) : null}
                 </div>
@@ -3185,211 +3131,65 @@ export default function CloudAppPage() {
             ) : null}
 
             {isStandaloneProject(shareProject) ? (
-              <div className="hidden">
+              <div className="space-y-3 border-t border-white/[0.06] pt-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-xs font-medium text-white/55">
-                      Security policies
+                      Custom policies
                     </div>
                     <div className="mt-0.5 text-[11px] text-white/30">
-                      Create named groups like Engineers or Designers.
+                      Reuse a named set of per-agent permissions.
                     </div>
                   </div>
-                  {shareAccessLoading ? (
-                    <LoaderCircle className="size-3.5 animate-spin text-white/35 motion-reduce:animate-none" />
-                  ) : null}
-                </div>
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_260px_auto]">
-                  <input
-                    className={field}
-                    value={newPolicyName}
-                    onChange={(event) => setNewPolicyName(event.target.value)}
-                    placeholder="New policy name"
-                    aria-label="New security policy name"
-                  />
-                  <SharePolicyTypePicker
-                    value={newPolicySandboxType}
-                    onChange={(value) =>
-                      setNewPolicySandboxType(
-                        value as SharePolicySandboxType,
-                      )
-                    }
-                    label="New policy type"
-                  />
                   <button
                     type="button"
                     className={button}
-                    disabled={loading || !newPolicyName.trim()}
-                    onClick={() => void createSharePolicy()}
+                    disabled={loading}
+                    onClick={() => setEditingSharePolicy("new")}
                   >
-                    Create
+                    <Plus className="size-3.5" />
+                    New policy
                   </button>
                 </div>
-                <p className="text-[11px] text-white/30">
-                  {
-                    sandboxTypeOptions.find(
-                      (option) => option.value === newPolicySandboxType,
-                    )?.description
-                  }
-                </p>
                 <div className="space-y-2">
-                  {(shareAccess?.policies ?? []).map((policy) => {
-                    const updatePolicySandboxType = (
-                      sandboxType: SharePolicySandboxType,
-                    ) => {
-                      void updateSharePolicy(policy.id, {
-                        name: policy.name,
-                        sandboxType,
-                        sessionRoles: policySessionRolesForType(sandboxType),
-                      });
-                    };
-                    const sandboxOption = sandboxTypeOptions.find(
-                      (option) => option.value === policy.sandboxType,
-                    );
-                    const policyLink = policyLinks[policy.id];
-                    return (
-                      <details
-                        key={policy.id}
-                        className="group rounded-lg border border-white/[0.06] bg-white/[0.018]"
-                      >
-                        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 [&::-webkit-details-marker]:hidden">
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium text-white/80">
-                              {policy.name}
-                            </div>
-                            <div className="mt-0.5 truncate text-xs text-white/30">
-                              {(policy.grants?.length ?? 0)} member
-                              {(policy.grants?.length ?? 0) === 1 ? "" : "s"} ·{" "}
-                              {sandboxOption?.label ?? "Standard"}
-                            </div>
-                          </div>
-                          <ChevronRight className="size-3.5 shrink-0 text-white/30 transition-transform group-open:rotate-90" />
-                        </summary>
-                        <div className="space-y-3 px-3 pb-3">
-                          <label className="block text-[11px] font-medium text-white/35">
-                            Policy name
-                            <input
-                              className={`${field} mt-1`}
-                              defaultValue={policy.name}
-                              disabled={loading}
-                              onBlur={(event) => {
-                                const name = event.target.value.trim();
-                                if (name && name !== policy.name) {
-                                  void updateSharePolicy(policy.id, {
-                                    name,
-                                    sandboxType: policy.sandboxType,
-                                    sessionRoles: policy.sessionRoles ?? [],
-                                  });
-                                }
-                              }}
-                              aria-label={`Policy name for ${policy.name}`}
-                            />
-                          </label>
-                          <div className="text-[11px] font-medium text-white/35">
-                            Policy type
-                            <div className="mt-1">
-                              <SharePolicyTypePicker
-                              value={policy.sandboxType}
-                              disabled={loading}
-                              onChange={(value) =>
-                                updatePolicySandboxType(
-                                  value as SharePolicySandboxType,
-                                )
-                              }
-                              label={`Policy type for ${policy.name}`}
-                            />
-                            </div>
-                          </div>
-                          <div className="rounded-lg border border-white/[0.06] bg-black/10 p-2">
-                            <div className="mb-2 text-[11px] font-medium text-white/40">
-                              Invite to policy
-                            </div>
-                            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
-                              <input
-                                className={field}
-                                value={policyInviteEmails[policy.id] ?? ""}
-                                onChange={(event) =>
-                                  setPolicyInviteEmails((current) => ({
-                                    ...current,
-                                    [policy.id]: event.target.value,
-                                  }))
-                                }
-                                placeholder="email@example.com"
-                                aria-label={`Invite emails for ${policy.name}`}
-                              />
-                              <button
-                                type="button"
-                                className={`${button} whitespace-nowrap px-3`}
-                                disabled={loading}
-                                onClick={() =>
-                                  void createSharePolicyLink(policy.id, true)
-                                }
-                              >
-                                Invite
-                              </button>
-                              <button
-                                type="button"
-                                className={`${button} whitespace-nowrap px-3`}
-                                disabled={loading}
-                                onClick={() =>
-                                  void createSharePolicyLink(policy.id, false)
-                                }
-                              >
-                                Copy link
-                              </button>
-                            </div>
-                            {policyLink ? (
-                              <div className="mt-2 flex items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.025] px-2.5 py-2 text-[11px] text-white/35">
-                                <Check className="size-3 shrink-0 text-[#4d8dff]" />
-                                <span className="shrink-0 text-white/45">
-                                  Link copied
-                                </span>
-                                <span className="min-w-0 truncate">
-                                  {policyLink}
-                                </span>
-                              </div>
-                            ) : null}
-                          </div>
-                          {(policy.grants?.length ?? 0) > 0 ? (
-                            <div className="space-y-1">
-                              <div className="text-[11px] font-medium text-white/35">
-                                Members
-                              </div>
-                              {policy.grants?.map((grant) => (
-                                <div
-                                  key={grant.id}
-                                  className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-xs text-white/55 hover:bg-white/[0.03]"
-                                >
-                                  <span className="min-w-0 truncate">
-                                    {grant.user.displayName || grant.user.email}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    className="h-7 rounded-md px-2 text-xs text-white/35 hover:bg-white/[0.05] hover:text-white/70"
-                                    disabled={loading}
-                                    onClick={() => void revokeShareGrant(grant.id)}
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="h-8 rounded-md px-2 text-xs text-red-300/60 hover:bg-red-500/10 hover:text-red-200"
-                            disabled={loading}
-                            onClick={() => void archiveSharePolicy(policy.id)}
-                          >
-                            Delete policy
-                          </button>
+                  {customSharePolicies.map((policy) => (
+                    <div
+                      key={policy.id}
+                      className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.018] px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm text-white/75">
+                          {policy.name}
                         </div>
-                      </details>
-                    );
-                  })}
-                  {(shareAccess?.policies?.length ?? 0) === 0 ? (
-                    <div className="text-xs text-white/30">
-                      No security policies yet.
+                        <div className="mt-0.5 text-[11px] text-white/30">
+                          {policy.sessionRoles?.length ?? 0} agent
+                          {(policy.sessionRoles?.length ?? 0) === 1 ? "" : "s"} ·{" "}
+                          {policy.grants?.length ?? 0} member
+                          {(policy.grants?.length ?? 0) === 1 ? "" : "s"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="h-8 rounded-md px-2 text-xs text-white/45 hover:bg-white/[0.05] hover:text-white/75"
+                        disabled={loading}
+                        onClick={() => setEditingSharePolicy(policy)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="grid size-8 place-items-center rounded-md text-red-300/45 hover:bg-red-500/10 hover:text-red-200"
+                        disabled={loading}
+                        onClick={() => void archiveSharePolicy(policy.id)}
+                        aria-label={`Delete ${policy.name} policy`}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {customSharePolicies.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-white/[0.07] px-3 py-3 text-xs text-white/30">
+                      No custom policies yet.
                     </div>
                   ) : null}
                 </div>
@@ -3653,6 +3453,63 @@ export default function CloudAppPage() {
             )}
           </div>
         </Overlay>
+      ) : null}
+      {shareProject && editingSharePolicy ? (
+        <SharePolicyEditorDialog
+          key={editingSharePolicy === "new" ? "new" : editingSharePolicy.id}
+          policy={editingSharePolicy === "new" ? undefined : editingSharePolicy}
+          sessions={shareProjectSessions}
+          loading={loading}
+          onClose={() => setEditingSharePolicy(null)}
+          onSave={async (name, sessionRoles) => {
+            const saved =
+              editingSharePolicy === "new"
+                ? await createSharePolicy({ name, sessionRoles })
+                : await updateSharePolicy(editingSharePolicy.id, {
+                    name,
+                    sandboxType: "standard",
+                    sessionRoles,
+                  });
+            if (saved) setEditingSharePolicy(null);
+          }}
+        />
+      ) : null}
+      {shareProject && managedShareGrantRow ? (
+        <ShareGrantAgentAccessDialog
+          key={managedShareGrantRow.grant.id}
+          grant={managedShareGrantRow.grant}
+          policy={managedShareGrantRow.policy}
+          sessions={shareProjectSessions}
+          loading={loading}
+          onClose={() => setManagedShareGrantId(null)}
+          onSave={async (sessionRoles) => {
+            const saved = await updateShareGrantAccess(
+              managedShareGrantRow.grant.id,
+              {
+                role:
+                  managedShareGrantRow.policy?.sandboxType === "read_only"
+                    ? "viewer"
+                    : managedShareGrantRow.grant.role,
+                ...(managedShareGrantRow.policy
+                  ? { policyId: managedShareGrantRow.policy.id }
+                  : {}),
+                sessionRoles,
+              },
+            );
+            if (saved) setManagedShareGrantId(null);
+          }}
+          onReset={
+            managedShareGrantRow.policy
+              ? async () => {
+                  const reset = await updateShareGrantPolicy(
+                    managedShareGrantRow.grant.id,
+                    policySelection(managedShareGrantRow.policy!),
+                  );
+                  if (reset) setManagedShareGrantId(null);
+                }
+              : undefined
+          }
+        />
       ) : null}
       {showSessionForm &&
       activeOrgId &&
@@ -5619,6 +5476,267 @@ function Overlay({
         {children}
       </section>
     </div>
+  );
+}
+
+type AgentAccessRole = "none" | "viewer" | "editor";
+
+function SharePolicyEditorDialog({
+  policy,
+  sessions,
+  loading,
+  onClose,
+  onSave,
+}: {
+  policy?: CloudProjectSharePolicy;
+  sessions: CloudSession[];
+  loading: boolean;
+  onClose: () => void;
+  onSave: (
+    name: string,
+    sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>,
+  ) => Promise<void>;
+}) {
+  const [name, setName] = useState(policy?.name ?? "");
+  const initialRoles = new Map(
+    (policy?.sessionRoles ?? []).map((entry) => [entry.sessionId, entry.role]),
+  );
+  const [roles, setRoles] = useState<Record<string, AgentAccessRole>>(() =>
+    Object.fromEntries(
+      sessions.map((session) => [
+        session.id,
+        initialRoles.get(session.id) ?? "none",
+      ]),
+    ),
+  );
+  const trimmedName = name.trim();
+
+  return (
+    <Overlay
+      title={policy ? `Edit policy - ${policy.name}` : "New custom policy"}
+      onClose={onClose}
+    >
+      <form
+        className="space-y-5 p-5 sm:p-6"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!trimmedName) return;
+          const sessionRoles = sessions.flatMap((session) => {
+            const role = roles[session.id] ?? "none";
+            return role === "none"
+              ? []
+              : [{ sessionId: session.id, role }];
+          });
+          void onSave(trimmedName, sessionRoles);
+        }}
+      >
+        <label className="block text-xs text-white/45">
+          Policy name
+          <input
+            className={`${field} mt-1.5`}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            placeholder="Design reviewers"
+            maxLength={80}
+            autoFocus
+            disabled={loading}
+          />
+        </label>
+        <div>
+          <div className="mb-2 text-xs font-medium text-white/50">
+            Agent access
+          </div>
+          <div className="divide-y divide-white/[0.05] rounded-lg border border-white/[0.07]">
+            {sessions.map((session) => (
+              <label
+                key={session.id}
+                className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-3 px-3 py-2.5"
+              >
+                <span className="min-w-0 truncate text-sm text-white/65">
+                  {session.displayName}
+                </span>
+                <select
+                  className="h-8 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70 outline-none focus:border-[#4d8dff]"
+                  value={roles[session.id] ?? "none"}
+                  disabled={loading}
+                  onChange={(event) =>
+                    setRoles((current) => ({
+                      ...current,
+                      [session.id]: event.target.value as AgentAccessRole,
+                    }))
+                  }
+                  aria-label={`Policy access to ${session.displayName}`}
+                >
+                  <option value="none">No access</option>
+                  <option value="viewer">View</option>
+                  <option value="editor">Edit</option>
+                </select>
+              </label>
+            ))}
+            {sessions.length === 0 ? (
+              <div className="px-3 py-4 text-xs text-white/30">
+                No active agents to add yet.
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-white/[0.07] pt-4">
+          <button type="button" className={button} onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className={primaryButton}
+            disabled={loading || !trimmedName}
+          >
+            {policy ? "Save policy" : "Create policy"}
+          </button>
+        </div>
+      </form>
+    </Overlay>
+  );
+}
+
+function ShareGrantAgentAccessDialog({
+  grant,
+  policy,
+  sessions,
+  loading,
+  onClose,
+  onSave,
+  onReset,
+}: {
+  grant: CloudProjectShareGrant;
+  policy?: CloudProjectSharePolicy;
+  sessions: CloudSession[];
+  loading: boolean;
+  onClose: () => void;
+  onSave: (
+    sessionRoles: Array<{ sessionId: string; role: "viewer" | "editor" }>,
+  ) => Promise<void>;
+  onReset?: () => Promise<void>;
+}) {
+  const grantRoles = new Map(
+    (grant.sessionRoles ?? []).map((entry) => [entry.sessionId, entry.role]),
+  );
+  const policyRoles = new Map(
+    (policy?.sessionRoles ?? []).map((entry) => [entry.sessionId, entry.role]),
+  );
+  const projectWide =
+    !grant.agentAccessOverridden &&
+    grantRoles.size === 0 &&
+    (policy?.sandboxType === "trusted" ||
+      (!policy && !grant.sessionId));
+  const [roles, setRoles] = useState<Record<string, AgentAccessRole>>(() =>
+    Object.fromEntries(
+      sessions.map((session) => [
+        session.id,
+        grantRoles.get(session.id) ??
+          (!grant.agentAccessOverridden
+            ? policyRoles.get(session.id)
+            : undefined) ??
+          (projectWide ? grant.role : "none"),
+      ]),
+    ),
+  );
+  const readOnly = policy?.sandboxType === "read_only";
+  const policyName = policy
+    ? fixedSharePolicyType(policy)
+      ? sharePolicyLabel(policy.sandboxType)
+      : policy.name
+    : "Direct access";
+
+  return (
+    <Overlay
+      title={`Manage agents - ${grant.user.displayName || grant.user.email}`}
+      onClose={onClose}
+    >
+      <div className="space-y-5 p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm text-white/75">
+              {grant.user.displayName || grant.user.email}
+            </div>
+            <div className="mt-0.5 truncate text-xs text-white/35">
+              {grant.user.email}
+            </div>
+          </div>
+          <span className="shrink-0 rounded-md border border-white/[0.07] px-2 py-1 text-[11px] text-white/45">
+            {policyName}
+          </span>
+        </div>
+        <div className="divide-y divide-white/[0.05] rounded-lg border border-white/[0.07]">
+          {sessions.map((session) => (
+            <label
+              key={session.id}
+              className="grid grid-cols-[minmax(0,1fr)_120px] items-center gap-3 px-3 py-2.5"
+            >
+              <span className="min-w-0 truncate text-sm text-white/65">
+                {session.displayName}
+              </span>
+              <select
+                className="h-8 rounded-md border border-white/[0.08] bg-[#111317] px-2 text-xs text-white/70 outline-none focus:border-[#4d8dff]"
+                value={roles[session.id] ?? "none"}
+                disabled={loading}
+                onChange={(event) =>
+                  setRoles((current) => ({
+                    ...current,
+                    [session.id]: event.target.value as AgentAccessRole,
+                  }))
+                }
+                aria-label={`Access to ${session.displayName} for ${grant.user.email}`}
+              >
+                <option value="none">No access</option>
+                <option value="viewer">View</option>
+                <option value="editor" disabled={readOnly}>
+                  Edit
+                </option>
+              </select>
+            </label>
+          ))}
+          {sessions.length === 0 ? (
+            <div className="px-3 py-4 text-xs text-white/30">
+              No active agents in this project.
+            </div>
+          ) : null}
+        </div>
+        <div className="flex items-center justify-between gap-3 border-t border-white/[0.07] pt-4">
+          <div>
+            {onReset ? (
+              <button
+                type="button"
+                className="h-8 rounded-md px-2 text-xs text-white/40 hover:bg-white/[0.05] hover:text-white/70"
+                disabled={loading}
+                onClick={() => void onReset()}
+              >
+                Reset to policy
+              </button>
+            ) : null}
+          </div>
+          <div className="flex gap-2">
+            <button type="button" className={button} onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={primaryButton}
+              disabled={loading}
+              onClick={() => {
+                const sessionRoles = sessions.flatMap((session) => {
+                  const role = roles[session.id] ?? "none";
+                  return role === "none"
+                    ? []
+                    : [{ sessionId: session.id, role }];
+                });
+                void onSave(sessionRoles);
+              }}
+            >
+              Save access
+            </button>
+          </div>
+        </div>
+      </div>
+    </Overlay>
   );
 }
 

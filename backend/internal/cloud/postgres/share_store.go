@@ -58,17 +58,18 @@ type CreateProjectShareLinkInput struct {
 
 // SharedProjectGrant is one project/session another user shared with this user.
 type SharedProjectGrant struct {
-	ID            string                         `json:"id"`
-	OrgID         clouddomain.OrgID              `json:"orgId"`
-	Project       clouddomain.Project            `json:"project"`
-	Session       *clouddomain.Session           `json:"session,omitempty"`
-	SessionRoles  []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
-	PolicyID      string                         `json:"policyId,omitempty"`
-	SandboxType   string                         `json:"sandboxType,omitempty"`
-	Role          string                         `json:"role"`
-	SharedByEmail string                         `json:"sharedByEmail"`
-	SharedByName  string                         `json:"sharedByName"`
-	RedeemedAt    time.Time                      `json:"redeemedAt"`
+	ID                    string                         `json:"id"`
+	OrgID                 clouddomain.OrgID              `json:"orgId"`
+	Project               clouddomain.Project            `json:"project"`
+	Session               *clouddomain.Session           `json:"session,omitempty"`
+	SessionRoles          []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
+	PolicyID              string                         `json:"policyId,omitempty"`
+	SandboxType           string                         `json:"sandboxType,omitempty"`
+	AgentAccessOverridden bool                           `json:"agentAccessOverridden"`
+	Role                  string                         `json:"role"`
+	SharedByEmail         string                         `json:"sharedByEmail"`
+	SharedByName          string                         `json:"sharedByName"`
+	RedeemedAt            time.Time                      `json:"redeemedAt"`
 }
 
 // ProjectShareAccess is the owner/admin management view for a project's shares.
@@ -80,15 +81,16 @@ type ProjectShareAccess struct {
 
 // ProjectShareGrant is an active redeemed share for one user.
 type ProjectShareGrant struct {
-	ID           string                         `json:"id"`
-	User         clouddomain.User               `json:"user"`
-	SessionID    clouddomain.SessionID          `json:"sessionId,omitempty"`
-	SessionRoles []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
-	PolicyID     string                         `json:"policyId,omitempty"`
-	Role         string                         `json:"role"`
-	Status       string                         `json:"status"`
-	RedeemedAt   time.Time                      `json:"redeemedAt"`
-	UpdatedAt    time.Time                      `json:"updatedAt"`
+	ID                    string                         `json:"id"`
+	User                  clouddomain.User               `json:"user"`
+	SessionID             clouddomain.SessionID          `json:"sessionId,omitempty"`
+	SessionRoles          []ProjectShareGrantSessionRole `json:"sessionRoles,omitempty"`
+	PolicyID              string                         `json:"policyId,omitempty"`
+	AgentAccessOverridden bool                           `json:"agentAccessOverridden"`
+	Role                  string                         `json:"role"`
+	Status                string                         `json:"status"`
+	RedeemedAt            time.Time                      `json:"redeemedAt"`
+	UpdatedAt             time.Time                      `json:"updatedAt"`
 }
 
 // ProjectShareGrantSessionRole grants one user access to one session.
@@ -324,6 +326,7 @@ func (s *Store) RedeemProjectShareLink(
 			session_id = EXCLUDED.session_id,
 			shared_by_user_id = EXCLUDED.shared_by_user_id,
 			policy_id = EXCLUDED.policy_id,
+			agent_access_overridden = false,
 			role = EXCLUDED.role,
 			updated_at = now()
 		RETURNING id
@@ -471,6 +474,7 @@ func (s *Store) ListProjectShareAccess(
 			share_grant.id,
 			COALESCE(share_grant.session_id::text, ''),
 			COALESCE(share_grant.policy_id::text, ''),
+			share_grant.agent_access_overridden,
 			user_row.id, user_row.auth_provider, user_row.external_user_id, user_row.email,
 			user_row.display_name, user_row.avatar_url, user_row.created_at, user_row.updated_at,
 			share_grant.role, share_grant.status, share_grant.redeemed_at, share_grant.updated_at
@@ -491,6 +495,7 @@ func (s *Store) ListProjectShareAccess(
 			&grant.ID,
 			&grant.SessionID,
 			&grant.PolicyID,
+			&grant.AgentAccessOverridden,
 			&grant.User.ID,
 			&grant.User.AuthProvider,
 			&grant.User.ExternalUserID,
@@ -717,6 +722,7 @@ func (s *Store) UpdateProjectShareGrantAccess(
 	sessionID clouddomain.SessionID,
 	policyID string,
 	sessionRoles []ProjectShareGrantSessionRole,
+	agentAccessOverridden bool,
 ) (ProjectShareGrant, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -725,17 +731,32 @@ func (s *Store) UpdateProjectShareGrantAccess(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	nextSessionID := sessionID
-	if len(sessionRoles) > 0 {
+	if agentAccessOverridden {
 		nextSessionID = ""
+	}
+	normalizedPolicyID := strings.TrimSpace(policyID)
+	policySandboxType := ""
+	if normalizedPolicyID != "" {
+		if err := tx.QueryRow(ctx, `
+			SELECT sandbox_type
+			FROM ao_project_share_policies
+			WHERE id = $1 AND org_id = $2 AND project_id = $3 AND status = 'active'
+		`, normalizedPolicyID, orgID, projectID).Scan(&policySandboxType); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ProjectShareGrant{}, ErrProjectSharePolicyNotFound
+			}
+			return ProjectShareGrant{}, fmt.Errorf("load project share policy for grant: %w", err)
+		}
 	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE ao_project_share_grants
 		SET role = $4,
 			session_id = NULLIF($5, '')::uuid,
 			policy_id = NULLIF($6, '')::uuid,
+			agent_access_overridden = $7,
 			updated_at = now()
 		WHERE org_id = $1 AND project_id = $2 AND id = $3 AND status = 'active'
-	`, orgID, projectID, grantID, role, string(nextSessionID), strings.TrimSpace(policyID))
+	`, orgID, projectID, grantID, role, string(nextSessionID), normalizedPolicyID, agentAccessOverridden)
 	if err != nil {
 		return ProjectShareGrant{}, fmt.Errorf("update project share grant: %w", err)
 	}
@@ -748,18 +769,22 @@ func (s *Store) UpdateProjectShareGrantAccess(
 	`, grantID); err != nil {
 		return ProjectShareGrant{}, fmt.Errorf("clear project share grant sessions: %w", err)
 	}
-	if strings.TrimSpace(policyID) != "" {
-		if err := syncGrantSessionsFromPolicy(ctx, tx, grantID, strings.TrimSpace(policyID)); err != nil {
+	if normalizedPolicyID != "" && !agentAccessOverridden {
+		if err := syncGrantSessionsFromPolicy(ctx, tx, grantID, normalizedPolicyID); err != nil {
 			return ProjectShareGrant{}, err
 		}
 	} else {
 		for _, sessionRole := range sessionRoles {
+			effectiveRole := sessionRole.Role
+			if policySandboxType == "read_only" {
+				effectiveRole = "viewer"
+			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO ao_project_share_grant_sessions (
 					grant_id, org_id, project_id, session_id, role
 				)
 				VALUES ($1, $2, $3, $4, $5)
-			`, grantID, orgID, projectID, sessionRole.SessionID, sessionRole.Role); err != nil {
+			`, grantID, orgID, projectID, sessionRole.SessionID, effectiveRole); err != nil {
 				return ProjectShareGrant{}, fmt.Errorf("insert project share grant session: %w", err)
 			}
 		}
@@ -901,7 +926,9 @@ func (s *Store) UpdateProjectSharePolicy(
 		WHERE grant_id IN (
 			SELECT id
 			FROM ao_project_share_grants
-			WHERE policy_id = $1 AND status = 'active'
+			WHERE policy_id = $1
+				AND status = 'active'
+				AND agent_access_overridden = false
 		)
 	`, policy.ID); err != nil {
 		return ProjectSharePolicy{}, fmt.Errorf("clear policy member sessions: %w", err)
@@ -921,9 +948,23 @@ func (s *Store) UpdateProjectSharePolicy(
 			ON policy.id = grant_row.policy_id
 		JOIN ao_project_share_policy_sessions policy_session
 			ON policy_session.policy_id = grant_row.policy_id
-		WHERE grant_row.policy_id = $1 AND grant_row.status = 'active'
+		WHERE grant_row.policy_id = $1
+			AND grant_row.status = 'active'
+			AND grant_row.agent_access_overridden = false
 	`, policy.ID); err != nil {
 		return ProjectSharePolicy{}, fmt.Errorf("sync policy member sessions: %w", err)
+	}
+	if sandboxType == "read_only" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE ao_project_share_grant_sessions grant_session
+			SET role = 'viewer', updated_at = now()
+			FROM ao_project_share_grants grant_row
+			WHERE grant_row.id = grant_session.grant_id
+				AND grant_row.policy_id = $1
+				AND grant_row.status = 'active'
+		`, policy.ID); err != nil {
+			return ProjectSharePolicy{}, fmt.Errorf("cap read-only policy member sessions: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return ProjectSharePolicy{}, fmt.Errorf("commit update project share policy: %w", err)
@@ -1062,6 +1103,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			COALESCE(session.updated_at, now()),
 			COALESCE(share_grant.policy_id::text, ''),
 			COALESCE(policy.sandbox_type, ''),
+			share_grant.agent_access_overridden,
 			share_grant.role,
 			shared_by.email,
 			shared_by.display_name,
@@ -1116,6 +1158,7 @@ func (s *Store) ListSharedProjectGrants(ctx context.Context, userID string) ([]S
 			&session.UpdatedAt,
 			&grant.PolicyID,
 			&grant.SandboxType,
+			&grant.AgentAccessOverridden,
 			&grant.Role,
 			&grant.SharedByEmail,
 			&grant.SharedByName,

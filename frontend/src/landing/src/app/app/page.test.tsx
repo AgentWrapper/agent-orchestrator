@@ -990,6 +990,108 @@ it("manages redeemed project share access", async () => {
   );
 });
 
+it("creates custom standalone policies and manages one person's agents", async () => {
+  const standaloneProject: CloudProject = {
+    ...project,
+    id: "standalone-project",
+    displayName: "Standalone",
+    repositoryUrl: "ao-standalone://org-one/standalone-project",
+    config: { source: "standalone" },
+  };
+  const standaloneAgent: CloudSession = {
+    ...worker,
+    id: "standalone-agent",
+    projectId: standaloneProject.id,
+    displayName: "Research agent",
+  };
+  const customPolicy = {
+    id: "policy-reviewers",
+    orgId: "org-one",
+    projectId: standaloneProject.id,
+    createdByUserId: "user-one",
+    name: "Reviewers",
+    sandboxType: "standard" as const,
+    status: "active" as const,
+    sessionRoles: [{ sessionId: standaloneAgent.id, role: "viewer" as const }],
+    grants: [
+      {
+        id: "grant-reviewer",
+        role: "editor" as const,
+        policyId: "policy-reviewers",
+        sessionRoles: [
+          { sessionId: standaloneAgent.id, role: "viewer" as const },
+        ],
+        user: {
+          id: "user-two",
+          email: "reviewer@example.com",
+          displayName: "Reviewer",
+        },
+      },
+    ],
+    links: [],
+    createdAt: "2026-08-06T00:00:00Z",
+    updatedAt: "2026-08-06T00:00:00Z",
+  };
+  apiMocks.projects.mockResolvedValue({ projects: [standaloneProject] });
+  apiMocks.sessions.mockResolvedValue({ sessions: [standaloneAgent] });
+  apiMocks.projectShareAccess.mockResolvedValue({
+    access: { links: [], grants: [], policies: [customPolicy] },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: `More actions for ${standaloneProject.displayName}`,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+
+  const sharePolicy = await screen.findByLabelText("Share policy");
+  expect(within(sharePolicy).getByRole("option", { name: "Reviewers" })).toBeVisible();
+
+  fireEvent.click(screen.getByRole("button", { name: "Manage agents" }));
+  const agentAccess = await screen.findByLabelText(
+    "Access to Research agent for reviewer@example.com",
+  );
+  fireEvent.change(agentAccess, { target: { value: "editor" } });
+  fireEvent.click(screen.getByRole("button", { name: "Save access" }));
+
+  await waitFor(() =>
+    expect(apiMocks.updateProjectShareGrant).toHaveBeenCalledWith(
+      "org-one",
+      standaloneProject.id,
+      "grant-reviewer",
+      {
+        role: "editor",
+        policyId: "policy-reviewers",
+        sessionRoles: [{ sessionId: standaloneAgent.id, role: "editor" }],
+      },
+    ),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "New policy" }));
+  fireEvent.change(await screen.findByLabelText("Policy name"), {
+    target: { value: "Design team" },
+  });
+  fireEvent.change(screen.getByLabelText("Policy access to Research agent"), {
+    target: { value: "viewer" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Create policy" }));
+
+  await waitFor(() =>
+    expect(apiMocks.createProjectSharePolicy).toHaveBeenCalledWith(
+      "org-one",
+      standaloneProject.id,
+      {
+        name: "Design team",
+        sandboxType: "standard",
+        sessionRoles: [{ sessionId: standaloneAgent.id, role: "viewer" }],
+      },
+    ),
+  );
+});
+
 it("shows shared projects with their sessions without switching workspace", async () => {
   const sharedProject: CloudProject = {
     ...project,

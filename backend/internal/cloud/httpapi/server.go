@@ -61,7 +61,7 @@ type store interface {
 	RedeemProjectShareLink(context.Context, string, string) (cloudpostgres.SharedProjectGrant, error)
 	ListSharedProjectGrants(context.Context, string) ([]cloudpostgres.SharedProjectGrant, error)
 	ListProjectShareAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID) (cloudpostgres.ProjectShareAccess, error)
-	UpdateProjectShareGrantAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, string, clouddomain.SessionID, string, []cloudpostgres.ProjectShareGrantSessionRole) (cloudpostgres.ProjectShareGrant, error)
+	UpdateProjectShareGrantAccess(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, string, clouddomain.SessionID, string, []cloudpostgres.ProjectShareGrantSessionRole, bool) (cloudpostgres.ProjectShareGrant, error)
 	CreateProjectSharePolicy(context.Context, cloudpostgres.CreateProjectSharePolicyInput) (cloudpostgres.ProjectSharePolicy, error)
 	UpdateProjectSharePolicy(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string, cloudpostgres.UpdateProjectSharePolicyInput) (cloudpostgres.ProjectSharePolicy, error)
 	ArchiveProjectSharePolicy(context.Context, clouddomain.OrgID, clouddomain.ProjectID, string) error
@@ -1039,27 +1039,38 @@ func (s *Server) sharedAccessForOrg(
 		if grant.OrgID != orgID {
 			continue
 		}
-		access.ProjectIDs[grant.Project.ID] = struct{}{}
-		access.Roles[grant.Project.ID] = grant.Role
-		if len(grant.SessionRoles) > 0 {
-			if _, ok := access.SessionRoles[grant.Project.ID]; !ok {
-				access.SessionRoles[grant.Project.ID] = map[clouddomain.SessionID]string{}
-			}
-			for _, sessionRole := range grant.SessionRoles {
-				access.SessionRoles[grant.Project.ID][sessionRole.SessionID] = sessionRole.Role
-			}
-			continue
-		}
-		if grant.Session == nil || grant.Session.ID == "" {
-			access.AllSessions[grant.Project.ID] = struct{}{}
-			continue
-		}
-		if _, ok := access.SessionRoles[grant.Project.ID]; !ok {
-			access.SessionRoles[grant.Project.ID] = map[clouddomain.SessionID]string{}
-		}
-		access.SessionRoles[grant.Project.ID][grant.Session.ID] = grant.Role
+		addSharedProjectGrant(&access, grant)
 	}
 	return access, len(access.ProjectIDs) > 0, nil
+}
+
+func addSharedProjectGrant(access *sharedProjectAccess, grant cloudpostgres.SharedProjectGrant) {
+	projectID := grant.Project.ID
+	access.ProjectIDs[projectID] = struct{}{}
+	access.Roles[projectID] = grant.Role
+	if len(grant.SessionRoles) > 0 {
+		if _, ok := access.SessionRoles[projectID]; !ok {
+			access.SessionRoles[projectID] = map[clouddomain.SessionID]string{}
+		}
+		for _, sessionRole := range grant.SessionRoles {
+			access.SessionRoles[projectID][sessionRole.SessionID] = sessionRole.Role
+		}
+		return
+	}
+	if grant.AgentAccessOverridden || (grant.PolicyID != "" && grant.SandboxType != "trusted") {
+		if _, ok := access.SessionRoles[projectID]; !ok {
+			access.SessionRoles[projectID] = map[clouddomain.SessionID]string{}
+		}
+		return
+	}
+	if grant.Session == nil || grant.Session.ID == "" {
+		access.AllSessions[projectID] = struct{}{}
+		return
+	}
+	if _, ok := access.SessionRoles[projectID]; !ok {
+		access.SessionRoles[projectID] = map[clouddomain.SessionID]string{}
+	}
+	access.SessionRoles[projectID][grant.Session.ID] = grant.Role
 }
 
 func (s *Server) requireOrgRole(required string) func(http.Handler) http.Handler {
@@ -1547,6 +1558,30 @@ func (s *Server) createProjectShareLink(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, r, "load share project", err)
 		return
 	}
+	if policyID := strings.TrimSpace(input.PolicyID); policyID != "" {
+		access, err := s.store.ListProjectShareAccess(r.Context(), org.Organization.ID, projectID)
+		if err != nil {
+			s.internalError(w, r, "validate project share policy", err)
+			return
+		}
+		var policy *cloudpostgres.ProjectSharePolicy
+		for index := range access.Policies {
+			if access.Policies[index].ID == policyID {
+				policy = &access.Policies[index]
+				break
+			}
+		}
+		if policy == nil {
+			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_POLICY", "Share policy must belong to this project.")
+			return
+		}
+		input.SessionID = ""
+		if policy.SandboxType == "read_only" {
+			role = "viewer"
+		} else {
+			role = "editor"
+		}
+	}
 	if input.SessionID != "" {
 		session, err := s.store.GetSession(r.Context(), account.ID, input.SessionID)
 		if errors.Is(err, cloudpostgres.ErrSessionNotFound) {
@@ -1792,10 +1827,10 @@ func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var input struct {
-		Role         string                                       `json:"role"`
-		SessionID    clouddomain.SessionID                        `json:"sessionId"`
-		PolicyID     string                                       `json:"policyId"`
-		SessionRoles []cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
+		Role         string                                        `json:"role"`
+		SessionID    clouddomain.SessionID                         `json:"sessionId"`
+		PolicyID     string                                        `json:"policyId"`
+		SessionRoles *[]cloudpostgres.ProjectShareGrantSessionRole `json:"sessionRoles"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -1834,30 +1869,48 @@ func (s *Server) updateProjectShareGrant(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	seenSessionRoles := map[clouddomain.SessionID]struct{}{}
-	for _, sessionRole := range input.SessionRoles {
-		if sessionRole.SessionID == "" || !validProjectShareRole(sessionRole.Role) {
-			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "Each agent access entry must include a session and viewer/editor permission.")
-			return
-		}
-		if _, exists := seenSessionRoles[sessionRole.SessionID]; exists {
-			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "An agent can only appear once in shared access.")
-			return
-		}
-		seenSessionRoles[sessionRole.SessionID] = struct{}{}
-		session, err := s.store.GetSession(r.Context(), clouddomain.AccountID(org.Organization.ID), sessionRole.SessionID)
-		if errors.Is(err, cloudpostgres.ErrSessionNotFound) || session.ProjectID != projectID {
-			writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "Share scope must be this project's sessions.")
-			return
-		}
-		if err != nil {
-			s.internalError(w, r, "validate project share session", err)
-			return
+	sessionRoles := []cloudpostgres.ProjectShareGrantSessionRole(nil)
+	if input.SessionRoles != nil {
+		sessionRoles = *input.SessionRoles
+		seenSessionRoles := map[clouddomain.SessionID]struct{}{}
+		for _, sessionRole := range sessionRoles {
+			if sessionRole.SessionID == "" || !validProjectShareRole(sessionRole.Role) {
+				writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "Each agent access entry must include a session and viewer/editor permission.")
+				return
+			}
+			if _, exists := seenSessionRoles[sessionRole.SessionID]; exists {
+				writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "An agent can only appear once in shared access.")
+				return
+			}
+			seenSessionRoles[sessionRole.SessionID] = struct{}{}
+			session, err := s.store.GetSession(r.Context(), clouddomain.AccountID(org.Organization.ID), sessionRole.SessionID)
+			if errors.Is(err, cloudpostgres.ErrSessionNotFound) || session.ProjectID != projectID {
+				writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_SESSION", "Share scope must be this project's sessions.")
+				return
+			}
+			if err != nil {
+				s.internalError(w, r, "validate project share session", err)
+				return
+			}
 		}
 	}
-	grant, err := s.store.UpdateProjectShareGrantAccess(r.Context(), org.Organization.ID, projectID, grantID, role, input.SessionID, input.PolicyID, input.SessionRoles)
+	grant, err := s.store.UpdateProjectShareGrantAccess(
+		r.Context(),
+		org.Organization.ID,
+		projectID,
+		grantID,
+		role,
+		input.SessionID,
+		input.PolicyID,
+		sessionRoles,
+		input.SessionRoles != nil,
+	)
 	if errors.Is(err, cloudpostgres.ErrProjectShareGrantNotFound) {
 		writeError(w, r, http.StatusNotFound, "SHARE_GRANT_NOT_FOUND", "That shared access no longer exists.")
+		return
+	}
+	if errors.Is(err, cloudpostgres.ErrProjectSharePolicyNotFound) {
+		writeError(w, r, http.StatusBadRequest, "INVALID_SHARE_POLICY", "Share policy must belong to this project.")
 		return
 	}
 	if err != nil {

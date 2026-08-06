@@ -159,6 +159,7 @@ export interface CloudSharedProject {
   sessions?: CloudSession[];
   role: "viewer" | "editor";
   sandboxType?: "read_only" | "standard" | "trusted";
+  agentAccessOverridden?: boolean;
   sharedByEmail: string;
   sharedByName: string;
   redeemedAt: string;
@@ -195,6 +196,7 @@ export interface CloudProjectShareGrant {
   sessionId?: string;
   sessionRoles?: Array<{ sessionId: string; role: "viewer" | "editor" }>;
   policyId?: string;
+  agentAccessOverridden?: boolean;
   role: "viewer" | "editor";
   status: "active" | "revoked";
   redeemedAt: string;
