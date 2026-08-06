@@ -321,15 +321,15 @@ describe("BrowserPanel", () => {
 		expect(onTogglePopOut).toHaveBeenCalledWith(true);
 	});
 
-	it("does not pop out an empty browser", async () => {
+	it("pops out an empty browser", async () => {
 		const onTogglePopOut = vi.fn();
 		render(<BrowserPanel active onTogglePopOut={onTogglePopOut} poppedOut={false} session={session} />);
 
 		const popOut = screen.getByRole("button", { name: /pop out/i });
-		expect(popOut).toBeDisabled();
+		expect(popOut).not.toBeDisabled();
 		await userEvent.click(popOut);
 
-		expect(onTogglePopOut).not.toHaveBeenCalled();
+		expect(onTogglePopOut).toHaveBeenCalledWith(true);
 	});
 
 	it("enables annotation mode from the toolbar when a page is loaded", async () => {

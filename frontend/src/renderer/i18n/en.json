@@ -24,7 +24,7 @@
 	"browser.forward": "Forward",
 	"browser.newTab": "New tab",
 	"browser.onlyTab": "The only tab cannot be closed",
-	"browser.openPageFirst": "Open a page before maximizing the browser",
+	"browser.openNewTab": "Open new tab",
 	"browser.pickElement": "Pick element",
 	"browser.popOut": "Pop out",
 	"browser.queued": "Queued",

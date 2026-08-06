@@ -24,7 +24,7 @@
 	"browser.forward": "앞으로",
 	"browser.newTab": "새 탭",
 	"browser.onlyTab": "마지막 탭은 닫을 수 없습니다",
-	"browser.openPageFirst": "브라우저를 최대화하기 전에 페이지를 여세요",
+	"browser.openNewTab": "새 탭 열기",
 	"browser.pickElement": "요소 선택",
 	"browser.popOut": "새 창으로 열기",
 	"browser.queued": "대기 중",

@@ -24,7 +24,7 @@
 	"browser.forward": "Adelante",
 	"browser.newTab": "Nueva pestaña",
 	"browser.onlyTab": "No se puede cerrar la única pestaña",
-	"browser.openPageFirst": "Abre una página antes de maximizar el navegador",
+	"browser.openNewTab": "Abrir nueva pestaña",
 	"browser.pickElement": "Seleccionar elemento",
 	"browser.popOut": "Abrir en ventana",
 	"browser.queued": "En cola",

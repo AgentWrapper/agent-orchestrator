@@ -24,7 +24,7 @@
 	"browser.forward": "Suivant",
 	"browser.newTab": "Nouvel onglet",
 	"browser.onlyTab": "L'unique onglet ne peut pas être fermé",
-	"browser.openPageFirst": "Ouvrez une page avant d'agrandir le navigateur",
+	"browser.openNewTab": "Ouvrir un nouvel onglet",
 	"browser.pickElement": "Sélectionner un élément",
 	"browser.popOut": "Ouvrir dans une fenêtre",
 	"browser.queued": "En file d'attente",

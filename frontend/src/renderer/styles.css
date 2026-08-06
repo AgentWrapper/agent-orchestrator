@@ -2489,7 +2489,9 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	flex-shrink: 0;
 	min-width: 0;
 	min-height: 44px;
-	padding: 7px 8px;
+	/* No right padding: the new-tab button's own column is flush against this
+	   edge so it lines up with the docked rail directly below it. */
+	padding: 7px 0 7px 8px;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
@@ -2582,12 +2584,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	box-shadow:
 		0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent),
 		inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
-}
-
-.browser-panel__tabs-trigger {
-	min-width: 42px;
-	border: 1px solid color-mix(in srgb, var(--color-border) 56%, transparent);
-	background: color-mix(in srgb, var(--surface) 86%, var(--bg));
 }
 
 .browser-panel__content {

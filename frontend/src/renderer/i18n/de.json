@@ -24,7 +24,7 @@
 	"browser.forward": "Vorwärts",
 	"browser.newTab": "Neuer Tab",
 	"browser.onlyTab": "Der einzige Tab kann nicht geschlossen werden",
-	"browser.openPageFirst": "Öffnen Sie eine Seite, bevor Sie den Browser maximieren",
+	"browser.openNewTab": "Neuen Tab öffnen",
 	"browser.pickElement": "Element auswählen",
 	"browser.popOut": "Auskoppeln",
 	"browser.queued": "In Warteschlange",
