@@ -28,21 +28,22 @@ import { cn } from "../lib/utils";
 
 // Inspector labels hide below 360px, so this is the smallest initial width
 // that presents both each destination icon and its name.
-const INSPECTOR_DEFAULT_SIZE = "360px";
-const INSPECTOR_MIN_PERCENT = 15;
-const INSPECTOR_MIN_SIZE = "240px";
+const INSPECTOR_DEFAULT_PX = 360;
+const INSPECTOR_DEFAULT_SIZE = `${INSPECTOR_DEFAULT_PX}px`;
+const INSPECTOR_MIN_PX = 240;
+const INSPECTOR_MIN_SIZE = `${INSPECTOR_MIN_PX}px`;
 const INSPECTOR_MAX_PERCENT = 50;
 const INSPECTOR_COLLAPSED_SIZE = "0%";
 const INSPECTOR_MOTION_MS = 240;
-const inspectorSplitStorageKey = "ao.inspector.split";
+const inspectorWidthStorageKey = "ao.inspector.widthPx";
 const emptySessionTabIds: string[] = [];
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
 function initialInspectorSize(): string {
-	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
+	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorWidthStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
 	if (!Number.isFinite(parsed)) return INSPECTOR_DEFAULT_SIZE;
-	return `${Math.min(INSPECTOR_MAX_PERCENT, Math.max(INSPECTOR_MIN_PERCENT, parsed))}%`;
+	return `${Math.max(INSPECTOR_MIN_PX, Math.round(parsed))}px`;
 }
 
 function previewRevealKey(previewUrl?: string, previewRevision?: number): string {
@@ -482,8 +483,10 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 		};
 	}, [hasInspector]);
 
-	// Persist explicit resizes. Open panels are non-collapsible, so dragging can
-	// never leave a residual collapsed rail or fight the top-bar toggle.
+	// Persist explicit resizes in pixels so the same inspector width is restored
+	// when the window or left sidebar changes. Open panels are non-collapsible,
+	// so dragging can never leave a residual collapsed rail or fight the top-bar
+	// toggle.
 	// Gated on an actively dragged separator: rrp v4 derives sizes from the
 	// observed DOM layout, so the flex-grow transition that animates
 	// expand()/collapse() (styles.css) fires onResize with transient
@@ -501,8 +504,8 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	const handleInspectorResize = useCallback(
 		(size: PanelSize) => {
 			if (inspectorSeparatorRef.current?.getAttribute("data-separator") !== "active") return;
-			if (size.asPercentage <= 0) return;
-			window.localStorage?.setItem(inspectorSplitStorageKey, String(size.asPercentage));
+			if (size.inPixels <= 0) return;
+			window.localStorage?.setItem(inspectorWidthStorageKey, String(Math.round(size.inPixels)));
 			const currentOpen = useUiStore.getState().inspectorSessions[sessionId]?.isOpen ?? true;
 			if (!currentOpen) toggleInspector(sessionId);
 		},

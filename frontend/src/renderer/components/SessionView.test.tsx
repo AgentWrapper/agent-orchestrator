@@ -794,14 +794,14 @@ describe("SessionView", () => {
 		// Dragging persists the width.
 		act(() => entry.onResize?.({ asPercentage: 31.5, inPixels: 400 }));
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
+		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBe("400");
 
 		// A drag can never auto-collapse the rail: even if a 0-size frame arrives
 		// mid-drag, the store stays open — collapse belongs to the explicit
 		// controls (topbar button / ⌘⇧B) only.
 		act(() => entry.onResize?.({ asPercentage: 0, inPixels: 0 }));
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(window.localStorage.getItem("ao.inspector.split")).toBe("31.5");
+		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBe("400");
 	});
 
 	it("reopens the store when a drag pulls the collapsed rail back open", () => {
@@ -813,7 +813,7 @@ describe("SessionView", () => {
 		act(() => entry.onResize?.({ asPercentage: 25, inPixels: 320 }));
 
 		expect(useUiStore.getState().inspectorSessions["sess-1"]).toMatchObject({ isOpen: true });
-		expect(window.localStorage.getItem("ao.inspector.split")).toBe("25");
+		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBe("320");
 	});
 
 	// Regression: rrp v4 reports observed DOM sizes, so the flex-grow
@@ -835,14 +835,21 @@ describe("SessionView", () => {
 		act(() => useUiStore.getState().toggleInspector("sess-1"));
 		act(() => entry.onResize?.({ asPercentage: 12.4, inPixels: 160 }));
 		expect(inspectorOpen("sess-1")).toBe(false);
-		expect(window.localStorage.getItem("ao.inspector.split")).toBeNull();
+		expect(window.localStorage.getItem("ao.inspector.widthPx")).toBeNull();
 	});
 
-	it("restores the persisted split width", () => {
+	it("restores the persisted inspector width in pixels", () => {
+		window.localStorage.setItem("ao.inspector.widthPx", "400");
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+		expect(panelSizes("inspector")[0]).toBe("400px");
+	});
+
+	it("ignores the legacy percentage width and uses the uniform default", () => {
 		window.localStorage.setItem("ao.inspector.split", "40");
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
-		expect(panelSizes("inspector")[0]).toBe("40%");
+		expect(panelSizes("inspector")[0]).toBe("360px");
 	});
 
 	// Regression: rrp only derives a panel's constraints one commit after it
