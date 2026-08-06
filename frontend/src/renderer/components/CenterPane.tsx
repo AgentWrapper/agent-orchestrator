@@ -97,6 +97,22 @@ export function CenterPane({
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
 				: sessionTabLabel;
+	const selectAdjacentTab = useCallback(
+		(direction: -1 | 1) => {
+			const activeIndex =
+				target.kind === "shell"
+					? shellTerminals.findIndex((shell) => shell.handleId === target.handleId) + 1
+					: 0;
+			const nextIndex = (activeIndex + direction + shellTerminals.length + 1) % (shellTerminals.length + 1);
+			if (nextIndex === 0) {
+				onSelectSessionTerminal?.();
+				return;
+			}
+			const nextShell = shellTerminals[nextIndex - 1];
+			if (nextShell) onSelectShellTerminal?.(nextShell.handleId);
+		},
+		[onSelectSessionTerminal, onSelectShellTerminal, shellTerminals, target],
+	);
 
 	useEffect(() => {
 		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === paneRef.current);
@@ -111,6 +127,15 @@ export function CenterPane({
 			}),
 		[target, onCloseShellTerminal],
 	);
+
+	useEffect(() => {
+		const disposePrevious = aoBridge.app.onPreviousTabShortcut(() => selectAdjacentTab(-1));
+		const disposeNext = aoBridge.app.onNextTabShortcut(() => selectAdjacentTab(1));
+		return () => {
+			disposePrevious();
+			disposeNext();
+		};
+	}, [selectAdjacentTab]);
 
 	useEffect(() => {
 		aoBridge.app.setCloseShellTerminalShortcutEnabled(
