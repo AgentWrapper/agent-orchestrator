@@ -29,8 +29,8 @@ describe("SessionInterfaceSwitchButton", () => {
 			/>,
 		);
 
-		expect(screen.getByRole("status")).toHaveTextContent("Waiting to switch… Chat");
-		const cancel = screen.getByRole("button", { name: "Cancel switch to Chat" });
+		expect(screen.getByRole("status")).toHaveTextContent("Waiting to switch… Chat UI");
+		const cancel = screen.getByRole("button", { name: "Cancel switch to Chat UI" });
 		fireEvent.click(cancel);
 		expect(onCancel).toHaveBeenCalledOnce();
 	});
@@ -46,7 +46,17 @@ describe("SessionInterfaceSwitchButton", () => {
 			/>,
 		);
 
-		expect(screen.getByRole("status")).toHaveTextContent("Stopping controller… Chat");
-		expect(screen.queryByRole("button", { name: "Cancel switch to Chat" })).not.toBeInTheDocument();
+		expect(screen.getByRole("status")).toHaveTextContent("Stopping controller… Chat UI");
+		expect(screen.queryByRole("button", { name: "Cancel switch to Chat UI" })).not.toBeInTheDocument();
+	});
+
+	it("shows explicit switch copy for the target interface", () => {
+		const onClick = vi.fn();
+		render(<SessionInterfaceSwitchButton target="tui" supported onClick={onClick} />);
+
+		const button = screen.getByRole("button", { name: "Switch to terminal UI" });
+		expect(button).toHaveTextContent("Switch to terminal UI");
+		fireEvent.click(button);
+		expect(onClick).toHaveBeenCalledOnce();
 	});
 });

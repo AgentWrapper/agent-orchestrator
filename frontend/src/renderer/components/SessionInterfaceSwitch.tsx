@@ -1,4 +1,4 @@
-import { ArrowRightLeft, Loader2, MessageSquare, Terminal, TriangleAlert, X } from "lucide-react";
+import { ArrowRightLeft, Loader2, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
 	SessionInterfaceMode,
@@ -21,13 +21,11 @@ import {
 } from "./ui/dialog";
 
 function targetLabel(target: SessionInterfaceMode): string {
-	return target === "chat" ? "Chat" : "Terminal UI";
+	return target === "chat" ? "chat UI" : "terminal UI";
 }
 
-function TargetIcon({ target, className }: { target: SessionInterfaceMode; className?: string }) {
-	const Icon = target === "chat" ? MessageSquare : Terminal;
-	// Terminal icon should be white
-	return <Icon aria-hidden="true" className={target === "chat" ? className : "size-3.5 text-white"} />;
+function targetTitleLabel(target: SessionInterfaceMode): string {
+	return target === "chat" ? "Chat UI" : "Terminal UI";
 }
 
 const phaseCopy: Record<SessionInterfaceTransition["phase"], string> = {
@@ -78,11 +76,11 @@ export function SessionInterfaceSwitchButton({
 					cancellable ? "pr-0.5" : "pr-2",
 					className,
 				)}
-				title={cancelError || `${phaseCopy[transition.phase]} Switching to ${targetLabel(transition.targetMode)}.`}
+				title={cancelError || `${phaseCopy[transition.phase]} Switching to ${targetTitleLabel(transition.targetMode)}.`}
 			>
 				<Loader2 aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
 				<span className="whitespace-nowrap">
-					{phaseCopy[transition.phase]} <span className="text-foreground">{targetLabel(transition.targetMode)}</span>
+					{phaseCopy[transition.phase]} <span className="text-foreground">{targetTitleLabel(transition.targetMode)}</span>
 				</span>
 				{cancellable ? (
 					<Button
@@ -92,7 +90,7 @@ export function SessionInterfaceSwitchButton({
 						className="ml-1 h-6 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
 						disabled={cancelling}
 						onClick={onCancel}
-						aria-label={`Cancel switch to ${targetLabel(transition.targetMode)}`}
+						aria-label={`Cancel switch to ${targetTitleLabel(transition.targetMode)}`}
 					>
 						{cancelling ? <Loader2 aria-hidden="true" className="size-3 animate-spin" /> : <X aria-hidden="true" className="size-3" />}
 						{cancelling ? "Cancelling" : "Cancel"}
@@ -107,14 +105,14 @@ export function SessionInterfaceSwitchButton({
 		);
 	}
 
-	const label = `Open ${targetLabel(target)}`;
+	const label = `Switch to ${targetLabel(target)}`;
 	return (
 		<Button
 			type="button"
 			size="sm"
 			variant="ghost"
 			className={cn(
-				"h-7 gap-1.5 px-2 text-xs text-muted-foreground",
+				"h-7 gap-1.5 px-2.5 text-xs text-muted-foreground",
 				supported && "hover:text-foreground",
 				!supported && "opacity-50",
 				className,
@@ -127,8 +125,9 @@ export function SessionInterfaceSwitchButton({
 			{pending ? (
 				<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
 			) : (
-				<TargetIcon target={target} className="size-3.5" />
+				<ArrowRightLeft aria-hidden="true" className="size-3.5" />
 			)}
+			<span className="whitespace-nowrap">{label}</span>
 		</Button>
 	);
 }
@@ -150,7 +149,7 @@ export function SessionInterfaceSwitchDialog({
 	onOpenChange: (open: boolean) => void;
 	onChoose: (policy: SessionInterfaceTransitionPolicy) => void;
 }) {
-	const targetName = targetLabel(target);
+	const targetName = targetTitleLabel(target);
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="max-w-md gap-0 overflow-hidden rounded-xl border-border bg-popover p-0">

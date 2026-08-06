@@ -14,9 +14,13 @@ import {
 import type { ConversationMessage, ConversationSnapshot } from "../../types/conversation";
 
 const writeText = vi.fn(async (_text: string) => undefined);
+const menuAction = vi.fn(async (_action: string) => undefined);
 
 vi.mock("../../lib/bridge", () => ({
-	aoBridge: { clipboard: { writeText: (text: string) => writeText(text) } },
+	aoBridge: {
+		clipboard: { writeText: (text: string) => writeText(text) },
+		menu: { action: (action: string) => menuAction(action) },
+	},
 }));
 
 /** A refetch: identical content, all-new objects, which is what JSON parsing gives. */
@@ -37,19 +41,45 @@ function stubGeometry(node: HTMLElement, { scrollHeight, clientHeight, scrollTop
 
 beforeEach(() => {
 	writeText.mockClear();
+	menuAction.mockClear();
 });
 
 describe("ChatWorkspace timeline", () => {
-	it("uses the same role-aware chat chrome for workers and orchestrators", () => {
+	it("uses the shared session topbar chrome for workers and orchestrators", () => {
 		const view = render(<ChatWorkspace snapshot={chatFixture} sessionRole="worker" />);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "worker");
-		expect(screen.getByText("Worker")).toBeInTheDocument();
+		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
+		expect(screen.getByTestId("session-terminal-region")).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: chatFixture.title })).toBeInTheDocument();
 
 		view.rerender(<ChatWorkspace snapshot={chatFixture} sessionRole="orchestrator" />);
 
 		expect(screen.getByLabelText("Chat")).toHaveAttribute("data-session-role", "orchestrator");
-		expect(screen.getByText("Orchestrator")).toBeInTheDocument();
+		expect(screen.getByTestId("session-workspace-topbar")).toBeInTheDocument();
+		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
+	});
+
+	it("routes chat zoom buttons through the native zoom actions", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
+		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
+
+		expect(menuAction).toHaveBeenNthCalledWith(1, "view.zoomOut");
+		expect(menuAction).toHaveBeenNthCalledWith(2, "view.zoomIn");
+	});
+
+	it("starts chat zoom at 12px and updates the displayed size with the zoom buttons", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
+
+		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
+		expect(screen.getByLabelText("Chat font size: 13 pixels")).toHaveTextContent("13px");
+
+		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
+		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
 	});
 
 	it("keeps the composer aligned to the readable conversation width", () => {

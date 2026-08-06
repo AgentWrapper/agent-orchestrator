@@ -19,6 +19,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	type CSSProperties,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type PointerEvent as ReactPointerEvent,
 	type ReactNode,
@@ -28,15 +29,20 @@ import {
 	Archive,
 	ArrowDown,
 	Loader2,
+	Maximize2,
 	MessageSquare,
+	Minimize2,
+	Minus,
+	Plus,
 	Square,
 	TriangleAlert,
 	Undo2,
-	Workflow,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
+import { aoBridge } from "../../lib/bridge";
 import type { SessionKind } from "../../types/workspace";
+import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { SessionTopbarPortal } from "../SessionTopbarPortal";
@@ -82,6 +88,14 @@ import {
 	type TurnDiff,
 	type TurnSettings,
 } from "../../types/conversation";
+
+const CHAT_FONT_SIZE_MIN = 11;
+const CHAT_FONT_SIZE_MAX = 24;
+const CHAT_FONT_SIZE_DEFAULT = 12;
+
+function clampChatFontSize(size: number): number {
+	return Math.min(CHAT_FONT_SIZE_MAX, Math.max(CHAT_FONT_SIZE_MIN, size));
+}
 
 type TopbarBounds = {
 	leftInset: number;
@@ -229,6 +243,8 @@ export function ChatWorkspace({
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
+	const [chatFontSize, setChatFontSize] = useState(CHAT_FONT_SIZE_DEFAULT);
+	const [isFullscreen, setIsFullscreen] = useState(false);
 	const surfaceRef = useRef<HTMLElement | null>(null);
 	const [topbarBounds, setTopbarBounds] = useState<TopbarBounds>({
 		leftInset: 0,
@@ -236,12 +252,16 @@ export function ChatWorkspace({
 		width: 0,
 	});
 
-	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
-	// and a control that exists to be refused is worse than one that waits.
-	const rollbackTarget = onRollback && !turn ? (id: string) => setConfirming(id) : undefined;
-	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
+	const fullscreenTarget = useCallback(() => {
+		const surface = surfaceRef.current;
+		return surface?.closest<HTMLElement>(".center-panel-surface") ?? surface;
+	}, []);
 
-	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
+	useEffect(() => {
+		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === fullscreenTarget());
+		document.addEventListener("fullscreenchange", handleFullscreenChange);
+		return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+	}, [fullscreenTarget]);
 
 	useEffect(() => {
 		const surface = surfaceRef.current;
@@ -271,23 +291,56 @@ export function ChatWorkspace({
 		return () => observer.disconnect();
 	}, []);
 
+	const triggerChatZoom = useCallback((direction: "in" | "out") => {
+		const action = direction === "in" ? "view.zoomIn" : "view.zoomOut";
+		setChatFontSize((current) => clampChatFontSize(current + (direction === "in" ? 1 : -1)));
+		void aoBridge.menu.action(action).catch((error) => {
+			console.warn("Unable to change chat zoom", error);
+		});
+	}, []);
+
+	const toggleFullscreen = useCallback(async () => {
+		const target = fullscreenTarget();
+		if (!target) return;
+		try {
+			if (document.fullscreenElement === target) {
+				await document.exitFullscreen();
+				return;
+			}
+			await target.requestFullscreen();
+		} catch (error) {
+			console.warn("Unable to toggle chat fullscreen", error);
+		}
+	}, [fullscreenTarget]);
+
+	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
+	// and a control that exists to be refused is worse than one that waits.
+	const rollbackTarget = onRollback && !turn ? (id: string) => setConfirming(id) : undefined;
+	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
+
+	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
+
 	return (
 		<section
 			ref={surfaceRef}
 			aria-label="Chat"
-			className="cursor-chat-surface flex h-full min-h-0 flex-col"
+			className="cursor-chat-surface flex h-full min-h-0 flex-col [font-size:var(--chat-font-size)]"
 			data-session-mode={snapshot.mode}
 			data-session-role={sessionRole}
+			style={{ "--chat-font-size": `${chatFontSize}px` } as CSSProperties}
 		>
 			<ChatHeader
 				snapshot={snapshot}
 				sessionTitle={sessionTitle}
-				sessionRole={sessionRole}
-				onCompact={onCompact}
-				compacting={compacting}
-				compactUnavailable={compactUnavailable}
-				turnInFlight={Boolean(turn)}
 				headerActions={headerActions}
+				onOpenShell={onOpenShell}
+				openingShell={openingShell}
+				shellError={shellError}
+				fontSize={chatFontSize}
+				onDecreaseFontSize={() => triggerChatZoom("out")}
+				onIncreaseFontSize={() => triggerChatZoom("in")}
+				isFullscreen={isFullscreen}
+				onToggleFullscreen={() => void toggleFullscreen()}
 				topbarBounds={topbarBounds}
 			/>
 			{/* Ordered by what blocks what. A session that needs credentials cannot make
@@ -327,6 +380,15 @@ export function ChatWorkspace({
 
 			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
 				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
+					<div className="flex items-center justify-end">
+						<CompactButton
+							onCompact={onCompact}
+							compacting={compacting}
+							unavailable={compactUnavailable}
+							turnInFlight={Boolean(turn)}
+							compactedAt={snapshot.compactedAt}
+						/>
+					</div>
 					{discarded > 0 ? <RolledBackNotice count={discarded} /> : null}
 					{turn ? (
 						<LiveTurnBar
@@ -519,67 +581,156 @@ function ChatHeader({
 	snapshot,
 	sessionTitle,
 	headerActions,
+	onOpenShell,
+	openingShell,
+	shellError,
+	fontSize,
+	onDecreaseFontSize,
+	onIncreaseFontSize,
+	isFullscreen,
+	onToggleFullscreen,
 	topbarBounds,
-	sessionRole,
-	onCompact,
-	compacting,
-	compactUnavailable,
-	turnInFlight,
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
-	sessionRole: SessionKind;
-	onCompact?: () => void;
-	compacting?: boolean;
-	compactUnavailable?: string;
-	turnInFlight?: boolean;
 	headerActions?: ReactNode;
+	onOpenShell?: () => void;
+	openingShell?: boolean;
+	shellError?: string;
+	fontSize: number;
+	onDecreaseFontSize: () => void;
+	onIncreaseFontSize: () => void;
+	isFullscreen: boolean;
+	onToggleFullscreen: () => void;
 	topbarBounds: TopbarBounds;
 }) {
-	const RoleIcon = sessionRole === "orchestrator" ? Workflow : MessageSquare;
-	const roleLabel = sessionRole === "orchestrator" ? "Orchestrator" : "Worker";
+	const label = sessionTitle || snapshot.title || snapshot.sessionId;
 	return (
 		<SessionTopbarPortal>
-			<header
-				className="flex h-session-topbar w-full shrink-0 items-stretch bg-sidebar pt-1"
-				style={{
-					paddingLeft: topbarBounds.leftInset,
-					paddingRight: topbarBounds.rightInset,
-				}}
-			>
-				<div
-					className="session-topbar-surface cursor-chat-header flex min-w-0 flex-1 items-center gap-3 px-3.5"
-					style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
-				>
-					<span className="cursor-chat-role-icon grid size-7 shrink-0 place-items-center rounded-md">
-						<RoleIcon aria-hidden="true" className="size-3.5" />
-					</span>
-					<div className="flex min-w-0 flex-col gap-0.5">
-						<strong
-							className="truncate text-[13px] font-medium leading-tight text-foreground"
-							title={sessionTitle || snapshot.title || snapshot.sessionId}
+			<header className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
+				<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
+					<div
+						className="flex min-w-0 shrink items-center pr-1.5"
+						data-testid="session-terminal-region"
+						style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
+					>
+						<div className="flex h-full min-w-flex-min flex-1 items-center">
+							<div
+								aria-label="Chat tabs"
+								className="scrollbar-none flex min-w-flex-min flex-1 self-stretch items-center overflow-x-auto"
+								role="tablist"
+							>
+								<span
+									data-terminal-role="primary"
+									className="group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border bg-overlay px-3 text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+								>
+									<AgentAvatar className="size-icon-base" decorative provider={snapshot.harness} />
+									<button
+										aria-current
+										aria-label={label}
+										aria-selected
+										className="inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1.5 text-control font-medium leading-none text-foreground transition-colors"
+										role="tab"
+										tabIndex={0}
+										title={label}
+										type="button"
+									>
+										<span className="truncate">{label}</span>
+									</button>
+								</span>
+							</div>
+							<Button
+								aria-label="New terminal"
+								className="shrink-0 text-muted-foreground"
+								disabled={!onOpenShell || openingShell}
+								onClick={onOpenShell}
+								size="icon-sm"
+								title={shellError || "New terminal"}
+								type="button"
+								variant="outline"
+							>
+								{openingShell ? (
+									<Loader2 aria-hidden="true" className="size-icon-md animate-spin" />
+								) : (
+									<Plus aria-hidden="true" className="size-icon-md" />
+								)}
+							</Button>
+						</div>
+						<div
+							aria-label="Chat display controls"
+							className="ml-1.5 flex shrink-0 items-center gap-0.5 border-l border-border/70 pl-1.5"
+							role="toolbar"
 						>
-							{sessionTitle || snapshot.title || snapshot.sessionId}
-						</strong>
-						<span className="flex items-center gap-1.5 text-[10.5px] leading-none text-muted-foreground">
-							<span className="cursor-chat-role-label">{roleLabel}</span>
-							<span aria-hidden="true">·</span>
-							<span>{snapshot.harness}</span>
-						</span>
+							<ChatTopbarControl
+								disabled={fontSize <= CHAT_FONT_SIZE_MIN}
+								label="Decrease font size"
+								onClick={onDecreaseFontSize}
+							>
+								<Minus aria-hidden="true" className="size-icon-sm" />
+							</ChatTopbarControl>
+							<span
+								aria-label={`Chat font size: ${fontSize} pixels`}
+								className="w-font-size-label text-center font-mono text-micro tabular-nums text-muted-foreground"
+							>
+								{fontSize}px
+							</span>
+							<ChatTopbarControl
+								disabled={fontSize >= CHAT_FONT_SIZE_MAX}
+								label="Increase font size"
+								onClick={onIncreaseFontSize}
+							>
+								<Plus aria-hidden="true" className="size-icon-sm" />
+							</ChatTopbarControl>
+							<div aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
+							<ChatTopbarControl
+								isPressed={isFullscreen}
+								label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+								onClick={onToggleFullscreen}
+							>
+								{isFullscreen ? (
+									<Minimize2 aria-hidden="true" className="size-icon-md" />
+								) : (
+									<Maximize2 aria-hidden="true" className="size-icon-md" />
+								)}
+							</ChatTopbarControl>
+						</div>
 					</div>
-					<div className="ml-auto flex shrink-0 items-center gap-2">
-						<CompactButton
-							onCompact={onCompact}
-							compacting={compacting}
-							unavailable={compactUnavailable}
-							turnInFlight={turnInFlight}
-							compactedAt={snapshot.compactedAt}
-						/>
+					<div className="ml-auto flex shrink-0 items-center px-3" data-testid="session-action-region">
 						{headerActions}
 					</div>
 				</div>
 			</header>
 		</SessionTopbarPortal>
+	);
+}
+
+function ChatTopbarControl({
+	children,
+	disabled,
+	isPressed,
+	label,
+	onClick,
+}: {
+	children: ReactNode;
+	disabled?: boolean;
+	isPressed?: boolean;
+	label: string;
+	onClick: () => void;
+}) {
+	return (
+		<Button
+			aria-label={label}
+			aria-pressed={isPressed}
+			className="size-control-sm p-0 text-passive"
+			disabled={disabled}
+			onClick={onClick}
+			size="icon-sm"
+			title={label}
+			type="button"
+			variant="ghost"
+		>
+			{children}
+		</Button>
 	);
 }
 

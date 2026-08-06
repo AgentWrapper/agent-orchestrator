@@ -549,9 +549,9 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Open Chat" }));
+		fireEvent.click(screen.getByRole("button", { name: "Switch to chat UI" }));
 
-		expect(screen.getByRole("dialog")).toHaveTextContent("Switch to Chat?");
+		expect(screen.getByRole("dialog")).toHaveTextContent("Switch to Chat UI?");
 		expect(screen.getByRole("button", { name: /Finish work, then switch/ })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: /Stop now and switch/ })).toBeInTheDocument();
 		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
@@ -566,7 +566,7 @@ describe("SessionView", () => {
 
 		render(<SessionView sessionId="sess-1" />);
 
-		fireEvent.click(screen.getByRole("button", { name: "Open Terminal UI" }));
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
 
 		expect(screen.getByRole("dialog")).toHaveTextContent("Switch to Terminal UI?");
 		expect(screen.getByRole("button", { name: /Finish work, then switch/ })).toBeInTheDocument();
