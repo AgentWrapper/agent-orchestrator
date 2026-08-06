@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -40,11 +41,11 @@ const (
 	// 4 KiB brief and 256-character model while preventing unbounded reads.
 	maxDelegateTaskBodyBytes = 32 << 10
 
-	// Attachment limits guard the daemon against oversized spawn bodies. Images
+	// Attachment limits guard the daemon against oversized spawn bodies. Files
 	// are pasted/dropped into the task brief and inlined as base64 in the JSON
 	// body, so the caps are deliberately conservative.
 	maxAttachments      = 8
-	maxAttachmentBytes  = 10 << 20 // 10 MiB per image, decoded
+	maxAttachmentBytes  = 10 << 20 // 10 MiB per file, decoded
 	maxAttachmentsBytes = 25 << 20 // 25 MiB total, decoded
 	// maxSpawnBodyBytes bounds the raw request body before it is decoded. The
 	// per-attachment and total caps above only apply after the whole body is
@@ -54,18 +55,11 @@ const (
 	maxSpawnBodyBytes = maxAttachmentsBytes*4/3 + (2 << 20)
 )
 
-// attachmentExtByMime maps the accepted image MIME types to the file extension
-// used when the image is written into the worktree. Raster formats only: the
-// agent is told to open the file for visual context, so active-content formats
-// (notably image/svg+xml, which is XML that can carry scripts/external entities)
-// are intentionally excluded.
-var attachmentExtByMime = map[string]string{
-	"image/png":  ".png",
-	"image/jpeg": ".jpg",
-	"image/jpg":  ".jpg",
-	"image/gif":  ".gif",
-	"image/webp": ".webp",
-	"image/bmp":  ".bmp",
+// blockedAttachmentMimes contains MIME types that are explicitly rejected for
+// security reasons. SVG is excluded because it is XML that can carry active
+// content (scripts/external entities).
+var blockedAttachmentMimes = map[string]bool{
+	"image/svg+xml": true,
 }
 
 var errPreviewFileNotFound = errors.New("preview file not found")
@@ -74,7 +68,7 @@ var errPreviewFileNotFound = errors.New("preview file not found")
 type SessionService interface {
 	List(ctx context.Context, filter sessionsvc.ListFilter) ([]domain.Session, error)
 	Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Session, int, int, error)
-	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error)
+	SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, requestedMode domain.SessionMode) (domain.Session, error)
 	Get(ctx context.Context, id domain.SessionID) (domain.Session, error)
 	Restore(ctx context.Context, id domain.SessionID) (sessionsvc.RestoreOutcome, error)
 	ResumeAgent(ctx context.Context, id domain.SessionID) (sessionsvc.ResumeAgentOutcome, error)
@@ -89,6 +83,7 @@ type SessionService interface {
 	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
+	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
 	WorkspaceWatchPaths(ctx context.Context, id domain.SessionID) ([]string, error)
 	ListWorkspaceFiles(ctx context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error)
 	GetWorkspaceFile(ctx context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error)
@@ -150,6 +145,7 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Post("/sessions/{sessionId}/preview/server", c.startPreviewServer)
 	r.Delete("/sessions/{sessionId}/preview/server", c.stopPreviewServer)
 	r.Get("/sessions/{sessionId}/preview/files/*", c.previewFile)
+	r.Post("/sessions/{sessionId}/attachments", c.stageAttachments)
 	r.Get("/sessions/{sessionId}/workspace/files", c.listWorkspaceFiles)
 	r.Get("/sessions/{sessionId}/workspace/file", c.getWorkspaceFile)
 	r.Post("/sessions/{sessionId}/open-editor", c.openInEditor)
@@ -161,6 +157,9 @@ func (c *SessionsController) Register(r chi.Router) {
 	r.Put("/sessions/{sessionId}/reviewer", c.setReviewer)
 	r.Post("/sessions/{sessionId}/restore", c.restore)
 	r.Post("/sessions/{sessionId}/resume-agent", c.resumeAgent)
+	r.Get("/sessions/{sessionId}/interface-transition", c.interfaceTransitionStatus)
+	r.Post("/sessions/{sessionId}/interface-transition", c.startInterfaceTransition)
+	r.Delete("/sessions/{sessionId}/interface-transition", c.cancelInterfaceTransition)
 	r.Post("/sessions/{sessionId}/kill", c.kill)
 	r.Post("/sessions/{sessionId}/rollback", c.rollback)
 	r.Post("/sessions/{sessionId}/send", c.send)
@@ -217,6 +216,12 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
 		return
 	}
+	mode, err := domain.ParseSessionMode(string(in.Mode))
+	if err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "SESSION_MODE_INVALID", err.Error(), nil)
+		return
+	}
+	in.Mode = mode
 	if len(in.Prompt) > maxPromptLen {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROMPT_TOO_LONG", "prompt is too long", nil)
 		return
@@ -238,7 +243,7 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
 		return
 	}
-	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
+	sess, promptBytes, systemPromptBytes, err := c.Svc.Spawn(r.Context(), ports.SpawnConfig{ProjectID: in.ProjectID, IssueID: in.IssueID, Kind: in.Kind, Harness: in.Harness, Branch: in.Branch, RequestedMode: in.Mode, Prompt: in.Prompt, DisplayName: displayName, Attachments: attachments})
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return
@@ -253,9 +258,57 @@ type spawnAttachmentError struct {
 	message string
 }
 
-// decodeSpawnAttachments validates and base64-decodes the inline image
-// attachments from a spawn request, enforcing count, per-image, and total size
-// caps. It returns a nil slice when there are no attachments.
+// extensionForMimeType returns a file extension for a MIME type. For known
+// MIME types, it returns a standard extension. For unknown types, it attempts
+// to extract a reasonable extension from the MIME type, or falls back to ".bin".
+func extensionForMimeType(mimeType string) string {
+	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
+
+	// Preferred extensions for MIME types with multiple options
+	preferredExts := map[string]string{
+		"image/jpeg": ".jpg",
+		"image/jpg":  ".jpg",
+		"text/plain": ".txt",
+	}
+
+	// Check if we have a preferred extension for this MIME type
+	if pref, ok := preferredExts[mimeType]; ok {
+		return pref
+	}
+
+	// Try the standard mime package
+	exts, err := mime.ExtensionsByType(mimeType)
+	if err == nil && len(exts) > 0 {
+		// Prefer common extensions when available
+		for _, ext := range exts {
+			switch ext {
+			case ".jpg", ".jpeg", ".png", ".gif", ".pdf", ".txt", ".json", ".xml", ".html", ".css", ".js", ".md", ".zip", ".tar", ".gz":
+				return ext
+			}
+		}
+		return exts[0] // Return the primary extension if no preferred match
+	}
+
+	// Fallback: extract from the MIME type itself
+	// e.g., "application/pdf" -> ".pdf", "text/plain" -> ".plain"
+	parts := strings.SplitN(mimeType, "/", 2)
+	if len(parts) == 2 {
+		subtype := parts[1]
+		// Handle common suffixes like "+xml", "+json"
+		if idx := strings.Index(subtype, "+"); idx >= 0 {
+			subtype = subtype[:idx]
+		}
+		return "." + subtype
+	}
+
+	// Ultimate fallback for unknown MIME types
+	return ".bin"
+}
+
+// decodeSpawnAttachments validates and base64-decodes the inline file
+// attachments from a spawn request, enforcing count, per-file, and total size
+// caps. It accepts any MIME type except explicitly blocked ones (e.g., SVG
+// for security reasons). Returns a nil slice when there are no attachments.
 func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment, *spawnAttachmentError) {
 	if len(in) == 0 {
 		return nil, nil
@@ -266,10 +319,16 @@ func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment,
 	out := make([]ports.SpawnAttachment, 0, len(in))
 	total := 0
 	for _, a := range in {
-		ext, ok := attachmentExtByMime[strings.ToLower(strings.TrimSpace(a.MimeType))]
-		if !ok {
+		mimeType := strings.ToLower(strings.TrimSpace(a.MimeType))
+
+		// Check for blocked MIME types (e.g., SVG for security)
+		if blockedAttachmentMimes[mimeType] {
 			return nil, &spawnAttachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
 		}
+
+		// Get file extension for the MIME type
+		ext := extensionForMimeType(mimeType)
+
 		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
 		if err != nil {
 			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
@@ -1073,12 +1132,21 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MODEL_TOO_LONG", "Model must be 256 characters or fewer", nil)
 		return
 	}
+	if in.Mode != "" {
+		mode, err := domain.ParseSessionMode(string(in.Mode))
+		if err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_SESSION_MODE", "mode must be chat or tui", nil)
+			return
+		}
+		in.Mode = mode
+	}
 
 	out, err := c.Svc.DelegateTask(r.Context(), sessionsvc.DelegateTaskInput{
 		ProjectID:      in.ProjectID,
 		Brief:          domain.SanitizeControlChars(in.Brief),
 		RequestedAgent: in.Agent,
 		Model:          domain.SanitizeControlChars(strings.TrimSpace(in.Model)),
+		RequestedMode:  in.Mode,
 	})
 	if err != nil {
 		envelope.WriteError(w, r, err)
@@ -1200,7 +1268,13 @@ func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Re
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
 		return
 	}
-	sess, err := c.Svc.SpawnOrchestrator(r.Context(), in.ProjectID, in.Clean)
+	if in.Mode != "" {
+		if _, err := domain.ParseSessionMode(string(in.Mode)); err != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation", "SESSION_MODE_INVALID", err.Error(), nil)
+			return
+		}
+	}
+	sess, err := c.Svc.SpawnOrchestrator(r.Context(), in.ProjectID, in.Clean, in.Mode)
 	if err != nil {
 		envelope.WriteError(w, r, err)
 		return

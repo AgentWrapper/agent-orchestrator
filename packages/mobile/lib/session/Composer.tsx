@@ -20,6 +20,7 @@ export function Composer({
 	voice,
 	keyboardVisible,
 	onDismissKeyboard,
+	targetLocked,
 }: {
 	value: string;
 	onChangeText: (v: string) => void;
@@ -30,6 +31,8 @@ export function Composer({
 	voice: { state: VoiceState; mode: VoiceMode; pressIn(): void; pressOut(): void };
 	keyboardVisible: boolean;
 	onDismissKeyboard: () => void;
+	/** Plain worktree shells have no agent route; hide the misleading toggle. */
+	targetLocked?: boolean;
 }) {
 	const t = useTheme();
 	const { scheme } = useThemeState();
@@ -51,7 +54,7 @@ export function Composer({
 					// No autoFocus: the bar is always mounted now, so focusing on mount
 					// would pop the keyboard over the terminal every time the screen opens.
 				/>
-				<Pressable
+				{!targetLocked ? <Pressable
 					accessibilityRole="button"
 					accessibilityLabel={target === "terminal" ? "Switch to chat" : "Switch to terminal"}
 					accessibilityState={{ selected: target === "terminal" }}
@@ -68,7 +71,7 @@ export function Composer({
 						size={15}
 						color={target === "terminal" ? t.textTertiary : t.blue}
 					/>
-				</Pressable>
+				</Pressable> : null}
 				{/* Only offered while there is a keyboard to dismiss, instead of a
 				    permanent toggle that claimed to hide a keyboard it did not own. */}
 				{keyboardVisible ? (

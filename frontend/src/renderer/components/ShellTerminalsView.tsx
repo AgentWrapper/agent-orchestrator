@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
@@ -41,6 +41,16 @@ export function ShellTerminalsView() {
 	// to a dead handle.
 	const active = shellTerminals.find((s) => s.handleId === activeHandleId);
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(shellTerminals.map((t) => t.handleId).join("|"));
+	const selectAdjacentTab = useCallback(
+		(direction: -1 | 1) => {
+			if (shellTerminals.length === 0) return;
+			const activeIndex = active ? shellTerminals.indexOf(active) : 0;
+			const nextIndex = (activeIndex + direction + shellTerminals.length) % shellTerminals.length;
+			const next = shellTerminals[nextIndex];
+			if (next) setActiveShellTerminal(next.handleId);
+		},
+		[active, setActiveShellTerminal, shellTerminals],
+	);
 	useEffect(() => {
 		if (shellTerminals.length === 0) {
 			if (activeHandleId !== null) setActiveShellTerminal(null);
@@ -56,6 +66,15 @@ export function ShellTerminalsView() {
 			}),
 		[active, closeShellTerminal],
 	);
+
+	useEffect(() => {
+		const disposePrevious = aoBridge.app.onPreviousTabShortcut(() => selectAdjacentTab(-1));
+		const disposeNext = aoBridge.app.onNextTabShortcut(() => selectAdjacentTab(1));
+		return () => {
+			disposePrevious();
+			disposeNext();
+		};
+	}, [selectAdjacentTab]);
 
 	useEffect(() => {
 		aoBridge.app.setCloseShellTerminalShortcutEnabled(Boolean(active));

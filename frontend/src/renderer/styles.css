@@ -233,6 +233,11 @@
 	--color-muted: var(--muted);
 	--color-muted-foreground: var(--muted-foreground);
 	--color-passive: var(--color-text-passive);
+	--color-logo-accent: var(--color-brand-logo);
+	--color-logo-accent-foreground: var(--color-brand-logo-foreground);
+	--color-markdown-code: var(--color-text-markdown-code);
+	--color-markdown-link: var(--color-text-markdown-link);
+	--color-markdown-link-hover: var(--color-text-markdown-link-hover);
 	--color-secondary: var(--secondary);
 	--color-secondary-foreground: var(--secondary-foreground);
 
@@ -551,12 +556,24 @@
 	);
 }
 
-/* Windows / Linux: a ShellTopbar already supplies the top chrome, so the
- * framed panel needs no additional top inset. Windows uses its custom
- * frameless titlebar; Linux uses the standard ShellTopbar. */
+/* Windows / Linux: rectangular frameless window. There is no rounded macOS
+ * window to inset into, so flush the framed panel on every side — top is
+ * already covered by the custom titlebar / ShellTopbar, and the left is flush
+ * to the sidebar globally (padding-left: 0). Zero the remaining right/bottom
+ * insets so the panel fills the full window width instead of floating with a
+ * gap on the right and bottom. */
 .platform-windows .center-panel-shell,
 .platform-linux .center-panel-shell {
 	padding-top: 0;
+	padding-right: 0;
+	padding-bottom: 0;
+}
+
+/* macOS nested-radius formula (window_radius − inset) only makes sense inside
+ * a rounded macOS window. Strip it so the framed panel has sharp corners. */
+.platform-windows .center-panel-surface,
+.platform-linux .center-panel-surface {
+	border-radius: 0;
 }
 
 @utility settings-row-bar {
@@ -1283,6 +1300,267 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	[data-slot="command-dialog-overlay"],
 	[data-slot="command-dialog-content"] {
 		animation: none;
+	}
+}
+
+/* Conversation minimap: each dash is a real turn anchor. The rail forwards
+   pointer, wheel, and keyboard navigation to the conversation viewport. */
+.cursor-chat-surface {
+	background:
+		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-logo-accent) 3%, transparent), transparent 34rem),
+		var(--color-bg-primary);
+}
+
+.cursor-chat-header {
+	border-bottom: 1px solid var(--color-border);
+	background: color-mix(in srgb, var(--color-bg-sidebar) 72%, var(--color-bg-primary));
+}
+
+.cursor-chat-role-icon {
+	color: var(--color-text-muted);
+	background: var(--color-interactive-hover);
+	box-shadow: 0 0 0 1px var(--color-border) inset;
+}
+
+.cursor-chat-role-label {
+	color: var(--color-text-muted);
+}
+
+.cursor-chat-mode-badge {
+	color: var(--color-text-passive);
+	background: var(--color-interactive-hover);
+}
+
+.cursor-chat-timeline {
+	--chat-readable-font-size: var(--chat-font-size, var(--font-size-md));
+	--chat-readable-code-font-size: max(10px, calc(var(--chat-readable-font-size) - 1.5px));
+	background: linear-gradient(to bottom, color-mix(in srgb, var(--color-bg-secondary) 16%, transparent), transparent 7rem);
+}
+
+.cursor-chat-timeline .chat-md,
+.cursor-chat-timeline .chat-md p,
+.cursor-chat-timeline .chat-md li,
+.cursor-chat-timeline .chat-md blockquote,
+.cursor-chat-timeline .cursor-chat-human-message,
+.cursor-chat-timeline .cursor-chat-origin-message > p {
+	font-size: var(--chat-readable-font-size);
+	line-height: 1.58;
+}
+
+.cursor-chat-timeline .chat-md h3 {
+	font-size: calc(var(--chat-readable-font-size) + 1px);
+}
+
+.cursor-chat-timeline .chat-md h4 {
+	font-size: var(--chat-readable-font-size);
+}
+
+.cursor-chat-timeline .chat-md h5,
+.cursor-chat-timeline .chat-md h6,
+.cursor-chat-timeline .chat-md table {
+	font-size: max(10px, calc(var(--chat-readable-font-size) - 0.5px));
+}
+
+.cursor-chat-timeline .chat-md code,
+.cursor-chat-timeline .chat-code code,
+.cursor-chat-timeline .chat-code span {
+	font-size: var(--chat-readable-code-font-size);
+}
+
+.cursor-chat-composer-dock {
+	border-top: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+	background: linear-gradient(to top, var(--color-bg-primary) 76%, color-mix(in srgb, var(--color-bg-primary) 92%, transparent));
+}
+
+.cursor-chat-composer {
+	background: color-mix(in srgb, var(--color-bg-secondary) 94%, var(--color-bg-elevated));
+	box-shadow: var(--elevation-sm);
+}
+
+.cursor-chat-composer:focus-within {
+	border-color: color-mix(in srgb, var(--color-logo-accent) 45%, var(--color-border-strong));
+	background: var(--color-bg-secondary);
+	box-shadow: var(--elevation-md);
+}
+
+.cursor-chat-human-message {
+	background: color-mix(in srgb, var(--color-bg-elevated) 72%, var(--color-bg-secondary));
+	border-color: color-mix(in srgb, var(--color-border-strong) 85%, transparent);
+}
+
+.cursor-chat-origin-message,
+.cursor-chat-activity-panel {
+	background: color-mix(in srgb, var(--color-bg-secondary) 62%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-surface {
+	background:
+		radial-gradient(circle at 50% 0%, color-mix(in srgb, var(--color-logo-accent) 5%, transparent), transparent 34rem),
+		var(--color-bg-primary);
+}
+
+:root[data-theme="light"] .cursor-chat-surface .text-foreground,
+:root[data-theme="light"] .cursor-chat-surface .chat-md {
+	color: var(--color-text-primary);
+}
+
+:root[data-theme="light"] .cursor-chat-surface .text-muted-foreground,
+:root[data-theme="light"] .cursor-chat-surface [class*="text-muted-foreground/"],
+:root[data-theme="light"] .cursor-chat-role-label,
+:root[data-theme="light"] .cursor-chat-role-icon {
+	color: color-mix(in oklch, var(--color-text-primary) 64%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-surface .text-passive,
+:root[data-theme="light"] .cursor-chat-composer textarea::placeholder,
+:root[data-theme="light"] .cursor-chat-mode-badge {
+	color: color-mix(in oklch, var(--color-text-primary) 48%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-header {
+	background: color-mix(in srgb, var(--color-bg-sidebar) 86%, var(--color-bg-primary));
+}
+
+:root[data-theme="light"] .cursor-chat-composer {
+	background: color-mix(in srgb, var(--color-bg-secondary) 98%, var(--color-bg-tertiary));
+	border-color: color-mix(in oklch, var(--color-text-primary) 18%, transparent);
+	box-shadow:
+		0 1px 0 color-mix(in oklch, var(--color-text-primary) 4%, transparent),
+		0 10px 28px color-mix(in oklch, var(--color-text-primary) 8%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-composer:focus-within {
+	border-color: color-mix(in srgb, var(--color-logo-accent) 48%, var(--color-border-strong));
+	background: var(--color-bg-secondary);
+}
+
+:root[data-theme="light"] .cursor-chat-human-message {
+	background: color-mix(in srgb, var(--color-bg-secondary) 78%, var(--color-bg-tertiary));
+	border-color: color-mix(in oklch, var(--color-text-primary) 14%, transparent);
+}
+
+:root[data-theme="light"] .cursor-chat-origin-message,
+:root[data-theme="light"] .cursor-chat-activity-panel {
+	background: color-mix(in srgb, var(--color-bg-tertiary) 66%, transparent);
+	border-color: color-mix(in oklch, var(--color-text-primary) 12%, transparent);
+}
+
+/* The live caret belongs to the text being written. A separate block after the
+   markdown looked like an empty automation row, especially between tool calls. */
+.chat-assistant-streaming .chat-md > :last-child::after {
+	display: inline-block;
+	width: 2px;
+	height: 1em;
+	margin-left: 0.25rem;
+	vertical-align: -0.12em;
+	background: var(--color-text-muted);
+	content: "";
+	animation: pulse 1.5s ease-in-out infinite;
+}
+
+.chat-md-emoji {
+	display: inline-block;
+	font-size: 0.86em;
+	line-height: 1;
+	vertical-align: -0.06em;
+}
+
+.chat-scroll-viewport {
+	scrollbar-width: none;
+}
+
+.chat-scroll-viewport::-webkit-scrollbar {
+	display: none;
+}
+
+.chat-scroll-marker {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	width: 7px;
+	height: 2px;
+	transform: translate(-50%, -50%);
+	border-radius: 999px;
+	background: color-mix(in srgb, var(--color-text-muted) 54%, transparent);
+	opacity: 0.76;
+	transition:
+		width 180ms cubic-bezier(0.16, 1, 0.3, 1),
+		background-color 140ms ease,
+		opacity 140ms ease;
+}
+
+.chat-scroll-marker-hit {
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 10px;
+	transform: translateY(-50%);
+}
+
+.chat-scroll-marker-visible {
+	background: color-mix(in srgb, var(--color-text-muted) 82%, transparent);
+	opacity: 1;
+}
+
+.group\/scroll:hover .chat-scroll-marker,
+.group\/scroll:focus-visible .chat-scroll-marker {
+	width: 9px;
+	background: color-mix(in srgb, var(--color-text-muted) 72%, transparent);
+	opacity: 0.96;
+}
+
+.group\/scroll:hover .chat-scroll-marker-visible,
+.group\/scroll:focus-visible .chat-scroll-marker-visible {
+	width: 11px;
+	background: var(--color-text-muted);
+}
+
+.group\/scroll .chat-scroll-marker-near,
+.group\/scroll:hover .chat-scroll-marker-near,
+.group\/scroll:focus-visible .chat-scroll-marker-near {
+	width: 15px;
+}
+
+.group\/scroll .chat-scroll-marker-adjacent,
+.group\/scroll:hover .chat-scroll-marker-adjacent,
+.group\/scroll:focus-visible .chat-scroll-marker-adjacent {
+	width: 21px;
+}
+
+.group\/scroll .chat-scroll-marker-active,
+.group\/scroll:hover .chat-scroll-marker-active,
+.group\/scroll:focus-visible .chat-scroll-marker-active {
+	width: 28px;
+	background: var(--color-foreground);
+	opacity: 1;
+}
+
+.chat-scroll-preview {
+	transform: translate(-6px, -50%) scale(0.98);
+	transform-origin: right center;
+	animation: chat-scroll-preview-in 140ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes chat-scroll-preview-in {
+	from {
+		opacity: 0;
+		transform: translate(2px, -50%) scale(0.98);
+	}
+	to {
+		opacity: 1;
+		transform: translate(-6px, -50%) scale(1);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.chat-scroll-marker {
+		transition: none;
+	}
+
+	.chat-scroll-preview {
+		animation: none;
+		opacity: 1;
+		transform: translate(-6px, -50%);
 	}
 }
 

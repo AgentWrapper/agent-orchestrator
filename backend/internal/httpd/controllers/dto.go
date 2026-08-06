@@ -3,6 +3,7 @@ package controllers
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
@@ -158,7 +159,15 @@ type SpawnSessionRequest struct {
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
 	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	Branch    string              `json:"branch,omitempty"`
-	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
+	// Mode picks the conversation controller: chat talks to the agent over a
+	// structured connection, tui opens the agent's native terminal interface.
+	// Omitted resolves to the daemon default (tui), which is why an upgrade
+	// changes nothing. Compatible sessions may later switch through the durable
+	// interface-transition endpoint; the default never mutates existing sessions
+	// automatically. An unsupported explicit request fails rather than quietly
+	// producing the other kind of session.
+	Mode   domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
+	Prompt string             `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
@@ -191,6 +200,23 @@ type SpawnSessionResponse struct {
 	Session           SessionView `json:"session"`
 	PromptBytes       int         `json:"promptBytes"`
 	SystemPromptBytes int         `json:"systemPromptBytes"`
+}
+
+// StageSessionAttachmentsRequest attaches images to a session that is already
+// running, for a caller that will name the returned paths in its next message.
+type StageSessionAttachmentsRequest struct {
+	// Attachments each carry their bytes as standard base64 (no data: URL prefix).
+	// The same count, size, and raster-only rules as spawn apply.
+	Attachments []SpawnAttachmentInput `json:"attachments"`
+}
+
+// StageSessionAttachmentsResponse is where the images were written.
+type StageSessionAttachmentsResponse struct {
+	SessionID domain.SessionID `json:"sessionId"`
+	// Paths are worktree-relative and forward-slashed, in the order submitted. They
+	// are what the agent can actually open, so a client must send these verbatim
+	// rather than a display form of them.
+	Paths []string `json:"paths"`
 }
 
 // ListWorkspaceFilesResponse is the body of GET /api/v1/sessions/{sessionId}/workspace/files.
@@ -385,6 +411,53 @@ type ResumeAgentResponse struct {
 	Session    SessionView                `json:"session"`
 }
 
+// StartSessionInterfaceTransitionRequest is the body of POST
+// /api/v1/sessions/{sessionId}/interface-transition.
+type StartSessionInterfaceTransitionRequest struct {
+	TargetMode domain.SessionMode                      `json:"targetMode" enum:"chat,tui"`
+	Policy     domain.SessionInterfaceTransitionPolicy `json:"policy" enum:"drain,interrupt"`
+}
+
+// SessionInterfaceTransitionView is the client-facing progress record. The
+// provider-native conversation id is intentionally not exposed: clients need
+// controller state, not an adapter implementation detail.
+type SessionInterfaceTransitionView struct {
+	ID          string                                  `json:"id"`
+	SessionID   domain.SessionID                        `json:"sessionId"`
+	SourceMode  domain.SessionMode                      `json:"sourceMode" enum:"chat,tui"`
+	TargetMode  domain.SessionMode                      `json:"targetMode" enum:"chat,tui"`
+	Policy      domain.SessionInterfaceTransitionPolicy `json:"policy" enum:"drain,interrupt"`
+	Phase       domain.SessionInterfaceTransitionPhase  `json:"phase" enum:"requested,preflighting,draining,source_stopping,source_stopped,target_starting,activating,completed,failed,cancelled,recovery_required"`
+	ErrorCode   string                                  `json:"errorCode,omitempty"`
+	ErrorDetail string                                  `json:"errorDetail,omitempty"`
+	CreatedAt   time.Time                               `json:"createdAt"`
+	UpdatedAt   time.Time                               `json:"updatedAt"`
+	CompletedAt *time.Time                              `json:"completedAt,omitempty"`
+}
+
+// SessionInterfaceTransitionStatusResponse is the body of GET
+// /api/v1/sessions/{sessionId}/interface-transition.
+type SessionInterfaceTransitionStatusResponse struct {
+	Supported  bool                            `json:"supported"`
+	TargetMode domain.SessionMode              `json:"targetMode" enum:"chat,tui"`
+	ReasonCode string                          `json:"reasonCode,omitempty"`
+	Reason     string                          `json:"reason,omitempty"`
+	Transition *SessionInterfaceTransitionView `json:"transition,omitempty"`
+}
+
+// StartSessionInterfaceTransitionResponse acknowledges an asynchronous handoff.
+type StartSessionInterfaceTransitionResponse struct {
+	OK         bool                           `json:"ok"`
+	SessionID  domain.SessionID               `json:"sessionId"`
+	Transition SessionInterfaceTransitionView `json:"transition"`
+}
+
+// CancelSessionInterfaceTransitionResponse acknowledges cancellation.
+type CancelSessionInterfaceTransitionResponse struct {
+	OK        bool             `json:"ok"`
+	SessionID domain.SessionID `json:"sessionId"`
+}
+
 // KillSessionResponse is the body of POST /api/v1/sessions/{sessionId}/kill.
 type KillSessionResponse struct {
 	OK        bool             `json:"ok"`
@@ -439,6 +512,9 @@ type DelegateTaskRequest struct {
 	Brief     string              `json:"brief" maxLength:"4096"`
 	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
 	Model     string              `json:"model,omitempty" maxLength:"256"`
+	// Mode is omitted for the daemon-owned default. The UI sends tui only when
+	// the user explicitly accepts the fallback after Chat preflight fails.
+	Mode domain.SessionMode `json:"mode,omitempty" enum:"tui,chat"`
 }
 
 // DelegateTaskResponse confirms which worker was spawned and, when available,
@@ -694,6 +770,10 @@ type OrchestratorIDParam struct {
 type SpawnOrchestratorRequest struct {
 	ProjectID domain.ProjectID `json:"projectId"`
 	Clean     bool             `json:"clean,omitempty"`
+	// Mode applies only when this request creates a project orchestrator. An
+	// idempotent ensure returns the existing orchestrator unchanged, and a clean
+	// replacement inherits the existing orchestrator's currently committed mode.
+	Mode domain.SessionMode `json:"mode,omitempty" enum:"chat,tui"`
 }
 
 // SpawnOrchestratorResponse is the body of POST /api/v1/orchestrators.
@@ -996,6 +1076,537 @@ type PushDeviceEnvelope struct {
 type UnregisterPushDeviceResponse struct {
 	Token   string `json:"token"`
 	Deleted bool   `json:"deleted"`
+}
+
+/* ---- chat conversations ------------------------------------------------ */
+
+// SendConversationMessageRequest is a message for a Chat session's agent.
+type SendConversationMessageRequest struct {
+	Text string `json:"text"`
+	// ClientMessageID makes delivery idempotent. A retry carrying the same value
+	// must not produce a second provider turn.
+	ClientMessageID string                               `json:"clientMessageId,omitempty"`
+	Attachments     []ConversationImageContentRequest    `json:"attachments,omitempty"`
+	Resources       []ConversationResourceContentRequest `json:"resources,omitempty"`
+}
+
+// ConversationImageContentRequest is a native raster image prompt block.
+type ConversationImageContentRequest struct {
+	MIMEType string `json:"mimeType"`
+	Data     string `json:"data"`
+}
+
+// ConversationResourceContentRequest is a resource link, or embedded text when
+// Text is present and the provider negotiated embedded context.
+type ConversationResourceContentRequest struct {
+	URI      string  `json:"uri"`
+	Name     string  `json:"name"`
+	MIMEType string  `json:"mimeType,omitempty"`
+	Text     *string `json:"text,omitempty"`
+}
+
+// SendConversationMessageResponse reports what the send did.
+type SendConversationMessageResponse struct {
+	TurnID         string `json:"turnId,omitempty"`
+	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	// State is `running` when the agent picked the message up immediately and
+	// `queued` when it arrived mid-turn and will be sent once the turn ends. A
+	// client that only reads turnId cannot tell those apart, and "accepted" is not
+	// the same claim as "delivered".
+	State domain.TurnState `json:"state,omitempty" enum:"queued,running,completed,interrupted,failed"`
+	// Duplicate is true when this client message id was already delivered, so a
+	// retrying client can stop instead of assuming a new turn began.
+	Duplicate bool `json:"duplicate"`
+}
+
+// ConversationModelsResponse is the provider's model catalog plus what is selected.
+type ConversationModelsResponse struct {
+	Models   []ConversationModelResponse     `json:"models"`
+	Selected ConversationTurnSettingsPayload `json:"selected"`
+}
+
+// ConversationConfigOptionsResponse is the provider's complete live session
+// configuration catalog. Clients replace their cached list after a mutation:
+// model changes can add or remove dependent controls.
+type ConversationConfigOptionsResponse struct {
+	Options []ConversationConfigOptionResponse `json:"options"`
+}
+
+// ConversationConfigOptionResponse is one provider-advertised session control.
+type ConversationConfigOptionResponse struct {
+	ID             string                             `json:"id"`
+	Name           string                             `json:"name"`
+	Description    string                             `json:"description,omitempty"`
+	Category       string                             `json:"category,omitempty"`
+	Type           string                             `json:"type" enum:"select,boolean"`
+	CurrentValue   string                             `json:"currentValue,omitempty"`
+	CurrentBoolean *bool                              `json:"currentBoolean,omitempty"`
+	Choices        []ConversationConfigChoiceResponse `json:"choices,omitempty"`
+}
+
+// ConversationConfigChoiceResponse is one value in a provider select.
+type ConversationConfigChoiceResponse struct {
+	Value       string `json:"value"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Group       string `json:"group,omitempty"`
+	GroupName   string `json:"groupName,omitempty"`
+}
+
+// SetConversationConfigOptionRequest selects one provider-advertised value.
+// Selects use Value; booleans use Enabled. Exactly one must be present.
+type SetConversationConfigOptionRequest struct {
+	Value   string `json:"value,omitempty"`
+	Enabled *bool  `json:"enabled,omitempty"`
+}
+
+// ConversationModelResponse is one model the provider offers.
+type ConversationModelResponse struct {
+	ID          string `json:"id"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+	// Default marks the model the provider would pick on its own, so a client can
+	// label it rather than inventing its own idea of a default.
+	Default bool `json:"default"`
+	// Efforts are the reasoning levels this model supports, in the provider's
+	// order. Empty means the model does not take one.
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
+}
+
+// ConversationSkillsResponse is the named skills the provider will let this
+// session invoke.
+//
+// An empty list is a real answer, not a failure: it means this agent offers no
+// skills, and a client must render that as "no commands" rather than as an error.
+type ConversationSkillsResponse struct {
+	Skills []ConversationSkillResponse `json:"skills"`
+}
+
+// ConversationSkillResponse is one skill a user can invoke by name.
+type ConversationSkillResponse struct {
+	// Name is the invocable identifier. It is what a client puts in the message
+	// text; DisplayName is only a label.
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description,omitempty"`
+	// InputHint is the provider's short placeholder for command arguments.
+	InputHint string `json:"inputHint,omitempty"`
+	// Source is where the skill came from (the provider's scope: user, repo,
+	// system, admin), so a user can tell a repo skill from one of their own.
+	Source string `json:"source,omitempty"`
+}
+
+// ConversationTurnSettingsPayload is the provider choices for the next turn. It is
+// both the request body for changing them and the echo of what is now stored.
+//
+// Every field is optional and an empty value means "use the provider's default",
+// so clearing a choice and never making one are the same thing.
+type ConversationTurnSettingsPayload struct {
+	Model           string `json:"model,omitempty"`
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	ApprovalMode    string `json:"approvalMode,omitempty" enum:"default,accept-edits,auto,bypass-permissions"`
+}
+
+// ResolveConversationApprovalRequest answers a pending approval. DecisionID must
+// be one the provider offered for that request; AO does not invent options.
+type ResolveConversationApprovalRequest struct {
+	DecisionID string `json:"decisionId"`
+}
+
+// ResolveConversationInputRequest answers a structured form or URL-consent
+// request. Content is meaningful only for accept.
+type ResolveConversationInputRequest struct {
+	Action  string         `json:"action" enum:"accept,decline,cancel"`
+	Content map[string]any `json:"content,omitempty"`
+}
+
+// CompactConversationResponse reports a compaction the provider accepted.
+//
+// Accepted, not finished. The provider takes the request and does the work as its
+// own turn over the following seconds, so this says what is about to be reclaimed
+// and the settled figures arrive on the timeline as a compaction entry. A client
+// that wants the outcome reads the timeline, which is where it belongs anyway:
+// the reclaim is durable history, not the answer to one request.
+type CompactConversationResponse struct {
+	// TokensBefore is the conversation's context position when compaction was
+	// requested. Zero means the provider has not reported one yet, in which case
+	// AO deliberately claims no figure rather than guessing at one.
+	TokensBefore int64 `json:"tokensBefore,omitempty"`
+	// TokensAfter is only set by a provider that compacts synchronously. Zero means
+	// the reclaim is still in flight.
+	TokensAfter int64 `json:"tokensAfter,omitempty"`
+}
+
+// ConversationTurnResponse is one request and the work that followed it.
+type ConversationTurnResponse struct {
+	ID             string  `json:"id"`
+	State          string  `json:"state" enum:"queued,running,completed,interrupted,failed"`
+	ProviderTurnID string  `json:"providerTurnId,omitempty"`
+	ErrorMessage   string  `json:"errorMessage,omitempty"`
+	RequestedAt    string  `json:"requestedAt"`
+	StartedAt      *string `json:"startedAt,omitempty"`
+	CompletedAt    *string `json:"completedAt,omitempty"`
+	// RolledBack marks a turn an undo discarded. Its messages and activities are
+	// absent from this snapshot because the agent no longer remembers them; the turn
+	// is still reported so a client can say what was taken back rather than letting
+	// the timeline quietly shrink.
+	RolledBack bool `json:"rolledBack,omitempty"`
+	// Diff is what this turn has changed on disk. Absent when the provider has
+	// reported nothing, which is not a claim that nothing changed: an agent
+	// without diff support never reports at all.
+	//
+	// Carried on the snapshot the client already polls rather than behind its own
+	// route. A dedicated route would be a second request, on the same cadence, for
+	// data this read has already loaded -- the diff belongs to a turn, and the turn
+	// list is right here. It also keeps the changed-file view and the timeline from
+	// disagreeing, which two independently-timed fetches would eventually do.
+	Diff *ConversationTurnDiffResponse `json:"diff,omitempty"`
+	// Plan is the agent's plan for this turn, or absent when it made none. The
+	// provider re-sends the whole plan on every change, so this is the current answer
+	// rather than a history of one: the earlier versions are the same plan with fewer
+	// steps ticked off.
+	Plan *ConversationPlanResponse `json:"plan,omitempty"`
+}
+
+// ConversationPlanResponse is the agent's plan for one turn.
+type ConversationPlanResponse struct {
+	// Explanation is the agent's note about the plan as a whole, when it gives one.
+	Explanation string                         `json:"explanation,omitempty"`
+	Steps       []ConversationPlanStepResponse `json:"steps"`
+}
+
+// ConversationPlanStepResponse is one step of a plan.
+//
+// Structured, not prose. The per-step status is the whole point -- it is where the
+// agent is up to -- and a client that wants a sentence can join the steps, while one
+// that wants checkboxes cannot recover them from a sentence.
+type ConversationPlanStepResponse struct {
+	Text   string `json:"text"`
+	Status string `json:"status" enum:"pending,in_progress,completed"`
+}
+
+// ConversationTurnDiffResponse is a turn's changed-file summary.
+type ConversationTurnDiffResponse struct {
+	Files []ConversationDiffFileResponse `json:"files"`
+	// Truncated reports that the file list was cut at the daemon's cap, so a client
+	// does not present a partial list as the whole change.
+	Truncated bool `json:"truncated,omitempty"`
+}
+
+// ConversationDiffFileResponse is one changed path.
+//
+// No patch text. The turn view answers "what did this touch, and by how much";
+// carrying every hunk would put the full diff into a body polled once a second,
+// and AO already has a diff surface for reading the change itself.
+type ConversationDiffFileResponse struct {
+	Path      string `json:"path"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Status    string `json:"status" enum:"added,modified,deleted,renamed"`
+	// OldPath is set only for a rename.
+	OldPath string `json:"oldPath,omitempty"`
+	// RolledBack marks a turn an undo discarded. Its messages and activities are
+	// absent from this snapshot because the agent no longer remembers them; the turn
+	// is still reported so a client can say what was taken back rather than letting
+	// the timeline quietly shrink.
+	RolledBack bool `json:"rolledBack,omitempty"`
+}
+
+// ConversationMessageResponse is one readable block of text.
+type ConversationMessageResponse struct {
+	Kind     string `json:"kind" enum:"message"`
+	ID       string `json:"id"`
+	TurnID   string `json:"turnId,omitempty"`
+	Sequence int64  `json:"sequence"`
+	Revision int64  `json:"revision"`
+	Role     string `json:"role" enum:"user,assistant"`
+	Origin   string `json:"origin" enum:"human,automation,daemon,provider"`
+	Text     string `json:"text"`
+	// Streaming is true while more deltas are expected for this message.
+	Streaming bool   `json:"streaming"`
+	CreatedAt string `json:"createdAt"`
+}
+
+// ConversationActivityResponse is one non-message timeline entry.
+type ConversationActivityResponse struct {
+	Kind     string `json:"kind" enum:"activity"`
+	ID       string `json:"id"`
+	TurnID   string `json:"turnId,omitempty"`
+	Sequence int64  `json:"sequence"`
+	Revision int64  `json:"revision"`
+	// ActivityKind discriminates the payload in Detail.
+	//
+	// mcp_tool is not command: an MCP call has a server, a tool name, structured
+	// arguments and a structured result, and rendering it as a shell command claimed
+	// the agent had run something in the worktree. auto_review is not approval: an
+	// approval is a question waiting on a person, while an auto-review is a decision
+	// the provider already made on their behalf, and those are opposites.
+	ActivityKind string `json:"activityKind" enum:"command,file_change,plan,reasoning,approval,usage,error,system,mcp_tool,auto_review,user_input"`
+	Status       string `json:"status" enum:"running,completed,failed,cancelled,pending,resolved"`
+	Summary      string `json:"summary"`
+	// Detail is the provider-neutral typed payload for this kind. For an approval
+	// it carries the provider's own offered decisions, which is what the client
+	// renders buttons from.
+	//
+	// The keys that depend on the kind:
+	//
+	//   command      command, rawCommand, cwd, exitCode, durationMs, processId,
+	//                output (+ outputSource, outputMayBePartial, outputTruncated),
+	//                terminalInput -- the keystrokes the agent sent to the PTY, kept
+	//                out of output because the PTY echoes them
+	//   file_change  files[] with path, oldPath, status, additions, deletions, patch
+	//   reasoning    text -- streamed while the model works, replaced by the
+	//                provider's settled summary when the item completes
+	//   mcp_tool     server, toolName, namespace, arguments, result, error, success,
+	//                progress
+	//   plan         event "plan", explanation, steps[] with text and status
+	//   auto_review  reviewId, targetItemId, actionType, command, riskLevel,
+	//                rationale, decisionSource, status, durationMs
+	//   user_input   inputMode, message, schema, url, elicitationId
+	//   system       event -- "compaction", "model.rerouted" or
+	//                "auth.reauth_required" -- plus that event's own fields
+	Detail    map[string]any `json:"detail,omitempty"`
+	RequestID string         `json:"requestId,omitempty"`
+	// ProviderItemID is the stable parent key used by nested ACP transcripts.
+	ProviderItemID string `json:"providerItemId,omitempty"`
+	CreatedAt      string `json:"createdAt"`
+}
+
+// ConversationSnapshotResponse is the durable read model a client bootstraps from.
+type ConversationSnapshotResponse struct {
+	ConversationID string `json:"conversationId"`
+	SessionID      string `json:"sessionId"`
+	Harness        string `json:"harness,omitempty"`
+	Mode           string `json:"mode" enum:"chat,tui"`
+	// Controller is reported separately from history so a client can tell "no
+	// messages yet" apart from "the agent is not running".
+	Controller     string                         `json:"controller" enum:"connecting,ready,busy,recovering,stopped"`
+	LatestSequence int64                          `json:"latestSequence"`
+	OldestSequence int64                          `json:"oldestSequence,omitempty"`
+	HasMoreBefore  bool                           `json:"hasMoreBefore"`
+	Turns          []ConversationTurnResponse     `json:"turns"`
+	Messages       []ConversationMessageResponse  `json:"messages"`
+	Activities     []ConversationActivityResponse `json:"activities"`
+	// Settings are the provider choices for the next turn. Carried on the snapshot
+	// the client already polls so the composer can label itself without a second
+	// request, and so a choice made on another client shows up here.
+	Settings ConversationTurnSettingsPayload `json:"settings"`
+	// Title is the name the provider currently gives this thread. Empty means it has
+	// not named one, which is not the same as an empty name.
+	Title string `json:"title,omitempty"`
+	// Usage is how full this conversation is. Omitted until the provider reports,
+	// so a client can tell "not known yet" from a conversation using nothing.
+	Usage *ConversationUsagePayload `json:"usage,omitempty"`
+	// RateLimits is where the account stands. Omitted until the provider reports.
+	RateLimits *ConversationRateLimitsPayload `json:"rateLimits,omitempty"`
+	// CompactedAt is when history was last summarized to reclaim context, or absent
+	// if never. On the snapshot rather than derived from the timeline so a client can
+	// label the control without scanning every activity.
+	CompactedAt *string `json:"compactedAt,omitempty"`
+	// ModelReroute is present when the provider answered with a model other than the
+	// one that was asked for. A client MUST prefer this over the selected model when
+	// naming what produced the answers: without it the composer keeps advertising a
+	// model that is not replying.
+	ModelReroute *ConversationModelReroutePayload `json:"modelReroute,omitempty"`
+	// Account is the provider account this conversation runs under. Omitted until the
+	// provider says anything about it.
+	Account *ConversationAccountPayload `json:"account,omitempty"`
+	// ThreadState is the provider's own lifecycle view of the thread. It is NOT the
+	// session's status, which stays derived from durable facts and is served on the
+	// session resource; this is one more such fact.
+	ThreadState *ConversationThreadStatePayload `json:"threadState,omitempty"`
+	// MCPServers is the startup state of the tool servers this conversation can
+	// reach. Empty means none are configured or none has reported. It answers a
+	// question the timeline cannot: a tool call that never happened because its
+	// server failed to start reads, from the timeline alone, as the agent choosing
+	// not to use it.
+	MCPServers []ConversationMCPServerPayload `json:"mcpServers,omitempty"`
+	// Capabilities names what this session's provider can do, so a client gates a
+	// control before drawing it. Sorted, and only the abilities the provider
+	// actually has are listed.
+	//
+	// An open list rather than a fixed set of booleans: drivers gain abilities, and
+	// a client that checks for membership keeps working against a daemon that knows
+	// about more of them than it does. Absent until a controller is live, because an
+	// unstarted session's abilities are not yet known — and a client must treat
+	// absent as "do not offer yet" rather than as "cannot".
+	Capabilities []string `json:"capabilities,omitempty"`
+}
+
+// ConversationModelReroutePayload is the provider answering with a model other than
+// the one that was asked for.
+type ConversationModelReroutePayload struct {
+	FromModel string `json:"fromModel,omitempty"`
+	ToModel   string `json:"toModel"`
+	// Reason is the provider's own word for why, carried verbatim rather than
+	// translated: AO cannot improve on the provider's account of its own policy.
+	Reason string `json:"reason,omitempty"`
+	// ProviderTurnID is the turn it happened on, so a client can point at the
+	// exchange rather than only at the conversation.
+	ProviderTurnID string `json:"providerTurnId,omitempty"`
+	At             string `json:"at"`
+}
+
+// ConversationAccountPayload is what the provider says about the account behind a
+// conversation.
+type ConversationAccountPayload struct {
+	AuthMode  string `json:"authMode,omitempty"`
+	PlanLabel string `json:"planLabel,omitempty"`
+	// ReauthRequiredAt is when the provider last asked for credentials the daemon
+	// does not hold. Present means the session has stopped working for a reason no
+	// retry will fix and the user has to sign in again.
+	ReauthRequiredAt *string `json:"reauthRequiredAt,omitempty"`
+	ReauthReason     string  `json:"reauthReason,omitempty"`
+}
+
+// ConversationThreadStatePayload is the provider's lifecycle view of the thread.
+type ConversationThreadStatePayload struct {
+	Status string `json:"status,omitempty" enum:"active,idle,not_loaded,system_error,closed"`
+	// WaitingOn are the provider's active flags. A thread can be active AND blocked
+	// on a person, and those are different states.
+	WaitingOn []string `json:"waitingOn,omitempty"`
+	// ArchivedAt is present while the provider considers the thread archived.
+	// Archiving is reversible, so this returns to absent on unarchive.
+	ArchivedAt *string `json:"archivedAt,omitempty"`
+	// ClosedAt is when the provider dropped the thread. Recorded rather than acted
+	// on: the daemon has never observed this, so tearing a controller down on the
+	// strength of it would be a guess.
+	ClosedAt *string `json:"closedAt,omitempty"`
+}
+
+// ConversationMCPServerPayload is one tool server's startup state.
+type ConversationMCPServerPayload struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	// Error is the provider's failure text; FailureReason is its classification,
+	// which is actionable in a way a message is not.
+	Error         string `json:"error,omitempty"`
+	FailureReason string `json:"failureReason,omitempty"`
+}
+
+// ReloadConversationMCPServersResponse reports the tool servers after a reload.
+//
+// The list is what the provider reported when asked. Its own startup notifications
+// remain the authoritative account and land on the conversation regardless, so a
+// client that polls the snapshot will converge on the same answer.
+type ReloadConversationMCPServersResponse struct {
+	Servers []ConversationMCPServerPayload `json:"servers"`
+}
+
+// ConversationUsagePayload is the conversation's token position.
+//
+// Current state on the snapshot rather than timeline entries: the provider reports
+// this after every tool call, and one row per report is what buried the
+// conversation before.
+type ConversationUsagePayload struct {
+	// ContextUsed and ContextWindow are what let a client draw a meter instead of
+	// printing a bare number. ContextWindow is 0 when the provider would not state
+	// one, and a client must then show the tokens without a fullness claim.
+	ContextUsed   int64 `json:"contextUsed"`
+	ContextWindow int64 `json:"contextWindow"`
+	// The conversation's cumulative spend, which is a different question from
+	// fullness: it grows without bound while context rises and falls.
+	InputTokens  int64    `json:"inputTokens"`
+	OutputTokens int64    `json:"outputTokens"`
+	CachedTokens int64    `json:"cachedTokens"`
+	TotalTokens  int64    `json:"totalTokens"`
+	Cost         *float64 `json:"cost,omitempty"`
+	Currency     string   `json:"currency,omitempty"`
+}
+
+// ConversationRateLimitsPayload is the account's quota position, which is why a
+// turn can fail for reasons that have nothing to do with the request.
+type ConversationRateLimitsPayload struct {
+	// Percentages in 0..100. Negative means the provider did not report that
+	// window, which is not the same as reporting it empty.
+	PrimaryUsedPercent   float64 `json:"primaryUsedPercent"`
+	SecondaryUsedPercent float64 `json:"secondaryUsedPercent"`
+	// Seconds remaining, not the absolute reset instant: a duration cannot read as
+	// already-refilled once the snapshot is a few minutes old.
+	PrimaryResetsInSeconds   int64  `json:"primaryResetsInSeconds,omitempty"`
+	SecondaryResetsInSeconds int64  `json:"secondaryResetsInSeconds,omitempty"`
+	PlanLabel                string `json:"planLabel,omitempty"`
+	// Title is the name the provider currently gives this thread. Empty means it has
+	// none, which is the normal state until something names it.
+	Title string `json:"title,omitempty"`
+}
+
+// ConversationRequestIDParam is the provider's approval request id. Resolving
+// matches on it, so a card left on screen cannot answer a newer request.
+type ConversationRequestIDParam struct {
+	RequestID string `path:"requestId" description:"Provider approval request identifier. Zero is a legitimate value."`
+}
+
+// ConversationConfigIDParam names one provider-advertised session option.
+type ConversationConfigIDParam struct {
+	ConfigID string `path:"configId" description:"Provider session configuration option identifier."`
+}
+
+// ConversationTurnIDParam names one turn in a session's conversation.
+type ConversationTurnIDParam struct {
+	TurnID string `path:"turnId" description:"AO conversation turn identifier, from the snapshot's turns array."`
+}
+
+// RollbackConversationResponse reports what an undo discarded.
+type RollbackConversationResponse struct {
+	// TurnsDiscarded counts the turns the agent no longer remembers, including the
+	// one the caller named. A client can say how much was taken back instead of
+	// leaving the user to notice the timeline is shorter.
+	TurnsDiscarded int `json:"turnsDiscarded"`
+}
+
+// SetConversationTitleRequest names the provider's thread.
+type SetConversationTitleRequest struct {
+	Title string `json:"title"`
+}
+
+// SetConversationTitleResponse echoes the normalized title.
+//
+// Accepted rather than applied: the provider confirms the name and then reports it
+// back on its own event, and that report is what updates AO's rows. So this is the
+// title AO asked for, which is not yet proof the session label has moved.
+type SetConversationTitleResponse struct {
+	Title string `json:"title"`
+}
+
+/* ---- settings ---------------------------------------------------------- */
+
+// SettingsResponse is the daemon-owned preference set.
+type SettingsResponse struct {
+	// DefaultSessionMode applies to sessions created from now on. Changing it
+	// never alters an existing session; only an explicit interface transition can.
+	DefaultSessionMode string `json:"defaultSessionMode" enum:"chat,tui"`
+	// ChatHarnesses are the agents that can run in chat mode today. Empty means
+	// chat cannot be used yet, which a client should say plainly.
+	ChatHarnesses []string `json:"chatHarnesses"`
+}
+
+// UpdateSessionInterfaceRequest changes the default interface for new sessions.
+type UpdateSessionInterfaceRequest struct {
+	DefaultSessionMode string `json:"defaultSessionMode" enum:"chat,tui"`
+}
+
+// capabilityNames lists the abilities a provider has, sorted so a client sees a
+// stable list rather than Go's map order. Only true entries are named: a
+// capability the driver reports as false is one it cannot do, which is the same
+// answer as not naming it, and listing both states would invite a client to read
+// presence rather than value.
+func capabilityNames(caps ports.ChatCapabilities) []string {
+	if len(caps) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(caps))
+	for name, has := range caps {
+		if has {
+			names = append(names, string(name))
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	return names
 }
 
 // TriggerReviewRequest is the optional body of the review trigger route. An

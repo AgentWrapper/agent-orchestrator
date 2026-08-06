@@ -63,7 +63,7 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	}, len(cfg.Prompt), 0, nil
 }
 
-func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool) (domain.Session, error) {
+func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, _ bool, _ domain.SessionMode) (domain.Session, error) {
 	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
 	return s, err
 }
@@ -150,6 +150,10 @@ func (f *fakeSessionService) ListEditors(context.Context) ([]sessionsvc.EditorIn
 
 func (f *fakeSessionService) OpenInEditor(context.Context, domain.SessionID, sessionsvc.OpenEditorRequest) (sessionsvc.OpenEditorResult, error) {
 	return sessionsvc.OpenEditorResult{}, nil
+}
+
+func (f *fakeSessionService) StageAttachments(context.Context, domain.SessionID, []ports.SpawnAttachment) ([]string, error) {
+	return nil, nil
 }
 
 type fakeAgentCatalog struct{}

@@ -416,6 +416,52 @@ func opencodeConfigEnvPrefix(inlinePrompt, promptFile, sessionID string) ([]stri
 	return []string{"env", opencodeConfigEnvVar + "=" + configPath}, agentName, nil
 }
 
+// PrepareACPConfigContent merges AO's standing instructions and any explicit
+// bypass-permissions choice into OpenCode's inline runtime overlay. The user's
+// OPENCODE_CONFIG path remains untouched, preserving its normal global, custom,
+// project, provider, and credential configuration.
+func PrepareACPConfigContent(
+	existing, systemPrompt, sessionID string,
+	permissions ports.PermissionMode,
+) (string, error) {
+	allowAll := ports.NormalizePermissionMode(permissions) == ports.PermissionModeBypassPermissions
+	if strings.TrimSpace(systemPrompt) == "" && !allowAll {
+		return existing, nil
+	}
+	config := map[string]any{}
+	if strings.TrimSpace(existing) != "" {
+		if err := json.Unmarshal([]byte(existing), &config); err != nil {
+			return "", fmt.Errorf("opencode: decode OPENCODE_CONFIG_CONTENT: %w", err)
+		}
+	}
+	if _, ok := config["$schema"]; !ok {
+		config["$schema"] = "https://opencode.ai/config.json"
+	}
+	if strings.TrimSpace(systemPrompt) != "" {
+		agents, ok := config["agent"].(map[string]any)
+		if config["agent"] != nil && !ok {
+			return "", fmt.Errorf("opencode: OPENCODE_CONFIG_CONTENT agent must be an object")
+		}
+		if agents == nil {
+			agents = map[string]any{}
+		}
+		agentName := opencodeAOAgentName(sessionID)
+		agents[agentName] = opencodeAgentSettings{Mode: "primary", Prompt: systemPrompt}
+		config["agent"] = agents
+		config["default_agent"] = agentName
+	}
+	if allowAll {
+		// This is the native config equivalent of OpenCode's TUI auto-approval
+		// flag. Other AO permission modes preserve the user's granular rules.
+		config["permission"] = "allow"
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return "", fmt.Errorf("opencode: encode ACP agent config: %w", err)
+	}
+	return string(data), nil
+}
+
 func opencodeAOAgentName(sessionID string) string {
 	const fallback = "ao-system-prompt"
 	trimmed := strings.TrimSpace(sessionID)
