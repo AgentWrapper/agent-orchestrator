@@ -772,7 +772,7 @@ describe("TerminalPane shell exit", () => {
 					daemonReady
 					fontSize={12}
 					onShellExited={onShellExited}
-					terminalTarget={{ kind: "shell", handleId: "sh-a", title: "Terminal 1" }}
+					terminalTarget={{ kind: "shell", handleId: "sh-a", title: "Terminal 1", generation: "2026-07-24T00:00:00Z" }}
 					theme="dark"
 				/>
 			</QueryClientProvider>,
