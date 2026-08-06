@@ -144,7 +144,7 @@ func (p *Provider) CommitChecksGuard(ctx context.Context, repo ports.SCMRepo, he
 		// Decode failure is unexpected but shouldn't block the whole repo poll.
 		// Return NotModified=false with no ETag so the observer falls back to the
 		// full GraphQL refresh path; DefaultPRMaxAge bounds staleness.
-		return ports.SCMGuardResult{}, nil
+		return ports.SCMGuardResult{}, nil //nolint:nilerr // decode failure falls back to the max-age refresh path
 	}
 	if page.TotalCount > len(page.CheckRuns) {
 		// The commit has more runs than one page fits; rely on a stable
