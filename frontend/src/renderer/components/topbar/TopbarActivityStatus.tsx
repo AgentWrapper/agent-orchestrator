@@ -19,3 +19,19 @@ export function TopbarActivityStatus({ activity }: { activity?: SessionActivity 
 		</>
 	);
 }
+
+/**
+ * Dot-only activity signal for controls that already name the agent. The
+ * surrounding button supplies the accessible activity label; this keeps the
+ * Kanban action compact while preserving the same live pulse semantics as a
+ * session identity.
+ */
+export function TopbarActivityDot({ activity }: { activity?: SessionActivity | null }) {
+	const { label, tone, breathe } = getAgentActivityView(activity);
+
+	return (
+		<span className="reverb-topbar__button-activity" data-activity={label} style={{ color: tone }} title={label}>
+			<span aria-hidden="true" className={cn("reverb-topbar__status-dot", breathe && "animate-status-pulse")} />
+		</span>
+	);
+}

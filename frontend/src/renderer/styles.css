@@ -716,6 +716,13 @@
 	white-space: nowrap;
 }
 
+.reverb-topbar__button-activity {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+}
+
 .reverb-topbar__trailing,
 .reverb-topbar__actions,
 .reverb-topbar__utilities {
@@ -1517,15 +1524,22 @@ textarea,
 
 .session-pane-tab {
 	box-sizing: border-box;
-	height: var(--size-control-md);
-	min-width: var(--size-shell-tab-min);
-	max-width: var(--size-session-pane-tab-max);
+	height: 100%;
+	min-width: var(--size-session-pane-tab-min);
+	max-width: none;
+	flex: 1 0 var(--size-session-pane-tab-min);
 	gap: var(--space-0_5);
+	border-inline-end: 1px solid var(--color-border);
+	border-radius: 0;
 	padding-inline: var(--space-2);
 }
 
 .session-pane-tab__label {
 	font-size: var(--font-size-sm-md);
+}
+
+.session-pane-tab__actions {
+	z-index: 1;
 }
 
 @keyframes status-pulse {

@@ -1,5 +1,12 @@
 import "@testing-library/jest-dom/vitest";
+import * as jestDomMatchers from "@testing-library/jest-dom/matchers";
+import { expect } from "vitest";
 import "../i18n";
+
+// The convenience entry supplies matcher type augmentation, but with Vitest 4
+// it does not extend the active runtime matcher instance. Register explicitly
+// as well so renderer assertions remain typed and executable.
+expect.extend(jestDomMatchers);
 
 // Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.

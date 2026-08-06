@@ -151,16 +151,12 @@ export function CenterPane({
 		: availableProjectSessions;
 	const expandedSessionList = showAllSessions || normalizedSessionSearch.length > 0;
 	const visibleSessions = expandedSessionList ? filteredSessions : filteredSessions.slice(0, COMPACT_SESSION_LIMIT);
-	const ownerSessionTab =
-		sessionTabs.find((projectSession) => projectSession.id === effectiveTabOwnerSessionId) ?? sessionTabs[0];
 	const reorderableTerminalTabs: ReorderableTerminalTab[] = [
-		...sessionTabs
-			.filter((projectSession) => projectSession.id !== ownerSessionTab?.id)
-			.map((projectSession) => ({
-				id: sessionTerminalTabId(projectSession.id),
-				kind: "session" as const,
-				session: projectSession,
-			})),
+		...sessionTabs.map((projectSession) => ({
+			id: sessionTerminalTabId(projectSession.id),
+			kind: "session" as const,
+			session: projectSession,
+		})),
 		...shellTerminals.map((shell) => ({
 			id: shellTerminalTabId(shell.handleId),
 			kind: "shell" as const,
@@ -173,9 +169,6 @@ export function CenterPane({
 	const unpinnedTabs = orderedTabs.filter((tab) => !pinnedTabIds.has(tab.id));
 	const visibleTerminalTabs = [
 		...pinnedTabs.map((tab) => ({ ...tab, isPinned: true })),
-		...(ownerSessionTab
-			? [{ id: `owner:${ownerSessionTab.id}`, kind: "owner" as const, session: ownerSessionTab }]
-			: []),
 		...unpinnedTabs.map((tab) => ({ ...tab, isPinned: false })),
 	];
 	const tabOverflowWatch = visibleTerminalTabs.map((tab) => tab.id).join("|");
@@ -340,15 +333,15 @@ export function CenterPane({
 	return (
 		<div
 			ref={paneRef}
-			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col px-px"
+			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-inspector-tabs shrink-0 items-center px-1.5">
-				<div className="flex min-w-flex-min flex-1 items-center gap-3">
+			<div className="flex h-inspector-tabs shrink-0 items-stretch">
+				<div className="flex min-w-flex-min flex-1 items-stretch gap-0">
 					<button
 						aria-label={t("terminal.scrollTabsLeft")}
 						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+							"inline-flex size-control-sm shrink-0 self-center items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
 							!tabsOverflow.canScrollLeft && "hidden",
 						)}
 						disabled={!tabsOverflow.canScrollLeft}
@@ -358,30 +351,17 @@ export function CenterPane({
 					>
 						<ChevronLeft aria-hidden="true" className="size-icon-md" />
 					</button>
-					{/* Each originating session owns a private set of worker and shell
-					    tabs. The + menu adds tabs; pinning moves an added tab to the left. */}
+					{/* Session-backed and standalone terminal tabs share one reorderable
+					    strip. Pinning any tab moves it to the leading pinned group. */}
 					<div
 						ref={tabsOverflow.ref}
-						className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
+						className="scrollbar-none flex min-w-flex-min flex-1 items-stretch gap-0 overflow-x-auto"
 						onKeyDown={handleTerminalTabListKeyDown}
 						role="tablist"
 						aria-label={t("terminal.tabsAria")}
 					>
 						{visibleTerminalTabs.length > 0
 							? visibleTerminalTabs.map((tab) => {
-									if (tab.kind === "owner") {
-										const isCurrent = tab.session.id === session?.id;
-										return (
-											<SessionPaneTab
-												key={tab.id}
-												isActive={isCurrent && target.kind !== "shell"}
-												label={isOrchestratorSession(tab.session) ? t("shell.orchestrator") : tab.session.title}
-												onSelect={isCurrent ? onSelectSessionTerminal : () => onSelectProjectSession?.(tab.session)}
-												provider={tab.session.provider}
-											/>
-										);
-									}
-
 									const dragProps = {
 										draggable: true,
 										isDragging: draggedTerminalTabId === tab.id,
@@ -398,6 +378,7 @@ export function CenterPane({
 
 									if (tab.kind === "session") {
 										const isCurrent = tab.session.id === session?.id;
+										const isOwner = tab.session.id === effectiveTabOwnerSessionId;
 										return (
 											<SessionPaneTab
 												key={tab.id}
@@ -405,7 +386,7 @@ export function CenterPane({
 												isActive={isCurrent && target.kind !== "shell"}
 												isPinned={tab.isPinned}
 												label={isOrchestratorSession(tab.session) ? t("shell.orchestrator") : tab.session.title}
-												onClose={() => onCloseProjectSession?.(tab.session)}
+												onClose={isOwner ? undefined : () => onCloseProjectSession?.(tab.session)}
 												onSelect={isCurrent ? onSelectSessionTerminal : () => onSelectProjectSession?.(tab.session)}
 												onTogglePinned={() => toggleTerminalTabPinned(tab.id)}
 												provider={tab.session.provider}
@@ -437,7 +418,7 @@ export function CenterPane({
 					<button
 						aria-label={t("terminal.scrollTabsRight")}
 						className={cn(
-							"inline-flex size-control-sm shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
+							"inline-flex size-control-sm shrink-0 self-center items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:pointer-events-none disabled:opacity-0",
 							!tabsOverflow.canScrollRight && "hidden",
 						)}
 						disabled={!tabsOverflow.canScrollRight}
@@ -458,7 +439,7 @@ export function CenterPane({
 						<DropdownMenuTrigger asChild>
 							<button
 								aria-label={t("terminal.addTab")}
-								className="inline-flex size-control-sm shrink-0 items-center justify-center rounded-md bg-interactive-active text-muted-foreground transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground"
+								className="inline-flex h-full w-control-md shrink-0 items-center justify-center border-l border-border bg-interactive-active text-muted-foreground transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground"
 								title={t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
 								type="button"
 							>
@@ -543,8 +524,8 @@ export function CenterPane({
 							) : null}
 						</DropdownMenuContent>
 					</DropdownMenu>
-						<span aria-hidden="true" className="h-4 w-px shrink-0 bg-border" />
-						<div className="flex shrink-0 items-center gap-1 font-mono text-passive/70">
+					<span aria-hidden="true" className="h-4 w-px shrink-0 self-center bg-border" />
+					<div className="flex shrink-0 self-center items-center gap-1 font-mono text-passive/70">
 							<button
 								aria-label={t("terminal.decreaseFontSize")}
 								className="inline-flex size-control-sm items-center justify-center rounded-sm bg-transparent text-control leading-none transition-[background,color,opacity] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-passive"
@@ -587,7 +568,7 @@ export function CenterPane({
 							</button>
 					</div>
 					{topbarActions ? (
-						<div className="ml-1.5 flex shrink-0 items-center border-l border-border/70 pl-1.5">
+						<div className="ml-1.5 flex shrink-0 self-center items-center border-l border-border/70 pl-1.5">
 							{topbarActions}
 						</div>
 					) : null}
@@ -611,7 +592,7 @@ export function CenterPane({
 					<span className="ml-auto truncate font-mono text-xs text-passive">{target.harness}</span>
 				</div>
 			) : null}
-			<div aria-label={t("terminal.panelAria", { title: activeTerminalLabel })} className="relative min-h-0 flex-1" role="tabpanel">
+			<div aria-label={t("terminal.panelAria", { title: activeTerminalLabel })} className="relative mx-px min-h-0 flex-1" role="tabpanel">
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
@@ -666,13 +647,12 @@ function SessionPaneTab({
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	return (
 		<span
+			data-active={isActive ? "true" : "false"}
 			className={cn(
-				"session-pane-tab group relative inline-flex items-center rounded-md transition-colors",
+				"session-pane-tab group relative inline-flex items-center transition-colors",
 				draggable && "cursor-grab active:cursor-grabbing",
 				isDragging && "opacity-45",
-				isActive
-					? "bg-interactive-active after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-foreground/65"
-					: "hover:bg-interactive-hover/60",
+				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
 			)}
 			draggable={draggable}
 			onDragEnd={onDragEnd}
@@ -686,7 +666,8 @@ function SessionPaneTab({
 				aria-current={isActive}
 				aria-selected={isActive}
 				className={cn(
-					"session-pane-tab__label inline-flex min-w-flex-min max-w-shell-tab-max items-center gap-1 overflow-hidden font-mono font-semibold transition-colors",
+					"session-pane-tab__label inline-flex min-w-0 w-full items-center gap-1 overflow-hidden font-mono font-semibold transition-colors",
+					onTogglePinned && onClose ? "pr-10" : onTogglePinned || onClose ? "pr-5" : undefined,
 					isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
 				)}
 				onClick={onSelect}
@@ -698,39 +679,43 @@ function SessionPaneTab({
 				<AgentAvatar className="size-icon-xs" decorative provider={provider} />
 				<span className="truncate">{label}</span>
 			</button>
-			{onTogglePinned ? (
-				<button
-					aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: label })}
-					className={cn(
-						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-						isPinned
-							? "ml-1 w-control-xs opacity-100"
-							: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-xs group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-xs group-focus-within:opacity-100",
-					)}
-					draggable={false}
-					onClick={(event) => {
-						event.stopPropagation();
-						onTogglePinned();
-					}}
-					title={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: label })}
-					type="button"
-				>
-					<Pin aria-hidden="true" className={cn("size-icon-xs", isPinned && "fill-current")} />
-				</button>
-			) : null}
-			{onClose ? (
-				<button
-					aria-label={t("terminal.closeSessionTab", { label })}
-					className="inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
-					onClick={(event) => {
-						event.stopPropagation();
-						onClose();
-					}}
-					draggable={false}
-					type="button"
-				>
-					<X aria-hidden="true" className="size-icon-sm" />
-				</button>
+			{onTogglePinned || onClose ? (
+				<span className="session-pane-tab__actions absolute inset-y-0 right-1 flex items-center gap-0.5">
+					{onTogglePinned ? (
+						<button
+							aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: label })}
+							className={cn(
+								"inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive transition-[background,color,opacity,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+								isPinned
+									? "opacity-100"
+									: "pointer-events-none translate-x-1 opacity-0 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100",
+							)}
+							draggable={false}
+							onClick={(event) => {
+								event.stopPropagation();
+								onTogglePinned();
+							}}
+							title={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: label })}
+							type="button"
+						>
+							<Pin aria-hidden="true" className={cn("size-icon-xs", isPinned && "fill-current")} />
+						</button>
+					) : null}
+					{onClose ? (
+						<button
+							aria-label={t("terminal.closeSessionTab", { label })}
+							className="pointer-events-none inline-flex size-control-xs shrink-0 translate-x-1 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity,transform] group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:pointer-events-auto focus-visible:translate-x-0 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+							onClick={(event) => {
+								event.stopPropagation();
+								onClose();
+							}}
+							draggable={false}
+							type="button"
+						>
+							<X aria-hidden="true" className="size-icon-sm" />
+						</button>
+					) : null}
+				</span>
 			) : null}
 		</span>
 	);

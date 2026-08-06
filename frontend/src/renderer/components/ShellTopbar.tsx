@@ -14,8 +14,8 @@ import {
 import { useEffect, useState } from "react";
 import { animate, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
-import { AgentAvatar } from "./AgentAvatar";
 import { hasConfiguredOrchestratorAgent, sessionIsActive, type WorkspaceSession } from "../types/workspace";
+import { getAgentActivityView } from "../lib/session-presentation";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { useReverbTopbarModel, type ReverbTopbarSurfaceOverride } from "../hooks/useReverbTopbarModel";
 import {
@@ -32,7 +32,7 @@ import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { TopbarButton, TopbarKillError } from "./TopbarButton";
 import { ReverbTopbar } from "./topbar/ReverbTopbar";
-import { TopbarActivityStatus } from "./topbar/TopbarActivityStatus";
+import { TopbarActivityDot, TopbarActivityStatus } from "./topbar/TopbarActivityStatus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { SessionTerminationPopover } from "./SessionTerminationPopover";
 
@@ -109,6 +109,7 @@ export function ShellTopbar({
 				? t("shell.openOrchestrator")
 				: t("shell.spawnOrchestratorLower");
 	const orchestratorActionLabel = orchestrator ? t("shell.openOrchestrator") : t("shell.spawnOrchestrator");
+	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 
 	useEffect(() => {
 		setBoardSpawnError(null);
@@ -198,7 +199,11 @@ export function ShellTopbar({
 					<TooltipTrigger asChild>
 						<span className="inline-flex" style={noDragStyle}>
 							<TopbarButton
-								aria-label={orchestrator ? t("shell.orchestrator") : orchestratorActionLabel}
+								aria-label={
+									orchestratorActivityLabel
+										? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
+										: orchestratorActionLabel
+								}
 								data-priority="secondary"
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
@@ -206,6 +211,7 @@ export function ShellTopbar({
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 								<span data-compact-label>{t("shell.orchestrator")}</span>
+								{orchestrator ? <TopbarActivityDot activity={orchestrator.activity} /> : null}
 							</TopbarButton>
 						</span>
 					</TooltipTrigger>
@@ -323,21 +329,7 @@ export function ShellTopbar({
 		) : null;
 
 	const context =
-		isSessionRoute && session && isOrchestrator ? (
-			<div className="reverb-topbar__state-content">
-				<AgentAvatar className="size-icon-xs" decorative provider={session.provider} />
-				<span className="reverb-topbar__state-label truncate font-mono">
-					{session.provider}
-				</span>
-				<TopbarActivityStatus activity={session.activity} />
-			</div>
-		) : isProjectBoardRoute && orchestrator ? (
-			<div className="reverb-topbar__state-content">
-				<OrchestratorIcon className="size-icon-md shrink-0" aria-hidden="true" />
-				<span className="reverb-topbar__state-label">{t("shell.orchestrator")}</span>
-				<TopbarActivityStatus activity={orchestrator.activity} />
-			</div>
-		) : surfaceOverride === "project-settings" && project?.path ? (
+		surfaceOverride === "project-settings" && project?.path ? (
 			<div className="reverb-topbar__state-content">
 				<FolderGit2 className="size-icon-md shrink-0" aria-hidden="true" />
 				<span className="reverb-topbar__state-label truncate font-mono" title={project.path}>
@@ -374,7 +366,7 @@ export function ShellTopbar({
 			}
 			leadingIcon={leadingIcon}
 			identityMeta={
-				isSessionRoute && session && !isOrchestrator ? <TopbarActivityStatus activity={session.activity} /> : undefined
+				isSessionRoute && session ? <TopbarActivityStatus activity={session.activity} /> : undefined
 			}
 			model={model}
 			paddingLeft={isMac ? paddingLeft : undefined}

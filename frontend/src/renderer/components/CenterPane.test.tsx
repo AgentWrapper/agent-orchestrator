@@ -93,20 +93,18 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 	});
 
-	it("shows the active session as a compact padded tab without a generic Terminal label", () => {
+	it("joins the active session tab to the full-width terminal strip", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 		const sessionTab = screen.getByRole("tab", { name: "do the thing" });
 		expect(sessionTab).toHaveAttribute("aria-current", "true");
 		expect(sessionTab).toHaveClass("session-pane-tab__label");
-		expect(sessionTab.parentElement).toHaveClass(
-			"session-pane-tab",
-			"bg-interactive-active",
-			"after:h-px",
-			"after:bg-foreground/65",
-		);
-		expect(sessionTab.closest(".h-inspector-tabs")).toHaveClass("px-1.5");
+		expect(sessionTab.parentElement).toHaveClass("session-pane-tab", "bg-interactive-active");
+		expect(sessionTab.parentElement).toHaveAttribute("data-active", "true");
+		expect(sessionTab.parentElement).not.toHaveClass("rounded-md", "after:h-px");
+		expect(sessionTab.closest(".h-inspector-tabs")).not.toHaveClass("px-1.5");
 		expect(document.querySelector('button[aria-label="Scroll tabs left"]')).toHaveClass("hidden");
-		expect(sessionTab.closest(".terminal-pane-frame")).toHaveClass("px-px");
+		expect(sessionTab.closest(".terminal-pane-frame")).not.toHaveClass("px-px");
+		expect(screen.getByRole("tabpanel")).toHaveClass("mx-px");
 		expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 	});
@@ -263,8 +261,8 @@ describe("CenterPane toolbar session label", () => {
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		expect(scrollRegion).toHaveClass("scrollbar-none", "min-w-flex-min", "flex-1");
 		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
-			expect(tab.parentElement).toHaveClass("min-w-shell-tab-min");
-			expect(tab.parentElement).not.toHaveClass("min-w-16", "shrink-0");
+			expect(tab.parentElement).toHaveClass("session-pane-tab", "self-stretch");
+			expect(tab.parentElement).not.toHaveClass("min-w-shell-tab-min", "rounded-md");
 			expect(tab).toHaveClass("min-w-0", "w-full");
 		}
 		// jsdom reports no overflow, so the inactive indicator stays mounted without reserving layout space.
@@ -322,7 +320,8 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: worker, shellTerminals: [shell] });
 
 		const shellTab = screen.getByRole("tab", { name: shell.title });
-		expect(shellTab.parentElement).toHaveClass("min-w-shell-tab-min", "session-pane-tab");
+		expect(shellTab.parentElement).toHaveClass("session-pane-tab", "self-stretch");
+		expect(shellTab.parentElement).not.toHaveClass("rounded-md");
 	});
 
 	it("reorders added shell terminal tabs by dragging them", () => {
@@ -356,7 +355,7 @@ describe("CenterPane toolbar session label", () => {
 			projectSessions: [worker, secondWorker, thirdWorker],
 			tabOwnerSessionId: worker.id,
 		});
-		const secondTab = screen.getByRole("tab", { name: secondWorker.title }).parentElement as HTMLElement;
+		const ownerTab = screen.getByRole("tab", { name: worker.title }).parentElement as HTMLElement;
 		const thirdTab = screen.getByRole("tab", { name: thirdWorker.title }).parentElement as HTMLElement;
 		const dataTransfer = {
 			dropEffect: "none",
@@ -364,16 +363,16 @@ describe("CenterPane toolbar session label", () => {
 			setData: vi.fn(),
 		};
 
-		fireEvent.dragStart(secondTab, { dataTransfer });
+		fireEvent.dragStart(ownerTab, { dataTransfer });
 		fireEvent.dragEnter(thirdTab, { dataTransfer });
-		fireEvent.dragEnd(secondTab, { dataTransfer });
+		fireEvent.dragEnd(ownerTab, { dataTransfer });
 
 		expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
-			"do the thing",
-			"ship the change",
 			"review the change",
+			"ship the change",
+			"do the thing",
 		]);
-		expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", `session:${secondWorker.id}`);
+		expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", `session:${worker.id}`);
 	});
 
 	it("pins session and shell terminals at the far left and lets them be unpinned", () => {
@@ -384,6 +383,7 @@ describe("CenterPane toolbar session label", () => {
 			shellTerminals: shells,
 			tabOwnerSessionId: worker.id,
 		});
+		expect(screen.getByRole("button", { name: `Pin tab ${worker.title}` })).toBeInTheDocument();
 
 		fireEvent.click(screen.getByRole("button", { name: `Pin tab ${secondWorker.title}` }));
 		fireEvent.click(screen.getByRole("button", { name: `Pin tab ${shells[1].title}` }));
@@ -404,8 +404,8 @@ describe("CenterPane toolbar session label", () => {
 		fireEvent.click(screen.getByRole("button", { name: `Unpin tab ${secondWorker.title}` }));
 		expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
 			"agent-orchestrator-1",
-			"do the thing",
 			"review the change",
+			"do the thing",
 			"agent-orchestrator-0",
 		]);
 	});

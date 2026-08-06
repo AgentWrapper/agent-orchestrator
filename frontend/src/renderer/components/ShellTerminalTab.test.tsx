@@ -83,29 +83,27 @@ describe("ShellTerminalTab rename", () => {
 		expect(onSelect).toHaveBeenCalled();
 	});
 
-	it("selects from the full connected pill, not only its title", () => {
+	it("selects from the full connected tab, not only its title", () => {
 		const { onSelect } = renderTab({ appearance: "connected" });
 		fireEvent.click(screen.getByRole("tab", { name: "ao" }).parentElement as HTMLElement);
 		expect(onSelect).toHaveBeenCalledOnce();
 	});
 
-	it("keeps the close affordance visible on an active connected tab", () => {
+	it("overlays the close affordance without changing an active tab's width", () => {
 		renderTab({ appearance: "connected", isActive: true });
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass("w-control-sm", "opacity-100");
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).not.toHaveClass("absolute");
+		const close = screen.getByRole("button", { name: "Close terminal ao" });
+		expect(close).toHaveClass("size-control-xs", "opacity-0", "group-hover:opacity-100");
+		expect(close.closest(".session-pane-tab__actions")).toHaveClass("absolute");
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
 	it("uses the same compact frame as a pinned session tab", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass(
-			"w-0",
-			"opacity-0",
-			"group-hover:w-control-sm",
-			"group-hover:opacity-100",
-		);
-		expect(screen.getByRole("button", { name: "Close terminal ao" })).not.toHaveClass("absolute");
+		const close = screen.getByRole("button", { name: "Close terminal ao" });
+		expect(close).toHaveClass("opacity-0", "group-hover:opacity-100", "group-hover:translate-x-0");
+		expect(close).not.toHaveClass("w-0", "group-hover:w-control-sm");
+		expect(close.closest(".session-pane-tab__actions")).toHaveClass("absolute");
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveClass(
 			"w-full",
 			"min-w-0",
@@ -113,21 +111,20 @@ describe("ShellTerminalTab rename", () => {
 			"session-pane-tab__label",
 		);
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
-			"grid",
+			"flex",
 			"session-pane-tab",
 		);
 	});
 
-	it("uses a neutral active surface with a subtle foreground selection line", () => {
+	it("uses a rectangular active surface without the old selection underline", () => {
 		renderTab({ appearance: "connected", isActive: true });
 
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
-			"self-stretch",
-			"bg-interactive-active",
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass("self-stretch", "bg-interactive-active");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass(
+			"rounded-md",
 			"after:h-px",
 			"after:bg-foreground/65",
 		);
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass("rounded-md");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("before:bg-accent");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("after:h-0.5");
 	});

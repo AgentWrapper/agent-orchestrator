@@ -119,6 +119,8 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	const storedSessionTabIds = useUiStore((state) => state.sessionTabsByOwner[ownerSessionId] ?? emptySessionTabIds);
 	const addSessionTab = useUiStore((state) => state.addSessionTab);
 	const removeSessionTab = useUiStore((state) => state.removeSessionTab);
+	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
+	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const availableSessions = workspaces.flatMap((workspace) =>
 		workerSessions(workspace.sessions).filter((candidate) => candidate.isTerminated !== true),
 	);
@@ -137,6 +139,12 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	}
 	const selectProjectSession = useCallback(
 		(projectSession: WorkspaceSession) => {
+			// A session-backed tab owns the route, topbar identity, sidebar
+			// selection, and visible agent terminal as one selection. Clear any
+			// standalone shell first so its global active handle cannot immediately
+			// override the routed session during the navigation commit.
+			setActiveShellTerminal(null);
+			setTerminalTarget({ kind: "worker" });
 			void navigate({
 				to: "/projects/$projectId/sessions/$sessionId",
 				params: {
@@ -146,7 +154,7 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 				search: projectSession.id === ownerSessionId ? {} : { tabOwner: ownerSessionId },
 			});
 		},
-		[navigate, ownerSessionId],
+		[navigate, ownerSessionId, setActiveShellTerminal],
 	);
 	const addProjectSession = useCallback(
 		(projectSession: WorkspaceSession) => {
@@ -177,8 +185,6 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 	const openShellTerminal = useOpenShellTerminal();
 	const closeShellTerminal = useCloseShellTerminal();
 	const renameShellTerminal = useRenameShellTerminal();
-	const activeShellTerminalHandleId = useUiStore((state) => state.activeShellTerminalHandleId);
-	const setActiveShellTerminal = useUiStore((state) => state.setActiveShellTerminal);
 	const setVisibleTerminalKind = useUiStore((state) => state.setVisibleTerminalKind);
 	const clearVisibleTerminalKind = useUiStore((state) => state.clearVisibleTerminalKind);
 	const renameShellTerminalByHandle = useCallback(

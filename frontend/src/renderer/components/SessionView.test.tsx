@@ -573,6 +573,32 @@ describe("SessionView", () => {
 		});
 	});
 
+	it("keeps the route, sidebar identity, and terminal target aligned when selecting a session tab", () => {
+		useUiStore.getState().addSessionTab("sess-1", "sess-2");
+		shellTerminalsState.data = [
+			{
+				handleId: "sh-a",
+				sessionId: "sess-1",
+				title: "owner-shell",
+				workingDir: "/p",
+				createdAt: "2026-07-24T00:00:00Z",
+			},
+		];
+		render(<SessionView sessionId="sess-1" />);
+		fireEvent.click(screen.getByRole("button", { name: "select owner-shell" }));
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBe("sh-a");
+
+		fireEvent.click(within(screen.getByTestId("project-tabs")).getByRole("button", { name: "do the other thing" }));
+
+		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker");
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-2" },
+			search: { tabOwner: "sess-1" },
+		});
+	});
+
 	it("offers and pins live worker sessions from other projects", () => {
 		render(<SessionView sessionId="sess-1" />);
 

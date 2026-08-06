@@ -66,7 +66,7 @@ import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { DaemonStartupLoader } from "./DaemonStartupLoader";
 import { useShellMaybe } from "../lib/shell-context";
 import { ReverbTopbar } from "./topbar/ReverbTopbar";
-import { TopbarActivityStatus } from "./topbar/TopbarActivityStatus";
+import { TopbarActivityDot } from "./topbar/TopbarActivityStatus";
 import type { ReverbTopbarModel } from "./topbar/topbar-model";
 
 type SessionsBoardProps = {
@@ -315,6 +315,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						>
 							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 							<span data-compact-label>{t("shell.orchestrator")}</span>
+							{orchestrator ? <TopbarActivityDot activity={orchestrator.activity} /> : null}
 						</TopbarButton>
 					</span>
 				</TooltipTrigger>
@@ -331,14 +332,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 				surface: "global-board",
 				breadcrumbs: [{ id: "board", label: t("shell.board") }],
 			};
-	const orchestratorContext = orchestrator ? (
-		<div className="reverb-topbar__state-content">
-			<OrchestratorIcon className="size-icon-md shrink-0" aria-hidden="true" />
-			<span className="reverb-topbar__state-label">{t("shell.orchestrator")}</span>
-			<TopbarActivityStatus activity={orchestrator.activity} />
-		</div>
-	) : null;
-
 	return (
 		<div className="flex h-full min-h-0 flex-col bg-background text-foreground" data-testid="board">
 			{/* macOS/Linux keep board actions inside the center panel. Welcome
@@ -346,7 +339,6 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			{!showWelcome && !showStartup && boardActionsInPanel ? (
 				<ReverbTopbar
 					actions={actions}
-					context={orchestratorContext}
 					dragStyle={dragStyle}
 					error={
 						visibleSpawnError && !showProjectEmpty ? (

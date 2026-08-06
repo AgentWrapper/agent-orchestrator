@@ -206,11 +206,14 @@ describe("SessionsBoard", () => {
 		renderBoard("p1");
 
 		const button = screen.getByRole("button", { name: `Orchestrator, ${label}` });
-		const indicator = screen.getByText(label).querySelector(".reverb-topbar__status-dot") as HTMLElement;
+		const activity = button.querySelector(".reverb-topbar__button-activity") as HTMLElement;
+		const indicator = activity.querySelector(".reverb-topbar__status-dot") as HTMLElement;
+		expect(activity).toHaveAttribute("data-activity", label);
 		expect(indicator).toHaveAttribute("aria-hidden", "true");
 		expect(indicator).toHaveClass("reverb-topbar__status-dot");
 		expect(button).toHaveClass("reverb-topbar__control--primary");
 		expect(button).toHaveTextContent("Orchestrator");
+		expect(document.querySelector(".reverb-topbar__state--empty")).toBeInTheDocument();
 		if (pulses) expect(indicator).toHaveClass("animate-status-pulse");
 		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
 	});

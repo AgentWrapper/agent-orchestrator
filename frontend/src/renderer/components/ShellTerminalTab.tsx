@@ -122,17 +122,18 @@ export function ShellTerminalTab({
 
 	return (
 		<span
+			data-active={isActive ? "true" : "false"}
 			className={cn(
-				"group relative min-w-shell-tab-min items-center transition-colors",
+				"group relative items-center transition-colors",
 				draggable && "cursor-grab active:cursor-grabbing",
 				isDragging && "opacity-45",
 				appearance === "connected"
-					? "session-pane-tab grid grid-cols-[auto_minmax(0,1fr)_auto_auto] self-stretch rounded-md border-x border-transparent"
+					? "session-pane-tab flex self-stretch"
 					: "inline-flex gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
-						? "border-border-strong bg-interactive-active text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-foreground/65"
-						: "border-transparent text-passive hover:bg-interactive-hover/60 hover:text-foreground"
+						? "bg-interactive-active text-foreground"
+						: "text-passive hover:bg-interactive-hover/60 hover:text-foreground"
 					: isActive
 						? "bg-interactive-active"
 						: "hover:bg-interactive-hover/60",
@@ -153,7 +154,9 @@ export function ShellTerminalTab({
 					aria-label={t("terminal.rename", { title: shell.title })}
 					className={cn(
 						"rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent",
-						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
+						appearance === "connected"
+							? "min-w-0 w-full pr-10 text-left"
+							: "min-w-flex-min max-w-shell-tab-max",
 					)}
 					onBlur={commit}
 					onChange={(event) => setDraft(event.target.value)}
@@ -176,7 +179,9 @@ export function ShellTerminalTab({
 					aria-selected={isActive}
 					className={cn(
 						"select-none truncate transition-colors",
-						appearance === "connected" ? "min-w-0 w-full text-left" : "min-w-flex-min max-w-shell-tab-max",
+						appearance === "connected"
+							? "min-w-0 w-full pr-10 text-left"
+							: "min-w-flex-min max-w-shell-tab-max",
 						appearance === "connected"
 							? "session-pane-tab__label font-mono font-semibold"
 							: "text-control font-mono font-semibold",
@@ -196,54 +201,85 @@ export function ShellTerminalTab({
 					{shell.title}
 				</button>
 			)}
-			{onTogglePinned ? (
-				<button
-					aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
-					className={cn(
-						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-						appearance === "connected"
-							? isPinned
-								? "ml-1 w-control-xs opacity-100"
-								: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-xs group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-xs group-focus-within:opacity-100"
-							: isPinned
-								? "w-control-xs opacity-100"
-								: "w-control-xs opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-					)}
-					draggable={false}
-					onClick={(event) => {
-						event.stopPropagation();
-						onTogglePinned();
-					}}
-					onContextMenu={(event) => event.stopPropagation()}
-					onDoubleClick={(event) => event.stopPropagation()}
-					title={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
-					type="button"
-				>
-					<Pin aria-hidden="true" className={cn("size-icon-xs", isPinned && "fill-current")} />
-				</button>
-			) : null}
-			<button
-				aria-label={t("terminal.closeNamed", { title: shell.title })}
-				className={cn(
-					"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-					appearance === "connected"
-						? isActive
-							? "ml-1 w-control-sm opacity-100"
-							: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-sm group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-sm group-focus-within:opacity-100"
-						: "w-control-sm opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-				)}
-				onClick={(event) => {
-					event.stopPropagation();
-					onClose();
-				}}
-				onDoubleClick={(event) => event.stopPropagation()}
-				onContextMenu={(event) => event.stopPropagation()}
-				draggable={false}
-				title={t("terminal.close")}
-				type="button"
-			>
-				<X aria-hidden="true" className="size-icon-sm" />
-			</button>
+			{appearance === "connected" ? (
+				<span className="session-pane-tab__actions absolute inset-y-0 right-1 flex items-center gap-0.5">
+					{onTogglePinned ? (
+						<button
+							aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
+							className={cn(
+								"inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive transition-[background,color,opacity,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+								isPinned
+									? "opacity-100"
+									: "pointer-events-none translate-x-1 opacity-0 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100",
+							)}
+							draggable={false}
+							onClick={(event) => {
+								event.stopPropagation();
+								onTogglePinned();
+							}}
+							onContextMenu={(event) => event.stopPropagation()}
+							onDoubleClick={(event) => event.stopPropagation()}
+							title={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
+							type="button"
+						>
+							<Pin aria-hidden="true" className={cn("size-icon-xs", isPinned && "fill-current")} />
+						</button>
+					) : null}
+					<button
+						aria-label={t("terminal.closeNamed", { title: shell.title })}
+						className="pointer-events-none inline-flex size-control-xs shrink-0 translate-x-1 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity,transform] group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:pointer-events-auto focus-visible:translate-x-0 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+						onClick={(event) => {
+							event.stopPropagation();
+							onClose();
+						}}
+						onDoubleClick={(event) => event.stopPropagation()}
+						onContextMenu={(event) => event.stopPropagation()}
+						draggable={false}
+						title={t("terminal.close")}
+						type="button"
+					>
+						<X aria-hidden="true" className="size-icon-sm" />
+					</button>
+				</span>
+			) : (
+				<>
+					{onTogglePinned ? (
+						<button
+							aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
+							className={cn(
+								"inline-flex h-control-sm w-control-xs shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+								isPinned ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+							)}
+							draggable={false}
+							onClick={(event) => {
+								event.stopPropagation();
+								onTogglePinned();
+							}}
+							onContextMenu={(event) => event.stopPropagation()}
+							onDoubleClick={(event) => event.stopPropagation()}
+							title={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
+							type="button"
+						>
+							<Pin aria-hidden="true" className={cn("size-icon-xs", isPinned && "fill-current")} />
+						</button>
+					) : null}
+					<button
+						aria-label={t("terminal.closeNamed", { title: shell.title })}
+						className="inline-flex h-control-sm w-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive opacity-0 transition-[background,color,opacity] group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+						onClick={(event) => {
+							event.stopPropagation();
+							onClose();
+						}}
+						onDoubleClick={(event) => event.stopPropagation()}
+						onContextMenu={(event) => event.stopPropagation()}
+						draggable={false}
+						title={t("terminal.close")}
+						type="button"
+					>
+						<X aria-hidden="true" className="size-icon-sm" />
+					</button>
+				</>
+			)}
 		</span>
 	);
 }
