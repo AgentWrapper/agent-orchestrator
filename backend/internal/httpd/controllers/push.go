@@ -16,7 +16,7 @@ import (
 // by *mobilebridge.DeviceRegistry.
 type PushRegistry interface {
 	Upsert(dev mobilebridge.PushDevice) error
-	Delete(token string) error
+	DeleteByToken(token string) error
 }
 
 // PushController owns the /push/devices routes: a paired phone registers (and
@@ -57,8 +57,14 @@ func (c *PushController) register(w http.ResponseWriter, r *http.Request) {
 			"token must be a well-formed Expo push token", nil)
 		return
 	}
+	if req.InstallID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MISSING_INSTALL_ID",
+			"installId is required", nil)
+		return
+	}
 	now := c.now()
 	dev := mobilebridge.PushDevice{
+		InstallID:  req.InstallID,
 		Token:      req.Token,
 		Platform:   req.Platform,
 		DeviceName: req.DeviceName,
@@ -86,7 +92,7 @@ func (c *PushController) unregister(w http.ResponseWriter, r *http.Request) {
 	// chi decodes the percent-encoded token (the Expo token's [ ] brackets are
 	// URL-encoded by the client). Deleting an unknown token is a clean no-op.
 	token := chi.URLParam(r, "token")
-	if err := c.Registry.Delete(token); err != nil {
+	if err := c.Registry.DeleteByToken(token); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "PUSH_UNREGISTER", err.Error(), nil)
 		return
 	}

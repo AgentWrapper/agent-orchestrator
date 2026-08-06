@@ -479,6 +479,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
       summary: List paired mobile devices with their live/muted status
       tags:
       - mobile
@@ -502,6 +508,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Internal Server Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
       summary: Remove a paired device from the roster
       tags:
       - mobile
@@ -542,6 +554,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/APIError'
           description: Not Found
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Service Unavailable
       summary: Mute or unmute push notifications for a paired device
       tags:
       - mobile
@@ -5865,6 +5883,10 @@ components:
         deviceName:
           description: Human-friendly device label.
           type: string
+        installId:
+          description: Stable per-install device id. Keys the registry so a rotated
+            push token updates the same row.
+          type: string
         platform:
           description: Device platform.
           enum:
@@ -5875,6 +5897,7 @@ components:
           description: Expo push token, e.g. ExponentPushToken[...].
           type: string
       required:
+      - installId
       - token
       type: object
     ReloadConversationMCPServersResponse:

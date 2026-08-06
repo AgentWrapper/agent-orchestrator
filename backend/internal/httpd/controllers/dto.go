@@ -1021,6 +1021,7 @@ type PushDeviceTokenParam struct {
 // sends its Expo push token plus a bit of descriptive metadata; the daemon keys
 // the registry on the token and re-registering is an idempotent upsert.
 type RegisterPushDeviceRequest struct {
+	InstallID  string `json:"installId" description:"Stable per-install device id. Keys the registry so a rotated push token updates the same row."`
 	Token      string `json:"token" description:"Expo push token, e.g. ExponentPushToken[...]."`
 	Platform   string `json:"platform,omitempty" enum:"ios,android" description:"Device platform."`
 	DeviceName string `json:"deviceName,omitempty" description:"Human-friendly device label."`

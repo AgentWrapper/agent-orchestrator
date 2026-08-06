@@ -2,6 +2,8 @@ package push
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -34,7 +36,7 @@ func (f *fakeDeviceStore) List() []mobilebridge.PushDevice {
 	return append([]mobilebridge.PushDevice(nil), f.devices...)
 }
 
-func (f *fakeDeviceStore) Delete(token string) error {
+func (f *fakeDeviceStore) DeleteByToken(token string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, token)
@@ -244,6 +246,27 @@ func TestDispatcherSweepPrunesOnReceipt(t *testing.T) {
 	defer store.mu.Unlock()
 	if len(store.deleted) != 1 || store.deleted[0] != "ExponentPushToken[dead]" {
 		t.Fatalf("deleted = %v, want [ExponentPushToken[dead]]", store.deleted)
+	}
+}
+
+func TestDispatchSkipsMutedDevices(t *testing.T) {
+	now := time.Now().UTC()
+	store := &fakeDeviceStore{devices: []mobilebridge.PushDevice{
+		{InstallID: "i1", Token: "ExponentPushToken[live]", CreatedAt: now, LastSeenAt: now},
+		{InstallID: "i2", Token: "ExponentPushToken[muted]", Muted: true, CreatedAt: now, LastSeenAt: now},
+	}}
+	sender := newFakeSender([]Ticket{{Status: "ok"}})
+	d := NewDispatcher(nil, store, sender, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	d.dispatch(context.Background(), domain.NotificationRecord{ID: "n1", Title: "hi"})
+
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if len(sender.gotMsgs) != 1 {
+		t.Fatalf("messages = %d, want 1 (the muted device must be skipped)", len(sender.gotMsgs))
+	}
+	if sender.gotMsgs[0].To != "ExponentPushToken[live]" {
+		t.Fatalf("sent to %q, want the unmuted device", sender.gotMsgs[0].To)
 	}
 }
 

@@ -29,7 +29,7 @@ func (f *fakePushRegistry) Upsert(dev mobilebridge.PushDevice) error {
 	return nil
 }
 
-func (f *fakePushRegistry) Delete(token string) error {
+func (f *fakePushRegistry) DeleteByToken(token string) error {
 	if f.err != nil {
 		return f.err
 	}
@@ -49,7 +49,7 @@ func TestRegisterPushDevice(t *testing.T) {
 	reg := &fakePushRegistry{}
 	srv := newPushTestServer(t, reg)
 
-	body := `{"token":"ExponentPushToken[abc]","platform":"android","deviceName":"Pixel"}`
+	body := `{"installId":"inst-1","token":"ExponentPushToken[abc]","platform":"android","deviceName":"Pixel"}`
 	res, err := http.Post(srv.URL+"/api/v1/push/devices", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("post: %v", err)
@@ -62,7 +62,7 @@ func TestRegisterPushDevice(t *testing.T) {
 		t.Fatalf("upserts = %d, want 1", len(reg.upserts))
 	}
 	got := reg.upserts[0]
-	if got.Token != "ExponentPushToken[abc]" || got.Platform != "android" || got.DeviceName != "Pixel" {
+	if got.InstallID != "inst-1" || got.Token != "ExponentPushToken[abc]" || got.Platform != "android" || got.DeviceName != "Pixel" {
 		t.Fatalf("upserted device = %+v", got)
 	}
 	if got.CreatedAt.IsZero() || got.LastSeenAt.IsZero() {
@@ -117,6 +117,39 @@ func TestUnregisterPushDevice(t *testing.T) {
 	}
 	if len(reg.deletes) != 1 || reg.deletes[0] != token {
 		t.Fatalf("deletes = %+v, want [%q]", reg.deletes, token)
+	}
+}
+
+func TestRegisterPushDeviceStoresInstallID(t *testing.T) {
+	reg := &fakePushRegistry{}
+	srv := newPushTestServer(t, reg)
+
+	body := `{"installId":"inst-9","token":"ExponentPushToken[abc]","platform":"android","deviceName":"Pixel"}`
+	res, err := http.Post(srv.URL+"/api/v1/push/devices", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if len(reg.upserts) != 1 || reg.upserts[0].InstallID != "inst-9" {
+		t.Fatalf("upserts = %+v, want InstallID inst-9", reg.upserts)
+	}
+}
+
+func TestRegisterPushDeviceRejectsMissingInstallID(t *testing.T) {
+	reg := &fakePushRegistry{}
+	srv := newPushTestServer(t, reg)
+
+	body := `{"token":"ExponentPushToken[abc]"}`
+	res, err := http.Post(srv.URL+"/api/v1/push/devices", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", res.StatusCode)
 	}
 }
 

@@ -874,6 +874,7 @@ func mobileDeviceOperations() []operation {
 			resps: []respUnit{
 				{http.StatusOK, controllers.MobileDevicesResponse{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
 			},
 		},
 		{
@@ -885,6 +886,7 @@ func mobileDeviceOperations() []operation {
 				{http.StatusOK, map[string]bool{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
 			},
 		},
 		{
@@ -894,6 +896,7 @@ func mobileDeviceOperations() []operation {
 			resps: []respUnit{
 				{http.StatusNoContent, nil},
 				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusServiceUnavailable, envelope.APIError{}},
 			},
 		},
 	}

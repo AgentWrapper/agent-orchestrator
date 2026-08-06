@@ -143,8 +143,16 @@ func mountMobile(r chi.Router, c *controllers.MobileController) {
 // under /api/v1/mobile deliberately: lanControlBlock already 404s that prefix on
 // the LAN socket, so the "a phone must not manage the roster" invariant is
 // enforced by the transport rather than by a spoofable header.
+//
+// The routes are mounted unconditionally, even when c.Registry is nil (a
+// corrupt ~/.ao/data/mobile/push-devices.json failed to load): each handler
+// answers 503 DEVICE_REGISTRY_UNAVAILABLE in that case, so the desktop can tell
+// "the registry failed to load" apart from "this route doesn't exist / talking
+// to an old daemon" (a 404 would be ambiguous with both). Only a nil controller
+// pointer — meaning the roster surface was never wired into APIDeps at all —
+// skips mounting, matching mountMobile's convention for an absent controller.
 func mountMobileDevices(r chi.Router, c *controllers.MobileDevicesController) {
-	if c == nil || c.Registry == nil {
+	if c == nil {
 		return
 	}
 	r.Get("/api/v1/mobile/devices", c.List)

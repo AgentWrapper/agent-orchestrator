@@ -21,7 +21,7 @@ type Subscriber interface {
 // targets and prune dead tokens. Satisfied by *mobilebridge.DeviceRegistry.
 type DeviceStore interface {
 	List() []mobilebridge.PushDevice
-	Delete(token string) error
+	DeleteByToken(token string) error
 }
 
 // Sender delivers Expo messages and fetches delivery receipts. Satisfied by
@@ -117,7 +117,16 @@ func (d *Dispatcher) dispatch(ctx context.Context, rec domain.NotificationRecord
 	}
 	messages := make([]Message, 0, len(devices))
 	for _, dev := range devices {
+		// Muted devices stay registered and listed on the desktop but receive
+		// nothing. Filtering here (rather than after Send) keeps tickets 1:1 with
+		// messages by index, which the pruning loop below depends on.
+		if dev.Muted {
+			continue
+		}
 		messages = append(messages, messageFor(rec, dev.Token))
+	}
+	if len(messages) == 0 {
+		return
 	}
 	tickets, err := d.sender.Send(ctx, messages)
 	if err != nil {
@@ -146,7 +155,7 @@ func (d *Dispatcher) dispatch(ctx context.Context, rec domain.NotificationRecord
 
 // prune removes a dead token from the registry, logging the outcome.
 func (d *Dispatcher) prune(token string) {
-	if err := d.devices.Delete(token); err != nil {
+	if err := d.devices.DeleteByToken(token); err != nil {
 		d.log.Warn("prune dead push token failed", "err", err)
 	} else {
 		d.log.Info("pruned dead push token")

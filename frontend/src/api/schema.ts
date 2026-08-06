@@ -2026,6 +2026,8 @@ export interface components {
         RegisterPushDeviceRequest: {
             /** @description Human-friendly device label. */
             deviceName?: string;
+            /** @description Stable per-install device id. Keys the registry so a rotated push token updates the same row. */
+            installId: string;
             /**
              * @description Device platform.
              * @enum {string}
@@ -3147,6 +3149,15 @@ export interface operations {
                     "application/json": components["schemas"]["APIError"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
         };
     };
     removeMobileDevice: {
@@ -3170,6 +3181,15 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3217,6 +3237,15 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

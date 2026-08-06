@@ -116,6 +116,63 @@ func TestMuteDevice(t *testing.T) {
 	}
 }
 
+// TestMobileDeviceRoutesUnavailableWithoutRegistry pins the human ruling that
+// supersedes the brief's nil-guard: the roster routes always mount, and when
+// the device registry failed to load (deps.DeviceRoster is nil), each of
+// List/Mute/Remove answers 503 with code DEVICE_REGISTRY_UNAVAILABLE rather
+// than 404 (route missing) or a panic (nil dereference). This lets the desktop
+// tell "your registry is broken" apart from "this daemon predates the roster
+// feature".
+func TestMobileDeviceRoutesUnavailableWithoutRegistry(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log,
+		nil, httpd.APIDeps{DeviceRoster: nil, DeviceLive: fakeLive{}}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{"list", http.MethodGet, "/api/v1/mobile/devices", ""},
+		{"mute", http.MethodPatch, "/api/v1/mobile/devices/i1", `{"muted":true}`},
+		{"remove", http.MethodDelete, "/api/v1/mobile/devices/i1", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var body io.Reader
+			if tc.body != "" {
+				body = strings.NewReader(tc.body)
+			}
+			req, err := http.NewRequest(tc.method, srv.URL+tc.path, body)
+			if err != nil {
+				t.Fatalf("new request: %v", err)
+			}
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("%s: %v", tc.method, err)
+			}
+			defer res.Body.Close()
+			if res.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d, want 503", res.StatusCode)
+			}
+			var apiErr struct {
+				Code string `json:"code"`
+			}
+			if err := json.NewDecoder(res.Body).Decode(&apiErr); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if apiErr.Code != "DEVICE_REGISTRY_UNAVAILABLE" {
+				t.Fatalf("code = %q, want DEVICE_REGISTRY_UNAVAILABLE", apiErr.Code)
+			}
+		})
+	}
+}
+
 func TestDeleteDevice(t *testing.T) {
 	roster := &fakeRoster{}
 	srv := newRosterServer(t, roster, fakeLive{})
