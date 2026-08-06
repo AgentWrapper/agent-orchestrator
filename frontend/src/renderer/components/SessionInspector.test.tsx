@@ -1469,8 +1469,12 @@ describe("SessionInspector summary reviews", () => {
 		expect(await screen.findByRole("button", { name: "Re-run review" })).toBeInTheDocument();
 		expect((await screen.findAllByText("Reviewable change 3")).length).toBeGreaterThan(0);
 		expect(screen.getByText(/2 unresolved/)).toBeInTheDocument();
-		expect(screen.getByText("Reviews on the pull request")).toBeInTheDocument();
-		expect(screen.queryByText("No one has reviewed this pull request yet.")).not.toBeInTheDocument();
+		// AO's runs and the PR's own reviews share one section keyed by PR, so the
+		// unresolved count rides the same row as the AO verdict.
+		expect(screen.getByText("Reviews")).toBeInTheDocument();
+		expect(screen.queryByText("Reviews on the pull request")).not.toBeInTheDocument();
+		expect(screen.queryByText("AO code reviews")).not.toBeInTheDocument();
+		expect(screen.queryByText("No unresolved threads.")).not.toBeInTheDocument();
 	});
 
 	it("renders PR review summaries as Markdown", async () => {
@@ -1678,9 +1682,13 @@ describe("SessionInspector summary reviews", () => {
 
 		await userEvent.click(await screen.findByRole("button", { name: /re-run review/i }));
 
-		expect(
-			await screen.findByText("This commit has already been reviewed. Push a new commit to run another review."),
-		).toBeInTheDocument();
+		// The notice is a compact marker; the sentence itself is its accessible name
+		// and rides a tooltip, so it costs the rail one line instead of a boxed
+		// paragraph that outlives the click that caused it.
+		const alreadyReviewed = await screen.findByRole("button", {
+			name: "This commit has already been reviewed. Push a new commit to run another review.",
+		});
+		expect(alreadyReviewed).toHaveTextContent("Already reviewed");
 		expect(onOpenReviewerTerminal).not.toHaveBeenCalled();
 	});
 
