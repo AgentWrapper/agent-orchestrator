@@ -250,6 +250,8 @@ var schemaNames = map[string]string{
 	"ControllersListSessionPRsResponse":                   "ListSessionPRsResponse",
 	"ControllersSetActivityRequest":                       "SetActivityRequest",
 	"ControllersSetActivityResponse":                      "SetActivityResponse",
+	"ControllersSetReviewActivityRequest":                 "SetReviewActivityRequest",
+	"ControllersSetReviewActivityResponse":                "SetReviewActivityResponse",
 	"ControllersSpawnOrchestratorRequest":                 "SpawnOrchestratorRequest",
 	"ControllersSpawnOrchestratorResponse":                "SpawnOrchestratorResponse",
 	"ControllersOrchestratorResponse":                     "OrchestratorResponse",
@@ -1538,6 +1540,19 @@ func sessionOperations() []operation {
 			reqBody:    controllers.SetActivityRequest{},
 			resps: []respUnit{
 				{http.StatusOK, controllers.SetActivityResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/reviews/{reviewSessionID}/activity", id: "setReviewActivity", tag: "reviews",
+			summary:    "Report a reviewer-owned hook signal",
+			pathParams: []any{controllers.ReviewSessionIDParam{}},
+			reqBody:    controllers.SetReviewActivityRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.SetReviewActivityResponse{}},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},

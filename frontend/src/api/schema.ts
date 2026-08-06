@@ -502,6 +502,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/reviews/{reviewSessionID}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report a reviewer-owned hook signal */
+        post: operations["setReviewActivity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions": {
         parameters: {
             query?: never;
@@ -2302,6 +2319,27 @@ export interface components {
         };
         SetProjectConfigInput: {
             config: components["schemas"]["ProjectConfig"];
+        };
+        SetReviewActivityRequest: {
+            /** @description Native reviewer session identifier used to resume its transcript. */
+            agentSessionId?: string;
+            /** @description AO hook sub-command that produced this signal. */
+            event?: string;
+            /** @description AO process generation that produced the signal. */
+            launchId?: string;
+            /**
+             * @description Reviewer activity state reported by a hook. Accepted for forward compatibility, not used for session display state.
+             * @enum {string}
+             */
+            state?: "active" | "idle" | "waiting_input" | "blocked" | "exited";
+            /** @description Native tool name, for tool-use hook events. */
+            toolName?: string;
+            /** @description Native tool-use id, for tool-use hook events. */
+            toolUseId?: string;
+        };
+        SetReviewActivityResponse: {
+            ok: boolean;
+            reviewSessionId: string;
         };
         SetSessionMergePolicyRequest: {
             terminateOnPrMerge: boolean;
@@ -4203,6 +4241,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnregisterPushDeviceResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setReviewActivity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Reviewer session identifier, currently the per-harness review row id. */
+                reviewSessionID: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetReviewActivityRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetReviewActivityResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Internal Server Error */

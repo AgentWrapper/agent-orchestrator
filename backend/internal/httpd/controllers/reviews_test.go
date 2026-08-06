@@ -27,6 +27,9 @@ type fakeReviewService struct {
 	cancel           reviewcore.CancelResult
 	list             reviewcore.SessionReviews
 	submitted        []reviewsvc.SubmittedReview
+	activityID       string
+	activitySignal   reviewsvc.ReviewActivitySignal
+	activityErr      error
 	killed           bool
 	restored         bool
 }
@@ -48,6 +51,12 @@ func (f *fakeReviewService) Trigger(
 
 func (f *fakeReviewService) Submit(context.Context, domain.SessionID, string, domain.ReviewVerdict, string, string) (domain.ReviewRun, error) {
 	return domain.ReviewRun{}, nil
+}
+
+func (f *fakeReviewService) ApplyReviewActivitySignal(_ context.Context, reviewSessionID string, signal reviewsvc.ReviewActivitySignal) error {
+	f.activityID = reviewSessionID
+	f.activitySignal = signal
+	return f.activityErr
 }
 
 func (f *fakeReviewService) Cancel(context.Context, domain.SessionID) (reviewcore.CancelResult, error) {
@@ -104,6 +113,23 @@ func TestReviewsTrigger_MissingReviewerBinaryReturns422WithCause(t *testing.T) {
 	mustJSON(t, body, &got)
 	if !strings.Contains(got.Message, "claude") || !strings.Contains(got.Message, ports.ErrAgentBinaryNotFound.Error()) {
 		t.Fatalf("message = %q, want reviewer binary cause", got.Message)
+	}
+}
+
+func TestReviewActivityPersistsReviewerNativeSessionID(t *testing.T) {
+	svc := &fakeReviewService{}
+	srv := newReviewTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/reviews/review-1/activity", `{"event":"session-start","agentSessionId":"native-review-1"}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status, body)
+	}
+	if svc.activityID != "review-1" {
+		t.Fatalf("activity id = %q, want review-1", svc.activityID)
+	}
+	if svc.activitySignal.Event != "session-start" || svc.activitySignal.AgentSessionID != "native-review-1" {
+		t.Fatalf("activity signal = %+v", svc.activitySignal)
 	}
 }
 

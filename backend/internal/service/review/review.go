@@ -53,6 +53,7 @@ type Manager interface {
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
 	RestoreReviewer(ctx context.Context, workerID domain.SessionID) error
+	ApplyReviewActivitySignal(ctx context.Context, reviewSessionID string, signal ReviewActivitySignal) error
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
@@ -71,6 +72,8 @@ var _ Manager = (*Service)(nil)
 
 // Store is the review_run persistence surface owned by the service submit path.
 type Store interface {
+	GetReviewByID(ctx context.Context, id string) (domain.Review, bool, error)
+	UpdateReviewAgentSessionID(ctx context.Context, id, agentSessionID string) (bool, error)
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
@@ -191,6 +194,38 @@ func (s *Service) TerminateReviewer(ctx context.Context, workerID domain.Session
 func (s *Service) RestoreReviewer(ctx context.Context, workerID domain.SessionID) error {
 	_, err := s.engine.RestoreReviewer(ctx, workerID)
 	return err
+}
+
+// ReviewActivitySignal is reviewer-owned hook metadata. It deliberately does
+// not model activity state for session/Kanban display; for now hooks only keep
+// the reviewer native conversation id up to date for restore.
+type ReviewActivitySignal struct {
+	Event          string
+	AgentSessionID string
+}
+
+// ApplyReviewActivitySignal records reviewer-owned hook facts without touching
+// the worker session lifecycle row.
+func (s *Service) ApplyReviewActivitySignal(ctx context.Context, reviewSessionID string, signal ReviewActivitySignal) error {
+	if reviewSessionID == "" {
+		return fmt.Errorf("%w: review session id is required", ErrInvalid)
+	}
+	if _, ok, err := s.store.GetReviewByID(ctx, reviewSessionID); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("%w: review session %q", ErrNotFound, reviewSessionID)
+	}
+	if signal.AgentSessionID == "" {
+		return nil
+	}
+	updated, err := s.store.UpdateReviewAgentSessionID(ctx, reviewSessionID, signal.AgentSessionID)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return fmt.Errorf("%w: review session %q", ErrNotFound, reviewSessionID)
+	}
+	return nil
 }
 
 // SubmittedReview is one review result supplied by the reviewer CLI.

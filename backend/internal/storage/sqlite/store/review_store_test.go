@@ -241,6 +241,24 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	if got.AgentSessionID != "reviewer-native-1" {
 		t.Fatalf("agent session id = %q, want reviewer-native-1", got.AgentSessionID)
 	}
+	updated, err := s.UpdateReviewAgentSessionID(ctx, "rev-1", "claude-native-1")
+	if err != nil || !updated {
+		t.Fatalf("update claude native session: updated=%v err=%v", updated, err)
+	}
+	got, ok, err = s.GetReviewBySessionAndHarness(ctx, rec.ID, domain.ReviewerClaudeCode)
+	if err != nil || !ok {
+		t.Fatalf("get claude review after native update: ok=%v err=%v", ok, err)
+	}
+	if got.AgentSessionID != "claude-native-1" {
+		t.Fatalf("claude agent session id = %q, want claude-native-1", got.AgentSessionID)
+	}
+	got, ok, err = s.GetReviewBySessionAndHarness(ctx, rec.ID, domain.ReviewerHarness("greptile"))
+	if err != nil || !ok {
+		t.Fatalf("get greptile review after claude update: ok=%v err=%v", ok, err)
+	}
+	if got.AgentSessionID != "reviewer-native-1" {
+		t.Fatalf("greptile agent session id = %q, want reviewer-native-1", got.AgentSessionID)
+	}
 	if err := s.ClearReviewerHandle(ctx, rec.ID); err != nil {
 		t.Fatalf("clear reviewer handle: %v", err)
 	}

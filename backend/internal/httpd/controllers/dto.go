@@ -729,9 +729,33 @@ type SetActivityResponse struct {
 	State     string           `json:"state"`
 }
 
+// SetReviewActivityRequest is the body of POST /api/v1/reviews/{reviewSessionID}/activity.
+// It mirrors the agent activity hook envelope where useful, but reviewer
+// activity does not currently feed worker/Kanban session state. AgentSessionID
+// is the native reviewer conversation id used for reviewer restore.
+type SetReviewActivityRequest struct {
+	State          string `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Reviewer activity state reported by a hook. Accepted for forward compatibility, not used for session display state."`
+	Event          string `json:"event,omitempty" description:"AO hook sub-command that produced this signal."`
+	ToolName       string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
+	ToolUseID      string `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
+	AgentSessionID string `json:"agentSessionId,omitempty" description:"Native reviewer session identifier used to resume its transcript."`
+	LaunchID       string `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
+}
+
+// SetReviewActivityResponse is the body of POST /api/v1/reviews/{reviewSessionID}/activity.
+type SetReviewActivityResponse struct {
+	OK              bool   `json:"ok"`
+	ReviewSessionID string `json:"reviewSessionId"`
+}
+
 // OrchestratorIDParam is the {id} path parameter for orchestrator routes.
 type OrchestratorIDParam struct {
 	ID string `path:"id" description:"Orchestrator session identifier, e.g. project-orchestrator."`
+}
+
+// ReviewSessionIDParam is the {reviewSessionID} path parameter for reviewer-owned routes.
+type ReviewSessionIDParam struct {
+	ID string `path:"reviewSessionID" description:"Reviewer session identifier, currently the per-harness review row id."`
 }
 
 // SpawnOrchestratorRequest is the body of POST /api/v1/orchestrators.

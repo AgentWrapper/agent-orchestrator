@@ -71,6 +71,28 @@ func (q *Queries) ClearReviewerHandleByHarness(ctx context.Context, arg ClearRev
 	return err
 }
 
+const getReviewByID = `-- name: GetReviewByID :one
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at
+FROM review WHERE id = ?
+`
+
+func (q *Queries) GetReviewByID(ctx context.Context, id string) (Review, error) {
+	row := q.db.QueryRowContext(ctx, getReviewByID, id)
+	var i Review
+	err := row.Scan(
+		&i.ID,
+		&i.SessionID,
+		&i.ProjectID,
+		&i.Harness,
+		&i.PRURL,
+		&i.ReviewerHandleID,
+		&i.AgentSessionID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getReviewBySession = `-- name: GetReviewBySession :one
 SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at
 FROM review WHERE session_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC LIMIT 1
@@ -458,6 +480,23 @@ func (q *Queries) SupersedeStaleRunningReviewRuns(ctx context.Context, arg Super
 		arg.PRURL,
 		arg.TargetSha,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateReviewAgentSessionID = `-- name: UpdateReviewAgentSessionID :execrows
+UPDATE review SET agent_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+`
+
+type UpdateReviewAgentSessionIDParams struct {
+	AgentSessionID string
+	ID             string
+}
+
+func (q *Queries) UpdateReviewAgentSessionID(ctx context.Context, arg UpdateReviewAgentSessionIDParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateReviewAgentSessionID, arg.AgentSessionID, arg.ID)
 	if err != nil {
 		return 0, err
 	}

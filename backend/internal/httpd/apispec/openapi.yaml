@@ -1310,6 +1310,59 @@ paths:
       summary: Unregister a phone's Expo push token
       tags:
       - push
+  /api/v1/reviews/{reviewSessionID}/activity:
+    post:
+      operationId: setReviewActivity
+      parameters:
+      - description: Reviewer session identifier, currently the per-harness review
+          row id.
+        in: path
+        name: reviewSessionID
+        required: true
+        schema:
+          description: Reviewer session identifier, currently the per-harness review
+            row id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetReviewActivityRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetReviewActivityResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Report a reviewer-owned hook signal
+      tags:
+      - reviews
   /api/v1/sessions:
     get:
       operationId: listSessions
@@ -6590,6 +6643,44 @@ components:
           $ref: '#/components/schemas/ProjectConfig'
       required:
       - config
+      type: object
+    SetReviewActivityRequest:
+      properties:
+        agentSessionId:
+          description: Native reviewer session identifier used to resume its transcript.
+          type: string
+        event:
+          description: AO hook sub-command that produced this signal.
+          type: string
+        launchId:
+          description: AO process generation that produced the signal.
+          type: string
+        state:
+          description: Reviewer activity state reported by a hook. Accepted for forward
+            compatibility, not used for session display state.
+          enum:
+          - active
+          - idle
+          - waiting_input
+          - blocked
+          - exited
+          type: string
+        toolName:
+          description: Native tool name, for tool-use hook events.
+          type: string
+        toolUseId:
+          description: Native tool-use id, for tool-use hook events.
+          type: string
+      type: object
+    SetReviewActivityResponse:
+      properties:
+        ok:
+          type: boolean
+        reviewSessionId:
+          type: string
+      required:
+      - ok
+      - reviewSessionId
       type: object
     SetSessionMergePolicyRequest:
       properties:

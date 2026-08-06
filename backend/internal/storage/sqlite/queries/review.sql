@@ -16,6 +16,10 @@ FROM review WHERE session_id = ? ORDER BY updated_at DESC, created_at DESC, id D
 SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at
 FROM review WHERE session_id = ? AND harness = ?;
 
+-- name: GetReviewByID :one
+SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at
+FROM review WHERE id = ?;
+
 -- name: ListReviewsBySession :many
 SELECT id, session_id, project_id, harness, pr_url, reviewer_handle_id, agent_session_id, created_at, updated_at
 FROM review WHERE session_id = ? ORDER BY updated_at DESC, created_at DESC, id DESC;
@@ -25,6 +29,9 @@ UPDATE review SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE 
 
 -- name: ClearReviewerHandleByHarness :exec
 UPDATE review SET reviewer_handle_id = '', updated_at = CURRENT_TIMESTAMP WHERE session_id = ? AND harness = ?;
+
+-- name: UpdateReviewAgentSessionID :execrows
+UPDATE review SET agent_session_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;
 
 -- name: InsertReviewRun :exec
 INSERT INTO review_run (id, review_id, session_id, batch_id, harness, pr_url, target_sha, status, verdict, body, github_review_id, created_at)

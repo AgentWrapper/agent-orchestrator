@@ -48,18 +48,19 @@ type Launcher interface {
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
-	RunID          string
-	BatchID        string
-	WorkerID       domain.SessionID
-	ProjectID      domain.ProjectID
-	Harness        domain.ReviewerHarness
-	WorkspacePath  string
-	AgentSessionID string
-	PreviousRuns   []domain.ReviewRun
-	PRURL          string
-	TargetSHA      string
-	ReviewQueue    []ports.ReviewTask
-	ReviewIndex    int
+	RunID           string
+	BatchID         string
+	ReviewSessionID string
+	WorkerID        domain.SessionID
+	ProjectID       domain.ProjectID
+	Harness         domain.ReviewerHarness
+	WorkspacePath   string
+	AgentSessionID  string
+	PreviousRuns    []domain.ReviewRun
+	PRURL           string
+	TargetSHA       string
+	ReviewQueue     []ports.ReviewTask
+	ReviewIndex     int
 }
 
 // LaunchResult is the terminal/runtime state created by a reviewer launch.
@@ -338,7 +339,10 @@ func (l *agentLauncher) runtimeEnv(ctx context.Context, spec LaunchSpec, argv []
 	for k, v := range base {
 		env[k] = v
 	}
-	env[sessionmanager.EnvSessionID] = string(spec.WorkerID)
+	delete(env, sessionmanager.EnvSessionID)
+	env["AO_REVIEW_SESSION_ID"] = spec.ReviewSessionID
+	env["AO_REVIEW_WORKER_SESSION_ID"] = string(spec.WorkerID)
+	env["AO_REVIEW_HARNESS"] = string(spec.Harness)
 	env[sessionmanager.EnvProjectID] = string(spec.ProjectID)
 	env[sessionmanager.EnvDataDir] = l.dataDir
 	path, err := sessionmanager.HookPATH(os.Executable, os.Getenv, env)

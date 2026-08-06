@@ -457,14 +457,21 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 	agentSessionID := ""
 	if hasReview {
 		agentSessionID = reviewRow.AgentSessionID
+	} else {
+		reviewRow, err = e.upsertReview(ctx, worker, harness, "", "", e.clock())
+		if err != nil {
+			return RestoreReviewerResult{}, err
+		}
+		hasReview = true
 	}
 	launch, err := e.launcher.RestoreTerminal(ctx, LaunchSpec{
-		WorkerID:       worker.ID,
-		ProjectID:      worker.ProjectID,
-		Harness:        harness,
-		WorkspacePath:  worker.Metadata.WorkspacePath,
-		AgentSessionID: agentSessionID,
-		PreviousRuns:   previousRuns,
+		ReviewSessionID: reviewRow.ID,
+		WorkerID:        worker.ID,
+		ProjectID:       worker.ProjectID,
+		Harness:         harness,
+		WorkspacePath:   worker.Metadata.WorkspacePath,
+		AgentSessionID:  agentSessionID,
+		PreviousRuns:    previousRuns,
 	})
 	if err != nil {
 		return RestoreReviewerResult{}, fmt.Errorf("restore reviewer: %w", err)
@@ -521,18 +528,19 @@ func (e *Engine) cancelStaleRunningRuns(ctx stdctx.Context, workerID domain.Sess
 
 func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarness, run domain.ReviewRun, queue []ports.ReviewTask, index int, agentSessionID string) LaunchSpec {
 	return LaunchSpec{
-		RunID:          run.ID,
-		BatchID:        run.BatchID,
-		WorkerID:       worker.ID,
-		ProjectID:      worker.ProjectID,
-		Harness:        harness,
-		WorkspacePath:  worker.Metadata.WorkspacePath,
-		AgentSessionID: agentSessionID,
-		PreviousRuns:   nil,
-		PRURL:          run.PRURL,
-		TargetSHA:      run.TargetSHA,
-		ReviewQueue:    queue,
-		ReviewIndex:    index,
+		RunID:           run.ID,
+		BatchID:         run.BatchID,
+		ReviewSessionID: run.ReviewID,
+		WorkerID:        worker.ID,
+		ProjectID:       worker.ProjectID,
+		Harness:         harness,
+		WorkspacePath:   worker.Metadata.WorkspacePath,
+		AgentSessionID:  agentSessionID,
+		PreviousRuns:    nil,
+		PRURL:           run.PRURL,
+		TargetSHA:       run.TargetSHA,
+		ReviewQueue:     queue,
+		ReviewIndex:     index,
 	}
 }
 

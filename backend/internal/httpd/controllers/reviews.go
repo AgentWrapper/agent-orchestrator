@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -94,12 +95,47 @@ type ReviewsController struct {
 
 // Register mounts the review routes on the supplied router.
 func (c *ReviewsController) Register(r chi.Router) {
+	r.Post("/reviews/{reviewSessionID}/activity", c.activity)
 	r.Get("/sessions/{sessionId}/reviews", c.list)
 	r.Post("/sessions/{sessionId}/reviews/trigger", c.trigger)
 	r.Post("/sessions/{sessionId}/reviews/cancel", c.cancel)
 	r.Post("/sessions/{sessionId}/reviews/kill", c.kill)
 	r.Post("/sessions/{sessionId}/reviews/restore", c.restore)
 	r.Post("/sessions/{sessionId}/reviews/submit", c.submit)
+}
+
+func (c *ReviewsController) activity(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/reviews/{reviewSessionID}/activity")
+		return
+	}
+	reviewSessionID := strings.TrimSpace(chi.URLParam(r, "reviewSessionID"))
+	if reviewSessionID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "REVIEW_ACTIVITY_INVALID", "Review session id is required", nil)
+		return
+	}
+	var in SetReviewActivityRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	agentSessionID := capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.AgentSessionID)))
+	if strings.TrimSpace(in.State) == "" && agentSessionID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "REVIEW_ACTIVITY_OR_SESSION_ID_REQUIRED", "Reviewer activity state or agent session ID is required", nil)
+		return
+	}
+	if err := c.Svc.ApplyReviewActivitySignal(r.Context(), reviewSessionID, reviewsvc.ReviewActivitySignal{
+		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		AgentSessionID: agentSessionID,
+	}); err != nil {
+		if errors.Is(err, reviewsvc.ErrNotFound) {
+			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "REVIEW_NOT_FOUND", "Unknown review session", nil)
+			return
+		}
+		writeReviewError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetReviewActivityResponse{OK: true, ReviewSessionID: reviewSessionID})
 }
 
 func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {

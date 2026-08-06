@@ -55,6 +55,18 @@ func (s *Store) GetReviewBySessionAndHarness(ctx context.Context, id domain.Sess
 	return reviewFromGetReviewBySessionAndHarnessRow(row), true, nil
 }
 
+// GetReviewByID returns one reviewer session row by its stable review id.
+func (s *Store) GetReviewByID(ctx context.Context, id string) (domain.Review, bool, error) {
+	row, err := s.qr.GetReviewByID(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Review{}, false, nil
+	}
+	if err != nil {
+		return domain.Review{}, false, fmt.Errorf("get review %s: %w", id, err)
+	}
+	return reviewFromReview(row), true, nil
+}
+
 // ListReviewsBySession returns every harness-specific review row for a worker
 // session, newest first.
 func (s *Store) ListReviewsBySession(ctx context.Context, id domain.SessionID) ([]domain.Review, error) {
@@ -83,6 +95,18 @@ func (s *Store) ClearReviewerHandleByHarness(ctx context.Context, id domain.Sess
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return s.qw.ClearReviewerHandleByHarness(ctx, gen.ClearReviewerHandleByHarnessParams{SessionID: id, Harness: harness})
+}
+
+// UpdateReviewAgentSessionID records the native reviewer conversation id
+// reported by the reviewer harness hooks.
+func (s *Store) UpdateReviewAgentSessionID(ctx context.Context, id, agentSessionID string) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.UpdateReviewAgentSessionID(ctx, gen.UpdateReviewAgentSessionIDParams{ID: id, AgentSessionID: agentSessionID})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // InsertReviewRun records a new review pass. A unique-constraint hit on the
@@ -261,34 +285,18 @@ func (s *Store) ListReviewRunsByBatch(ctx context.Context, id domain.SessionID, 
 }
 
 func reviewFromGetReviewBySessionRow(r gen.Review) domain.Review {
-	return domain.Review{
-		ID:               r.ID,
-		SessionID:        r.SessionID,
-		ProjectID:        r.ProjectID,
-		Harness:          r.Harness,
-		PRURL:            r.PRURL,
-		ReviewerHandleID: r.ReviewerHandleID,
-		AgentSessionID:   r.AgentSessionID,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
-	}
+	return reviewFromReview(r)
 }
 
 func reviewFromGetReviewBySessionAndHarnessRow(r gen.Review) domain.Review {
-	return domain.Review{
-		ID:               r.ID,
-		SessionID:        r.SessionID,
-		ProjectID:        r.ProjectID,
-		Harness:          r.Harness,
-		PRURL:            r.PRURL,
-		ReviewerHandleID: r.ReviewerHandleID,
-		AgentSessionID:   r.AgentSessionID,
-		CreatedAt:        r.CreatedAt,
-		UpdatedAt:        r.UpdatedAt,
-	}
+	return reviewFromReview(r)
 }
 
 func reviewFromListReviewsBySessionRow(r gen.Review) domain.Review {
+	return reviewFromReview(r)
+}
+
+func reviewFromReview(r gen.Review) domain.Review {
 	return domain.Review{
 		ID:               r.ID,
 		SessionID:        r.SessionID,
