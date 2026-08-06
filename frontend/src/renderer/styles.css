@@ -1312,7 +1312,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 .cursor-chat-header {
-	height: 46px;
 	border-bottom: 1px solid var(--color-border);
 	background: color-mix(in srgb, var(--color-bg-sidebar) 72%, var(--color-bg-primary));
 }

@@ -39,6 +39,7 @@ import { sameContent, useStableList } from "../../lib/stable-list";
 import type { SessionKind } from "../../types/workspace";
 import { Button } from "../ui/button";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { SessionTopbarPortal } from "../SessionTopbarPortal";
 import {
 	ActivityRow,
 	ApprovalCard,
@@ -82,6 +83,12 @@ import {
 	type TurnSettings,
 } from "../../types/conversation";
 
+type TopbarBounds = {
+	leftInset: number;
+	rightInset: number;
+	width: number;
+};
+
 export interface ChatWorkspaceProps {
 	snapshot: ConversationSnapshot;
 	/** The session title from the sidebar (matches what users see in the left sidebar) */
@@ -89,9 +96,7 @@ export interface ChatWorkspaceProps {
 	/** The AO role using this shared conversation surface. */
 	sessionRole?: SessionKind;
 	/** Session-level actions owned above the conversation surface. */
-	interfaceAction?: ReactNode;
-	/** A kill control for worker sessions, rendered in the chat header. */
-	killAction?: ReactNode;
+	headerActions?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
 	/** Older durable history is available but not loaded into the DOM yet. */
@@ -176,8 +181,7 @@ export function ChatWorkspace({
 	snapshot,
 	sessionTitle,
 	sessionRole = "worker",
-	interfaceAction,
-	killAction,
+	headerActions,
 	controllerTransitioning,
 	hasOlder,
 	loadingOlder,
@@ -225,6 +229,12 @@ export function ChatWorkspace({
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
+	const surfaceRef = useRef<HTMLElement | null>(null);
+	const [topbarBounds, setTopbarBounds] = useState<TopbarBounds>({
+		leftInset: 0,
+		rightInset: 0,
+		width: 0,
+	});
 
 	// Offered only while the agent is idle. The daemon refuses a rollback mid-turn,
 	// and a control that exists to be refused is worse than one that waits.
@@ -233,8 +243,37 @@ export function ChatWorkspace({
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
 
+	useEffect(() => {
+		const surface = surfaceRef.current;
+		if (!surface) return;
+		const workspaceSurface = surface.closest<HTMLElement>(".center-panel-surface");
+		const measure = () => {
+			const surfaceRect = surface.getBoundingClientRect();
+			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? surfaceRect;
+			const next = {
+				leftInset: workspaceRect.left,
+				rightInset: Math.max(0, window.innerWidth - workspaceRect.right),
+				width: surfaceRect.width,
+			};
+			setTopbarBounds((current) =>
+				current.leftInset === next.leftInset &&
+				current.rightInset === next.rightInset &&
+				current.width === next.width
+					? current
+					: next,
+			);
+		};
+		measure();
+		if (typeof ResizeObserver === "undefined") return;
+		const observer = new ResizeObserver(measure);
+		observer.observe(surface);
+		if (workspaceSurface) observer.observe(workspaceSurface);
+		return () => observer.disconnect();
+	}, []);
+
 	return (
 		<section
+			ref={surfaceRef}
 			aria-label="Chat"
 			className="cursor-chat-surface flex h-full min-h-0 flex-col"
 			data-session-mode={snapshot.mode}
@@ -244,12 +283,12 @@ export function ChatWorkspace({
 				snapshot={snapshot}
 				sessionTitle={sessionTitle}
 				sessionRole={sessionRole}
-				interfaceAction={interfaceAction}
-				killAction={killAction}
 				onCompact={onCompact}
 				compacting={compacting}
 				compactUnavailable={compactUnavailable}
 				turnInFlight={Boolean(turn)}
+				headerActions={headerActions}
+				topbarBounds={topbarBounds}
 			/>
 			{/* Ordered by what blocks what. A session that needs credentials cannot make
 			    progress at all, so it is stated first; the controller's own health next;
@@ -479,8 +518,8 @@ function readableItems(snapshot: ConversationSnapshot): ConversationItem[] {
 function ChatHeader({
 	snapshot,
 	sessionTitle,
-	interfaceAction,
-	killAction,
+	headerActions,
+	topbarBounds,
 	sessionRole,
 	onCompact,
 	compacting,
@@ -489,49 +528,58 @@ function ChatHeader({
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
-	interfaceAction?: ReactNode;
-	killAction?: ReactNode;
 	sessionRole: SessionKind;
 	onCompact?: () => void;
 	compacting?: boolean;
 	compactUnavailable?: string;
 	turnInFlight?: boolean;
+	headerActions?: ReactNode;
+	topbarBounds: TopbarBounds;
 }) {
 	const RoleIcon = sessionRole === "orchestrator" ? Workflow : MessageSquare;
 	const roleLabel = sessionRole === "orchestrator" ? "Orchestrator" : "Worker";
 	return (
-		<header className="cursor-chat-header flex shrink-0 items-center gap-3 px-3.5">
-			<span className="cursor-chat-role-icon grid size-7 shrink-0 place-items-center rounded-md">
-				<RoleIcon aria-hidden="true" className="size-3.5" />
-			</span>
-			<div className="flex min-w-0 flex-col gap-0.5">
-				{/* Show the session title (same as sidebar) for both worker and orchestrator */}
-				{/* Use sessionTitle from sidebar for consistency */}
-				<strong className="truncate text-[13px] font-medium leading-tight text-foreground" title={sessionTitle || snapshot.title || snapshot.sessionId}>
-					{sessionTitle || snapshot.title || snapshot.sessionId}
-				</strong>
-				<span className="flex items-center gap-1.5 text-[10.5px] leading-none text-muted-foreground">
-					<span className="cursor-chat-role-label">{roleLabel}</span>
-					<span aria-hidden="true">·</span>
-					<span>{snapshot.harness}</span>
-				</span>
-			</div>
-			<div className="ml-auto flex shrink-0 items-center gap-2">
-				<CompactButton
-					onCompact={onCompact}
-					compacting={compacting}
-					unavailable={compactUnavailable}
-					turnInFlight={turnInFlight}
-					compactedAt={snapshot.compactedAt}
-				/>
-				{interfaceAction}
-				{killAction}
-				{/* Current mode indicator - active chat icon */}
-				<div className="flex size-7 items-center justify-center rounded-md bg-raised">
-					<MessageSquare aria-hidden="true" className="size-3.5 text-logo-accent" />
+		<SessionTopbarPortal>
+			<header
+				className="flex h-session-topbar w-full shrink-0 items-stretch bg-sidebar pt-1"
+				style={{
+					paddingLeft: topbarBounds.leftInset,
+					paddingRight: topbarBounds.rightInset,
+				}}
+			>
+				<div
+					className="session-topbar-surface cursor-chat-header flex min-w-0 flex-1 items-center gap-3 px-3.5"
+					style={{ width: topbarBounds.width > 0 ? topbarBounds.width : "100%" }}
+				>
+					<span className="cursor-chat-role-icon grid size-7 shrink-0 place-items-center rounded-md">
+						<RoleIcon aria-hidden="true" className="size-3.5" />
+					</span>
+					<div className="flex min-w-0 flex-col gap-0.5">
+						<strong
+							className="truncate text-[13px] font-medium leading-tight text-foreground"
+							title={sessionTitle || snapshot.title || snapshot.sessionId}
+						>
+							{sessionTitle || snapshot.title || snapshot.sessionId}
+						</strong>
+						<span className="flex items-center gap-1.5 text-[10.5px] leading-none text-muted-foreground">
+							<span className="cursor-chat-role-label">{roleLabel}</span>
+							<span aria-hidden="true">·</span>
+							<span>{snapshot.harness}</span>
+						</span>
+					</div>
+					<div className="ml-auto flex shrink-0 items-center gap-2">
+						<CompactButton
+							onCompact={onCompact}
+							compacting={compacting}
+							unavailable={compactUnavailable}
+							turnInFlight={turnInFlight}
+							compactedAt={snapshot.compactedAt}
+						/>
+						{headerActions}
+					</div>
 				</div>
-			</div>
-		</header>
+			</header>
+		</SessionTopbarPortal>
 	);
 }
 

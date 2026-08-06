@@ -292,6 +292,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			}}
 		/>
 	) : null;
+	const sessionHeaderActions = (
+		<SessionInterfaceActionGroup>
+			{interfaceSwitchAction}
+			<ShellTopbar embedded />
+		</SessionInterfaceActionGroup>
+	);
 	const previewUrl = session?.previewUrl?.trim() || undefined;
 	const previewRevision = session?.previewRevision;
 	const browserSlotVisible = Boolean(
@@ -519,7 +525,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 						{showChatSurface ? (
 							<SessionChatSurface
 								session={session}
-								interfaceAction={interfaceSwitchAction}
+								headerActions={sessionHeaderActions}
 								controllerTransitioning={chatControllerTransitioning}
 								onOpenShell={addShellTerminal}
 								openingShell={openShellTerminal.isPending}
@@ -543,12 +549,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								shellTerminals={shellTerminals}
 								terminalTarget={routedTerminalTarget}
 								theme={theme}
-								topbarActions={
-									<SessionInterfaceActionGroup>
-										{interfaceSwitchAction}
-										<ShellTopbar embedded />
-									</SessionInterfaceActionGroup>
-								}
+								topbarActions={sessionHeaderActions}
 							/>
 						)}
 						{interfaceSwitch.transition?.id !== dismissedTransitionID ? (

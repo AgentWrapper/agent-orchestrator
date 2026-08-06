@@ -124,10 +124,10 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
 vi.mock("./chat/SessionChatSurface", () => ({
-	SessionChatSurface: ({ onOpenShell, interfaceAction }: { onOpenShell?: () => void; interfaceAction?: ReactNode }) => (
+	SessionChatSurface: ({ onOpenShell, headerActions }: { onOpenShell?: () => void; headerActions?: ReactNode }) => (
 		<div data-testid="chat-surface">
 			chat surface
-			{interfaceAction}
+			{headerActions}
 			<button type="button" onClick={onOpenShell}>
 				open shell from chat
 			</button>
