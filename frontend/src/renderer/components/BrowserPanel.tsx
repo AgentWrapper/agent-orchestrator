@@ -243,9 +243,9 @@ export function BrowserPanelView({
 		selectTab,
 		closeTab,
 		prepareForOverlay,
+		finishOverlay,
 		agentBrowserActive,
 		agentBrowserActivity,
-		visualTransition,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
@@ -315,6 +315,8 @@ export function BrowserPanelView({
 	const warmTabsMenuFrame = useCallback(() => {
 		void prepareTabsMenuFrame();
 	}, [prepareTabsMenuFrame]);
+	// Radix restores focus to the trigger when the menu closes. Preparing on
+	// focus would start a new capture after cleanup; keyboard opens prepare below.
 
 	const openTabsMenu = useCallback(async () => {
 		if (tabs.length === 0) return;
@@ -326,11 +328,26 @@ export function BrowserPanelView({
 		(next: boolean) => {
 			if (!next) {
 				setTabsMenuOpen(false);
+				finishOverlay();
 				return;
 			}
 			void openTabsMenu();
 		},
-		[openTabsMenu],
+		[finishOverlay, openTabsMenu],
+	);
+
+	const handleSelectTab = useCallback(
+		async (tabId: string) => {
+			setTabsMenuOpen(false);
+			try {
+				await selectTab(tabId);
+			} catch {
+				// The existing tab remains active; overlay cleanup still runs below.
+			} finally {
+				finishOverlay();
+			}
+		},
+		[finishOverlay, selectTab],
 	);
 
 	const handleTabsTriggerPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
@@ -370,7 +387,6 @@ export function BrowserPanelView({
 				agentStatusLabel && "browser-panel--agent-active",
 			)}
 			data-testid="browser-panel"
-			data-transition={visualTransition?.kind}
 			role="tabpanel"
 		>
 			<form
@@ -470,7 +486,6 @@ export function BrowserPanelView({
 							aria-label={t("browser.tabsAria", { count: tabs.length })}
 							className={cn("browser-panel__tabs-trigger gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
 							disabled={tabs.length === 0}
-							onFocus={warmTabsMenuFrame}
 							onKeyDown={handleTabsTriggerKeyDown}
 							onPointerDown={handleTabsTriggerPointerDown}
 							onPointerEnter={warmTabsMenuFrame}
@@ -491,7 +506,7 @@ export function BrowserPanelView({
 								<div className="flex min-w-0 items-center gap-0.5" key={tab.id}>
 									<DropdownMenuItem
 										className="min-w-0 flex-1 cursor-pointer py-2"
-										onSelect={() => void selectTab(tab.id)}
+										onSelect={() => void handleSelectTab(tab.id)}
 										textValue={`${label.title} ${label.subtitle}`}
 									>
 										<span className="flex size-4 shrink-0 items-center justify-center">
@@ -544,14 +559,6 @@ export function BrowserPanelView({
 					<MirrorVideo stream={mirrorStream} />
 				) : mirrorUrl ? (
 					<img alt="" className="absolute inset-0 h-full w-full object-fill" src={mirrorUrl} />
-				) : null}
-				{visualTransition ? (
-					<img
-						alt=""
-						className="browser-panel__transition-frame"
-						data-testid="browser-transition-frame"
-						src={visualTransition.snapshotUrl}
-					/>
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (

@@ -20,7 +20,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    reviewer_harness, model, is_pinned, pinned_at
+    reviewer_harness, is_pinned, pinned_at, model
 FROM sessions WHERE id = ?
 `
 
@@ -55,9 +55,9 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.DiffBaseSha,
 		&i.DiffBaseRef,
 		&i.ReviewerHarness,
-		&i.Model,
 		&i.IsPinned,
 		&i.PinnedAt,
+		&i.Model,
 	)
 	return i, err
 }
@@ -149,7 +149,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    reviewer_harness, model, is_pinned, pinned_at
+    reviewer_harness, is_pinned, pinned_at, model
 FROM sessions ORDER BY project_id, num
 `
 
@@ -190,9 +190,9 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
 			&i.ReviewerHarness,
-			&i.Model,
 			&i.IsPinned,
 			&i.PinnedAt,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}
@@ -214,7 +214,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    reviewer_harness, model, is_pinned, pinned_at
+    reviewer_harness, is_pinned, pinned_at, model
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -255,9 +255,9 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
 			&i.ReviewerHarness,
-			&i.Model,
 			&i.IsPinned,
 			&i.PinnedAt,
+			&i.Model,
 		); err != nil {
 			return nil, err
 		}

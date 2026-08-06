@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Copy, Info, Loader2, X } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
+import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { ConnectMobileGetApp } from "./settings/ConnectMobileGetApp";
 import { ConnectMobileSetup } from "./settings/ConnectMobileSetup";
@@ -67,6 +68,21 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 		enabled: open,
 	});
 
+	// Reported once per open, and only after the status query resolves, so
+	// bridge_enabled reflects the real state rather than the `false` default that
+	// every open would otherwise report. Reset on close so reopening counts again.
+	const reportedOpen = useRef(false);
+	const initialEnabled = query.data?.enabled;
+	useEffect(() => {
+		if (!open) {
+			reportedOpen.current = false;
+			return;
+		}
+		if (initialEnabled === undefined || reportedOpen.current) return;
+		reportedOpen.current = true;
+		void captureRendererEvent("ao.renderer.mobile_connect_opened", { bridge_enabled: initialEnabled });
+	}, [open, initialEnabled]);
+
 	const invalidate = () => {
 		void queryClient.invalidateQueries({ queryKey: mobileStatusQueryKey });
 	};
@@ -123,8 +139,15 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 	const onToggle = (next: boolean) => {
 		if (busy) return;
 		clearActionErrors();
-		if (next) enable.mutate();
-		else disable.mutate();
+		// Enabling is the step that starts the bridge and reveals the QR, so this
+		// paired with ao.mobile.device_connected (emitted by the daemon when a
+		// phone actually authenticates) is what shows how many people who set this
+		// up ever finish the scan.
+		const report = (outcome: "succeeded" | "failed") => {
+			void captureRendererEvent("ao.renderer.mobile_bridge_toggled", { enabled: next, outcome });
+		};
+		const mutation = next ? enable : disable;
+		mutation.mutate(undefined, { onSuccess: () => report("succeeded"), onError: () => report("failed") });
 	};
 
 	const actionError =

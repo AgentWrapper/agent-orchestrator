@@ -13,6 +13,17 @@
  * (:root[data-theme="light"]). apply-initial-theme runs before CSS load; the
  * Zustand theme toggle updates data-theme on <html>.
  */
+
+/*
+ * Theme switches run under document.startViewTransition so per-element
+ * color/background transitions are hidden behind a snapshot. Kill the
+ * default root crossfade — we want an instant cut, not an animation.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+	animation: none;
+	mix-blend-mode: normal;
+}
 @theme inline {
 	--font-sans: var(--font-family-base);
 	--font-mono: var(--font-family-mono);
@@ -1253,9 +1264,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 /* Expanded-only sidebar chrome waits for the rail width transition to finish
  * before painting, so tap-to-expand does not flash labels inside the narrow
  * collapsed rail. */
-.sidebar-expanded-chrome {
-	transition: opacity 150ms ease-out;
-}
+.sidebar-expanded-chrome {}
 [data-slot="sidebar-container"][data-expanded-chrome="hidden"] .sidebar-expanded-chrome {
 	opacity: 0;
 	pointer-events: none;
@@ -1269,10 +1278,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	.ao-startup-status,
 	.ao-startup-dots span {
 		animation: none;
-	}
-
-	.sidebar-expanded-chrome {
-		transition: none;
 	}
 
 	[data-slot="command-dialog-overlay"],
@@ -2617,18 +2622,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	box-shadow: none;
 }
 
-.browser-panel__transition-frame {
-	position: absolute;
-	inset: 0;
-	z-index: 2;
-	width: 100%;
-	height: 100%;
-	object-fit: fill;
-	background: var(--bg);
-	pointer-events: none;
-	animation: browser-transition-frame 240ms ease-out forwards;
-}
-
 .browser-panel__slot {
 	position: absolute;
 	inset: 0;
@@ -2663,15 +2656,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	font-size: 12px;
 }
 
-@keyframes browser-transition-frame {
-	0% {
-		opacity: 1;
-	}
-	100% {
-		opacity: 0;
-	}
-}
-
 @keyframes browser-popout-in {
 	from {
 		opacity: 0.94;
@@ -2684,8 +2668,7 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.browser-popout-overlay,
-	.browser-panel__transition-frame {
+	.browser-popout-overlay {
 		animation: none;
 	}
 

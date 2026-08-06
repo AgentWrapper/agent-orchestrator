@@ -176,7 +176,7 @@ test("renderer: route nav home to board to session detail and back @T0 @BRD", as
 	await expect(page.getByTestId("board")).toBeVisible();
 
 	// → project board
-	await page.getByRole("button", { name: "Open ao-demo dashboard" }).click();
+	await page.locator('[data-sidebar="menu-button"]').filter({ hasText: "ao-demo" }).first().click();
 	await expect(page).toHaveURL(/projects\/ao-demo/);
 	await expect(page.getByTestId("board")).toBeVisible();
 

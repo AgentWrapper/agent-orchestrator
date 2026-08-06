@@ -28,7 +28,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    reviewer_harness, model, is_pinned, pinned_at
+    reviewer_harness, is_pinned, pinned_at, model
 FROM sessions WHERE id = ?;
 
 -- name: ListSessionsByProject :many
@@ -38,7 +38,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    reviewer_harness, model, is_pinned, pinned_at
+    reviewer_harness, is_pinned, pinned_at, model
 FROM sessions WHERE project_id = ? ORDER BY num;
 
 -- name: ListAllSessions :many
@@ -48,7 +48,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    reviewer_harness, model, is_pinned, pinned_at
+    reviewer_harness, is_pinned, pinned_at, model
 FROM sessions ORDER BY project_id, num;
 
 

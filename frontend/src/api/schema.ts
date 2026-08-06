@@ -953,6 +953,40 @@ export interface paths {
         patch: operations["renameShellTerminal"];
         trace?: never;
     };
+    "/api/v1/usage/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List compact token usage for session cards */
+        get: operations["listCompactSessionUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/usage/sessions/{sessionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get detailed token usage for one session */
+        get: operations["getSessionUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1052,6 +1086,12 @@ export interface components {
         CleanupSkippedSession: {
             reason: string;
             sessionId: string;
+        };
+        CompactSessionUsageResponse: {
+            incomplete: boolean;
+            sessionId: string;
+            /** Format: int64 */
+            totalTokens: number;
         };
         ContainerReapConfig: {
             disabled?: boolean;
@@ -1173,6 +1213,9 @@ export interface components {
             installed: components["schemas"]["AgentInfo"][];
             /** @description Agents supported by this daemon build. */
             supported: components["schemas"]["AgentInfo"][];
+        };
+        ListCompactSessionUsageResponse: {
+            sessions: components["schemas"]["CompactSessionUsageResponse"][];
         };
         ListNotificationsResponse: {
             nextCursor?: string;
@@ -1562,6 +1605,12 @@ export interface components {
         SessionResponse: {
             session: components["schemas"]["ControllersSessionView"];
         };
+        SessionUsageResponse: {
+            harnesses: components["schemas"]["UsageHarnessResponse"][];
+            incomplete: boolean;
+            sessionId: string;
+            totals: components["schemas"]["UsageTotalsResponse"];
+        };
         SetActivityRequest: {
             /** @description Native agent session identifier used to resume its transcript. */
             agentSessionId?: string;
@@ -1578,6 +1627,8 @@ export interface components {
             toolName?: string;
             /** @description Native tool-use id, for tool-use hook events. */
             toolUseId?: string;
+            /** @description Provider transcript metadata used by the local usage pipeline. */
+            usage?: components["schemas"]["UsageHookMetadata"];
         };
         SetActivityResponse: {
             ok: boolean;
@@ -1695,6 +1746,31 @@ export interface components {
         UpdateShellTerminalRequest: {
             /** @description New tab title for the shell terminal. Trimmed; must be non-empty. */
             title: string;
+        };
+        UsageHarnessResponse: {
+            harness: string;
+            models: components["schemas"]["UsageModelResponse"][];
+            totals: components["schemas"]["UsageTotalsResponse"];
+        };
+        UsageHookMetadata: {
+            /** @enum {string} */
+            harness: "claude-code" | "codex";
+            modelId?: string;
+            subagentId?: string;
+            subagentTranscriptPath?: string;
+            transcriptPath?: string;
+        };
+        UsageModelResponse: {
+            modelId: string;
+            totals: components["schemas"]["UsageTotalsResponse"];
+        };
+        UsageTotalsResponse: {
+            cacheReadTokens: null | number;
+            cacheWriteTokens: null | number;
+            inputTokens: null | number;
+            outputTokens: null | number;
+            reasoningTokens: null | number;
+            uncachedInputTokens: null | number;
         };
         WorkspaceFileResponse: {
             additions: number;
@@ -5421,6 +5497,97 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listCompactSessionUsage: {
+        parameters: {
+            query?: {
+                /** @description Optional project id filter for dashboard cards. */
+                projectId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListCompactSessionUsageResponse"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    getSessionUsage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionUsageResponse"];
                 };
             };
             /** @description Not Found */

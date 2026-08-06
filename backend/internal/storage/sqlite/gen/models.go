@@ -30,6 +30,20 @@ type ChangeLog struct {
 	CreatedAt time.Time
 }
 
+type ModelUsageEvent struct {
+	ID                  int64
+	BindingID           int64
+	UsageSourceID       int64
+	ModelID             string
+	InputTokens         int64
+	UncachedInputTokens int64
+	CacheReadTokens     int64
+	CacheWriteTokens    int64
+	OutputTokens        int64
+	ReasoningTokens     sql.NullInt64
+	SourceEventKey      string
+}
+
 type Notification struct {
 	ID         string
 	SessionID  domain.SessionID
@@ -200,9 +214,9 @@ type Session struct {
 	DiffBaseSha        string
 	DiffBaseRef        string
 	ReviewerHarness    domain.ReviewerHarness
-	Model              string
 	IsPinned           bool
 	PinnedAt           sql.NullTime
+	Model              string
 }
 
 type SessionCleanupFact struct {
@@ -246,6 +260,54 @@ type TelemetryEvent struct {
 	SessionID   sql.NullString
 	RequestID   string
 	PayloadJson string
+}
+
+type UsageBinding struct {
+	ID             int64
+	SessionID      domain.SessionID
+	Harness        domain.AgentHarness
+	NativeRootID   string
+	InitialModelID string
+	State          domain.UsageBindingState
+	LastErrorCode  string
+	UpdatedAt      time.Time
+}
+
+type UsageCodexPendingChild struct {
+	BindingID       int64
+	NativeSessionID string
+}
+
+type UsageCodexSourceDiscovery struct {
+	SourceID               int64
+	BindingID              int64
+	NativeSessionID        string
+	DiscoveredChildIdsJson string
+	HasMixedChildTypes     int64
+}
+
+type UsageSessionIntegrity struct {
+	SessionID  string
+	Incomplete int64
+}
+
+type UsageSource struct {
+	ID              int64
+	BindingID       int64
+	Kind            domain.UsageSourceKind
+	NativeSessionID string
+	SubagentID      string
+	ArtifactPath    string
+	FileIdentity    string
+	Generation      int64
+	ByteOffset      int64
+	ParserStateJson string
+	State           domain.UsageSourceState
+	FailureCount    int64
+	AnomalyCount    int64
+	NextRetryAt     sql.NullTime
+	LastErrorCode   string
+	UpdatedAt       time.Time
 }
 
 type WorkspaceRepo struct {
