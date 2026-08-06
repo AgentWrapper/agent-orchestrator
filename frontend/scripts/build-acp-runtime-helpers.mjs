@@ -1,9 +1,16 @@
-import { rmSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT_BUILD_TOOLS = ["corepack", "corepack.cmd", "npm", "npm.cmd", "npx", "npx.cmd"];
 const BIN_BUILD_TOOLS = ["corepack", "npm", "npx"];
 const BUILD_ONLY_CONTENT = ["include", "lib", "node_modules", "share", "CHANGELOG.md", "README.md"];
+
+export function createWorkDirectory(outputRoot) {
+	// Windows runners commonly keep the checkout on D: and the OS temp directory
+	// on C:. Keep extraction beside its destination so the final rename remains
+	// an atomic, same-filesystem operation on every platform.
+	return mkdtempSync(join(outputRoot, ".node-download-"));
+}
 
 export function npmInvocation(
 	args,
