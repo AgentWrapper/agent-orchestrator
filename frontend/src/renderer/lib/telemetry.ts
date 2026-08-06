@@ -121,6 +121,11 @@ export function buildTelemetryContext(
 ): TelemetryProperties {
 	const version = appVersion.trim() || "unknown";
 	return {
+		// Classifies this install as the desktop app across every event, so a
+		// shared event like ao.app.active splits cleanly by `client` alongside
+		// the mobile app (client="mobile") and the CLI (client="cli"), rather
+		// than by inferring from the platform value set.
+		client: "desktop",
 		app_version: version,
 		ao_version: version,
 		platform,
