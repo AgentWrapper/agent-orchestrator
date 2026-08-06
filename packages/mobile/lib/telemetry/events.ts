@@ -35,8 +35,6 @@ export const MOBILE_EVENTS = {
 	// feature".
 	featureUsed: "ao.mobile_app.feature_used",
 
-	// An unhandled error or a handled failure. Mirrors the desktop error path.
-	error: "ao.mobile_app.error",
 } as const;
 
 export type MobileEventName = (typeof MOBILE_EVENTS)[keyof typeof MOBILE_EVENTS];
@@ -92,16 +90,5 @@ export const MOBILE_ALLOWLIST: Record<string, Readonly<Record<string, PropRule>>
 			oneOf: ["spawn", "merge", "kill", "restore", "conductor", "send", "voice_input"],
 		},
 		outcome: { oneOf: ["succeeded", "failed"] },
-	},
-	[MOBILE_EVENTS.error]: {
-		// A coarse bucket, never the message. describeConnectionFailure /
-		// ApiError classification feed this; the raw text stays on-device.
-		category: {
-			oneOf: ["network", "auth", "not_found", "server", "timeout", "unknown"],
-		},
-		surface: {
-			oneOf: ["pair", "connect", "spawn", "merge", "kill", "push", "mux", "render", "unknown"],
-		},
-		fatal: { flag: true },
 	},
 };

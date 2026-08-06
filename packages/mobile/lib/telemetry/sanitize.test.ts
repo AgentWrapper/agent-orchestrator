@@ -50,15 +50,4 @@ describe("sanitizeMobileProperties", () => {
 		).toEqual({ target: "session", cold_start: true });
 	});
 
-	it("classifies errors by coarse bucket only, never the message", () => {
-		expect(
-			sanitizeMobileProperties(MOBILE_EVENTS.error, {
-				category: "network",
-				surface: "pair",
-				fatal: false,
-				message: "connect ECONNREFUSED 100.64.0.3:3011",
-				stack: "at pingServer (lib/api.ts:580)",
-			}),
-		).toEqual({ category: "network", surface: "pair", fatal: false });
-	});
 });
