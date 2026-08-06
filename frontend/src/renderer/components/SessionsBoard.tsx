@@ -279,7 +279,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							variant="accent"
 						>
 							<Plus className="size-icon-md" aria-hidden="true" />
-							<span data-compact-label>{t("shell.newTask")}</span>
+							<span data-compact-label>{t("newTask.task")}</span>
 						</TopbarButton>
 					</span>
 				</TooltipTrigger>
@@ -297,7 +297,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 							data-priority="secondary"
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
-							variant="feature"
+							variant="primary"
 						>
 							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
 							<span data-compact-label>{t("shell.orchestrator")}</span>

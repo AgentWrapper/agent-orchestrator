@@ -317,7 +317,7 @@ describe("ShellTopbar orchestrator actions", () => {
 
 		const actions = within(screen.getByRole("group", { name: "Page actions" })).getAllByRole("button");
 		expect(actions.map((button) => button.getAttribute("aria-label"))).toEqual(["New task", "Open Kanban"]);
-		expect(actions.map((action) => action.textContent)).toEqual(["New task", "Open Kanban"]);
+		expect(actions.map((action) => action.textContent)).toEqual(["Task", "Open Kanban"]);
 		expect(actions[0]).toHaveClass("reverb-topbar__control--accent");
 		expect(actions[1]).toHaveClass("reverb-topbar__control--feature");
 		const separator = document.querySelector(".reverb-topbar__utility-separator");
@@ -340,9 +340,9 @@ describe("ShellTopbar orchestrator actions", () => {
 				.map((button) => button.getAttribute("aria-label")),
 		).toEqual(["New task", "Orchestrator"]);
 		expect(within(actions).getByRole("button", { name: "New task" })).toHaveClass("reverb-topbar__control--accent");
-		expect(within(actions).getByRole("button", { name: "New task" })).toHaveTextContent("New task");
+		expect(within(actions).getByRole("button", { name: "New task" })).toHaveTextContent("Task");
 		expect(within(actions).getByRole("button", { name: "Orchestrator" })).toHaveClass(
-			"reverb-topbar__control--feature",
+			"reverb-topbar__control--primary",
 		);
 		expect(within(actions).getByRole("button", { name: "Orchestrator" })).toHaveTextContent("Orchestrator");
 		expect(actions.nextElementSibling).toHaveClass("reverb-topbar__utility-separator");
@@ -520,7 +520,7 @@ describe("ShellTopbar session controls", () => {
 		expect(actions[0]).toHaveClass("reverb-topbar__control--icon");
 		expect(actions[0]).not.toHaveAttribute("data-priority");
 		expect(actions[0]).toHaveTextContent("");
-		expect(actions[1]).toHaveClass("reverb-topbar__control--feature");
+		expect(actions[1]).toHaveClass("reverb-topbar__control--primary");
 		expect(actions[1]).toHaveAttribute("data-priority", "secondary");
 		expect(actions[1]).toHaveTextContent("Orchestrator");
 		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
