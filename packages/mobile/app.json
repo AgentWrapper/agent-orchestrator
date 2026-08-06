@@ -22,6 +22,7 @@
 			},
 			"infoPlist": {
 				"NSLocalNetworkUsageDescription": "AO connects to Agent Orchestrator running on your computer over your local network.",
+				"NSPhotoLibraryUsageDescription": "AO uses camera-related system features to help pair with your desktop.",
 				"LSApplicationQueriesSchemes": ["github"]
 			}
 		},
