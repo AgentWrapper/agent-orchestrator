@@ -1,18 +1,20 @@
 // Package muse implements the Muse Code CLI agent adapter.
 //
-// Muse is distributed as the Python package "code-muse" and installs the
-// executable "muse". AO launches `muse --interactive` and supplies an initial
-// task as a positional command after `--`. Muse's `-p/--prompt` mode is not
-// used because it executes one prompt and exits instead of keeping the
-// interactive prompt-toolkit session attached to AO's terminal.
+// Muse Code is Meta's terminal coding agent, installed from
+// https://dev.meta.ai/install.sh as the executable "muse". With no subcommand
+// it opens the interactive TUI, and an optional positional prompt starts the
+// first turn without leaving that TUI.
 //
-// Muse has no permission-mode launch flags; its approval behavior is configured
-// through yolo_mode in muse.cfg. It reads project instructions from
-// .muse/AGENTS.md, which GetAgentHooks uses for AO's standing instructions.
+// Muse reads trusted project instructions from the workspace-root AGENTS.md,
+// which GetAgentHooks uses for AO's standing instructions.
 package muse
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
@@ -59,23 +61,32 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 
 // GetLaunchCommand builds the argv for a persistent interactive Muse session:
 //
-//	muse --interactive [--model <model>] [-- <prompt>]
+//	muse --trust-workspace [--approval-mode never|--yolo] [--model <model>] [prompt]
 //
-// A prompt is positional, not passed through -p/--prompt, because that flag is
-// Muse's single-prompt mode and exits after the response. The `--` terminator
-// keeps prompts beginning with a dash from being parsed as Muse flags.
+// The prompt is the CLI's documented optional positional argument. `muse exec`
+// is deliberately not used because it is headless and exits after one turn.
 func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	binary, err := p.museBinary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	cmd := []string{binary, "--interactive"}
+	cmd := []string{binary, "--trust-workspace"}
+	appendApprovalFlags(&cmd, cfg.Permissions)
 	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	if cfg.Prompt != "" {
-		cmd = append(cmd, "--", cfg.Prompt)
+		cmd = append(cmd, cfg.Prompt)
 	}
 	return cmd, nil
+}
+
+func appendApprovalFlags(cmd *[]string, mode ports.PermissionMode) {
+	switch mode {
+	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
+		*cmd = append(*cmd, "--approval-mode", "never")
+	case ports.PermissionModeBypassPermissions:
+		*cmd = append(*cmd, "--yolo")
+	}
 }
 
 var museBinarySpec = binaryutil.BinarySpec{
@@ -87,21 +98,28 @@ var museBinarySpec = binaryutil.BinarySpec{
 		"/opt/homebrew/bin/muse",
 	},
 	UnixHomePaths: [][]string{
-		{".local", "bin", "muse"}, // uv tool, pipx, and common pip user installs
-		{".pyenv", "shims", "muse"},
-		{"Library", "Python", "3.14", "bin", "muse"},
-	},
-	WinPaths: []binaryutil.WinPath{
-		{Base: binaryutil.WinLocalAppData, Parts: []string{"Programs", "Python", "Python314", "Scripts", "muse.exe"}},
-		{Base: binaryutil.WinAppData, Parts: []string{"Python", "Python314", "Scripts", "muse.exe"}},
-		{Base: binaryutil.WinHome, Parts: []string{".local", "bin", "muse.exe"}},
+		{".local", "bin", "muse"}, // official Meta installer default
 	},
 }
 
-// ResolveMuseBinary finds the `muse` executable installed by the code-muse
-// package, searching PATH and common UV/pip/Python user install locations.
+// ResolveMuseBinary finds the official Meta Muse Code launcher. The `muse`
+// command name is shared by unrelated tools, so a version-signature check keeps
+// those shims from being reported as an installed AO harness.
 func ResolveMuseBinary(ctx context.Context) (string, error) {
-	return binaryutil.ResolveBinary(ctx, museBinarySpec)
+	binary, err := binaryutil.ResolveBinary(ctx, museBinarySpec)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, binary, "--version")
+	cmd.Env = append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("muse: verify official Meta Muse Code CLI at %s: %w", binary, err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(out)), "Muse Code ") {
+		return "", fmt.Errorf("muse: %s is not the official Meta Muse Code CLI: %w", binary, ports.ErrAgentBinaryNotFound)
+	}
+	return binary, nil
 }
 
 func (p *Plugin) museBinary(ctx context.Context) (string, error) {

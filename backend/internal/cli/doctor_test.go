@@ -128,6 +128,9 @@ func TestDoctorChecksHarnessVersions(t *testing.T) {
 			return []byte("git version 2.43.0\n"), nil
 		case "/bin/claude", "/bin/codex", "/bin/muse":
 			if len(args) == 1 && args[0] == "--version" {
+				if name == "/bin/muse" {
+					return []byte("Muse Code 0.1.0 (0.1.0-R708.1)\n"), nil
+				}
 				return []byte(strings.TrimPrefix(name, "/bin/") + " 1.2.3\n"), nil
 			}
 			// The codex launch-flag canary probes the same binary.
@@ -148,6 +151,21 @@ func TestDoctorChecksHarnessVersions(t *testing.T) {
 		if check.Level != doctorPass || !strings.Contains(check.Message, "resolves to") {
 			t.Fatalf("%s check = %+v, want PASS with path/version", name, check)
 		}
+	}
+}
+
+func TestDoctorRejectsUnrelatedMuseBinary(t *testing.T) {
+	setConfigEnv(t)
+	c := doctorContext(t, map[string]string{"git": "/bin/git", "muse": "/bin/muse"}, func(_ context.Context, name string, _ ...string) ([]byte, error) {
+		if name == "/bin/git" {
+			return []byte("git version 2.43.0\n"), nil
+		}
+		return []byte("unrelated muse 1.0\n"), nil
+	})
+
+	check := findDoctorCheck(t, c.runDoctor(context.Background()), "muse")
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "does not identify the expected CLI") {
+		t.Fatalf("muse check = %+v, want WARN for unrelated binary", check)
 	}
 }
 

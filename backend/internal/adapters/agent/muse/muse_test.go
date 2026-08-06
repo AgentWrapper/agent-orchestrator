@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -26,7 +27,7 @@ func TestManifest(t *testing.T) {
 	t.Fatal("manifest missing CapabilityAgent")
 }
 
-func TestMuseBinarySpecIncludesUVToolInstallPath(t *testing.T) {
+func TestMuseBinarySpecIncludesOfficialInstallerPath(t *testing.T) {
 	want := []string{".local", "bin", "muse"}
 	for _, path := range museBinarySpec.UnixHomePaths {
 		if reflect.DeepEqual(path, want) {
@@ -52,7 +53,7 @@ func TestGetLaunchCommandStartsInteractiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"muse", "--interactive"}
+	want := []string{"muse", "--trust-workspace"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -64,7 +65,7 @@ func TestGetLaunchCommandDeliversPromptPositionally(t *testing.T) {
 		prompt string
 	}{
 		{name: "ordinary", prompt: "fix the tests"},
-		{name: "leading dash", prompt: "-add a health check"},
+		{name: "multiline", prompt: "fix the tests\nthen report"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -73,13 +74,13 @@ func TestGetLaunchCommandDeliversPromptPositionally(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := []string{"muse", "--interactive", "--", tt.prompt}
+			want := []string{"muse", "--trust-workspace", tt.prompt}
 			if !reflect.DeepEqual(cmd, want) {
 				t.Fatalf("cmd = %#v, want %#v", cmd, want)
 			}
 			for _, arg := range cmd {
-				if arg == "-p" || arg == "--prompt" {
-					t.Fatalf("cmd = %#v unexpectedly uses Muse's single-prompt mode", cmd)
+				if arg == "exec" {
+					t.Fatalf("cmd = %#v unexpectedly uses Muse's headless mode", cmd)
 				}
 			}
 		})
@@ -89,37 +90,41 @@ func TestGetLaunchCommandDeliversPromptPositionally(t *testing.T) {
 func TestGetLaunchCommandAppendsModelBeforePrompt(t *testing.T) {
 	p := &Plugin{resolvedBinary: "muse"}
 	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-		Config: ports.AgentConfig{Model: "anthropic:claude-sonnet-4"},
+		Config: ports.AgentConfig{Model: "muse-spark"},
 		Prompt: "fix it",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"muse", "--interactive", "--model", "anthropic:claude-sonnet-4", "--", "fix it"}
+	want := []string{"muse", "--trust-workspace", "--model", "muse-spark", "fix it"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 
-func TestGetLaunchCommandIgnoresPermissionAndSystemPromptArgs(t *testing.T) {
-	for _, mode := range []ports.PermissionMode{
-		ports.PermissionModeDefault,
-		ports.PermissionModeAcceptEdits,
-		ports.PermissionModeAuto,
-		ports.PermissionModeBypassPermissions,
-	} {
-		t.Run(string(mode), func(t *testing.T) {
+func TestGetLaunchCommandMapsOfficialPermissionFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		mode ports.PermissionMode
+		want []string
+	}{
+		{"default", ports.PermissionModeDefault, []string{"muse", "--trust-workspace"}},
+		{"accept edits", ports.PermissionModeAcceptEdits, []string{"muse", "--trust-workspace", "--approval-mode", "never"}},
+		{"auto", ports.PermissionModeAuto, []string{"muse", "--trust-workspace", "--approval-mode", "never"}},
+		{"bypass", ports.PermissionModeBypassPermissions, []string{"muse", "--trust-workspace", "--yolo"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			p := &Plugin{resolvedBinary: "muse"}
 			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-				Permissions:  mode,
+				Permissions:  tt.mode,
 				SystemPrompt: "AO rules",
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := []string{"muse", "--interactive"}
-			if !reflect.DeepEqual(cmd, want) {
-				t.Fatalf("cmd = %#v, want %#v", cmd, want)
+			if !reflect.DeepEqual(cmd, tt.want) {
+				t.Fatalf("cmd = %#v, want %#v", cmd, tt.want)
 			}
 		})
 	}
@@ -154,12 +159,8 @@ func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
 			t.Fatalf("instructions missing %q:\n%s", want, text)
 		}
 	}
-	gitignore, err := os.ReadFile(filepath.Join(workspace, museInstructionsDirName, ".gitignore"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(gitignore), "/AGENTS.md\n") {
-		t.Fatalf("gitignore does not ignore AGENTS.md:\n%s", gitignore)
+	if filepath.Base(museInstructionsPath(workspace)) != "AGENTS.md" || filepath.Dir(museInstructionsPath(workspace)) != workspace {
+		t.Fatalf("instructions path = %s, want workspace-root AGENTS.md", museInstructionsPath(workspace))
 	}
 }
 
@@ -187,9 +188,6 @@ func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
 func TestGetAgentHooksPreservesAndRewritesUserInstructions(t *testing.T) {
 	workspace := t.TempDir()
 	path := museInstructionsPath(workspace)
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		t.Fatal(err)
-	}
 	existing := "before\n\n" + museInstructionFile("old rules") + "\nafter\n"
 	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
@@ -221,8 +219,40 @@ func TestGetAgentHooksNoPromptIsNoOp(t *testing.T) {
 	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(workspace, museInstructionsDirName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf(".muse stat err = %v, want not exist", err)
+	if _, err := os.Stat(filepath.Join(workspace, museInstructionsFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("AGENTS.md stat err = %v, want not exist", err)
+	}
+}
+
+func TestResolveMuseBinaryRejectsUnrelatedMuseCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "muse")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'unrelated muse 1.0'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	_, err := ResolveMuseBinary(context.Background())
+	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want ErrAgentBinaryNotFound", err)
+	}
+}
+
+func TestResolveMuseBinaryAcceptsOfficialVersionSignature(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "muse")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\necho 'Muse Code 0.1.0 (0.1.0-R708.1)'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	got, err := ResolveMuseBinary(context.Background())
+	if err != nil || got != path {
+		t.Fatalf("ResolveMuseBinary = (%q, %v), want (%q, nil)", got, err, path)
 	}
 }
 

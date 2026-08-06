@@ -2,6 +2,7 @@ package muse
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +12,9 @@ import (
 
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 
-// AuthStatus reports whether Muse can see a configured provider credential.
-// Muse also supports unauthenticated local Ollama endpoints, so an absent key is
-// unknown rather than unauthorized.
+// AuthStatus reports whether the official Meta provider has a local API key or
+// OAuth login. Credential values are only tested for non-emptiness and are
+// never returned or logged.
 func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) {
 	if _, err := p.ResolveBinary(ctx); err != nil {
 		return ports.AgentAuthStatusUnknown, err
@@ -24,61 +25,40 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	return ports.AgentAuthStatusUnknown, nil
 }
 
-// These are Muse's built-in provider variables plus the variables its model
-// picker documents for supported OpenAI-compatible providers.
-var museAPIKeyEnvVars = []string{
-	"OPENAI_API_KEY",
-	"GEMINI_API_KEY",
-	"GOOGLE_API_KEY",
-	"ANTHROPIC_API_KEY",
-	"CEREBRAS_API_KEY",
-	"SYN_API_KEY",
-	"AZURE_OPENAI_API_KEY",
-	"OPENROUTER_API_KEY",
-	"ZAI_API_KEY",
-	"ARK_API_KEY",
-	"GROQ_API_KEY",
-	"MISTRAL_API_KEY",
-	"COHERE_API_KEY",
-	"DEEPSEEK_API_KEY",
-	"TOGETHER_API_KEY",
-	"FIREWORKS_API_KEY",
-	"XAI_API_KEY",
-	"PERPLEXITY_API_KEY",
-	"HUGGINGFACE_API_KEY",
-}
+const museAPIKeyEnvVar = "META_API_KEY"
 
 func museLocalAuthStatus(ctx context.Context) (ports.AgentAuthStatus, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
-	for _, name := range museAPIKeyEnvVars {
-		if strings.TrimSpace(os.Getenv(name)) != "" {
-			return ports.AgentAuthStatusAuthorized, true, nil
-		}
+	if strings.TrimSpace(os.Getenv(museAPIKeyEnvVar)) != "" {
+		return ports.AgentAuthStatusAuthorized, true, nil
 	}
 
-	path, ok := museConfigPath()
+	path, ok := museAuthPath()
 	if !ok {
 		return ports.AgentAuthStatusUnknown, false, nil
 	}
-	return museConfigAuthStatus(path)
+	return museAuthJSONStatus(path)
 }
 
-// museConfigPath mirrors Muse's path selection: an explicitly configured XDG
-// config root wins, otherwise all state defaults to ~/.muse.
-func museConfigPath() (string, bool) {
+// museAuthPath mirrors the official launcher: MUSE_AUTH_PATH wins, then the
+// XDG config root, then ~/.config/muse/auth.json.
+func museAuthPath() (string, bool) {
+	if path := strings.TrimSpace(os.Getenv("MUSE_AUTH_PATH")); path != "" {
+		return path, true
+	}
 	if root := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); root != "" {
-		return filepath.Join(root, "muse", "muse.cfg"), true
+		return filepath.Join(root, "muse", "auth.json"), true
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return "", false
 	}
-	return filepath.Join(home, ".muse", "muse.cfg"), true
+	return filepath.Join(home, ".config", "muse", "auth.json"), true
 }
 
-func museConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
+func museAuthJSONStatus(path string) (ports.AgentAuthStatus, bool, error) {
 	data, err := os.ReadFile(path) //nolint:gosec // user-selected Muse config path
 	if os.IsNotExist(err) {
 		return ports.AgentAuthStatusUnknown, false, nil
@@ -87,26 +67,33 @@ func museConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 		return ports.AgentAuthStatusUnknown, false, err
 	}
 
-	knownKeys := make(map[string]struct{}, len(museAPIKeyEnvVars))
-	for _, name := range museAPIKeyEnvVars {
-		knownKeys[name] = struct{}{}
+	if strings.TrimSpace(string(data)) == "" {
+		return ports.AgentAuthStatusUnknown, false, nil
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
-			continue
-		}
-		key, value, found := strings.Cut(line, "=")
-		if !found {
-			continue
-		}
-		if _, ok := knownKeys[strings.ToUpper(strings.TrimSpace(key))]; !ok {
-			continue
-		}
-		value = strings.Trim(strings.TrimSpace(strings.SplitN(value, "#", 2)[0]), `"'`)
-		if value != "" {
+	var auth struct {
+		Providers struct {
+			Meta struct {
+				Mechanism   string `json:"mechanism"`
+				AccessToken string `json:"access_token"`
+				APIKey      string `json:"api_key"`
+			} `json:"meta"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(data, &auth); err != nil {
+		return ports.AgentAuthStatusUnknown, false, err
+	}
+	meta := auth.Providers.Meta
+	switch strings.ToLower(strings.TrimSpace(meta.Mechanism)) {
+	case "oauth":
+		if strings.TrimSpace(meta.AccessToken) != "" {
 			return ports.AgentAuthStatusAuthorized, true, nil
 		}
+		return ports.AgentAuthStatusUnauthorized, true, nil
+	case "api_key", "api-key", "apikey":
+		if strings.TrimSpace(meta.APIKey) != "" {
+			return ports.AgentAuthStatusAuthorized, true, nil
+		}
+		return ports.AgentAuthStatusUnauthorized, true, nil
 	}
 	return ports.AgentAuthStatusUnknown, false, nil
 }

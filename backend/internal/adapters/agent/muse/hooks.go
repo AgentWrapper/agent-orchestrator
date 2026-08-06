@@ -13,14 +13,13 @@ import (
 )
 
 const (
-	museInstructionsDirName  = ".muse"
 	museInstructionsFileName = "AGENTS.md"
 	museInstructionsSentinel = "<!-- managed by agent-orchestrator: muse system prompt -->"
 	museInstructionsEnd      = "<!-- /managed by agent-orchestrator: muse system prompt -->"
 )
 
 // GetAgentHooks installs AO's standing prompt through Muse's documented
-// project instruction file. Muse's external hook support does not currently
+// workspace-root AGENTS.md. Muse's external hook support does not currently
 // emit every lifecycle event AO needs, so this adapter intentionally installs
 // instructions only and relies on AO's generic process supervision.
 func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
@@ -43,20 +42,14 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("muse.GetAgentHooks: read %s: %w", path, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return fmt.Errorf("muse.GetAgentHooks: create instruction dir: %w", err)
-	}
 	if err := hookutil.AtomicWriteFile(path, []byte(mergeMuseInstructionFile(string(existing), systemPrompt)), 0o600); err != nil {
 		return fmt.Errorf("muse.GetAgentHooks: write %s: %w", path, err)
-	}
-	if err := hookutil.EnsureWorkspaceGitignore(filepath.Dir(path), museInstructionsFileName); err != nil {
-		return fmt.Errorf("muse.GetAgentHooks: gitignore: %w", err)
 	}
 	return nil
 }
 
 func museInstructionsPath(workspacePath string) string {
-	return filepath.Join(workspacePath, museInstructionsDirName, museInstructionsFileName)
+	return filepath.Join(workspacePath, museInstructionsFileName)
 }
 
 func museSystemPromptText(inline, file string) (string, error) {

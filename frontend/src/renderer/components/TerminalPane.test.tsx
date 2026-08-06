@@ -622,6 +622,7 @@ describe("providerScrollsByKeyboard", () => {
 		expect(providerScrollsByKeyboard("opencode")).toBe(true);
 		expect(providerScrollsByKeyboard("kilocode")).toBe(true);
 		expect(providerScrollsByKeyboard("grok")).toBe(true);
+		expect(providerScrollsByKeyboard("muse")).toBe(true);
 	});
 
 	it("is false for mouse-report/native-scroll providers", () => {
