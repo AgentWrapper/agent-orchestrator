@@ -794,6 +794,37 @@ func TestBuildTargetContinuationMessageFitsConservativeInlineLaunchBudget(t *tes
 	}
 }
 
+func TestBuildTargetContinuationMessagePrioritizesReceivedHandoffReferences(t *testing.T) {
+	const budget = 780
+	handoffPath := "/Users/example/.ao/dev/data/handoffs/session-1/switch-00000000-0000-0000-0000-000000000000/agent-handoff.json"
+	transcriptPath := "/Users/example/.claude/projects/-Users-example-workspace/00000000-0000-0000-0000-000000000000.jsonl"
+	hash := strings.Repeat("a", 64)
+	message := buildTargetContinuationMessageWithLimit(
+		domain.AgentSwitch{
+			ID: "switch-00000000-0000-0000-0000-000000000000", SessionID: "session-1",
+			FromHarness: domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+			AgentHandoffStatus: domain.AgentHandoffReceived, AgentHandoffPath: handoffPath,
+			AgentHandoffHash: hash,
+		},
+		deterministicSwitchContext{
+			OriginalTask:          strings.Repeat("large original task ", 2_000),
+			LatestUserPrompt:      strings.Repeat("large latest user direction ", 2_000),
+			LatestAssistantUpdate: strings.Repeat("large latest assistant update ", 2_000),
+			SourceTranscriptPath:  transcriptPath,
+		},
+		&switchTranscriptFact{Path: transcriptPath},
+		budget,
+	)
+	if len(message) > budget {
+		t.Fatalf("continuation bytes = %d, want <= %d", len(message), budget)
+	}
+	for _, want := range []string{handoffPath, hash, transcriptPath, "newest two complete user/assistant messages"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("references-first continuation omitted %q:\n%s", want, message)
+		}
+	}
+}
+
 func TestBuildTargetContinuationEmergencyPathRetainsTranscriptReferenceAndNewestFallback(t *testing.T) {
 	snapshot := deterministicSwitchContext{
 		OriginalTask:          "finish the provider switch",

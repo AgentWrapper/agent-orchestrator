@@ -1556,6 +1556,11 @@ func coordinationQuotedReference(value string) string {
 	return fmt.Sprintf("%q", value)
 }
 
+func coordinationReferenceFits(value string) bool {
+	value = escapeAOCoordinationTags(strings.TrimSpace(value))
+	return value != "" && len(value) <= continuationReferenceBytes
+}
+
 func buildMinimalTargetContinuationMessage(sw domain.AgentSwitch, snapshot deterministicSwitchContext, transcript *switchTranscriptFact, maxBytes int) string {
 	originalTask := boundedString(boundedConversationFact(snapshot.OriginalTask), 2<<10)
 	if originalTask == "" {
@@ -1649,6 +1654,23 @@ func buildCompactTargetContinuationMessage(sw domain.AgentSwitch, snapshot deter
 			return message
 		}
 	}
+	// Once the source supplied a semantic handoff, its verified location and the
+	// provider transcript pointer are more useful than tiny, duplicated prefixes
+	// of the three inline conversation facts. Keep those references in an
+	// emergency envelope before considering the reference-free fallback used for
+	// switches that have no semantic report.
+	transcriptPath := strings.TrimSpace(snapshot.SourceTranscriptPath)
+	if transcript != nil && strings.TrimSpace(transcript.Path) != "" {
+		transcriptPath = strings.TrimSpace(transcript.Path)
+	}
+	if sw.AgentHandoffStatus == domain.AgentHandoffReceived &&
+		coordinationReferenceFits(sw.AgentHandoffPath) &&
+		(transcriptPath == "" || coordinationReferenceFits(transcriptPath)) {
+		message := buildCompactReferenceTargetContinuationBody(sw, snapshot, transcript)
+		if len(message) <= maxBytes {
+			return message
+		}
+	}
 	// Extremely long or percent-heavy references can expand while being safely
 	// encoded. Omit those references before sacrificing the three real
 	// conversation facts.
@@ -1661,6 +1683,25 @@ func buildCompactTargetContinuationMessage(sw domain.AgentSwitch, snapshot deter
 	// prepareTargetActivation verifies this exact worst-case floor before AO
 	// stops the source runtime, so production callers cannot exceed maxBytes.
 	return buildCompactTargetContinuationBody(sw, snapshot, transcript, minimumCompactFactBytes, false)
+}
+
+func buildCompactReferenceTargetContinuationBody(sw domain.AgentSwitch, snapshot deterministicSwitchContext, transcript *switchTranscriptFact) string {
+	transcriptPath := strings.TrimSpace(snapshot.SourceTranscriptPath)
+	if transcript != nil && strings.TrimSpace(transcript.Path) != "" {
+		transcriptPath = strings.TrimSpace(transcript.Path)
+	}
+
+	var b strings.Builder
+	_, _ = fmt.Fprintf(&b, `<ao-continuation switch-id=%s>
+Historical AO handoff; verify it against live state.
+Read semantic handoff JSON: %s
+SHA-256: %s
+`, coordinationQuotedAttribute(boundedString(string(sw.ID), 128)), coordinationQuotedReference(sw.AgentHandoffPath), coordinationQuotedAttribute(sw.AgentHandoffHash))
+	if transcriptPath != "" {
+		_, _ = fmt.Fprintf(&b, "Source transcript (read-only; inspect at most its newest two complete user/assistant messages): %s\n", coordinationQuotedReference(transcriptPath))
+	}
+	b.WriteString("Continue clear, safe, authorized unfinished work; otherwise acknowledge and wait.\n</ao-continuation>")
+	return b.String()
 }
 
 func minimumTargetContinuationBytes(sw domain.AgentSwitch) int {
