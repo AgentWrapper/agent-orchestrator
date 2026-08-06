@@ -30,8 +30,9 @@ const adapterID = "muse"
 
 // Muse's own launcher forwards this process-local override to the runtime.
 // Unlike AGENTS.md, it applies only to this process and cannot dirty the
-// project. The installed Meta binary contract is covered by the launch tests.
-const museSystemPromptEnvVar = "TBH_EVAL_APPEND_SYSTEM_PROMPT"
+// project. Muse's base-instructions override is rejected by the Meta provider,
+// so AO's standing instructions must ride the developer-prompt channel.
+const museDeveloperPromptEnvVar = "TBH_EVAL_APPEND_DEVELOPER_PROMPT"
 
 // Plugin is the Muse Code CLI agent adapter. It is safe for concurrent use;
 // the binary path is resolved once and cached under binaryMu.
@@ -69,7 +70,7 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 
 // GetLaunchCommand builds the argv for a persistent interactive Muse session:
 //
-//	[env TBH_EVAL_APPEND_SYSTEM_PROMPT=<instructions> TBH_MANAGED_HOOKS_PATH=<path>] muse --trust-workspace [--approval-mode never|--yolo] [--model <model>] [prompt]
+//	[env TBH_EVAL_APPEND_DEVELOPER_PROMPT=<instructions> TBH_MANAGED_HOOKS_PATH=<path>] muse --trust-workspace [--approval-mode never|--yolo] [--model <model>] [prompt]
 //
 // The prompt is the CLI's documented optional positional argument. `muse exec`
 // is deliberately not used because it is headless and exits after one turn.
@@ -86,7 +87,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd := make([]string, 0, 11)
 	env := make([]string, 0, 2)
 	if systemPrompt != "" {
-		env = append(env, museSystemPromptEnvVar+"="+systemPrompt)
+		env = append(env, museDeveloperPromptEnvVar+"="+systemPrompt)
 	}
 	if cfg.DataDir != "" || cfg.SessionID != "" {
 		hooksPath, pathErr := museManagedHooksPath(cfg.DataDir, cfg.SessionID)

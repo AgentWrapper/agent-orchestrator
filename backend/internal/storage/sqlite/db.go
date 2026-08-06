@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/pressly/goose/v3"
@@ -358,6 +359,60 @@ func reconcileSchema(db *sql.DB) error {
 				return fmt.Errorf("schema repair: replay skipped migration effects for %s.%s: %w", rc.table, rc.column, err)
 			}
 		}
+	}
+	if err := reconcileHarnessConstraint(db); err != nil {
+		return err
+	}
+	return nil
+}
+
+const (
+	sessionsHarnessCheckWithoutMuse   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuse      = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithoutMuseQM = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseQM    = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+)
+
+func reconcileHarnessConstraint(db *sql.DB) error {
+	var schema string
+	if err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions'`,
+	).Scan(&schema); err != nil {
+		return fmt.Errorf("schema verification: inspect sessions harness constraint: %w", err)
+	}
+	if strings.Contains(schema, "'muse'") {
+		return nil
+	}
+	if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
+		return fmt.Errorf("schema repair: enable writable_schema for sessions harness constraint: %w", err)
+	}
+	for _, replacement := range []struct {
+		old string
+		new string
+	}{
+		{sessionsHarnessCheckWithoutMuse, sessionsHarnessCheckWithMuse},
+		{sessionsHarnessCheckWithoutMuseQM, sessionsHarnessCheckWithMuseQM},
+	} {
+		if _, err := db.Exec(
+			`UPDATE sqlite_master
+SET sql = replace(sql, ?, ?)
+WHERE type = 'table' AND name = 'sessions'`,
+			replacement.old,
+			replacement.new,
+		); err != nil {
+			return fmt.Errorf("schema repair: widen sessions harness constraint for Muse: %w", err)
+		}
+	}
+	if _, err := db.Exec(`PRAGMA writable_schema = RESET`); err != nil {
+		return fmt.Errorf("schema repair: reparse sessions harness constraint: %w", err)
+	}
+	if err := db.QueryRow(
+		`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sessions'`,
+	).Scan(&schema); err != nil {
+		return fmt.Errorf("schema verification: inspect repaired sessions harness constraint: %w", err)
+	}
+	if !strings.Contains(schema, "'muse'") {
+		return fmt.Errorf("schema repair: sessions harness constraint is missing Muse and did not match known pre-Muse schema")
 	}
 	return nil
 }
