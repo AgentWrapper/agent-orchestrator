@@ -14,10 +14,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/sync/errgroup"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -561,7 +562,7 @@ func (s *Service) workspaceFileSummariesCached(
 	return files, truncated, compare, nil
 }
 
-func buildWorkspaceFileSummaries(root, prefix string, excludePrefixes []string, paths []string, changes workspaceChangeSet) []WorkspaceFileSummary {
+func buildWorkspaceFileSummaries(root, prefix string, excludePrefixes, paths []string, changes workspaceChangeSet) []WorkspaceFileSummary {
 	files := make([]WorkspaceFileSummary, 0, len(paths))
 	for _, rel := range paths {
 		if workspacePathExcluded(rel, excludePrefixes) {
@@ -621,7 +622,10 @@ func (s *Service) resolveWorkspaceChanges(
 	if err != nil {
 		return workspaceCompareTarget{}, workspaceChangeSet{}, err
 	}
-	entry := v.(workspaceCacheEntry)
+	entry, ok := v.(workspaceCacheEntry)
+	if !ok {
+		return workspaceCompareTarget{}, workspaceChangeSet{}, fmt.Errorf("resolveWorkspaceChanges: unexpected singleflight result type %T", v)
+	}
 	return entry.compare, entry.changes, nil
 }
 
@@ -952,18 +956,9 @@ func resolvedScratchPath(filePath string) (string, bool) {
 	return resolved, err == nil
 }
 
-func workspaceGitFiles(ctx context.Context, root string, extraPaths map[string]struct{}) ([]string, bool, error) {
-	parts, err := gitLsFilesParts(ctx, root)
-	if err != nil {
-		return nil, false, err
-	}
-	paths, truncated := mergeWorkspaceFilePaths(parts, extraPaths)
-	return paths, truncated, nil
-}
-
-// gitLsFilesParts runs the one git subprocess `workspaceGitFiles` needs, kept
-// separate from the (pure, no I/O) merge step so callers can run it
-// concurrently with other independent git calls (see workspaceFileSummaries).
+// gitLsFilesParts runs the `git ls-files` subprocess, kept separate from the
+// (pure, no I/O) merge step in mergeWorkspaceFilePaths so callers can run it
+// concurrently with other independent git calls (see workspaceFileSummariesCached).
 func gitLsFilesParts(ctx context.Context, root string) ([]string, error) {
 	out, err := gitWorkspaceOutput(ctx, root, "ls-files", "-z", "-co", "--exclude-standard")
 	if err != nil {
