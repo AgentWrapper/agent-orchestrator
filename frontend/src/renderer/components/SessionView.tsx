@@ -525,7 +525,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 							theme={theme}
 							topbarActions={
 								<SessionInterfaceActionGroup>
-									{interfaceSwitchAction}
 									<ShellTopbar embedded />
 								</SessionInterfaceActionGroup>
 							}

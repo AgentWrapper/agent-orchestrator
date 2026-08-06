@@ -88,6 +88,8 @@ export interface ChatWorkspaceProps {
 	sessionRole?: "worker" | "orchestrator";
 	/** Session-level actions owned above the conversation surface. */
 	interfaceAction?: ReactNode;
+	/** A kill control for worker sessions, rendered in the chat header. */
+	killAction?: ReactNode;
 	/** Suppress a transient stopped snapshot while a mode handoff installs Chat. */
 	controllerTransitioning?: boolean;
 	/** Older durable history is available but not loaded into the DOM yet. */
@@ -173,6 +175,7 @@ export function ChatWorkspace({
 	sessionTitle,
 	sessionRole = "worker",
 	interfaceAction,
+	killAction,
 	controllerTransitioning,
 	hasOlder,
 	loadingOlder,
@@ -237,6 +240,7 @@ export function ChatWorkspace({
 				sessionTitle={sessionTitle}
 				sessionRole={sessionRole}
 				interfaceAction={interfaceAction}
+				killAction={killAction}
 			/>
 			{/* Ordered by what blocks what. A session that needs credentials cannot make
 			    progress at all, so it is stated first; the controller's own health next;
@@ -467,11 +471,13 @@ function ChatHeader({
 	snapshot,
 	sessionTitle,
 	interfaceAction,
+	killAction,
 	sessionRole,
 }: {
 	snapshot: ConversationSnapshot;
 	sessionTitle?: string;
 	interfaceAction?: ReactNode;
+	killAction?: ReactNode;
 	sessionRole: "worker" | "orchestrator";
 }) {
 	const RoleIcon = sessionRole === "orchestrator" ? Workflow : MessageSquare;
@@ -496,6 +502,7 @@ function ChatHeader({
 			<div className="ml-auto flex shrink-0 items-center gap-2">
 				{/* Context meter removed per user request */}
 				{interfaceAction}
+				{killAction}
 				{/* Current mode indicator - active chat icon */}
 				<div className="flex size-7 items-center justify-center rounded-md bg-raised">
 					<MessageSquare aria-hidden="true" className="size-3.5 text-logo-accent" />

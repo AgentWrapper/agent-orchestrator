@@ -7,9 +7,17 @@
  * preview and live data here.
  */
 
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { ChatWorkspace } from "./ChatWorkspace";
+import { SessionTerminationPopover } from "../SessionTerminationPopover";
+import {
+	clearTerminateSessionState,
+	useTerminateSession,
+	useTerminateSessionState,
+} from "../../hooks/useTerminateSession";
 import {
 	useConversation,
 	useConversationCommands,
@@ -21,6 +29,41 @@ import {
 } from "../../hooks/useConversation";
 import { can } from "../../types/conversation";
 import type { WorkspaceSession } from "../../types/workspace";
+
+function WorkerKillButton({ session }: { session: WorkspaceSession }) {
+	const queryClient = useQueryClient();
+	const [confirmOpen, setConfirmOpen] = useState(false);
+	const terminate = useTerminateSession();
+	const { isPending } = useTerminateSessionState(session.id);
+	if (session.isTerminated === true || session.status === "terminated") return null;
+	return (
+		<SessionTerminationPopover
+			session={session}
+			open={confirmOpen}
+			onOpenChange={setConfirmOpen}
+			onConfirm={() => {
+				setConfirmOpen(false);
+				terminate.mutate(session);
+			}}
+			trigger={
+				<button
+					type="button"
+					disabled={isPending}
+					title={isPending ? "Killing worker…" : "Kill worker"}
+					aria-label={isPending ? `Killing worker ${session.title}` : `Kill worker ${session.title}`}
+					className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+					onClick={() => clearTerminateSessionState(queryClient, session.id)}
+				>
+					{isPending ? (
+						<Loader2 aria-hidden="true" className="size-3.5 animate-spin" />
+					) : (
+						<Trash2 aria-hidden="true" className="size-3.5" />
+					)}
+				</button>
+			}
+		/>
+	);
+}
 
 export function SessionChatSurface({
 	session,
@@ -108,6 +151,7 @@ export function SessionChatSurface({
 			sessionTitle={session.title}
 			sessionRole={session.kind}
 			interfaceAction={interfaceAction}
+			killAction={session.kind === "worker" ? <WorkerKillButton session={session} /> : undefined}
 			controllerTransitioning={controllerTransitioning}
 			hasOlder={hasOlder}
 			loadingOlder={isLoadingOlder}
