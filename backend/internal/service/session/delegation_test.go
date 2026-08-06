@@ -58,6 +58,9 @@ func TestDelegateTaskSpawnsWorkerThenRequestsTitleFromNewestActiveOrchestrator(t
 			if len(cmd.sent) != 1 || cmd.sent[0] != "orch-new" {
 				t.Fatalf("sent = %#v; want orch-new", cmd.sent)
 			}
+			if len(cmd.ready) != 1 || cmd.ready[0] != "orch-new" {
+				t.Fatalf("readiness waits = %#v; want orch-new", cmd.ready)
+			}
 			for _, want := range []string{
 				"AO TASK TITLE UPDATE",
 				"Do not spawn another worker or orchestrator",
@@ -112,6 +115,9 @@ func TestDelegateTaskResumesNewestExitedOrchestratorBeforeRequestingTitle(t *tes
 	if len(cmd.resumed) != 1 || cmd.resumed[0] != "orch-new" {
 		t.Fatalf("resumed = %#v, want orch-new", cmd.resumed)
 	}
+	if len(cmd.ready) != 1 || cmd.ready[0] != "orch-new" {
+		t.Fatalf("readiness waits = %#v, want orch-new", cmd.ready)
+	}
 	if len(cmd.sent) != 1 || cmd.sent[0] != "orch-new" {
 		t.Fatalf("sent = %#v, want orch-new", cmd.sent)
 	}
@@ -138,8 +144,32 @@ func TestDelegateTaskStartsMissingOrchestratorBeforeRequestingTitle(t *testing.T
 	if cmd.spawnCalls != 2 {
 		t.Fatalf("spawn calls = %d, want worker plus orchestrator", cmd.spawnCalls)
 	}
+	if len(cmd.ready) != 1 || cmd.ready[0] != "orch-new" {
+		t.Fatalf("readiness waits = %#v, want orch-new", cmd.ready)
+	}
 	if len(cmd.sent) != 1 || cmd.sent[0] != "orch-new" {
 		t.Fatalf("sent = %#v, want orch-new", cmd.sent)
+	}
+}
+
+func TestDelegateTaskKeepsSpawnSuccessWhenTitleOrchestratorNeverBecomesReady(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+	st.sessions["orch"] = domain.SessionRecord{ID: "orch", ProjectID: "ao", Kind: domain.KindOrchestrator}
+	cmd := &fakeCommander{readyErr: errors.New("readiness timed out")}
+
+	out, err := (&Service{store: st, manager: cmd, runBackground: runInline}).DelegateTask(context.Background(), DelegateTaskInput{ProjectID: "ao", Brief: "Fix it"})
+	if err != nil {
+		t.Fatalf("DelegateTask: %v", err)
+	}
+	if out.WorkerID != "mer-9" || out.OrchestratorID != "" {
+		t.Fatalf("out = %#v, want spawned worker without title recipient", out)
+	}
+	if len(cmd.ready) != 1 || cmd.ready[0] != "orch" {
+		t.Fatalf("readiness waits = %#v, want orch", cmd.ready)
+	}
+	if len(cmd.sent) != 0 {
+		t.Fatalf("sent = %#v, want no title request before readiness", cmd.sent)
 	}
 }
 

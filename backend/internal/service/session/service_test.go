@@ -1073,6 +1073,7 @@ type fakeCommander struct {
 	killed          []domain.SessionID
 	retired         []domain.SessionID
 	resumed         []domain.SessionID
+	ready           []domain.SessionID
 	sent            []domain.SessionID
 	sentMessages    []string
 	cleanupProjects []domain.ProjectID
@@ -1090,6 +1091,7 @@ type fakeCommander struct {
 	killsAtSpawn    int
 	restoreErr      error
 	restoreResult   sessionmanager.RestoreResult
+	readyErr        error
 }
 
 func (f *fakeCommander) Spawn(_ context.Context, cfg ports.SpawnConfig) (domain.SessionRecord, int, int, error) {
@@ -1134,6 +1136,10 @@ func (f *fakeCommander) RetireForReplacement(_ context.Context, id domain.Sessio
 	}
 	f.retired = append(f.retired, id)
 	return nil
+}
+func (f *fakeCommander) WaitForMessageDeliveryReady(_ context.Context, id domain.SessionID) error {
+	f.ready = append(f.ready, id)
+	return f.readyErr
 }
 func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
 	if f.sendFunc != nil {

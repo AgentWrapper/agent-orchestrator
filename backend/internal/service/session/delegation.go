@@ -103,6 +103,9 @@ func (s *Service) refineDelegatedTaskTitle(ctx context.Context, workerID domain.
 	if err != nil {
 		return err
 	}
+	if err := s.manager.WaitForMessageDeliveryReady(ctx, orchestratorID); err != nil {
+		return fmt.Errorf("wait for title orchestrator %s: %w", orchestratorID, err)
+	}
 	if err := s.manager.Send(ctx, orchestratorID, taskTitleDelegationMessage(workerID, in)); err != nil {
 		return fmt.Errorf("send title request to %s: %w", orchestratorID, err)
 	}
