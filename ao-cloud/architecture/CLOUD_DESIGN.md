@@ -102,6 +102,8 @@ tables, linked with foreign keys:
 | `ao_project_share_links` | Revocable, expiring project/session share links. |
 | `ao_project_share_grants` | Durable project access granted after a share link is redeemed. |
 | `ao_project_share_link_recipients` | Optional email or organization restriction for a share link. |
+| `ao_project_share_policies` | Standalone-project access policies, now fixed around `read_only`, `standard`, and `trusted` sandbox/access types. |
+| `ao_project_share_policy_sessions` | Per-session roles generated from a standalone policy when the policy is not project-wide trusted access. |
 
 The main relationships are:
 
@@ -113,7 +115,7 @@ sandbox → provider connection
 session → pull requests → PR checks
 organization → GitHub installations → repository grants → GitHub repositories
 GitHub webhook deliveries → installation/repository reconciliation
-project/session share links → redeemed user grants
+project/session share links → share policies → redeemed user grants
 ```
 
 Migration `00008_cloud_org_auth.sql` backfills legacy accounts into personal
@@ -265,8 +267,12 @@ isolated sandbox per active AO session.
   rather than directly from browser requests. Providers may expose pause/resume,
   but Fargate pause is a task stop and cannot resume that task in place.
 - Applies idempotency, provider-operation retries, worker bootstrap grants,
-  resource limits, sandbox quotas, and orphan cleanup. Production egress
-  allowlists, autostop, and retention policy remain hardening work.
+  resource limits, sandbox quotas, and orphan cleanup. Cloud V1 currently uses
+  only the standard resource profile: 4 vCPU, 8 GiB memory, and 10 GiB disk.
+  Repository sessions, scratch standalone projects, and top-level standalone
+  agents all use that same shape; the earlier high-spec standalone profile has
+  been removed. Production egress allowlists and retention policy remain
+  hardening work.
 - Starts a headless AO worker in each sandbox. The worker clones authorized
   repositories, runs one selected harness, reports heartbeats/events, and
   connects outward to the control plane.
@@ -312,11 +318,18 @@ Vercel Next.js app
               → worker image pinned by ECR digest
 ```
 
-The active worker task definition is sized at 2 vCPU and 4 GiB and uses
-`awsvpc` networking. The demo currently assigns public task IPs because it uses
-public subnets. The production direction is private subnets with NAT or
-controlled egress, no inbound worker rules, and VPC endpoints where they reduce
-cost and exposure.
+The control plane asks ECS for the standard Cloud V1 runtime shape: 4 vCPU and
+8 GiB memory, with AO's resource profile carrying a 10 GiB disk field. Current
+Fargate workspaces are disposable with the task. The task definition must allow
+those RunTask CPU/memory overrides and uses `awsvpc` networking. The demo
+currently assigns public task IPs because it uses public subnets. The production
+direction is private subnets with NAT or controlled egress, no inbound worker
+rules, and VPC endpoints where they reduce cost and exposure.
+
+The application-level sandbox quota defaults to 12 active sandboxes per org.
+AWS still enforces its regional Fargate On-Demand vCPU quota separately. With
+4-vCPU sessions, a 12-agent demo needs at least 48 vCPU of regional Fargate
+quota, plus headroom for retries or unrelated tasks.
 
 The EC2 control plane uses an instance role for ECS operations. Fargate uses a
 task execution role to pull from ECR and publish logs. The worker task does not
@@ -328,6 +341,35 @@ After the feature PRs merge upstream, EC2 must switch from the temporary fork
 feature branch to the upstream `main` commit. A Git merge or Vercel deployment
 does not update EC2, ECR, the ECS task definition, RDS, or existing Fargate
 tasks.
+
+## Current project and sharing model
+
+AO Cloud currently distinguishes three user-facing shapes:
+
+- **Repository projects** are backed by a GitHub repository grant and have the
+  normal orchestrator/worker project model.
+- **Scratch standalone projects** are created through the project flow with
+  `config.source = "standalone"`. They remain listed under Projects, can host
+  multiple peer agents in the same AO project, and may optionally initialize a
+  new GitHub repository through the user's account-wide GitHub authorization.
+- **Standalone agents** are created through the top-level standalone-agent flow
+  with `config.source = "standalone-agent"`. They intentionally appear as flat
+  independent agent rows rather than nested project workspaces, while reusing the
+  same backing project/session/sandbox tables internally.
+
+Standalone sharing is intentionally simplified for the demo. Owners invite
+people to one of three fixed policy types:
+
+- `read_only`: view-only terminal and session access.
+- `standard`: edit access to selected existing agents, with dangerous terminal
+  input blocked by terminal-ticket scopes.
+- `trusted`: project-wide editor access for standalone projects, including the
+  ability to spawn additional agents under the project owner's credentials.
+
+The policy type does not enforce VM lifetime or change the running Fargate task
+shape. Existing running sandboxes cannot be resized in place; policy changes
+affect authorization immediately, while runtime shape changes require future
+session recreation work.
 
 ## Deployment connection and version contract
 
