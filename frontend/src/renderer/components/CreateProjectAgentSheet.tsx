@@ -9,6 +9,7 @@ import { AGENT_OPTIONS } from "../lib/agent-options";
 import { agentLabelCompare, buildRankedAgentOptions } from "../lib/agent-select-options";
 import { cn } from "../lib/utils";
 import { AgentAvatar } from "./AgentAvatar";
+import { FieldDefaultHint } from "./FieldDefaultHint";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsRow } from "./settings/SettingsRow";
@@ -336,6 +337,7 @@ export function CreateProjectAgentSheet({
 export const RequiredAgentField = memo(function RequiredAgentField({
 	authorized,
 	disabled = false,
+	hint,
 	icon,
 	id,
 	invalid = false,
@@ -352,6 +354,8 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 }: {
 	authorized?: AgentInfo[];
 	disabled?: boolean;
+	/** Caption beside the label, e.g. naming where a preselected default came from. */
+	hint?: string;
 	icon?: LucideIcon;
 	id: string;
 	invalid?: boolean;
@@ -419,11 +423,16 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 		);
 	}
 
+	const selectedOption = options.find((agent) => agent.id === value);
+
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
-				{label}
-			</Label>
+			<div className="flex min-w-0 items-baseline gap-1.5">
+				<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
+					{label}
+				</Label>
+				{hint && <FieldDefaultHint text={hint} />}
+			</div>
 			<Select value={value} onValueChange={onChange} disabled={disabled}>
 				<SelectTrigger
 					id={id}
@@ -432,7 +441,16 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 					aria-label={label}
 					aria-invalid={invalid || undefined}
 				>
-					<SelectValue placeholder={placeholder} />
+					{/* Radix would otherwise clone the whole menu row into the trigger,
+					    dragging the selected checkmark and install status with it. */}
+					<SelectValue placeholder={placeholder}>
+						{selectedOption ? (
+							<span className="flex min-w-0 items-center gap-3">
+								<AgentAvatar provider={selectedOption.id} className="size-icon-lg" decorative />
+								<span className="min-w-0 truncate">{selectedOption.label}</span>
+							</span>
+						) : null}
+					</SelectValue>
 				</SelectTrigger>
 				<SelectContent
 					position="popper"
