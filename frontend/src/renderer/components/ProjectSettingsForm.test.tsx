@@ -638,7 +638,7 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "workflow");
 		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
 		await userEvent.click(reviewer);
 		const labels = (await screen.findAllByRole("menuitem")).map((option) => option.textContent);
@@ -646,7 +646,7 @@ describe("ProjectSettingsForm", () => {
 		expect(labels).toContain("Pi");
 	});
 
-	it("orders reviewers the same way as worker and orchestrator agents", async () => {
+	it("orders reviewers using the default agent priority", async () => {
 		mockProject({
 			id: "proj-1",
 			name: "Project One",
@@ -660,18 +660,24 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "workflow");
 
-		await userEvent.click(await screen.findByRole("button", { name: "Default worker agent" }));
-		const workerLabels = (await screen.findAllByRole("menuitem")).map((option) => option.textContent);
-		await userEvent.keyboard("{Escape}");
-
-		await userEvent.click(screen.getByRole("button", { name: "Default reviewer agent" }));
+		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
 		const reviewerLabels = (await screen.findAllByRole("menuitem"))
 			.map((option) => option.textContent)
 			.filter((label) => label !== "Project default");
 
-		expect(reviewerLabels).toEqual(workerLabels);
+		expect(reviewerLabels).toEqual([
+			"Claude Code",
+			"Codex",
+			"Cursor",
+			"OpenCode",
+			"GitHub Copilot",
+			"Goose",
+			"Kilo Code",
+			"Pi",
+			"KiroAuth unknown",
+		]);
 	});
 
 	it("offers the experimental host-trusted reviewer set", async () => {
@@ -714,10 +720,9 @@ describe("ProjectSettingsForm", () => {
 			return { data: { status: "ok", project }, error: undefined };
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "workflow");
 
-		await waitFor(() => expect(screen.getAllByText("/repo/project-one").length).toBeGreaterThan(0));
-		const reviewer = screen.getByRole("button", { name: "Default reviewer agent" });
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
 		await userEvent.click(reviewer);
 		const options = await screen.findAllByRole("menuitem");
 		const labels = options.map((option) => option.textContent);
@@ -768,7 +773,7 @@ describe("ProjectSettingsForm", () => {
 			};
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "workflow");
 		await chooseOption(await screen.findByRole("button", { name: "Default reviewer agent" }), "Qwen Code");
 		expect(screen.getByRole("status")).toHaveTextContent("Experimental host-trusted reviewer");
 	});
@@ -820,7 +825,7 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "workflow");
 
 		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
 		await userEvent.click(reviewer);
@@ -872,7 +877,7 @@ describe("ProjectSettingsForm", () => {
 			};
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "workflow");
 
 		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
 		const copilot = (await screen.findAllByRole("menuitem")).find((option) =>
@@ -914,7 +919,7 @@ describe("ProjectSettingsForm", () => {
 			};
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "workflow");
 
 		await userEvent.click(await screen.findByRole("button", { name: "Default reviewer agent" }));
 		const copilot = (await screen.findAllByRole("menuitem")).find((option) =>
@@ -938,7 +943,7 @@ describe("ProjectSettingsForm", () => {
 			},
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "workflow");
 
 		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
 		await userEvent.click(reviewer);
@@ -970,10 +975,9 @@ describe("ProjectSettingsForm", () => {
 			return { data: { status: "ok", project }, error: undefined };
 		});
 
-		renderSettings();
+		renderSettings("proj-1", undefined, "workflow");
 
-		await waitFor(() => expect(screen.getAllByText("/repo/project-one").length).toBeGreaterThan(0));
-		const reviewerAgent = screen.getByRole("button", { name: "Default reviewer agent" });
+		const reviewerAgent = await screen.findByRole("button", { name: "Default reviewer agent" });
 		await userEvent.click(reviewerAgent);
 		const options = await screen.findAllByRole("menuitem");
 		expect(options.map((option) => option.textContent)).toContain("Agy");
