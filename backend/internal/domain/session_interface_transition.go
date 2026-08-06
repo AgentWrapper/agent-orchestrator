@@ -26,17 +26,28 @@ func (p SessionInterfaceTransitionPolicy) Valid() bool {
 type SessionInterfaceTransitionPhase string
 
 const (
-	SessionInterfaceTransitionRequested      SessionInterfaceTransitionPhase = "requested"
-	SessionInterfaceTransitionPreflighting   SessionInterfaceTransitionPhase = "preflighting"
-	SessionInterfaceTransitionDraining       SessionInterfaceTransitionPhase = "draining"
+	// SessionInterfaceTransitionRequested is the durable row before work starts.
+	SessionInterfaceTransitionRequested SessionInterfaceTransitionPhase = "requested"
+	// SessionInterfaceTransitionPreflighting validates source and target controllers.
+	SessionInterfaceTransitionPreflighting SessionInterfaceTransitionPhase = "preflighting"
+	// SessionInterfaceTransitionDraining waits for source-side in-flight work.
+	SessionInterfaceTransitionDraining SessionInterfaceTransitionPhase = "draining"
+	// SessionInterfaceTransitionSourceStopping records that the source controller is stopping.
 	SessionInterfaceTransitionSourceStopping SessionInterfaceTransitionPhase = "source_stopping"
-	SessionInterfaceTransitionSourceStopped  SessionInterfaceTransitionPhase = "source_stopped"
+	// SessionInterfaceTransitionSourceStopped records that the source controller stopped.
+	SessionInterfaceTransitionSourceStopped SessionInterfaceTransitionPhase = "source_stopped"
+	// SessionInterfaceTransitionTargetStarting records that the target controller is starting.
 	SessionInterfaceTransitionTargetStarting SessionInterfaceTransitionPhase = "target_starting"
-	SessionInterfaceTransitionActivating     SessionInterfaceTransitionPhase = "activating"
-	SessionInterfaceTransitionCompleted      SessionInterfaceTransitionPhase = "completed"
-	SessionInterfaceTransitionFailed         SessionInterfaceTransitionPhase = "failed"
-	SessionInterfaceTransitionCancelled      SessionInterfaceTransitionPhase = "cancelled"
-	SessionInterfaceTransitionRecovery       SessionInterfaceTransitionPhase = "recovery_required"
+	// SessionInterfaceTransitionActivating commits the target controller as active.
+	SessionInterfaceTransitionActivating SessionInterfaceTransitionPhase = "activating"
+	// SessionInterfaceTransitionCompleted is a successful terminal transition state.
+	SessionInterfaceTransitionCompleted SessionInterfaceTransitionPhase = "completed"
+	// SessionInterfaceTransitionFailed is a failed terminal transition state.
+	SessionInterfaceTransitionFailed SessionInterfaceTransitionPhase = "failed"
+	// SessionInterfaceTransitionCancelled is a user-cancelled terminal transition state.
+	SessionInterfaceTransitionCancelled SessionInterfaceTransitionPhase = "cancelled"
+	// SessionInterfaceTransitionRecovery marks a transition that needs manual recovery.
+	SessionInterfaceTransitionRecovery SessionInterfaceTransitionPhase = "recovery_required"
 )
 
 // Terminal reports whether no transition worker may continue this row.

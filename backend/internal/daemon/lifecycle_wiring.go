@@ -402,7 +402,7 @@ func (c chatLauncher) PreflightChat(ctx context.Context, harness domain.AgentHar
 }
 
 func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStart) (sessionmanager.ChatStarted, error) {
-	out, err := c.svc.StartChat(ctx, chatsvc.ChatStartRequest{
+	out, err := c.svc.StartChat(ctx, chatsvc.StartRequest{
 		SessionID:              cfg.SessionID,
 		ProjectID:              cfg.ProjectID,
 		Kind:                   cfg.Kind,

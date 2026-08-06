@@ -44,6 +44,7 @@ func (s *Store) CreateSessionInterfaceTransition(
 	return interfaceTransitionToDomain(existing), false, nil
 }
 
+// GetSessionInterfaceTransition reads one interface transition by id.
 func (s *Store) GetSessionInterfaceTransition(
 	ctx context.Context,
 	id string,
@@ -58,6 +59,7 @@ func (s *Store) GetSessionInterfaceTransition(
 	return interfaceTransitionToDomain(row), true, nil
 }
 
+// GetActiveSessionInterfaceTransition reads the active transition for a session.
 func (s *Store) GetActiveSessionInterfaceTransition(
 	ctx context.Context,
 	id domain.SessionID,
@@ -72,6 +74,7 @@ func (s *Store) GetActiveSessionInterfaceTransition(
 	return interfaceTransitionToDomain(row), true, nil
 }
 
+// GetLatestSessionInterfaceTransition reads the newest transition for a session.
 func (s *Store) GetLatestSessionInterfaceTransition(
 	ctx context.Context,
 	id domain.SessionID,
@@ -86,6 +89,7 @@ func (s *Store) GetLatestSessionInterfaceTransition(
 	return interfaceTransitionToDomain(row), true, nil
 }
 
+// ListActiveSessionInterfaceTransitions lists transitions that have not reached a terminal phase.
 func (s *Store) ListActiveSessionInterfaceTransitions(ctx context.Context) ([]domain.SessionInterfaceTransition, error) {
 	rows, err := s.qr.ListActiveSessionInterfaceTransitions(ctx)
 	if err != nil {
@@ -172,6 +176,7 @@ func (s *Store) CommitSessionControllerEpoch(
 	return rows > 0, nil
 }
 
+// EnqueueSessionInterfaceTransitionMessage queues a user message while an interface transition is active.
 func (s *Store) EnqueueSessionInterfaceTransitionMessage(
 	ctx context.Context,
 	transitionID, clientMessageID, message string,
@@ -190,6 +195,7 @@ func (s *Store) EnqueueSessionInterfaceTransitionMessage(
 	return nil
 }
 
+// ListPendingSessionInterfaceTransitionMessages lists queued transition messages awaiting delivery.
 func (s *Store) ListPendingSessionInterfaceTransitionMessages(
 	ctx context.Context,
 	transitionID string,
@@ -209,6 +215,7 @@ func (s *Store) ListPendingSessionInterfaceTransitionMessages(
 	return out, nil
 }
 
+// MarkSessionInterfaceTransitionMessageDelivered records successful delivery of a queued transition message.
 func (s *Store) MarkSessionInterfaceTransitionMessageDelivered(
 	ctx context.Context,
 	id int64,

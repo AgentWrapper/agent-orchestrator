@@ -1352,6 +1352,7 @@ type ConversationSnapshot struct {
 	HasMoreBefore  bool
 }
 
+// DefaultConversationPageSize is the standard bounded read size for conversation snapshots.
 const DefaultConversationPageSize = 200
 
 // LoadConversationSnapshotPage reads a bounded slice ending immediately before

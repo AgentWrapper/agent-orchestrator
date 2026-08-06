@@ -662,7 +662,7 @@ func (c *Controller) turnSettings() ports.ChatTurnSettings {
 	return ports.ChatTurnSettings{
 		Model:    current.Model,
 		Effort:   current.ReasoningEffort,
-		Approval: ports.PermissionMode(current.ApprovalMode),
+		Approval: current.ApprovalMode,
 	}
 }
 

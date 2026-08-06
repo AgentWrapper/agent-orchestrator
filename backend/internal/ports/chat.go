@@ -554,9 +554,12 @@ type ChatDecision struct {
 type ChatInputAction string
 
 const (
-	ChatInputActionAccept  ChatInputAction = "accept"
+	// ChatInputActionAccept accepts a provider structured input request.
+	ChatInputActionAccept ChatInputAction = "accept"
+	// ChatInputActionDecline declines a provider structured input request.
 	ChatInputActionDecline ChatInputAction = "decline"
-	ChatInputActionCancel  ChatInputAction = "cancel"
+	// ChatInputActionCancel cancels a provider structured input request.
+	ChatInputActionCancel ChatInputAction = "cancel"
 )
 
 // Valid reports whether the action can cross the Chat port boundary.
@@ -568,8 +571,10 @@ func (a ChatInputAction) Valid() bool {
 type ChatInputMode string
 
 const (
+	// ChatInputModeForm represents an ACP form elicitation.
 	ChatInputModeForm ChatInputMode = "form"
-	ChatInputModeURL  ChatInputMode = "url"
+	// ChatInputModeURL represents an ACP URL elicitation.
+	ChatInputModeURL ChatInputMode = "url"
 )
 
 // Valid reports whether the mode has a defined provider-neutral representation.

@@ -37,7 +37,7 @@ func TestLiveClaudeACP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	answer := sendLiveTurn(t, ctx, conversation, "live-1", "Identify your live-test role.")
+	answer := sendLiveTurn(ctx, t, conversation, "live-1", "Identify your live-test role.")
 	if strings.TrimSpace(answer) != "AO ACP standing context works" {
 		t.Fatalf("new-session answer = %q", answer)
 	}
@@ -56,15 +56,15 @@ func TestLiveClaudeACP(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 	defer conversation.Close()
-	answer = sendLiveTurn(t, ctx, conversation, "live-2", "Identify your current live-test role.")
+	answer = sendLiveTurn(ctx, t, conversation, "live-2", "Identify your current live-test role.")
 	if strings.TrimSpace(answer) != "AO ACP resumed context works" {
 		t.Fatalf("resumed-session answer = %q", answer)
 	}
 }
 
 func sendLiveTurn(
-	t *testing.T,
 	ctx context.Context,
+	t *testing.T,
 	conversation ports.ChatConversation,
 	clientMessageID, prompt string,
 ) string {

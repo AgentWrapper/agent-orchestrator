@@ -59,7 +59,7 @@ func (c *SettingsController) setSessionInterface(w http.ResponseWriter, r *http.
 
 	// Parsed strictly: an unrecognized value is rejected rather than collapsing to
 	// a default the caller did not ask for.
-	mode, err := domain.ParseSessionMode(string(req.DefaultSessionMode))
+	mode, err := domain.ParseSessionMode(req.DefaultSessionMode)
 	if err != nil || mode == "" {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "validation",
 			"SESSION_MODE_INVALID", `defaultSessionMode must be "chat" or "tui"`, nil)

@@ -657,8 +657,10 @@ func (f SnapshotReaderFunc) LoadConversationSnapshot(
 	return f(ctx, conversationID)
 }
 
+// SnapshotPageReaderFunc adapts a function to SnapshotPageReader.
 type SnapshotPageReaderFunc func(ctx context.Context, conversationID string, beforeSequence, limit int64) (ConversationRows, error)
 
+// LoadConversationSnapshotPage satisfies SnapshotPageReader.
 func (f SnapshotPageReaderFunc) LoadConversationSnapshotPage(
 	ctx context.Context,
 	conversationID string,
@@ -694,34 +696,20 @@ func (s *Service) PreflightChat(ctx context.Context, harness domain.AgentHarness
 }
 
 // StartChat launches the controller for a freshly created session.
-func (s *Service) StartChat(ctx context.Context, cfg ChatStartRequest) (ChatStartResult, error) {
-	controller, err := s.Start(ctx, StartConfig{
-		SessionID:              cfg.SessionID,
-		ProjectID:              cfg.ProjectID,
-		Kind:                   cfg.Kind,
-		Harness:                cfg.Harness,
-		DataDir:                cfg.DataDir,
-		WorkspacePath:          cfg.WorkspacePath,
-		Env:                    cfg.Env,
-		Model:                  cfg.Model,
-		Permissions:            cfg.Permissions,
-		SystemPrompt:           cfg.SystemPrompt,
-		AdditionalDirectories:  cfg.AdditionalDirectories,
-		MCPServers:             cfg.MCPServers,
-		ProviderConversationID: cfg.ProviderConversationID,
-	})
+func (s *Service) StartChat(ctx context.Context, cfg StartRequest) (StartResult, error) {
+	controller, err := s.Start(ctx, StartConfig(cfg))
 	if err != nil {
-		return ChatStartResult{}, err
+		return StartResult{}, err
 	}
-	return ChatStartResult{
+	return StartResult{
 		ProviderConversationID: controller.ProviderConversationID(),
 		ControllerGeneration:   controller.Generation(),
 	}, nil
 }
 
-// ChatStartRequest mirrors session_manager.ChatStart. Duplicated rather than
+// StartRequest mirrors session_manager.ChatStart. Duplicated rather than
 // imported so the manager and this service do not depend on each other's types.
-type ChatStartRequest struct {
+type StartRequest struct {
 	SessionID             domain.SessionID
 	ProjectID             domain.ProjectID
 	Kind                  domain.SessionKind
@@ -738,8 +726,8 @@ type ChatStartRequest struct {
 	ProviderConversationID string
 }
 
-// ChatStartResult is the durable outcome of a launch.
-type ChatStartResult struct {
+// StartResult is the durable outcome of a launch.
+type StartResult struct {
 	ProviderConversationID string
 	ControllerGeneration   string
 }

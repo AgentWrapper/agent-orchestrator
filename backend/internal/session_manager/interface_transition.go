@@ -243,7 +243,7 @@ func (m *Manager) runInterfaceTransition(
 			m.abortSourceHandoff(transition)
 		}
 		if errors.Is(cause, context.Canceled) && !sourceStopped {
-			m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionCancelled,
+			_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionCancelled,
 				"TRANSITION_CANCELLED", "The interface switch was cancelled.")
 			return
 		}
@@ -251,7 +251,7 @@ func (m *Manager) runInterfaceTransition(
 			m.rollbackInterfaceTransition(transition, modeChanged, code, cause)
 			return
 		}
-		m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed, code, cause.Error())
+		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionFailed, code, cause.Error())
 	}
 
 	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionPreflighting, "", ""); err != nil {
@@ -337,7 +337,7 @@ func (m *Manager) runInterfaceTransition(
 	if err := m.moveInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionActivating, "", ""); err != nil {
 		// The target is live. Do not tear it down merely because diagnostics failed
 		// to advance; mark recovery so a user is never left with no controller.
-		m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
+		_ = m.finishInterfaceTransition(transition.ID, domain.SessionInterfaceTransitionRecovery,
 			"TRANSITION_STATE_FAILED", err.Error())
 		return
 	}
@@ -683,7 +683,10 @@ func (m *Manager) moveInterfaceTransition(
 	next domain.SessionInterfaceTransitionPhase,
 	errorCode, errorDetail string,
 ) error {
-	store := m.store.(interfaceTransitionStore)
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return ports.ErrChatUnsupported
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for attempt := 0; attempt < 4; attempt++ {
@@ -723,7 +726,10 @@ func (m *Manager) deliverTransitionMessages(
 ) error {
 	m.transitionDeliveryAttemptMu.Lock()
 	defer m.transitionDeliveryAttemptMu.Unlock()
-	store := m.store.(interfaceTransitionStore)
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		return ports.ErrChatUnsupported
+	}
 	ctx, cancel := context.WithTimeout(ctx, interfaceTransitionStepLimit)
 	defer cancel()
 	messages, err := store.ListPendingSessionInterfaceTransitionMessages(ctx, transition.ID)
@@ -828,7 +834,11 @@ func (m *Manager) queueDuringInterfaceTransition(
 // happy path. The immediate attempt makes rollback/cancellation responsive;
 // the daemon-lifetime worker retains responsibility after any transient error.
 func (m *Manager) settleTransitionMessages(transition domain.SessionInterfaceTransition) {
-	store := m.store.(interfaceTransitionStore)
+	store, ok := m.store.(interfaceTransitionStore)
+	if !ok {
+		m.logger.Error("interface transition: store does not support queued messages", "transitionID", transition.ID)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), interfaceTransitionStepLimit)
 	current, ok, err := store.GetSessionInterfaceTransition(ctx, transition.ID)
 	cancel()

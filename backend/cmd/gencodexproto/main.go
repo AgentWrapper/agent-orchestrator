@@ -66,37 +66,34 @@ func main() {
 	}
 	g.version = version
 
-	if err := os.MkdirAll(filepath.Dir(*out), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(*out), 0o750); err != nil {
 		fatal("mkdir: %v", err)
 	}
 
-	src, err := g.render()
-	if err != nil {
-		fatal("render: %v", err)
-	}
+	src := g.render()
 	formatted, err := format.Source(src)
 	if err != nil {
 		// Write the unformatted source next to the target so the syntax error is
 		// readable; a gofmt failure here is a generator bug, not a schema problem.
-		_ = os.WriteFile(*out+".broken", src, 0o644)
+		_ = os.WriteFile(*out+".broken", src, 0o600)
 		fatal("gofmt: %v (unformatted source at %s.broken)", err, *out)
 	}
-	if err := os.WriteFile(*out, formatted, 0o644); err != nil {
+	if err := os.WriteFile(*out, formatted, 0o600); err != nil {
 		fatal("write: %v", err)
 	}
 	fmt.Fprintf(os.Stderr, "gencodexproto: %d types, %d methods from %s\n",
 		len(g.defs), len(g.methods), version)
 }
 
-func fatal(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "gencodexproto: "+format+"\n", args...)
+func fatal(formatText string, args ...any) {
+	_, _ = fmt.Fprintf(os.Stderr, "gencodexproto: "+formatText+"\n", args...)
 	os.Exit(1)
 }
 
 func emitSchema(binary, dir string) error {
 	cmd := exec.Command(binary, "app-server", "generate-json-schema", "--out", dir)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s app-server generate-json-schema: %v: %s", binary, err, out)
+		return fmt.Errorf("%s app-server generate-json-schema: %w: %s", binary, err, out)
 	}
 	return nil
 }
@@ -190,15 +187,15 @@ func (s *schema) nullable() bool {
 // base strips the null arm so the remaining schema describes the value itself.
 func (s *schema) base() *schema {
 	if len(s.AnyOf) > 0 {
-		var real []*schema
+		var concrete []*schema
 		for _, v := range s.AnyOf {
 			if len(v.types()) == 1 && v.types()[0] == "null" {
 				continue
 			}
-			real = append(real, v)
+			concrete = append(concrete, v)
 		}
-		if len(real) == 1 {
-			return real[0]
+		if len(concrete) == 1 {
+			return concrete[0]
 		}
 	}
 	// allOf with a single arm is a wrapper the schema uses to attach a description
@@ -538,7 +535,7 @@ func taggedUnion(s *schema) (string, bool) {
 
 /* ---- rendering ---------------------------------------------------------- */
 
-func (g *generator) render() ([]byte, error) {
+func (g *generator) render() []byte {
 	var b strings.Builder
 
 	digest := g.digest()
@@ -567,10 +564,8 @@ import "encoding/json"
 	fmt.Fprintf(&b, "// ProtocolDigest fingerprints the generated method surface.\nconst ProtocolDigest = %q\n\n", digest)
 
 	g.renderMethods(&b)
-	if err := g.renderTypes(&b); err != nil {
-		return nil, err
-	}
-	return []byte(b.String()), nil
+	g.renderTypes(&b)
+	return []byte(b.String())
 }
 
 func (g *generator) digest() string {
@@ -580,8 +575,8 @@ func (g *generator) digest() string {
 		names = append(names, m.Direction+" "+m.Name)
 	}
 	sort.Strings(names)
-	for _, n := range names {
-		fmt.Fprintln(h, n)
+	for _, name := range names {
+		_, _ = fmt.Fprintln(h, name)
 	}
 	return fmt.Sprintf("%x", h.Sum(nil))[:16]
 }
@@ -629,7 +624,7 @@ func Declares(method string) bool {
 `)
 }
 
-func (g *generator) renderTypes(b *strings.Builder) error {
+func (g *generator) renderTypes(b *strings.Builder) {
 	names := make([]string, 0, len(g.defs))
 	for name := range g.defs {
 		names = append(names, name)
@@ -651,7 +646,6 @@ func (g *generator) renderTypes(b *strings.Builder) error {
 		}
 		g.renderStruct(b, it.name, it.s, &inline, emitted)
 	}
-	return nil
 }
 
 func (g *generator) renderDef(b *strings.Builder, name string, s *schema, inline *[]inlineType, emitted map[string]bool) {

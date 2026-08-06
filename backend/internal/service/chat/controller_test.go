@@ -1223,7 +1223,7 @@ func TestMessageTypedAfterStopIsStillDelivered(t *testing.T) {
 
 func errorsIs(err, target error) bool {
 	for err != nil {
-		if err == target {
+		if errors.Is(err, target) {
 			return true
 		}
 		unwrapped, ok := err.(interface{ Unwrap() error })

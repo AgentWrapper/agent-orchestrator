@@ -133,7 +133,7 @@ func capabilities() ports.ChatCapabilities {
 func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 	bin, err := d.plugin.ResolveBinary(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ports.ErrChatDriverUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 	}
 
 	// An unknown auth result is not proof of failure — the same rule AO already
@@ -153,7 +153,7 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 	versionOutput, versionErr := versionProbe(versionCtx, bin)
 	versionCancel()
 	if versionErr != nil {
-		return nil, fmt.Errorf("%w: read Codex version: %v", ports.ErrChatDriverIncompatible, versionErr)
+		return nil, fmt.Errorf("%w: read Codex version: %w", ports.ErrChatDriverIncompatible, versionErr)
 	}
 	installed, ok := parseCodexVersion(versionOutput)
 	if !ok {
@@ -185,7 +185,7 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 		Data []json.RawMessage `json:"data"`
 	}
 	if err := conv.conn.request(probeCtx, "model/list", map[string]any{}, &models); err != nil {
-		return nil, fmt.Errorf("%w: model/list: %v", ports.ErrChatDriverIncompatible, err)
+		return nil, fmt.Errorf("%w: model/list: %w", ports.ErrChatDriverIncompatible, err)
 	}
 
 	return capabilities(), nil
@@ -193,7 +193,7 @@ func (d *Driver) Probe(ctx context.Context) (ports.ChatCapabilities, error) {
 
 type codexVersion [3]int
 
-var codexVersionPattern = regexp.MustCompile(`\b([0-9]+)\.([0-9]+)\.([0-9]+)\b`)
+var codexVersionPattern = regexp.MustCompile(`\b(\d+)\.(\d+)\.(\d+)\b`)
 
 func parseCodexVersion(output string) (codexVersion, bool) {
 	match := codexVersionPattern.FindStringSubmatch(output)
@@ -313,7 +313,7 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 		_ = conv.Close()
 		// Deliberately not falling back to thread/start: silently opening a new
 		// conversation would present unrelated history as continuous.
-		return nil, fmt.Errorf("%w: %v", ports.ErrChatResumeFailed, err)
+		return nil, fmt.Errorf("%w: %w", ports.ErrChatResumeFailed, err)
 	}
 
 	conv.start(cfg.ProviderConversationID)
@@ -324,12 +324,12 @@ func (d *Driver) Resume(ctx context.Context, cfg ports.ChatResumeConfig) (ports.
 func (d *Driver) connect(ctx context.Context, workdir string, env map[string]string) (*conversation, error) {
 	bin, err := d.plugin.ResolveBinary(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ports.ErrChatDriverUnavailable, err)
+		return nil, fmt.Errorf("%w: %w", ports.ErrChatDriverUnavailable, err)
 	}
 
 	proc, err := d.spawn(ctx, bin, workdir, envSlice(env))
 	if err != nil {
-		return nil, fmt.Errorf("%w: launch app-server: %v", ports.ErrChatDriverUnavailable, err)
+		return nil, fmt.Errorf("%w: launch app-server: %w", ports.ErrChatDriverUnavailable, err)
 	}
 
 	conv := newConversation(proc, d.log)
@@ -349,7 +349,7 @@ func (d *Driver) connect(ctx context.Context, workdir string, env map[string]str
 	}, nil); err != nil {
 		_ = conv.Close()
 		// A handshake the provider rejects means a protocol AO cannot speak.
-		return nil, fmt.Errorf("%w: initialize: %v", ports.ErrChatDriverIncompatible, err)
+		return nil, fmt.Errorf("%w: initialize: %w", ports.ErrChatDriverIncompatible, err)
 	}
 
 	if err := conv.conn.notify("initialized", nil); err != nil {
@@ -366,7 +366,7 @@ func (d *Driver) connect(ctx context.Context, workdir string, env map[string]str
 // (--dangerously-bypass-approvals-and-sandbox): AO sessions run in isolated
 // worktrees and are expected to work without prompting. Chat does not quietly
 // become stricter than the terminal path for the same setting.
-func approvalSettings(mode ports.PermissionMode) (policy string, sandbox string) {
+func approvalSettings(mode ports.PermissionMode) (policy, sandbox string) {
 	switch ports.NormalizePermissionMode(mode) {
 	case ports.PermissionModeAcceptEdits, ports.PermissionModeAuto:
 		// on-request lets the provider decide when to ask; workspace-write keeps

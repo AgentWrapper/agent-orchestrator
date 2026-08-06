@@ -320,7 +320,7 @@ func (p *Plugin) NativeConversationExists(
 		return false, err
 	}
 	id := strings.TrimSpace(nativeConversationID)
-	if _, err := uuid.Parse(id); err != nil {
+	if !isUUID(id) {
 		return false, nil
 	}
 	configDir := strings.TrimSpace(env["CLAUDE_CONFIG_DIR"])
@@ -360,6 +360,11 @@ func (p *Plugin) NativeConversationExists(
 		}
 	}
 	return false, nil
+}
+
+func isUUID(value string) bool {
+	_, err := uuid.Parse(value)
+	return err == nil
 }
 
 // AuthStatus checks Claude Code's local authentication state without starting a

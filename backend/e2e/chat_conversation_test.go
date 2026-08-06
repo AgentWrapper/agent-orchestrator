@@ -196,7 +196,7 @@ func TestChatQueueHoldsMidTurnMessagesAndDrainsInOrder(t *testing.T) {
 		t.Fatalf("not every queued message was answered (SLEPT=%d SECOND=%d THIRD=%d)\n%s",
 			slept, second, third, describe(snap))
 	}
-	if !(slept < second && second < third) {
+	if slept >= second || second >= third {
 		t.Errorf("answers arrived out of order: SLEPT@%d SECOND@%d THIRD@%d", slept, second, third)
 	}
 }

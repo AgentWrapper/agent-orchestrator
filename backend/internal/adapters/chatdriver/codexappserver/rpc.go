@@ -237,7 +237,7 @@ func (c *conn) deliver(f frame) {
 func (c *conn) answer(req serverRequest) {
 	result, err := c.onServerRequest(context.Background(), req)
 
-	reply := map[string]any{"id": json.RawMessage(req.ID)}
+	reply := map[string]any{"id": req.ID}
 	if err != nil {
 		reply["error"] = rpcError{Code: -32000, Message: err.Error()}
 	} else {

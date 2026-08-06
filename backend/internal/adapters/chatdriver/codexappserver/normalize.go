@@ -1487,10 +1487,10 @@ func encodeDetail(detail map[string]any) []byte {
 }
 
 func truncateForLog(raw []byte) string {
-	const max = 400
+	const maxLogBytes = 400
 	s := string(raw)
-	if len(s) > max {
-		return s[:max] + "…"
+	if len(s) > maxLogBytes {
+		return s[:maxLogBytes] + "…"
 	}
 	return s
 }
