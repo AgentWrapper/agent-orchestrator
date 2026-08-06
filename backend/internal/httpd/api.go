@@ -50,6 +50,10 @@ type APIDeps struct {
 	// Presence tracks which mobile devices are currently running the app.
 	// Nil disables presence tracking (the roster then reports every device offline).
 	Presence *presence.Tracker
+
+	// DeviceRoster and DeviceLive back the desktop-only mobile device roster.
+	DeviceRoster controllers.DeviceRoster
+	DeviceLive   controllers.LiveSet
 }
 
 // API owns one controller per resource and is the single Register call the

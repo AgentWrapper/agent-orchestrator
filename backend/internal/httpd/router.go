@@ -66,6 +66,7 @@ func NewRouterWithControl(cfg config.Config, log *slog.Logger, termMgr *terminal
 	mountControl(r, control)
 	mountTelemetry(r, cfg, deps.Telemetry)
 	mountMobile(r, deps.Mobile)
+	mountMobileDevices(r, &controllers.MobileDevicesController{Registry: deps.DeviceRoster, Presence: deps.DeviceLive})
 	api.Register(r)
 
 	return r
@@ -136,6 +137,19 @@ func mountMobile(r chi.Router, c *controllers.MobileController) {
 	r.Post("/api/v1/mobile/enable", c.Enable)
 	r.Post("/api/v1/mobile/disable", c.Disable)
 	r.Post("/api/v1/mobile/regenerate", c.Regenerate)
+}
+
+// mountMobileDevices registers the desktop-only mobile device roster. These sit
+// under /api/v1/mobile deliberately: lanControlBlock already 404s that prefix on
+// the LAN socket, so the "a phone must not manage the roster" invariant is
+// enforced by the transport rather than by a spoofable header.
+func mountMobileDevices(r chi.Router, c *controllers.MobileDevicesController) {
+	if c == nil || c.Registry == nil {
+		return
+	}
+	r.Get("/api/v1/mobile/devices", c.List)
+	r.Patch("/api/v1/mobile/devices/{installId}", c.Mute)
+	r.Delete("/api/v1/mobile/devices/{installId}", c.Remove)
 }
 
 type cliInvokedRequest struct {

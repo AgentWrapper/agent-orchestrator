@@ -1584,3 +1584,32 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
 }
+
+// MobileDeviceResponse is one row of the desktop's mobile-device roster: the
+// stored registration plus whether that phone is running the app right now.
+type MobileDeviceResponse struct {
+	InstallID  string    `json:"installId"`
+	Token      string    `json:"token"`
+	Platform   string    `json:"platform,omitempty" enum:"ios,android"`
+	DeviceName string    `json:"deviceName,omitempty"`
+	Muted      bool      `json:"muted"`
+	Live       bool      `json:"live" description:"True when the phone's app is open and polling."`
+	CreatedAt  time.Time `json:"createdAt"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+}
+
+// MobileDevicesResponse is the { devices } envelope for the roster.
+type MobileDevicesResponse struct {
+	Devices []MobileDeviceResponse `json:"devices"`
+}
+
+// MuteDeviceRequest is the body of PATCH /api/v1/mobile/devices/{installId}.
+type MuteDeviceRequest struct {
+	Muted bool `json:"muted" description:"True to stop sending push notifications to this device."`
+}
+
+// InstallIDParam is the {installId} path parameter for mobile-device roster
+// routes.
+type InstallIDParam struct {
+	InstallID string `path:"installId" description:"The device's stable install id."`
+}

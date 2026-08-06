@@ -463,6 +463,88 @@ paths:
       summary: Run the legacy AO project import through the daemon store
       tags:
       - import
+  /api/v1/mobile/devices:
+    get:
+      operationId: listMobileDevices
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MobileDevicesResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: List paired mobile devices with their live/muted status
+      tags:
+      - mobile
+  /api/v1/mobile/devices/{installId}:
+    delete:
+      operationId: removeMobileDevice
+      parameters:
+      - description: The device's stable install id.
+        in: path
+        name: installId
+        required: true
+        schema:
+          description: The device's stable install id.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+      summary: Remove a paired device from the roster
+      tags:
+      - mobile
+    patch:
+      operationId: muteMobileDevice
+      parameters:
+      - description: The device's stable install id.
+        in: path
+        name: installId
+        required: true
+        schema:
+          description: The device's stable install id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MuteDeviceRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: boolean
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+      summary: Mute or unmute push notifications for a paired device
+      tags:
+      - mobile
   /api/v1/mobile/disable:
     post:
       operationId: disableMobile
@@ -5385,6 +5467,47 @@ components:
       - prNumber
       - method
       type: object
+    MobileDeviceResponse:
+      properties:
+        createdAt:
+          format: date-time
+          type: string
+        deviceName:
+          type: string
+        installId:
+          type: string
+        lastSeenAt:
+          format: date-time
+          type: string
+        live:
+          description: True when the phone's app is open and polling.
+          type: boolean
+        muted:
+          type: boolean
+        platform:
+          enum:
+          - ios
+          - android
+          type: string
+        token:
+          type: string
+      required:
+      - installId
+      - token
+      - muted
+      - live
+      - createdAt
+      - lastSeenAt
+      type: object
+    MobileDevicesResponse:
+      properties:
+        devices:
+          items:
+            $ref: '#/components/schemas/MobileDeviceResponse'
+          type: array
+      required:
+      - devices
+      type: object
     MobileStatusResponse:
       properties:
         enabled:
@@ -5403,6 +5526,14 @@ components:
       - port
       - password
       - warning
+      type: object
+    MuteDeviceRequest:
+      properties:
+        muted:
+          description: True to stop sending push notifications to this device.
+          type: boolean
+      required:
+      - muted
       type: object
     NotificationEnvelope:
       properties:
