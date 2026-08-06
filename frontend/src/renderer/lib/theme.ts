@@ -77,3 +77,17 @@ export function applyDocumentThemeStyle(style: ThemeStyle): void {
 		document.documentElement.dataset.styleTheme = style;
 	}
 }
+
+/**
+ * Apply a theme DOM update under a View Transition so per-element
+ * `transition-colors` / background tweens are hidden behind a snapshot.
+ * Default VT crossfade is disabled in CSS — this is an instant cut.
+ * Falls back to a plain update when the API is unavailable.
+ */
+export function runThemeTransition(update: () => void): void {
+	if (typeof document === "undefined" || typeof document.startViewTransition !== "function") {
+		update();
+		return;
+	}
+	document.startViewTransition(update);
+}

@@ -191,8 +191,16 @@ func (r *Reaper) Tick(ctx context.Context) error {
 // probe result — alive, dead, or failed — is returned for reporting. The
 // reaper does not optimize away the "alive" case; the reaper has no business
 // deciding what counts as a no-op. The LCM diffs and only writes on actual
-// change. ok is false only for sessions that cannot be probed at all.
+// change. ok is false for sessions that cannot or must not be runtime-probed.
 func (r *Reaper) probeOne(ctx context.Context, sess domain.SessionRecord, now time.Time) (ports.RuntimeFacts, bool) {
+	// A chat session has no terminal runtime by design, so it has no handle to
+	// probe and its absence is not an anomaly. Terminal liveness and chat
+	// controller liveness are separate facts: inferring one from the other would
+	// let a healthy chat session look dead to the reaper. The chat controller
+	// reports its own health through the conversation's controller state.
+	if domain.NormalizeSessionMode(sess.Mode) == domain.SessionModeChat {
+		return ports.RuntimeFacts{}, false
+	}
 	handle, ok := handleFromRecord(sess)
 	if !ok {
 		// A session in the running-set without a handle is an anomaly worth

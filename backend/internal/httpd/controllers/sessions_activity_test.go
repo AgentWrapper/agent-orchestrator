@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 )
 
 type fakeActivityRecorder struct {
@@ -21,6 +22,20 @@ type fakeActivityRecorder struct {
 	gotSignal ports.ActivitySignal
 	calls     int
 	err       error
+}
+
+type fakeUsageHookRecorder struct {
+	gotID     domain.SessionID
+	gotSignal usagesvc.HookSignal
+	calls     int
+	err       error
+}
+
+func (f *fakeUsageHookRecorder) RecordHook(_ context.Context, id domain.SessionID, signal usagesvc.HookSignal) error {
+	f.calls++
+	f.gotID = id
+	f.gotSignal = signal
+	return f.err
 }
 
 func (f *fakeActivityRecorder) ApplyActivitySignal(_ context.Context, id domain.SessionID, s ports.ActivitySignal) error {
@@ -40,6 +55,174 @@ func newActivityTestServer(t *testing.T, rec *fakeActivityRecorder) *httptest.Se
 	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, deps, httpd.ControlDeps{}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func TestSessionsAPI_ActivityForwardsUsageMetadataWithoutChangingActivity(t *testing.T) {
+	usage := &fakeUsageHookRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{UsageHooks: usage}, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{
+		"event":"subagent-stop",
+		"agentSessionId":"native-1",
+		"usage":{
+			"harness":"claude-code",
+			"transcriptPath":"/tmp/main.jsonl",
+			"modelId":"claude-sonnet",
+			"subagentId":"sub-1",
+			"subagentTranscriptPath":"/tmp/sub.jsonl"
+		}
+	}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if usage.calls != 1 || usage.gotID != "ao-1" {
+		t.Fatalf("usage calls=%d id=%q", usage.calls, usage.gotID)
+	}
+	if usage.gotSignal.NativeSessionID != "native-1" ||
+		usage.gotSignal.Harness != domain.HarnessClaudeCode ||
+		usage.gotSignal.SubagentTranscriptPath != "/tmp/sub.jsonl" {
+		t.Fatalf("usage signal = %+v", usage.gotSignal)
+	}
+}
+
+func TestSessionsAPI_ActivitySanitizesAndBoundsUsageMetadata(t *testing.T) {
+	usage := &fakeUsageHookRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	overlongPath := "/tmp/" + strings.Repeat("x", 4096) + ".jsonl"
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{
+		"event":"subagent-stop",
+		"agentSessionId":"native-1",
+		"usage":{
+			"harness":"claude-\u001bcode",
+			"transcriptPath":"/tmp/\u001bmain.jsonl",
+			"modelId":"claude-\u001bsonnet",
+			"subagentId":"sub-\u001b1",
+			"subagentTranscriptPath":"`+overlongPath+`"
+		}
+	}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if usage.calls != 1 {
+		t.Fatalf("usage calls=%d, want 1", usage.calls)
+	}
+	if usage.gotSignal.Harness != domain.HarnessClaudeCode ||
+		usage.gotSignal.TranscriptPath != "/tmp/main.jsonl" ||
+		usage.gotSignal.ModelID != "claude-sonnet" ||
+		usage.gotSignal.SubagentID != "sub-1" ||
+		usage.gotSignal.SubagentTranscriptPath != "" {
+		t.Fatalf("sanitized usage signal = %+v", usage.gotSignal)
+	}
+}
+
+func TestSessionsAPI_UsageOnlyUnknownSessionReturnsNotFound(t *testing.T) {
+	usage := &fakeUsageHookRecorder{err: usagesvc.ErrUsageSessionNotFound}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/missing/activity",
+		`{"event":"session-start","agentSessionId":"native-1"}`)
+	if status != http.StatusNotFound {
+		t.Fatalf("activity = %d, want 404; body=%s", status, body)
+	}
+}
+
+func TestSessionsAPI_ActivityForwardsMetadataOnlySessionStartToUsage(t *testing.T) {
+	usage := &fakeUsageHookRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"event":"session-start","agentSessionId":"codex-native-1","launchId":"launch-7"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if usage.calls != 1 || usage.gotID != "ao-1" {
+		t.Fatalf("usage calls=%d id=%q", usage.calls, usage.gotID)
+	}
+	if usage.gotSignal.Event != "session-start" ||
+		usage.gotSignal.NativeSessionID != "codex-native-1" ||
+		usage.gotSignal.LaunchID != "launch-7" ||
+		usage.gotSignal.Harness != "" {
+		t.Fatalf("usage signal = %+v", usage.gotSignal)
+	}
+}
+
+func TestSessionsAPI_ActivityUsageFailureDoesNotRejectAgentSignal(t *testing.T) {
+	usage := &fakeUsageHookRecorder{err: errors.New("usage storage unavailable")}
+	activity := &fakeActivityRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{Activity: activity, UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"state":"idle","event":"session-end","agentSessionId":"native-1"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if activity.calls != 1 || usage.calls != 1 {
+		t.Fatalf("activity calls=%d usage calls=%d, want 1/1", activity.calls, usage.calls)
+	}
+}
+
+func TestSessionsAPI_ActivityForwardsOrdinaryEventWithoutUsageMetadata(t *testing.T) {
+	activity := &fakeActivityRecorder{}
+	usage := &fakeUsageHookRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{Activity: activity, UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity",
+		`{"state":"active","event":"post-tool-use","agentSessionId":"codex-native-1","launchId":"launch-1"}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if activity.calls != 1 || usage.calls != 1 {
+		t.Fatalf("activity calls=%d usage calls=%d, want 1/1", activity.calls, usage.calls)
+	}
+	if usage.gotSignal.Event != "post-tool-use" ||
+		usage.gotSignal.LaunchID != "launch-1" ||
+		usage.gotSignal.NativeSessionID != "codex-native-1" ||
+		usage.gotSignal.Harness != "" {
+		t.Fatalf("usage signal = %+v", usage.gotSignal)
+	}
 }
 
 func TestSessionsAPI_ActivityAppliesSignal(t *testing.T) {

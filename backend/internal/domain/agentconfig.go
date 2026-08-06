@@ -25,6 +25,9 @@ const (
 type AgentConfig struct {
 	// Model overrides the agent's default model (e.g. claude-opus-4-5).
 	Model string `json:"model,omitempty"`
+	// Mode selects an agent-owned operating mode when the adapter exposes modes
+	// instead of raw model ids (currently Amp: low|medium|high|ultra).
+	Mode string `json:"mode,omitempty"`
 	// Permissions sets the agent's starting permission mode. Empty is treated
 	// like the adapter's default mode.
 	Permissions PermissionMode `json:"permissions,omitempty"`
@@ -36,13 +39,29 @@ func (c AgentConfig) IsZero() bool {
 	return c == AgentConfig{}
 }
 
+// Valid reports whether the mode is one AO knows. Empty counts as valid: it means
+// "the adapter's own baseline", which is a legitimate choice rather than a missing
+// one.
+func (m PermissionMode) Valid() bool {
+	switch m {
+	case "", PermissionModeDefault, PermissionModeAcceptEdits,
+		PermissionModeAuto, PermissionModeBypassPermissions:
+		return true
+	default:
+		return false
+	}
+}
+
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than silently dropped at spawn.
 func (c AgentConfig) Validate() error {
-	switch c.Permissions {
-	case "", PermissionModeDefault, PermissionModeAcceptEdits, PermissionModeAuto, PermissionModeBypassPermissions:
-		return nil
+	switch c.Mode {
+	case "", "low", "medium", "high", "ultra":
 	default:
-		return fmt.Errorf("invalid permissions %q: want one of default, accept-edits, auto, bypass-permissions", c.Permissions)
+		return fmt.Errorf("invalid mode %q: want one of low, medium, high, ultra", c.Mode)
 	}
+	if c.Permissions.Valid() {
+		return nil
+	}
+	return fmt.Errorf("invalid permissions %q: want one of default, accept-edits, auto, bypass-permissions", c.Permissions)
 }

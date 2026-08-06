@@ -33,6 +33,119 @@ paths:
       summary: Return cached supported and locally installed agent adapters
       tags:
       - agents
+  /api/v1/agents/{agent}/models:
+    get:
+      operationId: getAgentModels
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      - description: Optional project identifier used as the model-catalog cache scope.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project identifier used as the model-catalog cache
+            scope.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Return the cached model picker for one agent, discovering it on first
+        use
+      tags:
+      - agents
+  /api/v1/agents/{agent}/models/refresh:
+    post:
+      operationId: refreshAgentModels
+      parameters:
+      - description: Agent adapter identifier.
+        in: path
+        name: agent
+        required: true
+        schema:
+          description: Agent adapter identifier.
+          type: string
+      - description: Optional project identifier used as the model-catalog cache scope.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project identifier used as the model-catalog cache
+            scope.
+          type: string
+      - description: When true, compare executable and config metadata before running
+          discovery.
+        in: query
+        name: revalidate
+        schema:
+          description: When true, compare executable and config metadata before running
+            discovery.
+          type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentModelsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Refresh and cache the model picker for one agent
+      tags:
+      - agents
   /api/v1/agents/{agent}/probe:
     post:
       operationId: probeAgent
@@ -730,6 +843,55 @@ paths:
       summary: Fetch one orchestrator session
       tags:
       - sessions
+  /api/v1/orchestrators/delegate:
+    post:
+      operationId: delegateTask
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DelegateTaskRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DelegateTaskResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Start a worker task and ask the orchestrator to title it
+      tags:
+      - sessions
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -1374,6 +1536,1003 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Report an agent activity-state signal for a session
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/attachments:
+    post:
+      operationId: stageSessionAttachments
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StageSessionAttachmentsRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StageSessionAttachmentsResponse'
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Write images into a running session's worktree and return their paths
+      tags:
+      - sessions
+  /api/v1/sessions/{sessionId}/conversation:
+    get:
+      operationId: getSessionConversation
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Read items older than this conversation sequence. Omit for the
+          newest page.
+        in: query
+        name: beforeSequence
+        schema:
+          description: Read items older than this conversation sequence. Omit for
+            the newest page.
+          minimum: 1
+          type:
+          - "null"
+          - integer
+      - description: Maximum combined messages and activities to return. Defaults
+          to 200.
+        in: query
+        name: limit
+        schema:
+          description: Maximum combined messages and activities to return. Defaults
+            to 200.
+          maximum: 500
+          minimum: 1
+          type:
+          - "null"
+          - integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationSnapshotResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read a chat session's durable conversation
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/approvals/{requestId}/resolve:
+    post:
+      operationId: resolveSessionConversationApproval
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Provider approval request identifier. Zero is a legitimate value.
+        in: path
+        name: requestId
+        required: true
+        schema:
+          description: Provider approval request identifier. Zero is a legitimate
+            value.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveConversationApprovalRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Answer a pending approval in a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/compact:
+    post:
+      operationId: compactSessionConversation
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompactConversationResponse'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Summarize earlier history to reclaim context in a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/config-options:
+    get:
+      operationId: listSessionConversationConfigOptions
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationConfigOptionsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the live session controls the provider advertises
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/config-options/{configId}:
+    patch:
+      operationId: setSessionConversationConfigOption
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Provider session configuration option identifier.
+        in: path
+        name: configId
+        required: true
+        schema:
+          description: Provider session configuration option identifier.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetConversationConfigOptionRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationConfigOptionsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Choose one provider-advertised session configuration value
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/inputs/{requestId}/resolve:
+    post:
+      operationId: resolveSessionConversationInput
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: Provider approval request identifier. Zero is a legitimate value.
+        in: path
+        name: requestId
+        required: true
+        schema:
+          description: Provider approval request identifier. Zero is a legitimate
+            value.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveConversationInputRequest'
+        required: true
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Answer a structured input request in a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/interrupt:
+    post:
+      operationId: interruptSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Cancel the in-flight turn in a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/mcp/reload:
+    post:
+      operationId: reloadSessionConversationMcpServers
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReloadConversationMCPServersResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Restart the tool servers a chat session can reach
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/messages:
+    post:
+      operationId: sendSessionConversationMessage
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendConversationMessageRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendConversationMessageResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Send a message to a chat session's agent
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/models:
+    get:
+      operationId: listSessionConversationModels
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationModelsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the models the provider offers for a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/settings:
+    patch:
+      operationId: setSessionConversationTurnSettings
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationTurnSettingsPayload'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationTurnSettingsPayload'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Choose the model, reasoning effort and approval mode for the next turn
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/skills:
+    get:
+      operationId: listSessionConversationSkills
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationSkillsResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List the named skills the provider offers for a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/steer:
+    post:
+      operationId: steerSessionConversationTurn
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SteerConversationRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SteerConversationResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Send guidance into the in-flight turn of a chat session
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/title:
+    put:
+      operationId: setSessionConversationTitle
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetConversationTitleRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetConversationTitleResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Name the provider's conversation thread
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/conversation/turns/{turnId}/rollback:
+    post:
+      operationId: rollbackSessionConversation
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      - description: AO conversation turn identifier, from the snapshot's turns array.
+        in: path
+        name: turnId
+        required: true
+        schema:
+          description: AO conversation turn identifier, from the snapshot's turns
+            array.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RollbackConversationResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Discard a turn and everything after it from the agent's memory
+      tags:
+      - conversations
+  /api/v1/sessions/{sessionId}/interface-transition:
+    delete:
+      operationId: cancelSessionInterfaceTransition
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelSessionInterfaceTransitionResponse'
+          description: Accepted
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Cancel an interface handoff before its source controller stops
+      tags:
+      - sessions
+    get:
+      operationId: getSessionInterfaceTransition
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionInterfaceTransitionStatusResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Inspect TUI and Chat interface handoff support and progress
+      tags:
+      - sessions
+    post:
+      operationId: startSessionInterfaceTransition
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartSessionInterfaceTransitionRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartSessionInterfaceTransitionResponse'
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Conflict
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Switch a live session between its TUI and Chat controllers
       tags:
       - sessions
   /api/v1/sessions/{sessionId}/kill:
@@ -2579,6 +3738,68 @@ paths:
       summary: Clean up terminated session workspaces
       tags:
       - sessions
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Read the daemon-owned user preferences
+      tags:
+      - settings
+  /api/v1/settings/session-interface:
+    patch:
+      operationId: updateSessionInterface
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSessionInterfaceRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Choose the default interface for new sessions
+      tags:
+      - settings
   /api/v1/shell-terminals:
     get:
       operationId: listShellTerminals
@@ -2737,6 +3958,77 @@ paths:
       summary: Rename a standalone shell terminal tab
       tags:
       - shellTerminals
+  /api/v1/usage/sessions:
+    get:
+      operationId: listCompactSessionUsage
+      parameters:
+      - description: Optional project id filter for dashboard cards.
+        in: query
+        name: projectId
+        schema:
+          description: Optional project id filter for dashboard cards.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListCompactSessionUsageResponse'
+          description: OK
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: List compact token usage for session cards
+      tags:
+      - usage
+  /api/v1/usage/sessions/{sessionId}:
+    get:
+      operationId: getSessionUsage
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionUsageResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Get detailed token usage for one session
+      tags:
+      - usage
 components:
   schemas:
     APIError:
@@ -2778,6 +4070,8 @@ components:
       type: object
     AgentConfig:
       properties:
+        mode:
+          type: string
         model:
           type: string
         permissions:
@@ -2800,6 +4094,61 @@ components:
       required:
       - id
       - label
+      type: object
+    AgentModelInfo:
+      properties:
+        id:
+          type: string
+        isDefault:
+          type: boolean
+        label:
+          type: string
+        provider:
+          type: string
+      required:
+      - id
+      - label
+      type: object
+    AgentModelsResponse:
+      properties:
+        agentId:
+          type: string
+        allowCustom:
+          type: boolean
+        binaryVersion:
+          type: string
+        fetchedAt:
+          format: date-time
+          type: string
+        models:
+          items:
+            $ref: '#/components/schemas/AgentModelInfo'
+          type: array
+        refreshRecommended:
+          type: boolean
+        selectionMode:
+          enum:
+          - catalog
+          - text
+          - mode
+          type: string
+        source:
+          type: string
+        stale:
+          type: boolean
+        validatedAt:
+          format: date-time
+          type: string
+        warning:
+          type: string
+      required:
+      - agentId
+      - selectionMode
+      - models
+      - allowCustom
+      - source
+      - fetchedAt
+      - stale
       type: object
     BrowserCommandRequest:
       properties:
@@ -2856,6 +4205,16 @@ components:
       required:
       - reviewerHandleId
       - reviews
+      type: object
+    CancelSessionInterfaceTransitionResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+      required:
+      - ok
+      - sessionId
       type: object
     ClaimPRRequest:
       properties:
@@ -2919,6 +4278,30 @@ components:
       - sessionId
       - reason
       type: object
+    CompactConversationResponse:
+      properties:
+        tokensAfter:
+          format: int64
+          type: integer
+        tokensBefore:
+          format: int64
+          type: integer
+      type: object
+    CompactSessionUsageResponse:
+      properties:
+        incomplete:
+          type: boolean
+        sessionId:
+          type: string
+        totalTokens:
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - sessionId
+      - totalTokens
+      - incomplete
+      type: object
     ContainerReapConfig:
       properties:
         disabled:
@@ -2946,6 +4329,11 @@ components:
         issueId:
           type: string
         kind:
+          type: string
+        mode:
+          enum:
+          - chat
+          - tui
           type: string
         pinnedAt:
           format: date-time
@@ -3008,6 +4396,7 @@ components:
       - id
       - projectId
       - kind
+      - mode
       - activity
       - isTerminated
       - terminateOnPrMerge
@@ -3025,6 +4414,563 @@ components:
           type: string
       required:
       - data
+      type: object
+    ConversationAccountPayload:
+      properties:
+        authMode:
+          type: string
+        planLabel:
+          type: string
+        reauthReason:
+          type: string
+        reauthRequiredAt:
+          type:
+          - "null"
+          - string
+      type: object
+    ConversationActivityResponse:
+      properties:
+        activityKind:
+          enum:
+          - command
+          - file_change
+          - plan
+          - reasoning
+          - approval
+          - usage
+          - error
+          - system
+          - mcp_tool
+          - auto_review
+          - user_input
+          type: string
+        createdAt:
+          type: string
+        detail:
+          additionalProperties: {}
+          type: object
+        id:
+          type: string
+        kind:
+          enum:
+          - activity
+          type: string
+        providerItemId:
+          type: string
+        requestId:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        sequence:
+          format: int64
+          type: integer
+        status:
+          enum:
+          - running
+          - completed
+          - failed
+          - cancelled
+          - pending
+          - resolved
+          type: string
+        summary:
+          type: string
+        turnId:
+          type: string
+      required:
+      - kind
+      - id
+      - sequence
+      - revision
+      - activityKind
+      - status
+      - summary
+      - createdAt
+      type: object
+    ConversationConfigChoiceResponse:
+      properties:
+        description:
+          type: string
+        group:
+          type: string
+        groupName:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+      required:
+      - value
+      - name
+      type: object
+    ConversationConfigOptionResponse:
+      properties:
+        category:
+          type: string
+        choices:
+          items:
+            $ref: '#/components/schemas/ConversationConfigChoiceResponse'
+          type: array
+        currentBoolean:
+          type:
+          - "null"
+          - boolean
+        currentValue:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          enum:
+          - select
+          - boolean
+          type: string
+      required:
+      - id
+      - name
+      - type
+      type: object
+    ConversationConfigOptionsResponse:
+      properties:
+        options:
+          items:
+            $ref: '#/components/schemas/ConversationConfigOptionResponse'
+          type: array
+      required:
+      - options
+      type: object
+    ConversationDiffFileResponse:
+      properties:
+        additions:
+          type: integer
+        deletions:
+          type: integer
+        oldPath:
+          type: string
+        path:
+          type: string
+        rolledBack:
+          type: boolean
+        status:
+          enum:
+          - added
+          - modified
+          - deleted
+          - renamed
+          type: string
+      required:
+      - path
+      - additions
+      - deletions
+      - status
+      type: object
+    ConversationImageContentRequest:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - mimeType
+      - data
+      type: object
+    ConversationMCPServerPayload:
+      properties:
+        error:
+          type: string
+        failureReason:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+      required:
+      - name
+      - status
+      type: object
+    ConversationMessageResponse:
+      properties:
+        createdAt:
+          type: string
+        id:
+          type: string
+        kind:
+          enum:
+          - message
+          type: string
+        origin:
+          enum:
+          - human
+          - automation
+          - daemon
+          - provider
+          type: string
+        revision:
+          format: int64
+          type: integer
+        role:
+          enum:
+          - user
+          - assistant
+          type: string
+        sequence:
+          format: int64
+          type: integer
+        streaming:
+          type: boolean
+        text:
+          type: string
+        turnId:
+          type: string
+      required:
+      - kind
+      - id
+      - sequence
+      - revision
+      - role
+      - origin
+      - text
+      - streaming
+      - createdAt
+      type: object
+    ConversationModelReroutePayload:
+      properties:
+        at:
+          type: string
+        fromModel:
+          type: string
+        providerTurnId:
+          type: string
+        reason:
+          type: string
+        toModel:
+          type: string
+      required:
+      - toModel
+      - at
+      type: object
+    ConversationModelResponse:
+      properties:
+        default:
+          type: boolean
+        defaultEffort:
+          type: string
+        description:
+          type: string
+        displayName:
+          type: string
+        efforts:
+          items:
+            type: string
+          type: array
+        id:
+          type: string
+      required:
+      - id
+      - displayName
+      - default
+      type: object
+    ConversationModelsResponse:
+      properties:
+        models:
+          items:
+            $ref: '#/components/schemas/ConversationModelResponse'
+          type: array
+        selected:
+          $ref: '#/components/schemas/ConversationTurnSettingsPayload'
+      required:
+      - models
+      - selected
+      type: object
+    ConversationPlanResponse:
+      properties:
+        explanation:
+          type: string
+        steps:
+          items:
+            $ref: '#/components/schemas/ConversationPlanStepResponse'
+          type: array
+      required:
+      - steps
+      type: object
+    ConversationPlanStepResponse:
+      properties:
+        status:
+          enum:
+          - pending
+          - in_progress
+          - completed
+          type: string
+        text:
+          type: string
+      required:
+      - text
+      - status
+      type: object
+    ConversationRateLimitsPayload:
+      properties:
+        planLabel:
+          type: string
+        primaryResetsInSeconds:
+          format: int64
+          type: integer
+        primaryUsedPercent:
+          format: double
+          type: number
+        secondaryResetsInSeconds:
+          format: int64
+          type: integer
+        secondaryUsedPercent:
+          format: double
+          type: number
+        title:
+          type: string
+      required:
+      - primaryUsedPercent
+      - secondaryUsedPercent
+      type: object
+    ConversationResourceContentRequest:
+      properties:
+        mimeType:
+          type: string
+        name:
+          type: string
+        text:
+          type:
+          - "null"
+          - string
+        uri:
+          type: string
+      required:
+      - uri
+      - name
+      type: object
+    ConversationSkillResponse:
+      properties:
+        description:
+          type: string
+        displayName:
+          type: string
+        inputHint:
+          type: string
+        name:
+          type: string
+        source:
+          type: string
+      required:
+      - name
+      - displayName
+      type: object
+    ConversationSkillsResponse:
+      properties:
+        skills:
+          items:
+            $ref: '#/components/schemas/ConversationSkillResponse'
+          type: array
+      required:
+      - skills
+      type: object
+    ConversationSnapshotResponse:
+      properties:
+        account:
+          $ref: '#/components/schemas/ConversationAccountPayload'
+        activities:
+          items:
+            $ref: '#/components/schemas/ConversationActivityResponse'
+          type: array
+        capabilities:
+          items:
+            type: string
+          type: array
+        compactedAt:
+          type:
+          - "null"
+          - string
+        controller:
+          enum:
+          - connecting
+          - ready
+          - busy
+          - recovering
+          - stopped
+          type: string
+        conversationId:
+          type: string
+        harness:
+          type: string
+        hasMoreBefore:
+          type: boolean
+        latestSequence:
+          format: int64
+          type: integer
+        mcpServers:
+          items:
+            $ref: '#/components/schemas/ConversationMCPServerPayload'
+          type: array
+        messages:
+          items:
+            $ref: '#/components/schemas/ConversationMessageResponse'
+          type: array
+        mode:
+          enum:
+          - chat
+          - tui
+          type: string
+        modelReroute:
+          $ref: '#/components/schemas/ConversationModelReroutePayload'
+        oldestSequence:
+          format: int64
+          type: integer
+        rateLimits:
+          $ref: '#/components/schemas/ConversationRateLimitsPayload'
+        sessionId:
+          type: string
+        settings:
+          $ref: '#/components/schemas/ConversationTurnSettingsPayload'
+        threadState:
+          $ref: '#/components/schemas/ConversationThreadStatePayload'
+        title:
+          type: string
+        turns:
+          items:
+            $ref: '#/components/schemas/ConversationTurnResponse'
+          type: array
+        usage:
+          $ref: '#/components/schemas/ConversationUsagePayload'
+      required:
+      - conversationId
+      - sessionId
+      - mode
+      - controller
+      - latestSequence
+      - hasMoreBefore
+      - turns
+      - messages
+      - activities
+      - settings
+      type: object
+    ConversationThreadStatePayload:
+      properties:
+        archivedAt:
+          type:
+          - "null"
+          - string
+        closedAt:
+          type:
+          - "null"
+          - string
+        status:
+          enum:
+          - active
+          - idle
+          - not_loaded
+          - system_error
+          - closed
+          type: string
+        waitingOn:
+          items:
+            type: string
+          type: array
+      type: object
+    ConversationTurnDiffResponse:
+      properties:
+        files:
+          items:
+            $ref: '#/components/schemas/ConversationDiffFileResponse'
+          type: array
+        truncated:
+          type: boolean
+      required:
+      - files
+      type: object
+    ConversationTurnResponse:
+      properties:
+        completedAt:
+          type:
+          - "null"
+          - string
+        diff:
+          $ref: '#/components/schemas/ConversationTurnDiffResponse'
+        errorMessage:
+          type: string
+        id:
+          type: string
+        plan:
+          $ref: '#/components/schemas/ConversationPlanResponse'
+        providerTurnId:
+          type: string
+        requestedAt:
+          type: string
+        rolledBack:
+          type: boolean
+        startedAt:
+          type:
+          - "null"
+          - string
+        state:
+          enum:
+          - queued
+          - running
+          - completed
+          - interrupted
+          - failed
+          type: string
+      required:
+      - id
+      - state
+      - requestedAt
+      type: object
+    ConversationTurnSettingsPayload:
+      properties:
+        approvalMode:
+          enum:
+          - default
+          - accept-edits
+          - auto
+          - bypass-permissions
+          type: string
+        model:
+          type: string
+        reasoningEffort:
+          type: string
+      type: object
+    ConversationUsagePayload:
+      properties:
+        cachedTokens:
+          format: int64
+          type: integer
+        contextUsed:
+          format: int64
+          type: integer
+        contextWindow:
+          format: int64
+          type: integer
+        cost:
+          type:
+          - "null"
+          - number
+        currency:
+          type: string
+        inputTokens:
+          format: int64
+          type: integer
+        outputTokens:
+          format: int64
+          type: integer
+        totalTokens:
+          format: int64
+          type: integer
+      required:
+      - contextUsed
+      - contextWindow
+      - inputTokens
+      - outputTokens
+      - cachedTokens
+      - totalTokens
       type: object
     DegradedProject:
       properties:
@@ -3048,6 +4994,64 @@ components:
       - kind
       - path
       - resolveError
+      type: object
+    DelegateTaskRequest:
+      properties:
+        agent:
+          enum:
+          - claude-code
+          - codex
+          - aider
+          - opencode
+          - grok
+          - droid
+          - amp
+          - agy
+          - crush
+          - cursor
+          - qwen
+          - copilot
+          - goose
+          - auggie
+          - continue
+          - devin
+          - cline
+          - kimi
+          - kiro
+          - kilocode
+          - vibe
+          - pi
+          - autohand
+          - fake
+          type: string
+        brief:
+          maxLength: 4096
+          type: string
+        mode:
+          enum:
+          - tui
+          - chat
+          type: string
+        model:
+          maxLength: 256
+          type: string
+        projectId:
+          type: string
+      required:
+      - projectId
+      - brief
+      type: object
+    DelegateTaskResponse:
+      properties:
+        ok:
+          type: boolean
+        orchestratorId:
+          type: string
+        workerId:
+          type: string
+      required:
+      - ok
+      - workerId
       type: object
     DevImportProjectsConflict:
       properties:
@@ -3212,6 +5216,15 @@ components:
       - supported
       - installed
       - authorized
+      type: object
+    ListCompactSessionUsageResponse:
+      properties:
+        sessions:
+          items:
+            $ref: '#/components/schemas/CompactSessionUsageResponse'
+          type: array
+      required:
+      - sessions
       type: object
     ListNotificationsResponse:
       properties:
@@ -3732,6 +5745,15 @@ components:
       required:
       - token
       type: object
+    ReloadConversationMCPServersResponse:
+      properties:
+        servers:
+          items:
+            $ref: '#/components/schemas/ConversationMCPServerPayload'
+          type: array
+      required:
+      - servers
+      type: object
     RemoveProjectResult:
       properties:
         projectId:
@@ -3772,6 +5794,27 @@ components:
       required:
       - ok
       - resolved
+      type: object
+    ResolveConversationApprovalRequest:
+      properties:
+        decisionId:
+          type: string
+      required:
+      - decisionId
+      type: object
+    ResolveConversationInputRequest:
+      properties:
+        action:
+          enum:
+          - accept
+          - decline
+          - cancel
+          type: string
+        content:
+          additionalProperties: {}
+          type: object
+      required:
+      - action
       type: object
     RestoreSessionResponse:
       properties:
@@ -3881,6 +5924,13 @@ components:
         agentConfig:
           $ref: '#/components/schemas/AgentConfig'
       type: object
+    RollbackConversationResponse:
+      properties:
+        turnsDiscarded:
+          type: integer
+      required:
+      - turnsDiscarded
+      type: object
     RollbackSessionResponse:
       properties:
         deleted:
@@ -3894,6 +5944,42 @@ components:
       required:
       - ok
       - sessionId
+      type: object
+    SendConversationMessageRequest:
+      properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ConversationImageContentRequest'
+          type: array
+        clientMessageId:
+          type: string
+        resources:
+          items:
+            $ref: '#/components/schemas/ConversationResourceContentRequest'
+          type: array
+        text:
+          type: string
+      required:
+      - text
+      type: object
+    SendConversationMessageResponse:
+      properties:
+        duplicate:
+          type: boolean
+        providerTurnId:
+          type: string
+        state:
+          enum:
+          - queued
+          - running
+          - completed
+          - interrupted
+          - failed
+          type: string
+        turnId:
+          type: string
+      required:
+      - duplicate
       type: object
     SendSessionMessageRequest:
       properties:
@@ -3916,6 +6002,85 @@ components:
       - ok
       - sessionId
       - message
+      type: object
+    SessionInterfaceTransition:
+      properties:
+        completedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
+        createdAt:
+          format: date-time
+          type: string
+        errorCode:
+          type: string
+        errorDetail:
+          type: string
+        id:
+          type: string
+        phase:
+          enum:
+          - requested
+          - preflighting
+          - draining
+          - source_stopping
+          - source_stopped
+          - target_starting
+          - activating
+          - completed
+          - failed
+          - cancelled
+          - recovery_required
+          type: string
+        policy:
+          enum:
+          - drain
+          - interrupt
+          type: string
+        sessionId:
+          type: string
+        sourceMode:
+          enum:
+          - chat
+          - tui
+          type: string
+        targetMode:
+          enum:
+          - chat
+          - tui
+          type: string
+        updatedAt:
+          format: date-time
+          type: string
+      required:
+      - id
+      - sessionId
+      - sourceMode
+      - targetMode
+      - policy
+      - phase
+      - createdAt
+      - updatedAt
+      type: object
+    SessionInterfaceTransitionStatusResponse:
+      properties:
+        reason:
+          type: string
+        reasonCode:
+          type: string
+        supported:
+          type: boolean
+        targetMode:
+          enum:
+          - chat
+          - tui
+          type: string
+        transition:
+          $ref: '#/components/schemas/SessionInterfaceTransition'
+      required:
+      - supported
+      - targetMode
       type: object
     SessionPRCISummary:
       properties:
@@ -4215,6 +6380,24 @@ components:
       required:
       - session
       type: object
+    SessionUsageResponse:
+      properties:
+        harnesses:
+          items:
+            $ref: '#/components/schemas/UsageHarnessResponse'
+          type: array
+        incomplete:
+          type: boolean
+        sessionId:
+          type: string
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+      required:
+      - sessionId
+      - incomplete
+      - totals
+      - harnesses
+      type: object
     SetActivityRequest:
       properties:
         agentSessionId:
@@ -4242,6 +6425,9 @@ components:
         toolUseId:
           description: Native tool-use id, for tool-use hook events.
           type: string
+        usage:
+          $ref: '#/components/schemas/UsageHookMetadata'
+          description: Provider transcript metadata used by the local usage pipeline.
       type: object
     SetActivityResponse:
       properties:
@@ -4255,6 +6441,29 @@ components:
       - ok
       - sessionId
       - state
+      type: object
+    SetConversationConfigOptionRequest:
+      properties:
+        enabled:
+          type:
+          - "null"
+          - boolean
+        value:
+          type: string
+      type: object
+    SetConversationTitleRequest:
+      properties:
+        title:
+          type: string
+      required:
+      - title
+      type: object
+    SetConversationTitleResponse:
+      properties:
+        title:
+          type: string
+      required:
+      - title
       type: object
     SetProjectConfigInput:
       properties:
@@ -4302,6 +6511,21 @@ components:
           - opencode
           type: string
       type: object
+    SettingsResponse:
+      properties:
+        chatHarnesses:
+          items:
+            type: string
+          type: array
+        defaultSessionMode:
+          enum:
+          - chat
+          - tui
+          type: string
+      required:
+      - defaultSessionMode
+      - chatHarnesses
+      type: object
     ShellTerminalEnvelope:
       properties:
         shellTerminal:
@@ -4334,6 +6558,11 @@ components:
       properties:
         clean:
           type: boolean
+        mode:
+          enum:
+          - chat
+          - tui
+          type: string
         projectId:
           type: string
       required:
@@ -4390,6 +6619,11 @@ components:
           - worker
           - orchestrator
           type: string
+        mode:
+          enum:
+          - chat
+          - tui
+          type: string
         projectId:
           type: string
         prompt:
@@ -4411,12 +6645,80 @@ components:
       - promptBytes
       - systemPromptBytes
       type: object
+    StageSessionAttachmentsRequest:
+      properties:
+        attachments:
+          items:
+            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+          type: array
+      required:
+      - attachments
+      type: object
+    StageSessionAttachmentsResponse:
+      properties:
+        paths:
+          items:
+            type: string
+          type: array
+        sessionId:
+          type: string
+      required:
+      - sessionId
+      - paths
+      type: object
     StartPreviewServerRequest:
       properties:
         configuration:
           description: Named preview configuration. Optional when exactly one configuration
             exists.
           type: string
+      type: object
+    StartSessionInterfaceTransitionRequest:
+      properties:
+        policy:
+          enum:
+          - drain
+          - interrupt
+          type: string
+        targetMode:
+          enum:
+          - chat
+          - tui
+          type: string
+      required:
+      - targetMode
+      - policy
+      type: object
+    StartSessionInterfaceTransitionResponse:
+      properties:
+        ok:
+          type: boolean
+        sessionId:
+          type: string
+        transition:
+          $ref: '#/components/schemas/SessionInterfaceTransition'
+      required:
+      - ok
+      - sessionId
+      - transition
+      type: object
+    SteerConversationRequest:
+      properties:
+        clientMessageId:
+          type: string
+        text:
+          type: string
+      required:
+      - text
+      type: object
+    SteerConversationResponse:
+      properties:
+        activityId:
+          type: string
+        providerTurnId:
+          type: string
+      required:
+      - providerTurnId
       type: object
     SubmitReviewInput:
       properties:
@@ -4517,6 +6819,16 @@ components:
       - displayName
       - config
       type: object
+    UpdateSessionInterfaceRequest:
+      properties:
+        defaultSessionMode:
+          enum:
+          - chat
+          - tui
+          type: string
+      required:
+      - defaultSessionMode
+      type: object
     UpdateShellTerminalRequest:
       properties:
         title:
@@ -4524,6 +6836,83 @@ components:
           type: string
       required:
       - title
+      type: object
+    UsageHarnessResponse:
+      properties:
+        harness:
+          type: string
+        models:
+          items:
+            $ref: '#/components/schemas/UsageModelResponse'
+          type: array
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+      required:
+      - harness
+      - totals
+      - models
+      type: object
+    UsageHookMetadata:
+      properties:
+        harness:
+          enum:
+          - claude-code
+          - codex
+          type: string
+        modelId:
+          type: string
+        subagentId:
+          type: string
+        subagentTranscriptPath:
+          type: string
+        transcriptPath:
+          type: string
+      required:
+      - harness
+      type: object
+    UsageModelResponse:
+      properties:
+        modelId:
+          type: string
+        totals:
+          $ref: '#/components/schemas/UsageTotalsResponse'
+      required:
+      - modelId
+      - totals
+      type: object
+    UsageTotalsResponse:
+      properties:
+        cacheReadTokens:
+          type:
+          - "null"
+          - integer
+        cacheWriteTokens:
+          type:
+          - "null"
+          - integer
+        inputTokens:
+          type:
+          - "null"
+          - integer
+        outputTokens:
+          type:
+          - "null"
+          - integer
+        reasoningTokens:
+          type:
+          - "null"
+          - integer
+        uncachedInputTokens:
+          type:
+          - "null"
+          - integer
+      required:
+      - inputTokens
+      - uncachedInputTokens
+      - cacheReadTokens
+      - cacheWriteTokens
+      - outputTokens
+      - reasoningTokens
       type: object
     WorkspaceFileResponse:
       properties:
@@ -4640,6 +7029,8 @@ tags:
   name: reviews
 - description: Durable dashboard notifications
   name: notifications
+- description: Token usage telemetry for AO sessions
+  name: usage
 - description: Mobile push-device registration for OS push notifications
   name: push
 - description: Server-sent CDC event stream with durable replay

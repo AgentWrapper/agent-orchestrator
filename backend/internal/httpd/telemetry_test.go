@@ -264,6 +264,7 @@ func TestCLIUsageErrorRouteHashesInvalidCommandsBeforeRemoteExport(t *testing.T)
 		"phc_test",
 		"https://us.i.posthog.com",
 		"",
+		"",
 		telemetryRoundTripper(func(req *http.Request) (*http.Response, error) {
 			defer req.Body.Close()
 			var body map[string]any

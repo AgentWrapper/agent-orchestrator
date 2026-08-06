@@ -61,6 +61,23 @@ var shippedMigrations = map[int64]string{
 	41: "0041_notification_resolution.sql",
 	42: "0042_review_run_unique_per_harness.sql",
 	43: "0043_add_session_pinned.sql",
+	44: "0044_backfill_review_run_batch_id.sql",
+	47: "0047_agent_model_catalog.sql",
+	52: "0052_model_usage.sql",
+	66: "0066_chat_session_mode.sql",
+	67: "0067_app_settings.sql",
+	68: "0068_conversation_turn_settings.sql",
+	69: "0069_conversation_compaction.sql",
+	70: "0070_command_output_and_diffs.sql",
+	71: "0071_conversation_usage.sql",
+	72: "0072_conversation_history_ops.sql",
+	73: "0073_conversation_provider_state.sql",
+	74: "0074_activity_kinds_mcp_and_auto_review.sql",
+	75: "0075_conversation_user_input.sql",
+	76: "0076_conversation_delivery_content_and_cost.sql",
+	77: "0077_cancelled_conversation_activities.sql",
+	78: "0078_session_interface_transitions.sql",
+	79: "0079_session_interface_transition_delivery.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -71,8 +88,8 @@ var shippedMigrations = map[int64]string{
 //   - 22 shipped in a nightly (#2412) and was deleted by the revert.
 //
 // Beware of the adjacent hazard this cannot catch: at least one field profile
-// has versions 40 through 46 recorded as applied by a foreign build
-// (#3475/#3476), so migrations numbered up to 0046 are skipped there entirely.
+// has versions 40 through 51 recorded as applied by a foreign build
+// (#3475/#3476), so migrations numbered up to 0051 are skipped there entirely.
 // Any such migration whose schema the generated queries depend on must add a
 // schemaRepairs entry in db.go.
 func burnedVersion(v int64) bool {

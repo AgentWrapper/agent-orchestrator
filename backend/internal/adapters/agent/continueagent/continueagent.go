@@ -78,6 +78,11 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
+// GetConfigSpec reports Continue's optional model slug override.
+func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
+	return agentbase.ModelConfigSpec(ctx, "Model slug passed to `cn --model`.")
+}
+
 // GetLaunchCommand builds the Continue CLI argv for a fresh launch.
 //
 // AO sessions are long-lived terminal sessions, so prompted and promptless
@@ -92,6 +97,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 
 	cmd = []string{binary}
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	appendSystemPromptRule(&cmd, cfg.SystemPrompt, cfg.SystemPromptFile)
 
 	if cfg.Prompt != "" {
@@ -152,6 +158,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 5)
 	cmd = append(cmd, binary)
 	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	appendSystemPromptRule(&cmd, cfg.SystemPrompt, cfg.SystemPromptFile)
 	cmd = append(cmd, "--fork", agentSessionID)
 	return cmd, true, nil

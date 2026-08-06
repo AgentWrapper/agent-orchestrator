@@ -67,12 +67,23 @@
 	--color-bg-tertiary: var(--muted);
 	--color-bg-elevated: var(--popover);
 	--color-bg-sidebar: var(--sidebar);
+	/* Token keeps the historical #101317e7 value; painted surfaces use the
+	   opaque plate so the p-2 gutter cannot composite into #111316. */
+	--color-bg-terminal-opaque: #101317;
 	--color-bg-terminal: #101317e7;
+	/* Opaque backing for terminal swaps/covers; prevents retained frames leaking through. */
+	--color-bg-terminal-opaque: #101317;
 
 	/* Text */
 	--color-text-primary: var(--foreground);
 	--color-text-muted: var(--muted-foreground);
 	--color-text-passive: var(--chart-3);
+	--color-brand-logo: #79b0dc;
+	--color-brand-logo-bright: #a5cde7;
+	--color-brand-logo-foreground: #0a0b0d;
+	--color-text-markdown-code: var(--color-brand-logo);
+	--color-text-markdown-link: var(--color-brand-logo); /* underline distinguishes links */
+	--color-text-markdown-link-hover: var(--color-brand-logo-bright);
 	--color-text-terminal: #d7d7d2;
 	--color-text-terminal-dim: #7c7c7c;
 
@@ -393,17 +404,21 @@
 	--radius-welcome-panel: var(--radius-center-panel);
 
 	/* Import mode picker */
-	--color-bg-import-modal: var(--popover);
+	--color-bg-import-modal: var(--card);
 	--color-border-import-modal: var(--border);
 	--color-text-import-title: var(--foreground);
 	--color-text-import-muted: var(--muted-foreground);
-	--color-bg-import-card: var(--card);
+	--color-bg-import-card: var(--popover);
 	--color-bg-import-card-hover: var(--accent);
-	--color-bg-import-illustration: var(--color-bg-import-modal);
+	--color-bg-import-illustration: var(--color-bg-import-chip);
 	--color-bg-import-chip: var(--secondary);
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 	--size-import-modal-max: 896px;
 	--size-import-folder-dialog: 640px;
+	/* Shared equal edge inset for modal header/body/footer sections. */
+	--size-modal-padding: var(--space-6);
+	--size-import-modal-padding: var(--space-8);
+	--size-import-dialog-padding: var(--size-modal-padding);
 	--size-import-mode-card-min: 252px;
 	--size-import-mode-card-min-sm: 292px;
 	--size-import-mode-illustration: 178px;
@@ -452,7 +467,7 @@
 	--color-border-settings-input: var(--color-border-settings-dialog);
 	--color-text-settings-input: var(--foreground);
 	--color-text-settings-placeholder: var(--muted-foreground);
-	--color-text-import-sep: var(--color-text-settings-placeholder);
+	--color-text-import-sep: var(--color-text-import-muted);
 	--color-settings-accent: var(--primary);
 	--color-settings-switch-on: var(--primary);
 
@@ -650,11 +665,19 @@
 	--color-bg-tertiary: var(--muted);
 	--color-bg-elevated: var(--popover);
 	--color-bg-sidebar: var(--sidebar);
+	--color-bg-terminal-opaque: #f5f5f4;
 	--color-bg-terminal: #f5f5f4;
+	--color-bg-terminal-opaque: #f5f5f4;
 
 	--color-text-primary: var(--foreground);
 	--color-text-muted: var(--muted-foreground);
 	--color-text-passive: var(--chart-3);
+	--color-brand-logo: #304c83;
+	--color-brand-logo-bright: #466daa;
+	--color-brand-logo-foreground: #ffffff;
+	--color-text-markdown-code: var(--color-brand-logo);
+	--color-text-markdown-link: var(--color-brand-logo);
+	--color-text-markdown-link-hover: var(--color-brand-logo-bright);
 	--color-text-terminal: #24292f;
 	--color-text-terminal-dim: #6b7280;
 
@@ -734,6 +757,7 @@
 	--color-text-import-muted: var(--muted-foreground);
 	--color-bg-import-card: var(--card);
 	--color-bg-import-card-hover: var(--accent);
+	--color-bg-import-illustration: var(--color-bg-import-chip);
 	--color-bg-import-chip: var(--secondary);
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 

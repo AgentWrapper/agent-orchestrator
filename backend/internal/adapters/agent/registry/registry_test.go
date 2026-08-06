@@ -84,6 +84,23 @@ func TestHarnessedExcludesFakeHarness(t *testing.T) {
 	}
 }
 
+func TestEveryProductionHarnessReportsModelOrModeConfig(t *testing.T) {
+	for _, ha := range Harnessed() {
+		t.Run(string(ha.Harness), func(t *testing.T) {
+			spec, err := ha.Agent.GetConfigSpec(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range spec.Fields {
+				if field.Key == "model" || field.Key == "mode" {
+					return
+				}
+			}
+			t.Fatalf("%s exposes neither model nor mode configuration: %#v", ha.Harness, spec.Fields)
+		})
+	}
+}
+
 // workspaceFiles returns every regular file under root, relative to root.
 func workspaceFiles(t *testing.T, root string) []string {
 	t.Helper()

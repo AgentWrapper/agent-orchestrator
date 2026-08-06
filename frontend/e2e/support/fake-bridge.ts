@@ -72,6 +72,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
+					onPreviousTabShortcut: unsubscribe,
+					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
 				terminal: { saveDroppedFile: async () => "" },
@@ -238,7 +240,9 @@ export type FakeAgentOptions = {
 export type FakeAgentController = {
 	snapshot: () => unknown[];
 	createWorker: (worker: FakeWorker) => void;
+	removeWorker: (id: string) => void;
 	setStatus: (id: string, status: string, activity?: string) => void;
+	setTerminalHandle: (id: string, handleId: string) => void;
 	setPreview: (id: string, previewUrl: string, previewRevision?: number) => void;
 	setBrowserError: (message: string | null) => void;
 	notify: (n: { id: string; type: string; title: string; body?: string; sessionId?: string }) => void;
@@ -405,12 +409,25 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					if (!findSession(w.id)) (project.sessions as Session[]).push(makeWorker(w));
 					pushWorkspaces("session_created");
 				},
+				removeWorker: (id) => {
+					const sessions = project.sessions as Session[];
+					const index = sessions.findIndex((session) => session.id === id);
+					if (index >= 0) sessions.splice(index, 1);
+					pushWorkspaces();
+				},
 				setStatus: (id, status, activity) => {
 					const s = findSession(id);
 					if (!s) return;
 					s.status = status;
 					s.displayStatus = undefined;
 					if (activity) s.activity = { state: activity, lastActivityAt: new Date().toISOString() };
+					touch(s);
+					pushWorkspaces();
+				},
+				setTerminalHandle: (id, handleId) => {
+					const s = findSession(id);
+					if (!s) return;
+					s.terminalHandleId = handleId;
 					touch(s);
 					pushWorkspaces();
 				},
@@ -468,6 +485,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					onOpenSettingsShortcut: unsubscribe,
 					onPreviousSessionShortcut: unsubscribe,
 					onNextSessionShortcut: unsubscribe,
+					onPreviousTabShortcut: unsubscribe,
+					onNextTabShortcut: unsubscribe,
 					onFocusTerminalShortcut: unsubscribe,
 				},
 				terminal: { saveDroppedFile: async () => "" },

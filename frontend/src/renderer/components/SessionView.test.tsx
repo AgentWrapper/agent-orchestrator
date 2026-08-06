@@ -9,6 +9,16 @@ const navigateMock = vi.hoisted(() => vi.fn());
 const openShellTerminalMock = vi.hoisted(() => vi.fn());
 const closeShellTerminalMock = vi.hoisted(() => vi.fn());
 const nativeFullScreenMock = vi.hoisted(() => vi.fn(() => false));
+const interfaceTransitionMock = vi.hoisted(() => ({
+	start: vi.fn(),
+	resetStartError: vi.fn(),
+	cancel: vi.fn(),
+}));
+const interfaceTransitionState = vi.hoisted(() => ({
+	status: undefined as
+		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string }
+		| undefined,
+}));
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -22,6 +32,22 @@ vi.mock("../lib/platform", () => ({
 }));
 vi.mock("../hooks/useWindowFullScreen", () => ({
 	useWindowFullScreen: () => nativeFullScreenMock(),
+}));
+vi.mock("../hooks/useSessionInterfaceTransition", () => ({
+	interfaceTransitionIsActive: () => false,
+	useSessionInterfaceTransition: () => ({
+		status: interfaceTransitionState.status,
+		transition: undefined,
+		isLoading: false,
+		statusError: undefined,
+		start: interfaceTransitionMock.start,
+		starting: false,
+		startError: undefined,
+		resetStartError: interfaceTransitionMock.resetStartError,
+		cancel: interfaceTransitionMock.cancel,
+		cancelling: false,
+		cancelError: undefined,
+	}),
 }));
 
 type FakePanelHandle = {
@@ -97,6 +123,17 @@ const { workspaces, workspaceQueryState, panels, shellTerminalsState } = vi.hois
 // the split under test. (ShellTopbar is shell-owned on Win/Linux; when the
 // platform hides the shell topbar, SessionView mounts it in-panel.)
 vi.mock("./ShellTopbar", () => ({ ShellTopbar: () => null }));
+vi.mock("./chat/SessionChatSurface", () => ({
+	SessionChatSurface: ({ onOpenShell, headerActions }: { onOpenShell?: () => void; headerActions?: ReactNode }) => (
+		<div data-testid="chat-surface">
+			chat surface
+			{headerActions}
+			<button type="button" onClick={onOpenShell}>
+				open shell from chat
+			</button>
+		</div>
+	),
+}));
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
 		terminalTarget,
@@ -106,6 +143,7 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
 		onNewShellTerminal,
+		topbarActions,
 	}: {
 		terminalTarget?: { kind: string; handleId?: string };
 		session?: WorkspaceSession;
@@ -114,9 +152,11 @@ vi.mock("./CenterPane", () => ({
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
 		onNewShellTerminal?: () => void;
+		topbarActions?: ReactNode;
 	}) => (
 		<div>
 			terminal center
+			{topbarActions}
 			<div data-testid="terminal-target">
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : "worker"}
 			</div>
@@ -352,6 +392,7 @@ describe("SessionView", () => {
 			delete session.previewRevision;
 			delete session.isTerminated;
 			session.status = "working";
+			delete session.mode;
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
@@ -367,6 +408,10 @@ describe("SessionView", () => {
 		navigateMock.mockReset();
 		openShellTerminalMock.mockReset();
 		closeShellTerminalMock.mockReset();
+		interfaceTransitionMock.start.mockReset();
+		interfaceTransitionMock.resetStartError.mockReset();
+		interfaceTransitionMock.cancel.mockReset();
+		interfaceTransitionState.status = undefined;
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -427,6 +472,29 @@ describe("SessionView", () => {
 		expect(useUiStore.getState().visibleTerminalKindBySession["sess-1"]).toBeUndefined();
 	});
 
+	it("keeps a session-scoped shell reachable from a Chat session", () => {
+		workspaces[0].sessions[0].mode = "chat";
+		shellTerminalsState.data = [
+			{
+				handleId: "chat-shell",
+				sessionId: "sess-1",
+				title: "chat worktree shell",
+				workingDir: "/p",
+				createdAt: "2026-08-04T00:00:00Z",
+			},
+		];
+
+		render(<SessionView sessionId="sess-1" />);
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+
+		act(() => useUiStore.getState().setActiveShellTerminal("chat-shell"));
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(screen.queryByTestId("chat-surface")).not.toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
+		expect(screen.getByTestId("chat-surface")).toBeInTheDocument();
+	});
+
 	// The strip only ever shows the session on screen — pinning another session's
 	// terminal as a tab (and the cross-project picker that did it) is gone (#3208).
 	it("shows only the session on screen in the tab strip", () => {
@@ -444,6 +512,66 @@ describe("SessionView", () => {
 
 		fireEvent.click(screen.getByRole("button", { name: "new terminal" }));
 		expect(openShellTerminalMock).toHaveBeenCalledWith({ projectId: "proj-1", sessionId: "sess-2" }, expect.anything());
+	});
+
+	it("shows a shell opened from chat and returns to the chat agent tab", () => {
+		const session = workspaces[0]!.sessions.find((candidate) => candidate.id === "sess-1")!;
+		session.mode = "chat";
+		const shell = {
+			handleId: "sh-chat",
+			projectId: "proj-1",
+			sessionId: "sess-1",
+			title: "chat shell",
+			workingDir: "/p",
+			createdAt: "2026-08-04T00:00:00Z",
+		};
+		openShellTerminalMock.mockImplementation((_input, options) => {
+			shellTerminalsState.data = [shell];
+			options.onSuccess(shell);
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+		expect(screen.getByText("chat surface")).toBeInTheDocument();
+
+		fireEvent.click(screen.getByRole("button", { name: "open shell from chat" }));
+		expect(screen.getByText("terminal center")).toBeInTheDocument();
+		expect(screen.getByTestId("shell-tabs")).toHaveTextContent("chat shell");
+
+		fireEvent.click(screen.getByRole("button", { name: "select agent tab" }));
+		expect(screen.getByText("chat surface")).toBeInTheDocument();
+	});
+
+	it("opens the switch policy dialog from TUI instead of auto-starting", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "chat" };
+		const session = workerSession("sess-1");
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to chat UI" }));
+
+		expect(screen.getByRole("dialog")).toHaveTextContent("Switch to Chat UI?");
+		expect(screen.getByRole("button", { name: /Finish work, then switch/ })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Stop now and switch/ })).toBeInTheDocument();
+		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
+	});
+
+	it("opens the switch policy dialog from Chat instead of auto-starting", () => {
+		interfaceTransitionState.status = { supported: true, targetMode: "tui" };
+		const session = workerSession("sess-1");
+		session.mode = "chat";
+		session.status = "idle";
+		session.activity = { state: "idle", lastActivityAt: "2026-08-06T00:00:00Z" };
+
+		render(<SessionView sessionId="sess-1" />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Switch to terminal UI" }));
+
+		expect(screen.getByRole("dialog")).toHaveTextContent("Switch to Terminal UI?");
+		expect(screen.getByRole("button", { name: /Finish work, then switch/ })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Stop now and switch/ })).toBeInTheDocument();
+		expect(interfaceTransitionMock.start).not.toHaveBeenCalled();
 	});
 
 	it("walks backward through auxiliary terminals before returning to the permanent terminal", () => {
@@ -501,7 +629,7 @@ describe("SessionView", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(screen.getByText("terminal center")).toBeInTheDocument();
-		expect(panelSizes("inspector")[0]).toBe("28%");
+		expect(panelSizes("inspector")[0]).toBe("30%");
 		// Open panels are non-collapsible so a drag clamps at minSize instead of
 		// snapping the rail away; only the closed panel is collapsible.
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("data-collapsible");
@@ -580,7 +708,7 @@ describe("SessionView", () => {
 		// Opening resizes to the persisted split rather than expand(): the open
 		// panel re-registers as non-collapsible, and rrp's expand() no-ops on a
 		// non-collapsible panel.
-		expect(handle.resize).toHaveBeenCalledWith("28%");
+		expect(handle.resize).toHaveBeenCalledWith("30%");
 		expect(handle.collapse).not.toHaveBeenCalled();
 	});
 
@@ -595,7 +723,7 @@ describe("SessionView", () => {
 
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 		expect(inspectorOpen("sess-1")).toBe(true);
-		expect(handle.resize).toHaveBeenCalledWith("28%");
+		expect(handle.resize).toHaveBeenCalledWith("30%");
 
 		// Plain ⌘B belongs to the sidebar — the inspector must not react.
 		fireEvent.keyDown(window, { key: "b", metaKey: true });
@@ -702,7 +830,7 @@ describe("SessionView", () => {
 		fireEvent.keyDown(window, { key: "B", ctrlKey: true, shiftKey: true });
 
 		expect(inspectorOpen("sess-2")).toBe(true);
-		expect(handle.resize).toHaveBeenCalledWith("28%");
+		expect(handle.resize).toHaveBeenCalledWith("30%");
 	});
 
 	it("renders no inspector panel or handle for orchestrator sessions", () => {
@@ -841,7 +969,7 @@ describe("SessionView", () => {
 
 		const { rerender } = render(<SessionView sessionId="sess-1" />);
 
-		expect(panelSizes("inspector")[0]).toBe("28%");
+		expect(panelSizes("inspector")[0]).toBe("30%");
 		expect(screen.getByTestId("panel-inspector")).not.toHaveAttribute("inert");
 		expect(inspectorButton()).toHaveAttribute("data-view", "summary");
 

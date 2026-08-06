@@ -1,8 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
 	ArrowUpRight,
 	ChevronDown,
@@ -26,9 +28,11 @@ import {
 	useSessionScmSummary,
 	type SessionPRSummary,
 } from "../hooks/useSessionScmSummary";
+import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
 import { prBrowserUrl, prCardPresentation, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
@@ -298,6 +302,14 @@ function SummaryView({
 }) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
+	const developerMode = useUiStore((state) => state.developerMode);
+	const usageQuery = useSessionUsage(session.id, developerMode);
+	const showUsage =
+		developerMode &&
+		!usageQuery.isLoading &&
+		!usageQuery.isError &&
+		hasMeaningfulSessionUsage(usageQuery.data);
+	const showUsageError = developerMode && usageQuery.isError;
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
@@ -325,8 +337,313 @@ function SummaryView({
 				<ActivityTimeline prs={prSummaries} session={session} />
 				<ResumeAgentControl session={session} />
 			</Section>
+
+			{showUsageError ? (
+				<Section title={t("inspector.usage.title")}>
+					<p className={inspectorEmptyClass} role="alert">
+						{t("inspector.usage.totalTokensUnavailable")}
+					</p>
+				</Section>
+			) : showUsage && usageQuery.data ? (
+				<Section title={t("inspector.usage.title")}>
+					<UsageCostTelemetry usage={usageQuery.data} />
+				</Section>
+			) : null}
 		</div>
 	);
+}
+
+function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
+	const { t } = useTranslation();
+	const totalTokens = usageTokenTotal(usage.totals);
+	const exactTotal = totalTokens?.toLocaleString("en-US");
+
+	return (
+		<div>
+			<div className="grid grid-cols-2 gap-4">
+				<div className="min-w-0">
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalTokens")}</p>
+					<p
+						aria-label={
+							totalTokens === null
+								? t("inspector.usage.totalTokensUnavailable")
+								: t("inspector.usage.totalTokensAria", { count: exactTotal })
+						}
+						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
+						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+					>
+						{totalTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(totalTokens)}
+					</p>
+				</div>
+				<div className="min-w-0 text-right">
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalCost")}</p>
+					<p
+						className="mt-0.5 truncate text-sm-md text-settings-muted"
+						title={t("inspector.usage.costComingSoon")}
+					>
+						{t("inspector.usage.comingSoon")}
+					</p>
+				</div>
+			</div>
+
+			<div className="mt-3">
+				<div
+					className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-2.5"
+					data-testid="session-usage-metrics"
+				>
+					<UsageMetrics totals={usage.totals} />
+				</div>
+			</div>
+
+			{usage.harnesses.length > 0 ? (
+				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
+					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+						<span>{t("inspector.usage.agent")}</span>
+						<span className="text-right">{t("inspector.usage.tokens")}</span>
+						<span className="text-right">{t("inspector.usage.cost")}</span>
+					</div>
+					{usage.harnesses.map((harness, index) => (
+						<UsageProviderRow
+							harness={harness}
+							key={`${harness.harness}:${index}`}
+						/>
+					))}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+	const harnessName = formatHarnessName(harness.harness);
+
+	return (
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.providerDetails", { name: harnessName })}
+			name={harnessName}
+			nameClassName="text-sm-md"
+			regionLabel={t("inspector.usage.providerPeek", { name: harnessName })}
+			totals={harness.totals}
+		>
+			<ProviderUsageDetails harness={harness} />
+		</UsageDisclosureRow>
+	);
+}
+
+function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+
+	return (
+		<>
+			<div className="pb-2">
+				<UsageMetrics totals={harness.totals} />
+			</div>
+
+			<div className="border-t border-(--color-border-settings-input) pt-2">
+				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+					<span>{t("inspector.usage.models", { count: harness.models.length })}</span>
+					<span className="text-right">{t("inspector.usage.tokens")}</span>
+					<span className="text-right">{t("inspector.usage.cost")}</span>
+				</div>
+				{harness.models.length > 0 ? (
+					harness.models.map((model, index) => (
+						<UsageModelRow key={`${model.modelId}:${index}`} model={model} />
+					))
+				) : (
+					<p className="px-1 py-2 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
+				)}
+			</div>
+		</>
+	);
+}
+
+function UsageModelRow({
+	model,
+}: {
+	model: SessionUsage["harnesses"][number]["models"][number];
+}) {
+	const { t } = useTranslation();
+	const modelName = model.modelId;
+
+	return (
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.modelDetails", { name: modelName })}
+			name={modelName}
+			nameClassName="font-mono text-2xs"
+			regionLabel={t("inspector.usage.modelPeek", { name: modelName })}
+			totals={model.totals}
+		>
+			<UsageMetrics totals={model.totals} />
+		</UsageDisclosureRow>
+	);
+}
+
+function UsageDisclosureRow({
+	children,
+	detailsLabel,
+	name,
+	nameClassName,
+	regionLabel,
+	totals,
+}: {
+	children: ReactNode;
+	detailsLabel: string;
+	name: string;
+	nameClassName: string;
+	regionLabel: string;
+	totals: SessionUsage["totals"];
+}) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const detailID = useId();
+	const totalTokens = usageTokenTotal(totals);
+	const exactTotal = totalTokens?.toLocaleString("en-US");
+
+	return (
+		<div>
+			<button
+				aria-controls={detailID}
+				aria-expanded={open}
+				aria-label={detailsLabel}
+				className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+				onClick={() => setOpen((current) => !current)}
+				type="button"
+			>
+				<span className={`flex min-w-0 items-center gap-1 text-settings-label ${nameClassName}`}>
+					{open ? (
+						<ChevronDown aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					) : (
+						<ChevronRight aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					)}
+					<span className="truncate">{name}</span>
+				</span>
+				<span
+					className="text-right font-mono text-2xs text-settings-label"
+					title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+				>
+					{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+				</span>
+				<UsageCostPlaceholder />
+			</button>
+			{open ? (
+				<div
+					aria-label={regionLabel}
+					className="mx-1 mb-2 border-l border-(--color-border-settings-input) py-1.5 pl-2.5"
+					id={detailID}
+					role="region"
+				>
+					{children}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function UsageCostPlaceholder() {
+	const { t } = useTranslation();
+	const label = t("inspector.usage.metricUnavailable", { label: t("inspector.usage.cost") });
+	return (
+		<span aria-label={label} className="text-right font-mono text-2xs text-settings-muted" title={label}>
+			—
+		</span>
+	);
+}
+
+function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
+	const { t } = useTranslation();
+	return (
+		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
+			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
+			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
+			<UsageMetric label={t("inspector.usage.cacheReadTokens")} metric={totals.cacheReadTokens} />
+			<UsageMetric label={t("inspector.usage.cacheWriteTokens")} metric={totals.cacheWriteTokens} />
+			<UsageMetric label={t("inspector.usage.reasoningTokens")} metric={totals.reasoningTokens} />
+			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
+		</dl>
+	);
+}
+
+function UsageMetric({
+	label,
+	metric,
+}: {
+	label: string;
+	metric: SessionUsage["totals"]["inputTokens"];
+}) {
+	const { t } = useTranslation();
+	const exactValue = metric?.toLocaleString("en-US");
+	const accessibleLabel =
+		metric === null
+			? t("inspector.usage.metricUnavailable", { label })
+			: t("inspector.usage.metricAria", { label, count: exactValue });
+	return (
+		<div className="min-w-0">
+			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
+			<dd
+				aria-label={accessibleLabel}
+				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
+				title={
+					metric === null
+						? t("inspector.usage.metricUnavailable", { label })
+						: t("inspector.usage.tokensExact", { count: exactValue })
+				}
+			>
+				{metric === null ? "—" : formatTelemetryTokenValue(metric)}
+			</dd>
+		</div>
+	);
+}
+
+const usageMetricKeys = [
+	"inputTokens",
+	"uncachedInputTokens",
+	"cacheReadTokens",
+	"cacheWriteTokens",
+	"outputTokens",
+	"reasoningTokens",
+] as const;
+
+function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
+	return [
+		usage.totals,
+		...usage.harnesses.flatMap((harness) => [
+			harness.totals,
+			...harness.models.map((model) => model.totals),
+		]),
+	];
+}
+
+function hasMeaningfulSessionUsage(usage?: SessionUsage): usage is SessionUsage {
+	if (!usage) return false;
+	return usageScopes(usage).some((totals) =>
+		usageMetricKeys.some((key) => (totals[key] ?? 0) > 0),
+	);
+}
+
+function formatTelemetryTokenValue(totalTokens: number): string {
+	return formatTokenCount(totalTokens).replace(/ tok$/, "");
+}
+
+function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
+	if (totals.inputTokens === null && totals.outputTokens === null) return null;
+	return (totals.inputTokens ?? 0) + (totals.outputTokens ?? 0);
+}
+
+function formatHarnessName(harness: string): string {
+	const knownNames: Record<string, string> = {
+		"claude-code": "Claude",
+		claude: "Claude",
+		codex: "Codex",
+		glm: "GLM",
+		kimi: "Kimi",
+	};
+	if (knownNames[harness]) return knownNames[harness];
+	return harness
+		.split(/[-_]/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
@@ -908,8 +1225,7 @@ function ReviewsSection({
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
-	const unresolvedTotal = prSummaries
-		.filter((pr) => pr.state === "open")
+	const unresolvedTotal = githubReviews
 		.reduce((total, pr) => total + (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0), 0);
 	const githubReviewCount = githubReviews.reduce((n, pr) => n + (pr.review?.reviews?.length ?? 0), 0);
 
@@ -939,16 +1255,18 @@ function ReviewsSection({
 					}}
 					session={session}
 				/>
-			<Section
-				surface
-				title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
-			>
-				<GithubReviewPanel
-					isLoading={scmSummary.isLoading}
-					prs={githubReviews}
-					unresolvedTotal={unresolvedTotal}
-				/>
-			</Section>
+			{scmSummary.isLoading || githubReviewCount > 0 || unresolvedTotal > 0 ? (
+				<Section
+					surface
+					title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
+				>
+					<GithubReviewPanel
+						isLoading={scmSummary.isLoading}
+						prs={githubReviews}
+						unresolvedTotal={unresolvedTotal}
+					/>
+				</Section>
+			) : null}
 		</div>
 	);
 }
@@ -1046,8 +1364,8 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 							batchId: `demo-batch-${session.id}`,
 							body:
 								pr.review === "approved"
-									? "Demo review approved. The implementation is ready for the README screenshot flow."
-									: "Demo review found polish feedback for the terminal presentation.",
+									? "Demo review **approved** the README screenshot flow.\n\n- Layout is stable\n- Browser preview opens cleanly"
+									: "Demo review found **polish feedback** for the terminal presentation.\n\n- Tighten toolbar density\n- Recheck contrast",
 							createdAt: reviewedAt,
 							githubReviewId: `${pr.number}01`,
 							harness: "codex",
@@ -1260,10 +1578,23 @@ function ReviewPanel({
 			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
 		}
 	}
+	const triggeredReviewStates = openReviewStates.filter(
+		(reviewState) =>
+			Boolean(reviewState.latestRun) ||
+			Boolean(reviewState.previousRun) ||
+			runs.some((run) => run.prUrl === reviewState.prUrl) ||
+			reviewState.status === "up_to_date" ||
+			reviewState.status === "changes_requested",
+	);
 	const runDisabled =
 		isTriggering ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
+	const primaryReviewActionLabel = reviewRunning
+		? isCancelling
+			? t("inspector.review.cancelling")
+			: t("inspector.review.cancel")
+		: runAction;
 
 	return (
 		<div className="mb-2.5 flex flex-col">
@@ -1294,36 +1625,36 @@ function ReviewPanel({
 							installed={agentCatalog?.installed}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select h-control-md w-36 shrink-0 text-xs"
+							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink text-xs"
 							value={reviewerOverride}
 						/>
-						<div className="flex shrink-0 items-center gap-1.5">
+						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
 							<Button
+								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
 								disabled={reviewRunning ? isCancelling : runDisabled}
 								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
+								title={primaryReviewActionLabel}
 								type="button"
 								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 							>
 								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-								{reviewRunning
-									? isCancelling
-										? t("inspector.review.cancelling")
-										: t("inspector.review.cancel")
-									: runAction}
+								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
 							{reviewHasRun ? (
 								<Button
+									aria-label={t("inspector.openTerminal")}
 									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
 									disabled={!terminalEnabled}
 									onClick={openReviewerTerminal}
 									size="sm"
+									title={t("inspector.openTerminal")}
 									type="button"
 									variant="ghost"
 								>
 									<Terminal aria-hidden="true" />
-									{t("inspector.openTerminal")}
+									<span className="review-run-action-label">{t("inspector.openTerminal")}</span>
 								</Button>
 							) : null}
 						</div>
@@ -1338,29 +1669,27 @@ function ReviewPanel({
 					</div>
 				) : null}
 			</Section>
-			<Section surface title={t("inspector.aoCodeReviews")}>
-				<div className="flex flex-col divide-y divide-border">
-					{openReviewStates.length === 0 ? (
-						<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
-				) : (
-					openReviewStates.map((reviewState) => (
-						<ReviewDisclosure
-							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
-							collapsible
-							defaultOpen={false}
+			{triggeredReviewStates.length > 0 ? (
+				<Section surface title={t("inspector.aoCodeReviews")}>
+					<div className="flex flex-col divide-y divide-border">
+						{triggeredReviewStates.map((reviewState) => (
+							<ReviewDisclosure
+								key={`${reviewState.prUrl}:${reviewState.targetSha}`}
+								collapsible
+								defaultOpen={false}
 								meta={aoReviewMeta(reviewState)}
 								verdict={reviewVerdict(reviewState)}
-							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
+								title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
 							>
 								<ReviewerRuns
 									reviewState={reviewState}
 									runs={runsByPR.get(reviewState.prUrl) ?? []}
 								/>
 							</ReviewDisclosure>
-					))
-					)}
-				</div>
-			</Section>
+						))}
+					</div>
+				</Section>
+			) : null}
 		</div>
 	);
 }
@@ -1414,6 +1743,39 @@ function GithubReviewPanel({
 
 type GithubReviewEntry = NonNullable<NonNullable<SessionPRSummary["review"]>["reviews"]>[number];
 
+function ReviewMarkdownBody({ body, clamped, testId }: { body: string; clamped: boolean; testId: string }) {
+	return (
+		<div
+			className={cn(
+				"min-w-0 break-words text-2xs leading-relaxed text-muted-foreground",
+				"[&_a]:font-medium [&_a]:text-foreground [&_a]:underline [&_a]:underline-offset-2",
+				"[&_code]:rounded [&_code]:bg-muted/55 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-foreground",
+				"[&_li]:my-0.5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-1.5 [&_pre]:my-2",
+				"[&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-muted/35 [&_pre]:p-2",
+				"[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:text-foreground [&_table]:my-2 [&_table]:w-full",
+				"[&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1",
+				"[&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_th]:text-foreground",
+				"[&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+				clamped && "line-clamp-4",
+			)}
+			data-testid={testId}
+		>
+			<ReactMarkdown
+				components={{
+					a: ({ href, children }) => (
+						<a href={href} target="_blank" rel="noopener noreferrer">
+							{children}
+						</a>
+					),
+				}}
+				remarkPlugins={[remarkGfm]}
+			>
+				{body}
+			</ReactMarkdown>
+		</div>
+	);
+}
+
 function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 	const { t } = useTranslation();
 	const [expanded, setExpanded] = useState(false);
@@ -1431,15 +1793,7 @@ function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 				</span>
 			</div>
 			{body ? (
-				<p
-					className={cn(
-						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
-						clamped && !expanded && "line-clamp-4",
-					)}
-					data-testid="github-review-summary"
-				>
-					{body}
-				</p>
+				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="github-review-summary" />
 			) : null}
 			{clamped || entry.reviewUrl ? (
 				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
@@ -1562,15 +1916,7 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 				</span>
 			</span>
 			{body ? (
-				<p
-					className={cn(
-						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
-						clamped && !expanded && "line-clamp-4",
-					)}
-					data-testid="review-run-summary"
-				>
-					{body}
-				</p>
+				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="review-run-summary" />
 			) : null}
 			{/* One tertiary group, not two competing labels. Below the body's size so
 			    they read as controls rather than sitting in the reading flow, and

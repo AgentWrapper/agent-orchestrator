@@ -6,6 +6,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
+	"github.com/aoagents/agent-orchestrator/backend/internal/telemetrymeta"
 )
 
 // ErrInvalid and ErrNotFound re-export the engine sentinels so the HTTP
@@ -22,6 +24,28 @@ var (
 	ErrNotFound            = reviewcore.ErrNotFound
 	ErrAgentBinaryNotFound = ports.ErrAgentBinaryNotFound
 )
+
+// reviewErrorKind reduces a trigger failure to a safe category. Raw error text
+// can carry repository paths and agent binary locations, so only the kind and a
+// stable code ever leave the process.
+func reviewErrorKind(err error) string {
+	// The engine returns its own sentinels (reviewcore.ErrInvalid / ErrNotFound)
+	// and ports.ErrAgentBinaryNotFound, wrapped with %w. Those are mapped to API
+	// error kinds only at the HTTP controller boundary, after Trigger has already
+	// returned here, so telemetrymeta.ErrorKindAndCode (which only classifies
+	// *apierr.Error) would collapse every trigger failure to "internal" and the
+	// field could never say why a trigger failed. Classify the sentinels first.
+	switch {
+	case errors.Is(err, reviewcore.ErrInvalid):
+		return "invalid"
+	case errors.Is(err, reviewcore.ErrNotFound):
+		return "not_found"
+	case errors.Is(err, ports.ErrAgentBinaryNotFound):
+		return "agent_unavailable"
+	}
+	kind, _ := telemetrymeta.ErrorKindAndCode(err)
+	return kind
+}
 
 // Manager is the reviews surface the HTTP controller depends on.
 type Manager interface {
@@ -38,6 +62,7 @@ type Service struct {
 	store     Store
 	lifecycle Reducer
 	clock     func() time.Time
+	telemetry ports.EventSink
 }
 
 var _ Manager = (*Service)(nil)
@@ -53,7 +78,6 @@ type Store interface {
 // Reducer is the lifecycle reaction boundary used after a review result has
 // been persisted.
 type Reducer interface {
-	ApplyReviewResult(ctx context.Context, workerID domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 	ApplyReviewBatch(ctx context.Context, workerID domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error)
 }
 
@@ -68,6 +92,37 @@ func WithLifecycleReducer(r Reducer) Option {
 // WithClock overrides the service clock for tests.
 func WithClock(clock func() time.Time) Option {
 	return func(s *Service) { s.clock = clock }
+}
+
+// WithTelemetry records review outcomes.
+//
+// Code review is a headline feature with no telemetry at all, so there is no way
+// to answer whether reviewers are used, whether they approve or request changes,
+// or how long a pass takes. Optional so the service still works unwired, which
+// is how every existing test constructs it.
+func WithTelemetry(sink ports.EventSink) Option {
+	return func(s *Service) { s.telemetry = sink }
+}
+
+// emit reports an event when a sink is wired.
+//
+// Only enum-like fields are ever passed in. Never the review body, the PR URL,
+// or the target SHA: the body is reviewer prose about someone's code, and the URL
+// and SHA identify the repository. The daemon's remote allowlist would drop
+// unknown keys anyway, but the intent belongs at the call site.
+func (s *Service) emit(name string, sessionID domain.SessionID, payload map[string]any) {
+	if s.telemetry == nil {
+		return
+	}
+	session := sessionID
+	s.telemetry.Emit(context.Background(), ports.TelemetryEvent{
+		Name:       name,
+		Source:     "review_service",
+		OccurredAt: s.clock(),
+		Level:      ports.TelemetryLevelInfo,
+		SessionID:  &session,
+		Payload:    payload,
+	})
 }
 
 // New wraps a core review engine as the API-facing service.
@@ -92,12 +147,35 @@ func (s *Service) Trigger(
 	workerID domain.SessionID,
 	harness domain.ReviewerHarness,
 ) (reviewcore.TriggerResult, error) {
-	return s.engine.Trigger(ctx, workerID, harness)
+	result, err := s.engine.Trigger(ctx, workerID, harness)
+	if err != nil {
+		s.emit("ao.review.trigger_failed", workerID, map[string]any{
+			"error_kind": reviewErrorKind(err),
+		})
+		return result, err
+	}
+	// created_runs distinguishes a genuinely new pass from a reuse of a running
+	// or up-to-date one, which the engine also reports as success. harness is the
+	// one actually used, resolved by the engine, not the caller's override, which
+	// may be empty.
+	s.emit("ao.review.triggered", workerID, map[string]any{
+		"harness":      string(result.Run.Harness),
+		"created_runs": len(result.CreatedRuns),
+		"reused":       len(result.CreatedRuns) == 0,
+	})
+	return result, nil
 }
 
 // Cancel stops the live reviewer pane and marks running review passes as failed.
 func (s *Service) Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error) {
-	return s.engine.Cancel(ctx, workerID)
+	result, err := s.engine.Cancel(ctx, workerID)
+	if err != nil {
+		return result, err
+	}
+	s.emit("ao.review.cancelled", workerID, map[string]any{
+		"cancelled_runs": len(result.CancelledRuns),
+	})
+	return result, nil
 }
 
 // SubmittedReview is one review result supplied by the reviewer CLI.
@@ -203,6 +281,15 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		run.Verdict = verdict
 		run.Body = body
 		run.GithubReviewID = githubReviewID
+		// Only on the real running -> complete transition. Re-submitting an
+		// already-complete run returns early below, so telemetry stays idempotent
+		// the same way the store does.
+		s.emit("ao.review.submitted", workerID, map[string]any{
+			"harness":            string(run.Harness),
+			"verdict":            string(verdict),
+			"duration_ms":        s.clock().Sub(run.CreatedAt).Milliseconds(),
+			"posted_to_provider": githubReviewID != "",
+		})
 	case domain.ReviewRunComplete:
 		if run.Verdict != verdict {
 			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded verdict %q", ErrInvalid, runID, run.Verdict)
@@ -230,12 +317,7 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 		return nil, nil
 	}
 	results := reviewResults(workerID, deliverable)
-	var outcome lifecycle.ReviewDeliveryOutcome
-	if len(results) == 1 && results[0].BatchID == "" {
-		outcome, err = s.lifecycle.ApplyReviewResult(ctx, workerID, results[0])
-	} else {
-		outcome, err = s.lifecycle.ApplyReviewBatch(ctx, workerID, results[0].BatchID, results)
-	}
+	outcome, err := s.lifecycle.ApplyReviewBatch(ctx, workerID, results[0].BatchID, results)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +350,7 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.DeliveredAt != nil {
 			continue
 		}
-		if run.BatchID != "" && currentHeads[run.PRURL] != run.TargetSHA {
+		if currentHeads[run.PRURL] != run.TargetSHA {
 			continue
 		}
 		deliverable = append(deliverable, run)

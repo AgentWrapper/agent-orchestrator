@@ -154,8 +154,8 @@ func mountTelemetry(r chi.Router, cfg config.Config, sink ports.EventSink) {
 	if sink == nil {
 		return
 	}
-	// CLI telemetry is capped to bounded uniques: ao.app.active once per UTC
-	// six-hour slot for user-context CLI activity (matching the renderer
+	// CLI telemetry is capped to bounded uniques: ao.app.active once per UTC day
+	// for user-context CLI activity (matching the renderer
 	// heartbeat) and ao.cli.invoked once per actor type + command path per UTC
 	// day. Scripts and agent sessions invoke read-only commands (status, ls,
 	// get) in polling loops, so raw invocation counts measure automation, not

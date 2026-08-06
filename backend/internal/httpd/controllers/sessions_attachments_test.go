@@ -45,14 +45,26 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects unsupported type", func(t *testing.T) {
-		_, err := decodeSpawnAttachments([]SpawnAttachmentInput{{MimeType: "application/pdf", Data: b64([]byte("x"))}})
-		if err == nil || err.code != "UNSUPPORTED_ATTACHMENT_TYPE" {
-			t.Fatalf("want UNSUPPORTED_ATTACHMENT_TYPE got %v", err)
+	t.Run("accepts non-image types", func(t *testing.T) {
+		out, err := decodeSpawnAttachments([]SpawnAttachmentInput{
+			{MimeType: "application/pdf", Data: b64([]byte("pdfbytes"))},
+			{MimeType: "text/plain", Data: b64([]byte("textbytes"))},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %+v", err)
+		}
+		if len(out) != 2 {
+			t.Fatalf("want 2 attachments got %d", len(out))
+		}
+		if out[0].Ext != ".pdf" || string(out[0].Data) != "pdfbytes" {
+			t.Errorf("attachment 0 = %q %q", out[0].Ext, out[0].Data)
+		}
+		if out[1].Ext != ".txt" || string(out[1].Data) != "textbytes" {
+			t.Errorf("attachment 1 = %q %q", out[1].Ext, out[1].Data)
 		}
 	})
 
-	// SVG is XML that can carry active content; the raster-only allowlist rejects it.
+	// SVG is XML that can carry active content; it is explicitly blocked.
 	t.Run("rejects svg", func(t *testing.T) {
 		_, err := decodeSpawnAttachments([]SpawnAttachmentInput{{MimeType: "image/svg+xml", Data: b64([]byte("<svg/>"))}})
 		if err == nil || err.code != "UNSUPPORTED_ATTACHMENT_TYPE" {
@@ -92,6 +104,37 @@ func TestDecodeSpawnAttachments(t *testing.T) {
 		_, err := decodeSpawnAttachments(in)
 		if err == nil || err.code != "ATTACHMENTS_TOO_LARGE" {
 			t.Fatalf("want ATTACHMENTS_TOO_LARGE got %v", err)
+		}
+	})
+
+	t.Run("handles unknown mime type", func(t *testing.T) {
+		out, err := decodeSpawnAttachments([]SpawnAttachmentInput{
+			{MimeType: "application/octet-stream", Data: b64([]byte("bytes"))},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %+v", err)
+		}
+		if len(out) != 1 {
+			t.Fatalf("want 1 attachment got %d", len(out))
+		}
+		// Should have a fallback extension
+		if out[0].Ext == "" {
+			t.Errorf("want non-empty extension got %q", out[0].Ext)
+		}
+	})
+
+	t.Run("handles mime type with suffix", func(t *testing.T) {
+		out, err := decodeSpawnAttachments([]SpawnAttachmentInput{
+			{MimeType: "application/vnd.api+json", Data: b64([]byte("jsonbytes"))},
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %+v", err)
+		}
+		if len(out) != 1 {
+			t.Fatalf("want 1 attachment got %d", len(out))
+		}
+		if string(out[0].Data) != "jsonbytes" {
+			t.Errorf("attachment data mismatch: %q", out[0].Data)
 		}
 	})
 }
