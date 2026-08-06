@@ -5,8 +5,9 @@
 // it opens the interactive TUI, and an optional positional prompt starts the
 // first turn without leaving that TUI.
 //
-// AO's standing instructions are passed through Muse's process-local system
-// prompt environment, so launching a session never modifies project files.
+// AO's standing instructions and activity hooks are passed through Muse's
+// process-local environment, so launching a session never modifies project
+// files.
 package muse
 
 import (
@@ -68,7 +69,7 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 
 // GetLaunchCommand builds the argv for a persistent interactive Muse session:
 //
-//	[env TBH_EVAL_APPEND_SYSTEM_PROMPT=<instructions>] muse --trust-workspace [--approval-mode never|--yolo] [--model <model>] [prompt]
+//	[env TBH_EVAL_APPEND_SYSTEM_PROMPT=<instructions> TBH_MANAGED_HOOKS_PATH=<path>] muse --trust-workspace [--approval-mode never|--yolo] [--model <model>] [prompt]
 //
 // The prompt is the CLI's documented optional positional argument. `muse exec`
 // is deliberately not used because it is headless and exits after one turn.
@@ -82,9 +83,21 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		return nil, fmt.Errorf("muse.GetLaunchCommand: %w", err)
 	}
 
-	cmd := make([]string, 0, 9)
+	cmd := make([]string, 0, 11)
+	env := make([]string, 0, 2)
 	if systemPrompt != "" {
-		cmd = append(cmd, "env", museSystemPromptEnvVar+"="+systemPrompt)
+		env = append(env, museSystemPromptEnvVar+"="+systemPrompt)
+	}
+	if cfg.DataDir != "" || cfg.SessionID != "" {
+		hooksPath, pathErr := museManagedHooksPath(cfg.DataDir, cfg.SessionID)
+		if pathErr != nil {
+			return nil, fmt.Errorf("muse.GetLaunchCommand: %w", pathErr)
+		}
+		env = append(env, museManagedHooksEnvVar+"="+hooksPath)
+	}
+	if len(env) > 0 {
+		cmd = append(cmd, "env")
+		cmd = append(cmd, env...)
 	}
 	cmd = append(cmd, binary, "--trust-workspace")
 	appendApprovalFlags(&cmd, cfg.Permissions)

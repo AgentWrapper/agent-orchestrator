@@ -2,6 +2,7 @@ package muse
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -121,6 +122,56 @@ func TestGetLaunchCommandInjectsSystemPromptWithoutProjectFiles(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandInjectsManagedHooksPath(t *testing.T) {
+	dataDir := t.TempDir()
+	p := &Plugin{resolvedBinary: "muse"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		DataDir:   dataDir,
+		SessionID: "agent-orchestrator-96",
+		Prompt:    "fix it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooksPath, err := museManagedHooksPath(dataDir, "agent-orchestrator-96")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"env", museManagedHooksEnvVar + "=" + hooksPath,
+		"muse", "--trust-workspace", "fix it",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandCombinesSystemPromptAndManagedHooksEnvironment(t *testing.T) {
+	dataDir := t.TempDir()
+	p := &Plugin{resolvedBinary: "muse"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		DataDir:      dataDir,
+		SessionID:    "sess-1",
+		SystemPrompt: "follow AO rules",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooksPath, err := museManagedHooksPath(dataDir, "sess-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"env",
+		museSystemPromptEnvVar + "=follow AO rules",
+		museManagedHooksEnvVar + "=" + hooksPath,
+		"muse", "--trust-workspace",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
 func TestGetLaunchCommandReadsSystemPromptFile(t *testing.T) {
 	promptFile := filepath.Join(t.TempDir(), "system.md")
 	if err := os.WriteFile(promptFile, []byte("file rules\n"), 0o600); err != nil {
@@ -198,12 +249,27 @@ func TestWorkspaceHooksLeaveTrackedAgentsMDUnchanged(t *testing.T) {
 	runGit(t, workspace, "commit", "-m", "add project instructions")
 
 	p := &Plugin{}
-	cfg := ports.WorkspaceHookConfig{WorkspacePath: workspace, SystemPrompt: "AO-only instructions"}
+	dataDir := t.TempDir()
+	cfg := ports.WorkspaceHookConfig{
+		DataDir: dataDir, SessionID: "sess-tracked",
+		WorkspacePath: workspace, SystemPrompt: "AO-only instructions",
+	}
 	if err := p.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
+	hooksPath, err := museManagedHooksPath(dataDir, cfg.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMuseManagedHooks(t, hooksPath)
+	if status := runGit(t, workspace, "status", "--porcelain"); status != "" {
+		t.Fatalf("workspace became dirty before cleanup:\n%s", status)
+	}
 	if err := p.CleanupWorkspace(context.Background(), cfg); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(hooksPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("managed hooks stat after cleanup = %v, want not exist", err)
 	}
 	got, err := os.ReadFile(path)
 	if err != nil {
@@ -220,15 +286,73 @@ func TestWorkspaceHooksLeaveTrackedAgentsMDUnchanged(t *testing.T) {
 func TestWorkspaceHooksDoNotCreateAgentsMD(t *testing.T) {
 	workspace := t.TempDir()
 	p := &Plugin{}
-	cfg := ports.WorkspaceHookConfig{WorkspacePath: workspace, SystemPrompt: "AO-only instructions"}
+	dataDir := t.TempDir()
+	cfg := ports.WorkspaceHookConfig{
+		DataDir: dataDir, SessionID: "sess-absent",
+		WorkspacePath: workspace, SystemPrompt: "AO-only instructions",
+	}
 	if err := p.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
+	}
+	hooksPath, err := museManagedHooksPath(dataDir, cfg.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMuseManagedHooks(t, hooksPath)
+	if _, err := os.Stat(filepath.Join(workspace, "AGENTS.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("AGENTS.md stat before cleanup = %v, want not exist", err)
 	}
 	if err := p.CleanupWorkspace(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
+	if err := p.CleanupWorkspace(context.Background(), cfg); err != nil {
+		t.Fatalf("second cleanup: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(workspace, "AGENTS.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("AGENTS.md stat err = %v, want not exist", err)
+	}
+}
+
+func TestManagedHooksRequireAOOwnedPathInputs(t *testing.T) {
+	p := &Plugin{resolvedBinary: "muse"}
+	for _, cfg := range []ports.WorkspaceHookConfig{
+		{},
+		{DataDir: t.TempDir()},
+		{DataDir: t.TempDir(), SessionID: "../escape"},
+	} {
+		if err := p.GetAgentHooks(context.Background(), cfg); err == nil {
+			t.Fatalf("GetAgentHooks(%+v) succeeded, want error", cfg)
+		}
+	}
+}
+
+func assertMuseManagedHooks(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // test-owned path
+	if err != nil {
+		t.Fatal(err)
+	}
+	var file museHooksFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		t.Fatalf("decode managed hooks: %v", err)
+	}
+	want := map[string]string{
+		"SessionStart":      "session-start",
+		"UserPromptSubmit":  "user-prompt-submit",
+		"PreToolUse":        "pre-tool-use",
+		"PermissionRequest": "permission-request",
+		"PostToolUse":       "post-tool-use",
+		"Stop":              "stop",
+	}
+	for nativeEvent, aoEvent := range want {
+		groups := file.Hooks[nativeEvent]
+		if len(groups) != 1 || len(groups[0].Hooks) != 1 {
+			t.Fatalf("hooks[%q] = %#v, want one command", nativeEvent, groups)
+		}
+		hook := groups[0].Hooks[0]
+		if hook.Type != "command" || hook.Command != museHookCommandPrefix+aoEvent {
+			t.Fatalf("hooks[%q] = %#v, want AO %q command", nativeEvent, hook, aoEvent)
+		}
 	}
 }
 

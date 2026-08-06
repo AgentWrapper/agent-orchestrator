@@ -22,7 +22,7 @@ func TestDeriverTokensAreKnownHarnesses(t *testing.T) {
 }
 
 func TestSupportsHarness(t *testing.T) {
-	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessGrok, domain.HarnessOpenCode, domain.HarnessKimi, domain.HarnessVibe} {
+	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessGrok, domain.HarnessMuse, domain.HarnessOpenCode, domain.HarnessKimi, domain.HarnessVibe} {
 		if !SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = false, want true", h)
 		}
@@ -33,6 +33,30 @@ func TestSupportsHarness(t *testing.T) {
 		if SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = true, want false", h)
 		}
+	}
+}
+
+func TestMuseDerivesManagedHookActivity(t *testing.T) {
+	tests := []struct {
+		event string
+		want  domain.ActivityState
+	}{
+		{"user-prompt-submit", domain.ActivityActive},
+		{"pre-tool-use", domain.ActivityActive},
+		{"permission-request", domain.ActivityBlocked},
+		{"post-tool-use", domain.ActivityActive},
+		{"stop", domain.ActivityIdle},
+	}
+	for _, tt := range tests {
+		t.Run(tt.event, func(t *testing.T) {
+			got, ok := Derive("muse", tt.event, []byte(`{}`))
+			if !ok || got != tt.want {
+				t.Fatalf("Derive(muse, %q) = (%q, %v), want (%q, true)", tt.event, got, ok, tt.want)
+			}
+		})
+	}
+	if got, ok := Derive("muse", "session-start", []byte(`{}`)); ok {
+		t.Fatalf("Derive(muse, session-start) = (%q, true), want metadata-only", got)
 	}
 }
 
