@@ -6665,12 +6665,6 @@ components:
           - blocked
           - exited
           type: string
-        toolName:
-          description: Native tool name, for tool-use hook events.
-          type: string
-        toolUseId:
-          description: Native tool-use id, for tool-use hook events.
-          type: string
       type: object
     SetReviewActivityResponse:
       properties:

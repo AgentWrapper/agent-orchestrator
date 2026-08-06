@@ -2332,10 +2332,6 @@ export interface components {
              * @enum {string}
              */
             state?: "active" | "idle" | "waiting_input" | "blocked" | "exited";
-            /** @description Native tool name, for tool-use hook events. */
-            toolName?: string;
-            /** @description Native tool-use id, for tool-use hook events. */
-            toolUseId?: string;
         };
         SetReviewActivityResponse: {
             ok: boolean;

@@ -58,6 +58,16 @@ type usageHookMetadata struct {
 	SubagentTranscriptPath string `json:"subagentTranscriptPath,omitempty"`
 }
 
+// setReviewActivityAPIRequest mirrors POST /api/v1/reviews/{id}/activity.
+// Reviewer hooks only persist reviewer-owned restore metadata for now; they do
+// not feed worker lifecycle/tool-flight state.
+type setReviewActivityAPIRequest struct {
+	State          string `json:"state,omitempty"`
+	Event          string `json:"event,omitempty"`
+	AgentSessionID string `json:"agentSessionId,omitempty"`
+	LaunchID       string `json:"launchId,omitempty"`
+}
+
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
 // payload before they go on the wire — they are ids/names, anything longer is
 // garbage and gets dropped rather than truncated (a truncated id would never
@@ -238,12 +248,9 @@ func (c *commandContext) runReviewHook(ctx context.Context, agent, event, review
 	if !hasActivity && agentSessionID == "" {
 		return nil
 	}
-	toolName, toolUseID := activityMeta(payload)
 	path := "reviews/" + url.PathEscape(reviewSessionID) + "/activity"
-	req := setActivityAPIRequest{
+	req := setReviewActivityAPIRequest{
 		Event:          event,
-		ToolName:       toolName,
-		ToolUseID:      toolUseID,
 		AgentSessionID: agentSessionID,
 		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
 	}
