@@ -20,6 +20,7 @@ vi.mock("../lib/api-client", () => ({
 		GET: h.get,
 		POST: h.post,
 	},
+	apiErrorCode: (error: { code?: string }) => error?.code,
 	apiErrorMessage: (_e: unknown, fallback = "err") => fallback,
 }));
 
@@ -101,6 +102,29 @@ describe("TaskComposer", () => {
 
 		await waitFor(() => expect(screen.getByText("nope")).toBeInTheDocument());
 		expect(onSubmittingChange).toHaveBeenLastCalledWith(false);
+	});
+
+	it("offers an explicit Terminal UI retry after Chat preflight fails", async () => {
+		h.post
+			.mockResolvedValueOnce({ error: { code: "CHAT_DRIVER_UNAVAILABLE" } })
+			.mockResolvedValueOnce({ data: { workerId: "sess-tui" } });
+		const onCreated = vi.fn();
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={onCreated} />
+			</Wrap>,
+		);
+		fireEvent.change(task(), { target: { value: "Do the thing" } });
+		fireEvent.click(screen.getByText("Start task"));
+
+		const fallback = await screen.findByRole("button", { name: "Create as Terminal UI" });
+		fireEvent.click(fallback);
+		await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sess-tui"));
+		expect(h.post).toHaveBeenLastCalledWith(
+			"/api/v1/orchestrators/delegate",
+			expect.objectContaining({ body: expect.objectContaining({ mode: "tui" }) }),
+		);
 	});
 
 	it("reports dirty then clears it on unmount", () => {

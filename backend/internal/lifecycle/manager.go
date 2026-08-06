@@ -34,6 +34,21 @@ type sessionStore interface {
 	UpdatePRLastNudgeSignature(ctx context.Context, prURL, payload string) error
 }
 
+// controllerEpochStore is the atomic persistence primitive used by
+// CommitControllerEpoch. It stays optional on the broad lifecycle store so
+// focused reducer fakes do not need controller-transition methods; production
+// SQLite implements it.
+type controllerEpochStore interface {
+	CommitSessionControllerEpoch(
+		context.Context,
+		domain.SessionID,
+		domain.SessionMode,
+		domain.SessionMode,
+		string,
+		time.Time,
+	) (bool, error)
+}
+
 // notificationSink is the optional lifecycle-to-notification-producer boundary.
 type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
@@ -352,6 +367,7 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
 	s.LaunchID = strings.TrimSpace(s.LaunchID)
+	s.ControllerGeneration = strings.TrimSpace(s.ControllerGeneration)
 	if !s.Valid && s.AgentSessionID == "" {
 		return nil
 	}
@@ -387,6 +403,12 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return nil
 	}
 	if s.LaunchID != "" && s.LaunchID != rec.Metadata.RuntimeLaunchID {
+		m.mu.Unlock()
+		return nil
+	}
+	if s.ControllerGeneration != "" &&
+		(domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeChat ||
+			s.ControllerGeneration != rec.Metadata.ControllerGeneration) {
 		m.mu.Unlock()
 		return nil
 	}
@@ -751,6 +773,83 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 	return nil
 }
 
+// CommitControllerEpoch atomically changes which controller owns a live
+// session. Session Manager coordinates the external-process saga, but only
+// Lifecycle Manager is allowed to write the durable controller/activity facts.
+// A false result means the expected source controller no longer owns the row.
+// startFresh is accepted only with an empty native id; Session Manager sets it
+// after an adapter proved the reserved id has no persisted conversation.
+func (m *Manager) CommitControllerEpoch(
+	ctx context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	startFresh bool,
+) (bool, error) {
+	if !source.Valid() || !target.Valid() || source == target {
+		return false, fmt.Errorf("lifecycle: invalid controller epoch %q -> %q", source, target)
+	}
+	nativeConversationID = strings.TrimSpace(nativeConversationID)
+	if nativeConversationID == "" && !startFresh {
+		return false, fmt.Errorf("lifecycle: controller epoch for %q has no native conversation id", id)
+	}
+	if nativeConversationID != "" && startFresh {
+		return false, fmt.Errorf("lifecycle: fresh controller epoch for %q also supplied a native conversation id", id)
+	}
+	writer, ok := m.store.(controllerEpochStore)
+	if !ok {
+		return false, fmt.Errorf("lifecycle: controller epoch persistence is unavailable")
+	}
+
+	m.mu.Lock()
+	previous, found, err := m.store.GetSession(ctx, id)
+	if err != nil {
+		m.mu.Unlock()
+		return false, err
+	}
+	if !found {
+		m.mu.Unlock()
+		return false, fmt.Errorf("%w: %s", ports.ErrSessionNotFound, id)
+	}
+	if previous.IsTerminated || domain.NormalizeSessionMode(previous.Mode) != source {
+		m.mu.Unlock()
+		return false, nil
+	}
+	now := m.clock()
+	changed, err := writer.CommitSessionControllerEpoch(
+		ctx, id, source, target, nativeConversationID, now,
+	)
+	if err != nil || !changed {
+		m.mu.Unlock()
+		return changed, err
+	}
+
+	// Mirror the atomic store write for lifecycle side effects. MarkSpawned will
+	// clear FirstSignalAt and attach the target's process generation once the new
+	// controller is actually live.
+	next := previous
+	next.Mode = target
+	next.Metadata.RuntimeHandleID = ""
+	next.Metadata.RuntimeLaunchID = ""
+	next.Metadata.AgentSessionID = nativeConversationID
+	next.Metadata.ProviderConversationID = nativeConversationID
+	next.Metadata.ControllerGeneration = ""
+	next.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	next.UpdatedAt = now
+	delete(m.flights, id)
+	resolutions := needsInputResolutions(previous, next, now)
+	waitingEvents := m.waitingInputEvents(
+		next, previous.Activity.State, previous.Activity.LastActivityAt, now,
+	)
+	m.mu.Unlock()
+
+	for _, ev := range waitingEvents {
+		m.emitTelemetry(ctx, ev)
+	}
+	m.resolveNotifications(ctx, resolutions...)
+	return true, nil
+}
+
 // MarkTerminated marks a session terminated. Runtime/workspace teardown is the
 // caller's responsibility (see session_manager.Manager.Kill); this also reaps the
 // session's Docker containers via the optional ContainerReaper (#2652) as its one
@@ -908,5 +1007,13 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
+	// The chat controller's resume handle. Without this a restart has no thread to
+	// resume and the conversation is stranded — the provider still holds it, but
+	// AO no longer knows its id.
+	set(&base.ProviderConversationID, in.ProviderConversationID)
+	// Assigned rather than set: a relaunch rotates the generation, and the whole
+	// point is that the new value replaces the old one so events from the
+	// controller this one superseded can be told apart.
+	base.ControllerGeneration = in.ControllerGeneration
 	return base
 }

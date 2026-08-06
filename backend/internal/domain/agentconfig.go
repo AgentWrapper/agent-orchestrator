@@ -39,6 +39,19 @@ func (c AgentConfig) IsZero() bool {
 	return c == AgentConfig{}
 }
 
+// Valid reports whether the mode is one AO knows. Empty counts as valid: it means
+// "the adapter's own baseline", which is a legitimate choice rather than a missing
+// one.
+func (m PermissionMode) Valid() bool {
+	switch m {
+	case "", PermissionModeDefault, PermissionModeAcceptEdits,
+		PermissionModeAuto, PermissionModeBypassPermissions:
+		return true
+	default:
+		return false
+	}
+}
+
 // Validate rejects values outside the typed vocabulary so a bad config is
 // refused when it is set (CLI/API) rather than silently dropped at spawn.
 func (c AgentConfig) Validate() error {
@@ -47,10 +60,8 @@ func (c AgentConfig) Validate() error {
 	default:
 		return fmt.Errorf("invalid mode %q: want one of low, medium, high, ultra", c.Mode)
 	}
-	switch c.Permissions {
-	case "", PermissionModeDefault, PermissionModeAcceptEdits, PermissionModeAuto, PermissionModeBypassPermissions:
+	if c.Permissions.Valid() {
 		return nil
-	default:
-		return fmt.Errorf("invalid permissions %q: want one of default, accept-edits, auto, bypass-permissions", c.Permissions)
 	}
+	return fmt.Errorf("invalid permissions %q: want one of default, accept-edits, auto, bypass-permissions", c.Permissions)
 }

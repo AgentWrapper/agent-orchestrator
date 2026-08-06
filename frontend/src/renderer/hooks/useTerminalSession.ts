@@ -60,6 +60,8 @@ export type TerminalSessionState =
 export type UseTerminalSessionOptions = {
 	/** Gates auto-reattach: when false, a dropped socket waits instead of retrying. */
 	daemonReady: boolean;
+	/** Refuse user bytes without detaching while a controller handoff owns input. */
+	inputDisabled?: boolean;
 	/** Coalesce and cover the initial replay. Disable for non-retained reviewer panes. */
 	coverInitialReplay?: boolean;
 	/**
@@ -643,6 +645,7 @@ export function useTerminalSession(session: WorkspaceSession | undefined, option
 			if (
 				!isCurrentAttachment(generation, handle, mux) ||
 				!r.inputReady ||
+				optionsRef.current.inputDisabled ||
 				optionsRef.current.isVisible === false
 			) {
 				return;

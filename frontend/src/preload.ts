@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEXT_TAB_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, PREVIOUS_TAB_SHORTCUT_CHANNEL, SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, type KeybindingOverrides } from "./shared/shortcuts";
 import type {
 	BrowserAgentActivityState,
 	BrowserNavState,
@@ -121,6 +121,20 @@ const api = {
 			ipcRenderer.on(NEXT_SESSION_SHORTCUT_CHANNEL, wrapped);
 			return () => {
 				ipcRenderer.off(NEXT_SESSION_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
+		onPreviousTabShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(PREVIOUS_TAB_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(PREVIOUS_TAB_SHORTCUT_CHANNEL, wrapped);
+			};
+		},
+		onNextTabShortcut: (listener: () => void) => {
+			const wrapped = () => listener();
+			ipcRenderer.on(NEXT_TAB_SHORTCUT_CHANNEL, wrapped);
+			return () => {
+				ipcRenderer.off(NEXT_TAB_SHORTCUT_CHANNEL, wrapped);
 			};
 		},
 		onFocusTerminalShortcut: (listener: () => void) => {

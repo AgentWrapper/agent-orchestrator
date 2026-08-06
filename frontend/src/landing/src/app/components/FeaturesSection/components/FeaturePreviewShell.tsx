@@ -47,7 +47,7 @@ export function FeaturePreviewShell({
 }) {
 	return (
 		<div
-			className={`mx-auto w-full min-w-0 max-w-[570px] overflow-hidden rounded-[20px] border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)] ${className}`}
+			className={`mx-auto w-full min-w-0 max-w-[570px] select-none overflow-hidden rounded-[20px] border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)] ${className}`}
 			style={featurePreviewTokens}
 		>
 			<div className="flex h-9 items-center border-b border-[var(--preview-border)] bg-[var(--preview-background)] px-3">
@@ -62,7 +62,7 @@ export function FeaturePreviewShell({
 						{title}
 					</span>
 				</div>
-				{trailing ? <div className="ml-auto hidden shrink-0 min-[420px]:block">{trailing}</div> : null}
+				{trailing ? <div className="ml-auto min-w-0 shrink-0">{trailing}</div> : null}
 			</div>
 			{children}
 		</div>

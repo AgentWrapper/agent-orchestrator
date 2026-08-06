@@ -3,6 +3,7 @@
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { featurePreviewTokens } from "../FeaturePreviewShell";
+import { usePreviewScale } from "../usePreviewScale";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -416,6 +417,7 @@ function BoardColumn({ cards, color, title }: { cards: Card[]; color: string; ti
 export function FleetBoardDemo() {
 	const [cards, setCards] = useState<Card[]>(INITIAL_CARDS);
 	const incomingIdx = useRef(0);
+	const { viewportRef, viewportStyle, canvasStyle } = usePreviewScale(570, 318);
 
 	// Remove a merged card after its exit animation
 	const mergeCard = (id: string) => {
@@ -520,24 +522,30 @@ export function FleetBoardDemo() {
 
 	return (
 		<div
-			className="mx-auto h-[318px] w-full min-w-0 max-w-[570px] overflow-hidden rounded-[12px] border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[9px] text-[var(--preview-foreground)] shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)]"
-			style={featurePreviewTokens}
+			ref={viewportRef}
+			className="relative mx-auto w-full min-w-0 max-w-[570px]"
+			style={viewportStyle}
 		>
-			<style>{`
-				@keyframes ao-attention-pulse-frames {
-					0%, 100% { box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.35); }
-					50%       { box-shadow: 0 0 0 4px rgba(251, 146, 60, 0); }
-				}
-				.ao-attention-pulse { animation: ao-attention-pulse-frames 2.2s ease-in-out infinite; }
-				@media (prefers-reduced-motion: reduce) { .ao-attention-pulse { animation: none; } }
-			`}</style>
-			<LayoutGroup>
-				<div className="grid h-full min-h-0 auto-cols-[85%] grid-flow-col snap-x snap-mandatory divide-x divide-[var(--preview-border)] overflow-x-auto overscroll-x-contain scrollbar-hide sm:auto-cols-[48%] md:grid-flow-row md:grid-cols-4 md:auto-cols-auto md:snap-none md:overflow-hidden">
-					{boardColumns.map((col) => (
-						<BoardColumn key={col.id} cards={col.cards} color={col.color} title={col.title} />
-					))}
-				</div>
-			</LayoutGroup>
+			<div
+				className="absolute left-0 top-0 overflow-hidden rounded-[10px] border border-[var(--preview-border)] bg-[var(--preview-background)] text-[9px] text-[var(--preview-foreground)] shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)]"
+				style={{ ...featurePreviewTokens, ...canvasStyle, fontFamily: "var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif" }}
+			>
+				<style>{`
+					@keyframes ao-attention-pulse-frames {
+						0%, 100% { box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.35); }
+						50%       { box-shadow: 0 0 0 4px rgba(251, 146, 60, 0); }
+					}
+					.ao-attention-pulse { animation: ao-attention-pulse-frames 2.2s ease-in-out infinite; }
+					@media (prefers-reduced-motion: reduce) { .ao-attention-pulse { animation: none; } }
+				`}</style>
+				<LayoutGroup>
+					<div className="grid h-full min-h-0 grid-cols-4 divide-x divide-[var(--preview-border)] overflow-hidden">
+						{boardColumns.map((col) => (
+							<BoardColumn key={col.id} cards={col.cards} color={col.color} title={col.title} />
+						))}
+					</div>
+				</LayoutGroup>
+			</div>
 		</div>
 	);
 }
