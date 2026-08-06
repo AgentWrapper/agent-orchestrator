@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -226,7 +227,7 @@ func NewPostHogSink(dataDir, apiKey, host, appVersion, defaultAgent string, clie
 		apiKey:       apiKey,
 		host:         strings.TrimRight(host, "/"),
 		distinctID:   distinctID,
-		defaultAgent: strings.TrimSpace(defaultAgent),
+		defaultAgent: safeAgentSlug(defaultAgent),
 		tenure:       newTenureTracker(dataDir, time.Now),
 		client:       client,
 		log:          telemetryLogger(log),
@@ -459,6 +460,22 @@ func sanitizeRemoteValue(key string, v any) (any, bool) {
 	default:
 		return nil, false
 	}
+}
+
+// agentSlugPattern is the shape of a real adapter id (claude-code, codex, ...).
+// AO_AGENT is free text and cfg.Agent is only validated against the registry
+// when the daemon builds its resolver, which happens after ao.daemon.started is
+// already emitted. So a malformed value, including a filesystem path, could ride
+// on that first event. safeAgentSlug drops anything that is not a plain slug, so
+// telemetry carries a known-shape id or nothing, never a path.
+var agentSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+
+func safeAgentSlug(agent string) string {
+	trimmed := strings.TrimSpace(agent)
+	if agentSlugPattern.MatchString(trimmed) {
+		return trimmed
+	}
+	return ""
 }
 
 // versionChannel derives stable/nightly from the version string, matching the

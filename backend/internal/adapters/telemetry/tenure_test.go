@@ -199,3 +199,23 @@ func TestVersionChannel(t *testing.T) {
 		}
 	}
 }
+
+func TestSafeAgentSlug(t *testing.T) {
+	keep := []string{"claude-code", "codex", "cursor", "grok", "opencode", "a"}
+	for _, v := range keep {
+		if got := safeAgentSlug(v); got != v {
+			t.Errorf("safeAgentSlug(%q) = %q, want it kept", v, got)
+		}
+	}
+	// A path, whitespace, uppercase, or an over-long value must be dropped so it
+	// cannot leak on ao.daemon.started before the resolver rejects it.
+	drop := []string{
+		"/Users/me/bin/agent", "../codex", "claude code", "Claude-Code",
+		"agent;rm -rf", strings.Repeat("x", 60), "", "   ",
+	}
+	for _, v := range drop {
+		if got := safeAgentSlug(v); got != "" {
+			t.Errorf("safeAgentSlug(%q) = %q, want dropped", v, got)
+		}
+	}
+}
