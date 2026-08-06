@@ -23,4 +23,7 @@ func TestReviewCommandUsesRulesAndUserPermissions(t *testing.T) {
 	if spec.InitialMessage != "read task" {
 		t.Fatalf("initial message = %q, want interactive task", spec.InitialMessage)
 	}
+	if r.ReviewProcessReusable() {
+		t.Fatal("Auggie reviewer must force a fresh process for each pass")
+	}
 }

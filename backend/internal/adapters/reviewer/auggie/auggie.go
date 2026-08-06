@@ -26,6 +26,7 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerAuggie
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerReusePolicy = (*Reviewer)(nil)
 
 // ReviewCommand launches Auggie with AO's system rules and task prompt. AO
 // emits no blanket approval flag; users answer requests in the reviewer pane.
@@ -59,3 +60,8 @@ func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (s
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
 	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
 }
+
+// ReviewProcessReusable reports false because Auggie's review task is sent as
+// launch-time input to a one-shot review process. Each pass needs a fresh
+// process with the current AO task context.
+func (*Reviewer) ReviewProcessReusable() bool { return false }

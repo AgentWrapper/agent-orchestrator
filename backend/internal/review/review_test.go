@@ -150,6 +150,8 @@ func (f fakeProjects) GetProject(_ context.Context, id string) (domain.ProjectRe
 type fakeLauncher struct {
 	handle           string
 	alive            bool
+	reusable         bool
+	reusableSet      bool
 	spawnErr         error
 	notifyErr        error
 	spawned          bool
@@ -165,6 +167,7 @@ type fakeLauncher struct {
 	cancelledHarness domain.ReviewerHarness
 	specs            []LaunchSpec
 	handles          []string
+	aliveChecked     bool
 	preflightErr     error
 	preflighted      bool
 }
@@ -197,9 +200,15 @@ func (f *fakeLauncher) Notify(_ context.Context, handleID string, spec LaunchSpe
 	return f.notifyErr
 }
 func (f *fakeLauncher) Alive(_ context.Context, _ string) (bool, error) {
+	f.aliveChecked = true
 	return f.alive || f.spawned || f.restored, f.aliveErr
 }
-func (f *fakeLauncher) Reusable(domain.ReviewerHarness) bool { return true }
+func (f *fakeLauncher) Reusable(domain.ReviewerHarness) bool {
+	if f.reusableSet {
+		return f.reusable
+	}
+	return true
+}
 func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain.ReviewerHarness) error {
 	f.cancelled = true
 	f.cancelledHandle = handleID
@@ -542,6 +551,30 @@ func TestTriggerRestoresWhenRecordedReviewerDead(t *testing.T) {
 	}
 	if !launcher.restored || launcher.spawned || launcher.notified {
 		t.Fatalf("expected restore when recorded reviewer dead: %+v", launcher)
+	}
+}
+
+func TestTriggerSpawnsFreshPassForNonReusableReviewer(t *testing.T) {
+	store := &fakeStore{
+		review: &domain.Review{ID: "rev-1", SessionID: "mer-1", Harness: domain.ReviewerAuggie, ReviewerHandleID: "review-mer-1"},
+		runs:   []domain.ReviewRun{{ID: "run-0", SessionID: "mer-1", PRURL: "https://github.com/o/r/pull/1", TargetSHA: "sha0", Status: domain.ReviewRunComplete}},
+	}
+	launcher := &fakeLauncher{alive: true, handle: "review-mer-1", reusableSet: true, reusable: false}
+	projects := fakeProjects{cfg: domain.ProjectConfig{Reviewers: []domain.ReviewerConfig{{Harness: domain.ReviewerAuggie}}}}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), projects, launcher)
+
+	res, err := eng.Trigger(context.Background(), "mer-1")
+	if err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if !res.Created || res.Run.TargetSHA != "sha1" {
+		t.Fatalf("expected a fresh review run for sha1, got %+v", res)
+	}
+	if !launcher.spawned || launcher.restored || launcher.notified || launcher.aliveChecked {
+		t.Fatalf("non-reusable reviewer should spawn fresh without alive/restore/notify reuse: %+v", launcher)
+	}
+	if launcher.gotSpec.Harness != domain.ReviewerAuggie {
+		t.Fatalf("spawn harness = %q, want auggie", launcher.gotSpec.Harness)
 	}
 }
 

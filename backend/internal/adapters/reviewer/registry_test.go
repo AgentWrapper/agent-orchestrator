@@ -16,6 +16,11 @@ import (
 // adapter is a known reviewer harness, and every known harness has an adapter.
 func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 	registered := map[domain.ReviewerHarness]bool{}
+	oneShotReviewers := map[domain.ReviewerHarness]bool{
+		domain.ReviewerAider:  true,
+		domain.ReviewerAuggie: true,
+		domain.ReviewerQwen:   true,
+	}
 	for _, a := range Constructors() {
 		h := a.Harness()
 		if !h.IsKnown() {
@@ -42,6 +47,11 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 			}
 		} else if spec.Mode != ports.ReviewCancelInterrupt || spec.Interrupts != 2 {
 			t.Errorf("reviewer harness %q cancel spec = %+v, want two interrupts", h, spec)
+		}
+		policy, hasPolicy := a.(ports.ReviewerReusePolicy)
+		reusable := !hasPolicy || policy.ReviewProcessReusable()
+		if oneShotReviewers[h] == reusable {
+			t.Errorf("reviewer harness %q reusable = %v, want %v", h, reusable, !oneShotReviewers[h])
 		}
 		registered[h] = true
 	}
