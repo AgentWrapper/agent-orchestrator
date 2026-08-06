@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -102,6 +103,50 @@ func TestGetLaunchCommandAppendsModelBeforePrompt(t *testing.T) {
 	}
 }
 
+func TestGetLaunchCommandInjectsSystemPromptWithoutProjectFiles(t *testing.T) {
+	p := &Plugin{resolvedBinary: "muse"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPrompt: "follow AO rules\n",
+		Prompt:       "fix it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"env", museSystemPromptEnvVar + "=follow AO rules",
+		"muse", "--trust-workspace", "fix it",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandReadsSystemPromptFile(t *testing.T) {
+	promptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(promptFile, []byte("file rules\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := &Plugin{resolvedBinary: "muse"}
+	cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{SystemPromptFile: promptFile})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"env", museSystemPromptEnvVar + "=file rules", "muse", "--trust-workspace"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetLaunchCommandMissingSystemPromptFileErrors(t *testing.T) {
+	p := &Plugin{resolvedBinary: "muse"}
+	_, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
+		SystemPromptFile: filepath.Join(t.TempDir(), "missing.md"),
+	})
+	if err == nil {
+		t.Fatal("GetLaunchCommand succeeded with a missing system prompt file")
+	}
+}
+
 func TestGetLaunchCommandMapsOfficialPermissionFlags(t *testing.T) {
 	tests := []struct {
 		name string
@@ -117,8 +162,7 @@ func TestGetLaunchCommandMapsOfficialPermissionFlags(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &Plugin{resolvedBinary: "muse"}
 			cmd, err := p.GetLaunchCommand(context.Background(), ports.LaunchConfig{
-				Permissions:  tt.mode,
-				SystemPrompt: "AO rules",
+				Permissions: tt.mode,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -140,86 +184,50 @@ func TestGetPromptDeliveryStrategy(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksInstallsSystemPromptInstructions(t *testing.T) {
+func TestWorkspaceHooksLeaveTrackedAgentsMDUnchanged(t *testing.T) {
 	workspace := t.TempDir()
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
-		WorkspacePath: workspace,
-		SystemPrompt:  "follow AO rules\n",
-	}); err != nil {
+	runGit(t, workspace, "init")
+	runGit(t, workspace, "config", "user.name", "AO Test")
+	runGit(t, workspace, "config", "user.email", "ao@example.invalid")
+	path := filepath.Join(workspace, "AGENTS.md")
+	want := []byte("project-owned instructions\n")
+	if err := os.WriteFile(path, want, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	runGit(t, workspace, "add", "AGENTS.md")
+	runGit(t, workspace, "commit", "-m", "add project instructions")
 
-	data, err := os.ReadFile(museInstructionsPath(workspace))
+	p := &Plugin{}
+	cfg := ports.WorkspaceHookConfig{WorkspacePath: workspace, SystemPrompt: "AO-only instructions"}
+	if err := p.GetAgentHooks(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CleanupWorkspace(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	for _, want := range []string{museInstructionsSentinel, "# Agent Orchestrator Session Instructions", "follow AO rules", museInstructionsEnd} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("instructions missing %q:\n%s", want, text)
-		}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("AGENTS.md = %q, want unchanged %q", got, want)
 	}
-	if filepath.Base(museInstructionsPath(workspace)) != "AGENTS.md" || filepath.Dir(museInstructionsPath(workspace)) != workspace {
-		t.Fatalf("instructions path = %s, want workspace-root AGENTS.md", museInstructionsPath(workspace))
+	if status := runGit(t, workspace, "status", "--porcelain"); status != "" {
+		t.Fatalf("workspace became dirty:\n%s", status)
 	}
 }
 
-func TestGetAgentHooksReadsSystemPromptFile(t *testing.T) {
+func TestWorkspaceHooksDoNotCreateAgentsMD(t *testing.T) {
 	workspace := t.TempDir()
-	promptFile := filepath.Join(t.TempDir(), "system.md")
-	if err := os.WriteFile(promptFile, []byte("file rules\n"), 0o600); err != nil {
+	p := &Plugin{}
+	cfg := ports.WorkspaceHookConfig{WorkspacePath: workspace, SystemPrompt: "AO-only instructions"}
+	if err := p.GetAgentHooks(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
-		WorkspacePath:    workspace,
-		SystemPromptFile: promptFile,
-	}); err != nil {
+	if err := p.CleanupWorkspace(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(museInstructionsPath(workspace))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "file rules") {
-		t.Fatalf("instructions missing file rules:\n%s", data)
-	}
-}
-
-func TestGetAgentHooksPreservesAndRewritesUserInstructions(t *testing.T) {
-	workspace := t.TempDir()
-	path := museInstructionsPath(workspace)
-	existing := "before\n\n" + museInstructionFile("old rules") + "\nafter\n"
-	if err := os.WriteFile(path, []byte(existing), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{
-		WorkspacePath: workspace,
-		SystemPrompt:  "new rules",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	for _, want := range []string{"before", "after", "new rules"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("instructions missing %q:\n%s", want, text)
-		}
-	}
-	if strings.Contains(text, "old rules") || strings.Count(text, museInstructionsSentinel) != 1 {
-		t.Fatalf("managed instructions not rewritten cleanly:\n%s", text)
-	}
-}
-
-func TestGetAgentHooksNoPromptIsNoOp(t *testing.T) {
-	workspace := t.TempDir()
-	if err := (&Plugin{}).GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(workspace, museInstructionsFileName)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(workspace, "AGENTS.md")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("AGENTS.md stat err = %v, want not exist", err)
 	}
 }
@@ -234,9 +242,38 @@ func TestResolveMuseBinaryRejectsUnrelatedMuseCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
-	_, err := ResolveMuseBinary(context.Background())
+	_, err := resolveMuseBinary(context.Background(), binaryutil.BinarySpec{
+		Label: "muse",
+		Names: []string{"muse"},
+	})
 	if !errors.Is(err, ports.ErrAgentBinaryNotFound) {
 		t.Fatalf("err = %v, want ErrAgentBinaryNotFound", err)
+	}
+}
+
+func TestResolveMuseBinaryContinuesAfterPathCollision(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	pathDir := t.TempDir()
+	shadow := filepath.Join(pathDir, "muse")
+	if err := os.WriteFile(shadow, []byte("#!/bin/sh\necho 'unrelated muse 1.0'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	officialDir := t.TempDir()
+	official := filepath.Join(officialDir, "muse")
+	if err := os.WriteFile(official, []byte("#!/bin/sh\necho 'Muse Code 0.1.0 (0.1.0-R708.1)'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pathDir)
+
+	got, err := resolveMuseBinary(context.Background(), binaryutil.BinarySpec{
+		Label:     "muse",
+		Names:     []string{"muse"},
+		UnixPaths: []string{official},
+	})
+	if err != nil || got != official {
+		t.Fatalf("resolveMuseBinary = (%q, %v), want (%q, nil)", got, err, official)
 	}
 }
 
@@ -282,6 +319,9 @@ func TestContextCancellation(t *testing.T) {
 	if err := (&Plugin{}).GetAgentHooks(ctx, ports.WorkspaceHookConfig{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("GetAgentHooks err = %v, want context.Canceled", err)
 	}
+	if err := (&Plugin{}).CleanupWorkspace(ctx, ports.WorkspaceHookConfig{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("CleanupWorkspace err = %v, want context.Canceled", err)
+	}
 	if _, _, err := (&Plugin{}).GetRestoreCommand(ctx, ports.RestoreConfig{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("GetRestoreCommand err = %v, want context.Canceled", err)
 	}
@@ -291,4 +331,15 @@ func TestContextCancellation(t *testing.T) {
 	if _, err := ResolveMuseBinary(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ResolveMuseBinary err = %v, want context.Canceled", err)
 	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.CommandContext(t.Context(), "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
 }

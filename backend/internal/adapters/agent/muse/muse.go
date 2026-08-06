@@ -5,8 +5,8 @@
 // it opens the interactive TUI, and an optional positional prompt starts the
 // first turn without leaving that TUI.
 //
-// Muse reads trusted project instructions from the workspace-root AGENTS.md,
-// which GetAgentHooks uses for AO's standing instructions.
+// AO's standing instructions are passed through Muse's process-local system
+// prompt environment, so launching a session never modifies project files.
 package muse
 
 import (
@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -24,6 +26,11 @@ import (
 )
 
 const adapterID = "muse"
+
+// Muse's own launcher forwards this process-local override to the runtime.
+// Unlike AGENTS.md, it applies only to this process and cannot dirty the
+// project. The installed Meta binary contract is covered by the launch tests.
+const museSystemPromptEnvVar = "TBH_EVAL_APPEND_SYSTEM_PROMPT"
 
 // Plugin is the Muse Code CLI agent adapter. It is safe for concurrent use;
 // the binary path is resolved once and cached under binaryMu.
@@ -61,7 +68,7 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 
 // GetLaunchCommand builds the argv for a persistent interactive Muse session:
 //
-//	muse --trust-workspace [--approval-mode never|--yolo] [--model <model>] [prompt]
+//	[env TBH_EVAL_APPEND_SYSTEM_PROMPT=<instructions>] muse --trust-workspace [--approval-mode never|--yolo] [--model <model>] [prompt]
 //
 // The prompt is the CLI's documented optional positional argument. `muse exec`
 // is deliberately not used because it is headless and exits after one turn.
@@ -70,8 +77,16 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	if err != nil {
 		return nil, err
 	}
+	systemPrompt, err := museSystemPromptText(cfg.SystemPrompt, cfg.SystemPromptFile)
+	if err != nil {
+		return nil, fmt.Errorf("muse.GetLaunchCommand: %w", err)
+	}
 
-	cmd := []string{binary, "--trust-workspace"}
+	cmd := make([]string, 0, 9)
+	if systemPrompt != "" {
+		cmd = append(cmd, "env", museSystemPromptEnvVar+"="+systemPrompt)
+	}
+	cmd = append(cmd, binary, "--trust-workspace")
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
 	if cfg.Prompt != "" {
@@ -106,20 +121,61 @@ var museBinarySpec = binaryutil.BinarySpec{
 // command name is shared by unrelated tools, so a version-signature check keeps
 // those shims from being reported as an installed AO harness.
 func ResolveMuseBinary(ctx context.Context) (string, error) {
-	binary, err := binaryutil.ResolveBinary(ctx, museBinarySpec)
+	return resolveMuseBinary(ctx, museBinarySpec)
+}
+
+func resolveMuseBinary(ctx context.Context, spec binaryutil.BinarySpec) (string, error) {
+	first, err := binaryutil.ResolveBinary(ctx, spec)
 	if err != nil {
 		return "", err
 	}
+
+	candidates := append([]string{first}, museCanonicalBinaryCandidates(spec)...)
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if candidate == "" {
+			continue
+		}
+		if _, ok := seen[candidate]; ok {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		if isOfficialMuseBinary(ctx, candidate) {
+			return candidate, nil
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return "", fmt.Errorf("%s: %w", spec.Label, ports.ErrAgentBinaryNotFound)
+}
+
+func isOfficialMuseBinary(ctx context.Context, binary string) bool {
 	cmd := exec.CommandContext(ctx, binary, "--version")
 	cmd.Env = append(os.Environ(), "MUSE_NO_AUTO_UPDATE=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("muse: verify official Meta Muse Code CLI at %s: %w", binary, err)
+		return false
 	}
-	if !strings.HasPrefix(strings.TrimSpace(string(out)), "Muse Code ") {
-		return "", fmt.Errorf("muse: %s is not the official Meta Muse Code CLI: %w", binary, ports.ErrAgentBinaryNotFound)
+	return strings.HasPrefix(strings.TrimSpace(string(out)), "Muse Code ")
+}
+
+func museCanonicalBinaryCandidates(spec binaryutil.BinarySpec) []string {
+	if runtime.GOOS == "windows" {
+		return nil
 	}
-	return binary, nil
+	candidates := append([]string(nil), spec.UnixPaths...)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return candidates
+	}
+	for _, parts := range spec.UnixHomePaths {
+		candidates = append(candidates, filepath.Join(append([]string{home}, parts...)...))
+	}
+	return candidates
 }
 
 func (p *Plugin) museBinary(ctx context.Context) (string, error) {
