@@ -123,6 +123,21 @@ func (s *Store) MarkReviewRunDelivered(ctx context.Context, id string, delivered
 	return n > 0, nil
 }
 
+// MarkReviewRunSuppressed records that automatic injection was intentionally
+// disabled for a completed AO-internal review pass.
+func (s *Store) MarkReviewRunSuppressed(ctx context.Context, id string, suppressedAt time.Time) (bool, error) {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	n, err := s.qw.MarkReviewRunSuppressed(ctx, gen.MarkReviewRunSuppressedParams{
+		SuppressedAt: sql.NullTime{Time: suppressedAt, Valid: true},
+		ID:           id,
+	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // GetReviewRun returns one review pass by id.
 func (s *Store) GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error) {
 	row, err := s.qr.GetReviewRun(ctx, id)
@@ -222,6 +237,11 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		t := r.DeliveredAt.Time
 		deliveredAt = &t
 	}
+	var suppressedAt *time.Time
+	if r.SuppressedAt.Valid {
+		t := r.SuppressedAt.Time
+		suppressedAt = &t
+	}
 	return domain.ReviewRun{
 		ID:             r.ID,
 		ReviewID:       r.ReviewID,
@@ -236,5 +256,6 @@ func reviewRunFromRow(r gen.ReviewRun) domain.ReviewRun {
 		GithubReviewID: r.GithubReviewID,
 		CreatedAt:      r.CreatedAt,
 		DeliveredAt:    deliveredAt,
+		SuppressedAt:   suppressedAt,
 	}
 }

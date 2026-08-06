@@ -287,6 +287,7 @@ type ReviewRun struct {
 	GithubReviewID string
 	DeliveredAt    sql.NullTime
 	BatchID        string
+	SuppressedAt   sql.NullTime
 }
 
 type Session struct {

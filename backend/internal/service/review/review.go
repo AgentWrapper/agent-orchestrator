@@ -72,6 +72,7 @@ type Store interface {
 	GetReviewRun(ctx context.Context, id string) (domain.ReviewRun, bool, error)
 	UpdateReviewRunResult(ctx context.Context, id string, status domain.ReviewRunStatus, verdict domain.ReviewVerdict, body, githubReviewID string) (bool, error)
 	MarkReviewRunDelivered(ctx context.Context, id string, deliveredAt time.Time) (bool, error)
+	MarkReviewRunSuppressed(ctx context.Context, id string, suppressedAt time.Time) (bool, error)
 	ListPRsBySession(ctx context.Context, id domain.SessionID) ([]domain.PullRequest, error)
 }
 
@@ -300,7 +301,7 @@ func (s *Service) submitOne(ctx context.Context, workerID domain.SessionID, revi
 		if githubReviewID != "" && githubReviewID != run.GithubReviewID {
 			return domain.ReviewRun{}, fmt.Errorf("%w: review run %q already recorded GitHub review id %q", ErrInvalid, runID, run.GithubReviewID)
 		}
-	case domain.ReviewRunDelivered:
+	case domain.ReviewRunDelivered, domain.ReviewRunSuppressed:
 		return run, nil
 	default:
 		return domain.ReviewRun{}, fmt.Errorf("%w: review run %q is not running", ErrInvalid, runID)
@@ -313,6 +314,11 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 	if err != nil {
 		return nil, err
 	}
+	suppressible, err := s.suppressedRuns(ctx, workerID, runs)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(deliverable) == 0 {
 		return nil, nil
 	}
@@ -321,8 +327,24 @@ func (s *Service) deliverSubmitted(ctx context.Context, workerID domain.SessionI
 	if err != nil {
 		return nil, err
 	}
-	if outcome != lifecycle.ReviewDeliverySent {
+	if outcome != lifecycle.ReviewDeliverySent && outcome != lifecycle.ReviewDeliverySuppressed {
 		return nil, nil
+	}
+	if outcome == lifecycle.ReviewDeliverySuppressed {
+		suppressedAt := s.clock()
+		suppressed := make([]domain.ReviewRun, 0, len(suppressible))
+		for _, run := range suppressible {
+			updated, err := s.store.MarkReviewRunSuppressed(ctx, run.ID, suppressedAt)
+			if err != nil {
+				return nil, err
+			}
+			if updated {
+				run.Status = domain.ReviewRunSuppressed
+				run.SuppressedAt = &suppressedAt
+				suppressed = append(suppressed, run)
+			}
+		}
+		return suppressed, nil
 	}
 	deliveredAt := s.clock()
 	delivered := make([]domain.ReviewRun, 0, len(deliverable))
@@ -356,6 +378,24 @@ func (s *Service) deliverableRuns(ctx context.Context, workerID domain.SessionID
 		deliverable = append(deliverable, run)
 	}
 	return deliverable, nil
+}
+
+func (s *Service) suppressedRuns(ctx context.Context, workerID domain.SessionID, runs []domain.ReviewRun) ([]domain.ReviewRun, error) {
+	currentHeads, err := s.currentHeadsByPR(ctx, workerID)
+	if err != nil {
+		return nil, err
+	}
+	suppressed := make([]domain.ReviewRun, 0, len(runs))
+	for _, run := range runs {
+		if run.Status != domain.ReviewRunComplete || run.Verdict != domain.VerdictChangesRequested || run.SuppressedAt != nil {
+			continue
+		}
+		if currentHeads[run.PRURL] != run.TargetSHA {
+			continue
+		}
+		suppressed = append(suppressed, run)
+	}
+	return suppressed, nil
 }
 
 func reviewResults(workerID domain.SessionID, runs []domain.ReviewRun) []lifecycle.ReviewResult {

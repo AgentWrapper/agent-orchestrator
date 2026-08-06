@@ -279,6 +279,25 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	} else if ok {
 		t.Fatal("second update completed an already-complete run")
 	}
+
+	suppressedAt := now.Add(2 * time.Second)
+	if ok, err := s.MarkReviewRunSuppressed(ctx, "run-1", suppressedAt); err != nil {
+		t.Fatalf("mark suppressed: %v", err)
+	} else if !ok {
+		t.Fatal("mark suppressed: got ok=false")
+	}
+	gotRun, ok, err = s.GetReviewRun(ctx, "run-1")
+	if err != nil || !ok {
+		t.Fatalf("get suppressed run: ok=%v err=%v", ok, err)
+	}
+	if gotRun.Status != domain.ReviewRunSuppressed || gotRun.SuppressedAt == nil || !gotRun.SuppressedAt.Equal(suppressedAt) || gotRun.DeliveredAt != nil {
+		t.Fatalf("suppressed run not persisted: %+v", gotRun)
+	}
+	if ok, err := s.MarkReviewRunSuppressed(ctx, "run-1", suppressedAt.Add(time.Second)); err != nil {
+		t.Fatalf("mark suppressed again: %v", err)
+	} else if ok {
+		t.Fatal("mark suppressed updated an already-suppressed run")
+	}
 }
 
 func TestCancelRunningReviewRunsBySession(t *testing.T) {

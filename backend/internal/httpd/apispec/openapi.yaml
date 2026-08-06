@@ -5888,6 +5888,11 @@ components:
           type: string
         status:
           type: string
+        suppressedAt:
+          format: date-time
+          type:
+          - "null"
+          - string
         targetSha:
           type: string
         verdict:

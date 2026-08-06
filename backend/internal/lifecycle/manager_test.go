@@ -1839,7 +1839,7 @@ func TestApplyReviewBatchSendsCombinedAndDedups(t *testing.T) {
 	}
 }
 
-func TestApplyReviewBatchAutoInjectDisabledNoops(t *testing.T) {
+func TestApplyReviewBatchAutoInjectDisabledSuppresses(t *testing.T) {
 	st := newFakeStore()
 	rec := working("mer-1")
 	rec.AutoInjectReviewFeedback = false
@@ -1856,8 +1856,8 @@ func TestApplyReviewBatchAutoInjectDisabledNoops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ApplyReviewBatch: %v", err)
 	}
-	if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
-		t.Fatalf("disabled auto-inject should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
+	if outcome != ReviewDeliverySuppressed || len(msg.msgs) != 0 || st.signatureWrites != 0 {
+		t.Fatalf("disabled auto-inject should suppress, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
 	}
 }
 
@@ -1901,7 +1901,9 @@ func TestApplyReviewBatchNoopsWhenWorkerCannotBeNudged(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m, st, msg := newManager()
-			st.sessions["mer-1"] = tt.rec
+			rec := tt.rec
+			rec.AutoInjectReviewFeedback = true
+			st.sessions["mer-1"] = rec
 			outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", []ReviewResult{tt.result})
 			if err != nil {
 				t.Fatalf("ApplyReviewBatch: %v", err)

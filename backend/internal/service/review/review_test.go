@@ -20,9 +20,11 @@ type fakeStore struct {
 	batchRuns []domain.ReviewRun
 	prs       []domain.PullRequest
 
-	updateCalls int
-	markCalls   int
-	markedIDs   []string
+	updateCalls   int
+	markCalls     int
+	markedIDs     []string
+	suppressCalls int
+	suppressedIDs []string
 }
 
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
@@ -83,6 +85,25 @@ func (f *fakeStore) MarkReviewRunDelivered(_ context.Context, id string, deliver
 		return false, nil
 	}
 	return true, nil
+}
+
+func (f *fakeStore) MarkReviewRunSuppressed(_ context.Context, id string, suppressedAt time.Time) (bool, error) {
+	f.suppressCalls++
+	f.suppressedIDs = append(f.suppressedIDs, id)
+	updated := false
+	if f.run.ID == id && f.run.Status == domain.ReviewRunComplete && f.run.SuppressedAt == nil {
+		f.run.Status = domain.ReviewRunSuppressed
+		f.run.SuppressedAt = &suppressedAt
+		updated = true
+	}
+	for i := range f.batchRuns {
+		if f.batchRuns[i].ID == id && f.batchRuns[i].Status == domain.ReviewRunComplete && f.batchRuns[i].SuppressedAt == nil {
+			f.batchRuns[i].Status = domain.ReviewRunSuppressed
+			f.batchRuns[i].SuppressedAt = &suppressedAt
+			updated = true
+		}
+	}
+	return updated, nil
 }
 
 func (f *fakeStore) ListReviewRunsByBatch(context.Context, domain.SessionID, string) ([]domain.ReviewRun, error) {
@@ -251,6 +272,40 @@ func TestSubmitDeliveryFailureLeavesCompletedUndeliveredForRetry(t *testing.T) {
 	}
 	if st.updateCalls != 1 || reducer.batchCalls != 2 || st.run.Status != domain.ReviewRunDelivered || st.run.DeliveredAt == nil {
 		t.Fatalf("retry should not rewrite result and should stamp delivery: update=%d reducer=%d run=%+v", st.updateCalls, reducer.batchCalls, st.run)
+	}
+}
+
+func TestSubmitSuppressedDoesNotReplayAfterPolicyIsEnabled(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
+	}
+	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySuppressed}
+	svc := New(nil, st, WithLifecycleReducer(reducer), WithClock(func() time.Time { return now }))
+
+	run, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "987")
+	if err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+	if run.Status != domain.ReviewRunSuppressed || run.SuppressedAt == nil || !run.SuppressedAt.Equal(now) {
+		t.Fatalf("run not stamped suppressed: %+v", run)
+	}
+	if st.suppressCalls != 1 || st.markCalls != 0 || reducer.batchCalls != 1 {
+		t.Fatalf("calls suppress/deliver/reducer = %d/%d/%d", st.suppressCalls, st.markCalls, reducer.batchCalls)
+	}
+
+	// Enabling automatic injection later must not re-drive an already suppressed
+	// result through lifecycle. A future explicit manual-injection path can choose
+	// to operate on this durable suppressed state.
+	reducer.outcome = lifecycle.ReviewDeliverySent
+	run, err = svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "987")
+	if err != nil {
+		t.Fatalf("repeat Submit: %v", err)
+	}
+	if run.Status != domain.ReviewRunSuppressed || st.suppressCalls != 1 || st.markCalls != 0 || reducer.batchCalls != 1 {
+		t.Fatalf("suppressed run replayed: run=%+v suppress=%d deliver=%d reducer=%d", run, st.suppressCalls, st.markCalls, reducer.batchCalls)
 	}
 }
 

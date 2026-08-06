@@ -52,7 +52,7 @@ func (q *Queries) GetReviewBySession(ctx context.Context, sessionID domain.Sessi
 }
 
 const getReviewRun = `-- name: GetReviewRun :one
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, suppressed_at
 FROM review_run WHERE id = ?
 `
 
@@ -73,12 +73,13 @@ func (q *Queries) GetReviewRun(ctx context.Context, id string) (ReviewRun, error
 		&i.GithubReviewID,
 		&i.DeliveredAt,
 		&i.BatchID,
+		&i.SuppressedAt,
 	)
 	return i, err
 }
 
 const getReviewRunBySessionPRAndSHA = `-- name: GetReviewRunBySessionPRAndSHA :one
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, suppressed_at
 FROM review_run WHERE session_id = ? AND pr_url = ? AND target_sha = ? ORDER BY created_at DESC LIMIT 1
 `
 
@@ -105,12 +106,13 @@ func (q *Queries) GetReviewRunBySessionPRAndSHA(ctx context.Context, arg GetRevi
 		&i.GithubReviewID,
 		&i.DeliveredAt,
 		&i.BatchID,
+		&i.SuppressedAt,
 	)
 	return i, err
 }
 
 const getReviewRunBySessionPRSHAAndHarness = `-- name: GetReviewRunBySessionPRSHAAndHarness :one
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, suppressed_at
 FROM review_run WHERE session_id = ? AND pr_url = ? AND target_sha = ? AND harness = ? ORDER BY created_at DESC LIMIT 1
 `
 
@@ -143,6 +145,7 @@ func (q *Queries) GetReviewRunBySessionPRSHAAndHarness(ctx context.Context, arg 
 		&i.GithubReviewID,
 		&i.DeliveredAt,
 		&i.BatchID,
+		&i.SuppressedAt,
 	)
 	return i, err
 }
@@ -186,7 +189,7 @@ func (q *Queries) InsertReviewRun(ctx context.Context, arg InsertReviewRunParams
 }
 
 const listReviewRunsByBatch = `-- name: ListReviewRunsByBatch :many
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, suppressed_at
 FROM review_run WHERE session_id = ? AND batch_id = ? ORDER BY created_at ASC, id ASC
 `
 
@@ -218,6 +221,7 @@ func (q *Queries) ListReviewRunsByBatch(ctx context.Context, arg ListReviewRunsB
 			&i.GithubReviewID,
 			&i.DeliveredAt,
 			&i.BatchID,
+			&i.SuppressedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -233,7 +237,7 @@ func (q *Queries) ListReviewRunsByBatch(ctx context.Context, arg ListReviewRunsB
 }
 
 const listReviewRunsBySession = `-- name: ListReviewRunsBySession :many
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, suppressed_at
 FROM review_run WHERE session_id = ? ORDER BY created_at DESC
 `
 
@@ -260,6 +264,7 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 			&i.GithubReviewID,
 			&i.DeliveredAt,
 			&i.BatchID,
+			&i.SuppressedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -275,7 +280,7 @@ func (q *Queries) ListReviewRunsBySession(ctx context.Context, sessionID domain.
 }
 
 const listRunningReviewRunsBySession = `-- name: ListRunningReviewRunsBySession :many
-SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id
+SELECT id, review_id, session_id, harness, pr_url, target_sha, status, verdict, body, created_at, github_review_id, delivered_at, batch_id, suppressed_at
 FROM review_run WHERE session_id = ? AND status = 'running' AND verdict = '' ORDER BY created_at DESC
 `
 
@@ -302,6 +307,7 @@ func (q *Queries) ListRunningReviewRunsBySession(ctx context.Context, sessionID 
 			&i.GithubReviewID,
 			&i.DeliveredAt,
 			&i.BatchID,
+			&i.SuppressedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -327,6 +333,23 @@ type MarkReviewRunDeliveredParams struct {
 
 func (q *Queries) MarkReviewRunDelivered(ctx context.Context, arg MarkReviewRunDeliveredParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, markReviewRunDelivered, arg.DeliveredAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const markReviewRunSuppressed = `-- name: MarkReviewRunSuppressed :execrows
+UPDATE review_run SET status = 'suppressed', suppressed_at = ? WHERE id = ? AND status = 'complete' AND verdict = 'changes_requested' AND suppressed_at IS NULL
+`
+
+type MarkReviewRunSuppressedParams struct {
+	SuppressedAt sql.NullTime
+	ID           string
+}
+
+func (q *Queries) MarkReviewRunSuppressed(ctx context.Context, arg MarkReviewRunSuppressedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markReviewRunSuppressed, arg.SuppressedAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}

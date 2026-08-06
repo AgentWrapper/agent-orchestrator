@@ -53,6 +53,7 @@ type ReviewRun struct {
 	GithubReviewID string     `json:"githubReviewId"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
+	SuppressedAt   *time.Time `json:"suppressedAt,omitempty"`
 }
 
 // ReviewRunStatus is the lifecycle state of a single review pass.
@@ -60,11 +61,12 @@ type ReviewRunStatus string
 
 // Review run statuses.
 const (
-	ReviewRunRunning   ReviewRunStatus = "running"
-	ReviewRunComplete  ReviewRunStatus = "complete"
-	ReviewRunDelivered ReviewRunStatus = "delivered"
-	ReviewRunFailed    ReviewRunStatus = "failed"
-	ReviewRunCancelled ReviewRunStatus = "cancelled"
+	ReviewRunRunning    ReviewRunStatus = "running"
+	ReviewRunComplete   ReviewRunStatus = "complete"
+	ReviewRunDelivered  ReviewRunStatus = "delivered"
+	ReviewRunSuppressed ReviewRunStatus = "suppressed"
+	ReviewRunFailed     ReviewRunStatus = "failed"
+	ReviewRunCancelled  ReviewRunStatus = "cancelled"
 )
 
 // ReviewVerdict is the outcome a reviewer reports. The empty verdict marks a

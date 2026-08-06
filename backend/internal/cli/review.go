@@ -30,6 +30,7 @@ type reviewRun struct {
 	GithubReviewID string     `json:"githubReviewId"`
 	CreatedAt      time.Time  `json:"createdAt"`
 	DeliveredAt    *time.Time `json:"deliveredAt,omitempty"`
+	SuppressedAt   *time.Time `json:"suppressedAt,omitempty"`
 }
 
 type reviewState struct {

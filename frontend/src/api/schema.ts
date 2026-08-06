@@ -2036,6 +2036,8 @@ export interface components {
             reviewId: string;
             sessionId: string;
             status: string;
+            /** Format: date-time */
+            suppressedAt?: null | string;
             targetSha: string;
             verdict: string;
         };

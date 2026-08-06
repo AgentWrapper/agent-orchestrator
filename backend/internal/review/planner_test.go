@@ -25,6 +25,9 @@ func TestPlanStatuses(t *testing.T) {
 		{name: "changes requested current sha", pr: planPR("pr1", 1, "sha1"), runs: []domain.ReviewRun{
 			{ID: "run-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunComplete, Verdict: domain.VerdictChangesRequested, CreatedAt: now},
 		}, want: ReviewStateChangesRequested},
+		{name: "suppressed changes requested current sha", pr: planPR("pr1", 1, "sha1"), runs: []domain.ReviewRun{
+			{ID: "run-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunSuppressed, Verdict: domain.VerdictChangesRequested, CreatedAt: now},
+		}, want: ReviewStateChangesRequested},
 		{name: "running current sha", pr: planPR("pr1", 1, "sha1"), runs: []domain.ReviewRun{
 			{ID: "run-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning, CreatedAt: now},
 		}, want: ReviewStateRunning},
@@ -97,12 +100,13 @@ func TestPlanPreviousRunChoosesNewestQualifyingDifferentHead(t *testing.T) {
 	got := Plan([]domain.PullRequest{planPR("pr1", 1, "sha-current")}, []domain.ReviewRun{
 		{ID: "older", PRURL: "pr1", TargetSHA: "sha-old", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: now},
 		{ID: "newest-other", PRURL: "pr1", TargetSHA: "sha-newer", Status: domain.ReviewRunDelivered, Verdict: domain.VerdictChangesRequested, CreatedAt: now.Add(time.Second)},
+		{ID: "newest-suppressed", PRURL: "pr1", TargetSHA: "sha-suppressed", Status: domain.ReviewRunSuppressed, Verdict: domain.VerdictChangesRequested, CreatedAt: now.Add(1500 * time.Millisecond)},
 		{ID: "failed-other", PRURL: "pr1", TargetSHA: "sha-failed", Status: domain.ReviewRunFailed, Verdict: domain.VerdictApproved, CreatedAt: now.Add(2 * time.Second)},
 		{ID: "current", PRURL: "pr1", TargetSHA: "sha-current", Status: domain.ReviewRunComplete, Verdict: domain.VerdictApproved, CreatedAt: now.Add(3 * time.Second)},
 	})
 
-	if got[0].PreviousRun == nil || got[0].PreviousRun.ID != "newest-other" {
-		t.Fatalf("previous run = %+v, want newest qualifying different-head run", got[0].PreviousRun)
+	if got[0].PreviousRun == nil || got[0].PreviousRun.ID != "newest-suppressed" {
+		t.Fatalf("previous run = %+v, want newest suppressed run", got[0].PreviousRun)
 	}
 	if got[0].LatestRun == nil || got[0].LatestRun.ID != "current" || got[0].Status != ReviewStateUpToDate {
 		t.Fatalf("current-head state = %+v, want current approved run", got[0])

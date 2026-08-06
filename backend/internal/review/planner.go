@@ -94,7 +94,7 @@ func latestCompletedRunForOtherSHA(runs []domain.ReviewRun, prURL, targetSHA str
 		if run.PRURL != prURL || run.TargetSHA == "" || run.TargetSHA == targetSHA {
 			continue
 		}
-		if run.Status != domain.ReviewRunComplete && run.Status != domain.ReviewRunDelivered {
+		if run.Status != domain.ReviewRunComplete && run.Status != domain.ReviewRunDelivered && run.Status != domain.ReviewRunSuppressed {
 			continue
 		}
 		if run.Verdict != domain.VerdictApproved && run.Verdict != domain.VerdictChangesRequested {

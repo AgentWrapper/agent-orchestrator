@@ -81,6 +81,7 @@ var shippedMigrations = map[int64]string{
 	77: "0077_cancelled_conversation_activities.sql",
 	78: "0078_session_interface_transitions.sql",
 	79: "0079_session_interface_transition_delivery.sql",
+	80: "0080_review_run_suppressed_at.sql",
 }
 
 func TestSchemaRepairReplaysAutoInjectCDCTriggerAfterPinnedRepair(t *testing.T) {
