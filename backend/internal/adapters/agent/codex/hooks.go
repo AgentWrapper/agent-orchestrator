@@ -69,6 +69,7 @@ type codexHookSpec struct {
 var codexManagedHooks = []codexHookSpec{
 	{Event: "SessionStart", Command: codexHookCommandPrefix + "session-start"},
 	{Event: "UserPromptSubmit", Command: codexHookCommandPrefix + "user-prompt-submit"},
+	{Event: "PreToolUse", Command: codexHookCommandPrefix + "pre-tool-use"},
 	{Event: "PermissionRequest", Command: codexHookCommandPrefix + "permission-request"},
 	{Event: "Stop", Command: codexHookCommandPrefix + "stop"},
 }
@@ -76,6 +77,7 @@ var codexManagedHooks = []codexHookSpec{
 // appendSessionHookFlags adds AO's activity hooks to the argv as `-c`
 // session-flag config, one flag per managed event.
 func appendSessionHookFlags(cmd *[]string) {
+	*cmd = append(*cmd, "-c", "features.codex_hooks=true")
 	for _, spec := range codexManagedHooks {
 		flag := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s,timeout=%d}]}]`,
 			spec.Event, codexTOMLBasicString(spec.Command), codexHookTimeout)

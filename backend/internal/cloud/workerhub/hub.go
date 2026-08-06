@@ -13,13 +13,14 @@ const commandBufferSize = 256
 
 // Command is a live instruction sent to a connected cloud worker.
 type Command struct {
-	Type      string `json:"type"`
-	RequestID string `json:"requestId,omitempty"`
-	Action    string `json:"action,omitempty"`
-	Data      string `json:"data,omitempty"`
-	Sequence  int64  `json:"sequence,omitempty"`
-	Rows      uint16 `json:"rows,omitempty"`
-	Cols      uint16 `json:"cols,omitempty"`
+	Type         string `json:"type"`
+	RequestID    string `json:"requestId,omitempty"`
+	Action       string `json:"action,omitempty"`
+	Data         string `json:"data,omitempty"`
+	Sequence     int64  `json:"sequence,omitempty"`
+	Rows         uint16 `json:"rows,omitempty"`
+	Cols         uint16 `json:"cols,omitempty"`
+	CommandGuard *bool  `json:"commandGuard,omitempty"`
 }
 
 type connection struct {

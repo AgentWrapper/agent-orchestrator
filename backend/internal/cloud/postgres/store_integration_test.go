@@ -85,6 +85,21 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 		launchSpec.PendingPrompt != input.Prompt {
 		t.Fatalf("initial worker launch prompt = %#v", launchSpec)
 	}
+	if err := store.UpdateActiveTurnCommandGuard(
+		ctx,
+		account.ID,
+		first.Session.ID,
+		true,
+	); err != nil {
+		t.Fatalf("UpdateActiveTurnCommandGuard() error = %v", err)
+	}
+	launchSpec, err = store.WorkerLaunchSpec(ctx, account.ID, first.Session.ID)
+	if err != nil {
+		t.Fatalf("WorkerLaunchSpec(guarded prompt) error = %v", err)
+	}
+	if !launchSpec.CommandGuardEnabled {
+		t.Fatalf("guarded worker launch prompt = %#v", launchSpec)
+	}
 	if _, err := store.TransitionActiveTurn(
 		ctx,
 		account.ID,

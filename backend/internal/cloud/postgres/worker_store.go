@@ -19,6 +19,7 @@ type WorkerLaunchSpec struct {
 	ProjectConfig         []byte                `json:"projectConfig"`
 	PendingPromptSequence int64                 `json:"pendingPromptSequence,omitempty"`
 	PendingPrompt         string                `json:"pendingPrompt,omitempty"`
+	CommandGuardEnabled   bool                  `json:"commandGuardEnabled"`
 }
 
 // WorkerLaunchSpec returns launch data for an account-owned session.
@@ -49,7 +50,8 @@ func (s *Store) WorkerLaunchSpec(
 			project.default_branch,
 			project.config,
 			COALESCE(turn.user_message_sequence, 0),
-			COALESCE(prompt.payload->>'text', '')
+			COALESCE(prompt.payload->>'text', ''),
+			COALESCE(turn.command_guard_enabled, false)
 		FROM ao_sessions session
 		JOIN ao_projects project ON project.id = session.project_id
 		LEFT JOIN ao_turns turn
@@ -82,6 +84,7 @@ func (s *Store) WorkerLaunchSpec(
 		&spec.ProjectConfig,
 		&spec.PendingPromptSequence,
 		&spec.PendingPrompt,
+		&spec.CommandGuardEnabled,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WorkerLaunchSpec{}, ErrSessionNotFound
@@ -90,6 +93,30 @@ func (s *Store) WorkerLaunchSpec(
 		return WorkerLaunchSpec{}, fmt.Errorf("load worker launch spec: %w", err)
 	}
 	return spec, nil
+}
+
+// UpdateActiveTurnCommandGuard persists the guard mode that must apply while
+// the current prompt is executed, including after worker restarts.
+func (s *Store) UpdateActiveTurnCommandGuard(
+	ctx context.Context,
+	accountID clouddomain.AccountID,
+	sessionID clouddomain.SessionID,
+	enabled bool,
+) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE ao_turns
+		SET command_guard_enabled = $3, updated_at = now()
+		WHERE org_id = $1
+			AND session_id = $2
+			AND state IN ('queued', 'provisioning', 'running', 'cancel_requested')
+	`, accountID, sessionID, enabled)
+	if err != nil {
+		return fmt.Errorf("update active turn command guard: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrActiveTurnNotFound
+	}
+	return nil
 }
 
 // UpdateSessionActivity records the latest worker-reported activity state.

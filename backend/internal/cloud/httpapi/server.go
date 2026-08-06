@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	cloudauth "github.com/aoagents/agent-orchestrator/backend/internal/cloud/auth"
+	cloudcommandguard "github.com/aoagents/agent-orchestrator/backend/internal/cloud/commandguard"
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudevents "github.com/aoagents/agent-orchestrator/backend/internal/cloud/events"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
@@ -86,6 +87,7 @@ type store interface {
 	MarkWorkerSeen(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, string, int64, []string) error
 	WorkerLaunchSpec(context.Context, clouddomain.AccountID, clouddomain.SessionID) (cloudpostgres.WorkerLaunchSpec, error)
 	UpdateSessionActivity(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
+	UpdateActiveTurnCommandGuard(context.Context, clouddomain.AccountID, clouddomain.SessionID, bool) error
 	WorkerConnectionCurrent(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, int64) (bool, error)
 	LatestEventSequenceByType(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) (int64, error)
 	LatestPromptAcceptedSequence(context.Context, clouddomain.AccountID, clouddomain.SessionID) (int64, error)
@@ -1157,53 +1159,11 @@ func validProjectShareRole(role string) bool {
 }
 
 func containsDangerousShellCommand(text string) bool {
-	for _, line := range strings.Split(strings.ReplaceAll(text, "\r", "\n"), "\n") {
-		if dangerousShellCommandLine(line) {
-			return true
-		}
-	}
-	return false
+	return cloudcommandguard.Check(text) != nil
 }
 
 func dangerousShellCommandLine(line string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(line))
-	if normalized == "" {
-		return false
-	}
-	normalized = strings.TrimLeft(normalized, ";&|() ")
-	fields := strings.Fields(normalized)
-	for len(fields) > 0 {
-		switch fields[0] {
-		case "sudo", "command", "builtin", "env":
-			fields = fields[1:]
-		default:
-			goto parsedPrefix
-		}
-	}
-parsedPrefix:
-	if len(fields) == 0 || fields[0] != "rm" {
-		return false
-	}
-	recursive := false
-	force := false
-	for _, field := range fields[1:] {
-		if field == "--" {
-			break
-		}
-		if !strings.HasPrefix(field, "-") {
-			continue
-		}
-		if field == "-rf" || field == "-fr" {
-			return true
-		}
-		if strings.Contains(field, "r") || strings.Contains(field, "R") {
-			recursive = true
-		}
-		if strings.Contains(field, "f") {
-			force = true
-		}
-	}
-	return recursive && force
+	return cloudcommandguard.Check(line) != nil
 }
 
 func normalizedSharePolicySandboxType(value string) string {
@@ -2399,8 +2359,10 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, http.StatusBadRequest, "INVALID_MESSAGE", "text must be non-empty and at most 64 KiB.")
 		return
 	}
-	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok && shared.requiresDangerousCommandGuard(session) {
-		if containsDangerousShellCommand(input.Text) {
+	commandGuardEnabled := false
+	if shared, ok := sharedProjectAccessFromContext(r.Context()); ok {
+		commandGuardEnabled = shared.requiresDangerousCommandGuard(session)
+		if commandGuardEnabled && containsDangerousShellCommand(input.Text) {
 			writeError(w, r, http.StatusForbidden, "COMMAND_NOT_PERMITTED", "Command guard blocked that command.")
 			return
 		}
@@ -2424,14 +2386,24 @@ func (s *Server) sendMessage(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, r, "append cloud message", err)
 		return
 	}
+	if err := s.store.UpdateActiveTurnCommandGuard(
+		r.Context(),
+		account.ID,
+		session.ID,
+		commandGuardEnabled,
+	); err != nil && !errors.Is(err, cloudpostgres.ErrActiveTurnNotFound) {
+		s.internalError(w, r, "persist cloud message command guard", err)
+		return
+	}
 	if err := s.wakeSessionForMessage(r.Context(), account.ID, session.ID); err != nil {
 		s.internalError(w, r, "wake cloud session for message", err)
 		return
 	}
 	command := cloudworkerhub.Command{
-		Type:     "prompt",
-		Data:     base64.StdEncoding.EncodeToString([]byte(input.Text)),
-		Sequence: event.Sequence,
+		Type:         "prompt",
+		Data:         base64.StdEncoding.EncodeToString([]byte(input.Text)),
+		Sequence:     event.Sequence,
+		CommandGuard: &commandGuardEnabled,
 	}
 	if err := s.workerHub.Send(session.ID, command); err != nil {
 		writeError(w, r, http.StatusServiceUnavailable, "WORKER_BACKPRESSURE", "The message was saved but worker delivery is temporarily unavailable.")
@@ -4628,7 +4600,9 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	live := make(chan clouddomain.Event, 1024)
 	unsubscribe := s.events.Subscribe(ticket.AccountID, ticket.SessionID, func(event clouddomain.Event) {
-		if event.Type != terminalOutputEvent(kind) && event.Type != "worker.connected" {
+		if event.Type != terminalOutputEvent(kind) &&
+			event.Type != "worker.connected" &&
+			event.Type != "agent.command_guard_blocked" {
 			return
 		}
 		select {
@@ -4666,6 +4640,10 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 		for _, event := range replayed {
 			if event.Type == terminalOutputEvent(kind) {
 				if err := writeTerminalEvent(ctx, socket, event, &sent); err != nil {
+					return
+				}
+			} else if event.Type == "agent.command_guard_blocked" {
+				if err := writeCommandGuardEvent(ctx, socket, event, &sent); err != nil {
 					return
 				}
 			} else if event.Sequence > sent {
@@ -4724,6 +4702,10 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				sent = event.Sequence
+			} else if event.Type == "agent.command_guard_blocked" {
+				if err := writeCommandGuardEvent(ctx, socket, event, &sent); err != nil {
+					return
+				}
 			} else {
 				if err := writeTerminalEvent(ctx, socket, event, &sent); err != nil {
 					return
@@ -4767,6 +4749,9 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 					})
 					continue
 				}
+			}
+			if kind == "agent" && workerCommand.Type == "input" {
+				workerCommand.CommandGuard = &blockDangerousInput
 			}
 			if kind == "workspace" {
 				workerCommand.Type = "workspace_terminal_" + workerCommand.Type
@@ -4867,6 +4852,36 @@ func writeTerminalEvent(
 	if err := writeTerminalMessage(ctx, socket, terminalServerMessage{
 		Type:     "output",
 		Data:     payload.Data,
+		Sequence: event.Sequence,
+	}); err != nil {
+		return err
+	}
+	*sent = event.Sequence
+	return nil
+}
+
+func writeCommandGuardEvent(
+	ctx context.Context,
+	socket *websocket.Conn,
+	event clouddomain.Event,
+	sent *int64,
+) error {
+	if event.Sequence <= *sent {
+		return nil
+	}
+	var payload struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return err
+	}
+	message := strings.TrimSpace(payload.Message)
+	if message == "" {
+		message = "Command guard blocked a destructive command."
+	}
+	if err := writeTerminalMessage(ctx, socket, terminalServerMessage{
+		Type:     "error",
+		Message:  message,
 		Sequence: event.Sequence,
 	}); err != nil {
 		return err

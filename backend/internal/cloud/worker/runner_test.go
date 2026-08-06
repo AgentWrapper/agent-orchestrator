@@ -22,12 +22,47 @@ import (
 	"github.com/coder/websocket"
 	"github.com/creack/pty"
 
+	cloudcommandguard "github.com/aoagents/agent-orchestrator/backend/internal/cloud/commandguard"
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudpostgres "github.com/aoagents/agent-orchestrator/backend/internal/cloud/postgres"
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 	shareddomain "github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestApplyCommandGuardTracksPromptOwnerPolicy(t *testing.T) {
+	dataDir := t.TempDir()
+	runner := &Runner{dataDir: dataDir}
+	enabled := true
+	if err := runner.applyCommandGuard(cloudworkerhub.Command{
+		Type:         "input",
+		CommandGuard: &enabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !cloudcommandguard.Enabled(dataDir) {
+		t.Fatal("command guard was not enabled")
+	}
+	disabled := false
+	if err := runner.applyCommandGuard(cloudworkerhub.Command{
+		Type:         "input",
+		CommandGuard: &disabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !cloudcommandguard.Enabled(dataDir) {
+		t.Fatal("unguarded terminal input disabled an active guarded turn")
+	}
+	if err := runner.applyCommandGuard(cloudworkerhub.Command{
+		Type:         "prompt",
+		CommandGuard: &disabled,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cloudcommandguard.Enabled(dataDir) {
+		t.Fatal("command guard was not disabled")
+	}
+}
 
 func TestPrepareClaudeCloudExperienceSkipsFirstRunPrompts(t *testing.T) {
 	home := t.TempDir()

@@ -2,7 +2,7 @@
 
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { CloudAPI } from "@/lib/cloud-api";
 import {
@@ -30,6 +30,13 @@ export function CloudTerminal({
   const [connection, setConnection] =
     useState<CloudTerminalConnectionState>("connecting");
   const [notice, setNotice] = useState<string | null>(null);
+  const commandGuardNotice = notice?.toLowerCase().includes("command guard");
+
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(null), 5_000);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -93,7 +100,6 @@ export function CloudTerminal({
       } else if (event.type === "notice") {
         setNotice(event.message);
       } else {
-        setNotice(null);
         terminal.write(event.data);
       }
     });
@@ -149,8 +155,12 @@ export function CloudTerminal({
       ) : null}
       {notice ? (
         <div
-          className="absolute inset-x-3 bottom-3 z-20 rounded border border-amber-400/30 bg-[#1a1710]/95 px-3 py-2 text-xs text-amber-100 shadow-lg"
-          role="status"
+          className={`absolute bottom-3 left-1/2 z-20 max-w-[calc(100%-1.5rem)] -translate-x-1/2 rounded-md border px-3 py-2 text-xs shadow-lg ${
+            commandGuardNotice
+              ? "border-red-400/30 bg-[#211113]/95 text-red-100"
+              : "border-amber-400/30 bg-[#1a1710]/95 text-amber-100"
+          }`}
+          role={commandGuardNotice ? "alert" : "status"}
         >
           {notice}
         </div>

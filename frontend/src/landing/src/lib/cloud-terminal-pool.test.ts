@@ -75,7 +75,11 @@ it("sends resize but not input for a read-only shared terminal", async () => {
     "session-one",
   );
   const events: string[] = [];
-  connection.subscribe((event) => events.push(event.type));
+  const notices: string[] = [];
+  connection.subscribe((event) => {
+    events.push(event.type);
+    if (event.type === "notice") notices.push(event.message);
+  });
   connection.resize(40, 120);
   await vi.waitFor(() => expect(FakeWebSocket.instance).toBeDefined());
 
@@ -89,9 +93,15 @@ it("sends resize but not input for a read-only shared terminal", async () => {
     type: "replay_complete",
     sequence: 1,
   });
+  FakeWebSocket.instance.message({
+    type: "error",
+    message: "Command guard blocked a destructive command.",
+    sequence: 2,
+  });
   connection.sendInput("x");
 
   expect(events).toContain("reset");
+  expect(notices).toContain("Command guard blocked a destructive command.");
   expect(FakeWebSocket.instance.send).toHaveBeenCalledTimes(3);
   expect(FakeWebSocket.instance.send).toHaveBeenNthCalledWith(
     1,

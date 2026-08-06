@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	cloudagentcli "github.com/aoagents/agent-orchestrator/backend/internal/cloud/agentcli"
+	cloudcommandguard "github.com/aoagents/agent-orchestrator/backend/internal/cloud/commandguard"
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
 )
 
@@ -36,6 +37,9 @@ func run() int {
 		client.SetToken(token)
 		if err := cloudworker.ForwardHook(ctx, client, os.Args[2], os.Args[3], os.Stdin); err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)
+			if errors.Is(err, cloudcommandguard.ErrBlocked) {
+				return 2
+			}
 			return 1
 		}
 		return 0

@@ -34,8 +34,10 @@ func canonicalTempDir(t *testing.T) string {
 // these values as TOML.
 func sessionHookFlags() []string {
 	return []string{
+		"-c", "features.codex_hooks=true",
 		"-c", `hooks.SessionStart=[{hooks=[{type="command",command="ao hooks codex session-start",timeout=5}]}]`,
 		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command="ao hooks codex user-prompt-submit",timeout=5}]}]`,
+		"-c", `hooks.PreToolUse=[{hooks=[{type="command",command="ao hooks codex pre-tool-use",timeout=5}]}]`,
 		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command="ao hooks codex permission-request",timeout=5}]}]`,
 		"-c", `hooks.Stop=[{hooks=[{type="command",command="ao hooks codex stop",timeout=5}]}]`,
 	}

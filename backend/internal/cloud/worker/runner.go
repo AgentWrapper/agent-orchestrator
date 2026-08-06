@@ -19,6 +19,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	cloudcommandguard "github.com/aoagents/agent-orchestrator/backend/internal/cloud/commandguard"
 	clouddomain "github.com/aoagents/agent-orchestrator/backend/internal/cloud/domain"
 	cloudlocalgh "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm/localgh"
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
@@ -219,6 +220,12 @@ func NewRunner(client *Client, bootstrap BootstrapResponse, workspaceDir, dataDi
 func (r *Runner) Run(ctx context.Context) error {
 	if err := os.MkdirAll(r.dataDir, 0o700); err != nil {
 		return fmt.Errorf("create worker data dir: %w", err)
+	}
+	if err := cloudcommandguard.SetEnabled(
+		r.dataDir,
+		r.bootstrap.Launch.CommandGuardEnabled,
+	); err != nil {
+		return fmt.Errorf("initialize command guard: %w", err)
 	}
 	if err := os.Setenv("AO_DATA_DIR", r.dataDir); err != nil {
 		return fmt.Errorf("set worker data dir: %w", err)
@@ -568,6 +575,9 @@ func (r *Runner) commandLoop(
 		if command.Sequence > 0 && command.Sequence <= highestPrompt.Load() {
 			return nil
 		}
+		if err := r.applyCommandGuard(command); err != nil {
+			return fmt.Errorf("update prompt command guard: %w", err)
+		}
 		decoded, err := base64.StdEncoding.DecodeString(command.Data)
 		if err != nil {
 			return fmt.Errorf("decode prompt: %w", err)
@@ -613,6 +623,9 @@ func (r *Runner) commandLoop(
 				case "input":
 					if !terminalInputAllowed(agentReady) {
 						return nil
+					}
+					if err := r.applyCommandGuard(command); err != nil {
+						return fmt.Errorf("update terminal command guard: %w", err)
 					}
 					decoded, err := base64.StdEncoding.DecodeString(command.Data)
 					if err != nil {
@@ -683,6 +696,19 @@ func (r *Runner) commandLoop(
 			backoff *= 2
 		}
 	}
+}
+
+func (r *Runner) applyCommandGuard(command cloudworkerhub.Command) error {
+	if command.CommandGuard == nil {
+		return nil
+	}
+	// Terminal connections can overlap. A trusted user's keystroke must not
+	// disable a guarded collaborator's active turn; only a new durable prompt
+	// may lower the session guard.
+	if command.Type == "input" && !*command.CommandGuard {
+		return nil
+	}
+	return cloudcommandguard.SetEnabled(r.dataDir, *command.CommandGuard)
 }
 
 func terminalInputAllowed(agentReady bool) bool {
