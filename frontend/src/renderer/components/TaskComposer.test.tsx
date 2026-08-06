@@ -78,6 +78,12 @@ describe("TaskComposer", () => {
 		expect(h.post).toHaveBeenCalledWith(
 			"/api/v1/orchestrators/delegate",
 			expect.objectContaining({
+				body: expect.not.objectContaining({ attachments: expect.anything() }),
+			}),
+		);
+		expect(h.post).toHaveBeenCalledWith(
+			"/api/v1/orchestrators/delegate",
+			expect.objectContaining({
 				body: expect.objectContaining({ projectId: "proj-1", brief: "Do the thing" }),
 			}),
 		);
@@ -85,6 +91,55 @@ describe("TaskComposer", () => {
 		await act(async () => resolveCreate({ data: { workerId: "sess-1" } }));
 		await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sess-1"));
 		await waitFor(() => expect(onSubmittingChange).toHaveBeenLastCalledWith(false));
+	});
+
+	it("attaches a selected image and sends it in the delegate body", async () => {
+		h.post.mockResolvedValueOnce({ data: { workerId: "sess-1" } });
+
+		const { container } = render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		const png = new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" });
+		fireEvent.change(input, { target: { files: [png] } });
+
+		expect(await screen.findByText("Image 1")).toBeInTheDocument();
+
+		fireEvent.change(task(), { target: { value: "Use the screenshot" } });
+		fireEvent.click(screen.getByText("Start task"));
+
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		const body = h.post.mock.calls[0][1].body as { attachments?: Array<{ mimeType: string; data: string }> };
+		expect(body.attachments).toHaveLength(1);
+		expect(body.attachments?.[0].mimeType).toBe("image/png");
+		expect(body.attachments?.[0].data.length).toBeGreaterThan(0);
+	});
+
+	it("removes a selected image before submitting", async () => {
+		h.post.mockResolvedValueOnce({ data: { workerId: "sess-1" } });
+
+		const { container } = render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		const png = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
+		fireEvent.change(input, { target: { files: [png] } });
+
+		expect(await screen.findByText("Image 1")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Remove image 1" }));
+		await waitFor(() => expect(screen.queryByText("Image 1")).not.toBeInTheDocument());
+
+		fireEvent.change(task(), { target: { value: "No attachment now" } });
+		fireEvent.click(screen.getByText("Start task"));
+
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		expect(h.post.mock.calls[0][1].body).not.toHaveProperty("attachments");
 	});
 
 	it("clears busy state when a create rejects", async () => {

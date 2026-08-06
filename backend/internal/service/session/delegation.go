@@ -20,6 +20,7 @@ type DelegateTaskInput struct {
 	RequestedAgent domain.AgentHarness
 	Model          string
 	RequestedMode  domain.SessionMode
+	Attachments    []ports.SpawnAttachment
 }
 
 // DelegateTaskOutcome identifies the spawned worker and, when present, the
@@ -54,6 +55,7 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 		DisplayName:   delegatedTaskDisplayName(in.Brief),
 		AgentConfig:   ports.AgentConfig{Model: strings.TrimSpace(in.Model)},
 		RequestedMode: in.RequestedMode,
+		Attachments:   in.Attachments,
 	})
 	if err != nil {
 		return DelegateTaskOutcome{}, toAPIError(err)

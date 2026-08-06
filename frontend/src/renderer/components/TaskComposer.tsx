@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
+import { Loader2, Paperclip, X } from "lucide-react";
+import {
+	type ClipboardEvent,
+	type DragEvent,
+	type FormEvent,
+	useCallback,
+	useEffect,
+	useId,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
 import { Label } from "./ui/label";
@@ -9,6 +18,7 @@ import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { type ImageAttachmentPayload, useImageAttachments } from "../hooks/useImageAttachments";
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
@@ -18,6 +28,7 @@ import {
 } from "../hooks/useAgentModelsQuery";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
+import { cn } from "../lib/utils";
 
 type Project = components["schemas"]["Project"];
 type DelegateAgent = components["schemas"]["DelegateTaskRequest"]["agent"];
@@ -28,6 +39,7 @@ type CreateTaskInput = {
 	agent?: DelegateAgent;
 	model?: string;
 	mode?: "tui";
+	attachments?: ImageAttachmentPayload[];
 };
 
 const CHAT_PREFLIGHT_CODES = new Set([
@@ -72,6 +84,7 @@ export function TaskComposer({
 	const promptId = useId();
 	const modelId = useId();
 	const agentId = useId();
+	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("");
 	const [mode, setMode] = useState("");
@@ -81,6 +94,15 @@ export function TaskComposer({
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
 	const [canCreateAsTUI, setCanCreateAsTUI] = useState(false);
+	const [isDragging, setIsDragging] = useState(false);
+	const {
+		attachments,
+		error: attachmentError,
+		addFiles,
+		remove: removeAttachment,
+		clear: clearAttachments,
+		toPayload,
+	} = useImageAttachments();
 	const createTask = useCallback(
 		async (input: CreateTaskInput): Promise<string> => {
 			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
@@ -92,6 +114,7 @@ export function TaskComposer({
 						agent: input.agent,
 						model: input.model,
 						...(input.mode ? { mode: input.mode } : {}),
+						...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
 					},
 				});
 				if (error) {
@@ -149,7 +172,7 @@ export function TaskComposer({
 		}
 	}, [defaultModelForSelectedAgent, defaultModeForSelectedAgent, modelTouched]);
 
-	const isDirty = prompt.trim() !== "" || modelTouched;
+	const isDirty = prompt.trim() !== "" || modelTouched || attachments.length > 0;
 	useEffect(() => {
 		onDirtyChange?.(isDirty);
 	}, [isDirty, onDirtyChange]);
@@ -159,6 +182,7 @@ export function TaskComposer({
 		onSubmittingChange?.(isSubmitting);
 	}, [isSubmitting, onSubmittingChange]);
 	useEffect(() => () => onSubmittingChange?.(false), [onSubmittingChange]);
+	useEffect(() => () => clearAttachments(), [clearAttachments]);
 
 	const submitTask = async (interfaceMode?: "tui") => {
 		if (!projectId || isSubmitting) return;
@@ -185,6 +209,7 @@ export function TaskComposer({
 				agent: agentTouched && agent ? (agent as CreateTaskInput["agent"]) : undefined,
 				model: requestedModel,
 				mode: interfaceMode,
+				attachments: attachments.length > 0 ? toPayload() : undefined,
 			});
 			onCreated(sessionId);
 		} catch (err) {
@@ -204,6 +229,27 @@ export function TaskComposer({
 		void submitTask();
 	};
 
+	const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+		const files = Array.from(event.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
+		if (files.length === 0) return;
+		event.preventDefault();
+		void addFiles(files);
+	};
+
+	const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+		event.preventDefault();
+		setIsDragging(false);
+		const files = Array.from(event.dataTransfer?.files ?? []).filter((file) => file.type.startsWith("image/"));
+		if (files.length > 0) void addFiles(files);
+	};
+
+	const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+		if (Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === "file")) {
+			event.preventDefault();
+			setIsDragging(true);
+		}
+	};
+
 	return (
 		<form onSubmit={submit} className="space-y-4 p-(--size-modal-padding)">
 			<div className="space-y-1.5">
@@ -211,8 +257,24 @@ export function TaskComposer({
 					<label className="text-xs font-medium text-muted-foreground" htmlFor={promptId}>
 						{t("newTask.task")}
 					</label>
+					<button
+						type="button"
+						className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground"
+						aria-label="Attach image"
+						onClick={() => fileInputRef.current?.click()}
+					>
+						<Paperclip className="size-icon-sm" aria-hidden="true" />
+					</button>
 				</div>
-				<div className="rounded-md border border-border transition">
+				<div
+					className={cn(
+						"rounded-md border border-border transition",
+						isDragging && "border-accent ring-2 ring-accent-weak",
+					)}
+					onDrop={handleDrop}
+					onDragOver={handleDragOver}
+					onDragLeave={() => setIsDragging(false)}
+				>
 					<textarea
 						id={promptId}
 						autoFocus={autoFocusTitle}
@@ -220,6 +282,7 @@ export function TaskComposer({
 						placeholder={t("newTask.taskPlaceholder")}
 						value={prompt}
 						onChange={(event) => setPrompt(event.target.value)}
+						onPaste={handlePaste}
 						onKeyDown={(event) => {
 							if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
 								event.preventDefault();
@@ -227,7 +290,44 @@ export function TaskComposer({
 							}
 						}}
 					/>
+					{attachments.length > 0 && (
+						<ul className="grid max-h-40 grid-cols-2 gap-2 overflow-y-auto border-t border-border p-2 sm:grid-cols-3">
+							{attachments.map((attachment, index) => (
+								<li
+									key={attachment.id}
+									className="flex items-center gap-2 rounded-md border border-border bg-surface p-1 text-xs text-foreground"
+								>
+									<img
+										src={attachment.dataUrl}
+										alt={`Image ${index + 1}`}
+										className="size-7 shrink-0 rounded object-cover"
+									/>
+									<span className="min-w-0 flex-1 truncate font-medium">Image {index + 1}</span>
+									<button
+										type="button"
+										className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition hover:bg-border hover:text-foreground"
+										aria-label={`Remove image ${index + 1}`}
+										onClick={() => removeAttachment(attachment.id)}
+									>
+										<X className="size-icon-sm" aria-hidden="true" />
+									</button>
+								</li>
+							))}
+						</ul>
+					)}
 				</div>
+				<input
+					ref={fileInputRef}
+					type="file"
+					accept="image/*"
+					multiple
+					className="hidden"
+					onChange={(event) => {
+						if (event.target.files) void addFiles(event.target.files);
+						event.target.value = "";
+					}}
+				/>
+				{attachmentError && <p className="text-caption text-destructive">{attachmentError}</p>}
 				<p className="text-caption text-muted-foreground">{t("newTask.enterHint")}</p>
 			</div>
 

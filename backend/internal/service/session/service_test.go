@@ -1991,6 +1991,40 @@ func TestSpawnOrchestratorVerifiesReplacementHarness(t *testing.T) {
 	}
 }
 
+func TestDelegateTaskPassesAttachmentsToSpawnConfig(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	fc := &fakeCommander{}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+
+	_, err := svc.DelegateTask(context.Background(), DelegateTaskInput{
+		ProjectID:      "mer",
+		Brief:          "Use the attached image.",
+		RequestedAgent: domain.HarnessCodex,
+		Attachments: []ports.SpawnAttachment{
+			{Ext: ".png", Data: []byte{1, 2, 3}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("DelegateTask: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatal("DelegateTask did not call Spawn")
+	}
+	if fc.spawnedCfg.ProjectID != "mer" || fc.spawnedCfg.Kind != domain.KindWorker {
+		t.Fatalf("spawned cfg identity = %#v", fc.spawnedCfg)
+	}
+	if fc.spawnedCfg.Harness != domain.HarnessCodex || fc.spawnedCfg.Prompt != "Use the attached image." {
+		t.Fatalf("spawned cfg fields = %#v", fc.spawnedCfg)
+	}
+	if len(fc.spawnedCfg.Attachments) != 1 {
+		t.Fatalf("attachments = %#v, want one", fc.spawnedCfg.Attachments)
+	}
+	if got := fc.spawnedCfg.Attachments[0]; got.Ext != ".png" || string(got.Data) != "\x01\x02\x03" {
+		t.Fatalf("attachment = %#v, want decoded png", got)
+	}
+}
+
 type fakePRClaimer struct {
 	out errorFreeClaimOutcome
 	err error

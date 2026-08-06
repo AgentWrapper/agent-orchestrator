@@ -207,6 +207,9 @@ describe("normalizeApiOperation", () => {
 		// These match an exact OpenAPI template, so the trailing segment must not
 		// be collapsed to :id (which would break aggregation and hide the route).
 		expect(normalizeApiOperation("POST", "/api/v1/notifications/read-all")).toBe("POST /api/v1/notifications/read-all");
+		expect(normalizeApiOperation("POST", "/api/v1/orchestrators/delegate")).toBe(
+			"POST /api/v1/orchestrators/delegate",
+		);
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/cleanup")).toBe("POST /api/v1/sessions/cleanup");
 	});
 
