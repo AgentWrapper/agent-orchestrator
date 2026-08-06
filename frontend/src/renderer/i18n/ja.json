@@ -224,7 +224,7 @@
 	"inspector.reviewRequestFailed": "レビュー要求に失敗しました",
 	"inspector.reviewAlreadyRanForCommit": "このコミットはすでにレビュー済みです。別のレビューを実行するには新しいコミットをプッシュしてください。",
 	"inspector.reviewAlreadyRanShort": "レビュー済み",
-	"inspector.reviewBySource.ao": "AO",
+	"inspector.reviewBySource.ao": "AO レビュー",
 	"inspector.reviewBySource.github": "GitHub 上",
 	"inspector.unresolvedCount": "未解決 {{count}} 件",
 	"inspector.selectReviewerAgent": "レビュー担当エージェントを選択",

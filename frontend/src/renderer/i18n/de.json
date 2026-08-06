@@ -224,7 +224,7 @@
 	"inspector.reviewRequestFailed": "Review-Anfrage fehlgeschlagen",
 	"inspector.reviewAlreadyRanForCommit": "Dieser Commit wurde bereits reviewt. Pushen Sie einen neuen Commit, um ein weiteres Review auszuführen.",
 	"inspector.reviewAlreadyRanShort": "Bereits geprüft",
-	"inspector.reviewBySource.ao": "AO",
+	"inspector.reviewBySource.ao": "AO-Review",
 	"inspector.reviewBySource.github": "Auf GitHub",
 	"inspector.unresolvedCount": "{{count}} offen",
 	"inspector.selectReviewerAgent": "Reviewer-Agent auswählen",

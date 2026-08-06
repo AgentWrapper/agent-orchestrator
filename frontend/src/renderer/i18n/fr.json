@@ -226,7 +226,7 @@
 	"inspector.reviewRequestFailed": "Échec de la demande de revue",
 	"inspector.reviewAlreadyRanForCommit": "Ce commit a déjà été relu. Poussez un nouveau commit pour lancer une autre revue.",
 	"inspector.reviewAlreadyRanShort": "Déjà relu",
-	"inspector.reviewBySource.ao": "AO",
+	"inspector.reviewBySource.ao": "Revue AO",
 	"inspector.reviewBySource.github": "Sur GitHub",
 	"inspector.unresolvedCount": "{{count}} non résolus",
 	"inspector.selectReviewerAgent": "Sélectionner l'agent de revue",

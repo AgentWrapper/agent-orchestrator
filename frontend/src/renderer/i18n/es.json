@@ -226,7 +226,7 @@
 	"inspector.reviewRequestFailed": "Falló la solicitud de revisión",
 	"inspector.reviewAlreadyRanForCommit": "Este commit ya fue revisado. Sube un nuevo commit para ejecutar otra revisión.",
 	"inspector.reviewAlreadyRanShort": "Ya revisado",
-	"inspector.reviewBySource.ao": "AO",
+	"inspector.reviewBySource.ao": "Revisión de AO",
 	"inspector.reviewBySource.github": "En GitHub",
 	"inspector.unresolvedCount": "{{count}} sin resolver",
 	"inspector.selectReviewerAgent": "Seleccionar agente revisor",

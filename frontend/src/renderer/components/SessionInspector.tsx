@@ -1329,7 +1329,7 @@ function MergedReviewsSection({
 							verdict={ao ? reviewVerdict(ao) : undefined}
 						>
 							{ao ? (
-								<div className="flex min-w-0 flex-col gap-1.5">
+								<div className="flex min-w-0 flex-col gap-2.5">
 									{/* Names the side, not the agent. A PR's passes can come from
 									    different reviewers, so one harness on the group caption is
 									    wrong as often as it is right, and every run row below already
@@ -1339,7 +1339,7 @@ function MergedReviewsSection({
 								</div>
 							) : null}
 							{entries.length > 0 ? (
-								<div className="flex min-w-0 flex-col gap-1.5">
+								<div className="flex min-w-0 flex-col gap-2.5">
 									<ReviewSourceLabel>{t("inspector.reviewBySource.github")}</ReviewSourceLabel>
 									{entries.map((entry) => (
 										<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
@@ -1354,10 +1354,23 @@ function MergedReviewsSection({
 	);
 }
 
-/** Names which side of the loop a group of reviews came from. */
+/**
+ * Heading for one source's reviews inside a PR row.
+ *
+ * A bare caption sat on the same visual plane as the rows beneath it, so it
+ * read as one more line of text and the two groups ran together. It now takes
+ * the Section heading's own weight and colour, and a rule carries it to the
+ * edge — enough to bracket the group without spending the vertical space a
+ * real section header would cost inside an already-nested row.
+ */
 function ReviewSourceLabel({ children }: { children: ReactNode }) {
 	return (
-		<span className="truncate font-mono text-micro uppercase tracking-[0.06em] text-passive">{children}</span>
+		<div className="flex min-w-0 items-center gap-2">
+			<span className="shrink-0 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+				{children}
+			</span>
+			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
+		</div>
 	);
 }
 
