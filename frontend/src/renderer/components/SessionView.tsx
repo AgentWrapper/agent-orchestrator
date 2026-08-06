@@ -208,10 +208,8 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		);
 	}, [shellTerminals]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
-	// Terminal orchestrators retain their established terminal-only layout. Chat
-	// orchestrators still need the project inspector: Browser and Files are the
-	// structured flow's escape hatches, not terminal-only affordances.
-	const hasInspector = Boolean(session && (!isOrchestrator || session.mode === "chat"));
+	// Orchestrators get the full workspace width; only workers need the inspector rail.
+	const hasInspector = Boolean(session && !isOrchestrator);
 	const showChatSurface = session?.mode === "chat" && terminalTarget.kind === "worker";
 	const activeInterfaceTransition = interfaceTransitionIsActive(interfaceSwitch.transition);
 	const chatControllerTransitioning = Boolean(
