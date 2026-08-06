@@ -11,15 +11,63 @@ import type {
 import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
+	BrowserAnnotationContext,
 	BrowserAnnotationModeInput,
 	BrowserAnnotationPageCancelPayload,
 	BrowserAnnotationPageSubmitPayload,
+	BrowserAnnotationSelection,
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
 import type { KeybindingOverrides } from "../shared/shortcuts";
 import type { AgentBrowserRuntime } from "./agent-browser-runtime";
 import type { AgentBrowserTarget, AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
+
+function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
+	if (typeof value !== "object" || value === null) return false;
+	const context = value as {
+		url?: unknown;
+		tag?: unknown;
+		classes?: unknown;
+		selector?: unknown;
+		rect?: unknown;
+		nearbyText?: unknown;
+		computedStyle?: unknown;
+	};
+	if (typeof context.url !== "string") return false;
+	if (typeof context.tag !== "string") return false;
+	if (!Array.isArray(context.classes)) return false;
+	if (typeof context.selector !== "string") return false;
+	if (typeof context.rect !== "object" || context.rect === null) return false;
+	const rect = context.rect as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
+	if (
+		typeof rect.x !== "number" ||
+		typeof rect.y !== "number" ||
+		typeof rect.width !== "number" ||
+		typeof rect.height !== "number"
+	) {
+		return false;
+	}
+	if (!Array.isArray(context.nearbyText)) return false;
+	if (typeof context.computedStyle !== "object" || context.computedStyle === null) return false;
+	return true;
+}
+
+function isValidAnnotationSelection(value: unknown): value is BrowserAnnotationSelection {
+	if (typeof value !== "object" || value === null) return false;
+	const selection = value as { kind?: unknown; context?: unknown; contexts?: unknown };
+	if (selection.kind === "element") {
+		return isValidAnnotationContext(selection.context);
+	}
+	if (selection.kind === "elements") {
+		return (
+			Array.isArray(selection.contexts) &&
+			selection.contexts.length > 0 &&
+			selection.contexts.every(isValidAnnotationContext)
+		);
+	}
+	return false;
+}
 
 export type BrowserRect = Pick<Rectangle, "x" | "y" | "width" | "height">;
 
@@ -172,6 +220,7 @@ export type BrowserViewHostOptions = {
 	getKeybindingOverrides?: () => KeybindingOverrides;
 	isKeybindingRecording?: () => boolean;
 	agentBrowserRuntime?: AgentBrowserRuntime;
+	isCloseShellTerminalShortcutEnabled?: () => boolean;
 };
 
 export type BrowserViewHost = {
@@ -468,6 +517,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			true,
 			options.getKeybindingOverrides,
 			options.isKeybindingRecording,
+			(id) => id !== "close-shell-terminal" || options.isCloseShellTerminalShortcutEnabled?.() !== false,
 			(id) => {
 				if (id !== "toggle-browser-devtools") return;
 				lastFocusedViewId = session.viewId;
@@ -646,6 +696,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				false,
 				options.getKeybindingOverrides,
 				options.isKeybindingRecording,
+				(id) => id !== "close-shell-terminal" || options.isCloseShellTerminalShortcutEnabled?.() !== false,
 				(id) => {
 					if (id !== "toggle-browser-devtools") return;
 					void devtoolsAction(session, "toggle")
@@ -869,6 +920,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const entry = activeEntry(session);
 		entry.annotationEnabled = input.enabled;
 		entry.view.webContents.send("browser:annotation:setMode", { enabled: input.enabled });
+		if (input.enabled) entry.view.webContents.focus();
 	};
 
 	const forwardAnnotationSubmit = (
@@ -882,8 +934,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			!entry ||
 			!payload ||
 			typeof payload.instruction !== "string" ||
-			typeof payload.context !== "object" ||
-			payload.context === null
+			!isValidAnnotationSelection(payload.selection)
 		) {
 			return;
 		}
@@ -891,7 +942,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		const forwarded: BrowserAnnotationSubmitPayload = {
 			viewId,
 			instruction: payload.instruction,
-			context: payload.context,
+			selection: payload.selection,
 		};
 		options.mainWindow.webContents.send("browser:annotation:submitted", forwarded);
 	};

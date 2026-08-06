@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SessionPRSummary } from "../hooks/useSessionScmSummary";
 import { appI18n } from "../i18n";
 import { useLocaleStore } from "../stores/locale-store";
-import { PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
+import { PRCardStatusSummary, PRSummaryMeta, PRSummaryParts } from "./PRSummaryDisplay";
 
 const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary => ({
 	url: "https://github.com/acme/repo/pull/7",
@@ -31,6 +31,81 @@ const summary = (overrides: Partial<SessionPRSummary> = {}): SessionPRSummary =>
 });
 
 describe("PRSummaryParts", () => {
+	it("links GitHub authors and successful checks to their provider pages", () => {
+		render(
+			<>
+				<PRSummaryMeta pr={summary()} />
+				<PRCardStatusSummary pr={summary()} />
+			</>,
+		);
+
+		expect(screen.getByRole("link", { name: "@ada" })).toHaveAttribute("href", "https://github.com/ada");
+		expect(screen.getByRole("link", { name: "Checks passing" })).toHaveAttribute(
+			"href",
+			"https://github.com/acme/repo/pull/7/checks",
+		);
+	});
+
+	it("keeps running checks visible and pulsing beneath a higher-priority review blocker", () => {
+		const { container } = render(
+			<PRCardStatusSummary
+				pr={summary({
+					ci: { state: "pending", failingChecks: [] },
+					review: { decision: "review_required", hasUnresolvedHumanComments: false, unresolvedBy: [] },
+					mergeability: {
+						state: "blocked",
+						reasons: ["review_required"],
+						prUrl: "https://github.com/acme/repo/pull/7",
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.getByText("Review required")).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: "Checks running" })).toHaveAttribute(
+			"href",
+			"https://github.com/acme/repo/pull/7/checks",
+		);
+		expect(container.querySelector(".animate-status-pulse")).toBeInTheDocument();
+	});
+
+	it("optically centers the primary status marker with its text line", () => {
+		const { container } = render(<PRCardStatusSummary pr={summary()} />);
+
+		const marker = container.querySelector(".size-dot-sm");
+		expect(marker).toHaveClass("mt-1");
+		expect(marker).not.toHaveClass("mt-1.5");
+	});
+
+	it("centers a supplied primary action beside the compact status stack", () => {
+		const { container } = render(<PRCardStatusSummary action={<button type="button">Merge</button>} pr={summary()} />);
+
+		const action = screen.getByRole("button", { name: "Merge" });
+		const supportingStatus = screen.getByRole("link", { name: "Checks passing" });
+		expect(action.parentElement).toHaveClass("shrink-0", "self-center");
+		expect(action.parentElement?.parentElement).toHaveClass("items-center");
+		expect(action.parentElement?.previousElementSibling).toContainElement(supportingStatus);
+		expect(action.parentElement?.previousElementSibling).toHaveClass("gap-1.5");
+		expect(container.querySelector(".pl-4")).not.toContainElement(action);
+	});
+
+	it("renders failing check links with visible error contrast", () => {
+		render(
+			<PRCardStatusSummary
+				pr={summary({
+					ci: {
+						state: "failing",
+						failingChecks: [
+							{ name: "renderer-smoke", status: "failed", conclusion: "failure", url: "https://ci/smoke" },
+						],
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.getByRole("link", { name: "renderer-smoke" })).toHaveClass("text-error");
+	});
+
 	it("localizes changed-file plurals instead of rebuilding English nouns", async () => {
 		await appI18n.changeLanguage("zh-CN");
 		useLocaleStore.setState({ locale: "zh-CN" });

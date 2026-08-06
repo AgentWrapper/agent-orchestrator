@@ -29,7 +29,7 @@ import {
 import { listFeatureBuilds, getActiveFeatureBuild } from "./main/feature-builds";
 import { readUpdateSettings, type UpdateSettings, type UpdateStatus } from "./main/update-settings";
 import { readKeybindingOverrides, writeKeybindingOverrides } from "./main/keybinding-settings";
-import { readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
+import { coerceUiSettings, readUiSettings, writeUiSettings, type UiSettings } from "./main/ui-settings";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
@@ -43,8 +43,15 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import { attachAppShortcuts } from "./main/app-shortcuts";
 import {
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
+	SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL,
 	type KeybindingOverrides,
 } from "./shared/shortcuts";
+import { createTrayController, type TrayController } from "./main/tray";
+import { createTrayLifecycle, isTrayEnabled } from "./main/tray-lifecycle";
+import {
+	TRAY_RENDERER_READY_CHANNEL,
+	TRAY_SET_ATTENTION_STATE_CHANNEL,
+} from "./shared/tray";
 import {
 	type DaemonProbe,
 	expectedDaemonPort,
@@ -64,6 +71,7 @@ import { connectBrowserRuntime, type BrowserRuntimeLinkHandle } from "./main/bro
 import { keepDaemonAlive, shouldLinkOnAttach } from "./main/daemon-owner";
 import { readMigrationState, updateMigration, writeAppStateMarker, type MigrationState } from "./main/app-state";
 import { isAllowedAppExternalURL, openAllowedAppExternalURL } from "./main/external-open";
+import { shouldSignalAttention, shouldToast } from "./main/notification-signals";
 import { buildWindowsAppMenuTemplate } from "./main/menu";
 import { ancestorRepositorySetupWarning, scanImportFolder } from "./main/import-folder-scan";
 
@@ -110,6 +118,12 @@ app.setPath(
 );
 
 let mainWindow: BrowserWindow | null = null;
+let trayController: TrayController | null = null;
+const trayLifecycle = createTrayLifecycle({
+	getWindow: () => mainWindow,
+	getTrayController: () => trayController,
+	focusWindow: () => focusMainWindow(),
+});
 let daemonProcess: ChildProcess | null = null;
 let daemonStoppingProcess: ChildProcess | null = null;
 let daemonRestartAfterExitProcess: ChildProcess | null = null;
@@ -127,8 +141,11 @@ let browserRuntimeLink: BrowserRuntimeLinkHandle | null = null;
 let browserRuntimeLinkIdentity: BrowserRuntimeIdentity | null = null;
 let keybindingOverrides: KeybindingOverrides = {};
 let keybindingRecordingActive = false;
+let closeShellTerminalShortcutEnabled = false;
 // Held for the app lifetime. Dropping it (on any exit) triggers daemon self-stop.
 let supervisorLink: SupervisorLinkHandle | null = null;
+// Guard: prevents stacking multiple flashFrame(true) calls when notifications arrive rapidly.
+let isFlashing = false;
 
 const isDev = !app.isPackaged;
 
@@ -229,6 +246,16 @@ function applyRuntimeAppIcon(): void {
 	if (!icon.isEmpty()) {
 		app.dock.setIcon(icon);
 	}
+}
+
+function focusMainWindow(): void {
+	if (!mainWindow) {
+		createWindow();
+		return;
+	}
+	if (mainWindow.isMinimized()) mainWindow.restore();
+	mainWindow.show();
+	mainWindow.focus();
 }
 
 function setDaemonStatus(nextStatus: DaemonStatus): void {
@@ -373,6 +400,7 @@ async function createWindowInternal(): Promise<void> {
 		false,
 		() => keybindingOverrides,
 		() => keybindingRecordingActive,
+		() => true,
 		(id) => {
 			if (id !== "toggle-browser-devtools") return;
 			void browserViewHost?.toggleDevToolsForLastFocused().catch(() => undefined);
@@ -405,6 +433,7 @@ async function createWindowInternal(): Promise<void> {
 		getKeybindingOverrides: () => keybindingOverrides,
 		isKeybindingRecording: () => keybindingRecordingActive,
 		agentBrowserRuntime,
+		isCloseShellTerminalShortcutEnabled: () => closeShellTerminalShortcutEnabled,
 	});
 	if (daemonStatus.state === "ready") establishBrowserRuntimeLink();
 
@@ -431,12 +460,15 @@ async function createWindowInternal(): Promise<void> {
 	mainWindow.webContents.on("render-process-gone", () => {
 		keybindingRecordingActive = false;
 	});
+	mainWindow.webContents.on("did-start-loading", () => trayLifecycle.clear());
+	mainWindow.webContents.on("render-process-gone", () => trayLifecycle.clear());
 
 	mainWindow.on("closed", () => {
 		disposeBrowserRuntimeLink();
 		keybindingRecordingActive = false;
 		void disposeBrowserViewHost();
 		mainWindow = null;
+		trayLifecycle.clearPendingTarget();
 	});
 }
 
@@ -495,12 +527,25 @@ let shellEnvPromise: Promise<void> | null = null;
 
 // Telemetry defaults stamped on the daemon env on every platform; explicit env
 // always wins.
+//
+// Unpackaged builds keep local event recording but never export to PostHog: a
+// dev loop or a CI job driving the real app would otherwise bill production
+// events and inflate install/DAU counts. Set AO_TELEMETRY_REMOTE explicitly to
+// exercise the export path from a dev build.
 function telemetryOverrides(): Record<string, string> {
 	return {
 		AO_TELEMETRY_EVENTS: process.env.AO_TELEMETRY_EVENTS ?? "on",
-		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? "posthog",
+		AO_TELEMETRY_REMOTE: process.env.AO_TELEMETRY_REMOTE ?? (isDev ? "off" : "posthog"),
 		AO_TELEMETRY_POSTHOG_KEY: process.env.AO_TELEMETRY_POSTHOG_KEY ?? DEFAULT_POSTHOG_PROJECT_KEY,
 		AO_TELEMETRY_POSTHOG_HOST: process.env.AO_TELEMETRY_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST,
+		// The daemon binary has no version of its own that release tooling sets,
+		// so without this every daemon event lands unattributable to a release.
+		AO_TELEMETRY_APP_VERSION: process.env.AO_TELEMETRY_APP_VERSION ?? app.getVersion(),
+		// Kill switch: forwarded so a noisy stream can be silenced by env on an
+		// install that already exists, without shipping a new build.
+		...(process.env.AO_TELEMETRY_DISABLED_EVENTS
+			? { AO_TELEMETRY_DISABLED_EVENTS: process.env.AO_TELEMETRY_DISABLED_EVENTS }
+			: {}),
 	};
 }
 
@@ -1413,6 +1458,10 @@ ipcMain.handle("theme:set", (_event, preference: "light" | "dark" | "system") =>
 // Renderer calls this when focus lands on real shell UI (not the titlebar menu), so menu:action's panel fallback below doesn't go stale.
 ipcMain.on("shell:focus", () => browserViewHost?.forgetLastFocusedPanel());
 
+ipcMain.on(SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL, (_event, enabled: unknown) => {
+	closeShellTerminalShortcutEnabled = enabled === true;
+});
+
 // Backs the custom title-bar menu (WindowTitlebar). Each item maps to the same
 // action the native default menu would have performed.
 ipcMain.handle("menu:action", (_event, action: string) => {
@@ -1474,7 +1523,7 @@ ipcMain.handle("menu:action", (_event, action: string) => {
 	}
 });
 ipcMain.handle("telemetry:getBootstrap", () =>
-	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform),
+	buildTelemetryBootstrap(process.env, app.getVersion(), process.platform, os.homedir(), app.isPackaged),
 );
 async function chooseDirectory(title: string): Promise<string | null> {
 	const options: OpenDialogOptions = {
@@ -1551,11 +1600,12 @@ ipcMain.handle("uiSettings:get", async (): Promise<UiSettings> => {
 	if (!runFile) return { locale: "en" };
 	return readUiSettings(path.dirname(runFile));
 });
-ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
-	const runFile = runFilePath();
-	if (!runFile) return { locale: settings?.locale === "zh-CN" ? "zh-CN" : "en" };
-	return writeUiSettings(path.dirname(runFile), settings);
-});
+	ipcMain.handle("uiSettings:set", async (_event, settings: UiSettings): Promise<UiSettings> => {
+		const runFile = runFilePath();
+	const result = !runFile ? coerceUiSettings(settings) : await writeUiSettings(path.dirname(runFile), settings);
+	trayController?.setLocale(result.locale);
+	return result;
+	});
 
 ipcMain.handle("keybindings:get", (): KeybindingOverrides => keybindingOverrides);
 ipcMain.handle("keybindings:set", async (_event, overrides: KeybindingOverrides): Promise<KeybindingOverrides> => {
@@ -1590,21 +1640,108 @@ ipcMain.handle("updates:install", () => {
 	quitAndInstallUpdate();
 });
 
-ipcMain.handle("notifications:show", (_event, notification: { id: string; title: string; body?: string }) => {
-	if (!notification.id || !notification.title || !ElectronNotification.isSupported()) return;
-	const toast = new ElectronNotification({
-		title: notification.title,
-		body: notification.body,
-	});
-	toast.on("click", () => {
+ipcMain.handle(
+	"notifications:show",
+	(_event, notification: { id: string; title: string; body?: string; type?: string }) => {
+		if (!notification.id || !mainWindow) return;
+		// Only signal when the window isn't already focused (the user is looking).
+		if (mainWindow.isFocused()) return;
+		// OS toast: a native banner the user can click to jump straight back to the
+		// session. Fires for every backend notification type (see shouldToast), so a
+		// new type in notification.go never silently loses its toast.
+		if (shouldToast(notification, ElectronNotification.isSupported())) {
+			const toast = new ElectronNotification({
+				title: notification.title,
+				body: notification.body,
+				// AO logo as the notification icon on Windows/Linux. Omitted on macOS,
+				// where a custom icon renders only as a redundant right-side content image —
+				// macOS uses the app-bundle icon (the AO logo in a packaged build) as the
+				// single main icon.
+				icon: process.platform === "darwin" ? undefined : windowIconPath(),
+			});
+			toast.on("click", () => {
+				if (!mainWindow) return;
+				if (mainWindow.isMinimized()) mainWindow.restore();
+				mainWindow.show();
+				mainWindow.focus();
+				mainWindow.webContents.send("notifications:click", notification.id);
+			});
+			toast.show();
+		}
+
+		// Dock (macOS) / taskbar (Windows/Linux) attention signal — only for the
+		// actionable types. A merged/closed PR still toasts above, but shouldn't
+		// bounce the dock as insistently as an agent blocked waiting on the user.
+		if (shouldSignalAttention(notification.type)) {
+			if (process.platform === "darwin" && app.dock) {
+				app.dock.bounce("informational");
+			} else if (process.platform === "win32" || process.platform === "linux") {
+				if (!isFlashing) {
+					isFlashing = true;
+					mainWindow.flashFrame(true);
+					mainWindow.once("focus", () => {
+						isFlashing = false;
+						mainWindow?.flashFrame(false);
+					});
+				}
+			}
+		}
+	},
+);
+
+// Dev-only: force attention signal regardless of window focus (for testing)
+if (!app.isPackaged) {
+	ipcMain.handle("notifications:devBounce", () => {
 		if (!mainWindow) return;
-		if (mainWindow.isMinimized()) mainWindow.restore();
-		mainWindow.show();
-		mainWindow.focus();
-		mainWindow.webContents.send("notifications:click", notification.id);
+		if (process.platform === "darwin") {
+			const id = app.dock?.bounce("critical");
+			setTimeout(() => {
+				if (id !== undefined) app.dock?.cancelBounce(id);
+			}, 2000);
+		} else if (process.platform === "win32" || process.platform === "linux") {
+			mainWindow.flashFrame(true);
+			setTimeout(() => {
+				mainWindow?.flashFrame(false);
+			}, 2000);
+		}
 	});
-	toast.show();
+}
+
+ipcMain.handle("notifications:setBadge", (_event, count: number) => {
+	if (!mainWindow) return { error: "no mainWindow" };
+	const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+	if (process.platform === "darwin") {
+		const dock = app.dock;
+		if (!dock) return { error: "no app.dock" };
+		try {
+			dock.setBadge(n > 0 ? String(n) : "");
+		} catch (e) {
+			return { error: String(e) };
+		}
+	} else if (process.platform === "win32") {
+		if (n > 0) {
+			// Pre-built red dot PNG overlay — indicates unread without needing Canvas.
+			const badgeDataUrl =
+				"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAN0lEQVR42mNgoAW4o6b2HxumSDNRhhDSjNcQYjVjNYRUzRiGjBpABQMojkaqJCSqJGWqZCZSAQASKE/UCaPI8AAAAABJRU5ErkJggg==";
+			const icon = nativeImage.createFromDataURL(badgeDataUrl);
+			mainWindow.setOverlayIcon(icon, `${n} unread`);
+		} else {
+			mainWindow.setOverlayIcon(null, "");
+		}
+	} else if (process.platform === "linux") {
+		// setBadgeCount drives a numeric launcher badge on Unity only, and only
+		// when the app ships a matching .desktop entry. Other Linux launchers
+		// (KDE, GNOME) expose no equivalent API, so the call is a no-op there.
+		// Surface the boolean result so the renderer can tell the badge was not
+		// applied instead of assuming unconditional success.
+		return { ok: app.setBadgeCount(n) };
+	}
+	return { ok: true };
 });
+
+ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.handleSetAttentionState(event, state));
+
+ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
 
 // Auto-update only runs for packaged builds reading the GitHub Releases feed
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
@@ -1705,6 +1842,14 @@ app.whenReady().then(async () => {
 
 	registerRendererProtocol();
 	applyRuntimeAppIcon();
+	if (isTrayEnabled(process.platform, app.isPackaged, app.getVersion())) {
+		const initialUiSettings = keybindingRunFile ? await readUiSettings(path.dirname(keybindingRunFile)) : { locale: "en" as const };
+		trayController = createTrayController({
+			focusWindow: focusMainWindow,
+			openSession: trayLifecycle.openSession,
+			locale: initialUiSettings.locale,
+		});
+	}
 	await createWindow();
 	void startDaemon();
 	initAutoUpdates();
@@ -1723,6 +1868,8 @@ app.whenReady().then(async () => {
 app.on("before-quit", (event) => {
 	browserQuitRequested = true;
 	disposeBrowserRuntimeLink();
+	trayLifecycle.dispose();
+	trayController = null;
 	if (!browserCleanupComplete) {
 		event.preventDefault();
 		if (!browserQuitCleanupPromise) {

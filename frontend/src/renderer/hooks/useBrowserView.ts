@@ -60,6 +60,7 @@ export type BrowserViewModel = {
 	openDevTools: () => Promise<void>;
 	closeDevTools: () => Promise<void>;
 	prepareForOverlay: () => Promise<void>;
+	finishOverlay: () => void;
 	visualTransition: BrowserVisualTransition | null;
 	destroy: () => void;
 	annotationMode: boolean;
@@ -86,6 +87,17 @@ const EMPTY_DEVTOOLS_STATE: BrowserDevToolsState = {
 	open: false,
 	activeTabId: "",
 };
+
+type PreviewTrigger = { revision: number | null; target: string };
+
+// The native view survives React session switches, so remember which preview
+// trigger was already consumed for each session. This prevents switching back
+// from reasserting previewUrl over a URL the user manually navigated to.
+const consumedPreviewTriggers = new Map<string, PreviewTrigger>();
+
+export function resetConsumedPreviewTriggersForTest(): void {
+	consumedPreviewTriggers.clear();
+}
 
 const HIDDEN_RECT: BrowserRect = { x: 0, y: 0, width: 0, height: 0 };
 const VISUAL_TRANSITION_DURATION_MS = 240;
@@ -328,10 +340,10 @@ export function useBrowserView({
 
 	useEffect(() => {
 		let disposed = false;
-		// Preview revisions are scoped to a session. Reset the trigger before
-		// ensuring a different worker so equal revision numbers cannot suppress
-		// that worker's own target.
-		previewTriggerRef.current = null;
+		// Preview revisions are scoped to a session. A native view survives session
+		// switches, so seed from the per-session consumed trigger to avoid
+		// reasserting previewUrl over manual navigation on switch-back.
+		previewTriggerRef.current = hasNativeBrowser ? (consumedPreviewTriggers.get(sessionId) ?? null) : null;
 		setTabsState(EMPTY_TABS_STATE);
 		setDevtoolsState(EMPTY_DEVTOOLS_STATE);
 		setTabNotice("");
@@ -473,10 +485,18 @@ export function useBrowserView({
 	const prepareForOverlay = useCallback(async () => {
 		const id = viewIdRef.current;
 		if (!id || !hasNativeBrowser || !activeRef.current || !hasUrlRef.current) return;
+		const token = ++mirrorTokenRef.current;
 		clearMirrorTimer();
 		const frame = await (window.ao?.browser.capture?.(id) ?? Promise.resolve(null)).catch(() => null);
-		if (frame && viewIdRef.current === id) setMirrorFrame(frame);
+		if (frame && mirrorTokenRef.current === token && viewIdRef.current === id) setMirrorFrame(frame);
 	}, [clearMirrorTimer, hasNativeBrowser]);
+
+	const finishOverlay = useCallback(() => {
+		modalOpenRef.current = false;
+		mirrorTokenRef.current += 1;
+		clearMirrorTimer();
+		scheduleSettleMeasure();
+	}, [clearMirrorTimer, scheduleSettleMeasure]);
 
 
 	useEffect(() => {
@@ -671,13 +691,15 @@ export function useBrowserView({
 		const previous = previewTriggerRef.current;
 		if (previous?.revision === revision && previous.target === target) return;
 		if (revision !== null && previous?.revision === revision) return;
-		previewTriggerRef.current = { revision, target };
+		const consumed: PreviewTrigger = { revision, target };
+		previewTriggerRef.current = consumed;
+		if (hasNativeBrowser) consumedPreviewTriggers.set(sessionId, consumed);
 		if (target) {
 			void navigate(target);
 		} else if ((revision !== null && revision > 0) || previous?.target) {
 			void clear();
 		}
-	}, [clear, navigate, previewRevision, previewUrl, terminated, viewId]);
+	}, [clear, hasNativeBrowser, navigate, previewRevision, previewUrl, sessionId, terminated, viewId]);
 
 	const destroy = useCallback(() => {
 		const id = viewIdRef.current;
@@ -710,8 +732,9 @@ export function useBrowserView({
 	// explicit preview-reset operation.
 	useEffect(() => {
 		if (!terminated || !viewId) return;
+		consumedPreviewTriggers.delete(sessionId);
 		destroy();
-	}, [destroy, terminated, viewId]);
+	}, [destroy, sessionId, terminated, viewId]);
 
 	return {
 		viewId,
@@ -732,6 +755,7 @@ export function useBrowserView({
 		openDevTools: () => runDevtools("open"),
 		closeDevTools: () => runDevtools("close"),
 		prepareForOverlay,
+		finishOverlay,
 		visualTransition,
 		destroy,
 		annotationMode,

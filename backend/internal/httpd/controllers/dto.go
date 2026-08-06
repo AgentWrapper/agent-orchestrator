@@ -8,6 +8,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/devimport"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/legacyimport"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
@@ -155,7 +156,7 @@ type SpawnSessionRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	IssueID   domain.IssueID      `json:"issueId,omitempty"`
 	Kind      domain.SessionKind  `json:"kind,omitempty" enum:"worker,orchestrator"`
-	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
+	Harness   domain.AgentHarness `json:"harness,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand"`
 	Branch    string              `json:"branch,omitempty"`
 	Prompt    string              `json:"prompt,omitempty" maxLength:"4096"`
 	// DisplayName is the sidebar label for the session, capped at 20 characters.
@@ -243,6 +244,12 @@ type SessionPreviewResponse struct {
 // RenameSessionRequest is the body of PATCH /api/v1/sessions/{sessionId}.
 type RenameSessionRequest struct {
 	DisplayName string `json:"displayName" minLength:"1"`
+}
+
+// SetSessionReviewerRequest sets the durable reviewer preference for a session.
+// Empty clears the preference and falls back to project configuration.
+type SetSessionReviewerRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
 }
 
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
@@ -388,6 +395,26 @@ type SendSessionMessageResponse struct {
 	OK        bool             `json:"ok"`
 	SessionID domain.SessionID `json:"sessionId"`
 	Message   string           `json:"message"`
+}
+
+// DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
+// An omitted agent tells the orchestrator to use the project's worker default.
+// Attachments are intentionally absent from this MVP contract: delegation uses
+// the string-only guarded messenger and cannot safely hand image bytes to a
+// worker that does not exist yet without a durable attachment store.
+type DelegateTaskRequest struct {
+	ProjectID domain.ProjectID    `json:"projectId"`
+	Brief     string              `json:"brief" maxLength:"4096"`
+	Agent     domain.AgentHarness `json:"agent,omitempty" enum:"claude-code,codex,aider,opencode,grok,droid,amp,agy,crush,cursor,qwen,copilot,goose,auggie,continue,devin,cline,kimi,kiro,kilocode,vibe,pi,autohand,fake"`
+	Model     string              `json:"model,omitempty" maxLength:"256"`
+}
+
+// DelegateTaskResponse confirms which worker was spawned and, when available,
+// which orchestrator received the follow-up title request.
+type DelegateTaskResponse struct {
+	OK             bool             `json:"ok"`
+	WorkerID       domain.SessionID `json:"workerId"`
+	OrchestratorID domain.SessionID `json:"orchestratorId,omitempty"`
 }
 
 // SessionPRFacts is the pull-request read shape returned under session PR routes.
@@ -599,12 +626,24 @@ type ClaimPRResponse struct {
 // state-only semantics.
 // AgentSessionID may arrive without State on metadata-only SessionStart hooks.
 type SetActivityRequest struct {
-	State          string `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook. Optional for metadata-only hooks."`
-	Event          string `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
-	ToolName       string `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
-	ToolUseID      string `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
-	AgentSessionID string `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
-	LaunchID       string `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
+	State          string             `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Agent activity state reported by an agent hook. Optional for metadata-only hooks."`
+	Event          string             `json:"event,omitempty" description:"AO hook sub-command that produced this state (e.g. post-tool-use)."`
+	ToolName       string             `json:"toolName,omitempty" description:"Native tool name, for tool-use hook events."`
+	ToolUseID      string             `json:"toolUseId,omitempty" description:"Native tool-use id, for tool-use hook events."`
+	AgentSessionID string             `json:"agentSessionId,omitempty" description:"Native agent session identifier used to resume its transcript."`
+	LaunchID       string             `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
+	Usage          *UsageHookMetadata `json:"usage,omitempty" description:"Provider transcript metadata used by the local usage pipeline."`
+}
+
+// UsageHookMetadata is the transcript metadata carried by supported Claude
+// Code and Codex hooks. It contains paths and identifiers only, never prompt or
+// response content.
+type UsageHookMetadata struct {
+	Harness                domain.AgentHarness `json:"harness" enum:"claude-code,codex"`
+	TranscriptPath         string              `json:"transcriptPath,omitempty"`
+	ModelID                string              `json:"modelId,omitempty"`
+	SubagentID             string              `json:"subagentId,omitempty"`
+	SubagentTranscriptPath string              `json:"subagentTranscriptPath,omitempty"`
 }
 
 // SetActivityResponse is the body of POST /api/v1/sessions/{sessionId}/activity.
@@ -646,12 +685,80 @@ type RefreshAgentsResponse = agentsvc.Inventory
 // ProbeAgentResponse is the body of POST /api/v1/agents/{agent}/probe.
 type ProbeAgentResponse = agentsvc.ProbeResult
 
+// AgentModelsQuery scopes a model catalog to a project where providers may be
+// configured per workspace.
+type AgentModelsQuery struct {
+	ProjectID string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+}
+
+// AgentModelsRefreshQuery controls forced refresh versus cheap background
+// revalidation for a project-scoped model catalog.
+type AgentModelsRefreshQuery struct {
+	ProjectID  string `query:"projectId,omitempty" description:"Optional project identifier used as the model-catalog cache scope."`
+	Revalidate bool   `query:"revalidate,omitempty" description:"When true, compare executable and config metadata before running discovery."`
+}
+
+// AgentModelsResponse is the normalized model picker for one agent.
+type AgentModelsResponse = ports.AgentModelCatalog
+
+// AgentModelInfo is one selectable model or agent-owned mode.
+type AgentModelInfo = ports.AgentModelInfo
+
 // AgentInfo is one supported or installed agent entry.
 type AgentInfo = agentsvc.Info
 
+// ListUsageSessionsQuery is the query string accepted by GET
+// /api/v1/usage/sessions.
+type ListUsageSessionsQuery struct {
+	ProjectID domain.ProjectID `query:"projectId,omitempty" description:"Optional project id filter for dashboard cards."`
+}
+
+// CompactSessionUsageResponse is one session card's token-only usage summary.
+type CompactSessionUsageResponse struct {
+	SessionID   domain.SessionID `json:"sessionId"`
+	TotalTokens int64            `json:"totalTokens" minimum:"0"`
+	Incomplete  bool             `json:"incomplete"`
+}
+
+// ListCompactSessionUsageResponse is the batch dashboard usage response.
+type ListCompactSessionUsageResponse struct {
+	Sessions []CompactSessionUsageResponse `json:"sessions"`
+}
+
+// UsageTotalsResponse is the normalized telemetry aggregate for one scope.
+type UsageTotalsResponse struct {
+	InputTokens         *int64 `json:"inputTokens"`
+	UncachedInputTokens *int64 `json:"uncachedInputTokens"`
+	CacheReadTokens     *int64 `json:"cacheReadTokens"`
+	CacheWriteTokens    *int64 `json:"cacheWriteTokens"`
+	OutputTokens        *int64 `json:"outputTokens"`
+	ReasoningTokens     *int64 `json:"reasoningTokens"`
+}
+
+// UsageModelResponse is telemetry grouped by exact model id.
+type UsageModelResponse struct {
+	ModelID string              `json:"modelId"`
+	Totals  UsageTotalsResponse `json:"totals"`
+}
+
+// UsageHarnessResponse groups model telemetry under one AO harness.
+type UsageHarnessResponse struct {
+	Harness string               `json:"harness"`
+	Totals  UsageTotalsResponse  `json:"totals"`
+	Models  []UsageModelResponse `json:"models"`
+}
+
+// SessionUsageResponse is detailed telemetry for the session inspector.
+type SessionUsageResponse struct {
+	SessionID  domain.SessionID       `json:"sessionId"`
+	Incomplete bool                   `json:"incomplete"`
+	Totals     UsageTotalsResponse    `json:"totals"`
+	Harnesses  []UsageHarnessResponse `json:"harnesses"`
+}
+
 // ListNotificationsQuery is the query string accepted by GET /api/v1/notifications.
 type ListNotificationsQuery struct {
-	Status string `query:"status,omitempty" enum:"unread,all" description:"Notification status filter. Defaults to unread; all includes read history."`
+	Status string `query:"status,omitempty" enum:"unread,all,unresolved" description:"Notification filter. Defaults to unread (unseen); unresolved returns notifications whose underlying issue is still open; all includes read history."`
 	Limit  int    `query:"limit,omitempty" minimum:"1" maximum:"100" description:"Maximum notifications to return. Defaults to 100."`
 	Cursor string `query:"cursor,omitempty" description:"Opaque cursor returned by the previous page."`
 }
@@ -675,23 +782,28 @@ type NotificationTarget struct {
 
 // NotificationResponse is one stored notification returned by the API.
 type NotificationResponse struct {
-	ID        string             `json:"id"`
-	SessionID string             `json:"sessionId"`
-	ProjectID string             `json:"projectId"`
-	PRURL     string             `json:"prUrl"`
-	Type      string             `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
-	Title     string             `json:"title"`
-	Body      string             `json:"body"`
-	Status    string             `json:"status" enum:"unread,read"`
-	CreatedAt time.Time          `json:"createdAt"`
-	Target    NotificationTarget `json:"target"`
+	ID        string    `json:"id"`
+	SessionID string    `json:"sessionId"`
+	ProjectID string    `json:"projectId"`
+	PRURL     string    `json:"prUrl"`
+	Type      string    `json:"type" enum:"needs_input,ready_to_merge,pr_merged,pr_closed_unmerged"`
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Status    string    `json:"status" enum:"unread,read" description:"Seen state. unread means the user has not opened the notification panel since it arrived."`
+	CreatedAt time.Time `json:"createdAt"`
+	// ResolvedAt is set by AO when the underlying issue goes away (the session
+	// received its input, the PR stopped waiting on a merge). Absent means the
+	// issue is still open. There is no user-facing action that sets it.
+	ResolvedAt *time.Time         `json:"resolvedAt,omitempty"`
+	Target     NotificationTarget `json:"target"`
 }
 
 // ListNotificationsResponse is one history page from GET /api/v1/notifications.
 type ListNotificationsResponse struct {
-	Notifications []NotificationResponse `json:"notifications"`
-	NextCursor    string                 `json:"nextCursor,omitempty"`
-	UnreadCount   int                    `json:"unreadCount"`
+	Notifications   []NotificationResponse `json:"notifications"`
+	NextCursor      string                 `json:"nextCursor,omitempty"`
+	UnreadCount     int                    `json:"unreadCount"`
+	UnresolvedCount int                    `json:"unresolvedCount"`
 }
 
 // MarkNotificationReadRequest is the body of PATCH /api/v1/notifications/{id}.
@@ -744,6 +856,12 @@ type ShellTerminalEnvelope struct {
 	ShellTerminal ShellTerminalResponse `json:"shellTerminal"`
 }
 
+// MarkAllNotificationsReadRequest is the optional body of
+// POST /api/v1/notifications/read-all.
+type MarkAllNotificationsReadRequest struct {
+	IDs []string `json:"ids,omitempty" description:"Acknowledge exactly these notifications. Omit to acknowledge every unread notification; paginating clients should send the ids they actually rendered so later pages stay unread."`
+}
+
 // MarkAllNotificationsReadResponse is the body of POST /api/v1/notifications/read-all.
 type MarkAllNotificationsReadResponse struct {
 	Notifications []NotificationResponse `json:"notifications" description:"Deprecated compatibility field. Always empty so mark-all responses stay bounded."`
@@ -777,6 +895,12 @@ type DevImportProjectsResponse struct {
 // PRIDParam is the {id} path parameter shared by the /prs/{id} routes.
 type PRIDParam struct {
 	ID string `path:"id" description:"PR number."`
+}
+
+// MergePRRequest is the body of POST /api/v1/prs/{id}/merge.
+type MergePRRequest struct {
+	PRURL           string `json:"prUrl" minLength:"1"`
+	ExpectedHeadSHA string `json:"expectedHeadSha" minLength:"40"`
 }
 
 // MergePRResponse is the body of POST /api/v1/prs/{id}/merge (200).
@@ -840,4 +964,12 @@ type PushDeviceEnvelope struct {
 type UnregisterPushDeviceResponse struct {
 	Token   string `json:"token"`
 	Deleted bool   `json:"deleted"`
+}
+
+// TriggerReviewRequest is the optional body of the review trigger route. An
+// empty harness keeps the project's configured reviewer; setting one overrides
+// it for this pass only, without editing project config, so one session's choice
+// cannot change what another session in the project runs.
+type TriggerReviewRequest struct {
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
 }

@@ -1,4 +1,5 @@
 import {
+	CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL,
 	FOCUS_TERMINAL_SHORTCUT_CHANNEL,
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
 	matchesAppShortcut,
@@ -43,6 +44,7 @@ type ShortcutTargetContents = {
 const mainShortcutChannels: readonly [AppShortcutId, string][] = [
 	["new-session", NEW_SESSION_SHORTCUT_CHANNEL],
 	["new-shell-terminal", NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL],
+	["close-shell-terminal", CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL],
 	["keyboard-shortcuts", KEYBOARD_SHORTCUTS_HELP_CHANNEL],
 	["open-settings", OPEN_SETTINGS_SHORTCUT_CHANNEL],
 	["previous-session", PREVIOUS_SESSION_SHORTCUT_CHANNEL],
@@ -54,9 +56,9 @@ const appShortcutChannel = (
 	chord: ShortcutChord,
 	isMac: boolean,
 	overrides: KeybindingOverrides,
-): string | null => {
+): readonly [AppShortcutId, string] | null => {
 	for (const [id, channel] of mainShortcutChannels) {
-		if (matchesAppShortcut(id, chord, isMac, overrides)) return channel;
+		if (matchesAppShortcut(id, chord, isMac, overrides)) return [id, channel];
 	}
 	return null;
 };
@@ -71,6 +73,7 @@ export function attachAppShortcuts(
 	focusTarget = false,
 	getOverrides: () => KeybindingOverrides = () => ({}),
 	isRecording: () => boolean = () => false,
+	shouldHandle: (id: AppShortcutId) => boolean = () => true,
 	onShortcut?: (id: AppShortcutId) => void,
 ): void {
 	contents.on("before-input-event", (event, input) => {
@@ -92,8 +95,10 @@ export function attachAppShortcuts(
 			onShortcut("toggle-browser-devtools");
 			return;
 		}
-		const channel = appShortcutChannel(chord, isMac, getOverrides());
-		if (!channel) return;
+		const match = appShortcutChannel(chord, isMac, getOverrides());
+		if (!match) return;
+		const [id, channel] = match;
+		if (!shouldHandle(id)) return;
 
 		event.preventDefault();
 		if (focusTarget) target.focus();

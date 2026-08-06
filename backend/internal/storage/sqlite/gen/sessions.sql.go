@@ -19,7 +19,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, browser_capability_verifier
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    reviewer_harness, is_pinned, pinned_at, browser_capability_verifier
 FROM sessions WHERE id = ?
 `
 
@@ -53,6 +54,9 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.TerminateOnPRMerge,
 		&i.DiffBaseSha,
 		&i.DiffBaseRef,
+		&i.ReviewerHarness,
+		&i.IsPinned,
+		&i.PinnedAt,
 		&i.BrowserCapabilityVerifier,
 	)
 	return i, err
@@ -60,13 +64,17 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 
 const insertSession = `-- name: InsertSession :exec
 INSERT INTO sessions (
-    id, project_id, num, issue_id, kind, harness, display_name,
+    id, project_id, num, issue_id, kind, harness, reviewer_harness, display_name,
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
-    created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    created_at, updated_at, is_pinned, pinned_at
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+)
 `
 
 type InsertSessionParams struct {
@@ -76,6 +84,7 @@ type InsertSessionParams struct {
 	IssueID                   domain.IssueID
 	Kind                      domain.SessionKind
 	Harness                   domain.AgentHarness
+	ReviewerHarness           domain.ReviewerHarness
 	DisplayName               string
 	ActivityState             domain.ActivityState
 	ActivityLastAt            time.Time
@@ -97,6 +106,8 @@ type InsertSessionParams struct {
 	BrowserCapabilityVerifier string
 	CreatedAt                 time.Time
 	UpdatedAt                 time.Time
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -107,6 +118,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.IssueID,
 		arg.Kind,
 		arg.Harness,
+		arg.ReviewerHarness,
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
@@ -128,6 +140,8 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.BrowserCapabilityVerifier,
 		arg.CreatedAt,
 		arg.UpdatedAt,
+		arg.IsPinned,
+		arg.PinnedAt,
 	)
 	return err
 }
@@ -138,7 +152,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, browser_capability_verifier
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    reviewer_harness, is_pinned, pinned_at, browser_capability_verifier
 FROM sessions ORDER BY project_id, num
 `
 
@@ -178,6 +193,9 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.ReviewerHarness,
+			&i.IsPinned,
+			&i.PinnedAt,
 			&i.BrowserCapabilityVerifier,
 		); err != nil {
 			return nil, err
@@ -199,7 +217,8 @@ SELECT id, project_id, num, issue_id, kind, harness,
     runtime_handle_id, agent_session_id, prompt,
     created_at, updated_at, display_name, first_signal_at, preview_url,
     preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, browser_capability_verifier
+    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
+    reviewer_harness, is_pinned, pinned_at, browser_capability_verifier
 FROM sessions WHERE project_id = ? ORDER BY num
 `
 
@@ -239,6 +258,9 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.ReviewerHarness,
+			&i.IsPinned,
+			&i.PinnedAt,
 			&i.BrowserCapabilityVerifier,
 		); err != nil {
 			return nil, err
@@ -307,6 +329,30 @@ func (q *Queries) SessionIsSeed(ctx context.Context, id domain.SessionID) (bool,
 	return is_seed, err
 }
 
+const setSessionPinned = `-- name: SetSessionPinned :execrows
+UPDATE sessions SET is_pinned = ?, pinned_at = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionPinnedParams struct {
+	IsPinned  bool
+	PinnedAt  sql.NullTime
+	UpdatedAt time.Time
+	ID        domain.SessionID
+}
+
+func (q *Queries) SetSessionPinned(ctx context.Context, arg SetSessionPinnedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionPinned,
+		arg.IsPinned,
+		arg.PinnedAt,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setSessionPreviewURL = `-- name: SetSessionPreviewURL :execrows
 UPDATE sessions SET preview_url = ?, preview_revision = preview_revision + 1, updated_at = ? WHERE id = ?
 `
@@ -322,6 +368,24 @@ type SetSessionPreviewURLParams struct {
 // trigger and the desktop browser panel re-navigates / refreshes.
 func (q *Queries) SetSessionPreviewURL(ctx context.Context, arg SetSessionPreviewURLParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, setSessionPreviewURL, arg.PreviewURL, arg.UpdatedAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const setSessionReviewerHarness = `-- name: SetSessionReviewerHarness :execrows
+UPDATE sessions SET reviewer_harness = ?, updated_at = ? WHERE id = ?
+`
+
+type SetSessionReviewerHarnessParams struct {
+	ReviewerHarness domain.ReviewerHarness
+	UpdatedAt       time.Time
+	ID              domain.SessionID
+}
+
+func (q *Queries) SetSessionReviewerHarness(ctx context.Context, arg SetSessionReviewerHarnessParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setSessionReviewerHarness, arg.ReviewerHarness, arg.UpdatedAt, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -348,12 +412,12 @@ func (q *Queries) SetSessionTerminateOnPRMerge(ctx context.Context, arg SetSessi
 
 const updateSession = `-- name: UpdateSession :exec
 UPDATE sessions SET
-    issue_id = ?, kind = ?, harness = ?, display_name = ?,
+    issue_id = ?, kind = ?, harness = ?, reviewer_harness = ?, display_name = ?,
     activity_state = ?, activity_last_at = ?, first_signal_at = ?, is_terminated = ?,
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, browser_capability_verifier = ?, updated_at = ?
+    cleanup_generation = ?, browser_capability_verifier = ?, updated_at = ?, is_pinned = ?, pinned_at = ?
 WHERE id = ?
 `
 
@@ -361,6 +425,7 @@ type UpdateSessionParams struct {
 	IssueID                   domain.IssueID
 	Kind                      domain.SessionKind
 	Harness                   domain.AgentHarness
+	ReviewerHarness           domain.ReviewerHarness
 	DisplayName               string
 	ActivityState             domain.ActivityState
 	ActivityLastAt            time.Time
@@ -381,6 +446,8 @@ type UpdateSessionParams struct {
 	CleanupGeneration         int64
 	BrowserCapabilityVerifier string
 	UpdatedAt                 time.Time
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
 	ID                        domain.SessionID
 }
 
@@ -389,6 +456,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.IssueID,
 		arg.Kind,
 		arg.Harness,
+		arg.ReviewerHarness,
 		arg.DisplayName,
 		arg.ActivityState,
 		arg.ActivityLastAt,
@@ -409,6 +477,8 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.CleanupGeneration,
 		arg.BrowserCapabilityVerifier,
 		arg.UpdatedAt,
+		arg.IsPinned,
+		arg.PinnedAt,
 		arg.ID,
 	)
 	return err
