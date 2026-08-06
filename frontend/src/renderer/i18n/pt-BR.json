@@ -276,7 +276,7 @@
 	"mobile.devices.confirmRemove": "Confirmar remoção",
 	"mobile.devices.description": "Telefones emparelhados com este desktop. Dispositivos silenciados continuam emparelhados, mas não recebem notificações.",
 	"mobile.devices.empty": "Nenhum dispositivo emparelhado ainda.",
-	"mobile.devices.live": "Ao vivo",
+	"mobile.devices.live": "Online",
 	"mobile.devices.loading": "Carregando dispositivos…",
 	"mobile.devices.notificationsFor": "Notificações de {{name}}",
 	"mobile.devices.registryUnavailable": "Registro de dispositivos indisponível — o AO não conseguiu ler seus dispositivos salvos.",

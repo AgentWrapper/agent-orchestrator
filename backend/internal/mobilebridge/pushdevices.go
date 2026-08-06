@@ -15,9 +15,11 @@ import (
 
 // PushDevice is one registered phone that should receive push notifications.
 // InstallID is the unique key: a phone generates it once per install and keeps
-// it across reinstalls of the JS bundle, so a rotated Expo push token updates
-// the existing row instead of creating a second one. Muted devices stay
-// registered and listed but are skipped by the dispatcher.
+// it across push-token rotations, so a rotated Expo push token updates the
+// existing row instead of creating a second one. It does not survive a full
+// uninstall/reinstall, since it's stored in AsyncStorage, which uninstall
+// wipes. Muted devices stay registered and listed but are skipped by the
+// dispatcher.
 type PushDevice struct {
 	InstallID  string    `json:"installId"`
 	Token      string    `json:"token"`

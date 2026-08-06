@@ -140,30 +140,33 @@ export function MobileDevicesSection() {
 	return (
 		<section className="mt-6">
 			<h3 className="text-sm font-medium">{t("mobile.devices.title")}</h3>
-			<p className="mt-1 text-xs text-muted-foreground">{t("mobile.devices.description")}</p>
+			<p className="mt-1 text-caption text-settings-muted">{t("mobile.devices.description")}</p>
 
 			{query.isLoading ? (
-				<div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+				<div className="mt-3 flex items-center gap-2 text-caption text-settings-muted">
 					<Loader2 className="size-3 animate-spin" /> {t("mobile.devices.loading")}
 				</div>
 			) : registryUnavailable ? (
-				<p className="mt-3 text-xs text-error">{t("mobile.devices.registryUnavailable")}</p>
+				<p className="mt-3 text-caption text-error">{t("mobile.devices.registryUnavailable")}</p>
 			) : queryError && !hasData ? (
-				<p className="mt-3 text-xs text-error">{queryError.message}</p>
+				<p className="mt-3 text-caption text-error">{queryError.message}</p>
 			) : devices.length === 0 ? (
-				<p className="mt-3 text-xs text-muted-foreground">{t("mobile.devices.empty")}</p>
+				<p className="mt-3 text-caption text-settings-muted">{t("mobile.devices.empty")}</p>
 			) : (
 				<>
-					{queryError && <p className="mt-3 text-xs text-error">{queryError.message}</p>}
+					{queryError && <p className="mt-3 text-caption text-error">{queryError.message}</p>}
 					<ul className="mt-3 space-y-2">
 						{sortedDevices.map((device) => {
 							const name = device.deviceName || t("mobile.devices.unnamed");
 							return (
-								<li key={device.installId} className="flex items-center gap-3 rounded-md border p-3">
-									<Smartphone className="size-4 shrink-0 text-muted-foreground" />
+								<li
+									key={device.installId}
+									className="flex items-center gap-3 rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-input)] p-3"
+								>
+									<Smartphone className="size-4 shrink-0 text-settings-muted" />
 									<div className="min-w-0 flex-1">
 										<div className="truncate text-sm">{name}</div>
-										<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+										<div className="flex items-center gap-1.5 text-caption text-settings-muted">
 											{device.live ? (
 												<>
 													<span className={cn("size-1.5 rounded-full bg-success")} aria-hidden />
@@ -182,12 +185,20 @@ export function MobileDevicesSection() {
 										onCheckedChange={(next) =>
 											mute.mutate({ installId: device.installId, muted: !next })
 										}
+										className={cn(
+											"h-(--size-settings-mobile-switch-h) w-(--size-settings-mobile-switch-w) transition-colors duration-300 ease-out",
+											"data-[state=checked]:bg-settings-switch-on data-[state=unchecked]:bg-[var(--color-border-settings-input)]",
+											"focus-visible:ring-0 focus-visible:ring-offset-0",
+											"**:data-[slot=switch-thumb]:size-5 **:data-[slot=switch-thumb]:bg-white **:data-[slot=switch-thumb]:transition-transform **:data-[slot=switch-thumb]:duration-300 **:data-[slot=switch-thumb]:ease-out",
+											"data-[state=checked]:**:data-[slot=switch-thumb]:translate-x-(--size-settings-mobile-switch-travel)",
+											"data-[state=unchecked]:**:data-[slot=switch-thumb]:translate-x-0.5",
+										)}
 									/>
 
 									{confirmingRemoval === device.installId ? (
 										<button
 											type="button"
-											className="text-xs text-error"
+											className="text-caption text-error"
 											disabled={remove.isPending}
 											onClick={() => remove.mutate(device.installId)}
 										>
@@ -197,7 +208,7 @@ export function MobileDevicesSection() {
 										<button
 											type="button"
 											aria-label={t("mobile.devices.removeAria", { name })}
-											className="text-muted-foreground hover:text-foreground"
+											className="text-settings-muted hover:text-settings-label"
 											onClick={() => setConfirmingRemoval(device.installId)}
 										>
 											<X className="size-4" />
@@ -210,7 +221,7 @@ export function MobileDevicesSection() {
 				</>
 			)}
 
-			{mutationError && <p className="mt-2 text-xs text-error">{mutationError}</p>}
+			{mutationError && <p className="mt-2 text-caption text-error">{mutationError}</p>}
 		</section>
 	);
 }

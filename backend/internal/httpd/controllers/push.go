@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -57,14 +58,17 @@ func (c *PushController) register(w http.ResponseWriter, r *http.Request) {
 			"token must be a well-formed Expo push token", nil)
 		return
 	}
-	if req.InstallID == "" {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MISSING_INSTALL_ID",
-			"installId is required", nil)
-		return
+	installID := req.InstallID
+	if installID == "" {
+		// Phone builds installed before install IDs existed don't send one. Synthesize
+		// a legacy id rather than rejecting the registration; Upsert's token-adoption
+		// path merges this row into the real one once that phone updates and sends a
+		// genuine install ID. Mirrors LoadRegistry's migration of pre-existing rows.
+		installID = "legacy-" + uuid.NewString()
 	}
 	now := c.now()
 	dev := mobilebridge.PushDevice{
-		InstallID:  req.InstallID,
+		InstallID:  installID,
 		Token:      req.Token,
 		Platform:   req.Platform,
 		DeviceName: req.DeviceName,

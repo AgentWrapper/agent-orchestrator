@@ -138,7 +138,7 @@ func TestRegisterPushDeviceStoresInstallID(t *testing.T) {
 	}
 }
 
-func TestRegisterPushDeviceRejectsMissingInstallID(t *testing.T) {
+func TestRegisterPushDeviceSynthesizesMissingInstallID(t *testing.T) {
 	reg := &fakePushRegistry{}
 	srv := newPushTestServer(t, reg)
 
@@ -148,8 +148,15 @@ func TestRegisterPushDeviceRejectsMissingInstallID(t *testing.T) {
 		t.Fatalf("post: %v", err)
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", res.StatusCode)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if len(reg.upserts) != 1 {
+		t.Fatalf("upserts = %d, want 1", len(reg.upserts))
+	}
+	got := reg.upserts[0].InstallID
+	if got == "" || !strings.HasPrefix(got, "legacy-") {
+		t.Fatalf("InstallID = %q, want non-empty legacy- prefixed id", got)
 	}
 }
 
