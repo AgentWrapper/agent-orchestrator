@@ -119,6 +119,19 @@ func sessionJSON(id, project, kind, status string, terminated bool) string {
 	return string(b)
 }
 
+func sessionJSONWithContextPressure(id, project, kind, status string, terminated bool) string {
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(sessionJSON(id, project, kind, status, terminated)), &payload)
+	payload["contextPressure"] = map[string]any{
+		"usedPercent":             91,
+		"untilAutoCompactPercent": 9,
+		"source":                  "claude-code",
+		"observedAt":              "2026-06-02T12:30:00Z",
+	}
+	b, _ := json.Marshal(payload)
+	return string(b)
+}
+
 func jsonQuote(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
@@ -272,6 +285,58 @@ func TestSessionGet_JSONOutputDecodes(t *testing.T) {
 	}
 	if got.Session.ID != "demo-1" || got.Session.ProjectID != "demo" || got.Session.Status != "working" {
 		t.Fatalf("unexpected session JSON: %#v", got.Session)
+	}
+}
+
+func TestSessionGet_RendersContextPressure(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/sessions/demo-1" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"session":`+sessionJSONWithContextPressure("demo-1", "demo", "worker", "working", false)+`}`)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "get", "demo-1")
+	if err != nil {
+		t.Fatalf("session get failed: %v\nstderr=%s", err, errOut)
+	}
+	for _, want := range []string{
+		"contextPressure: used=91% untilAutoCompact=9% source=claude-code observedAt=2026-06-02T12:30:00Z",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSessionList_RendersContextPressure(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/sessions" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"sessions":[`+sessionJSONWithContextPressure("demo-1", "demo", "worker", "working", false)+`]}`)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+
+	out, errOut, err := executeCLI(t, Deps{
+		ProcessAlive: func(int) bool { return true },
+	}, "session", "ls")
+	if err != nil {
+		t.Fatalf("session ls failed: %v\nstderr=%s", err, errOut)
+	}
+	if !strings.Contains(out, "ctx 91%") {
+		t.Fatalf("output missing context pressure:\n%s", out)
 	}
 }
 

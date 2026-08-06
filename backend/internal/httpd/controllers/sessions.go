@@ -1047,8 +1047,13 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	agentSessionID := capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.AgentSessionID)))
-	if state == "" && agentSessionID == "" {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "ACTIVITY_OR_SESSION_ID_REQUIRED", "Activity state or agent session ID is required", nil)
+	pressure, pressureErr := normalizeContextPressure(in.ContextPressure)
+	if pressureErr != "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_CONTEXT_PRESSURE", pressureErr, nil)
+		return
+	}
+	if state == "" && agentSessionID == "" && pressure == nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "ACTIVITY_OR_SESSION_ID_REQUIRED", "Activity state, agent session ID, or context pressure is required", nil)
 		return
 	}
 	// The correlation fields ride the same lenient decode: absent on old CLIs.
@@ -1057,13 +1062,14 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 	// never match its pre/post counterpart, so overlong values are dropped by
 	// the CLI; the cap here is defense against non-AO callers).
 	sig := ports.ActivitySignal{
-		Valid:          state != "",
-		State:          state,
-		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
-		ToolName:       capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
-		ToolUseID:      capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
-		AgentSessionID: agentSessionID,
-		LaunchID:       capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.LaunchID))),
+		Valid:           state != "",
+		State:           state,
+		Event:           capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		ToolName:        capActivityMeta(domain.SanitizeControlChars(in.ToolName)),
+		ToolUseID:       capActivityMeta(domain.SanitizeControlChars(in.ToolUseID)),
+		AgentSessionID:  agentSessionID,
+		ContextPressure: pressure,
+		LaunchID:        capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.LaunchID))),
 	}
 	if err := c.Activity.ApplyActivitySignal(r.Context(), sessionID(r), sig); err != nil {
 		if errors.Is(err, ports.ErrSessionNotFound) {
@@ -1084,6 +1090,24 @@ func capActivityMeta(v string) string {
 		return ""
 	}
 	return v
+}
+
+func normalizeContextPressure(in *domain.ContextPressure) (*domain.ContextPressure, string) {
+	if in == nil {
+		return nil, ""
+	}
+	if in.UsedPercent < 0 || in.UsedPercent > 100 {
+		return nil, "contextPressure.usedPercent must be between 0 and 100"
+	}
+	if in.UntilAutoCompactPercent < 0 || in.UntilAutoCompactPercent > 100 {
+		return nil, "contextPressure.untilAutoCompactPercent must be between 0 and 100"
+	}
+	out := *in
+	out.Source = capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(out.Source)))
+	if out.ObservedAt.IsZero() {
+		out.ObservedAt = time.Now().UTC()
+	}
+	return &out, ""
 }
 
 func (c *SessionsController) spawnOrchestrator(w http.ResponseWriter, r *http.Request) {

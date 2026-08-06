@@ -3149,6 +3149,8 @@ components:
           $ref: '#/components/schemas/DomainActivity'
         branch:
           type: string
+        contextPressure:
+          $ref: '#/components/schemas/DomainContextPressure'
         createdAt:
           format: date-time
           type: string
@@ -3392,6 +3394,23 @@ components:
       required:
       - state
       - lastActivityAt
+      type: object
+    DomainContextPressure:
+      properties:
+        observedAt:
+          format: date-time
+          type: string
+        source:
+          type: string
+        untilAutoCompactPercent:
+          type: integer
+        usedPercent:
+          type: integer
+      required:
+      - usedPercent
+      - untilAutoCompactPercent
+      - source
+      - observedAt
       type: object
     DomainReviewerConfig:
       properties:
@@ -4492,6 +4511,10 @@ components:
         agentSessionId:
           description: Native agent session identifier used to resume its transcript.
           type: string
+        contextPressure:
+          $ref: '#/components/schemas/DomainContextPressure'
+          description: Best-effort harness context-pressure reading. Omitted when
+            unknown.
         event:
           description: AO hook sub-command that produced this state (e.g. post-tool-use).
           type: string

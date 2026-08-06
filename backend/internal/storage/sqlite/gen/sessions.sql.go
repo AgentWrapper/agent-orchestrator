@@ -14,14 +14,7 @@ import (
 )
 
 const getSession = `-- name: GetSession :one
-SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt,
-    created_at, updated_at, display_name, first_signal_at, preview_url,
-    preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    is_pinned, pinned_at, reviewer_harness
-FROM sessions WHERE id = ?
+SELECT id, project_id, num, issue_id, kind, harness, activity_state, activity_last_at, is_terminated, branch, workspace_path, runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, cleanup_generation, runtime_launch_id, workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, reviewer_harness, is_pinned, pinned_at, context_pressure FROM sessions WHERE id = ?
 `
 
 func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session, error) {
@@ -54,9 +47,10 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.TerminateOnPRMerge,
 		&i.DiffBaseSha,
 		&i.DiffBaseRef,
+		&i.ReviewerHarness,
 		&i.IsPinned,
 		&i.PinnedAt,
-		&i.ReviewerHarness,
+		&i.ContextPressure,
 	)
 	return i, err
 }
@@ -67,9 +61,9 @@ INSERT INTO sessions (
     activity_state, activity_last_at, first_signal_at, is_terminated,
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
-    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    preview_url, preview_revision, terminate_on_pr_merge, context_pressure, cleanup_generation,
     created_at, updated_at, is_pinned, pinned_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertSessionParams struct {
@@ -97,6 +91,7 @@ type InsertSessionParams struct {
 	PreviewURL         string
 	PreviewRevision    int64
 	TerminateOnPRMerge bool
+	ContextPressure    sql.NullString
 	CleanupGeneration  int64
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -130,6 +125,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
+		arg.ContextPressure,
 		arg.CleanupGeneration,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -140,14 +136,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 }
 
 const listAllSessions = `-- name: ListAllSessions :many
-SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt,
-    created_at, updated_at, display_name, first_signal_at, preview_url,
-    preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    is_pinned, pinned_at, reviewer_harness
-FROM sessions ORDER BY project_id, num
+SELECT id, project_id, num, issue_id, kind, harness, activity_state, activity_last_at, is_terminated, branch, workspace_path, runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, cleanup_generation, runtime_launch_id, workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, reviewer_harness, is_pinned, pinned_at, context_pressure FROM sessions ORDER BY project_id, num
 `
 
 func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
@@ -186,9 +175,10 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.ReviewerHarness,
 			&i.IsPinned,
 			&i.PinnedAt,
-			&i.ReviewerHarness,
+			&i.ContextPressure,
 		); err != nil {
 			return nil, err
 		}
@@ -204,14 +194,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 }
 
 const listSessionsByProject = `-- name: ListSessionsByProject :many
-SELECT id, project_id, num, issue_id, kind, harness,
-    activity_state, activity_last_at, is_terminated, branch, workspace_path,
-    runtime_handle_id, agent_session_id, prompt,
-    created_at, updated_at, display_name, first_signal_at, preview_url,
-    preview_revision, cleanup_generation, runtime_launch_id,
-    workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
-    is_pinned, pinned_at, reviewer_harness
-FROM sessions WHERE project_id = ? ORDER BY num
+SELECT id, project_id, num, issue_id, kind, harness, activity_state, activity_last_at, is_terminated, branch, workspace_path, runtime_handle_id, agent_session_id, prompt, created_at, updated_at, display_name, first_signal_at, preview_url, preview_revision, cleanup_generation, runtime_launch_id, workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref, reviewer_harness, is_pinned, pinned_at, context_pressure FROM sessions WHERE project_id = ? ORDER BY num
 `
 
 func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.ProjectID) ([]Session, error) {
@@ -250,9 +233,10 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.TerminateOnPRMerge,
 			&i.DiffBaseSha,
 			&i.DiffBaseRef,
+			&i.ReviewerHarness,
 			&i.IsPinned,
 			&i.PinnedAt,
-			&i.ReviewerHarness,
+			&i.ContextPressure,
 		); err != nil {
 			return nil, err
 		}
@@ -408,7 +392,7 @@ UPDATE sessions SET
     branch = ?, workspace_path = ?, workspace_repo_path = ?, diff_base_sha = ?, diff_base_ref = ?, runtime_handle_id = ?,
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?, updated_at = ?, is_pinned = ?, pinned_at = ?
+    context_pressure = ?, cleanup_generation = ?, updated_at = ?, is_pinned = ?, pinned_at = ?
 WHERE id = ?
 `
 
@@ -434,6 +418,7 @@ type UpdateSessionParams struct {
 	PreviewURL         string
 	PreviewRevision    int64
 	TerminateOnPRMerge bool
+	ContextPressure    sql.NullString
 	CleanupGeneration  int64
 	UpdatedAt          time.Time
 	IsPinned           bool
@@ -464,6 +449,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PreviewURL,
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
+		arg.ContextPressure,
 		arg.CleanupGeneration,
 		arg.UpdatedAt,
 		arg.IsPinned,

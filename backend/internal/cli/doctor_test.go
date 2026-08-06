@@ -309,6 +309,26 @@ func TestDoctorTextOutputIsGrouped(t *testing.T) {
 	}
 }
 
+func TestDoctorWarnsOnHighContextPressure(t *testing.T) {
+	cfg := setConfigEnv(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/sessions" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, `{"sessions":[`+sessionJSONWithContextPressure("demo-1", "demo", "worker", "working", false)+`]}`)
+	}))
+	t.Cleanup(srv.Close)
+	writeRunFileFor(t, cfg, srv)
+	c := &commandContext{deps: Deps{ProcessAlive: func(int) bool { return true }}.withDefaults()}
+
+	check := c.checkSessionContextPressure(context.Background(), stateReady)
+	if check.Level != doctorWarn || !strings.Contains(check.Message, "demo-1") || !strings.Contains(check.Message, "used=91%") {
+		t.Fatalf("context-pressure check = %+v, want WARN for demo-1", check)
+	}
+}
+
 func clearDoctorGitHubEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("AO_GITHUB_TOKEN", "")

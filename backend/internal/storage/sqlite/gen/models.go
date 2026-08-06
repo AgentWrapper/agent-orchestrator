@@ -199,9 +199,10 @@ type Session struct {
 	TerminateOnPRMerge bool
 	DiffBaseSha        string
 	DiffBaseRef        string
+	ReviewerHarness    domain.ReviewerHarness
 	IsPinned           bool
 	PinnedAt           sql.NullTime
-	ReviewerHarness    domain.ReviewerHarness
+	ContextPressure    sql.NullString
 }
 
 type SessionCleanupFact struct {

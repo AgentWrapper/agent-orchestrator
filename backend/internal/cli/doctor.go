@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,8 +48,11 @@ const (
 	doctorSectionCore           = "Core"
 	doctorSectionTools          = "Tools"
 	doctorSectionAgents         = "Agent harnesses"
+	doctorSectionSessions       = "Sessions"
 	doctorSectionGitHub         = "GitHub"
 	minGitVersion               = "2.25.0"
+	contextPressureWarnPercent  = 90
+	contextCompactWarnPercent   = 10
 	githubDoctorUserAgent       = "ao-agent-orchestrator/doctor"
 	defaultDoctorGitHubRESTBase = "https://api.github.com"
 )
@@ -145,10 +149,12 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 
 	checks = append(checks, checkStore(cfg.DataDir), checkHooksLog(cfg.DataDir, time.Now()))
 
+	daemonState := stateStopped
 	st, err := c.inspectDaemon(ctx)
 	if err != nil {
 		checks = append(checks, doctorCheck{Level: doctorFail, Section: doctorSectionCore, Name: "daemon", Message: err.Error()})
 	} else {
+		daemonState = st.State
 		level := doctorPass
 		switch st.State {
 		case stateStale, stateNotReady:
@@ -165,8 +171,8 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 		}
 		checks = append(checks, doctorCheck{Level: level, Section: doctorSectionCore, Name: "daemon", Message: msg})
 	}
-
 	checks = append(checks,
+		c.checkSessionContextPressure(ctx, daemonState),
 		c.checkGit(ctx),
 		c.checkTerminalRuntime(ctx),
 		c.checkAOBinary(),
@@ -176,6 +182,37 @@ func (c *commandContext) runDoctor(ctx context.Context) []doctorCheck {
 	}
 	checks = append(checks, c.checkCodexLaunchFlags(ctx), c.checkGitHubToken(ctx))
 	return checks
+}
+
+func (c *commandContext) checkSessionContextPressure(ctx context.Context, daemonState daemonState) doctorCheck {
+	const name = "context-pressure"
+	if daemonState != stateReady {
+		return doctorCheck{Level: doctorPass, Section: doctorSectionSessions, Name: name, Message: "skipped: daemon is not ready"}
+	}
+	params := url.Values{}
+	params.Set("active", "true")
+	var res sessionListResponse
+	if err := c.getJSON(ctx, apiPath("sessions", params), &res); err != nil {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionSessions, Name: name, Message: fmt.Sprintf("could not read active sessions: %v", err)}
+	}
+	var pressured []string
+	for _, sess := range res.Sessions {
+		if sess.Kind != "worker" || sess.IsTerminated || sess.ContextPressure == nil {
+			continue
+		}
+		cp := sess.ContextPressure
+		if cp.UsedPercent >= contextPressureWarnPercent || cp.UntilAutoCompactPercent <= contextCompactWarnPercent {
+			label := sess.ID
+			if sess.DisplayName != "" {
+				label += " (" + sess.DisplayName + ")"
+			}
+			pressured = append(pressured, fmt.Sprintf("%s used=%d%% untilAutoCompact=%d%% source=%s", label, cp.UsedPercent, cp.UntilAutoCompactPercent, cp.Source))
+		}
+	}
+	if len(pressured) > 0 {
+		return doctorCheck{Level: doctorWarn, Section: doctorSectionSessions, Name: name, Message: strings.Join(pressured, "; ")}
+	}
+	return doctorCheck{Level: doctorPass, Section: doctorSectionSessions, Name: name, Message: "no active worker above context-pressure thresholds"}
 }
 
 // checkStore inspects the SQLite store WITHOUT opening or migrating it. The
