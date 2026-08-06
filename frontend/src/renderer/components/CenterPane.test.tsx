@@ -330,7 +330,68 @@ describe("CenterPane toolbar session label", () => {
 			"agent-orchestrator-2",
 			"agent-orchestrator-0",
 		]);
-		expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", shells[0].handleId);
+		expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", `shell:${shells[0].handleId}`);
+	});
+
+	it("reorders added session terminals with the same drag behavior", () => {
+		const thirdWorker = { ...secondWorker, id: "sess-3", title: "ship the change" } satisfies WorkspaceSession;
+		renderCenterPane({
+			session: worker,
+			projectSessions: [worker, secondWorker, thirdWorker],
+			tabOwnerSessionId: worker.id,
+		});
+		const secondTab = screen.getByRole("tab", { name: secondWorker.title }).parentElement as HTMLElement;
+		const thirdTab = screen.getByRole("tab", { name: thirdWorker.title }).parentElement as HTMLElement;
+		const dataTransfer = {
+			dropEffect: "none",
+			effectAllowed: "none",
+			setData: vi.fn(),
+		};
+
+		fireEvent.dragStart(secondTab, { dataTransfer });
+		fireEvent.dragEnter(thirdTab, { dataTransfer });
+		fireEvent.dragEnd(secondTab, { dataTransfer });
+
+		expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+			"do the thing",
+			"ship the change",
+			"review the change",
+		]);
+		expect(dataTransfer.setData).toHaveBeenCalledWith("text/plain", `session:${secondWorker.id}`);
+	});
+
+	it("pins session and shell terminals at the far left and lets them be unpinned", () => {
+		const shells = makeShells(2);
+		renderCenterPane({
+			session: worker,
+			projectSessions: [worker, secondWorker],
+			shellTerminals: shells,
+			tabOwnerSessionId: worker.id,
+		});
+
+		fireEvent.click(screen.getByRole("button", { name: `Pin tab ${secondWorker.title}` }));
+		fireEvent.click(screen.getByRole("button", { name: `Pin tab ${shells[1].title}` }));
+
+		expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+			"review the change",
+			"agent-orchestrator-1",
+			"do the thing",
+			"agent-orchestrator-0",
+		]);
+		expect(
+			screen
+				.getByRole("button", { name: `Unpin tab ${shells[1].title}` })
+				.querySelector("svg")
+				?.classList.contains("fill-current"),
+		).toBe(true);
+
+		fireEvent.click(screen.getByRole("button", { name: `Unpin tab ${secondWorker.title}` }));
+		expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+			"agent-orchestrator-1",
+			"do the thing",
+			"review the change",
+			"agent-orchestrator-0",
+		]);
 	});
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {

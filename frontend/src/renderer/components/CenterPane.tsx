@@ -3,6 +3,7 @@ import {
 	ChevronRight,
 	Maximize2,
 	Minimize2,
+	Pin,
 	Plus,
 	Search,
 	Shield,
@@ -67,15 +68,27 @@ const COMPACT_SESSION_LIMIT = 5;
 const isMac = isMacPlatform();
 const newTerminalShortcutLabel = shortcutBindingLabel(defaultShortcutBindings("new-shell-terminal", isMac)[0], isMac);
 
-function orderedShells(shellTerminals: ShellTerminal[], order: string[]): ShellTerminal[] {
-	const byHandle = new Map(shellTerminals.map((shell) => [shell.handleId, shell]));
-	const ordered = order.flatMap((handleId) => {
-		const shell = byHandle.get(handleId);
-		if (!shell) return [];
-		byHandle.delete(handleId);
-		return [shell];
+type ReorderableTerminalTab =
+	| { id: string; kind: "session"; session: WorkspaceSession }
+	| { id: string; kind: "shell"; shell: ShellTerminal };
+
+function sessionTerminalTabId(sessionId: string): string {
+	return `session:${sessionId}`;
+}
+
+function shellTerminalTabId(handleId: string): string {
+	return `shell:${handleId}`;
+}
+
+function orderedTerminalTabs(tabs: ReorderableTerminalTab[], order: string[]): ReorderableTerminalTab[] {
+	const byId = new Map(tabs.map((tab) => [tab.id, tab]));
+	const ordered = order.flatMap((id) => {
+		const tab = byId.get(id);
+		if (!tab) return [];
+		byId.delete(id);
+		return [tab];
 	});
-	return [...ordered, ...byHandle.values()];
+	return [...ordered, ...byId.values()];
 }
 
 function clampTerminalFontSize(size: number): number {
@@ -113,11 +126,12 @@ export function CenterPane({
 	const paneRef = useRef<HTMLDivElement | null>(null);
 	const wheelZoomRemainderRef = useRef(0);
 	const lastWheelZoomAtRef = useRef(0);
-	const draggedShellTerminalIdRef = useRef<string | null>(null);
+	const draggedTerminalTabIdRef = useRef<string | null>(null);
 	const [fontSize, setFontSize] = useState(initialTerminalFontSize);
 	const [isFullscreen, setIsFullscreen] = useState(false);
-	const [shellTerminalOrder, setShellTerminalOrder] = useState<string[]>([]);
-	const [draggedShellTerminalId, setDraggedShellTerminalId] = useState<string | null>(null);
+	const [terminalTabOrder, setTerminalTabOrder] = useState<string[]>([]);
+	const [pinnedTerminalTabIds, setPinnedTerminalTabIds] = useState<string[]>([]);
+	const [draggedTerminalTabId, setDraggedTerminalTabId] = useState<string | null>(null);
 	const [showAllSessions, setShowAllSessions] = useState(false);
 	const [sessionSearch, setSessionSearch] = useState("");
 	const sessionTabs = projectSessions?.length ? projectSessions : session ? [session] : [];
@@ -131,10 +145,34 @@ export function CenterPane({
 		: availableProjectSessions;
 	const expandedSessionList = showAllSessions || normalizedSessionSearch.length > 0;
 	const visibleSessions = expandedSessionList ? filteredSessions : filteredSessions.slice(0, COMPACT_SESSION_LIMIT);
-	const orderedShellTerminals = orderedShells(shellTerminals, shellTerminalOrder);
-	const tabOverflowWatch = `${sessionTabs.map((item) => item.id).join("|")}|${shellTerminals
-		.map((terminal) => terminal.handleId)
-		.join("|")}`;
+	const ownerSessionTab =
+		sessionTabs.find((projectSession) => projectSession.id === effectiveTabOwnerSessionId) ?? sessionTabs[0];
+	const reorderableTerminalTabs: ReorderableTerminalTab[] = [
+		...sessionTabs
+			.filter((projectSession) => projectSession.id !== ownerSessionTab?.id)
+			.map((projectSession) => ({
+				id: sessionTerminalTabId(projectSession.id),
+				kind: "session" as const,
+				session: projectSession,
+			})),
+		...shellTerminals.map((shell) => ({
+			id: shellTerminalTabId(shell.handleId),
+			kind: "shell" as const,
+			shell,
+		})),
+	];
+	const orderedTabs = orderedTerminalTabs(reorderableTerminalTabs, terminalTabOrder);
+	const pinnedTabIds = new Set(pinnedTerminalTabIds);
+	const pinnedTabs = orderedTabs.filter((tab) => pinnedTabIds.has(tab.id));
+	const unpinnedTabs = orderedTabs.filter((tab) => !pinnedTabIds.has(tab.id));
+	const visibleTerminalTabs = [
+		...pinnedTabs.map((tab) => ({ ...tab, isPinned: true })),
+		...(ownerSessionTab
+			? [{ id: `owner:${ownerSessionTab.id}`, kind: "owner" as const, session: ownerSessionTab }]
+			: []),
+		...unpinnedTabs.map((tab) => ({ ...tab, isPinned: false })),
+	];
+	const tabOverflowWatch = `${ownerSessionTab?.id ?? ""}|${orderedTabs.map((tab) => tab.id).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
 	const target = terminalTarget ?? { kind: "worker" };
 	const activeTerminalLabel =
@@ -213,30 +251,36 @@ export function CenterPane({
 		[updateFontSize],
 	);
 
-	const moveShellTerminal = (targetHandleId: string) => {
-		const sourceHandleId = draggedShellTerminalIdRef.current;
-		if (!sourceHandleId || sourceHandleId === targetHandleId) return;
-		setShellTerminalOrder((currentOrder) => {
-			const nextOrder = orderedShells(shellTerminals, currentOrder).map((shell) => shell.handleId);
-			const sourceIndex = nextOrder.indexOf(sourceHandleId);
-			const targetIndex = nextOrder.indexOf(targetHandleId);
+	const moveTerminalTab = (targetTabId: string) => {
+		const sourceTabId = draggedTerminalTabIdRef.current;
+		if (!sourceTabId || sourceTabId === targetTabId) return;
+		setTerminalTabOrder((currentOrder) => {
+			const nextOrder = orderedTerminalTabs(reorderableTerminalTabs, currentOrder).map((tab) => tab.id);
+			const sourceIndex = nextOrder.indexOf(sourceTabId);
+			const targetIndex = nextOrder.indexOf(targetTabId);
 			if (sourceIndex < 0 || targetIndex < 0) return currentOrder;
 			nextOrder.splice(sourceIndex, 1);
-			nextOrder.splice(targetIndex, 0, sourceHandleId);
+			nextOrder.splice(targetIndex, 0, sourceTabId);
 			return nextOrder;
 		});
 	};
 
-	const beginShellTerminalDrag = (event: DragEvent<HTMLSpanElement>, handleId: string) => {
+	const beginTerminalTabDrag = (event: DragEvent<HTMLSpanElement>, tabId: string) => {
 		event.dataTransfer.effectAllowed = "move";
-		event.dataTransfer.setData("text/plain", handleId);
-		draggedShellTerminalIdRef.current = handleId;
-		setDraggedShellTerminalId(handleId);
+		event.dataTransfer.setData("text/plain", tabId);
+		draggedTerminalTabIdRef.current = tabId;
+		setDraggedTerminalTabId(tabId);
 	};
 
-	const endShellTerminalDrag = () => {
-		draggedShellTerminalIdRef.current = null;
-		setDraggedShellTerminalId(null);
+	const endTerminalTabDrag = () => {
+		draggedTerminalTabIdRef.current = null;
+		setDraggedTerminalTabId(null);
+	};
+
+	const toggleTerminalTabPinned = (tabId: string) => {
+		setPinnedTerminalTabIds((current) =>
+			current.includes(tabId) ? current.filter((currentId) => currentId !== tabId) : [...current, tabId],
+		);
 	};
 
 	return (
@@ -260,8 +304,8 @@ export function CenterPane({
 					>
 						<ChevronLeft aria-hidden="true" className="size-icon-md" />
 					</button>
-					{/* Each originating session owns a private set of pinned worker and
-					    shell tabs. The + menu is the only way to add to that layout. */}
+					{/* Each originating session owns a private set of worker and shell
+					    tabs. The + menu adds tabs; pinning moves an added tab to the left. */}
 					<div
 						ref={tabsOverflow.ref}
 						className="scrollbar-none flex min-w-flex-min flex-1 items-center gap-3 overflow-x-auto"
@@ -269,47 +313,72 @@ export function CenterPane({
 						role="tablist"
 						aria-label={t("terminal.tabsAria")}
 					>
-						{sessionTabs.length > 0
-							? sessionTabs.map((projectSession) => {
-									const isCurrent = projectSession.id === session?.id;
+						{visibleTerminalTabs.length > 0
+							? visibleTerminalTabs.map((tab) => {
+									if (tab.kind === "owner") {
+										const isCurrent = tab.session.id === session?.id;
+										return (
+											<SessionPaneTab
+												key={tab.id}
+												isActive={isCurrent && target.kind !== "shell"}
+												label={isOrchestratorSession(tab.session) ? t("shell.orchestrator") : tab.session.title}
+												onSelect={isCurrent ? onSelectSessionTerminal : () => onSelectProjectSession?.(tab.session)}
+												provider={tab.session.provider}
+											/>
+										);
+									}
+
+									const dragProps = {
+										draggable: true,
+										isDragging: draggedTerminalTabId === tab.id,
+										onDragEnd: endTerminalTabDrag,
+										onDragEnter: () => moveTerminalTab(tab.id),
+										onDragOver: (event: DragEvent<HTMLSpanElement>) => {
+											if (!draggedTerminalTabIdRef.current) return;
+											event.preventDefault();
+											event.dataTransfer.dropEffect = "move";
+										},
+										onDragStart: (event: DragEvent<HTMLSpanElement>) => beginTerminalTabDrag(event, tab.id),
+										onDrop: (event: DragEvent<HTMLSpanElement>) => event.preventDefault(),
+									};
+
+									if (tab.kind === "session") {
+										const isCurrent = tab.session.id === session?.id;
+										return (
+											<SessionPaneTab
+												key={tab.id}
+												{...dragProps}
+												isActive={isCurrent && target.kind !== "shell"}
+												isPinned={tab.isPinned}
+												label={isOrchestratorSession(tab.session) ? t("shell.orchestrator") : tab.session.title}
+												onClose={() => onCloseProjectSession?.(tab.session)}
+												onSelect={isCurrent ? onSelectSessionTerminal : () => onSelectProjectSession?.(tab.session)}
+												onTogglePinned={() => toggleTerminalTabPinned(tab.id)}
+												provider={tab.session.provider}
+											/>
+										);
+									}
+
 									return (
-										<SessionPaneTab
-											key={projectSession.id}
-											isActive={isCurrent && target.kind !== "shell"}
-											label={isOrchestratorSession(projectSession) ? t("shell.orchestrator") : projectSession.title}
-											provider={projectSession.provider}
-											onSelect={isCurrent ? onSelectSessionTerminal : () => onSelectProjectSession?.(projectSession)}
-											onClose={
-												projectSession.id !== effectiveTabOwnerSessionId
-													? () => onCloseProjectSession?.(projectSession)
+										<ShellTerminalTab
+											key={tab.id}
+											{...dragProps}
+											appearance="connected"
+											isActive={target.kind === "shell" && target.handleId === tab.shell.handleId}
+											isPinned={tab.isPinned}
+											onClose={() => onCloseShellTerminal?.(tab.shell.handleId)}
+											onRename={
+												onRenameShellTerminal
+													? (title) => onRenameShellTerminal(tab.shell.handleId, title)
 													: undefined
 											}
+											onSelect={() => onSelectShellTerminal?.(tab.shell.handleId)}
+											onTogglePinned={() => toggleTerminalTabPinned(tab.id)}
+											shell={tab.shell}
 										/>
 									);
 								})
 							: !session && <span className="font-mono text-control text-passive">{t("terminal.noSession")}</span>}
-						{orderedShellTerminals.map((shell) => (
-							<ShellTerminalTab
-								key={shell.handleId}
-								appearance="connected"
-								draggable
-								isActive={target.kind === "shell" && target.handleId === shell.handleId}
-								isDragging={draggedShellTerminalId === shell.handleId}
-								onClose={() => onCloseShellTerminal?.(shell.handleId)}
-								onDragEnd={endShellTerminalDrag}
-								onDragEnter={() => moveShellTerminal(shell.handleId)}
-								onDragOver={(event) => {
-									if (!draggedShellTerminalIdRef.current) return;
-									event.preventDefault();
-									event.dataTransfer.dropEffect = "move";
-								}}
-								onDragStart={(event) => beginShellTerminalDrag(event, shell.handleId)}
-								onDrop={(event) => event.preventDefault()}
-								onRename={onRenameShellTerminal ? (title) => onRenameShellTerminal(shell.handleId, title) : undefined}
-								onSelect={() => onSelectShellTerminal?.(shell.handleId)}
-								shell={shell}
-							/>
-						))}
 					</div>
 					<button
 						aria-label={t("terminal.scrollTabsRight")}
@@ -500,25 +569,57 @@ type SessionPaneTabProps = {
 	label: string;
 	provider: string;
 	isActive: boolean;
+	draggable?: boolean;
+	isDragging?: boolean;
+	isPinned?: boolean;
 	onSelect?: () => void;
 	onClose?: () => void;
+	onTogglePinned?: () => void;
+	onDragStart?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDragEnter?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDragOver?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDrop?: (event: DragEvent<HTMLSpanElement>) => void;
+	onDragEnd?: (event: DragEvent<HTMLSpanElement>) => void;
 };
 
 // Shared tab chrome: the open tab is highlighted with the same rounded
 // background as the inspector rail tabs (Summary · Reviews · Browser), and
 // the full label only becomes the hover tooltip when the tab strip is
 // crowded enough to truncate it.
-function SessionPaneTab({ label, provider, isActive, onSelect, onClose }: SessionPaneTabProps) {
+function SessionPaneTab({
+	label,
+	provider,
+	isActive,
+	draggable = false,
+	isDragging = false,
+	isPinned = false,
+	onSelect,
+	onClose,
+	onTogglePinned,
+	onDragStart,
+	onDragEnter,
+	onDragOver,
+	onDrop,
+	onDragEnd,
+}: SessionPaneTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	return (
 		<span
 			className={cn(
 				"session-pane-tab group relative inline-flex items-center rounded-md transition-colors",
+				draggable && "cursor-grab active:cursor-grabbing",
+				isDragging && "opacity-45",
 				isActive
 					? "bg-interactive-active after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-foreground/65"
 					: "hover:bg-interactive-hover/60",
 			)}
+			draggable={draggable}
+			onDragEnd={onDragEnd}
+			onDragEnter={onDragEnter}
+			onDragOver={onDragOver}
+			onDragStart={onDragStart}
+			onDrop={onDrop}
 		>
 			<button
 				ref={ref}
@@ -537,6 +638,26 @@ function SessionPaneTab({ label, provider, isActive, onSelect, onClose }: Sessio
 				<AgentAvatar className="size-icon-xs" decorative provider={provider} />
 				<span className="truncate">{label}</span>
 			</button>
+			{onTogglePinned ? (
+				<button
+					aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: label })}
+					className={cn(
+						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+						isPinned
+							? "ml-1 w-control-xs opacity-100"
+							: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-xs group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-xs group-focus-within:opacity-100",
+					)}
+					draggable={false}
+					onClick={(event) => {
+						event.stopPropagation();
+						onTogglePinned();
+					}}
+					title={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: label })}
+					type="button"
+				>
+					<Pin aria-hidden="true" className={cn("size-icon-xs", isPinned && "fill-current")} />
+				</button>
+			) : null}
 			{onClose ? (
 				<button
 					aria-label={t("terminal.closeSessionTab", { label })}
@@ -545,6 +666,7 @@ function SessionPaneTab({ label, provider, isActive, onSelect, onClose }: Sessio
 						event.stopPropagation();
 						onClose();
 					}}
+					draggable={false}
 					type="button"
 				>
 					<X aria-hidden="true" className="size-icon-sm" />

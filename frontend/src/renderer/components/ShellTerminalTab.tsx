@@ -1,4 +1,4 @@
-import { SquareTerminal, X } from "lucide-react";
+import { Pin, SquareTerminal, X } from "lucide-react";
 import { type DragEvent, type MouseEvent, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useTruncatedText } from "../hooks/useTruncatedText";
@@ -17,6 +17,8 @@ type ShellTerminalTabProps = {
 	onRename?: (title: string) => void;
 	draggable?: boolean;
 	isDragging?: boolean;
+	isPinned?: boolean;
+	onTogglePinned?: () => void;
 	onDragStart?: (event: DragEvent<HTMLSpanElement>) => void;
 	onDragEnter?: (event: DragEvent<HTMLSpanElement>) => void;
 	onDragOver?: (event: DragEvent<HTMLSpanElement>) => void;
@@ -44,6 +46,8 @@ export function ShellTerminalTab({
 	onRename,
 	draggable = false,
 	isDragging = false,
+	isPinned = false,
+	onTogglePinned,
 	onDragStart,
 	onDragEnter,
 	onDragOver,
@@ -123,7 +127,7 @@ export function ShellTerminalTab({
 				draggable && "cursor-grab active:cursor-grabbing",
 				isDragging && "opacity-45",
 				appearance === "connected"
-					? "session-pane-tab grid grid-cols-[auto_minmax(0,1fr)_auto] self-stretch rounded-md border-x border-transparent"
+					? "session-pane-tab grid grid-cols-[auto_minmax(0,1fr)_auto_auto] self-stretch rounded-md border-x border-transparent"
 					: "inline-flex gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
@@ -192,6 +196,32 @@ export function ShellTerminalTab({
 					{shell.title}
 				</button>
 			)}
+			{onTogglePinned ? (
+				<button
+					aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
+					className={cn(
+						"inline-flex h-control-sm shrink-0 items-center justify-center overflow-hidden rounded-sm text-passive transition-[width,margin,background,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
+						appearance === "connected"
+							? isPinned
+								? "ml-1 w-control-xs opacity-100"
+								: "ml-0 w-0 opacity-0 group-hover:ml-1 group-hover:w-control-xs group-hover:opacity-100 group-focus-within:ml-1 group-focus-within:w-control-xs group-focus-within:opacity-100"
+							: isPinned
+								? "w-control-xs opacity-100"
+								: "w-control-xs opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+					)}
+					draggable={false}
+					onClick={(event) => {
+						event.stopPropagation();
+						onTogglePinned();
+					}}
+					onContextMenu={(event) => event.stopPropagation()}
+					onDoubleClick={(event) => event.stopPropagation()}
+					title={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
+					type="button"
+				>
+					<Pin aria-hidden="true" className={cn("size-icon-xs", isPinned && "fill-current")} />
+				</button>
+			) : null}
 			<button
 				aria-label={t("terminal.closeNamed", { title: shell.title })}
 				className={cn(
@@ -208,6 +238,7 @@ export function ShellTerminalTab({
 				}}
 				onDoubleClick={(event) => event.stopPropagation()}
 				onContextMenu={(event) => event.stopPropagation()}
+				draggable={false}
 				title={t("terminal.close")}
 				type="button"
 			>
