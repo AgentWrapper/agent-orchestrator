@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -261,6 +262,42 @@ func TestIngestorPersistsParsedCheckpointWhenRewriteFollowsFinalVerification(t *
 		t.Fatalf("ingest replacement generation: %v", err)
 	}
 	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 350)
+}
+
+func TestIngestorRejectsChunkAfterSourceRetirement(t *testing.T) {
+	ctx := context.Background()
+	store, source, path, now := seedCodexIngestionSource(t, t.TempDir())
+	content := string(codexSessionMetaLine(t, "codex-root", "")) + "\n" +
+		string(codexTokenLine("2026-07-28T10:00:00Z", 100, 60, 0, 20, 5)) + "\n"
+	mustNoError(t, os.WriteFile(path, []byte(content), 0o600))
+
+	interleaved := &applyInterleavingStore{Store: store}
+	interleaved.beforeApply = func() {
+		_, err := store.ReplaceUsageSource(ctx, source.ID, domain.UsageErrorArtifactReplaced, domain.UsageSourceRecord{
+			BindingID:       source.BindingID,
+			Kind:            source.Kind,
+			NativeSessionID: source.NativeSessionID,
+			ArtifactPath:    source.ArtifactPath,
+			FileIdentity:    source.FileIdentity,
+			Generation:      source.Generation + 1,
+			State:           domain.UsageSourcePending,
+			UpdatedAt:       now.Add(time.Second),
+		}, now.Add(time.Second))
+		mustNoError(t, err)
+	}
+	ingestor := NewIngestor(interleaved, IngestorConfig{Clock: func() time.Time { return now }})
+	if _, err := ingestor.Ingest(ctx, source.ID); !errors.Is(err, domain.ErrUsageSourceRevisionConflict) {
+		t.Fatalf("ingest error = %v, want revision conflict", err)
+	}
+
+	sources, err := store.ListUsageSourcesForBinding(ctx, source.BindingID)
+	mustNoError(t, err)
+	if len(sources) != 2 || sources[0].ByteOffset != 0 ||
+		sources[0].State != domain.UsageSourceComplete ||
+		sources[0].LastErrorCode != domain.UsageErrorArtifactReplaced {
+		t.Fatalf("sources after interleaving = %+v", sources)
+	}
+	assertTokenAggregate(t, store, sourceSessionID(t, store, source.ID), 0)
 }
 
 func TestIngestorReplacesSameInodeWhenPreCursorCheckpointChanges(t *testing.T) {
@@ -871,7 +908,7 @@ func TestIngestorStopsRetryingConflictingNativeEvent(t *testing.T) {
 	}
 	conflict := parsed.Events[0]
 	conflict.Tokens.OutputTokens++
-	if err := store.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset: 0,
 		State:      domain.UsageSourcePending,
 		UpdatedAt:  now,
@@ -954,6 +991,7 @@ func (s *applyInterleavingStore) ApplyUsageChunk(
 	ctx context.Context,
 	sourceID int64,
 	expectedOffset int64,
+	expectedRevision time.Time,
 	nextState domain.SourceCursorState,
 	events []domain.ModelUsageEvent,
 ) error {
@@ -961,7 +999,7 @@ func (s *applyInterleavingStore) ApplyUsageChunk(
 		s.beforeApply = nil
 		beforeApply()
 	}
-	return s.Store.ApplyUsageChunk(ctx, sourceID, expectedOffset, nextState, events)
+	return s.Store.ApplyUsageChunk(ctx, sourceID, expectedOffset, expectedRevision, nextState, events)
 }
 
 func assertTokenAggregate(t *testing.T, store *sqlite.Store, sessionID domain.SessionID, total int64) {

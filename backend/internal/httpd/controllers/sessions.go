@@ -1091,13 +1091,17 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 			NativeSessionID: agentSessionID,
 		}
 		if in.Usage != nil {
-			usageSignal.Harness = in.Usage.Harness
-			usageSignal.TranscriptPath = in.Usage.TranscriptPath
-			usageSignal.ModelID = in.Usage.ModelID
-			usageSignal.SubagentID = in.Usage.SubagentID
-			usageSignal.SubagentTranscriptPath = in.Usage.SubagentTranscriptPath
+			usageSignal.Harness = domain.AgentHarness(capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(string(in.Usage.Harness)))))
+			usageSignal.TranscriptPath = capUsagePath(domain.SanitizeControlChars(strings.TrimSpace(in.Usage.TranscriptPath)))
+			usageSignal.ModelID = capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.Usage.ModelID)))
+			usageSignal.SubagentID = capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.Usage.SubagentID)))
+			usageSignal.SubagentTranscriptPath = capUsagePath(domain.SanitizeControlChars(strings.TrimSpace(in.Usage.SubagentTranscriptPath)))
 		}
 		if err := c.Usage.RecordHook(r.Context(), sessionID(r), usageSignal); err != nil {
+			if errors.Is(err, usagesvc.ErrUsageSessionNotFound) {
+				envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "SESSION_NOT_FOUND", "Unknown session", nil)
+				return
+			}
 			slog.Default().Warn(
 				"usage hook processing failed",
 				"session", sessionID(r),
@@ -1113,6 +1117,14 @@ func (c *SessionsController) activity(w http.ResponseWriter, r *http.Request) {
 // values are dropped, not truncated (see the comment at its call site).
 func capActivityMeta(v string) string {
 	const maxLen = 256
+	if len(v) > maxLen {
+		return ""
+	}
+	return v
+}
+
+func capUsagePath(v string) string {
+	const maxLen = 4096
 	if len(v) > maxLen {
 		return ""
 	}

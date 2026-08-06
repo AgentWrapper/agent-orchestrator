@@ -4,7 +4,6 @@ import { apiClient } from "../lib/api-client";
 
 export type SessionUsageSummary = components["schemas"]["CompactSessionUsageResponse"];
 
-export const sessionUsageRefreshIntervalMs = 30_000;
 export const sessionUsageQueryRoot = ["session-usage"] as const;
 export const sessionUsageQueryKey = (projectId?: string) =>
 	[...sessionUsageQueryRoot, projectId ?? "all"] as const;
@@ -22,7 +21,6 @@ export function sessionUsageQueryOptions(projectId?: string) {
 		queryKey: sessionUsageQueryKey(projectId),
 		queryFn: () => fetchSessionUsageSummaries(projectId),
 		retry: 1,
-		refetchInterval: sessionUsageRefreshIntervalMs,
 		select: (items: SessionUsageSummary[]) =>
 			new Map(items.map((item) => [item.sessionId, item] as const)),
 	};

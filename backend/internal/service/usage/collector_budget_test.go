@@ -132,8 +132,8 @@ func TestCollectorCodexBudgetCountsLogicalIDsAndAllowsExistingGenerations(t *tes
 	}
 	reader := NewSummaryReader(fixture.store)
 	compact, err := reader.ListCompact(ctx, fixture.session.ProjectID)
-	if err != nil || len(compact) != 1 || !compact[0].Incomplete {
-		t.Fatalf("live compact summary=%+v err=%v", compact, err)
+	if err != nil || len(compact) != 0 {
+		t.Fatalf("zero-usage compact summary=%+v err=%v, want no card metric", compact, err)
 	}
 	detail, err := reader.Get(ctx, fixture.session.ID)
 	if err != nil || !detail.Incomplete {
@@ -361,6 +361,11 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 		}
 	}
 	setCodexDiscoveredChildren(t, store, rootSource, testCodexChildID, testCodexOverflowID)
+	rootContext, ok, err := store.GetUsageSourceForIngestion(ctx, rootSource.ID)
+	if err != nil || !ok {
+		t.Fatalf("reload root source: ok=%v err=%v", ok, err)
+	}
+	rootSource = rootContext.Source
 	if _, err := collector.registerSource(
 		ctx,
 		binding,
@@ -373,7 +378,7 @@ func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ApplyUsageChunk(ctx, rootSource.ID, rootSource.ByteOffset, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(ctx, rootSource.ID, rootSource.ByteOffset, rootSource.UpdatedAt, domain.SourceCursorState{
 		ByteOffset:      rootSource.ByteOffset,
 		ParserStateJSON: codexParserStateWithChildren(t, testCodexChildID, testCodexOverflowID),
 		State:           domain.UsageSourceActive,
@@ -493,7 +498,7 @@ func setCodexDiscoveredChildren(
 	childIDs ...string,
 ) {
 	t.Helper()
-	err := store.ApplyUsageChunk(context.Background(), source.ID, source.ByteOffset, domain.SourceCursorState{
+	err := store.ApplyUsageChunk(context.Background(), source.ID, source.ByteOffset, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset:      source.ByteOffset,
 		ParserStateJSON: codexParserStateWithChildren(t, childIDs...),
 		State:           source.State,

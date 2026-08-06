@@ -224,6 +224,17 @@ func (s *Store) ListWatchableUsageSources(ctx context.Context) ([]domain.UsageSo
 	return out, nil
 }
 
+// HasPendingUsageDiscovery reports whether a live binding has a durable reason
+// to retry source discovery. It excludes healthy active bindings, so retries do
+// not degrade into global transcript polling.
+func (s *Store) HasPendingUsageDiscovery(ctx context.Context) (bool, error) {
+	pending, err := s.qr.HasPendingUsageDiscovery(ctx)
+	if err != nil {
+		return false, fmt.Errorf("check pending usage discovery: %w", err)
+	}
+	return pending != 0, nil
+}
+
 // ListLatestRetiredCodexReplacementClaimsByPath returns durable replacement
 // claims for one exact provider artifact path on resumable bindings.
 func (s *Store) ListLatestRetiredCodexReplacementClaimsByPath(
@@ -341,7 +352,13 @@ func (s *Store) MarkUsageSourceFailure(ctx context.Context, id, failureCount int
 
 // ApplyUsageChunk atomically writes parsed usage events and advances the source
 // cursor/baselines. The cursor never moves unless all event writes commit.
-func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset int64, nextState domain.SourceCursorState, events []domain.ModelUsageEvent) error {
+func (s *Store) ApplyUsageChunk(
+	ctx context.Context,
+	sourceID, expectedOffset int64,
+	expectedRevision time.Time,
+	nextState domain.SourceCursorState,
+	events []domain.ModelUsageEvent,
+) error {
 	if nextState.ParserStateJSON != "" {
 		if err := validateParserStateObject(nextState.ParserStateJSON); err != nil {
 			return err
@@ -361,6 +378,11 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 		if source.ByteOffset != expectedOffset {
 			return fmt.Errorf("%w: source %d has offset %d, expected %d", domain.ErrUsageSourceOffsetConflict, sourceID, source.ByteOffset, expectedOffset)
 		}
+		if !source.SourceUpdatedAt.Equal(expectedRevision) ||
+			(source.SourceState == domain.UsageSourceComplete && source.SourceLastErrorCode == domain.UsageErrorArtifactReplaced) {
+			return fmt.Errorf("%w: source %d changed while its chunk was being read", domain.ErrUsageSourceRevisionConflict, sourceID)
+		}
+		insertedEvent := false
 		for _, ev := range events {
 			existing, err := q.GetModelUsageEventByKey(ctx, gen.GetModelUsageEventByKeyParams{
 				BindingID:      source.BindingID,
@@ -378,8 +400,9 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 			if err := q.InsertModelUsageEvent(ctx, usageEventInsertParams(source, ev)); err != nil {
 				return err
 			}
+			insertedEvent = true
 		}
-		return q.UpdateUsageSourceCursor(ctx, gen.UpdateUsageSourceCursorParams{
+		if err := q.UpdateUsageSourceCursor(ctx, gen.UpdateUsageSourceCursorParams{
 			ID:              sourceID,
 			ByteOffset:      nextState.ByteOffset,
 			ParserStateJson: stringOrDefault(nextState.ParserStateJSON, source.ParserStateJson),
@@ -389,7 +412,16 @@ func (s *Store) ApplyUsageChunk(ctx context.Context, sourceID, expectedOffset in
 			NextRetryAt:     ptrTimeToNullTime(nextState.NextRetryAt),
 			LastErrorCode:   nextState.LastErrorCode,
 			UpdatedAt:       timeOrNow(nextState.UpdatedAt),
-		})
+		}); err != nil {
+			return err
+		}
+		if insertedEvent {
+			return q.TouchUsageBinding(ctx, gen.TouchUsageBindingParams{
+				UpdatedAt: timeOrNow(nextState.UpdatedAt),
+				ID:        source.BindingID,
+			})
+		}
+		return nil
 	})
 	if err != nil {
 		return err
@@ -419,7 +451,7 @@ func (s *Store) GetUsageSessionIncomplete(ctx context.Context, sessionID domain.
 	return incomplete != 0, nil
 }
 
-// ListCompactSessionUsage returns every session's usage facts in one grouped
+// ListCompactSessionUsage returns sessions with observed usage in one grouped
 // read. projectID optionally limits the rows to one dashboard board.
 func (s *Store) ListCompactSessionUsage(ctx context.Context, projectID domain.ProjectID) ([]domain.CompactSessionUsage, error) {
 	rows, err := s.qr.ListCompactSessionUsage(ctx, projectID)

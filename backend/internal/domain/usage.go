@@ -60,8 +60,9 @@ const (
 
 // Usage ingestion sentinel errors report replay and cursor conflicts.
 var (
-	ErrUsageSourceOffsetConflict = errors.New("usage source cursor offset conflict")
-	ErrUsageSourceEventConflict  = errors.New("usage source event conflict")
+	ErrUsageSourceOffsetConflict   = errors.New("usage source cursor offset conflict")
+	ErrUsageSourceRevisionConflict = errors.New("usage source revision conflict")
+	ErrUsageSourceEventConflict    = errors.New("usage source event conflict")
 )
 
 // UsageBindingRecord binds one AO session to one native root session/thread.

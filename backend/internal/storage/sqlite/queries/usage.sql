@@ -101,6 +101,39 @@ WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
   )
 ORDER BY us.artifact_path, us.generation, us.id;
 
+-- name: HasPendingUsageDiscovery :one
+SELECT CAST(EXISTS (
+    SELECT 1
+    FROM usage_bindings ub
+    JOIN sessions s ON s.id = ub.session_id
+    WHERE (s.is_terminated = 0 OR ub.state = 'finalizing')
+      AND ub.harness IN ('claude-code', 'codex')
+      AND (
+          ub.state = 'discovering'
+          OR ub.last_error_code = 'source_discovery_pending'
+          OR EXISTS (
+              SELECT 1
+              FROM usage_codex_pending_children pending
+              WHERE pending.binding_id = ub.id
+          )
+          OR EXISTS (
+              SELECT 1
+              FROM usage_sources source
+              WHERE source.binding_id = ub.id
+                AND source.state = 'error'
+                AND source.last_error_code IN ('artifact_missing', 'source_read_failed')
+                AND source.id = (
+                    SELECT latest.id
+                    FROM usage_sources latest
+                    WHERE latest.binding_id = source.binding_id
+                      AND latest.artifact_path = source.artifact_path
+                    ORDER BY latest.generation DESC, latest.id DESC
+                    LIMIT 1
+                )
+          )
+      )
+) AS INTEGER);
+
 -- name: ListLatestRetiredCodexReplacementClaimsByPath :many
 SELECT us.*
 FROM usage_bindings ub
@@ -314,6 +347,9 @@ INSERT INTO model_usage_events (
     source_event_key
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
+-- name: TouchUsageBinding :exec
+UPDATE usage_bindings SET updated_at = ? WHERE id = ?;
+
 -- name: AggregateUsageBySessionHarnessModel :many
 SELECT
     ub.harness,
@@ -338,13 +374,13 @@ SELECT CAST(COALESCE((
 
 -- name: ListCompactSessionUsage :many
 SELECT
-    s.id AS session_id,
-    CAST(COALESCE(SUM(mue.input_tokens + mue.output_tokens), 0) AS INTEGER) AS total_tokens,
+    ub.session_id,
+    CAST(SUM(mue.input_tokens + mue.output_tokens) AS INTEGER) AS total_tokens,
     CAST(COALESCE(integrity.incomplete, 0) AS INTEGER) AS incomplete
-FROM sessions s
-LEFT JOIN usage_bindings ub ON ub.session_id = s.id
-LEFT JOIN model_usage_events mue ON mue.binding_id = ub.id
-LEFT JOIN usage_session_integrity integrity ON integrity.session_id = s.id
+FROM model_usage_events mue
+JOIN usage_bindings ub ON ub.id = mue.binding_id
+JOIN sessions s ON s.id = ub.session_id
+LEFT JOIN usage_session_integrity integrity ON integrity.session_id = ub.session_id
 WHERE (sqlc.arg(project_id) = '' OR s.project_id = sqlc.arg(project_id))
-GROUP BY s.id
+GROUP BY ub.session_id
 ORDER BY s.project_id, s.num;

@@ -87,6 +87,64 @@ func TestSessionsAPI_ActivityForwardsUsageMetadataWithoutChangingActivity(t *tes
 	}
 }
 
+func TestSessionsAPI_ActivitySanitizesAndBoundsUsageMetadata(t *testing.T) {
+	usage := &fakeUsageHookRecorder{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	overlongPath := "/tmp/" + strings.Repeat("x", 4096) + ".jsonl"
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/activity", `{
+		"event":"subagent-stop",
+		"agentSessionId":"native-1",
+		"usage":{
+			"harness":"claude-\u001bcode",
+			"transcriptPath":"/tmp/\u001bmain.jsonl",
+			"modelId":"claude-\u001bsonnet",
+			"subagentId":"sub-\u001b1",
+			"subagentTranscriptPath":"`+overlongPath+`"
+		}
+	}`)
+	if status != http.StatusOK {
+		t.Fatalf("activity = %d, want 200; body=%s", status, body)
+	}
+	if usage.calls != 1 {
+		t.Fatalf("usage calls=%d, want 1", usage.calls)
+	}
+	if usage.gotSignal.Harness != domain.HarnessClaudeCode ||
+		usage.gotSignal.TranscriptPath != "/tmp/main.jsonl" ||
+		usage.gotSignal.ModelID != "claude-sonnet" ||
+		usage.gotSignal.SubagentID != "sub-1" ||
+		usage.gotSignal.SubagentTranscriptPath != "" {
+		t.Fatalf("sanitized usage signal = %+v", usage.gotSignal)
+	}
+}
+
+func TestSessionsAPI_UsageOnlyUnknownSessionReturnsNotFound(t *testing.T) {
+	usage := &fakeUsageHookRecorder{err: usagesvc.ErrUsageSessionNotFound}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(httpd.NewRouterWithControl(
+		config.Config{},
+		log,
+		nil,
+		httpd.APIDeps{UsageHooks: usage},
+		httpd.ControlDeps{},
+	))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/missing/activity",
+		`{"event":"session-start","agentSessionId":"native-1"}`)
+	if status != http.StatusNotFound {
+		t.Fatalf("activity = %d, want 404; body=%s", status, body)
+	}
+}
+
 func TestSessionsAPI_ActivityForwardsMetadataOnlySessionStartToUsage(t *testing.T) {
 	usage := &fakeUsageHookRecorder{}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))

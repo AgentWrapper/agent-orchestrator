@@ -1033,8 +1033,14 @@ func TestCollectorDiscoversFinalizingCodexSourceAndArchivedRelocation(t *testing
 	resolvedArchivedPath, err := filepath.EvalSymlinks(archivedPath)
 	mustNoError(t, err)
 	if sources[0].State != domain.UsageSourceComplete || sources[1].ArtifactPath != resolvedArchivedPath ||
+		sources[0].LastErrorCode != domain.UsageErrorArtifactReplaced ||
 		sources[1].ByteOffset != sources[0].ByteOffset {
 		t.Fatalf("relocated sources=%+v", sources)
+	}
+	watchable, err := store.ListWatchableUsageSources(context.Background())
+	mustNoError(t, err)
+	if len(watchable) != 1 || watchable[0].ID != sources[1].ID {
+		t.Fatalf("watchable relocated sources=%+v, want only generation %d", watchable, sources[1].ID)
 	}
 }
 
@@ -1352,7 +1358,7 @@ func TestCollectorReconcilesPersistedCodexChildrenRecursively(t *testing.T) {
 		t.Fatalf("root sources=%+v err=%v", sources, err)
 	}
 	parentState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + childID + `","` + childID + `","` + wrongID + `"]}}`
-	if err := store.ApplyUsageChunk(context.Background(), sources[0].ID, 0, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(context.Background(), sources[0].ID, 0, sources[0].UpdatedAt, domain.SourceCursorState{
 		State:           domain.UsageSourceActive,
 		ParserStateJSON: parentState,
 		UpdatedAt:       time.Now().UTC(),
@@ -1381,7 +1387,7 @@ func TestCollectorReconcilesPersistedCodexChildrenRecursively(t *testing.T) {
 	}
 
 	childState := `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{},"pending_spawn_call_ids":[],"discovered_child_ids":["` + grandchildID + `"]}}`
-	if err := store.ApplyUsageChunk(context.Background(), childSource.ID, 0, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(context.Background(), childSource.ID, 0, childSource.UpdatedAt, domain.SourceCursorState{
 		State:           domain.UsageSourceActive,
 		ParserStateJSON: childState,
 		UpdatedAt:       time.Now().UTC(),
@@ -1530,7 +1536,7 @@ func TestCollectorDoesNotTransferCursorAcrossNativeSessions(t *testing.T) {
 	if err != nil || len(sources) != 1 {
 		t.Fatalf("sources=%+v err=%v", sources, err)
 	}
-	if err := store.ApplyUsageChunk(context.Background(), sources[0].ID, 0, domain.SourceCursorState{
+	if err := store.ApplyUsageChunk(context.Background(), sources[0].ID, 0, sources[0].UpdatedAt, domain.SourceCursorState{
 		ByteOffset: 100,
 		State:      domain.UsageSourceActive,
 		UpdatedAt:  now,
@@ -1624,6 +1630,18 @@ func TestDiscoverCodexPathRequiresConfiguredRoots(t *testing.T) {
 	mustNoError(t, err)
 	if got != "" {
 		t.Fatalf("unconfigured Codex roots discovered %q", got)
+	}
+}
+
+func TestDiscoverClaudePathRejectsGlobMetadata(t *testing.T) {
+	root := t.TempDir()
+	writeUsageFixture(t, filepath.Join(root, "project", "native-session.jsonl"), "{}\n")
+	collector := NewCollector(collectorTestStore(t), SourceRoots{ClaudeProjects: root}, nil)
+
+	path, err := collector.discoverPath(context.Background(), domain.HarnessClaudeCode, "*")
+	mustNoError(t, err)
+	if path != "" {
+		t.Fatalf("invalid Claude native ID discovered %q", path)
 	}
 }
 

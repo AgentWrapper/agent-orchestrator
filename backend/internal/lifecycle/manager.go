@@ -756,34 +756,67 @@ func (m *Manager) MarkSpawned(ctx context.Context, id domain.SessionID, metadata
 // session's Docker containers via the optional ContainerReaper (#2652) as its one
 // built-in external side effect.
 func (m *Manager) MarkTerminated(ctx context.Context, id domain.SessionID) error {
-	rec, ok, err := m.store.GetSession(ctx, id)
-	if err != nil || !ok || rec.IsTerminated {
-		return err
-	}
-	launchID := rec.Metadata.RuntimeLaunchID
-	sessionRevision := rec.UpdatedAt
-	m.mu.Lock()
-	finalizer := m.usageFinalizer
-	m.mu.Unlock()
-	finalizeSessionUsage(ctx, id, launchID, sessionRevision, finalizer)
-	terminated := false
-	err = m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
-		if cur.IsTerminated || cur.Metadata.RuntimeLaunchID != launchID {
-			return cur, false
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		cur.IsTerminated = true
-		cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
-		delete(m.flights, id) // runs under m.mu (mutate holds it)
-		terminated = true
-		return cur, true
-	})
-	if err != nil {
-		return err
+		rec, ok, err := m.store.GetSession(ctx, id)
+		if err != nil || !ok {
+			return err
+		}
+		if rec.IsTerminated {
+			m.reapSessionContainers(ctx, id)
+			return nil
+		}
+
+		launchID := rec.Metadata.RuntimeLaunchID
+		sessionRevision := rec.UpdatedAt
+		m.mu.Lock()
+		finalizer := m.usageFinalizer
+		m.mu.Unlock()
+		finalizeSessionUsage(ctx, id, launchID, sessionRevision, finalizer)
+
+		const (
+			terminationChanged = iota
+			terminationApplied
+			terminationAlreadyApplied
+			terminationLaunchChanged
+		)
+		outcome := terminationChanged
+		err = m.mutate(ctx, id, func(cur domain.SessionRecord, now time.Time) (domain.SessionRecord, bool) {
+			switch {
+			case cur.IsTerminated:
+				outcome = terminationAlreadyApplied
+				return cur, false
+			case cur.Metadata.RuntimeLaunchID != launchID:
+				outcome = terminationLaunchChanged
+				return cur, false
+			case !cur.UpdatedAt.Equal(sessionRevision):
+				return cur, false
+			default:
+				cur.IsTerminated = true
+				cur.Activity = domain.Activity{State: domain.ActivityExited, LastActivityAt: now}
+				delete(m.flights, id) // runs under m.mu (mutate holds it)
+				outcome = terminationApplied
+				return cur, true
+			}
+		})
+		if err != nil {
+			return err
+		}
+		switch outcome {
+		case terminationApplied, terminationAlreadyApplied:
+			m.reapSessionContainers(ctx, id)
+			return nil
+		case terminationLaunchChanged:
+			return fmt.Errorf("lifecycle: runtime launch changed while terminating session %q", id)
+		default:
+			// A same-launch activity transition changed UpdatedAt after usage was
+			// finalized. Retry from a fresh snapshot so termination and usage
+			// finalization commit against the same durable revision.
+			continue
+		}
 	}
-	if terminated {
-		m.reapSessionContainers(ctx, id)
-	}
-	return nil
 }
 
 // reapSessionContainers is the container leg of #2652 (the container-owning

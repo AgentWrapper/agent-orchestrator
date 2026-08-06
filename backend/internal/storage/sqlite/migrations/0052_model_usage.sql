@@ -5,6 +5,8 @@
 -- that now belong to shipped main migrations. Version 0052 is deliberately
 -- beyond the known burned range. It installs the compact schema on clean
 -- databases and rebuilds wider development tables without losing usage data.
+-- NO TRANSACTION is required to toggle foreign_keys, while the explicit
+-- BEGIN IMMEDIATE below still makes the entire compatibility rebuild atomic.
 PRAGMA foreign_keys=OFF;
 BEGIN IMMEDIATE;
 
@@ -233,12 +235,10 @@ CREATE TRIGGER usage_bindings_cdc_update AFTER UPDATE ON usage_bindings BEGIN
     VALUES ((SELECT project_id FROM sessions WHERE id = NEW.session_id),
             NEW.session_id, 'session_updated', json_object('id', NEW.session_id), NEW.updated_at);
 END;
-CREATE TRIGGER usage_sources_cdc_insert AFTER INSERT ON usage_sources BEGIN
-    INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
-    SELECT s.project_id, ub.session_id, 'session_updated', json_object('id', ub.session_id), NEW.updated_at
-    FROM usage_bindings ub JOIN sessions s ON s.id = ub.session_id WHERE ub.id = NEW.binding_id;
-END;
-CREATE TRIGGER usage_sources_cdc_update AFTER UPDATE ON usage_sources BEGIN
+CREATE TRIGGER usage_sources_cdc_update AFTER UPDATE ON usage_sources
+WHEN OLD.anomaly_count IS NOT NEW.anomaly_count
+  OR OLD.last_error_code IS NOT NEW.last_error_code
+BEGIN
     INSERT INTO change_log (project_id, session_id, event_type, payload, created_at)
     SELECT s.project_id, ub.session_id, 'session_updated', json_object('id', ub.session_id), NEW.updated_at
     FROM usage_bindings ub JOIN sessions s ON s.id = ub.session_id WHERE ub.id = NEW.binding_id;
@@ -246,13 +246,11 @@ END;
 
 COMMIT;
 PRAGMA foreign_keys=ON;
-PRAGMA foreign_key_check;
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
 DROP TRIGGER IF EXISTS usage_sources_cdc_update;
-DROP TRIGGER IF EXISTS usage_sources_cdc_insert;
 DROP TRIGGER IF EXISTS usage_bindings_cdc_update;
 DROP TRIGGER IF EXISTS usage_bindings_cdc_insert;
 DROP VIEW IF EXISTS usage_session_integrity;

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -20,23 +19,22 @@ const (
 )
 
 // TranscriptEvent reports a transcript path whose contents or filesystem
-// identity may have changed. Discovery events may carry a directory path after
-// a recursive watch-set rebuild so the coordinator can reconcile files that
-// were created before the new directory became watched.
+// identity may have changed.
 type TranscriptEvent struct {
 	Path      string
 	Discovery bool
-	Topology  bool
 }
 
-// TranscriptWatcher recursively watches transcript roots while keeping all
-// fsnotify mutations serialized with Rebuild.
+// TranscriptWatcher watches exact registered transcript files. Exact-file
+// watches keep descriptor use proportional to active durable sources even on
+// kqueue, where watching a large directory can open every file inside it.
 type TranscriptWatcher struct {
-	mu      sync.Mutex
-	watcher *fsnotify.Watcher
-	roots   []string
-	watched map[string]struct{}
-	closed  bool
+	mu          sync.Mutex
+	watcher     *fsnotify.Watcher
+	roots       []string
+	sourcePaths []string
+	watched     map[string]struct{}
+	closed      bool
 
 	events chan TranscriptEvent
 	errors chan error
@@ -45,9 +43,8 @@ type TranscriptWatcher struct {
 	startOnce sync.Once
 }
 
-// NewTranscriptWatcher creates a watcher and registers every currently
-// available directory. A missing root is represented by a watch on its nearest
-// existing ancestor until directory creation events make the root available.
+// NewTranscriptWatcher creates an empty watcher. The coordinator supplies the
+// current durable source inventory through Rebuild before ingestion begins.
 func NewTranscriptWatcher(ctx context.Context, roots []string) (*TranscriptWatcher, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -55,6 +52,20 @@ func NewTranscriptWatcher(ctx context.Context, roots []string) (*TranscriptWatch
 	normalized, err := normalizeTranscriptRoots(roots)
 	if err != nil {
 		return nil, err
+	}
+	for index, root := range normalized {
+		resolved, err := resolveTranscriptRoot(ctx, root)
+		if err != nil {
+			return nil, fmt.Errorf("resolve transcript root: %w", redactFilesystemError(err))
+		}
+		normalized[index] = resolved
+		info, err := os.Stat(resolved)
+		if err == nil && !info.IsDir() {
+			return nil, errors.New("transcript root is not a directory")
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("inspect transcript root: %w", redactFilesystemError(err))
+		}
 	}
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -68,10 +79,6 @@ func NewTranscriptWatcher(ctx context.Context, roots []string) (*TranscriptWatch
 		errors:  make(chan error, watcherErrorBuffer),
 		done:    make(chan struct{}),
 	}
-	if err := result.Rebuild(ctx); err != nil {
-		_ = watcher.Close()
-		return nil, err
-	}
 	return result, nil
 }
 
@@ -81,7 +88,7 @@ func (w *TranscriptWatcher) Events() <-chan TranscriptEvent {
 }
 
 // Errors returns watcher errors, including fsnotify queue-overflow errors and
-// failures encountered while rebuilding the recursive watch set.
+// failures encountered while rebuilding the exact-file watch set.
 func (w *TranscriptWatcher) Errors() <-chan error {
 	return w.errors
 }
@@ -96,9 +103,9 @@ func (w *TranscriptWatcher) Start(ctx context.Context) <-chan struct{} {
 	return w.done
 }
 
-// Rebuild replaces the current watch set with watches derived from the desired
-// roots. It is safe to call while event handling is active.
-func (w *TranscriptWatcher) Rebuild(ctx context.Context) error {
+// Rebuild replaces the current watch set using exact durable source paths. It
+// is safe during event handling and also serves as fsnotify-overflow recovery.
+func (w *TranscriptWatcher) Rebuild(ctx context.Context, sourcePaths []string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -110,6 +117,14 @@ func (w *TranscriptWatcher) Rebuild(ctx context.Context) error {
 	if w.closed {
 		return errors.New("transcript watcher is closed")
 	}
+	w.sourcePaths = w.sourcePaths[:0]
+	for _, path := range sourcePaths {
+		path = canonicalTranscriptPath(path)
+		if w.withinDesiredRoot(ctx, path) {
+			w.sourcePaths = append(w.sourcePaths, path)
+		}
+	}
+	sort.Strings(w.sourcePaths)
 	return w.rebuildLocked(ctx)
 }
 
@@ -128,12 +143,12 @@ func (w *TranscriptWatcher) run(ctx context.Context) {
 				w.close()
 				return
 			}
-			emit, discovery, topology, rebuildErr := w.handleEvent(ctx, event)
+			emit, discovery, rebuildErr := w.handleEvent(ctx, event)
 			if rebuildErr != nil && !w.sendError(ctx, rebuildErr) {
 				w.close()
 				return
 			}
-			if emit != "" && !w.sendEvent(ctx, TranscriptEvent{Path: emit, Discovery: discovery, Topology: topology}) {
+			if emit != "" && !w.sendEvent(ctx, TranscriptEvent{Path: emit, Discovery: discovery}) {
 				w.close()
 				return
 			}
@@ -161,11 +176,11 @@ func (w *TranscriptWatcher) close() {
 	clear(w.watched)
 }
 
-func (w *TranscriptWatcher) handleEvent(ctx context.Context, event fsnotify.Event) (string, bool, bool, error) {
+func (w *TranscriptWatcher) handleEvent(ctx context.Context, event fsnotify.Event) (string, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return "", false, false, err
+		return "", false, err
 	}
-	path := filepath.Clean(event.Name)
+	path := canonicalTranscriptPath(event.Name)
 	emit := ""
 	discovery := false
 	if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Rename|fsnotify.Remove) != 0 &&
@@ -177,39 +192,18 @@ func (w *TranscriptWatcher) handleEvent(ctx context.Context, event fsnotify.Even
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.closed || !w.directoryEventRequiresRebuildLocked(ctx, path, event.Op) {
-		return emit, discovery, false, nil
+	if w.closed || event.Op&(fsnotify.Rename|fsnotify.Remove) == 0 {
+		return emit, discovery, nil
 	}
+	if _, watched := w.watched[path]; !watched {
+		return emit, discovery, nil
+	}
+	_ = w.watcher.Remove(path)
+	delete(w.watched, path)
 	if err := w.rebuildLocked(ctx); err != nil {
-		return emit, discovery, false, fmt.Errorf("rebuild transcript watcher after %s: %w", event.Op, err)
+		return emit, discovery, fmt.Errorf("rebuild transcript watcher after %s: %w", event.Op, err)
 	}
-	if emit == "" {
-		emit = path
-		discovery = true
-		return emit, discovery, true, nil
-	}
-	return emit, discovery, false, nil
-}
-
-func (w *TranscriptWatcher) directoryEventRequiresRebuildLocked(ctx context.Context, path string, op fsnotify.Op) bool {
-	if ctx.Err() != nil {
-		return false
-	}
-	if op&fsnotify.Create != 0 && w.directoryRelevant(ctx, path) {
-		info, err := os.Stat(path)
-		if err == nil && info.IsDir() {
-			return true
-		}
-	}
-	if op&(fsnotify.Rename|fsnotify.Remove) == 0 {
-		return false
-	}
-	for watched := range w.watched {
-		if pathWithin(watched, path) {
-			return true
-		}
-	}
-	return false
+	return emit, discovery, nil
 }
 
 func (w *TranscriptWatcher) rebuildLocked(ctx context.Context) error {
@@ -217,43 +211,6 @@ func (w *TranscriptWatcher) rebuildLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-
-	// Keep ancestor watches active while descendants are being created. After
-	// each add pass, scan again to close the stat-to-watch race where another
-	// directory appears before its parent watch is installed.
-	const maxTopologyPasses = 16
-	var addedPaths []string
-	for pass := 0; pass < maxTopologyPasses; pass++ {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		paths := unwatchedPaths(desired, w.watched)
-		for _, path := range paths {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := w.watcher.Add(path); err != nil {
-				return fmt.Errorf("watch transcript directory: %w", redactFilesystemError(err))
-			}
-			w.watched[path] = struct{}{}
-			addedPaths = append(addedPaths, path)
-		}
-
-		refreshed, err := w.desiredWatchSetLocked(ctx)
-		if err != nil {
-			return err
-		}
-		if samePaths(desired, refreshed) {
-			desired = refreshed
-			break
-		}
-		desired = refreshed
-		if pass == maxTopologyPasses-1 {
-			return errors.New("transcript directory topology did not stabilize during rebuild")
-		}
-	}
-
-	removedStale := false
 	for path := range w.watched {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -266,67 +223,43 @@ func (w *TranscriptWatcher) rebuildLocked(ctx context.Context) error {
 			return fmt.Errorf("remove stale transcript watch: %w", redactFilesystemError(err))
 		}
 		delete(w.watched, path)
-		removedStale = true
 	}
 
-	// On Linux, a directory rename can leave the old and new paths referring
-	// to the same inotify watch. Removing the stale path can then remove the
-	// watch just added for the new path. Re-add new paths after stale removals
-	// so the kernel watch set and w.watched cannot diverge.
-	if removedStale {
-		sort.Strings(addedPaths)
-		for _, path := range addedPaths {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if _, keep := desired[path]; !keep {
-				continue
-			}
-			if err := w.watcher.Add(path); err != nil {
-				return fmt.Errorf("refresh transcript watch: %w", redactFilesystemError(err))
-			}
+	paths := make([]string, 0, len(desired))
+	for path := range desired {
+		if _, watched := w.watched[path]; !watched {
+			paths = append(paths, path)
 		}
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := w.watcher.Add(path); err != nil {
+			return fmt.Errorf("watch transcript source: %w", redactFilesystemError(err))
+		}
+		w.watched[path] = struct{}{}
 	}
 	return nil
 }
 
 func (w *TranscriptWatcher) desiredWatchSetLocked(ctx context.Context) (map[string]struct{}, error) {
 	result := make(map[string]struct{})
-	for _, root := range w.roots {
+	for _, path := range w.sourcePaths {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		walkRoot, err := resolveTranscriptRoot(ctx, root)
-		if err != nil {
-			return nil, fmt.Errorf("resolve transcript root: %w", redactFilesystemError(err))
-		}
-		info, err := os.Stat(walkRoot)
+		info, err := os.Stat(path)
 		switch {
-		case err == nil && !info.IsDir():
-			return nil, errors.New("transcript root is not a directory")
+		case err == nil && info.Mode().IsRegular():
+			result[path] = struct{}{}
 		case err == nil:
-			if err := filepath.WalkDir(walkRoot, func(path string, entry fs.DirEntry, walkErr error) error {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-				if walkErr != nil {
-					return walkErr
-				}
-				if entry.IsDir() {
-					result[filepath.Clean(path)] = struct{}{}
-				}
-				return nil
-			}); err != nil {
-				return nil, fmt.Errorf("walk transcript root: %w", redactFilesystemError(err))
-			}
+			continue
 		case errors.Is(err, os.ErrNotExist):
-			ancestor, ancestorErr := nearestExistingDirectory(ctx, root)
-			if ancestorErr != nil {
-				return nil, fmt.Errorf("locate transcript root ancestor: %w", redactFilesystemError(ancestorErr))
-			}
-			result[ancestor] = struct{}{}
+			continue
 		default:
-			return nil, fmt.Errorf("inspect transcript root: %w", redactFilesystemError(err))
+			return nil, fmt.Errorf("inspect transcript source: %w", redactFilesystemError(err))
 		}
 	}
 	return result, nil
@@ -342,22 +275,6 @@ func (w *TranscriptWatcher) withinDesiredRoot(ctx context.Context, path string) 
 		}
 		resolved, err := resolveTranscriptRoot(ctx, root)
 		if err == nil && pathWithin(path, resolved) {
-			return true
-		}
-	}
-	return false
-}
-
-func (w *TranscriptWatcher) directoryRelevant(ctx context.Context, path string) bool {
-	for _, root := range w.roots {
-		if ctx.Err() != nil {
-			return false
-		}
-		if pathWithin(path, root) || pathWithin(root, path) {
-			return true
-		}
-		resolved, err := resolveTranscriptRoot(ctx, root)
-		if err == nil && (pathWithin(path, resolved) || pathWithin(resolved, path)) {
 			return true
 		}
 	}
@@ -408,50 +325,14 @@ func resolveTranscriptRoot(ctx context.Context, path string) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	info, err := os.Lstat(path)
+	resolved, err := filepath.EvalSymlinks(path)
 	switch {
-	case err == nil && info.Mode()&os.ModeSymlink != 0:
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		resolved, err := filepath.EvalSymlinks(path)
-		if errors.Is(err, os.ErrNotExist) {
-			return filepath.Clean(path), nil
-		}
-		if err != nil {
-			return "", err
-		}
-		return filepath.Clean(resolved), nil
 	case err == nil:
-		return filepath.Clean(path), nil
+		return filepath.Clean(resolved), nil
 	case errors.Is(err, os.ErrNotExist):
 		return filepath.Clean(path), nil
 	default:
 		return "", err
-	}
-}
-
-func nearestExistingDirectory(ctx context.Context, path string) (string, error) {
-	current := filepath.Clean(path)
-	for {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		info, err := os.Stat(current)
-		if err == nil {
-			if !info.IsDir() {
-				return "", errors.New("transcript root ancestor is not a directory")
-			}
-			return current, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", redactFilesystemError(err)
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", errors.New("no existing transcript root ancestor")
-		}
-		current = parent
 	}
 }
 
@@ -477,42 +358,4 @@ func pathWithin(path, root string) bool {
 	}
 	return relative == "." ||
 		(relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)))
-}
-
-func pathDepth(path string) int {
-	cleaned := filepath.Clean(path)
-	if volume := filepath.VolumeName(cleaned); volume != "" {
-		cleaned = strings.TrimPrefix(cleaned, volume)
-	}
-	return strings.Count(cleaned, string(filepath.Separator))
-}
-
-func unwatchedPaths(desired, watched map[string]struct{}) []string {
-	paths := make([]string, 0, len(desired))
-	for path := range desired {
-		if _, ok := watched[path]; !ok {
-			paths = append(paths, path)
-		}
-	}
-	sort.Slice(paths, func(i, j int) bool {
-		leftDepth := pathDepth(paths[i])
-		rightDepth := pathDepth(paths[j])
-		if leftDepth == rightDepth {
-			return paths[i] < paths[j]
-		}
-		return leftDepth < rightDepth
-	})
-	return paths
-}
-
-func samePaths(left, right map[string]struct{}) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for path := range left {
-		if _, ok := right[path]; !ok {
-			return false
-		}
-	}
-	return true
 }

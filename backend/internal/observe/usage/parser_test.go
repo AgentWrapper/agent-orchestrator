@@ -447,7 +447,7 @@ func TestParsersTrackProviderModelChanges(t *testing.T) {
 func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 	path := t.TempDir() + "/rollout.jsonl"
 	mustNoError(t, osWrite(path, `{"a":1}`+"\n"+`{"b":`))
-	first, err := readJSONLChunkAtPath(path, 0, 1024, 32, "")
+	first, err := readJSONLChunkAtPath(path, 0, 1024, 32, false)
 	mustNoError(t, err)
 	if len(first.records) != 1 || first.atEOF || !first.readToEOF ||
 		string(first.trailing) != `{"b":` ||
@@ -455,17 +455,35 @@ func TestReadJSONLChunkRetainsPartialTailAndSkipsOversizedRecord(t *testing.T) {
 		t.Fatalf("first chunk = %+v", first)
 	}
 	mustNoError(t, osAppend(path, `2}`+"\n"))
-	second, err := readJSONLChunkAtPath(path, first.nextOffset, 1024, 32, "")
+	second, err := readJSONLChunkAtPath(path, first.nextOffset, 1024, 32, false)
 	mustNoError(t, err)
 	if len(second.records) != 1 || !second.atEOF {
 		t.Fatalf("second chunk = %+v", second)
 	}
 
 	mustNoError(t, osWrite(path, strings.Repeat("x", 40)+"\n"))
-	large, err := readJSONLChunkAtPath(path, 0, 1024, 16, "")
+	large, err := readJSONLChunkAtPath(path, 0, 1024, 16, false)
 	mustNoError(t, err)
 	if large.anomalies != 1 || large.errorCode != domain.UsageErrorRecordTooLarge || large.nextOffset != 41 {
 		t.Fatalf("oversized chunk = %+v", large)
+	}
+}
+
+func TestReadJSONLChunkDoesNotSkipRecordAfterCompleteOversizedLine(t *testing.T) {
+	path := t.TempDir() + "/rollout.jsonl"
+	oversized := strings.Repeat("x", 40) + "\n"
+	valid := `{"valid":true}` + "\n"
+	mustNoError(t, osWrite(path, oversized+valid))
+
+	first, err := readJSONLChunkAtPath(path, 0, int64(len(oversized)), 16, false)
+	mustNoError(t, err)
+	if first.nextOffset != int64(len(oversized)) || first.discardingOversizedRecord {
+		t.Fatalf("first chunk = %+v, want a fully consumed oversized record", first)
+	}
+	second, err := readJSONLChunkAtPath(path, first.nextOffset, 1024, 16, first.discardingOversizedRecord)
+	mustNoError(t, err)
+	if len(second.records) != 1 || string(second.records[0].Data) != `{"valid":true}` {
+		t.Fatalf("second chunk = %+v, want the valid record", second)
 	}
 }
 
@@ -545,14 +563,14 @@ func readJSONLChunkAtPath(
 	offset int64,
 	maxBytes int64,
 	maxRecord int,
-	previousError string,
+	discardingOversizedRecord bool,
 ) (jsonlChunk, error) {
 	file, err := os.Open(path) //nolint:gosec // test-controlled path.
 	if err != nil {
 		return jsonlChunk{}, err
 	}
 	defer func() { _ = file.Close() }()
-	return readJSONLChunkFromFile(file, offset, maxBytes, maxRecord, previousError)
+	return readJSONLChunkFromFile(file, offset, maxBytes, maxRecord, discardingOversizedRecord)
 }
 
 func osAppend(path, content string) error {

@@ -20,6 +20,7 @@ const (
 
 type coordinatorStore interface {
 	ListWatchableUsageSources(context.Context) ([]domain.UsageSourceRecord, error)
+	HasPendingUsageDiscovery(context.Context) (bool, error)
 }
 
 type sourceIngestor interface {
@@ -30,7 +31,7 @@ type transcriptWatcher interface {
 	Events() <-chan TranscriptEvent
 	Errors() <-chan error
 	Start(context.Context) <-chan struct{}
-	Rebuild(context.Context) error
+	Rebuild(context.Context, []string) error
 }
 
 // CoordinatorConfig configures the event-driven usage pipeline.
@@ -38,6 +39,7 @@ type CoordinatorConfig struct {
 	Workers       int
 	QueueSize     int
 	Clock         func() time.Time
+	RetryDelay    time.Duration
 	Logger        *slog.Logger
 	Initialize    func(context.Context) error
 	Reconcile     func(context.Context) error
@@ -53,6 +55,7 @@ type Coordinator struct {
 	workers       int
 	queueSize     int
 	now           func() time.Time
+	retryDelay    time.Duration
 	logger        *slog.Logger
 	initialize    func(context.Context) error
 	reconcile     func(context.Context) error
@@ -77,6 +80,9 @@ func NewCoordinator(
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
 	}
+	if cfg.RetryDelay <= 0 {
+		cfg.RetryDelay = defaultCoordinatorRetry
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -87,6 +93,7 @@ func NewCoordinator(
 		workers:       cfg.Workers,
 		queueSize:     cfg.QueueSize,
 		now:           cfg.Clock,
+		retryDelay:    cfg.RetryDelay,
 		logger:        cfg.Logger,
 		initialize:    cfg.Initialize,
 		reconcile:     cfg.Reconcile,
@@ -202,7 +209,7 @@ func (c *Coordinator) run(ctx context.Context) {
 			if err := c.initialize(ctx); err != nil {
 				if ctx.Err() == nil {
 					c.logger.Warn("usage source initialization failed", "err", err)
-					scheduleRetry(refreshRetryID, c.now().UTC().Add(defaultCoordinatorRetry))
+					scheduleRetry(refreshRetryID, c.now().UTC().Add(c.retryDelay))
 				}
 			} else {
 				initializePending = false
@@ -211,14 +218,14 @@ func (c *Coordinator) run(ctx context.Context) {
 		if runDiscovery && c.reconcile != nil {
 			if err := c.reconcile(ctx); err != nil && ctx.Err() == nil {
 				c.logger.Warn("usage source reconciliation failed", "err", err)
-				scheduleRetry(refreshRetryID, c.now().UTC().Add(defaultCoordinatorRetry))
+				scheduleRetry(refreshRetryID, c.now().UTC().Add(c.retryDelay))
 			}
 		}
 		sources, err := c.store.ListWatchableUsageSources(ctx)
 		if err != nil {
 			if ctx.Err() == nil {
 				c.logger.Warn("load watchable usage sources failed", "err", err)
-				scheduleRetry(refreshRetryID, c.now().UTC().Add(defaultCoordinatorRetry))
+				scheduleRetry(refreshRetryID, c.now().UTC().Add(c.retryDelay))
 			}
 			return
 		}
@@ -235,6 +242,17 @@ func (c *Coordinator) run(ctx context.Context) {
 			}
 			enqueue(source.ID)
 		}
+		sourcePaths := make([]string, 0, len(nextPaths))
+		for path := range nextPaths {
+			sourcePaths = append(sourcePaths, path)
+		}
+		if err := c.watcher.Rebuild(ctx, sourcePaths); err != nil {
+			if ctx.Err() == nil {
+				c.logger.Warn("sync usage transcript watcher failed", "err", err)
+				scheduleRetry(refreshRetryID, c.now().UTC().Add(c.retryDelay))
+			}
+			return
+		}
 		for sourceID := range retries {
 			if sourceID == refreshRetryID {
 				continue
@@ -244,17 +262,27 @@ func (c *Coordinator) run(ctx context.Context) {
 			}
 		}
 		paths = nextPaths
+		pending, err := c.store.HasPendingUsageDiscovery(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				c.logger.Warn("check pending usage discovery failed", "err", err)
+				scheduleRetry(refreshRetryID, c.now().UTC().Add(c.retryDelay))
+			}
+		} else if pending {
+			if _, scheduled := retries[refreshRetryID]; !scheduled {
+				scheduleRetry(refreshRetryID, c.now().UTC().Add(c.retryDelay))
+			}
+		} else {
+			delete(retries, refreshRetryID)
+		}
 	}
 
 	recoverWatcher := func(err error) {
 		if err != nil {
 			c.logger.Warn("usage transcript watcher failed; rebuilding", "err", err)
 		}
-		if rebuildErr := c.watcher.Rebuild(ctx); rebuildErr != nil {
-			c.logger.Warn("usage transcript watcher rebuild failed", "err", rebuildErr)
-			scheduleRetry(refreshRetryID, c.now().UTC().Add(defaultCoordinatorRetry))
-			return
-		}
+		// Inventory refresh performs one rebuild with the latest durable paths;
+		// discovery first recovers files created while fsnotify was unreliable.
 		refreshInventory(true)
 	}
 
@@ -297,7 +325,17 @@ func (c *Coordinator) run(ctx context.Context) {
 			if completed.result.RetryAt != nil {
 				scheduleRetry(completed.sourceID, *completed.result.RetryAt)
 			} else if completed.err != nil && ctx.Err() == nil {
-				scheduleRetry(completed.sourceID, c.now().UTC().Add(defaultCoordinatorRetry))
+				scheduleRetry(completed.sourceID, c.now().UTC().Add(c.retryDelay))
+			}
+			if completed.result.SyncWatch {
+				sourcePaths := make([]string, 0, len(paths))
+				for path := range paths {
+					sourcePaths = append(sourcePaths, path)
+				}
+				if err := c.watcher.Rebuild(ctx, sourcePaths); err != nil && ctx.Err() == nil {
+					c.logger.Warn("restore usage transcript watch failed", "err", err)
+					scheduleRetry(refreshRetryID, c.now().UTC().Add(c.retryDelay))
+				}
 			}
 			if completed.result.ReconcilePath != "" && c.reconcilePath != nil {
 				if err := c.reconcilePath(ctx, completed.result.ReconcilePath); err != nil && ctx.Err() == nil {
@@ -327,10 +365,6 @@ func (c *Coordinator) run(ctx context.Context) {
 				return
 			}
 			path := canonicalTranscriptPath(event.Path)
-			if event.Topology {
-				refreshInventory(true)
-				continue
-			}
 			sourceIDs := paths[path]
 			if len(sourceIDs) == 0 {
 				if c.reconcilePath != nil {
@@ -380,6 +414,12 @@ func canonicalTranscriptPath(path string) string {
 	path = filepath.Clean(strings.TrimSpace(path))
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		return resolved
+	}
+	// Rename/remove events arrive after the leaf stopped existing. Resolve the
+	// parent so aliases such as macOS /var and /private/var still identify the
+	// same durable source.
+	if parent, err := filepath.EvalSymlinks(filepath.Dir(path)); err == nil {
+		return filepath.Join(parent, filepath.Base(path))
 	}
 	return path
 }

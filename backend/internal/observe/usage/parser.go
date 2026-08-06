@@ -92,8 +92,9 @@ type parserStateEnvelope struct {
 }
 
 type parserIntegrityStateV1 struct {
-	Checkpoint *parserCheckpointV1 `json:"checkpoint,omitempty"`
-	StableTail *stableTailStateV1  `json:"stable_tail,omitempty"`
+	Checkpoint                *parserCheckpointV1 `json:"checkpoint,omitempty"`
+	StableTail                *stableTailStateV1  `json:"stable_tail,omitempty"`
+	DiscardingOversizedRecord bool                `json:"discarding_oversized_record,omitempty"`
 }
 
 type parserCheckpointV1 struct {

@@ -23,7 +23,7 @@ const (
 
 type ingestorStore interface {
 	GetUsageSourceForIngestion(context.Context, int64) (domain.UsageSourceContext, bool, error)
-	ApplyUsageChunk(context.Context, int64, int64, domain.SourceCursorState, []domain.ModelUsageEvent) error
+	ApplyUsageChunk(context.Context, int64, int64, time.Time, domain.SourceCursorState, []domain.ModelUsageEvent) error
 	MarkUsageSourceState(context.Context, int64, domain.UsageSourceState, string, *time.Time, time.Time) (bool, error)
 	MarkUsageSourceFailure(context.Context, int64, int64, string, time.Time, time.Time) (bool, error)
 	ReplaceUsageSource(context.Context, int64, string, domain.UsageSourceRecord, time.Time) (domain.UsageSourceRecord, error)
@@ -44,6 +44,7 @@ type IngestorConfig struct {
 type IngestResult struct {
 	More                bool
 	Refresh             bool
+	SyncWatch           bool
 	Reconcile           bool
 	ReconcilePath       string
 	RetryAt             *time.Time
@@ -98,7 +99,10 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 	if err != nil || !ok {
 		return IngestResult{}, err
 	}
-	result := IngestResult{}
+	result := IngestResult{
+		SyncWatch: source.Source.State == domain.UsageSourceError &&
+			source.Source.LastErrorCode == domain.UsageErrorArtifactMissing,
+	}
 	parserState, err := decodeParserState(source.Source)
 	if err != nil {
 		return i.retrySource(
@@ -172,7 +176,7 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		source.Source.ByteOffset,
 		i.chunkBytes,
 		i.recordBytes,
-		source.Source.LastErrorCode,
+		parserState.Integrity.DiscardingOversizedRecord,
 	)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -236,6 +240,7 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 		return i.retrySource(ctx, source.Source, domain.UsageErrorSourceReadFailed, now, nil)
 	}
 	parserState.Integrity.Checkpoint = checkpoint
+	parserState.Integrity.DiscardingOversizedRecord = chunk.discardingOversizedRecord
 	parsed := parseRecordsWithState(source, chunk.records, chunk.nextOffset, now, parserState)
 	if parsed.err != nil {
 		return i.retrySource(ctx, source.Source, domain.UsageErrorInvalidParserState, now, parsed.err)
@@ -281,7 +286,14 @@ func (i *Ingestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, er
 			errors.New("transcript changed during ingestion"),
 		)
 	}
-	if err := i.store.ApplyUsageChunk(ctx, source.Source.ID, source.Source.ByteOffset, parsed.Cursor, parsed.Events); err != nil {
+	if err := i.store.ApplyUsageChunk(
+		ctx,
+		source.Source.ID,
+		source.Source.ByteOffset,
+		source.Source.UpdatedAt,
+		parsed.Cursor,
+		parsed.Events,
+	); err != nil {
 		if errors.Is(err, domain.ErrUsageSourceEventConflict) {
 			if _, markErr := i.store.MarkUsageSourceState(
 				ctx,
@@ -582,16 +594,17 @@ func retryDelay(failure int64) time.Duration {
 }
 
 type jsonlChunk struct {
-	records        []jsonlRecord
-	data           []byte
-	nextOffset     int64
-	atEOF          bool
-	readToEOF      bool
-	fileSize       int64
-	trailing       []byte
-	trailingOffset int64
-	anomalies      int
-	errorCode      string
+	records                   []jsonlRecord
+	data                      []byte
+	nextOffset                int64
+	atEOF                     bool
+	readToEOF                 bool
+	fileSize                  int64
+	trailing                  []byte
+	trailingOffset            int64
+	anomalies                 int
+	errorCode                 string
+	discardingOversizedRecord bool
 }
 
 func readJSONLChunkFromSnapshot(
@@ -601,7 +614,7 @@ func readJSONLChunkFromSnapshot(
 	offset int64,
 	maxBytes int64,
 	maxRecord int,
-	previousError string,
+	discardingOversizedRecord bool,
 ) (jsonlChunk, error) {
 	if err := ctx.Err(); err != nil {
 		return jsonlChunk{}, err
@@ -632,12 +645,12 @@ func readJSONLChunkFromSnapshot(
 	}
 
 	start := 0
-	if previousError == domain.UsageErrorRecordTooLarge {
+	if discardingOversizedRecord {
 		newline := bytes.IndexByte(data, '\n')
 		if newline < 0 {
 			chunk.nextOffset += int64(len(data))
-			chunk.anomalies = 1
 			chunk.errorCode = domain.UsageErrorRecordTooLarge
+			chunk.discardingOversizedRecord = true
 			return chunk, nil
 		}
 		start = newline + 1
@@ -649,6 +662,7 @@ func readJSONLChunkFromSnapshot(
 			chunk.nextOffset += int64(len(data) - start)
 			chunk.anomalies++
 			chunk.errorCode = domain.UsageErrorRecordTooLarge
+			chunk.discardingOversizedRecord = true
 			chunk.atEOF = chunk.nextOffset >= fileSize
 		} else {
 			chunk.trailing = append([]byte(nil), data[start:]...)

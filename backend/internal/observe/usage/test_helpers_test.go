@@ -19,12 +19,12 @@ func parseRecords(source domain.UsageSourceContext, records []jsonlRecord, nextO
 	return parseRecordsWithState(source, records, nextOffset, now, state)
 }
 
-func readJSONLChunkFromFile(file *os.File, offset, maxBytes int64, maxRecord int, previousError string) (jsonlChunk, error) {
+func readJSONLChunkFromFile(file *os.File, offset, maxBytes int64, maxRecord int, discardingOversizedRecord bool) (jsonlChunk, error) {
 	info, err := file.Stat()
 	if err != nil {
 		return jsonlChunk{}, err
 	}
-	return readJSONLChunkFromSnapshot(context.Background(), file, info.Size(), offset, maxBytes, maxRecord, previousError)
+	return readJSONLChunkFromSnapshot(context.Background(), file, info.Size(), offset, maxBytes, maxRecord, discardingOversizedRecord)
 }
 
 func seedUsageTestSession(

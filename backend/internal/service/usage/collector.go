@@ -33,6 +33,15 @@ const (
 
 var nativeUsageIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
+// ErrUsageSessionNotFound reports that hook metadata targeted no durable AO session.
+var ErrUsageSessionNotFound = errors.New("usage session not found")
+
+type validatedSourceArtifact struct {
+	path     string
+	identity string
+	size     int64
+}
+
 // HookSignal is the usage-specific metadata carried by an AO agent hook.
 type HookSignal struct {
 	Harness                domain.AgentHarness
@@ -178,7 +187,7 @@ func (c *Collector) ReactivateSession(
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("usage session %s not found", sessionID)
+		return fmt.Errorf("%w: %s", ErrUsageSessionNotFound, sessionID)
 	}
 	if session.IsTerminated || session.Metadata.RuntimeLaunchID != expectedRuntimeLaunchID ||
 		!SupportedHarness(session.Harness) {
@@ -217,32 +226,11 @@ func (c *Collector) ReactivateSession(
 // RecordHook registers transcript metadata and updates collection lifecycle for
 // one native hook callback.
 func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, signal HookSignal) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	session, ok, err := c.store.GetSession(ctx, sessionID)
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("usage session %s not found", sessionID)
-	}
-	if !SupportedHarness(session.Harness) {
-		return nil
-	}
 	signal.LaunchID = boundedUsageMetadata(signal.LaunchID)
-	if signal.LaunchID != "" &&
-		session.Metadata.RuntimeLaunchID != "" &&
-		signal.LaunchID != session.Metadata.RuntimeLaunchID {
-		return nil
-	}
 	finalizing := finalizingEvent(signal.Event)
-	sessionLive := !session.IsTerminated && session.Activity.State != domain.ActivityExited
-	if session.IsTerminated || (!finalizing && !sessionLive) {
-		return nil
-	}
-	if signal.Harness != "" && signal.Harness != session.Harness {
-		return fmt.Errorf("usage hook harness %s does not match session harness %s", signal.Harness, session.Harness)
+	session, proceed, err := c.hookSession(ctx, sessionID, signal, finalizing)
+	if err != nil || !proceed {
+		return err
 	}
 	signal.Harness = session.Harness
 	signal.NativeSessionID = boundedUsageMetadata(signal.NativeSessionID)
@@ -253,6 +241,46 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		signal.NativeSessionID = nativeIDFromTranscript(signal.TranscriptPath)
 	}
 
+	mainPath := strings.TrimSpace(signal.TranscriptPath)
+	existsForDiscovery := false
+	if finalizing && signal.NativeSessionID != "" && session.Harness == domain.HarnessClaudeCode {
+		_, existsForDiscovery, err = c.store.GetUsageBinding(ctx, sessionID, session.Harness, signal.NativeSessionID)
+		if err != nil {
+			return err
+		}
+	}
+	if signal.NativeSessionID != "" && mainPath == "" &&
+		(session.Harness == domain.HarnessCodex || finalizing && !existsForDiscovery) {
+		mainPath, err = c.discoverPath(ctx, session.Harness, signal.NativeSessionID)
+		if err != nil {
+			return err
+		}
+	}
+	subagentPath := strings.TrimSpace(signal.SubagentTranscriptPath)
+	mainArtifact, err := c.validateHookArtifact(ctx, session.Harness, mainPath)
+	if err != nil {
+		return err
+	}
+	subagentArtifact, err := c.validateHookArtifact(ctx, session.Harness, subagentPath)
+	if err != nil {
+		return err
+	}
+	if finalizing && !existsForDiscovery {
+		recoveryPath := mainPath
+		if recoveryPath == "" && session.Harness == domain.HarnessClaudeCode {
+			recoveryPath = subagentPath
+		}
+		if recoveryPath == "" {
+			return nil
+		}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	session, proceed, err = c.hookSession(ctx, sessionID, signal, finalizing)
+	if err != nil || !proceed {
+		return err
+	}
 	now := c.now().UTC()
 	if finalizing {
 		if err := c.finalizeSession(ctx, sessionID, now); err != nil {
@@ -263,31 +291,11 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		c.notifySourceInventory(!finalizing)
 		return nil
 	}
-
 	existing, exists, err := c.store.GetUsageBinding(ctx, sessionID, session.Harness, signal.NativeSessionID)
 	if err != nil {
 		return err
 	}
-	mainPath := strings.TrimSpace(signal.TranscriptPath)
-	if mainPath == "" && (session.Harness == domain.HarnessCodex || finalizing && !exists) {
-		mainPath, err = c.discoverPath(ctx, session.Harness, signal.NativeSessionID)
-		if err != nil {
-			return err
-		}
-	}
-	subagentPath := strings.TrimSpace(signal.SubagentTranscriptPath)
-	if finalizing && !exists {
-		recoveryPath := mainPath
-		if recoveryPath == "" && session.Harness == domain.HarnessClaudeCode {
-			recoveryPath = subagentPath
-		}
-		if recoveryPath == "" {
-			return nil
-		}
-		if _, _, _, err := c.validateSourcePath(ctx, session.Harness, recoveryPath); err != nil {
-			return err
-		}
-	}
+	sessionLive := !session.IsTerminated && session.Activity.State != domain.ActivityExited
 	reactivating := sessionLive && !finalizing && (signal.Event == "session-start" ||
 		exists && existing.State == domain.UsageBindingFinalizing)
 	state := domain.UsageBindingActive
@@ -322,18 +330,18 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 		return err
 	}
 
-	if mainPath != "" {
+	if mainArtifact != nil {
 		kind := domain.UsageSourceClaudeMain
 		if session.Harness == domain.HarnessCodex {
 			kind = domain.UsageSourceCodexRollout
 		}
-		changed, err := c.registerSource(
+		changed, err := c.registerHookSource(
 			ctx,
 			binding,
 			kind,
 			signal.NativeSessionID,
 			"",
-			mainPath,
+			*mainArtifact,
 			now,
 			signal.Event == "session-start" || finalizing,
 		)
@@ -352,14 +360,14 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 	} else {
 		needsReconcile = true
 	}
-	if path := subagentPath; path != "" && session.Harness == domain.HarnessClaudeCode {
-		changed, err := c.registerSource(
+	if subagentArtifact != nil && session.Harness == domain.HarnessClaudeCode {
+		changed, err := c.registerHookSource(
 			ctx,
 			binding,
 			domain.UsageSourceClaudeSubagent,
 			signal.NativeSessionID,
 			boundedUsageMetadata(signal.SubagentID),
-			path,
+			*subagentArtifact,
 			now,
 			finalizing || signal.Event == "subagent-stop",
 		)
@@ -405,6 +413,55 @@ func (c *Collector) RecordHook(ctx context.Context, sessionID domain.SessionID, 
 
 func finalizingEvent(event string) bool {
 	return event == "session-end" || event == "process-exited"
+}
+
+func (c *Collector) hookSession(
+	ctx context.Context,
+	sessionID domain.SessionID,
+	signal HookSignal,
+	finalizing bool,
+) (domain.SessionRecord, bool, error) {
+	session, ok, err := c.store.GetSession(ctx, sessionID)
+	if err != nil {
+		return domain.SessionRecord{}, false, err
+	}
+	if !ok {
+		return domain.SessionRecord{}, false, fmt.Errorf("%w: %s", ErrUsageSessionNotFound, sessionID)
+	}
+	if !SupportedHarness(session.Harness) {
+		return session, false, nil
+	}
+	if signal.LaunchID != "" && session.Metadata.RuntimeLaunchID != "" &&
+		signal.LaunchID != session.Metadata.RuntimeLaunchID {
+		return session, false, nil
+	}
+	if signal.Harness != "" && signal.Harness != session.Harness {
+		return domain.SessionRecord{}, false, fmt.Errorf(
+			"usage hook harness %s does not match session harness %s",
+			signal.Harness,
+			session.Harness,
+		)
+	}
+	sessionLive := !session.IsTerminated && session.Activity.State != domain.ActivityExited
+	if session.IsTerminated || (!finalizing && !sessionLive) {
+		return session, false, nil
+	}
+	return session, true, nil
+}
+
+func (c *Collector) validateHookArtifact(
+	ctx context.Context,
+	harness domain.AgentHarness,
+	path string,
+) (*validatedSourceArtifact, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	resolved, identity, size, err := c.validateSourcePath(ctx, harness, path)
+	if err != nil {
+		return nil, err
+	}
+	return &validatedSourceArtifact{path: resolved, identity: identity, size: size}, nil
 }
 
 // BackfillActive discovers transcript files only for live/resumable AO
@@ -966,6 +1023,50 @@ func (c *Collector) registerSource(
 	)
 }
 
+func (c *Collector) registerHookSource(
+	ctx context.Context,
+	binding domain.UsageBindingRecord,
+	kind domain.UsageSourceKind,
+	nativeSessionID string,
+	subagentID string,
+	artifact validatedSourceArtifact,
+	now time.Time,
+	reactivateExisting bool,
+) (bool, error) {
+	expectedParentID := ""
+	if kind == domain.UsageSourceCodexRollout && subagentID != "" {
+		expectedParentID = binding.NativeRootID
+	}
+	if err := validateSourceAttribution(
+		binding,
+		kind,
+		nativeSessionID,
+		subagentID,
+		artifact.path,
+		expectedParentID,
+	); err != nil {
+		return false, err
+	}
+	sources, err := c.store.ListUsageSourcesForBinding(ctx, binding.ID)
+	if err != nil {
+		return false, err
+	}
+	return c.registerValidatedSource(
+		ctx,
+		binding,
+		kind,
+		nativeSessionID,
+		subagentID,
+		expectedParentID,
+		artifact.path,
+		artifact.identity,
+		artifact.size,
+		now,
+		reactivateExisting,
+		newBindingSourceInventory(sources),
+	)
+}
+
 func (c *Collector) registerSourceWithExpectedParent(
 	ctx context.Context,
 	binding domain.UsageBindingRecord,
@@ -1100,11 +1201,9 @@ func (c *Collector) registerValidatedSource(
 		generation++
 	}
 	var replaced *domain.UsageSourceRecord
-	replacementCode := ""
 	switch {
 	case latest != nil:
 		replaced = latest
-		replacementCode = domain.UsageErrorArtifactReplaced
 	case kind == domain.UsageSourceCodexRollout && latestNative != nil:
 		replaced = latestNative
 	case identityMatch != nil:
@@ -1142,7 +1241,7 @@ func (c *Collector) registerValidatedSource(
 	var inserted domain.UsageSourceRecord
 	var err error
 	if replaced != nil {
-		inserted, err = c.store.ReplaceUsageSource(ctx, replaced.ID, replacementCode, record, now)
+		inserted, err = c.store.ReplaceUsageSource(ctx, replaced.ID, domain.UsageErrorArtifactReplaced, record, now)
 	} else {
 		inserted, err = c.store.InsertUsageSource(ctx, record)
 	}
@@ -1150,7 +1249,7 @@ func (c *Collector) registerValidatedSource(
 		return false, err
 	}
 	if replaced != nil {
-		inventory.markState(replaced.ID, domain.UsageSourceComplete, replacementCode, now)
+		inventory.markState(replaced.ID, domain.UsageSourceComplete, domain.UsageErrorArtifactReplaced, now)
 	}
 	inventory.add(inserted)
 	return true, nil
@@ -1590,6 +1689,9 @@ func pathWithinRoot(ctx context.Context, path, root string) bool {
 }
 
 func (c *Collector) discoverPath(ctx context.Context, harness domain.AgentHarness, nativeID string) (string, error) {
+	if !nativeUsageIDPattern.MatchString(nativeID) {
+		return "", nil
+	}
 	var patterns []string
 	switch harness {
 	case domain.HarnessClaudeCode:

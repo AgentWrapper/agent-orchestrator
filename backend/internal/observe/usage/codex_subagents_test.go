@@ -261,6 +261,7 @@ func TestCoordinatorReconcilesLateCodexChildBeforeBindingCompletes(t *testing.T)
 	ingestor := NewIngestor(store, IngestorConfig{FinalizationWait: 50 * time.Millisecond})
 	coordinator := NewCoordinator(store, ingestor, watcher, CoordinatorConfig{
 		Workers:    1,
+		RetryDelay: 20 * time.Millisecond,
 		Initialize: collector.BackfillActive,
 		Reconcile: func(reconcileCtx context.Context) error {
 			return collector.ReconcileSources(reconcileCtx, -1)

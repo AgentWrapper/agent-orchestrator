@@ -75,6 +75,25 @@ func TestUsageBindingAndSourceIdempotency(t *testing.T) {
 	if len(bindings) != 1 || len(sources) != 1 || len(aggregates) != 0 {
 		t.Fatalf("rows = bindings:%d sources:%d aggregates:%d, want 1/1/0", len(bindings), len(sources), len(aggregates))
 	}
+	pending, err := s.HasPendingUsageDiscovery(ctx)
+	mustNoError(t, err, "check healthy discovery state")
+	if pending {
+		t.Fatal("healthy active binding requested discovery retry")
+	}
+	if _, err := s.UpdateUsageBindingState(
+		ctx,
+		binding.ID,
+		domain.UsageBindingDiscovering,
+		domain.UsageErrorSourceDiscoveryPending,
+		now.Add(2*time.Hour),
+	); err != nil {
+		t.Fatalf("mark discovery pending: %v", err)
+	}
+	pending, err = s.HasPendingUsageDiscovery(ctx)
+	mustNoError(t, err, "check pending discovery state")
+	if !pending {
+		t.Fatal("discovering binding did not request targeted retry")
+	}
 }
 
 func TestListLatestRetiredCodexReplacementClaimsByPath(t *testing.T) {
@@ -344,11 +363,11 @@ func TestUsageMutationsEmitSessionUpdatedCDC(t *testing.T) {
 		FileIdentity:    "dev:ino",
 		State:           domain.UsageSourcePending,
 	})
-	assertUsageSessionUpdatedEvents(t, s, base, sess, 1)
+	assertUsageSessionUpdatedEvents(t, s, base, sess, 0)
 
 	base, err = s.LatestSeq(ctx)
 	mustNoError(t, err)
-	err = s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+	err = s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset: 10,
 		State:      domain.UsageSourceActive,
 		UpdatedAt:  now,
@@ -357,8 +376,23 @@ func TestUsageMutationsEmitSessionUpdatedCDC(t *testing.T) {
 		domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 2},
 	)})
 	mustNoError(t, err)
-	// The cursor update invalidates usage after the transaction commits.
+	// New totals invalidate usage once after the transaction commits.
 	assertUsageSessionUpdatedEvents(t, s, base, sess, 1)
+
+	base, err = s.LatestSeq(ctx)
+	mustNoError(t, err)
+	current, ok, err := s.GetUsageSourceForIngestion(ctx, source.ID)
+	mustNoError(t, err)
+	if !ok {
+		t.Fatal("usage source disappeared")
+	}
+	err = s.ApplyUsageChunk(ctx, source.ID, 10, current.Source.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 20,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now.Add(time.Second),
+	}, nil)
+	mustNoError(t, err)
+	assertUsageSessionUpdatedEvents(t, s, base, sess, 0)
 }
 
 func assertUsageSessionUpdatedEvents(
@@ -405,7 +439,7 @@ func TestApplyUsageChunkAtomicReplayAndTokenAggregates(t *testing.T) {
 		ReasoningTokens:     &reasoning,
 	})
 
-	err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+	err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset:      100,
 		State:           domain.UsageSourceActive,
 		ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{"input_tokens":100}}}`,
@@ -414,7 +448,7 @@ func TestApplyUsageChunkAtomicReplayAndTokenAggregates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply chunk: %v", err)
 	}
-	err = s.ApplyUsageChunk(ctx, source.ID, 100, domain.SourceCursorState{
+	err = s.ApplyUsageChunk(ctx, source.ID, 100, now, domain.SourceCursorState{
 		ByteOffset:      120,
 		State:           domain.UsageSourceActive,
 		ParserStateJSON: `{"version":1,"source_kind":"codex_rollout","codex":{"baseline":{"input_tokens":100},"model_id":"gpt-5.6"}}`,
@@ -454,14 +488,14 @@ func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	source := seedUsageSource(t, s, sess, now)
 
-	if err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{ByteOffset: 50, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{ByteOffset: 50, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{
 		usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 10, UncachedInputTokens: 10, OutputTokens: 1}),
 	}); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 
 	conflict := usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 11, UncachedInputTokens: 11, OutputTokens: 1})
-	err := s.ApplyUsageChunk(ctx, source.ID, 50, domain.SourceCursorState{ByteOffset: 80, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{
+	err := s.ApplyUsageChunk(ctx, source.ID, 50, now, domain.SourceCursorState{ByteOffset: 80, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{
 		usageEvent("event-2", domain.UsageTokenMetrics{InputTokens: 4, UncachedInputTokens: 4, OutputTokens: 1}),
 		conflict,
 	})
@@ -481,12 +515,12 @@ func TestApplyUsageChunkRejectsConflictsAndPreservesCursor(t *testing.T) {
 		CacheReadTokens:     11,
 		OutputTokens:        1,
 	})
-	if err := s.ApplyUsageChunk(ctx, source.ID, 50, domain.SourceCursorState{ByteOffset: 90, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{bad}); err == nil {
+	if err := s.ApplyUsageChunk(ctx, source.ID, 50, now, domain.SourceCursorState{ByteOffset: 90, State: domain.UsageSourceActive, UpdatedAt: now}, []domain.ModelUsageEvent{bad}); err == nil {
 		t.Fatal("expected invalid event insert to fail")
 	}
 	assertUsageSourceOffset(t, s, source.ID, 50)
 
-	if err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{ByteOffset: 60, State: domain.UsageSourceActive, UpdatedAt: now}, nil); !errors.Is(err, domain.ErrUsageSourceOffsetConflict) {
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, now, domain.SourceCursorState{ByteOffset: 60, State: domain.UsageSourceActive, UpdatedAt: now}, nil); !errors.Is(err, domain.ErrUsageSourceOffsetConflict) {
 		t.Fatalf("offset err = %v, want ErrUsageSourceOffsetConflict", err)
 	}
 	assertUsageSourceOffset(t, s, source.ID, 50)
@@ -649,7 +683,7 @@ func TestUsageRowsCascadeWhenSeedSessionDeleted(t *testing.T) {
 		t.Fatalf("create seed session: %v", err)
 	}
 	source := seedUsageSource(t, s, sess, now)
-	if err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{ByteOffset: 10, State: domain.UsageSourceComplete, UpdatedAt: now}, []domain.ModelUsageEvent{
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{ByteOffset: 10, State: domain.UsageSourceComplete, UpdatedAt: now}, []domain.ModelUsageEvent{
 		usageEvent("event-1", domain.UsageTokenMetrics{InputTokens: 1, UncachedInputTokens: 1, OutputTokens: 1}),
 	}); err != nil {
 		t.Fatalf("apply event: %v", err)
@@ -682,7 +716,7 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 	otherSession, err := s.CreateSession(ctx, sampleRecord("other"))
 	mustNoError(t, err, "create other session")
 	source := seedUsageSource(t, s, usageSession, now)
-	if err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+	if err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 		ByteOffset: 10,
 		State:      domain.UsageSourceComplete,
 		UpdatedAt:  now,
@@ -719,8 +753,8 @@ func TestListCompactSessionUsageAggregatesAndFiltersByProject(t *testing.T) {
 	}
 	all, err := s.ListCompactSessionUsage(ctx, "")
 	mustNoError(t, err, "list all compact usage")
-	if len(all) != 2 {
-		t.Fatalf("all rows = %d, want 2", len(all))
+	if len(all) != 1 {
+		t.Fatalf("all rows = %d, want only sessions with usage", len(all))
 	}
 }
 
@@ -730,6 +764,15 @@ func TestListCompactSessionUsageSeparatesRetriesFromIntegrityFailures(t *testing
 	now := time.Unix(1700000000, 0).UTC()
 	transientSession := seedUsageSession(t, s, domain.HarnessCodex)
 	transientSource := seedUsageSource(t, s, transientSession, now)
+	if err := s.ApplyUsageChunk(ctx, transientSource.ID, 0, transientSource.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 1,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now,
+	}, []domain.ModelUsageEvent{
+		usageEvent("transient-event", domain.UsageTokenMetrics{InputTokens: 1, UncachedInputTokens: 1}),
+	}); err != nil {
+		t.Fatalf("seed transient usage: %v", err)
+	}
 	if _, err := s.MarkUsageSourceState(
 		ctx,
 		transientSource.ID,
@@ -743,6 +786,15 @@ func TestListCompactSessionUsageSeparatesRetriesFromIntegrityFailures(t *testing
 
 	incompleteSession := seedUsageSession(t, s, domain.HarnessCodex)
 	incompleteSource := seedUsageSource(t, s, incompleteSession, now)
+	if err := s.ApplyUsageChunk(ctx, incompleteSource.ID, 0, incompleteSource.UpdatedAt, domain.SourceCursorState{
+		ByteOffset: 1,
+		State:      domain.UsageSourceActive,
+		UpdatedAt:  now,
+	}, []domain.ModelUsageEvent{
+		usageEvent("incomplete-event", domain.UsageTokenMetrics{InputTokens: 1, UncachedInputTokens: 1}),
+	}); err != nil {
+		t.Fatalf("seed incomplete usage: %v", err)
+	}
 	if _, err := s.MarkUsageSourceState(
 		ctx,
 		incompleteSource.ID,
@@ -796,7 +848,7 @@ func TestUsageSessionAggregatesParentChildAndMultipleBindingsExactlyOnce(t *test
 	}
 	apply := func(source domain.UsageSourceRecord, key string, input, output int64, observedAt time.Time) {
 		t.Helper()
-		err := s.ApplyUsageChunk(ctx, source.ID, 0, domain.SourceCursorState{
+		err := s.ApplyUsageChunk(ctx, source.ID, 0, source.UpdatedAt, domain.SourceCursorState{
 			ByteOffset: 10,
 			State:      domain.UsageSourceComplete,
 			UpdatedAt:  observedAt,

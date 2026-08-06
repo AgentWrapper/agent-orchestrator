@@ -9,7 +9,6 @@ vi.mock("../lib/api-client", () => ({
 import {
 	fetchSessionUsageSummaries,
 	sessionUsageQueryOptions,
-	sessionUsageRefreshIntervalMs,
 } from "./useSessionUsageSummaries";
 
 describe("session usage summaries", () => {
@@ -17,14 +16,13 @@ describe("session usage summaries", () => {
 		getMock.mockReset().mockResolvedValue({ data: { sessions: [] } });
 	});
 
-	it("fetches one project batch and refreshes every 30 seconds", async () => {
+	it("fetches one project batch and relies on event invalidation", async () => {
 		await fetchSessionUsageSummaries("reverb");
 
 		expect(getMock).toHaveBeenCalledOnce();
 		expect(getMock).toHaveBeenCalledWith("/api/v1/usage/sessions", {
 			params: { query: { projectId: "reverb" } },
 		});
-		expect(sessionUsageRefreshIntervalMs).toBe(30_000);
-		expect(sessionUsageQueryOptions("reverb").refetchInterval).toBe(30_000);
+		expect(sessionUsageQueryOptions("reverb")).not.toHaveProperty("refetchInterval");
 	});
 });

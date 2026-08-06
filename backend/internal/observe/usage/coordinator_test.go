@@ -157,8 +157,8 @@ func TestCoordinatorRebuildsWatcherAndReconcilesAfterWatcherError(t *testing.T) 
 	waitForCoordinatorCalls(t, reconciled, 1)
 	stopCoordinatorTest(t, cancel, done)
 
-	if got := watcher.rebuilds.Load(); got != 1 {
-		t.Fatalf("watcher rebuilds = %d, want 1", got)
+	if got := watcher.rebuilds.Load(); got != 2 {
+		t.Fatalf("watcher rebuilds = %d, want startup plus overflow recovery", got)
 	}
 }
 
@@ -217,13 +217,12 @@ func TestCoordinatorRunsDiscoveryOnlyForDiscoveryEvents(t *testing.T) {
 	watcher.events <- TranscriptEvent{
 		Path:      filepath.Join(t.TempDir(), "created-directory"),
 		Discovery: true,
-		Topology:  true,
 	}
 	waitForCoordinatorCalls(t, reconciled, 1)
 	select {
-	case got := <-pathReconciled:
-		t.Fatalf("topology discovery incorrectly used exact-path reconciliation for %q", got)
-	default:
+	case <-pathReconciled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("discovery event did not attempt exact-path reconciliation")
 	}
 	cancel()
 	waitForCoordinatorSignal(t, done, "coordinator did not stop")
@@ -262,6 +261,10 @@ func (s *coordinatorTestStore) ListWatchableUsageSources(context.Context) ([]dom
 	return append([]domain.UsageSourceRecord(nil), s.sources...), nil
 }
 
+func (s *coordinatorTestStore) HasPendingUsageDiscovery(context.Context) (bool, error) {
+	return false, nil
+}
+
 type coordinatorTestIngestor func(context.Context, int64) (IngestResult, error)
 
 func (f coordinatorTestIngestor) Ingest(ctx context.Context, sourceID int64) (IngestResult, error) {
@@ -274,6 +277,8 @@ type coordinatorTestWatcher struct {
 	done     chan struct{}
 	once     sync.Once
 	rebuilds atomic.Int64
+	pathsMu  sync.Mutex
+	paths    []string
 }
 
 func newCoordinatorTestWatcher() *coordinatorTestWatcher {
@@ -302,8 +307,11 @@ func (w *coordinatorTestWatcher) Start(ctx context.Context) <-chan struct{} {
 	return w.done
 }
 
-func (w *coordinatorTestWatcher) Rebuild(context.Context) error {
+func (w *coordinatorTestWatcher) Rebuild(_ context.Context, paths []string) error {
 	w.rebuilds.Add(1)
+	w.pathsMu.Lock()
+	w.paths = append([]string(nil), paths...)
+	w.pathsMu.Unlock()
 	return nil
 }
 
