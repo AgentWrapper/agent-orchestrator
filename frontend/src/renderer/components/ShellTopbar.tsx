@@ -3,7 +3,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import {
 	FolderGit2,
-	GitBranch,
 	LayoutDashboard,
 	PanelRightOpen,
 	Plus,
@@ -180,8 +179,16 @@ export function ShellTopbar({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<span className="inline-flex" style={noDragStyle}>
-							<TopbarButton aria-label={t("shell.newTask")} disabled={isProjectRestarting} onClick={openNewTask} variant="icon">
+							<TopbarButton
+								aria-label={t("shell.newTask")}
+								className="reverb-topbar__control--labeled"
+								data-priority="primary"
+								disabled={isProjectRestarting}
+								onClick={openNewTask}
+								variant="accent"
+							>
 								<Plus className="size-icon-md" aria-hidden="true" />
+								<span data-compact-label>{t("shell.newTask")}</span>
 							</TopbarButton>
 						</span>
 					</TooltipTrigger>
@@ -192,11 +199,13 @@ export function ShellTopbar({
 						<span className="inline-flex" style={noDragStyle}>
 							<TopbarButton
 								aria-label={orchestrator ? t("shell.orchestrator") : orchestratorActionLabel}
+								data-priority="secondary"
 								disabled={isSpawning || isProjectRestarting}
 								onClick={() => void openOrchestrator()}
-								variant="featureIcon"
+								variant="feature"
 							>
 								<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+								<span data-compact-label>{t("shell.orchestrator")}</span>
 							</TopbarButton>
 						</span>
 					</TooltipTrigger>
@@ -216,11 +225,14 @@ export function ShellTopbar({
 								<span className="inline-flex" style={noDragStyle}>
 									<TopbarButton
 										aria-label={t("shell.newTask")}
+										className="reverb-topbar__control--labeled"
+										data-priority="primary"
 										disabled={isProjectRestarting}
 										onClick={openNewTask}
-										variant="icon"
+										variant="accent"
 									>
 										<Plus className="size-icon-md" aria-hidden="true" />
+										<span data-compact-label>{t("shell.newTask")}</span>
 									</TopbarButton>
 								</span>
 							</TooltipTrigger>
@@ -230,11 +242,13 @@ export function ShellTopbar({
 							<TooltipTrigger asChild>
 								<TopbarButton
 									aria-label={t("shell.openKanban")}
+									data-priority="secondary"
 									onClick={openBoard}
 									style={noDragStyle}
-									variant="featureIcon"
+									variant="feature"
 								>
 									<LayoutDashboard className="size-icon-md" aria-hidden="true" />
+									<span data-compact-label>{t("shell.openKanban")}</span>
 								</TopbarButton>
 							</TooltipTrigger>
 							<TooltipContent side="bottom">{t("shell.openKanban")}</TooltipContent>
@@ -269,11 +283,13 @@ export function ShellTopbar({
 							<span className="inline-flex" style={noDragStyle}>
 								<TopbarButton
 									aria-label={orchestratorActionLabel}
+									data-priority="secondary"
 									disabled={isSpawning || isProjectRestarting}
 									onClick={() => void openOrchestrator()}
-									variant="featureIcon"
+									variant="feature"
 								>
-									<OrchestratorIcon className="size-icon-lg" aria-hidden="true" />
+									<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+									<span data-compact-label>{t("shell.orchestrator")}</span>
 								</TopbarButton>
 							</span>
 						</TooltipTrigger>
@@ -307,15 +323,11 @@ export function ShellTopbar({
 		) : null;
 
 	const context =
-		isSessionRoute && session ? (
+		isSessionRoute && session && isOrchestrator ? (
 			<div className="reverb-topbar__state-content">
-				{isOrchestrator ? (
-					<AgentAvatar className="size-icon-xs" decorative provider={session.provider} />
-				) : (
-					<GitBranch className="size-icon-md shrink-0" aria-hidden="true" />
-				)}
+				<AgentAvatar className="size-icon-xs" decorative provider={session.provider} />
 				<span className="reverb-topbar__state-label truncate font-mono">
-					{isOrchestrator ? session.provider : (session.branch ?? session.provider)}
+					{session.provider}
 				</span>
 				<TopbarActivityStatus activity={session.activity} />
 			</div>
@@ -361,6 +373,9 @@ export function ShellTopbar({
 				) : null
 			}
 			leadingIcon={leadingIcon}
+			identityMeta={
+				isSessionRoute && session && !isOrchestrator ? <TopbarActivityStatus activity={session.activity} /> : undefined
+			}
 			model={model}
 			paddingLeft={isMac ? paddingLeft : undefined}
 			separateUtilities={isOrchestrator || !isSessionRoute}

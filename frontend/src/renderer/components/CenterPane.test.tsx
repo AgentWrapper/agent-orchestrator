@@ -82,7 +82,12 @@ describe("CenterPane toolbar session label", () => {
 		const sessionTab = screen.getByRole("tab", { name: "do the thing" });
 		expect(sessionTab).toHaveAttribute("aria-current", "true");
 		expect(sessionTab).toHaveClass("session-pane-tab__label");
-		expect(sessionTab.parentElement).toHaveClass("session-pane-tab", "bg-interactive-active");
+		expect(sessionTab.parentElement).toHaveClass(
+			"session-pane-tab",
+			"bg-interactive-active",
+			"after:h-0.5",
+			"after:bg-foreground/80",
+		);
 		expect(sessionTab.closest(".h-inspector-tabs")).toHaveClass("px-1.5");
 		expect(document.querySelector('button[aria-label="Scroll tabs left"]')).toHaveClass("hidden");
 		expect(sessionTab.closest(".terminal-pane-frame")).toHaveClass("px-px");
@@ -286,8 +291,8 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: worker, shellTerminals: [shell] });
 
 		const shellTab = screen.getByRole("tab", { name: shell.title });
-		expect(shellTab.parentElement).toHaveClass("min-w-shell-tab-min", "w-shell-tab-connected");
-		expect(shellTab.parentElement).not.toHaveClass("session-pane-tab");
+		expect(shellTab.parentElement).toHaveClass("min-w-shell-tab-min", "session-pane-tab");
+		expect(shellTab.parentElement).not.toHaveClass("w-shell-tab-connected");
 	});
 
 	it("closes only the selected auxiliary terminal from the application shortcut", () => {

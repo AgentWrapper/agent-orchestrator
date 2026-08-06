@@ -449,8 +449,10 @@ function SessionPaneTab({ label, provider, isActive, onSelect, onClose }: Sessio
 	return (
 		<span
 			className={cn(
-				"session-pane-tab group inline-flex items-center rounded-md transition-colors",
-				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
+				"session-pane-tab group relative inline-flex items-center rounded-md transition-colors",
+				isActive
+					? "bg-interactive-active after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+					: "hover:bg-interactive-hover/60",
 			)}
 		>
 			<button

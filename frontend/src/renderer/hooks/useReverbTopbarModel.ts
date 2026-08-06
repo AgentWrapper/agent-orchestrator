@@ -81,8 +81,9 @@ export function useReverbTopbarModel(surfaceOverride?: ReverbTopbarSurfaceOverri
 			],
 		};
 	} else if (isSessionRoute) {
-		const sessionContextLabel =
-			projectLabel || session?.workspaceName || (isOrchestrator ? t("shell.orchestrator") : session?.title) || "Session unavailable";
+		const sessionContextLabel = isOrchestrator
+			? projectLabel || session?.workspaceName || t("shell.orchestrator")
+			: session?.title || projectLabel || session?.workspaceName || "Session unavailable";
 		model = {
 			surface: isOrchestrator ? "orchestrator-session" : "worker-session",
 			breadcrumbs: session
@@ -94,7 +95,7 @@ export function useReverbTopbarModel(surfaceOverride?: ReverbTopbarSurfaceOverri
 						},
 					]
 				: [{ id: "session-unavailable", label: "Session unavailable" }],
-			contextAriaLabel: session ? (isOrchestrator ? "Orchestrator activity" : "Worker context") : undefined,
+			contextAriaLabel: session && isOrchestrator ? "Orchestrator activity" : undefined,
 		};
 	} else if (isProjectBoardRoute) {
 		model = {

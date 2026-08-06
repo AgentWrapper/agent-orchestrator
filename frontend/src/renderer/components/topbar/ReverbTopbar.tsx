@@ -9,6 +9,7 @@ export interface ReverbTopbarProps {
 	/** Animated macOS clearance for the fixed traffic-light/navigation cluster. */
 	paddingLeft?: MotionValue<number>;
 	leadingIcon?: ReactNode;
+	identityMeta?: ReactNode;
 	context?: ReactNode;
 	error?: ReactNode;
 	actions?: ReactNode;
@@ -34,6 +35,7 @@ export function ReverbTopbar({
 	model,
 	paddingLeft,
 	leadingIcon,
+	identityMeta,
 	context,
 	error,
 	actions,
@@ -124,6 +126,12 @@ export function ReverbTopbar({
 							})}
 						</ol>
 					</nav>
+				) : null}
+
+				{identityMeta ? (
+					<span className="reverb-topbar__identity-meta inline-flex shrink-0 items-center" style={noDragStyle}>
+						{identityMeta}
+					</span>
 				) : null}
 			</div>
 

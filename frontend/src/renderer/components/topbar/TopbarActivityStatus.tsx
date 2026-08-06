@@ -3,8 +3,8 @@ import { cn } from "../../lib/utils";
 import type { SessionActivity } from "../../types/workspace";
 
 /**
- * Compact activity metadata for the worktree context box. The hairline keeps
- * the worktree and runtime state distinct without turning status into a pill.
+ * Compact activity metadata for the current session context. The hairline
+ * keeps identity and runtime state distinct without turning status into a pill.
  */
 export function TopbarActivityStatus({ activity }: { activity?: SessionActivity | null }) {
 	const { label, tone, breathe } = getAgentActivityView(activity);

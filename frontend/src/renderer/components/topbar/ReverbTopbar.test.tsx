@@ -130,6 +130,16 @@ describe("ReverbTopbar", () => {
 		expect(container.querySelector(".reverb-topbar__utility-separator")).toHaveAttribute("aria-hidden", "true");
 	});
 
+	it("renders identity metadata beside the current breadcrumb", () => {
+		const { container } = render(
+			<ReverbTopbar identityMeta={<span>Working</span>} model={projectBoardModel} />,
+		);
+
+		const identity = container.querySelector(".reverb-topbar__context");
+		expect(identity).toContainElement(screen.getByText("Working"));
+		expect(screen.getByText("Working").parentElement).toHaveClass("reverb-topbar__identity-meta");
+	});
+
 	it("omits empty controls and utility separation while retaining the layout state cell", () => {
 		const { container } = render(<ReverbTopbar model={projectBoardModel} />);
 

@@ -96,7 +96,7 @@ describe("ShellTerminalTab rename", () => {
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
-	it("uses a compact fixed width and shrinks its title around the sibling close affordance", () => {
+	it("uses the same compact frame as a pinned session tab", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
 		expect(screen.getByRole("button", { name: "Close terminal ao" })).toHaveClass(
@@ -109,8 +109,9 @@ describe("ShellTerminalTab rename", () => {
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveClass("w-full", "min-w-0", "text-left");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
 			"grid",
-			"w-shell-tab-connected",
+			"session-pane-tab",
 		);
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("w-shell-tab-connected");
 	});
 
 	it("uses a neutral active surface with a strong foreground selection line", () => {
@@ -118,11 +119,11 @@ describe("ShellTerminalTab rename", () => {
 
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
 			"self-stretch",
-			"bg-overlay",
+			"bg-interactive-active",
 			"after:h-0.5",
 			"after:bg-foreground/80",
 		);
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("rounded-md");
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass("rounded-md");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("before:bg-accent");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("after:h-px");
 	});

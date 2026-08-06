@@ -121,7 +121,7 @@ describe("SessionsBoard", () => {
 		expect(screen.queryByText(/reload agents/i)).not.toBeInTheDocument();
 	});
 
-	it("keeps in-panel board identity and actions compact", async () => {
+	it("shows labelled in-panel board actions", async () => {
 		boardActionsInPanelMock.mockReturnValue(true);
 		workspaceQueryMock.mockReturnValue({
 			data: [
@@ -154,8 +154,8 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("Board")).toBeInTheDocument();
 		expect(screen.queryByText("solkit-ui")).not.toBeInTheDocument();
 		const newTask = screen.getByRole("button", { name: "New task" });
-		expect(newTask).toHaveClass("reverb-topbar__control--icon");
-		expect(newTask.textContent).toBe("");
+		expect(newTask).toHaveClass("reverb-topbar__control--accent");
+		expect(newTask).toHaveTextContent("New task");
 		await userEvent.hover(newTask);
 		expect(await screen.findByRole("tooltip")).toHaveTextContent("New task");
 	});
@@ -198,8 +198,8 @@ describe("SessionsBoard", () => {
 		const indicator = screen.getByText(label).querySelector(".reverb-topbar__status-dot") as HTMLElement;
 		expect(indicator).toHaveAttribute("aria-hidden", "true");
 		expect(indicator).toHaveClass("reverb-topbar__status-dot");
-		expect(button).toHaveClass("reverb-topbar__control--icon");
-		expect(button.textContent).toBe("");
+		expect(button).toHaveClass("reverb-topbar__control--feature");
+		expect(button).toHaveTextContent("Orchestrator");
 		if (pulses) expect(indicator).toHaveClass("animate-status-pulse");
 		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
 	});

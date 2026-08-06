@@ -264,11 +264,14 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					<span className="inline-flex">
 						<TopbarButton
 							aria-label={t("shell.newTask")}
+							className="reverb-topbar__control--labeled"
+							data-priority="primary"
 							disabled={isProjectRestarting}
 							onClick={() => projectId && requestNewTask(projectId)}
-							variant="icon"
+							variant="accent"
 						>
 							<Plus className="size-icon-md" aria-hidden="true" />
+							<span data-compact-label>{t("shell.newTask")}</span>
 						</TopbarButton>
 					</span>
 				</TooltipTrigger>
@@ -283,11 +286,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									? t("shell.orchestratorWithActivity", { activity: orchestratorActivityLabel })
 									: t("shell.spawnOrchestrator")
 							}
+							data-priority="secondary"
 							disabled={isSpawning || isProjectRestarting}
 							onClick={() => void openOrchestrator()}
-							variant="featureIcon"
+							variant="feature"
 						>
 							<OrchestratorIcon className="size-icon-md" aria-hidden="true" />
+							<span data-compact-label>{t("shell.orchestrator")}</span>
 						</TopbarButton>
 					</span>
 				</TooltipTrigger>

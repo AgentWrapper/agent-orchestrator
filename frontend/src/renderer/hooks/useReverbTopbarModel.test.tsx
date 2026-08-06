@@ -90,7 +90,7 @@ describe("useReverbTopbarModel", () => {
 
 		expect(result.current.projectId).toBe("project-1");
 		expect(result.current.model.surface).toBe("worker-session");
-		expect(result.current.model.breadcrumbs.map((crumb) => crumb.label)).toEqual(["reverb-app"]);
+		expect(result.current.model.breadcrumbs.map((crumb) => crumb.label)).toEqual(["Refine the top bar"]);
 		expect(result.current.model.breadcrumbs[0]?.onClick).toBeUndefined();
 	});
 

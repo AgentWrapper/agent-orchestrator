@@ -19,8 +19,8 @@ type ShellTerminalTabProps = {
 
 // One standalone-shell tab, shared by the session pane's tab strip (CenterPane)
 // and the standalone /terminals screen (ShellTerminalsView) so the two never
-// drift. Session-pane tabs use a connected treatment that visually continues
-// into xterm below; the standalone terminals screen keeps its compact pill.
+// drift. Session-pane tabs share the compact frame used by pinned session tabs;
+// the standalone terminals screen keeps its compact pill.
 // The full title only becomes the hover tooltip when the strip truncates it.
 //
 // Renaming happens inline with the platform's native gesture: double-click on
@@ -107,11 +107,11 @@ export function ShellTerminalTab({
 			className={cn(
 				"group relative min-w-shell-tab-min items-center transition-colors",
 				appearance === "connected"
-					? "grid w-shell-tab-connected grid-cols-[auto_minmax(0,1fr)_auto] self-stretch border-x border-transparent pl-2 pr-0"
+					? "session-pane-tab grid grid-cols-[auto_minmax(0,1fr)_auto] self-stretch rounded-md border-x border-transparent"
 					: "inline-flex gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
-						? "border-border-strong bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
+						? "border-border-strong bg-interactive-active text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 						: "border-transparent text-passive hover:bg-interactive-hover/60 hover:text-foreground"
 					: isActive
 						? "bg-interactive-active"

@@ -229,12 +229,13 @@ describe("ShellTopbar activity status", () => {
 		expect(screen.getByText(label)).toBeInTheDocument();
 	});
 
-	it("separates the worktree from a plain, non-pill activity label", () => {
+	it("places a plain, non-pill activity label beside the session name", () => {
 		renderTopbar(sessionWith());
 
 		const status = screen.getByText("Working");
 		expect(status).toHaveClass("reverb-topbar__activity");
 		expect(status.previousElementSibling).toHaveClass("reverb-topbar__state-divider");
+		expect(status.closest(".reverb-topbar__context")).toHaveTextContent("do the thing");
 		expect(status).not.toHaveClass("rounded-md");
 	});
 
@@ -276,7 +277,7 @@ describe("ShellTopbar activity status", () => {
 		try {
 			renderTopbar(sessionWith());
 
-			expect(screen.getByText("my-app")).toBeInTheDocument();
+			expect(screen.getByText("do the thing")).toBeInTheDocument();
 			expect(screen.getByRole("button", { name: "结束会话" })).toBeInTheDocument();
 			expect(screen.getByRole("button", { name: "启动编排器" })).toBeInTheDocument();
 		} finally {
@@ -308,7 +309,7 @@ describe("ShellTopbar orchestrator actions", () => {
 		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
 	});
 
-	it("keeps orchestrator-session actions compact and explains them on hover", async () => {
+	it("shows labelled orchestrator-session actions and explains them on hover", async () => {
 		renderTopbar(orchestrator);
 		const providerLabel = screen.getByText("claude-code");
 		expect(providerLabel.previousElementSibling).toHaveAttribute("src", expect.stringContaining("claude-code"));
@@ -316,10 +317,9 @@ describe("ShellTopbar orchestrator actions", () => {
 
 		const actions = within(screen.getByRole("group", { name: "Page actions" })).getAllByRole("button");
 		expect(actions.map((button) => button.getAttribute("aria-label"))).toEqual(["New task", "Open Kanban"]);
-		for (const action of actions) {
-			expect(action).toHaveClass("reverb-topbar__control--icon");
-			expect(action.textContent).toBe("");
-		}
+		expect(actions.map((action) => action.textContent)).toEqual(["New task", "Open Kanban"]);
+		expect(actions[0]).toHaveClass("reverb-topbar__control--accent");
+		expect(actions[1]).toHaveClass("reverb-topbar__control--feature");
 		const separator = document.querySelector(".reverb-topbar__utility-separator");
 		expect(separator).toBeInTheDocument();
 		expect(screen.getByRole("group", { name: "Page actions" }).nextElementSibling).toBe(separator);
@@ -339,10 +339,12 @@ describe("ShellTopbar orchestrator actions", () => {
 				.getAllByRole("button")
 				.map((button) => button.getAttribute("aria-label")),
 		).toEqual(["New task", "Orchestrator"]);
-		expect(within(actions).getByRole("button", { name: "New task" })).toHaveClass("reverb-topbar__control--icon");
+		expect(within(actions).getByRole("button", { name: "New task" })).toHaveClass("reverb-topbar__control--accent");
+		expect(within(actions).getByRole("button", { name: "New task" })).toHaveTextContent("New task");
 		expect(within(actions).getByRole("button", { name: "Orchestrator" })).toHaveClass(
 			"reverb-topbar__control--feature",
 		);
+		expect(within(actions).getByRole("button", { name: "Orchestrator" })).toHaveTextContent("Orchestrator");
 		expect(actions.nextElementSibling).toHaveClass("reverb-topbar__utility-separator");
 		expect(screen.getByRole("group", { name: "Global utilities" })).toContainElement(
 			screen.getByRole("button", { name: "Notifications" }),
@@ -499,7 +501,9 @@ describe("ShellTopbar session controls", () => {
 		expect(context).toHaveClass("reverb-topbar__state");
 		expect(trailing).toHaveClass("reverb-topbar__trailing");
 		expect(within(identity as HTMLElement).getByText("do the thing")).toBeInTheDocument();
-		expect(within(context as HTMLElement).getByText("ao/sess-1")).toBeInTheDocument();
+		expect(within(identity as HTMLElement).getByText("Working")).toBeInTheDocument();
+		expect(context).toHaveClass("reverb-topbar__state--empty");
+		expect(screen.queryByText("ao/sess-1")).not.toBeInTheDocument();
 
 		const trailingButtons = within(trailing as HTMLElement)
 			.getAllByRole("button")
@@ -507,17 +511,18 @@ describe("ShellTopbar session controls", () => {
 		expect(trailingButtons).toEqual(["Kill session", "Spawn Orchestrator", "Notifications"]);
 	});
 
-	it("keeps compact session actions in order without visible labels", () => {
+	it("keeps the destructive action compact and makes the orchestrator label responsive", () => {
 		renderTopbarSessions([worker], "sess-1");
 
 		const actions = within(screen.getByRole("group", { name: "Page actions" })).getAllByRole("button");
 		const labels = actions.map((button) => button.getAttribute("aria-label"));
 		expect(labels).toEqual(["Kill session", "Spawn Orchestrator"]);
-		for (const action of actions) {
-			expect(action).toHaveClass("reverb-topbar__control--icon");
-			expect(action).not.toHaveAttribute("data-priority");
-			expect(action.textContent).toBe("");
-		}
+		expect(actions[0]).toHaveClass("reverb-topbar__control--icon");
+		expect(actions[0]).not.toHaveAttribute("data-priority");
+		expect(actions[0]).toHaveTextContent("");
+		expect(actions[1]).toHaveClass("reverb-topbar__control--feature");
+		expect(actions[1]).toHaveAttribute("data-priority", "secondary");
+		expect(actions[1]).toHaveTextContent("Orchestrator");
 		expect(screen.queryByRole("button", { name: /inspector panel/i })).not.toBeInTheDocument();
 		expect(document.querySelector(".reverb-topbar__utility-separator")).not.toBeInTheDocument();
 	});
