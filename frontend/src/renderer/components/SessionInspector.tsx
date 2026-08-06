@@ -1616,7 +1616,6 @@ function ReviewsSection({
         onTrigger={() => triggerReview.mutate()}
         reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
         reviewStates={reviewStates}
-        runs={reviewsQuery.data?.runs ?? []}
         notice={reviewNotice}
         agentCatalog={agentsQuery.data}
         reviewerOverride={reviewerOverride}

@@ -1572,7 +1572,7 @@ describe("SessionInspector summary reviews", () => {
 
     await userEvent.click(
       await screen.findByRole("switch", {
-        name: "Automatically send review feedback to the worker",
+        name: "Auto inject review comments",
       }),
     );
 
