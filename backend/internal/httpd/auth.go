@@ -160,7 +160,12 @@ func maybeSetPreviewAuthCookie(w http.ResponseWriter, r *http.Request, tok strin
 	})
 }
 
-func authMiddleware(state *authState, lock *lockout) func(http.Handler) http.Handler {
+// authMiddleware authenticates LAN requests against the current connection
+// password. connected, which may be nil, is notified of the source address of
+// every request that authenticates; it exists so telemetry can observe that a
+// phone actually reached this desktop, and it must not block the request, since
+// it runs inline on every authenticated call.
+func authMiddleware(state *authState, lock *lockout, connected *mobileConnectReporter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			src := sourceKey(r)
@@ -171,6 +176,7 @@ func authMiddleware(state *authState, lock *lockout) func(http.Handler) http.Han
 			}
 			if tok := connectionToken(r); mobilebridge.PasswordMatches(state.currentHash(), tok) {
 				lock.reset(src)
+				connected.report(src)
 				maybeSetPreviewAuthCookie(w, r, tok)
 				next.ServeHTTP(w, r)
 				return

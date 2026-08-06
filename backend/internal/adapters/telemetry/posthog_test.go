@@ -13,7 +13,7 @@ import (
 
 func TestPostHogSinkCapturesEvent(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -73,7 +73,7 @@ func TestPostHogSinkCapturesEvent(t *testing.T) {
 
 func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -139,7 +139,7 @@ func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 
 func TestPostHogSinkSanitizesAppActivePayload(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -216,7 +216,7 @@ var _ postHogClient = roundTripClient(nil)
 func TestPostHogSinkStampsAppVersionWhenSupplied(t *testing.T) {
 	requests := make(chan map[string]any, 1)
 	newSink := func(appVersion string) *PostHogSink {
-		sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", appVersion, roundTripClient(func(req *http.Request) (*http.Response, error) {
+		sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", appVersion, "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 			defer req.Body.Close()
 			var body map[string]any
 			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
