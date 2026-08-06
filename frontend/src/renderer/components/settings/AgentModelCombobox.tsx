@@ -94,6 +94,7 @@ export function AgentModelCombobox({
 			</DropdownMenuTrigger>
 			<DropdownMenuContent
 				align="end"
+				alignOffset={0}
 				className="settings-menu-surface max-h-select-menu-max! w-[min(28rem,calc(100vw-2rem))] overflow-y-auto! overflow-x-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
 			>
 				<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
@@ -354,8 +355,8 @@ function groupModels(models: IndexedModel[], showPinned: boolean, selectedID: st
 function modelItemClass(selected: boolean): string {
 	return cn(
 		"settings-menu-item min-w-0 cursor-default outline-none",
-		"focus:border-settings-menu focus:bg-settings-menu-selected focus:text-settings-label",
-		"data-highlighted:border-settings-menu data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-label",
-		selected && "border-settings-menu bg-settings-menu-selected",
+		"focus:bg-settings-menu-selected focus:text-settings-title",
+		"data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-title",
+		selected && "border-settings-menu bg-settings-menu-selected text-settings-title",
 	);
 }

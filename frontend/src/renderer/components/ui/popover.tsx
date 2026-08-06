@@ -14,7 +14,6 @@ export function PopoverContent({
 			<PopoverPrimitive.Content
 				className={cn(
 					"z-overlay rounded-lg border border-border bg-popover text-popover-foreground outline-none",
-					"shadow-(--shadow-popover)",
 					"origin-(--radix-popover-content-transform-origin)",
 					"data-[state=open]:animate-popover-in data-[state=closed]:animate-popover-out",
 					className,

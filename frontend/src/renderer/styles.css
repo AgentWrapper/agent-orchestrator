@@ -129,6 +129,10 @@
 	--color-settings-title: var(--color-text-settings-title);
 	--color-settings-muted: var(--color-text-settings-muted);
 	--color-settings-label: var(--color-text-settings-row);
+	--color-bg-settings-row-hover: color-mix(in oklch, var(--color-bg-settings-row) 94%, var(--color-text-settings-title));
+	--color-bg-settings-trigger: color-mix(in oklch, var(--color-bg-settings-row) 97%, var(--color-text-settings-title));
+	--color-bg-settings-trigger-hover: color-mix(in oklch, var(--color-bg-settings-row) 91%, var(--color-text-settings-title));
+	--color-text-settings-trigger: color-mix(in oklch, var(--color-text-settings-title) 80%, var(--color-text-settings-muted));
 	--radius-settings-row: var(--radius-settings-row);
 	--radius-settings-panel: var(--radius-settings-panel);
 
@@ -281,9 +285,11 @@
 	--animate-status-pulse: status-pulse 1.8s ease-in-out infinite;
 	--animate-overlay-in: overlay-in 130ms var(--ease-out);
 	--animate-modal-in: modal-in 180ms var(--ease-out);
+	--animate-popover-in: popover-in 150ms var(--ease-out);
 	/* Exits are shorter than entries: the system is responding, not deciding. */
 	--animate-overlay-out: overlay-out 90ms ease-in;
 	--animate-modal-out: modal-out 100ms cubic-bezier(0.4, 0, 1, 1);
+	--animate-popover-out: popover-out 100ms cubic-bezier(0.4, 0, 1, 1);
 }
 
 /* Full-viewport modal/sheet scrim — dim + blur everything behind pop panels. */
@@ -588,9 +594,21 @@
 	padding: var(--size-settings-row-padding);
 }
 
+/* Helper copy belongs to the preceding settings row, not a separate divided row. */
+[data-section="updates"] .nightly-warning {
+	border-top: 0 !important;
+	border-block-start: 0 !important;
+}
+
 /* Tailwind preflight clears button backgrounds; keep settings rows filled. */
 button.settings-row-bar {
 	background-color: var(--color-bg-settings-row);
+}
+
+button.settings-link-row:hover,
+button.settings-link-row:active {
+	background-color: var(--color-bg-settings-row-hover);
+	color: var(--color-text-settings-title);
 }
 
 @utility settings-menu-item {
@@ -610,14 +628,14 @@ button.settings-row-bar {
 	display: inline-flex;
 	align-items: center;
 	gap: calc(var(--spacing) * 1.5);
-	border-radius: var(--radius-settings-row);
-	padding-inline: var(--space-1);
-	padding-block: var(--space-0_5);
+	border-radius: var(--radius-md);
+	padding-inline: var(--space-2);
+	padding-block: var(--space-1);
 	font-size: var(--font-size-base);
 	color: var(--color-text-settings-muted);
 	outline: none;
 	box-shadow: none;
-	transition-property: color;
+	transition-property: color, background-color;
 	transition-duration: var(--duration-fast);
 }
 
@@ -652,7 +670,7 @@ button.settings-row-bar {
 	background-color: var(--color-bg-settings-menu);
 	padding: var(--space-2);
 	gap: var(--space-1_5);
-	box-shadow: var(--elevation-md);
+	box-shadow: none;
 }
 
 @utility settings-agent-menu-surface {
@@ -866,7 +884,7 @@ button.settings-row-bar {
 	transition-duration: var(--duration-normal);
 
 	&:hover {
-		background-color: var(--color-bg-settings-row);
+		background-color: var(--color-bg-settings-row-hover);
 		color: var(--color-text-settings-title);
 	}
 
@@ -1260,6 +1278,28 @@ textarea,
 	to {
 		opacity: 0;
 		scale: 0.95;
+	}
+}
+
+@keyframes popover-in {
+	from {
+		opacity: 0;
+		scale: 0.98;
+	}
+	to {
+		opacity: 1;
+		scale: 1;
+	}
+}
+
+@keyframes popover-out {
+	from {
+		opacity: 1;
+		scale: 1;
+	}
+	to {
+		opacity: 0;
+		scale: 0.98;
 	}
 }
 

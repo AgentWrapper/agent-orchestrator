@@ -31,15 +31,28 @@ export function SettingsRow({
 	);
 }
 
-export function SettingsLinkRow({ icon, label, onClick }: { icon?: LucideIcon; label: string; onClick: () => void }) {
+export function SettingsLinkRow({
+	icon,
+	label,
+	onClick,
+	className,
+}: {
+	icon?: LucideIcon;
+	label: string;
+	onClick: () => void;
+	className?: string;
+}) {
 	return (
 		<button
 			type="button"
 			onClick={onClick}
-			className="settings-row-bar w-full text-left transition-colors hover:bg-settings-menu-selected"
+			className={cn(
+				"group/settings-link-row settings-link-row settings-row-bar w-full bg-transparent text-left transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none",
+				className,
+			)}
 		>
 			<SettingsRowLabel icon={icon} label={label} />
-			<ChevronRight className="size-icon-base shrink-0 text-settings-muted" aria-hidden="true" />
+			<ChevronRight className="size-icon-base shrink-0 text-settings-muted transition-colors group-hover:text-settings-label" aria-hidden="true" />
 		</button>
 	);
 }

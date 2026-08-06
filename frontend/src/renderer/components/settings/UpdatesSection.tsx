@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Check, HardDriveDownload, History, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, Loader2, RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { aoBridge } from "../../lib/bridge";
 import { useUpdateStatus } from "../../hooks/useUpdateStatus";
@@ -143,7 +143,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 
 	return (
 		<>
-			<SettingsSection title={t("settings.updates")} sectionId="updates" titleHidden={titleHidden}>
+			<SettingsSection title={t("settings.updates")} sectionId="updates" titleHidden={titleHidden} grouped>
 				{featurePr != null && (
 					<div className="flex flex-col gap-2">
 						<div className="settings-row-bar h-auto min-h-(--size-settings-row) flex-wrap gap-2">
@@ -163,7 +163,7 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					</div>
 				)}
 
-				<SettingsRow icon={History} label={t("settings.updates.automatic")}>
+				<SettingsRow label={t("settings.updates.automatic")}>
 					<SettingsOptionMenu
 						aria-label={t("settings.updates.automatic")}
 						value={form.enabled ? "on" : "off"}
@@ -173,35 +173,39 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					/>
 				</SettingsRow>
 
-				<SettingsRow icon={HardDriveDownload} label={t("settings.updates.channel")}>
-					<SettingsOptionMenu
-						aria-label={t("settings.updates.channel")}
-						value={primaryValue}
-						options={channelOptions}
-						onChange={handlePrimaryChannel}
-						disabled={!form.enabled || save.isPending}
-					/>
-				</SettingsRow>
+				<div className="w-full">
+					<SettingsRow label={t("settings.updates.channel")} className="rounded-none">
+						<SettingsOptionMenu
+							aria-label={t("settings.updates.channel")}
+							value={primaryValue}
+							options={channelOptions}
+							onChange={handlePrimaryChannel}
+							disabled={!form.enabled || save.isPending}
+						/>
+					</SettingsRow>
 
-				{primaryValue === "nightly" && form.enabled && (
-					<p className="flex items-center gap-2 px-1 text-xs leading-row text-warning">
-						<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
-						<span>{t("settings.updates.nightlyWarning")}</span>
-					</p>
-				)}
+					{primaryValue === "nightly" && form.enabled && (
+						<p className="nightly-warning px-(--size-settings-row-padding) pb-(--size-settings-row-padding) text-xs leading-row text-warning">
+							<span className="mr-2 inline-flex align-middle" aria-hidden="true">
+								<AlertTriangle className="size-icon-sm" />
+							</span>
+							{t("settings.updates.nightlyWarning")}
+						</p>
+					)}
+				</div>
 
 				{save.isError && (
 					<p className="px-1 text-xs text-error">{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}</p>
 				)}
 
-				<UpdateActions status={status} />
+				<UpdateActions status={status} suppressTopBorder={primaryValue === "nightly" && form.enabled} />
 			</SettingsSection>
 
 		</>
 	);
 }
 
-function UpdateActions({ status }: { status: UpdateStatus }) {
+function UpdateActions({ status, suppressTopBorder = false }: { status: UpdateStatus; suppressTopBorder?: boolean }) {
 	const { t } = useTranslation();
 	const version = useQuery({ queryKey: ["app-version"], queryFn: () => aoBridge.app.getVersion() });
 
@@ -219,7 +223,7 @@ function UpdateActions({ status }: { status: UpdateStatus }) {
 
 	return (
 		<>
-			<SettingsRow icon={Check} label={t("settings.updates.checksForUpdates")}>
+			<SettingsRow label={t("settings.updates.checksForUpdates")} className={suppressTopBorder ? "!border-t-0" : undefined}>
 				<div className="flex items-center gap-2">
 					<span className="text-control text-settings-muted" data-testid="app-version">
 						{t("settings.updates.currentVersion", { version: version.data ? `v${version.data}` : "…" })}

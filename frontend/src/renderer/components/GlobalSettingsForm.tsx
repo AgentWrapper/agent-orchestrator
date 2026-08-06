@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Keyboard, Mail } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ConnectMobileModal } from "./ConnectMobileModal";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
@@ -33,9 +32,8 @@ export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettin
 							onConnectMobile={() => setMobileOpen(true)}
 							titleHidden={leadingTitleHidden}
 						/>
-						<SettingsSection title={t("settings.preferences")}>
+						<SettingsSection title={t("settings.preferences")} grouped>
 							<SettingsLinkRow
-								icon={Keyboard}
 								label={t("settings.keyboardShortcuts")}
 								onClick={() => setKeyboardShortcutsOpen(true)}
 							/>
@@ -44,8 +42,8 @@ export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettin
 				)}
 				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}
 				{(section === "all" || section === "help") && (
-					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden}>
-						<SettingsLinkRow icon={Mail} label={t("settings.reportProblem")} onClick={() => setReportProblemOpen(true)} />
+					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden} grouped>
+						<SettingsLinkRow label={t("settings.reportProblem")} onClick={() => setReportProblemOpen(true)} />
 					</SettingsSection>
 				)}
 			</div>
