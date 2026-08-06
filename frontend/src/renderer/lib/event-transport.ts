@@ -4,6 +4,7 @@ import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-
 import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
+import { sessionUsageQueryRoot } from "../hooks/useSessionUsageSummaries";
 
 export type EventTransport = {
 	connect: () => () => void;
@@ -52,6 +53,7 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 				debounce = setTimeout(() => {
 					void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 					void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
+					void queryClient.invalidateQueries({ queryKey: sessionUsageQueryRoot });
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 

@@ -1,6 +1,8 @@
 package httpd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -65,26 +67,40 @@ func TestCLITelemetryReservoirNormalizesCommandPathReservations(t *testing.T) {
 	}
 }
 
-func TestCLITelemetryReservoirActiveReservationsUseSixHourSlots(t *testing.T) {
+func TestCLITelemetryReservoirActiveReservationIsOncePerUTCDay(t *testing.T) {
 	dir := t.TempDir()
 	r := newCLITelemetryReservoir(dir)
 
 	if !r.reserveActive(time.Date(2026, 7, 20, 0, 1, 0, 0, time.UTC)) {
-		t.Fatal("slot 0 reservation = false, want true")
+		t.Fatal("first reservation of the day = false, want true")
 	}
-	if r.reserveActive(time.Date(2026, 7, 20, 5, 59, 0, 0, time.UTC)) {
-		t.Fatal("duplicate slot 0 reservation = true, want false")
+	// Under the old six-hour slotting, 06:00, 12:00 and 18:00 each reserved
+	// again, so one install reported four times a day for a metric that is a
+	// unique count and never moved because of it.
+	for _, hour := range []int{5, 6, 12, 18, 23} {
+		at := time.Date(2026, 7, 20, hour, 0, 0, 0, time.UTC)
+		if r.reserveActive(at) {
+			t.Fatalf("second reservation at %02d:00 = true, want false", hour)
+		}
 	}
-	if !r.reserveActive(time.Date(2026, 7, 20, 6, 0, 0, 0, time.UTC)) {
-		t.Fatal("slot 1 reservation = false, want true")
+	if !r.reserveActive(time.Date(2026, 7, 21, 0, 0, 0, 0, time.UTC)) {
+		t.Fatal("next UTC day = false, want true")
 	}
-	if !r.reserveActive(time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)) {
-		t.Fatal("slot 2 reservation = false, want true")
+}
+
+func TestCLITelemetryReservoirTreatsSlotStateFromOlderBuildAsSpent(t *testing.T) {
+	dir := t.TempDir()
+	// The upgrade path: a build that reported per slot persisted active_slots.
+	// Reading it must not hand out a fresh reservation for the same day.
+	body := `{"active_day":"2026-07-20","active_slots":[0],"invoked_day":"","invoked_seen":[]}`
+	if err := os.WriteFile(filepath.Join(dir, cliTelemetryStateFile), []byte(body), 0o600); err != nil {
+		t.Fatalf("seed state: %v", err)
 	}
-	if !r.reserveActive(time.Date(2026, 7, 20, 18, 0, 0, 0, time.UTC)) {
-		t.Fatal("slot 3 reservation = false, want true")
+	r := newCLITelemetryReservoir(dir)
+	if r.reserveActive(time.Date(2026, 7, 20, 14, 0, 0, 0, time.UTC)) {
+		t.Fatal("reservation on a day an older build already reported = true, want false")
 	}
-	if r.reserveActive(time.Date(2026, 7, 20, 23, 59, 0, 0, time.UTC)) {
-		t.Fatal("duplicate slot 3 reservation = true, want false")
+	if !r.reserveActive(time.Date(2026, 7, 21, 1, 0, 0, 0, time.UTC)) {
+		t.Fatal("next UTC day = false, want true")
 	}
 }

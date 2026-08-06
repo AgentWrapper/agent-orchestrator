@@ -33,6 +33,10 @@ import {
 	type AttentionZoneView,
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import {
+	useSessionUsageSummaries,
+	type SessionUsageSummary,
+} from "../hooks/useSessionUsageSummaries";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import {
 	clearTerminateSessionState,
@@ -50,6 +54,7 @@ import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
+import { formatTokenCount } from "../lib/format-token-count";
 import { aoBridge } from "../lib/bridge";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { cn } from "../lib/utils";
@@ -69,6 +74,8 @@ type SessionsBoardProps = {
 // Live merged sessions remain in-flow. A terminated runtime is archived even
 // when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
+type UsageBySession = ReadonlyMap<string, SessionUsageSummary>;
+const emptyUsageBySession: UsageBySession = new Map();
 
 function isArchivedSession(session: WorkspaceSession): boolean {
 	return session.isTerminated === true || session.status === "terminated";
@@ -86,6 +93,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
+	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -359,6 +367,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
 									onTerminate={(session) => terminateSession.mutate(session)}
+									usageBySession={usageBySession}
 								/>
 							))}
 						</div>
@@ -412,6 +421,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
 									isRestoreDisabled={restoringSessionId !== undefined}
+									usage={usageBySession.get(s.id)}
 								/>
 							))}
 						</div>
@@ -439,15 +449,43 @@ function BoardColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
-	if (col.zone === "working") return <WorkLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
-	if (col.zone === "merge") return <MergeLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
-	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
+	if (col.zone === "working") {
+		return (
+			<WorkLaneColumn
+				sessions={sessions}
+				onOpen={onOpen}
+				onTerminate={onTerminate}
+				usageBySession={usageBySession}
+			/>
+		);
+	}
+	if (col.zone === "merge") {
+		return (
+			<MergeLaneColumn
+				sessions={sessions}
+				onOpen={onOpen}
+				onTerminate={onTerminate}
+				usageBySession={usageBySession}
+			/>
+		);
+	}
+	return (
+		<ZoneColumn
+			col={col}
+			sessions={sessions}
+			onOpen={onOpen}
+			onTerminate={onTerminate}
+			usageBySession={usageBySession}
+		/>
+	);
 }
 
 function ZoneColumn({
@@ -455,11 +493,13 @@ function ZoneColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	return (
@@ -490,6 +530,7 @@ function ZoneColumn({
 							session={session}
 							onOpen={() => onOpen(session)}
 							onTerminate={() => onTerminate(session)}
+							usage={usageBySession.get(session.id)}
 						/>
 					))}
 				</div>
@@ -558,10 +599,12 @@ function WorkLaneColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	const tones = splitLaneTones(t);
@@ -578,6 +621,7 @@ function WorkLaneColumn({
 			secondaryTone={tones.working}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
+			usageBySession={usageBySession}
 		/>
 	);
 }
@@ -586,10 +630,12 @@ function MergeLaneColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	const tones = splitLaneTones(t);
@@ -610,6 +656,7 @@ function MergeLaneColumn({
 			secondaryTone={tones.merged}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
+			usageBySession={usageBySession}
 		/>
 	);
 }
@@ -623,6 +670,7 @@ function SplitLaneColumn({
 	secondaryTone,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	ariaLabel: string;
 	zone: Extract<AttentionZone, "working" | "merge">;
@@ -632,6 +680,7 @@ function SplitLaneColumn({
 	secondaryTone: SplitLaneTone;
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	const showPrimary = primarySessions.length > 0;
@@ -677,6 +726,7 @@ function SplitLaneColumn({
 										session={session}
 										onOpen={() => onOpen(session)}
 										onTerminate={() => onTerminate(session)}
+										usage={usageBySession.get(session.id)}
 									/>
 								))}
 							</div>
@@ -689,6 +739,7 @@ function SplitLaneColumn({
 							tone={secondaryTone}
 							onOpen={onOpen}
 							onTerminate={onTerminate}
+							usageBySession={usageBySession}
 						/>
 					) : null}
 				</div>
@@ -721,12 +772,14 @@ function SecondaryLaneSection({
 	onTerminate,
 	standalone,
 	tone,
+	usageBySession,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate?: (s: WorkspaceSession) => void;
 	standalone: boolean;
 	tone: SplitLaneTone;
+	usageBySession: UsageBySession;
 }) {
 	return (
 		<div
@@ -750,6 +803,7 @@ function SecondaryLaneSection({
 						session={session}
 						onOpen={() => onOpen(session)}
 						onTerminate={onTerminate ? () => onTerminate(session) : undefined}
+						usage={usageBySession.get(session.id)}
 					/>
 				))}
 			</div>
@@ -761,6 +815,7 @@ function SessionCard({
 	session,
 	onOpen,
 	onTerminate,
+	usage,
 	interactive = true,
 	action,
 	branchAction,
@@ -769,6 +824,7 @@ function SessionCard({
 	session: WorkspaceSession;
 	onOpen?: () => void;
 	onTerminate?: () => void;
+	usage?: SessionUsageSummary;
 	interactive?: boolean;
 	action?: ReactNode;
 	branchAction?: ReactNode;
@@ -890,12 +946,13 @@ function SessionCard({
 						/>
 						{badge.label}
 					</span>
-					<span
-						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"
-						title={t("shell.updatedAt", { time: session.updatedAt })}
-					>
-						{formatTimeCompact(session.updatedAt)}
-					</span>
+					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
+						<SessionUsageMetric usage={usage} />
+						{usage && usage.totalTokens > 0 ? <span aria-hidden="true">·</span> : null}
+						<span title={t("shell.updatedAt", { time: session.updatedAt })}>
+							{formatTimeCompact(session.updatedAt)}
+						</span>
+					</div>
 				</div>
 				{prSummaries.length > 0 && (
 					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-passive">
@@ -929,12 +986,14 @@ function ArchiveSessionItem({
 	restoreError,
 	isRestoring,
 	isRestoreDisabled,
+	usage,
 }: {
 	session: WorkspaceSession;
 	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
 	restoreError?: string;
 	isRestoring: boolean;
 	isRestoreDisabled: boolean;
+	usage?: SessionUsageSummary;
 }) {
 	const branch = session.branch || "";
 	const restoreButton = (
@@ -953,7 +1012,29 @@ function ArchiveSessionItem({
 			footer={<ArchiveRestoreError message={restoreError} />}
 			interactive={false}
 			session={session}
+			usage={usage}
 		/>
+	);
+}
+
+function SessionUsageMetric({ usage }: { usage?: SessionUsageSummary }) {
+	const { t } = useTranslation();
+	if (!usage || usage.totalTokens <= 0) return null;
+	const tooltip = t("shell.usageTokens", {
+		count: usage.totalTokens.toLocaleString("en-US"),
+	});
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<span
+					aria-label={tooltip}
+					className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-2xs text-muted-foreground"
+				>
+					{formatTokenCount(usage.totalTokens)}
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="top">{tooltip}</TooltipContent>
+		</Tooltip>
 	);
 }
 
