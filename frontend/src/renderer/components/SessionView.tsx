@@ -290,6 +290,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
 		(session?.mode === "chat" ? "tui" : "chat");
+	const interfaceBusy = Boolean(
+		session &&
+		(session.status === "working" ||
+			session.status === "needs_input" ||
+			session.activity?.state === "active" ||
+			session.activity?.state === "waiting_input" ||
+			session.activity?.state === "blocked"),
+	);
 	const interfaceWaitingForInput = Boolean(
 		session &&
 		(session.status === "needs_input" ||
@@ -302,17 +310,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
 				setInterfaceSwitchDialogOpen(false);
 			} catch {
-				// The mutation owns the typed error. Keep the dialog open so it is
-				// visible instead of also producing an unhandled rejection.
-				setInterfaceSwitchDialogOpen(true);
+				// The mutation owns the typed error. A policy dialog that was already
+				// open stays open; a direct idle switch must not open one on failure.
 			}
 		},
 		[interfaceSwitch, interfaceTarget],
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();
+		if (!interfaceBusy) {
+			void beginInterfaceSwitch("drain");
+			return;
+		}
 		setInterfaceSwitchDialogOpen(true);
-	}, [interfaceSwitch]);
+	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
 	const showInterfaceSwitchAction = Boolean(
 		interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError,
 	);
@@ -635,7 +646,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
-									onSelectReviewerTerminal={selectReviewerTerminal}
+									onOpenReviewerTerminal={selectReviewerTerminal}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}
