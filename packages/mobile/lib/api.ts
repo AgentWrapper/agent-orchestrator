@@ -470,6 +470,22 @@ export async function registerPushDevice(
 	});
 }
 
+// Announce this device's identity to the daemon with no push token, so the
+// desktop roster shows a paired phone the moment it connects — independent of
+// notification permission. Posts to the same /push/devices route as
+// registerPushDevice, just without a `token` field; the daemon upserts by
+// installId, so a later registerForPush call attaches the token to this same
+// row instead of creating a second one.
+export async function announceDevice(
+	cfg: ServerConfig,
+	device: { installId: string; platform?: string; deviceName?: string },
+): Promise<void> {
+	await req(cfg, `${API}/push/devices`, {
+		method: "POST",
+		body: JSON.stringify(device),
+	});
+}
+
 // Unregister this device's push token (best-effort on disconnect/unpair). The
 // token's [ ] brackets must be URL-encoded for the path segment.
 export async function unregisterPushDevice(cfg: ServerConfig, token: string): Promise<void> {

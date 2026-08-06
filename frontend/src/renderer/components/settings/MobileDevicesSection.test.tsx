@@ -20,11 +20,12 @@ const twoDevices = {
 		devices: [
 			{
 				installId: "i1", token: "ExponentPushToken[a]", deviceName: "iPhone", platform: "ios",
-				muted: false, live: true, createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(),
+				muted: false, live: true, notificationsEnabled: true,
+				createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(),
 			},
 			{
 				installId: "i2", token: "ExponentPushToken[b]", deviceName: "M31s", platform: "android",
-				muted: true, live: false, createdAt: new Date().toISOString(),
+				muted: true, live: false, notificationsEnabled: true, createdAt: new Date().toISOString(),
 				lastSeenAt: new Date(Date.now() - 7200_000).toISOString(),
 			},
 		],
@@ -168,6 +169,37 @@ describe("MobileDevicesSection", () => {
 		await screen.findByText("iPhone");
 		const names = screen.getAllByText(/iPhone|M31s/).map((el) => el.textContent);
 		expect(names).toEqual(["iPhone", "M31s"]);
+	});
+
+	it("shows a disabled switch and explanatory line for a device with no push token, but keeps live/last-seen and removal working", async () => {
+		const noToken = {
+			data: {
+				devices: [
+					{
+						installId: "i3", deviceName: "Pixel Announce", platform: "android",
+						muted: false, live: true, notificationsEnabled: false,
+						createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(),
+					},
+				],
+			},
+		};
+		vi.spyOn(apiClient, "GET").mockResolvedValue(noToken as never);
+		const del = vi.spyOn(apiClient, "DELETE").mockResolvedValue({ data: undefined } as never);
+		renderSection();
+
+		expect(await screen.findByText("Pixel Announce")).toBeInTheDocument();
+		// Still shows live state even with no token.
+		expect(screen.getByText("Live")).toBeInTheDocument();
+		// Explanatory line for the disabled-notifications state.
+		expect(screen.getByText(/Notifications not enabled on this device/i)).toBeInTheDocument();
+
+		const toggle = screen.getByRole("switch", { name: /notifications for Pixel Announce/i });
+		expect(toggle).toBeDisabled();
+
+		// Still removable.
+		fireEvent.click(screen.getByRole("button", { name: /remove Pixel Announce/i }));
+		fireEvent.click(screen.getByRole("button", { name: /confirm remove/i }));
+		await waitFor(() => expect(del).toHaveBeenCalledTimes(1));
 	});
 
 	it("formats last-seen relative to the app's language, not the OS locale", async () => {

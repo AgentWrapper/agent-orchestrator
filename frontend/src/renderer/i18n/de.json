@@ -277,6 +277,7 @@
 	"mobile.devices.live": "Online",
 	"mobile.devices.loading": "Geräte werden geladen…",
 	"mobile.devices.notificationsFor": "Benachrichtigungen für {{name}}",
+	"mobile.devices.notificationsNotEnabled": "Benachrichtigungen sind auf diesem Gerät nicht aktiviert.",
 	"mobile.devices.registryUnavailable": "Geräteregister nicht verfügbar — AO konnte Ihre gespeicherten Geräte nicht lesen.",
 	"mobile.devices.removeAria": "{{name}} entfernen",
 	"mobile.devices.title": "Geräte",

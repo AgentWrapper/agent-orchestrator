@@ -140,6 +140,47 @@ func TestListDevicesFallsBackToPresenceWhenDeviceLiveOmitted(t *testing.T) {
 	}
 }
 
+// TestListDevicesReportsNotificationsEnabled pins the new wire field: a row
+// with a token reports notificationsEnabled true, and a row with none (an
+// identity-only announce) reports false, regardless of muted/live state.
+func TestListDevicesReportsNotificationsEnabled(t *testing.T) {
+	now := time.Now().UTC()
+	roster := &fakeRoster{devices: []mobilebridge.PushDevice{
+		{InstallID: "i1", Token: "ExponentPushToken[a]", DeviceName: "iPhone", CreatedAt: now, LastSeenAt: now},
+		{InstallID: "i2", Token: "", DeviceName: "Pixel", CreatedAt: now, LastSeenAt: now},
+	}}
+	srv := newRosterServer(t, roster, fakeLive{"i1": true, "i2": true})
+
+	res, err := http.Get(srv.URL + "/api/v1/mobile/devices")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+
+	var env struct {
+		Devices []struct {
+			InstallID            string `json:"installId"`
+			NotificationsEnabled bool   `json:"notificationsEnabled"`
+		} `json:"devices"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	byID := map[string]bool{}
+	for _, d := range env.Devices {
+		byID[d.InstallID] = d.NotificationsEnabled
+	}
+	if !byID["i1"] {
+		t.Fatal("i1 has a token, want notificationsEnabled true")
+	}
+	if byID["i2"] {
+		t.Fatal("i2 has no token, want notificationsEnabled false")
+	}
+}
+
 func TestMuteDevice(t *testing.T) {
 	roster := &fakeRoster{}
 	srv := newRosterServer(t, roster, fakeLive{})

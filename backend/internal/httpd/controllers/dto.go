@@ -1021,15 +1021,19 @@ type PushDeviceTokenParam struct {
 // sends its Expo push token plus a bit of descriptive metadata; the daemon keys
 // the registry on the token and re-registering is an idempotent upsert.
 type RegisterPushDeviceRequest struct {
-	InstallID  string `json:"installId" description:"Stable per-install device id. Keys the registry so a rotated push token updates the same row."`
-	Token      string `json:"token" description:"Expo push token, e.g. ExponentPushToken[...]."`
+	InstallID string `json:"installId" description:"Stable per-install device id. Keys the registry so a rotated push token updates the same row."`
+	// Optional: a row represents a paired phone, not a push registration. Omitted
+	// (or empty) when the phone is only announcing its identity — permission not
+	// yet granted, or a build that can't mint a token. When present it must still
+	// be a well-formed Expo push token.
+	Token      string `json:"token,omitempty" description:"Expo push token, e.g. ExponentPushToken[...]. Optional: omitted when the phone has no push token yet."`
 	Platform   string `json:"platform,omitempty" enum:"ios,android" description:"Device platform."`
 	DeviceName string `json:"deviceName,omitempty" description:"Human-friendly device label."`
 }
 
 // PushDeviceResponse is the stored view of a registered push device.
 type PushDeviceResponse struct {
-	Token      string    `json:"token"`
+	Token      string    `json:"token,omitempty"`
 	Platform   string    `json:"platform,omitempty"`
 	DeviceName string    `json:"deviceName,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
@@ -1589,14 +1593,15 @@ type TriggerReviewRequest struct {
 // MobileDeviceResponse is one row of the desktop's mobile-device roster: the
 // stored registration plus whether that phone is running the app right now.
 type MobileDeviceResponse struct {
-	InstallID  string    `json:"installId"`
-	Token      string    `json:"token"`
-	Platform   string    `json:"platform,omitempty" enum:"ios,android"`
-	DeviceName string    `json:"deviceName,omitempty"`
-	Muted      bool      `json:"muted"`
-	Live       bool      `json:"live" description:"True when the phone's app is open and polling."`
-	CreatedAt  time.Time `json:"createdAt"`
-	LastSeenAt time.Time `json:"lastSeenAt"`
+	InstallID            string    `json:"installId"`
+	Token                string    `json:"token,omitempty"`
+	Platform             string    `json:"platform,omitempty" enum:"ios,android"`
+	DeviceName           string    `json:"deviceName,omitempty"`
+	Muted                bool      `json:"muted"`
+	Live                 bool      `json:"live" description:"True when the phone's app is open and polling."`
+	NotificationsEnabled bool      `json:"notificationsEnabled" description:"True when this device has a push token registered."`
+	CreatedAt            time.Time `json:"createdAt"`
+	LastSeenAt           time.Time `json:"lastSeenAt"`
 }
 
 // MobileDevicesResponse is the { devices } envelope for the roster.

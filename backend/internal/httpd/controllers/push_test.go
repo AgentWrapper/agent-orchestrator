@@ -82,6 +82,32 @@ func TestRegisterPushDevice(t *testing.T) {
 	}
 }
 
+// TestRegisterPushDeviceAcceptsMissingToken pins the identity-announce path: a
+// phone that connects before notification permission is granted (or on a
+// build that can't mint a token at all) must still be able to register its
+// identity and appear in the roster, rather than being rejected outright.
+func TestRegisterPushDeviceAcceptsMissingToken(t *testing.T) {
+	reg := &fakePushRegistry{}
+	srv := newPushTestServer(t, reg)
+
+	body := `{"installId":"inst-announce","platform":"ios","deviceName":"iPhone"}`
+	res, err := http.Post(srv.URL+"/api/v1/push/devices", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if len(reg.upserts) != 1 {
+		t.Fatalf("upserts = %d, want 1", len(reg.upserts))
+	}
+	got := reg.upserts[0]
+	if got.InstallID != "inst-announce" || got.Token != "" {
+		t.Fatalf("upserted device = %+v, want tokenless inst-announce", got)
+	}
+}
+
 func TestRegisterPushDeviceRejectsBadToken(t *testing.T) {
 	reg := &fakePushRegistry{}
 	srv := newPushTestServer(t, reg)

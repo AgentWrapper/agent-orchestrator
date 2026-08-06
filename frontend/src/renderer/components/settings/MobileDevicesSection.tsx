@@ -23,6 +23,7 @@ interface MobileDevice {
 	platform?: string;
 	muted: boolean;
 	live: boolean;
+	notificationsEnabled: boolean;
 	lastSeenAt: string;
 }
 
@@ -176,11 +177,16 @@ export function MobileDevicesSection() {
 												<span>{lastSeenLabel(device.lastSeenAt, i18n.language)}</span>
 											)}
 										</div>
+										{!device.notificationsEnabled && (
+											<div className="text-caption text-settings-muted">
+												{t("mobile.devices.notificationsNotEnabled")}
+											</div>
+										)}
 									</div>
 
 									<Switch
-										checked={!device.muted}
-										disabled={mute.isPending}
+										checked={device.notificationsEnabled && !device.muted}
+										disabled={mute.isPending || !device.notificationsEnabled}
 										aria-label={t("mobile.devices.notificationsFor", { name })}
 										onCheckedChange={(next) =>
 											mute.mutate({ installId: device.installId, muted: !next })

@@ -304,6 +304,7 @@
 	"mobile.devices.live": "Live",
 	"mobile.devices.loading": "Loading devices…",
 	"mobile.devices.notificationsFor": "Notifications for {{name}}",
+	"mobile.devices.notificationsNotEnabled": "Notifications not enabled on this device.",
 	"mobile.devices.registryUnavailable": "Device registry unavailable — AO could not read your saved devices.",
 	"mobile.devices.removeAria": "Remove {{name}}",
 	"mobile.devices.title": "Devices",

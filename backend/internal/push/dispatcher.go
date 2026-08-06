@@ -123,6 +123,14 @@ func (d *Dispatcher) dispatch(ctx context.Context, rec domain.NotificationRecord
 		if dev.Muted {
 			continue
 		}
+		// A row is a paired phone, not a push registration: it may have no token
+		// (permission not granted yet, or a build that can't mint one). Skip it
+		// here, before Send, for the same reason muted devices are skipped above —
+		// keeping this filter ahead of Send preserves the 1:1 ticket-to-message
+		// index correspondence the pruning loop below depends on.
+		if dev.Token == "" {
+			continue
+		}
 		messages = append(messages, messageFor(rec, dev.Token))
 	}
 	if len(messages) == 0 {

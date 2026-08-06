@@ -5502,6 +5502,9 @@ components:
           type: boolean
         muted:
           type: boolean
+        notificationsEnabled:
+          description: True when this device has a push token registered.
+          type: boolean
         platform:
           enum:
           - ios
@@ -5511,9 +5514,9 @@ components:
           type: string
       required:
       - installId
-      - token
       - muted
       - live
+      - notificationsEnabled
       - createdAt
       - lastSeenAt
       type: object
@@ -5874,7 +5877,6 @@ components:
         token:
           type: string
       required:
-      - token
       - createdAt
       - lastSeenAt
       type: object
@@ -5894,11 +5896,11 @@ components:
           - android
           type: string
         token:
-          description: Expo push token, e.g. ExponentPushToken[...].
+          description: 'Expo push token, e.g. ExponentPushToken[...]. Optional: omitted
+            when the phone has no push token yet.'
           type: string
       required:
       - installId
-      - token
       type: object
     ReloadConversationMCPServersResponse:
       properties:

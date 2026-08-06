@@ -57,14 +57,15 @@ func (c *MobileDevicesController) List(w http.ResponseWriter, r *http.Request) {
 	out := make([]MobileDeviceResponse, 0, len(devices))
 	for _, d := range devices {
 		out = append(out, MobileDeviceResponse{
-			InstallID:  d.InstallID,
-			Token:      d.Token,
-			Platform:   d.Platform,
-			DeviceName: d.DeviceName,
-			Muted:      d.Muted,
-			Live:       live[d.InstallID],
-			CreatedAt:  d.CreatedAt,
-			LastSeenAt: d.LastSeenAt,
+			InstallID:            d.InstallID,
+			Token:                d.Token,
+			Platform:             d.Platform,
+			DeviceName:           d.DeviceName,
+			Muted:                d.Muted,
+			Live:                 live[d.InstallID],
+			NotificationsEnabled: d.Token != "",
+			CreatedAt:            d.CreatedAt,
+			LastSeenAt:           d.LastSeenAt,
 		})
 	}
 	// Live devices first, then most-recently-seen, so the phone you are holding

@@ -277,6 +277,7 @@
 	"mobile.devices.live": "オンライン",
 	"mobile.devices.loading": "デバイスを読み込み中…",
 	"mobile.devices.notificationsFor": "{{name}} の通知",
+	"mobile.devices.notificationsNotEnabled": "この端末では通知が有効になっていません。",
 	"mobile.devices.registryUnavailable": "デバイスレジストリを利用できません — AO は保存済みのデバイスを読み込めませんでした。",
 	"mobile.devices.removeAria": "{{name}} を削除",
 	"mobile.devices.title": "デバイス",

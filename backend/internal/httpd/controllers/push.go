@@ -53,7 +53,11 @@ func (c *PushController) register(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	if !mobilebridge.ValidPushToken(req.Token) {
+	// Token is optional: a row represents a paired phone, not a push
+	// registration. An empty token means "no notifications yet" (permission not
+	// granted, or a build that can't mint one); a non-empty one must still be a
+	// well-formed Expo push token.
+	if req.Token != "" && !mobilebridge.ValidPushToken(req.Token) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PUSH_TOKEN",
 			"token must be a well-formed Expo push token", nil)
 		return

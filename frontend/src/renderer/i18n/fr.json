@@ -279,6 +279,7 @@
 	"mobile.devices.live": "En ligne",
 	"mobile.devices.loading": "Chargement des appareils…",
 	"mobile.devices.notificationsFor": "Notifications pour {{name}}",
+	"mobile.devices.notificationsNotEnabled": "Les notifications ne sont pas activées sur cet appareil.",
 	"mobile.devices.registryUnavailable": "Registre des appareils indisponible — AO n'a pas pu lire vos appareils enregistrés.",
 	"mobile.devices.removeAria": "Supprimer {{name}}",
 	"mobile.devices.title": "Appareils",

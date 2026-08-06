@@ -294,6 +294,32 @@ func TestDispatchAllMutedNeverCallsSend(t *testing.T) {
 	}
 }
 
+// TestDispatchSkipsDevicesWithoutToken pins the third dispatcher-side guard: a
+// row can now represent a paired phone that never minted a push token (no
+// permission granted, or a build that can't mint one). Sending to an empty
+// token would be a wasted/erroring Expo call, so those rows must be filtered
+// out exactly like muted ones, and the survivor must still be the tokened one.
+func TestDispatchSkipsDevicesWithoutToken(t *testing.T) {
+	now := time.Now().UTC()
+	store := &fakeDeviceStore{devices: []mobilebridge.PushDevice{
+		{InstallID: "i1", Token: "", CreatedAt: now, LastSeenAt: now},
+		{InstallID: "i2", Token: "ExponentPushToken[live]", CreatedAt: now, LastSeenAt: now},
+	}}
+	sender := newFakeSender([]Ticket{{Status: "ok"}})
+	d := NewDispatcher(nil, store, sender, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	d.dispatch(context.Background(), domain.NotificationRecord{ID: "n1", Title: "hi"})
+
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if len(sender.gotMsgs) != 1 {
+		t.Fatalf("messages = %d, want 1 (the tokenless device must be skipped)", len(sender.gotMsgs))
+	}
+	if sender.gotMsgs[0].To != "ExponentPushToken[live]" {
+		t.Fatalf("sent to %q, want the tokened device", sender.gotMsgs[0].To)
+	}
+}
+
 func TestDispatcherSweepSkipsFreshAndDropsExpired(t *testing.T) {
 	store := &fakeDeviceStore{}
 	sender := newFakeSender(nil)

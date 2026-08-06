@@ -417,6 +417,103 @@ func TestTombstonesPersistAcrossReload(t *testing.T) {
 	}
 }
 
+func TestUpsertAcceptsDeviceWithoutToken(t *testing.T) {
+	reg, err := LoadRegistry(PushDevicesPath(t.TempDir()))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	dev := PushDevice{InstallID: "inst-a", Token: "", Platform: "ios", DeviceName: "iPhone", CreatedAt: now, LastSeenAt: now}
+	if err := reg.Upsert(dev); err != nil {
+		t.Fatalf("upsert without token: %v", err)
+	}
+	got := reg.List()
+	if len(got) != 1 {
+		t.Fatalf("list len = %d, want 1", len(got))
+	}
+	if got[0].InstallID != "inst-a" || got[0].Token != "" {
+		t.Fatalf("stored device = %+v, want tokenless inst-a", got[0])
+	}
+}
+
+func TestUpsertStillRejectsMalformedToken(t *testing.T) {
+	reg, err := LoadRegistry(PushDevicesPath(t.TempDir()))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := reg.Upsert(PushDevice{InstallID: "inst-a", Token: "garbage"}); err == nil {
+		t.Fatal("expected error upserting malformed token")
+	}
+	if got := reg.List(); len(got) != 0 {
+		t.Fatalf("malformed upsert leaked a row: %+v", got)
+	}
+}
+
+func TestTokenAttachesToExistingIdentityRow(t *testing.T) {
+	reg, err := LoadRegistry(PushDevicesPath(t.TempDir()))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	// The phone announces its identity with no token (permission not yet granted).
+	if err := reg.Upsert(PushDevice{InstallID: "inst-a", Token: "", Platform: "ios", CreatedAt: now, LastSeenAt: now}); err != nil {
+		t.Fatalf("announce: %v", err)
+	}
+	later := now.Add(time.Minute)
+	// Permission is granted; the same install ID registers WITH a token.
+	if err := reg.Upsert(PushDevice{InstallID: "inst-a", Token: "ExponentPushToken[a]", Platform: "ios", CreatedAt: later, LastSeenAt: later}); err != nil {
+		t.Fatalf("register with token: %v", err)
+	}
+	got := reg.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %d, want 1 (token must attach to the same row)", len(got))
+	}
+	if got[0].InstallID != "inst-a" || got[0].Token != "ExponentPushToken[a]" {
+		t.Fatalf("device = %+v, want inst-a with the new token", got[0])
+	}
+}
+
+func TestAnnounceDoesNotBlankExistingToken(t *testing.T) {
+	reg, err := LoadRegistry(PushDevicesPath(t.TempDir()))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := reg.Upsert(PushDevice{InstallID: "inst-a", Token: "ExponentPushToken[a]", Platform: "ios", CreatedAt: now, LastSeenAt: now}); err != nil {
+		t.Fatalf("register with token: %v", err)
+	}
+	later := now.Add(time.Minute)
+	// A later announce (e.g. app foregrounded) carries no token at all.
+	if err := reg.Upsert(PushDevice{InstallID: "inst-a", Token: "", Platform: "ios", CreatedAt: later, LastSeenAt: later}); err != nil {
+		t.Fatalf("announce: %v", err)
+	}
+	got := reg.List()
+	if len(got) != 1 {
+		t.Fatalf("devices = %d, want 1", len(got))
+	}
+	if got[0].Token != "ExponentPushToken[a]" {
+		t.Fatalf("token = %q, want the original token to survive a tokenless announce", got[0].Token)
+	}
+}
+
+func TestTokenlessAnnounceDoesNotAdoptByToken(t *testing.T) {
+	reg, err := LoadRegistry(PushDevicesPath(t.TempDir()))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := reg.Upsert(PushDevice{InstallID: "inst-a", Token: "", Platform: "ios", CreatedAt: now, LastSeenAt: now}); err != nil {
+		t.Fatalf("announce a: %v", err)
+	}
+	if err := reg.Upsert(PushDevice{InstallID: "inst-b", Token: "", Platform: "android", CreatedAt: now, LastSeenAt: now}); err != nil {
+		t.Fatalf("announce b: %v", err)
+	}
+	got := reg.List()
+	if len(got) != 2 {
+		t.Fatalf("devices = %d, want 2 (two distinct tokenless phones must not merge)", len(got))
+	}
+}
+
 func TestTombstonesAreCapped(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "push-devices.json")
 	reg, err := LoadRegistry(path)

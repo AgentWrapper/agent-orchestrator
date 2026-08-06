@@ -22,7 +22,7 @@ import (
 // dispatcher.
 type PushDevice struct {
 	InstallID  string    `json:"installId"`
-	Token      string    `json:"token"`
+	Token      string    `json:"token,omitempty"`
 	Platform   string    `json:"platform,omitempty"`
 	DeviceName string    `json:"deviceName,omitempty"`
 	Muted      bool      `json:"muted,omitempty"`
@@ -119,11 +119,18 @@ func LoadRegistry(path string) (*DeviceRegistry, error) {
 
 // Upsert registers or refreshes a device. It resolves the target row in three
 // steps: an existing row with the same InstallID; failing that, a row carrying
-// the same push token (a legacy row adopting its real install ID exactly once);
-// failing that, a new row. CreatedAt and Muted always survive, so neither a
-// reinstall nor a token rotation can silently unmute a device.
+// the same push token (a legacy row adopting its real install ID exactly once,
+// skipped entirely when the incoming token is empty — otherwise every
+// tokenless announce would adopt an arbitrary tokenless row); failing that, a
+// new row. CreatedAt, Muted, and (when the incoming Token is empty) the
+// existing Token always survive, so neither a reinstall, a token rotation, nor
+// a plain identity announce can silently unmute a device or blank a working
+// token.
+//
+// A row represents a paired phone, not a push registration: Token is optional.
+// When non-empty it must still be a well-formed Expo push token.
 func (r *DeviceRegistry) Upsert(dev PushDevice) error {
-	if !ValidPushToken(dev.Token) {
+	if dev.Token != "" && !ValidPushToken(dev.Token) {
 		return fmt.Errorf("invalid push token %q", dev.Token)
 	}
 	if dev.InstallID == "" {
@@ -133,20 +140,22 @@ func (r *DeviceRegistry) Upsert(dev PushDevice) error {
 	defer r.mu.Unlock()
 
 	if existing, ok := r.devices[dev.InstallID]; ok {
-		dev.CreatedAt, dev.Muted = carryOver(existing, dev)
+		dev.CreatedAt, dev.Muted, dev.Token = carryOver(existing, dev)
 		r.consumeTombstoneLocked(&dev)
 		r.devices[dev.InstallID] = dev
 		return r.persistLocked()
 	}
-	for key, existing := range r.devices {
-		if existing.Token != dev.Token {
-			continue
+	if dev.Token != "" {
+		for key, existing := range r.devices {
+			if existing.Token != dev.Token {
+				continue
+			}
+			dev.CreatedAt, dev.Muted, dev.Token = carryOver(existing, dev)
+			delete(r.devices, key) // re-key from the legacy/synthesized id
+			r.consumeTombstoneLocked(&dev)
+			r.devices[dev.InstallID] = dev
+			return r.persistLocked()
 		}
-		dev.CreatedAt, dev.Muted = carryOver(existing, dev)
-		delete(r.devices, key) // re-key from the legacy/synthesized id
-		r.consumeTombstoneLocked(&dev)
-		r.devices[dev.InstallID] = dev
-		return r.persistLocked()
 	}
 	r.consumeTombstoneLocked(&dev)
 	r.devices[dev.InstallID] = dev
@@ -167,13 +176,21 @@ func (r *DeviceRegistry) consumeTombstoneLocked(dev *PushDevice) {
 	}
 }
 
-// carryOver preserves the fields an incoming registration must never reset.
-func carryOver(existing, incoming PushDevice) (time.Time, bool) {
+// carryOver preserves the fields an incoming registration must never reset:
+// CreatedAt and Muted always survive from the existing row, and an incoming
+// empty Token never blanks an existing one — an identity announce (no token)
+// must not silently disable notifications on a phone that already had them
+// working.
+func carryOver(existing, incoming PushDevice) (createdAt time.Time, muted bool, token string) {
 	created := incoming.CreatedAt
 	if !existing.CreatedAt.IsZero() {
 		created = existing.CreatedAt
 	}
-	return created, existing.Muted
+	token = incoming.Token
+	if token == "" {
+		token = existing.Token
+	}
+	return created, existing.Muted, token
 }
 
 // Delete removes a device by install ID (the desktop's remove action) and
