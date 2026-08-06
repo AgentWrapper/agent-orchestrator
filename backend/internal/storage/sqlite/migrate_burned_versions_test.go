@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pressly/goose/v3"
 
@@ -93,19 +94,13 @@ func TestSchemaRepairReplaysAutoInjectCDCTriggerAfterPinnedRepair(t *testing.T) 
 	if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN auto_inject_review_feedback BOOLEAN NOT NULL DEFAULT TRUE`); err != nil {
 		t.Fatalf("seed mixed schema auto-inject column: %v", err)
 	}
-	if _, err := db.Exec(`
-CREATE TABLE conversations (
-	id TEXT PRIMARY KEY,
-	session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE
-)`); err != nil {
-		t.Fatalf("seed pre-current-session conversations table: %v", err)
-	}
 
 	if err := reconcileSchema(db); err != nil {
 		t.Fatalf("reconcile mixed schema: %v", err)
 	}
 
 	ctx := t.Context()
+	store := sqlitestore.NewStore(db, db)
 	if _, err := db.Exec(`
 	INSERT INTO projects (
 		id, path, repo_origin_url, display_name, registered_at, config, kind
@@ -121,34 +116,27 @@ CREATE TABLE conversations (
 	); err != nil {
 		t.Fatalf("seed project: %v", err)
 	}
-	if _, err := db.ExecContext(ctx, `
-INSERT INTO sessions (
-	id, project_id, num, kind, harness, activity_state, activity_last_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`,
-		"mer-1",
-		"mer",
-		1,
-		"worker",
-		"claude-code",
-		"active",
-		"2026-07-23T00:00:00Z",
-		"2026-07-23T00:00:00Z",
-		"2026-07-23T00:00:00Z",
-	); err != nil {
-		t.Fatalf("seed session on repaired mixed schema: %v", err)
+	created, err := store.CreateSession(ctx, domain.SessionRecord{
+		ProjectID:                "mer",
+		Kind:                     domain.KindWorker,
+		Harness:                  domain.HarnessClaudeCode,
+		AutoInjectReviewFeedback: true,
+		Activity:                 domain.Activity{State: domain.ActivityActive},
+	})
+	if err != nil {
+		t.Fatalf("create session on repaired mixed schema: %v", err)
 	}
 
-	if _, err := db.ExecContext(ctx, `
-UPDATE sessions
-SET auto_inject_review_feedback = FALSE, updated_at = ?
-WHERE id = ?
-`, "2026-07-23T00:00:01Z", "mer-1"); err != nil {
+	ok, err := store.SetSessionAutoInjectReviewFeedback(ctx, created.ID, false, time.Now())
+	if err != nil {
 		t.Fatalf("toggle auto-inject policy: %v", err)
+	}
+	if !ok {
+		t.Fatal("toggle auto-inject policy returned not found")
 	}
 	var updates int
 	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM change_log WHERE session_id = ? AND event_type = 'session_updated'`, "mer-1",
+		`SELECT COUNT(*) FROM change_log WHERE session_id = ? AND event_type = 'session_updated'`, created.ID,
 	).Scan(&updates); err != nil {
 		t.Fatalf("count session_updated CDC: %v", err)
 	}

@@ -1589,57 +1589,6 @@ paths:
       summary: Write images into a running session's worktree and return their paths
       tags:
       - sessions
-  /api/v1/sessions/{sessionId}/auto-inject-review-feedback:
-    patch:
-      operationId: setSessionAutoInjectReviewFeedback
-      parameters:
-      - description: Session identifier, e.g. project-1.
-        in: path
-        name: sessionId
-        required: true
-        schema:
-          description: Session identifier, e.g. project-1.
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AutoInjectReviewFeedbackRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AutoInjectReviewFeedbackResponse'
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Bad Request
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Found
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Internal Server Error
-        "501":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/APIError'
-          description: Not Implemented
-      summary: Configure automatic review-feedback delivery for a session
-      tags:
-      - sessions
   /api/v1/sessions/{sessionId}/conversation:
     get:
       operationId: getSessionConversation
@@ -4200,26 +4149,6 @@ components:
       - source
       - fetchedAt
       - stale
-      type: object
-    AutoInjectReviewFeedbackRequest:
-      properties:
-        autoInjectReviewFeedback:
-          type: boolean
-      required:
-      - autoInjectReviewFeedback
-      type: object
-    AutoInjectReviewFeedbackResponse:
-      properties:
-        autoInjectReviewFeedback:
-          type: boolean
-        ok:
-          type: boolean
-        sessionId:
-          type: string
-      required:
-      - ok
-      - sessionId
-      - autoInjectReviewFeedback
       type: object
     BrowserCommandRequest:
       properties:

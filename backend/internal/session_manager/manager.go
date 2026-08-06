@@ -2560,19 +2560,19 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		IssueID:     cfg.IssueID,
 		Kind:        cfg.Kind,
 		CreatedAt:   now,
-		UpdatedAt:   now,
-		Harness:     cfg.Harness,
-		DisplayName: cfg.DisplayName,
-		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
-		// Resolved before this point and persisted here. There is no UPDATE
-		// statement that can change it afterwards.
-		Mode: domain.NormalizeSessionMode(cfg.RequestedMode),
-		// Preserve the pre-toggle behavior for every newly created session.
-		// The INSERT binds this value explicitly, so SQLite's DEFAULT TRUE does
-		// not apply on this path.
-		AutoInjectReviewFeedback: true,
+			UpdatedAt:   now,
+			Harness:     cfg.Harness,
+			DisplayName: cfg.DisplayName,
+			Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+			// Resolved before this point and persisted here. There is no UPDATE
+			// statement that can change it afterwards.
+			Mode: domain.NormalizeSessionMode(cfg.RequestedMode),
+			// Preserve the pre-toggle behavior for every newly created session.
+			// The INSERT binds this value explicitly, so SQLite's DEFAULT TRUE does
+			// not apply on this path.
+			AutoInjectReviewFeedback: true,
+		}
 	}
-}
 
 func defaultSessionBranch(id domain.SessionID, kind domain.SessionKind, prefix, branchNamespace string) string {
 	if kind == domain.KindOrchestrator {
