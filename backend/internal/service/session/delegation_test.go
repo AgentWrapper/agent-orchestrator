@@ -85,6 +85,7 @@ func TestDelegatedTaskDisplayName(t *testing.T) {
 		brief string
 		want  string
 	}{
+		{name: "empty", brief: " \n\t ", want: "Untitled task"},
 		{name: "short", brief: "  tell me a joke  ", want: "tell me a joke"},
 		{name: "whitespace", brief: "Fix the renderer\nwithout changing the API", want: "Fix the renderer wit"},
 		{name: "unicode rune limit", brief: "一二三四五六七八九十一二三四五六七八九十一", want: "一二三四五六七八九十一二三四五六七八九十"},
@@ -94,6 +95,30 @@ func TestDelegatedTaskDisplayName(t *testing.T) {
 				t.Fatalf("delegatedTaskDisplayName(%q) = %q, want %q", tt.brief, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDelegateTaskStartsPromptlessWorkerWithoutRequestingTitle(t *testing.T) {
+	st := newFakeStore()
+	st.projects["ao"] = domain.ProjectRecord{ID: "ao"}
+	st.sessions["orch"] = domain.SessionRecord{ID: "orch", ProjectID: "ao", Kind: domain.KindOrchestrator}
+	cmd := &fakeCommander{}
+
+	out, err := (&Service{store: st, manager: cmd, runBackground: runInline}).DelegateTask(
+		context.Background(),
+		DelegateTaskInput{ProjectID: "ao", Brief: " \n\t "},
+	)
+	if err != nil {
+		t.Fatalf("DelegateTask: %v", err)
+	}
+	if out.WorkerID != "mer-9" || out.OrchestratorID != "" {
+		t.Fatalf("out = %#v, want promptless worker mer-9", out)
+	}
+	if !cmd.spawned || cmd.spawnedCfg.Prompt != "" || cmd.spawnedCfg.DisplayName != "Untitled task" {
+		t.Fatalf("spawn cfg = %#v", cmd.spawnedCfg)
+	}
+	if len(cmd.ready) != 0 || len(cmd.sent) != 0 || len(cmd.resumed) != 0 {
+		t.Fatalf("promptless spawn contacted orchestrator: ready=%#v sent=%#v resumed=%#v", cmd.ready, cmd.sent, cmd.resumed)
 	}
 }
 

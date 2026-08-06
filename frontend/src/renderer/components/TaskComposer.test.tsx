@@ -60,6 +60,27 @@ afterEach(() => {
 });
 
 describe("TaskComposer", () => {
+	it("starts a promptless worker when the task is empty", async () => {
+		const onCreated = vi.fn();
+		h.post.mockResolvedValueOnce({ data: { workerId: "sess-empty" } });
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={onCreated} />
+			</Wrap>,
+		);
+
+		fireEvent.click(screen.getByText("Start task"));
+
+		await waitFor(() =>
+			expect(h.post).toHaveBeenCalledWith(
+				"/api/v1/orchestrators/delegate",
+				expect.objectContaining({ body: expect.objectContaining({ projectId: "proj-1", brief: "" }) }),
+			),
+		);
+		expect(onCreated).toHaveBeenCalledWith("sess-empty");
+	});
+
 	it("emits busy state around an in-flight create and reports the new session", async () => {
 		const onSubmittingChange = vi.fn();
 		const onCreated = vi.fn();

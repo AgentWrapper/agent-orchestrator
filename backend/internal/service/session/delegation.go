@@ -16,10 +16,12 @@ import (
 
 const (
 	delegatedTaskTitleLimit             = 20
+	delegatedTaskUntitledName           = "Untitled task"
 	delegatedTaskTitleRefinementTimeout = time.Minute
 )
 
-// DelegateTaskInput describes a task AO should spawn as a worker session. Empty
+// DelegateTaskInput describes a task AO should spawn as a worker session. Brief
+// may be empty to open an idle worker that the user can instruct later. Empty
 // RequestedAgent means the spawn uses the project's worker-agent default.
 type DelegateTaskInput struct {
 	ProjectID      domain.ProjectID
@@ -45,21 +47,22 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 	if _, err := s.requireProject(ctx, in.ProjectID); err != nil {
 		return DelegateTaskOutcome{}, err
 	}
-	if strings.TrimSpace(in.Brief) == "" {
-		return DelegateTaskOutcome{}, apierr.Invalid("TASK_REQUIRED", "Task is required", nil)
-	}
 	if in.RequestedAgent != "" && !in.RequestedAgent.IsKnown() {
 		return DelegateTaskOutcome{}, apierr.Invalid("UNKNOWN_HARNESS", "Unknown requested agent", nil)
 	}
 	if in.RequestedMode != "" && !in.RequestedMode.Valid() {
 		return DelegateTaskOutcome{}, apierr.Invalid("INVALID_SESSION_MODE", "mode must be chat or tui", nil)
 	}
+	prompt := in.Brief
+	if strings.TrimSpace(prompt) == "" {
+		prompt = ""
+	}
 
 	worker, _, _, err := s.manager.Spawn(ctx, ports.SpawnConfig{
 		ProjectID:     in.ProjectID,
 		Kind:          domain.KindWorker,
 		Harness:       in.RequestedAgent,
-		Prompt:        in.Brief,
+		Prompt:        prompt,
 		DisplayName:   delegatedTaskDisplayName(in.Brief),
 		AgentConfig:   ports.AgentConfig{Model: strings.TrimSpace(in.Model)},
 		RequestedMode: in.RequestedMode,
@@ -69,8 +72,11 @@ func (s *Service) DelegateTask(ctx context.Context, in DelegateTaskInput) (Deleg
 	}
 
 	// The worker spawn is the commit point. Coordinator startup and title
-	// generation must never hold the new-task response open.
-	s.refineDelegatedTaskTitleInBackground(worker.ID, in)
+	// generation must never hold the new-task response open. A promptless worker
+	// stays idle with its provisional title until the user supplies instructions.
+	if prompt != "" {
+		s.refineDelegatedTaskTitleInBackground(worker.ID, in)
+	}
 	return DelegateTaskOutcome{WorkerID: worker.ID}, nil
 }
 
@@ -151,6 +157,9 @@ func (s *Service) taskTitleOrchestrator(ctx context.Context, projectID domain.Pr
 
 func delegatedTaskDisplayName(brief string) string {
 	title := strings.Join(strings.Fields(brief), " ")
+	if title == "" {
+		return delegatedTaskUntitledName
+	}
 	if utf8.RuneCountInString(title) <= delegatedTaskTitleLimit {
 		return title
 	}

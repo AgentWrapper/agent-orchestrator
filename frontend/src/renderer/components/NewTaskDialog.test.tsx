@@ -187,14 +187,21 @@ describe("NewTaskDialog", () => {
 		expect(requestBody().agent).toBe("kiro");
 	});
 
-	it("requires task text", async () => {
-		renderDialog();
+	it("starts an untitled task without an initial prompt", async () => {
+		const { onCreated, onOpenChange } = renderDialog();
 		const user = userEvent.setup();
+		await waitForAgentCatalog();
 
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
-		expect(await screen.findByText("Task is required.")).toBeInTheDocument();
-		expect(postMock).not.toHaveBeenCalledWith("/api/v1/orchestrators/delegate", expect.anything());
+		await waitFor(() => expect(requestBody).not.toThrow());
+		expect(requestBody()).toMatchObject({
+			projectId: "proj-1",
+			brief: "",
+			agent: "claude-code",
+		});
+		expect(onCreated).toHaveBeenCalledWith("worker-1");
+		expect(onOpenChange).toHaveBeenCalledWith(false);
 	});
 
 	it("shows an empty Model field for scratch projects and omits it from delegation", async () => {

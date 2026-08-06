@@ -16,10 +16,10 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-dialog)] bg-popover p-0 text-popover-foreground shadow-[var(--shadow-settings-dialog)] data-[state=open]:animate-modal-in">
+				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
 					{/* An eyebrow, not a heading with a subtitle: the placeholder already
 					    explains the field, so a description line only adds a row to read. */}
-					<div className="flex items-center justify-between gap-4 px-(--size-modal-padding) pt-4 pb-2">
+					<div className="flex items-center justify-between gap-4 border-b border-border/70 px-(--size-modal-padding) py-3">
 						<Dialog.Title className="eyebrow-label">{t("newTask.title")}</Dialog.Title>
 						<Dialog.Description className="sr-only">{t("newTask.description")}</Dialog.Description>
 						<Dialog.Close asChild>

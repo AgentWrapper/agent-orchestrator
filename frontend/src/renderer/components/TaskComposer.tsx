@@ -198,17 +198,12 @@ export function TaskComposer({
 	const submitTask = async (interfaceMode?: "tui") => {
 		if (!projectId || isSubmitting) return;
 
-		const cleanPrompt = prompt.trim();
 		const cleanModel = model.trim();
 		const cleanMode = mode.trim();
 		const requestedModel =
 			modelTouched && (cleanModel !== defaultModelForSelectedAgent || cleanMode !== defaultModeForSelectedAgent)
 				? cleanModel || cleanMode || undefined
 				: undefined;
-		if (!cleanPrompt) {
-			setError(t("newTask.taskRequired"));
-			return;
-		}
 
 		setIsSubmitting(true);
 		setError(undefined);
@@ -343,11 +338,11 @@ export function TaskComposer({
 				<p className="text-caption text-passive">{t("newTask.newlineHint")}</p>
 				<div className="flex shrink-0 items-center gap-2">
 					{onCancel && (
-						<Button type="button" variant="footer" disabled={isSubmitting} onClick={onCancel}>
+						<Button type="button" variant="secondary" disabled={isSubmitting} onClick={onCancel}>
 							{t("newTask.cancel")}
 						</Button>
 					)}
-					<Button type="submit" variant="footer-primary" disabled={isSubmitting || !projectId}>
+					<Button type="submit" variant="primary" disabled={isSubmitting || !projectId}>
 						{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
 						{isSubmitting ? t("newTask.starting") : t("newTask.start")}
 						{!isSubmitting && (
