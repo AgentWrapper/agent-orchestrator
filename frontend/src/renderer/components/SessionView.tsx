@@ -588,7 +588,6 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								onSelectSessionTerminal={selectSessionTerminal}
 								onSelectReviewerTerminal={selectReviewerTerminal}
 								onSelectShellTerminal={selectShellTerminal}
-								onSelectWorkerTerminal={selectSessionTerminal}
 								reviewerTerminal={reviewerTerminal}
 								session={session}
 								shellTerminals={shellTerminals}

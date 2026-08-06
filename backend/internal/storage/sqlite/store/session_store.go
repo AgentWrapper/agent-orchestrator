@@ -252,7 +252,7 @@ func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, er
 	return mapListAllSessionsRows(rows), nil
 }
 
-func mapListSessionsByProjectRows(rows []gen.ListSessionsByProjectRow) []domain.SessionRecord {
+func mapListSessionsByProjectRows(rows []gen.Session) []domain.SessionRecord {
 	out := make([]domain.SessionRecord, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, listSessionsByProjectRowToRecord(r))
@@ -260,7 +260,7 @@ func mapListSessionsByProjectRows(rows []gen.ListSessionsByProjectRow) []domain.
 	return out
 }
 
-func mapListAllSessionsRows(rows []gen.ListAllSessionsRow) []domain.SessionRecord {
+func mapListAllSessionsRows(rows []gen.Session) []domain.SessionRecord {
 	out := make([]domain.SessionRecord, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, listAllSessionsRowToRecord(r))
@@ -309,115 +309,16 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 	}
 }
 
-func getSessionRowToRecord(row gen.GetSessionRow) domain.SessionRecord {
-	return domain.SessionRecord{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		IssueID:         row.IssueID,
-		Kind:            row.Kind,
-		Harness:         row.Harness,
-		ReviewerHarness: row.ReviewerHarness,
-		DisplayName:     row.DisplayName,
-		Activity: domain.Activity{
-			State:          row.ActivityState,
-			LastActivityAt: row.ActivityLastAt,
-		},
-		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
-		IsTerminated:       row.IsTerminated,
-		IsPinned:           row.IsPinned,
-		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
-		TerminateOnPRMerge: row.TerminateOnPRMerge,
-		Metadata: domain.SessionMetadata{
-			Branch:            row.Branch,
-			WorkspacePath:     row.WorkspacePath,
-			WorkspaceRepoPath: row.WorkspaceRepoPath,
-			DiffBaseSHA:       row.DiffBaseSha,
-			DiffBaseRef:       row.DiffBaseRef,
-			RuntimeHandleID:   row.RuntimeHandleID,
-			RuntimeLaunchID:   row.RuntimeLaunchID,
-			AgentSessionID:    row.AgentSessionID,
-			Prompt:            row.Prompt,
-			PreviewURL:        row.PreviewURL,
-			PreviewRevision:   row.PreviewRevision,
-		},
-		CleanupGeneration: row.CleanupGeneration,
-		CreatedAt:         row.CreatedAt,
-		UpdatedAt:         row.UpdatedAt,
-	}
+func getSessionRowToRecord(row gen.Session) domain.SessionRecord {
+	return rowToRecord(row)
 }
 
-func listSessionsByProjectRowToRecord(row gen.ListSessionsByProjectRow) domain.SessionRecord {
-	return domain.SessionRecord{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		IssueID:         row.IssueID,
-		Kind:            row.Kind,
-		Harness:         row.Harness,
-		ReviewerHarness: row.ReviewerHarness,
-		DisplayName:     row.DisplayName,
-		Activity: domain.Activity{
-			State:          row.ActivityState,
-			LastActivityAt: row.ActivityLastAt,
-		},
-		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
-		IsTerminated:       row.IsTerminated,
-		IsPinned:           row.IsPinned,
-		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
-		TerminateOnPRMerge: row.TerminateOnPRMerge,
-		Metadata: domain.SessionMetadata{
-			Branch:            row.Branch,
-			WorkspacePath:     row.WorkspacePath,
-			WorkspaceRepoPath: row.WorkspaceRepoPath,
-			DiffBaseSHA:       row.DiffBaseSha,
-			DiffBaseRef:       row.DiffBaseRef,
-			RuntimeHandleID:   row.RuntimeHandleID,
-			RuntimeLaunchID:   row.RuntimeLaunchID,
-			AgentSessionID:    row.AgentSessionID,
-			Prompt:            row.Prompt,
-			PreviewURL:        row.PreviewURL,
-			PreviewRevision:   row.PreviewRevision,
-		},
-		CleanupGeneration: row.CleanupGeneration,
-		CreatedAt:         row.CreatedAt,
-		UpdatedAt:         row.UpdatedAt,
-	}
+func listSessionsByProjectRowToRecord(row gen.Session) domain.SessionRecord {
+	return rowToRecord(row)
 }
 
-func listAllSessionsRowToRecord(row gen.ListAllSessionsRow) domain.SessionRecord {
-	return domain.SessionRecord{
-		ID:              row.ID,
-		ProjectID:       row.ProjectID,
-		IssueID:         row.IssueID,
-		Kind:            row.Kind,
-		Harness:         row.Harness,
-		ReviewerHarness: row.ReviewerHarness,
-		DisplayName:     row.DisplayName,
-		Activity: domain.Activity{
-			State:          row.ActivityState,
-			LastActivityAt: row.ActivityLastAt,
-		},
-		FirstSignalAt:      nullTimeToTime(row.FirstSignalAt),
-		IsTerminated:       row.IsTerminated,
-		IsPinned:           row.IsPinned,
-		PinnedAt:           nullTimeToTimePtr(row.PinnedAt),
-		TerminateOnPRMerge: row.TerminateOnPRMerge,
-		Metadata: domain.SessionMetadata{
-			Branch:            row.Branch,
-			WorkspacePath:     row.WorkspacePath,
-			WorkspaceRepoPath: row.WorkspaceRepoPath,
-			DiffBaseSHA:       row.DiffBaseSha,
-			DiffBaseRef:       row.DiffBaseRef,
-			RuntimeHandleID:   row.RuntimeHandleID,
-			RuntimeLaunchID:   row.RuntimeLaunchID,
-			AgentSessionID:    row.AgentSessionID,
-			Prompt:            row.Prompt,
-			PreviewURL:        row.PreviewURL,
-			PreviewRevision:   row.PreviewRevision,
-		},
-		CleanupGeneration: row.CleanupGeneration,
-		CreatedAt:         row.CreatedAt,
-		UpdatedAt:         row.UpdatedAt,
-	}
+func listAllSessionsRowToRecord(row gen.Session) domain.SessionRecord {
+	return rowToRecord(row)
 }
 
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {
