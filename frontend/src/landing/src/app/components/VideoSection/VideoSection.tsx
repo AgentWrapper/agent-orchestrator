@@ -34,7 +34,12 @@ export function VideoSection() {
 	const [playing, setPlaying] = useState(false);
 	// One view's reported milestones. Lives in a ref so a re-render never resets
 	// it and re-reports a milestone the visitor already passed.
-	const progress = useRef(newVideoProgressState());
+	// Lazy ref init: passing newVideoProgressState() as the useRef argument would
+	// build a fresh Set on every render and immediately discard it. Build it once,
+	// on first render, and read the stable value out for the rest of the render.
+	const progressRef = useRef<ReturnType<typeof newVideoProgressState> | null>(null);
+	progressRef.current ??= newVideoProgressState();
+	const progress = progressRef.current;
 
 	return (
 		<section id="see-it" className="relative px-4 py-16 sm:px-8 sm:py-20 lg:px-[30px] lg:py-24">
@@ -65,12 +70,12 @@ export function VideoSection() {
 								className="absolute inset-0 h-full w-full"
 								onTimeUpdate={(event) => {
 									const player = event.currentTarget as { currentTime?: number; duration?: number };
-									reportVideoProgress(progress.current, player.currentTime ?? 0, player.duration ?? 0);
+									reportVideoProgress(progress, player.currentTime ?? 0, player.duration ?? 0);
 								}}
 								onEnded={() => {
 									// currentTime rarely lands exactly on duration, so without this the
 									// 100% milestone would be missed by the people who watched it all.
-									reportVideoProgress(progress.current, 1, 1);
+									reportVideoProgress(progress, 1, 1);
 								}}
 							/>
 						) : (
