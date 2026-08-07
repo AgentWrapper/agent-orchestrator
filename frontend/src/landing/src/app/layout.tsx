@@ -29,7 +29,7 @@ const siteDescription =
 export const metadata: Metadata = {
   metadataBase: new URL(COMPANY.MARKETING_URL),
   title: {
-    default: COMPANY.NAME,
+    default: `Run Coding Agents in Parallel | ${COMPANY.NAME}`,
     template: `%s | ${COMPANY.NAME}`,
   },
   description: siteDescription,
@@ -106,6 +106,22 @@ export default function RootLayout({
         <OrganizationJsonLd />
         <SoftwareApplicationJsonLd />
         <WebsiteJsonLd />
+        <link rel="preload" as="image" href="/optimized/hero-background.webp" type="image/webp" />
+        <link rel="preload" as="image" href="/optimized/feature.webp" type="image/webp" />
+        <link rel="preload" as="image" href="/optimized/feature2.webp" type="image/webp" />
+        <link rel="preload" as="image" href="/optimized/feature3.webp" type="image/webp" />
+        <link rel="preload" as="image" href="/optimized/feature4.webp" type="image/webp" />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                var ua = navigator.userAgent || "";
+                document.documentElement.dataset.landingPlatform =
+                  /mac os x|macintosh/i.test(ua) ? "mac" : "other";
+              })();
+            `,
+          }}
+        />
       </head>
       <body className="relative overscroll-none font-sans antialiased">
         <Providers>

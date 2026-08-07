@@ -3,25 +3,35 @@
 import type { CSSProperties, ReactNode } from "react";
 
 export const featurePreviewTokens = {
-	"--preview-background": "oklch(0.153 0.006 107.1)",
-	"--preview-foreground": "oklch(0.988 0.003 106.5)",
-	"--preview-card": "oklch(0.228 0.013 107.4)",
-	"--preview-card-foreground": "oklch(0.988 0.003 106.5)",
-	"--preview-primary": "oklch(0.93 0.007 106.5)",
-	"--preview-primary-foreground": "oklch(0.228 0.013 107.4)",
-	"--preview-muted": "oklch(0.286 0.016 107.4)",
-	"--preview-muted-foreground": "oklch(0.737 0.021 106.9)",
-	"--preview-accent": "#7eaaff",
-	"--preview-border": "oklch(1 0 0 / 10%)",
-	"--preview-ring": "oklch(0.58 0.031 107.3)",
+	// Exact dark-theme values from frontend/src/styles/tokens.css (:root).
+	"--preview-background": "oklch(0.185 0.006 285.885)",
+	"--preview-foreground": "oklch(0.985 0 0)",
+	"--preview-card": "oklch(0.24 0.008 285.885)",
+	"--preview-card-foreground": "oklch(0.985 0 0)",
+	"--preview-primary": "oklch(0.92 0.004 286.32)",
+	"--preview-primary-foreground": "oklch(0.21 0.006 285.885)",
+	"--preview-muted": "oklch(0.274 0.006 286.033)",
+	"--preview-muted-foreground": "oklch(0.705 0.015 286.067)",
+	"--preview-accent": "oklch(0.274 0.006 286.033)",
+	"--preview-border": "oklch(1 0 0 / 7%)",
+	"--preview-border-strong": "oklch(1 0 0 / 4%)",
+	"--preview-ring": "oklch(0.552 0.016 285.938)",
+	"--preview-divider": "oklch(1 0 0 / 4%)",
+	"--preview-input": "oklch(1 0 0 / 4%)",
+	"--preview-sidebar": "oklch(0.155 0.005 285.823)",
+	"--preview-sidebar-foreground": "oklch(0.985 0 0)",
+	"--preview-sidebar-accent": "oklch(0.274 0.006 286.033)",
+	"--preview-sidebar-hover": "color-mix(in oklch, oklch(0.985 0 0) 4%, transparent)",
+	"--preview-passive": "oklch(0.442 0.017 285.786)",
+	"--preview-raised": "oklch(0.274 0.006 286.033)",
 } as CSSProperties;
 
 export const previewStatus = {
-	working: "#f59f4c",
-	warning: "#e8c14a",
-	success: "#74b98a",
-	error: "#ef6b73",
-	accent: "#7eaaff",
+	working: "#60a5fa", // --color-status-working
+	warning: "#fb923c", // --color-status-needs-you
+	success: "#4ade80", // --color-status-ready
+	error: "oklch(0.704 0.191 22.216)", // --destructive
+	accent: "#60a5fa",
 } as const;
 
 export function FeaturePreviewShell({
@@ -37,7 +47,7 @@ export function FeaturePreviewShell({
 }) {
 	return (
 		<div
-			className={`mx-auto w-full min-w-0 max-w-[570px] overflow-hidden rounded-xl border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)] ${className}`}
+			className={`mx-auto w-full min-w-0 max-w-[570px] select-none overflow-hidden rounded-[20px] border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)] ${className}`}
 			style={featurePreviewTokens}
 		>
 			<div className="flex h-9 items-center border-b border-[var(--preview-border)] bg-[var(--preview-background)] px-3">
@@ -52,7 +62,7 @@ export function FeaturePreviewShell({
 						{title}
 					</span>
 				</div>
-				{trailing ? <div className="ml-auto hidden shrink-0 min-[420px]:block">{trailing}</div> : null}
+				{trailing ? <div className="ml-auto min-w-0 shrink-0">{trailing}</div> : null}
 			</div>
 			{children}
 		</div>

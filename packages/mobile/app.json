@@ -2,10 +2,10 @@
 	"expo": {
 		"name": "AO",
 		"slug": "ao-mobile",
-		"version": "1.0.0",
+		"version": "1.1.0",
 		"orientation": "portrait",
 		"icon": "./assets/icon.png",
-		"userInterfaceStyle": "dark",
+		"userInterfaceStyle": "automatic",
 		"backgroundColor": "#0a0b0d",
 		"scheme": "aomobile",
 		"splash": {
@@ -14,10 +14,18 @@
 			"backgroundColor": "#0a0b0d"
 		},
 		"ios": {
+			"icon": "./assets/AO.icon",
 			"supportsTablet": true,
 			"bundleIdentifier": "aoagents.ao",
 			"config": {
 				"usesNonExemptEncryption": false
+			},
+			"infoPlist": {
+				"NSLocalNetworkUsageDescription": "AO connects to Agent Orchestrator running on your computer over your local network.",
+				"NSAppTransportSecurity": {
+					"NSAllowsLocalNetworking": true
+				},
+				"LSApplicationQueriesSchemes": ["github"]
 			}
 		},
 		"android": {
@@ -25,10 +33,12 @@
 			"googleServicesFile": "./google-services.json",
 			"adaptiveIcon": {
 				"backgroundColor": "#0a0b0d",
-				"foregroundImage": "./assets/android-icon-foreground.png"
+				"foregroundImage": "./assets/android-icon-foreground.png",
+				"monochromeImage": "./assets/android-icon-monochrome.png"
 			},
 			"predictiveBackGestureEnabled": false,
-			"permissions": ["android.permission.CAMERA"]
+			"permissions": ["android.permission.CAMERA"],
+			"softwareKeyboardLayoutMode": "resize"
 		},
 		"web": {
 			"favicon": "./assets/favicon.png",
@@ -48,14 +58,27 @@
 				"expo-camera",
 				{
 					"cameraPermission": "Allow AO to scan the pairing QR code.",
-					"microphonePermission": false,
 					"recordAudioAndroid": false
+				}
+			],
+			[
+				"expo-image-picker",
+				{
+					"photosPermission": "Allow AO to attach images to agent conversations."
+				}
+			],
+			"expo-document-picker",
+			[
+				"expo-speech-recognition",
+				{
+					"microphonePermission": "Allow AO to use the microphone so you can dictate prompts to an agent.",
+					"speechRecognitionPermission": "Allow AO to transcribe your speech into prompts for an agent."
 				}
 			],
 			[
 				"expo-notifications",
 				{
-					"color": "#0a0b0d"
+					"color": "#4d8dff"
 				}
 			],
 			"expo-secure-store"

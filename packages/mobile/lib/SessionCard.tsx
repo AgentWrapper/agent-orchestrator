@@ -1,19 +1,48 @@
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { Pressable, StyleSheet, Text, View } from "react-native";
-import { sessionTitle, shortLabel, shortSessionId, type DashboardSession } from "./api";
+import { AgentLogo } from "./AgentLogo";
+import { sessionTitle, shortLabel, type DashboardSession } from "./api";
 import { haptics } from "./haptics";
-import { ciColor, statusVisual, theme } from "./theme";
-import { Dot } from "./ui";
+import { prLine, showBranch, trackerIssueId } from "./agentsView";
+import { relativeTime } from "./notificationView";
+import { toneColor } from "./prView";
+import { statusVisual, type Theme } from "./theme";
+import { useTheme, useThemedStyles } from "./ThemeProvider";
+import { cardShell, cardShellPressed, Dot } from "./ui";
 
-export function SessionCard({ session, showProject = false }: { session: DashboardSession; showProject?: boolean }) {
+// One session on the board, following the desktop board card's anatomy: agent
+// mark and title, a branch line, a hairline, then a footer of status + relative
+// time, PR line, and identifiers.
+//
+// The whole card is the tap target. A session card has exactly one destination
+// — its mode-aware session surface — so the card being the button is honest;
+// PRCard uses explicit IconButtons because it has two. The previous version drew a `terminal` glyph
+// that looked like a control and did nothing.
+export function SessionCard({
+	session,
+	showProject = false,
+}: {
+	session: DashboardSession;
+	showProject?: boolean;
+}) {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
 	const router = useRouter();
-	const v = statusVisual(session.status);
-	const pr = session.pr ?? session.prs?.[0];
+
+	const v = statusVisual(t, session.status);
 	const title = sessionTitle(session);
+	const branch = showBranch(session.branch, title) ? session.branch : null;
+	const prs = prLine(session);
+	const when = relativeTime(session.lastActivityAt);
+	// Only a real tracker reference earns a chip; a hand-typed task name does
+	// not, matching desktop.
+	const issue = trackerIssueId(session.issueId);
 
 	return (
 		<Pressable
+			accessibilityRole="button"
+			accessibilityLabel={`${title}. ${v.label}.`}
 			onPress={() => {
 				haptics.tap();
 				router.push({
@@ -23,95 +52,98 @@ export function SessionCard({ session, showProject = false }: { session: Dashboa
 			}}
 			style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
 		>
-			<View style={styles.top}>
-				<Dot color={v.color} breathing={v.breathing} size={8} />
-				<Text style={[styles.status, { color: v.color }]}>{v.label}</Text>
-				<View style={{ flex: 1 }} />
+			{/* Identity above the divider, state below. The project rides on the
+			    title row rather than a row of its own: right-aligned and alone, it
+			    was an orphan line on every card without an issue chip. */}
+			<View style={styles.head}>
+				<AgentLogo harness={session.harness} size={20} />
+				<Text style={styles.title} numberOfLines={2}>
+					{title}
+				</Text>
 				{showProject ? (
 					<Text style={styles.project} numberOfLines={1}>
 						{shortLabel(session.projectId)}
 					</Text>
 				) : null}
-				<Text style={styles.id} numberOfLines={1}>
-					{shortSessionId(session)}
-				</Text>
 			</View>
 
-			<Text style={styles.title} numberOfLines={2}>
-				{title}
-			</Text>
-
-			<View style={styles.meta}>
-				{session.branch ? (
-					<View style={styles.metaItem}>
-						<Feather name="git-branch" size={11} color={theme.textTertiary} />
-						<Text style={styles.branch} numberOfLines={1}>
-							{session.branch}
-						</Text>
-					</View>
-				) : null}
-				{pr?.number ? (
-					<View style={[styles.prChip, { borderColor: ciColor(pr.ciStatus) }]}>
-						<Dot color={ciColor(pr.ciStatus)} size={6} />
-						<Text style={styles.prText}>#{pr.number}</Text>
-						{pr.additions !== undefined && pr.deletions !== undefined ? (
-							<Text style={styles.diff}>
-								<Text style={{ color: theme.green }}>+{pr.additions}</Text>{" "}
-								<Text style={{ color: theme.red }}>-{pr.deletions}</Text>
+			{branch || issue ? (
+				<View style={styles.metaRow}>
+					{branch ? (
+						<>
+							<Feather name="git-branch" size={11} color={t.textFaint} />
+							<Text style={styles.branch} numberOfLines={1}>
+								{branch}
 							</Text>
-						) : null}
-					</View>
-				) : null}
+						</>
+					) : null}
+					{issue ? (
+						// Wrapped in a View: a bare Text in a flex row stretches to the
+						// row's width, which turned the chip into a full-width bar. This
+						// is why `Chip` in ui.tsx is built the same way.
+						<View style={styles.issue}>
+							<Text style={styles.issueText} numberOfLines={1}>
+								{shortLabel(issue, 24)}
+							</Text>
+						</View>
+					) : null}
+				</View>
+			) : null}
+
+			<View style={styles.divider} />
+
+			<View style={styles.statusRow}>
+				<Dot color={v.color} breathing={v.breathing} size={7} />
+				<Text style={[styles.status, { color: v.color }]} numberOfLines={1}>
+					{v.label}
+				</Text>
 				<View style={{ flex: 1 }} />
-				<Feather name="terminal" size={15} color={theme.textTertiary} />
+				{when ? <Text style={styles.time}>{when}</Text> : null}
 			</View>
+
+			{prs ? (
+				<Text style={[styles.prs, { color: toneColor(t, prs.tone) }]} numberOfLines={1}>
+					{prs.text}
+				</Text>
+			) : null}
 		</Pressable>
 	);
 }
 
-const styles = StyleSheet.create({
-	card: {
-		backgroundColor: theme.bgElevated,
-		borderRadius: 12,
-		borderWidth: 1,
-		borderColor: theme.borderSubtle,
-		paddingHorizontal: 14,
-		paddingVertical: 13,
-		marginHorizontal: 12,
-		marginVertical: 5,
-	},
-	cardPressed: { backgroundColor: theme.bgElevatedHover, borderColor: theme.borderDefault },
-	top: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 },
-	status: { fontSize: 12, fontWeight: "600" },
-	project: {
-		color: theme.textTertiary,
-		fontSize: 11,
-		fontFamily: theme.fontMono,
-		marginRight: 8,
-		// The labels are pre-shortened, but let the project still give way rather
-		// than push anything off the card if a name ever outgrows its budget.
-		flexShrink: 1,
-	},
-	// The `#n` discriminator is what tells sibling sessions apart - never shrink it.
-	id: { color: theme.textTertiary, fontSize: 11, fontFamily: theme.fontMono, flexShrink: 0 },
-	title: { color: theme.textPrimary, fontSize: 15, fontWeight: "500", lineHeight: 20 },
-	meta: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10 },
-	metaItem: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 1 },
-	branch: {
-		color: theme.textTertiary,
-		fontSize: 12,
-		fontFamily: theme.fontMono,
-		flexShrink: 1,
-	},
-	prChip: {
-		flexDirection: "row",
-		alignItems: "center",
-		gap: 5,
-		paddingHorizontal: 7,
-		paddingVertical: 3,
-		borderRadius: 6,
-		borderWidth: 1,
-	},
-	prText: { color: theme.textSecondary, fontSize: 11, fontWeight: "700", fontFamily: theme.fontMono },
-	diff: { fontSize: 10, fontFamily: theme.fontMono },
-});
+const makeStyles = (t: Theme) =>
+	StyleSheet.create({
+		card: cardShell(t),
+		cardPressed: cardShellPressed(t),
+		head: { flexDirection: "row", alignItems: "flex-start", gap: 9 },
+		title: { flex: 1, color: t.textPrimary, fontSize: 15, fontWeight: "600", lineHeight: 20 },
+		// Nudged down to sit on the title's first baseline rather than its box top,
+		// and never shrinks — the title truncates instead.
+		project: {
+			color: t.textTertiary,
+			fontSize: 11,
+			fontFamily: t.fontMono,
+			marginTop: 3,
+			flexShrink: 0,
+			maxWidth: "40%",
+		},
+		// Branch and issue share one row, indented to the title's x-origin (the
+		// 20pt mark plus its 9pt gap). Either may be absent; the row only appears
+		// when at least one is present, so it can never render empty.
+		metaRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6, marginLeft: 29 },
+		branch: { color: t.textFaint, fontSize: 11, fontFamily: t.fontMono, flexShrink: 1 },
+		issue: {
+			backgroundColor: t.tintBlue,
+			borderRadius: 5,
+			paddingHorizontal: 6,
+			paddingVertical: 2,
+			flexShrink: 1,
+		},
+		issueText: { color: t.blue, fontSize: 10, fontFamily: t.fontMono },
+		// Desktop separates the identity block from the status block with a
+		// hairline; without it the two runs of small text read as one paragraph.
+		divider: { height: StyleSheet.hairlineWidth, backgroundColor: t.borderSubtle, marginTop: 10 },
+		statusRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
+		status: { fontSize: 12, fontWeight: "600", flexShrink: 1 },
+		time: { color: t.textFaint, fontSize: 11, fontFamily: t.fontMono },
+		prs: { fontSize: 11, fontFamily: t.fontMono, marginTop: 5 },
+	});

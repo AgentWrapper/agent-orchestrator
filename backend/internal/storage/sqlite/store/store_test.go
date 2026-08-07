@@ -12,16 +12,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func newTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	s, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-	return s
+	return sqlitetest.MustOpen(t)
 }
 
 func seedProject(t *testing.T, s *sqlite.Store, id string) {
@@ -56,6 +52,60 @@ func TestSessionCreateAllowsFakeHarness(t *testing.T) {
 	rec.Harness = domain.HarnessFake
 	if _, err := s.CreateSession(ctx, rec); err != nil {
 		t.Fatalf("create fake-harness session: %v", err)
+	}
+}
+
+func TestSessionPersistsReviewerHarness(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec, err := s.CreateSession(ctx, sampleRecord("mer"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.SetSessionReviewerHarness(ctx, rec.ID, domain.ReviewerCodex, time.Now().UTC()); err != nil || !ok {
+		t.Fatalf("set reviewer harness = %v, %v", ok, err)
+	}
+	got, ok, err := s.GetSession(ctx, rec.ID)
+	if err != nil || !ok {
+		t.Fatalf("get session = %v, %v", ok, err)
+	}
+	if got.ReviewerHarness != domain.ReviewerCodex {
+		t.Fatalf("reviewer harness = %q, want %q", got.ReviewerHarness, domain.ReviewerCodex)
+	}
+}
+
+func TestSessionPersistsDiffBaseMetadata(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	rec := sampleRecord("mer")
+	rec.Metadata.DiffBaseSHA = "base-sha-1"
+	rec.Metadata.DiffBaseRef = "main"
+
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	got, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get session: ok=%v err=%v", ok, err)
+	}
+	if got.Metadata.DiffBaseSHA != "base-sha-1" || got.Metadata.DiffBaseRef != "main" {
+		t.Fatalf("created diff base = sha:%q ref:%q", got.Metadata.DiffBaseSHA, got.Metadata.DiffBaseRef)
+	}
+
+	got.Metadata.DiffBaseSHA = "base-sha-2"
+	got.Metadata.DiffBaseRef = "develop"
+	if err := s.UpdateSession(ctx, got); err != nil {
+		t.Fatalf("update session: %v", err)
+	}
+	updated, ok, err := s.GetSession(ctx, created.ID)
+	if err != nil || !ok {
+		t.Fatalf("get updated session: ok=%v err=%v", ok, err)
+	}
+	if updated.Metadata.DiffBaseSHA != "base-sha-2" || updated.Metadata.DiffBaseRef != "develop" {
+		t.Fatalf("updated diff base = sha:%q ref:%q", updated.Metadata.DiffBaseSHA, updated.Metadata.DiffBaseRef)
 	}
 }
 
@@ -952,6 +1002,43 @@ func TestRenameSessionFiresCDCEvent(t *testing.T) {
 	}
 	if _, carried := payload["displayName"]; carried {
 		t.Fatalf("session_updated must stay invalidation-only; payload should not carry displayName: %v", payload)
+	}
+}
+
+func TestSessionPinFiresCDCEvent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "mer")
+	r, _ := s.CreateSession(ctx, sampleRecord("mer"))
+
+	base, _ := s.LatestSeq(ctx)
+	pinnedAt := r.UpdatedAt.Add(time.Minute)
+	if ok, err := s.SetSessionPinned(ctx, r.ID, true, &pinnedAt, pinnedAt); err != nil || !ok {
+		t.Fatalf("pin: ok=%v err=%v", ok, err)
+	}
+
+	evs, err := s.EventsAfter(ctx, base, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payloads []json.RawMessage
+	for _, e := range evs {
+		if string(e.Type) == "session_updated" {
+			payloads = append(payloads, e.Payload)
+		}
+	}
+	if len(payloads) != 1 {
+		t.Fatalf("session_updated events = %d, want 1 after pin", len(payloads))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(payloads[0], &payload); err != nil {
+		t.Fatalf("session_updated payload JSON: %v", err)
+	}
+	if payload["id"] != string(r.ID) {
+		t.Fatalf("payload id = %v, want %q", payload["id"], r.ID)
+	}
+	if isPinned, ok := payload["isPinned"].(bool); !ok || !isPinned {
+		t.Fatalf("payload isPinned = %v, want true", payload["isPinned"])
 	}
 }
 

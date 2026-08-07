@@ -2,8 +2,10 @@ package github
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -105,6 +107,45 @@ func newProviderForTest(t *testing.T, f *fakeGH) *Provider {
 }
 
 func ctx() context.Context { return context.Background() }
+
+func TestAuthenticatedIdentityCachesHumanUser(t *testing.T) {
+	f := newFakeGH(t)
+	f.on(http.MethodGet, "/user", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"login": "Alice", "type": "User"})
+	})
+	p := newProviderForTest(t, f)
+
+	first, err := p.AuthenticatedIdentity(ctx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := p.AuthenticatedIdentity(ctx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != (ports.SCMIdentity{Login: "Alice", Human: true}) || second != first {
+		t.Fatalf("identities = %#v, %#v", first, second)
+	}
+	if got := f.callsTo(http.MethodGet, "/user"); got != 1 {
+		t.Fatalf("GET /user calls = %d, want 1", got)
+	}
+}
+
+func TestAuthenticatedIdentityClassifiesBot(t *testing.T) {
+	f := newFakeGH(t)
+	f.on(http.MethodGet, "/user", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"login": "ao-bot", "type": "Bot"})
+	})
+	p := newProviderForTest(t, f)
+
+	got, err := p.AuthenticatedIdentity(ctx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (ports.SCMIdentity{Login: "ao-bot", Human: false}) {
+		t.Fatalf("identity = %#v", got)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Fixture builders. Each test composes a REST pull + GraphQL response so
@@ -1471,5 +1512,185 @@ func TestFetchReviewThreadsFetchesOneOlderPageWhenOldestUnresolved(t *testing.T)
 	}
 	if len(review.Threads) != 2 || review.Threads[0].ID != "older" || review.Threads[1].ID != "latest-unresolved" {
 		t.Fatalf("threads order = %#v", review.Threads)
+	}
+}
+
+// installCheckRunsFake serves the per-commit check-runs endpoint exactly the way
+// GitHub does for ETag purposes: 304 when the representation GitHub would return
+// for the caller's per_page is unchanged, otherwise 200 with a fresh ETag. The
+// authoritative full run list is held behind mu so a test can pivot one run's
+// status between calls. This models the real GitHub contract, where the ETag
+// covers only the returned page (which is why the old per_page=1 bug existed).
+func installCheckRunsFake(t *testing.T, f *fakeGH, owner, repo, sha string, mu *sync.Mutex, runs *[]map[string]any) {
+	t.Helper()
+	path := repoPath(owner, repo, "commits", sha, "check-runs")
+	f.on(http.MethodGet, path, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		perPage := 100
+		if q := r.URL.Query().Get("per_page"); q != "" {
+			if n, err := strconv.Atoi(q); err == nil && n > 0 {
+				perPage = n
+			}
+		}
+		shown := *runs
+		if perPage < len(shown) {
+			shown = (*runs)[:perPage]
+		}
+		body, _ := json.Marshal(map[string]any{"total_count": len(*runs), "check_runs": shown})
+		sum := sha256.Sum256(body)
+		etag := fmt.Sprintf(`W/"%x"`, sum)
+		if r.Header.Get("If-None-Match") == etag {
+			w.Header().Set("ETag", etag)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", etag)
+		_, _ = w.Write(body)
+	})
+}
+
+// TestCommitChecksGuard_OtherRunTransitionInvalidatesGuard is a regression test
+// for the "completed checks remain pending" bug: the guard used to condition on
+// per_page=1, so GitHub's ETag only covered the first returned run. When a
+// DIFFERENT workflow finished, the single-item representation was unchanged and
+// GitHub answered 304, leaving AO stuck on "Checks running" until the five-minute
+// forced refresh. The guard must now track the complete run set.
+func TestCommitChecksGuard_OtherRunTransitionInvalidatesGuard(t *testing.T) {
+	f := newFakeGH(t)
+	const owner, repo, sha = "octocat", "hello", "abc123"
+	var mu sync.Mutex
+	runs := []map[string]any{
+		{"id": 1, "name": "lint", "status": "completed", "conclusion": "success"},
+		{"id": 2, "name": "test", "status": "in_progress", "conclusion": ""},
+	}
+	installCheckRunsFake(t, f, owner, repo, sha, &mu, &runs)
+	p := newProviderForTest(t, f)
+	repoRef := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: repo, Repo: owner + "/" + repo}
+
+	// First poll: no cached ETag, must be a fresh fetch -> NotModified=false.
+	res, err := p.CommitChecksGuard(ctx(), repoRef, sha, "")
+	if err != nil {
+		t.Fatalf("first CommitChecksGuard: %v", err)
+	}
+	if res.NotModified {
+		t.Fatal("first poll reported NotModified with no cached ETag")
+	}
+	if res.ETag == "" {
+		t.Fatal("first poll returned an empty ETag")
+	}
+
+	// Second poll: representation unchanged -> 304 -> NotModified=true.
+	res, err = p.CommitChecksGuard(ctx(), repoRef, sha, res.ETag)
+	if err != nil {
+		t.Fatalf("unchanged CommitChecksGuard: %v", err)
+	}
+	if !res.NotModified {
+		t.Fatal("unchanged check-runs representation reported NotModified=false")
+	}
+
+	// Third poll: the FIRST returned run is stable, but a DIFFERENT run
+	// transitions in_progress -> completed. With the old per_page=1 guard this
+	// returned 304 and AO kept "Checks running". With the complete-representation
+	// guard the full body changed, so GitHub sends a fresh ETag -> NotModified=false.
+	mu.Lock()
+	runs = []map[string]any{
+		{"id": 1, "name": "lint", "status": "completed", "conclusion": "success"},
+		{"id": 2, "name": "test", "status": "completed", "conclusion": "success"},
+	}
+	mu.Unlock()
+	res, err = p.CommitChecksGuard(ctx(), repoRef, sha, res.ETag)
+	if err != nil {
+		t.Fatalf("transitioned CommitChecksGuard: %v", err)
+	}
+	if res.NotModified {
+		t.Fatal("guard stayed NotModified after a non-first run transitioned (per_page=1 regression)")
+	}
+}
+
+// TestCommitChecksGuard_PaginatedFingerprintInvalidatesLaterPageRun verifies the
+// paginated path: when a commit carries more than one page of check runs, the
+// guard fingerprints the complete set so a transition on a LATER page (invisible
+// to the first page's ETag) still invalidates the guard.
+func TestCommitChecksGuard_PaginatedFingerprintInvalidatesLaterPageRun(t *testing.T) {
+	f := newFakeGH(t)
+	const owner, repo, sha = "octocat", "hello", "abc123"
+	path := repoPath(owner, repo, "commits", sha, "check-runs")
+
+	var mu sync.Mutex
+	// 150 runs: page 1 holds runs 1..100, page 2 holds 101..150. The first-page
+	// ETag only reflects runs 1..100; the transition happens on a page-2 run.
+	page1 := make([]map[string]any, 0, githubCheckRunsPageSize)
+	for i := 1; i <= 100; i++ {
+		page1 = append(page1, map[string]any{"id": i, "name": fmt.Sprintf("job-%d", i), "status": "completed", "conclusion": "success"})
+	}
+	page2 := make([]map[string]any, 0, 50)
+	for i := 101; i <= 150; i++ {
+		status, conclusion := "completed", "success"
+		if i == 150 {
+			// The run whose transition the first page's ETag cannot see.
+			status, conclusion = "in_progress", ""
+		}
+		page2 = append(page2, map[string]any{"id": i, "name": fmt.Sprintf("job-%d", i), "status": status, "conclusion": conclusion})
+	}
+	state := &struct {
+		page1 []map[string]any
+		page2 []map[string]any
+	}{page1: page1, page2: page2}
+
+	f.on(http.MethodGet, path, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		pageNum := 1
+		if q := r.URL.Query().Get("page"); q != "" {
+			if n, err := strconv.Atoi(q); err == nil && n > 0 {
+				pageNum = n
+			}
+		}
+		var shown []map[string]any
+		switch pageNum {
+		case 1:
+			shown = state.page1
+		case 2:
+			shown = state.page2
+		}
+		body, _ := json.Marshal(map[string]any{"total_count": 150, "check_runs": shown})
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("ETag", fmt.Sprintf(`W/"%x"`, sha256.Sum256(body)))
+		_, _ = w.Write(body)
+	})
+	p := newProviderForTest(t, f)
+	repoRef := ports.SCMRepo{Provider: "github", Host: "github.com", Owner: owner, Name: repo, Repo: owner + "/" + repo}
+
+	res, err := p.CommitChecksGuard(ctx(), repoRef, sha, "")
+	if err != nil {
+		t.Fatalf("first paginated guard: %v", err)
+	}
+	if res.NotModified {
+		t.Fatal("first paginated poll reported NotModified")
+	}
+	firstFingerprint := res.ETag
+
+	// Unchanged set -> NotModified=true.
+	res, err = p.CommitChecksGuard(ctx(), repoRef, sha, firstFingerprint)
+	if err != nil {
+		t.Fatalf("unchanged paginated guard: %v", err)
+	}
+	if !res.NotModified {
+		t.Fatal("unchanged page-2 content reported NotModified=false")
+	}
+
+	// Only a page-2 run transitions; page 1 (whose ETag page-1 callers would see)
+	// is untouched. The fingerprint over the whole set must change.
+	mu.Lock()
+	state.page2[49] = map[string]any{"id": 150, "name": "job-150", "status": "completed", "conclusion": "success"}
+	mu.Unlock()
+	res, err = p.CommitChecksGuard(ctx(), repoRef, sha, firstFingerprint)
+	if err != nil {
+		t.Fatalf("transitioned paginated guard: %v", err)
+	}
+	if res.NotModified {
+		t.Fatal("guard stayed NotModified after a page-2 run transitioned (fingerprint bug)")
 	}
 }

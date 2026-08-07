@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
@@ -22,21 +23,86 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	previewutil "github.com/aoagents/agent-orchestrator/backend/internal/preview"
+	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 )
 
 type fakeSessionService struct {
-	sessions        map[domain.SessionID]domain.Session
-	sent            string
-	cleanupProjects []domain.ProjectID
-	cleanupResult   []domain.SessionID
-	cleanupSkipped  []sessionsvc.CleanupSkipped
-	workspaceFiles  sessionsvc.WorkspaceFiles
-	workspaceFile   sessionsvc.WorkspaceFileDetail
-	spawnErr        error
-	claimErr        error
-	listPRErr       error
-	workspaceErr    error
+	sessions         map[domain.SessionID]domain.Session
+	sent             string
+	delegationInput  sessionsvc.DelegateTaskInput
+	delegationErr    error
+	cleanupProjects  []domain.ProjectID
+	cleanupResult    []domain.SessionID
+	cleanupSkipped   []sessionsvc.CleanupSkipped
+	workspaceFiles   sessionsvc.WorkspaceFiles
+	workspaceFile    sessionsvc.WorkspaceFileDetail
+	workspacePaths   []string
+	spawnErr         error
+	orchestratorMode domain.SessionMode
+	claimErr         error
+	listPRErr        error
+	workspaceErr     error
+	staged           []ports.SpawnAttachment
+	stagedPaths      []string
+	stageErr         error
+}
+
+type fakeManagedPreviewServer struct {
+	status         previewserver.Status
+	startErr       error
+	startName      string
+	startWorkspace string
+	stopCalls      int
+	onStop         func()
+}
+
+type allowSessionCapability struct{}
+
+func (allowSessionCapability) Valid(domain.SessionID, string) bool { return true }
+
+type denySessionCapability struct{}
+
+func (denySessionCapability) Valid(domain.SessionID, string) bool { return false }
+
+func (f *fakeManagedPreviewServer) Start(
+	_ context.Context,
+	sessionID domain.SessionID,
+	workspacePath string,
+	configurationName string,
+) (previewserver.Status, error) {
+	f.startName = configurationName
+	f.startWorkspace = workspacePath
+	if f.startErr != nil {
+		return previewserver.Status{}, f.startErr
+	}
+	f.status.SessionID = sessionID
+	return f.status, nil
+}
+
+func (f *fakeManagedPreviewServer) Stop(
+	_ context.Context,
+	sessionID domain.SessionID,
+) (previewserver.Status, error) {
+	f.stopCalls++
+	if f.onStop != nil {
+		f.onStop()
+	}
+	f.status.SessionID = sessionID
+	f.status.State = previewserver.StateStopped
+	return f.status, nil
+}
+
+func (f *fakeManagedPreviewServer) Status(sessionID domain.SessionID) previewserver.Status {
+	status := f.status
+	status.SessionID = sessionID
+	if status.State == "" {
+		status.State = previewserver.StateStopped
+	}
+	if status.Logs == nil {
+		status.Logs = []string{}
+	}
+	return status
 }
 
 func newFakeSessionService() *fakeSessionService {
@@ -72,7 +138,8 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	return s, len(cfg.Prompt), 0, nil
 }
 
-func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, requestedMode domain.SessionMode) (domain.Session, error) {
+	f.orchestratorMode = requestedMode
 	if clean {
 		active := true
 		existing, err := f.List(ctx, sessionsvc.ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
@@ -85,7 +152,7 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 			}
 		}
 	}
-	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator, RequestedMode: requestedMode})
 	return s, err
 }
 
@@ -116,6 +183,39 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	s.TerminateOnPRMerge = terminate
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) Pin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = true
+	now := time.Now().UTC()
+	s.PinnedAt = &now
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) Unpin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = false
+	s.PinnedAt = nil
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.ReviewerHarness = harness
 	f.sessions[id] = s
 	return s, nil
 }
@@ -174,6 +274,14 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
 	f.sent = message
 	return nil
+}
+
+func (f *fakeSessionService) DelegateTask(_ context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error) {
+	f.delegationInput = in
+	if f.delegationErr != nil {
+		return sessionsvc.DelegateTaskOutcome{}, f.delegationErr
+	}
+	return sessionsvc.DelegateTaskOutcome{WorkerID: "ao-worker", OrchestratorID: "ao-orch"}, nil
 }
 
 func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
@@ -243,6 +351,21 @@ func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref
 	return sessionsvc.ClaimPRResult{PRs: prs, TakenOverFrom: []domain.SessionID{}, BranchChanged: true}, nil
 }
 
+func (f *fakeSessionService) StageAttachments(
+	_ context.Context,
+	id domain.SessionID,
+	attachments []ports.SpawnAttachment,
+) ([]string, error) {
+	if f.stageErr != nil {
+		return nil, f.stageErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	f.staged = attachments
+	return f.stagedPaths, nil
+}
+
 func (f *fakeSessionService) ListWorkspaceFiles(_ context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
 	if f.workspaceErr != nil {
 		return sessionsvc.WorkspaceFiles{}, f.workspaceErr
@@ -254,6 +377,20 @@ func (f *fakeSessionService) ListWorkspaceFiles(_ context.Context, id domain.Ses
 		return f.workspaceFiles, nil
 	}
 	return sessionsvc.WorkspaceFiles{SessionID: id}, nil
+}
+
+func (f *fakeSessionService) WorkspaceWatchPaths(_ context.Context, id domain.SessionID) ([]string, error) {
+	if f.workspaceErr != nil {
+		return nil, f.workspaceErr
+	}
+	session, ok := f.sessions[id]
+	if !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if len(f.workspacePaths) > 0 {
+		return f.workspacePaths, nil
+	}
+	return []string{session.Metadata.WorkspacePath}, nil
 }
 
 func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error) {
@@ -270,9 +407,22 @@ func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.Sessi
 }
 
 func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {
+	return newSessionTestServerWithPreview(t, svc, nil)
+}
+
+func newSessionTestServerWithPreview(
+	t *testing.T,
+	svc *fakeSessionService,
+	managed *fakeManagedPreviewServer,
+) *httptest.Server {
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, httpd.APIDeps{Sessions: svc}, httpd.ControlDeps{}))
+	deps := httpd.APIDeps{Sessions: svc}
+	if managed != nil {
+		deps.PreviewServer = managed
+		deps.SessionCapabilities = allowSessionCapability{}
+	}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, deps, httpd.ControlDeps{}))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -457,6 +607,50 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("session merge policy not updated: %+v", svc.sessions["ao-2"])
 	}
 
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("pin = %d, want 200; body=%s", status, body)
+	}
+	var pinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &pinned)
+	if !pinned.Session.IsPinned {
+		t.Fatalf("pin response = %#v", pinned)
+	}
+	if !svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session pin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("unpin = %d, want 200; body=%s", status, body)
+	}
+	var unpinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &unpinned)
+	if unpinned.Session.IsPinned {
+		t.Fatalf("unpin response = %#v", unpinned)
+	}
+	if svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session unpin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	_, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("pin unknown = %d, want 404", status)
+	}
+
+	_, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("unpin unknown = %d, want 404", status)
+	}
+
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
@@ -479,6 +673,41 @@ func TestSessionsAPI_SpawnRejectsOversizedBody(t *testing.T) {
 		strings.Repeat("A", 40<<20) + `"}]}`
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", oversized)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
+func TestSessionsAPI_SpawnRejectsUnknownExplicitMode(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
+		`{"projectId":"ao","kind":"worker","harness":"codex","prompt":"fix","mode":"tuii"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "SESSION_MODE_INVALID")
+	if len(svc.sessions) != 1 {
+		t.Fatalf("invalid mode created a session: %#v", svc.sessions)
+	}
+}
+
+func TestSessionsAPI_OrchestratorAcceptsExplicitChatMode(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators",
+		`{"projectId":"ao","mode":"chat"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", status, body)
+	}
+	if svc.orchestratorMode != domain.SessionModeChat {
+		t.Fatalf("requested mode = %q, want chat", svc.orchestratorMode)
+	}
+}
+
+func TestSessionsAPI_OrchestratorRejectsUnknownExplicitMode(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators",
+		`{"projectId":"ao","mode":"chatt"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "SESSION_MODE_INVALID")
 }
 
 func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
@@ -708,6 +937,59 @@ func TestSessionsAPI_SetPreviewLocalRelativePathResolvesToPreviewOrigin(t *testi
 	fileBody, fileStatus, _ := doPreviewOriginRequest(t, srv, resp.Session.PreviewURL, "/")
 	if fileStatus != http.StatusOK {
 		t.Fatalf("serve local file = %d, want 200; body=%s", fileStatus, fileBody)
+	}
+}
+
+func TestSessionsAPI_SetPreviewServesBrowserDisplayableArtifacts(t *testing.T) {
+	tests := []struct {
+		name        string
+		path        string
+		contents    []byte
+		contentType string
+	}{
+		{name: "PDF", path: "artifacts/report.pdf", contents: []byte("%PDF-1.4\n%%EOF\n"), contentType: "application/pdf"},
+		{name: "PNG", path: "artifacts/mockup.png", contents: []byte("\x89PNG\r\n\x1a\n"), contentType: "image/png"},
+		{name: "SVG", path: "artifacts/diagram.svg", contents: []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`), contentType: "image/svg+xml"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFakeSessionService()
+			workspace := t.TempDir()
+			artifact := filepath.Join(workspace, filepath.FromSlash(tc.path))
+			if err := os.MkdirAll(filepath.Dir(artifact), 0o755); err != nil {
+				t.Fatalf("mkdir artifact dir: %v", err)
+			}
+			if err := os.WriteFile(artifact, tc.contents, 0o644); err != nil {
+				t.Fatalf("write artifact: %v", err)
+			}
+			session := svc.sessions["ao-1"]
+			session.Metadata = domain.SessionMetadata{WorkspacePath: workspace}
+			svc.sessions["ao-1"] = session
+			srv := newSessionTestServer(t, svc)
+
+			request := `{"url":` + strconv.Quote(tc.path) + `}`
+			body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview", request)
+			if status != http.StatusOK {
+				t.Fatalf("set artifact preview = %d body=%s", status, body)
+			}
+			var response struct {
+				Session struct {
+					PreviewURL string `json:"previewUrl"`
+				} `json:"session"`
+			}
+			mustJSON(t, body, &response)
+			if !strings.HasSuffix(response.Session.PreviewURL, "/"+tc.path) {
+				t.Fatalf("preview URL = %q, want suffix /%s", response.Session.PreviewURL, tc.path)
+			}
+
+			served, servedStatus, headers := doPreviewOriginRequest(t, srv, response.Session.PreviewURL, "/")
+			if servedStatus != http.StatusOK {
+				t.Fatalf("serve artifact = %d body=%q", servedStatus, served)
+			}
+			if got := headers.Get("Content-Type"); !strings.HasPrefix(got, tc.contentType) {
+				t.Fatalf("Content-Type = %q, want %q", got, tc.contentType)
+			}
+		})
 	}
 }
 
@@ -1031,13 +1313,156 @@ func TestSessionsAPI_ClearPreviewNotFound(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusNotFound, "SESSION_NOT_FOUND")
 }
 
+func TestSessionsAPI_ManagedPreviewStartsExactApplicationAndPersistsTarget(t *testing.T) {
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.WorkspacePath = t.TempDir()
+	svc.sessions["ao-1"] = session
+	managed := &fakeManagedPreviewServer{status: previewserver.Status{
+		State:         previewserver.StateReady,
+		Configuration: "web",
+		TargetKind:    previewserver.TargetApp,
+		URL:           "http://127.0.0.1:43123/",
+		Port:          43123,
+		Logs:          []string{"ready"},
+	}}
+	srv := newSessionTestServerWithPreview(t, svc, managed)
+
+	body, status, _ := doRequest(
+		t,
+		srv,
+		http.MethodPost,
+		"/api/v1/sessions/ao-1/preview/server",
+		`{"configuration":"web"}`,
+	)
+	if status != http.StatusOK || !containsAll(body, `"state":"ready"`, `"configuration":"web"`, `"targetKind":"app"`) {
+		t.Fatalf("start managed preview = %d body=%s", status, body)
+	}
+	if managed.startName != "web" || managed.startWorkspace != session.Metadata.WorkspacePath {
+		t.Fatalf("start args = name %q workspace %q", managed.startName, managed.startWorkspace)
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != managed.status.URL {
+		t.Fatalf("persisted preview URL = %q, want %q", got, managed.status.URL)
+	}
+}
+
+func TestSessionsAPI_ManagedPreviewRequiresOwningCapability(t *testing.T) {
+	svc := newFakeSessionService()
+	managed := &fakeManagedPreviewServer{}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	deps := httpd.APIDeps{
+		Sessions:            svc,
+		PreviewServer:       managed,
+		SessionCapabilities: denySessionCapability{},
+	}
+	srv := httptest.NewServer(httpd.NewRouterWithControl(config.Config{}, log, nil, deps, httpd.ControlDeps{}))
+	t.Cleanup(srv.Close)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview/server", `{}`)
+	assertErrorCode(t, body, status, http.StatusForbidden, "PREVIEW_CAPABILITY_INVALID")
+	if managed.startName != "" {
+		t.Fatal("preview process started without a valid capability")
+	}
+}
+
+func TestSessionsAPI_APIManagedPreviewDoesNotTakeOverBrowser(t *testing.T) {
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.WorkspacePath = t.TempDir()
+	session.Metadata.PreviewURL = "http://127.0.0.1:4173/"
+	svc.sessions["ao-1"] = session
+	managed := &fakeManagedPreviewServer{status: previewserver.Status{
+		State:         previewserver.StateReady,
+		Configuration: "api",
+		TargetKind:    previewserver.TargetAPI,
+		URL:           "http://127.0.0.1:8080/health",
+		Port:          8080,
+		Logs:          []string{},
+	}}
+	srv := newSessionTestServerWithPreview(t, svc, managed)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/preview/server", `{}`)
+	if status != http.StatusOK {
+		t.Fatalf("start API preview = %d body=%s", status, body)
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://127.0.0.1:4173/" {
+		t.Fatalf("API server replaced browser target with %q", got)
+	}
+}
+
+func TestSessionsAPI_StopManagedPreviewPreservesExplicitFileTarget(t *testing.T) {
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.PreviewURL = "http://ao-1.preview.localhost:3001/README.md"
+	svc.sessions["ao-1"] = session
+	managed := &fakeManagedPreviewServer{status: previewserver.Status{
+		State:      previewserver.StateReady,
+		TargetKind: previewserver.TargetApp,
+		URL:        "http://127.0.0.1:4173/",
+		Logs:       []string{},
+	}}
+	srv := newSessionTestServerWithPreview(t, svc, managed)
+
+	body, status, _ := doRequest(t, srv, http.MethodDelete, "/api/v1/sessions/ao-1/preview/server", "")
+	if status != http.StatusOK || !containsAll(body, `"state":"stopped"`) {
+		t.Fatalf("stop managed preview = %d body=%s", status, body)
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != session.Metadata.PreviewURL {
+		t.Fatalf("explicit file target was cleared: %q", got)
+	}
+}
+
+func TestSessionsAPI_StopManagedPreviewPreservesTargetChangedDuringStop(t *testing.T) {
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.PreviewURL = "http://127.0.0.1:4173/"
+	svc.sessions["ao-1"] = session
+	managed := &fakeManagedPreviewServer{status: previewserver.Status{
+		State:      previewserver.StateReady,
+		TargetKind: previewserver.TargetApp,
+		URL:        session.Metadata.PreviewURL,
+		Logs:       []string{},
+	}}
+	managed.onStop = func() {
+		current := svc.sessions["ao-1"]
+		current.Metadata.PreviewURL = "http://127.0.0.1:5173/"
+		svc.sessions["ao-1"] = current
+	}
+	srv := newSessionTestServerWithPreview(t, svc, managed)
+
+	body, status, _ := doRequest(t, srv, http.MethodDelete, "/api/v1/sessions/ao-1/preview/server", "")
+	if status != http.StatusOK || !containsAll(body, `"state":"stopped"`) {
+		t.Fatalf("stop managed preview = %d body=%s", status, body)
+	}
+	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://127.0.0.1:5173/" {
+		t.Fatalf("target changed during stop was cleared: %q", got)
+	}
+}
+
+func TestSessionsAPI_KillLeavesPreviewTeardownToSessionLifecycle(t *testing.T) {
+	svc := newFakeSessionService()
+	managed := &fakeManagedPreviewServer{}
+	srv := newSessionTestServerWithPreview(t, svc, managed)
+
+	body, status, _ := doRequest(t, srv, http.MethodPost, "/api/v1/sessions/ao-1/kill", "")
+	if status != http.StatusOK {
+		t.Fatalf("kill = %d body=%s", status, body)
+	}
+	if managed.stopCalls != 0 {
+		t.Fatalf("controller duplicated managed preview teardown: stop calls = %d", managed.stopCalls)
+	}
+}
+
 func TestSessionsAPI_ListWorkspaceFiles(t *testing.T) {
 	svc := newFakeSessionService()
 	svc.workspaceFiles = sessionsvc.WorkspaceFiles{
-		SessionID: "ao-1",
+		SessionID:      "ao-1",
+		CompareBaseSHA: "base-sha",
+		CompareBaseRef: "main",
+		CompareMode:    sessionsvc.WorkspaceCompareBase,
 		Files: []sessionsvc.WorkspaceFileSummary{
 			{Path: "README.md", Status: sessionsvc.WorkspaceFileModified, Additions: 2, Deletions: 1, Size: 48},
-			{Path: "notes.txt", Status: sessionsvc.WorkspaceFileAdded, Additions: 1, Size: 11},
+			{Path: "notes.txt", PreviousPath: "old-notes.txt", Status: sessionsvc.WorkspaceFileRenamed, Additions: 1, Size: 11},
 		},
 	}
 	srv := newSessionTestServer(t, svc)
@@ -1048,35 +1473,49 @@ func TestSessionsAPI_ListWorkspaceFiles(t *testing.T) {
 		t.Fatalf("GET workspace files = %d, want 200; body=%s", status, body)
 	}
 	var got struct {
-		SessionID string `json:"sessionId"`
-		Files     []struct {
-			Path      string `json:"path"`
-			Status    string `json:"status"`
-			Additions int    `json:"additions"`
-			Deletions int    `json:"deletions"`
-			Size      int64  `json:"size"`
+		SessionID      string `json:"sessionId"`
+		CompareBaseSHA string `json:"compareBaseSha"`
+		CompareBaseRef string `json:"compareBaseRef"`
+		CompareMode    string `json:"compareMode"`
+		Files          []struct {
+			Path         string `json:"path"`
+			PreviousPath string `json:"previousPath"`
+			Status       string `json:"status"`
+			Additions    int    `json:"additions"`
+			Deletions    int    `json:"deletions"`
+			Size         int64  `json:"size"`
 		} `json:"files"`
 	}
 	mustJSON(t, body, &got)
 	if got.SessionID != "ao-1" || len(got.Files) != 2 {
 		t.Fatalf("response = %#v", got)
 	}
+	if got.CompareMode != "base" || got.CompareBaseSHA != "base-sha" || got.CompareBaseRef != "main" {
+		t.Fatalf("compare metadata = mode:%q sha:%q ref:%q", got.CompareMode, got.CompareBaseSHA, got.CompareBaseRef)
+	}
 	if got.Files[0].Path != "README.md" || got.Files[0].Status != "modified" || got.Files[0].Additions != 2 || got.Files[0].Deletions != 1 {
 		t.Fatalf("first file = %#v", got.Files[0])
+	}
+	if got.Files[1].Path != "notes.txt" || got.Files[1].PreviousPath != "old-notes.txt" || got.Files[1].Status != "renamed" {
+		t.Fatalf("second file = %#v", got.Files[1])
 	}
 }
 
 func TestSessionsAPI_GetWorkspaceFile(t *testing.T) {
 	svc := newFakeSessionService()
 	svc.workspaceFile = sessionsvc.WorkspaceFileDetail{
-		SessionID: "ao-1",
-		Path:      "README.md",
-		Status:    sessionsvc.WorkspaceFileModified,
-		Additions: 1,
-		Deletions: 1,
-		Size:      14,
-		Content:   "hello\nupdated\n",
-		Diff:      "@@ -1 +1 @@\n-hello\n+updated\n",
+		SessionID:      "ao-1",
+		Path:           "README.md",
+		PreviousPath:   "README.old.md",
+		Status:         sessionsvc.WorkspaceFileModified,
+		Additions:      1,
+		Deletions:      1,
+		Size:           14,
+		Content:        "hello\nupdated\n",
+		Diff:           "@@ -1 +1 @@\n-hello\n+updated\n",
+		CompareBaseSHA: "base-sha",
+		CompareBaseRef: "main",
+		CompareMode:    sessionsvc.WorkspaceCompareBase,
 	}
 	srv := newSessionTestServer(t, svc)
 
@@ -1086,14 +1525,21 @@ func TestSessionsAPI_GetWorkspaceFile(t *testing.T) {
 		t.Fatalf("GET workspace file = %d, want 200; body=%s", status, body)
 	}
 	var got struct {
-		SessionID string `json:"sessionId"`
-		Path      string `json:"path"`
-		Content   string `json:"content"`
-		Diff      string `json:"diff"`
+		SessionID      string `json:"sessionId"`
+		Path           string `json:"path"`
+		PreviousPath   string `json:"previousPath"`
+		Content        string `json:"content"`
+		Diff           string `json:"diff"`
+		CompareBaseSHA string `json:"compareBaseSha"`
+		CompareBaseRef string `json:"compareBaseRef"`
+		CompareMode    string `json:"compareMode"`
 	}
 	mustJSON(t, body, &got)
 	if got.SessionID != "ao-1" || got.Path != "README.md" || got.Content == "" || got.Diff == "" {
 		t.Fatalf("response = %#v", got)
+	}
+	if got.PreviousPath != "README.old.md" || got.CompareMode != "base" || got.CompareBaseSHA != "base-sha" || got.CompareBaseRef != "main" {
+		t.Fatalf("workspace file metadata = %#v", got)
 	}
 }
 
@@ -1103,6 +1549,56 @@ func TestSessionsAPI_GetWorkspaceFileRequiresPath(t *testing.T) {
 	body, status, headers := doRequest(t, srv, "GET", "/api/v1/sessions/ao-1/workspace/file", "")
 	assertJSON(t, headers)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
+}
+
+func TestSessionsAPI_StreamWorkspaceChanges(t *testing.T) {
+	workspace := t.TempDir()
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.WorkspacePath = workspace
+	svc.sessions["ao-1"] = session
+	srv := newSessionTestServer(t, svc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/sessions/ao-1/workspace/events", nil)
+	if err != nil {
+		t.Fatalf("new workspace stream request: %v", err)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET workspace stream: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET workspace stream = %d body=%s", resp.StatusCode, body)
+	}
+	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream", contentType)
+	}
+
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatalf("write workspace file: %v", err)
+	}
+	event := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "event:") {
+				event <- scanner.Text()
+				return
+			}
+		}
+	}()
+	select {
+	case got := <-event:
+		if got != "event: workspace_changed" {
+			t.Fatalf("event = %q, want workspace_changed", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for workspace change event")
+	}
 }
 
 func TestSessionsAPI_SetPreviewEmptyURLNoEntry(t *testing.T) {
@@ -1216,6 +1712,58 @@ func TestSessionsAPI_SendValidation(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", `{"message":""}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "MESSAGE_REQUIRED")
+}
+
+func TestSessionsAPI_DelegateTask(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom ","mode":"chat"}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("delegate = %d, want 202; body=%s", status, body)
+	}
+	var got struct {
+		OK             bool   `json:"ok"`
+		WorkerID       string `json:"workerId"`
+		OrchestratorID string `json:"orchestratorId"`
+	}
+	mustJSON(t, body, &got)
+	if !got.OK || got.WorkerID != "ao-worker" || got.OrchestratorID != "ao-orch" {
+		t.Fatalf("response = %#v", got)
+	}
+	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "Fix it" || svc.delegationInput.RequestedAgent != domain.HarnessCursor || svc.delegationInput.Model != "sonnet-custom" || svc.delegationInput.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("delegation input = %#v", svc.delegationInput)
+	}
+}
+
+func TestSessionsAPI_DelegateTaskValidationAndServiceError(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"  "}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "TASK_REQUIRED")
+
+	svc.delegationErr = apierr.Invalid("UNKNOWN_HARNESS", "Unknown requested agent", nil)
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "UNKNOWN_HARNESS")
+
+	svc.delegationErr = nil
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it","mode":"tuii"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_SESSION_MODE")
+}
+
+func TestSessionsAPI_DelegateTaskRejectsOversizedBody(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	// A brief past the 32 KiB raw-body cap must fail during bounded decoding.
+	// Without MaxBytesReader this would decode and fail later as TASK_TOO_LONG.
+	oversized := `{"projectId":"ao","brief":"` + strings.Repeat("A", 40<<10) + `"}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", oversized)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	if svc.delegationInput.ProjectID != "" {
+		t.Fatalf("delegate service called with oversized body: %#v", svc.delegationInput)
+	}
 }
 
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {

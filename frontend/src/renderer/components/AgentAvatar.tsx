@@ -1,29 +1,32 @@
 import { cn } from "../lib/utils";
+import agyLogo from "../assets/agents/agy.png";
 import aiderLogo from "../assets/agents/aider.png";
 import ampLogo from "../assets/agents/amp.svg";
+import auggieLogo from "../assets/agents/auggie.svg";
+import autohandLogo from "../assets/agents/autohand.svg";
 import clineLogo from "../assets/agents/cline.svg";
 import claudeLogo from "../assets/agents/claude.svg";
 import claudeCodeLogo from "../assets/agents/claude-code.svg";
 import codexLogo from "../assets/agents/codex.svg";
 import continueLogo from "../assets/agents/continue.png";
-import copilotLogo from "../assets/agents/copilot.png";
+import copilotLogo from "../assets/agents/copilot.svg";
 import crushLogo from "../assets/agents/crush.png";
 import cursorLogo from "../assets/agents/cursor.svg";
 import devinLogo from "../assets/agents/devin.png";
 import droidLogo from "../assets/agents/droid.png";
-import gooseLogo from "../assets/agents/goose.png";
+import gooseLogo from "../assets/agents/goose.svg";
 import grokLogo from "../assets/agents/grok.png";
-import kilocodeLogo from "../assets/agents/kilocode.png";
+import kilocodeLogo from "../assets/agents/kilocode.svg";
 import kimiLogo from "../assets/agents/kimi.png";
 import kiroLogo from "../assets/agents/kiro.png";
+import museLogo from "../assets/agents/muse.png";
 import opencodeLogo from "../assets/agents/opencode.svg";
 import piLogo from "../assets/agents/pi.png";
 import qwenLogo from "../assets/agents/qwen.png";
 import vibeLogo from "../assets/agents/vibe.png";
 
 // Real brand logos keyed by the harness name AO stores on session.provider.
-// Agents without an asset fall back to a lettered tile (agy, auggie, autohand,
-// fake).
+// Agents without an asset fall back to a lettered tile (fake).
 const LOGOS: Record<string, string> = {
 	codex: codexLogo,
 	"claude-code": claudeCodeLogo,
@@ -40,12 +43,16 @@ const LOGOS: Record<string, string> = {
 	continue: continueLogo,
 	devin: devinLogo,
 	kimi: kimiLogo,
+	muse: museLogo,
 	kiro: kiroLogo,
 	kilocode: kilocodeLogo,
 	vibe: vibeLogo,
 	pi: piLogo,
 	amp: ampLogo,
 	cline: clineLogo,
+	agy: agyLogo,
+	auggie: auggieLogo,
+	autohand: autohandLogo,
 };
 
 type AgentAvatarProps = {

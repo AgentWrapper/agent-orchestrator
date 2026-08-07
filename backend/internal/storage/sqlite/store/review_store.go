@@ -150,6 +150,19 @@ func (s *Store) GetReviewRunBySessionPRAndSHA(ctx context.Context, id domain.Ses
 	return reviewRunFromRow(row), true, nil
 }
 
+// GetReviewRunBySessionPRSHAAndHarness returns the most recent review pass for
+// a worker session, PR, commit, and reviewer harness, ok=false if none.
+func (s *Store) GetReviewRunBySessionPRSHAAndHarness(ctx context.Context, id domain.SessionID, prURL, targetSHA string, harness domain.ReviewerHarness) (domain.ReviewRun, bool, error) {
+	row, err := s.qr.GetReviewRunBySessionPRSHAAndHarness(ctx, gen.GetReviewRunBySessionPRSHAAndHarnessParams{SessionID: id, PRURL: prURL, TargetSha: targetSHA, Harness: harness})
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.ReviewRun{}, false, nil
+	}
+	if err != nil {
+		return domain.ReviewRun{}, false, fmt.Errorf("get review run for session %s pr %s sha %s harness %s: %w", id, prURL, targetSHA, harness, err)
+	}
+	return reviewRunFromRow(row), true, nil
+}
+
 // ListReviewRunsBySession returns all review passes for a worker session, newest first.
 func (s *Store) ListReviewRunsBySession(ctx context.Context, id domain.SessionID) ([]domain.ReviewRun, error) {
 	rows, err := s.qr.ListReviewRunsBySession(ctx, id)

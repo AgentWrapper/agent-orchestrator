@@ -12,15 +12,21 @@ test("opens, selects, and closes standalone shell terminals from the tab strip",
 	const closeButtons = page.getByRole("button", { name: /^Close terminal / });
 	const initialCount = await closeButtons.count();
 
-	// The topbar action opens a shell and makes it the active pane.
+	// The button at the end of the tab strip opens a shell and makes it the
+	// active pane. It creates a terminal directly — no menu, no session picker.
 	await page.getByRole("button", { name: "New terminal" }).click();
+	await expect(page.getByRole("menu")).toHaveCount(0);
 	await expect(closeButtons).toHaveCount(initialCount + 1);
 
-	// Selecting the session tab hands the pane back to the agent. Matched by
-	// title, not role-name: the tab's accessible name is the session's title.
-	const sessionTab = page.getByTitle("Session terminal");
+	// Selecting the session tab hands the pane back to the agent. Matched by the
+	// session's own title: the tab's accessible name is that title, and its
+	// title attribute falls back to the label once the strip truncates it.
+	// Scoped to the terminal panel: the sidebar carries the same session name.
+	const sessionTab = page
+		.getByTestId("terminal")
+		.getByRole("tab", { name: /^Build screenshot-ready dashboard data/ });
 	await sessionTab.click();
-	await expect(sessionTab).toHaveAttribute("aria-current", "true");
+	await expect(sessionTab).toHaveAttribute("aria-selected", "true");
 
 	// Closing a shell removes exactly its own tab.
 	await closeButtons.last().click();

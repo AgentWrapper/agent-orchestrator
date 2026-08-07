@@ -11,10 +11,16 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
+	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
+	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/daemon/supervisor"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -22,15 +28,22 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/controllers"
 	"github.com/aoagents/agent-orchestrator/backend/internal/mobilebridge"
 	"github.com/aoagents/agent-orchestrator/backend/internal/notify"
+	usagepipeline "github.com/aoagents/agent-orchestrator/backend/internal/observe/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/preview"
+	"github.com/aoagents/agent-orchestrator/backend/internal/previewserver"
 	"github.com/aoagents/agent-orchestrator/backend/internal/push"
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
+	browsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/browser"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
+	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
+	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
 	"github.com/aoagents/agent-orchestrator/backend/internal/terminal"
@@ -49,8 +62,24 @@ func Run() error {
 	if err := stabilizeWorkingDirectory(cfg.DataDir); err != nil {
 		return err
 	}
+	ignoreBrokenPipeSignal()
 
 	log := newLogger()
+	browserRuntimeToken := strings.TrimSpace(os.Getenv(browserruntime.RuntimeTokenEnv))
+	if browserRuntimeToken == "" {
+		browserRuntimeToken, err = browserruntime.NewToken()
+		if err != nil {
+			return err
+		}
+		if err := os.Setenv(browserruntime.RuntimeTokenEnv, browserRuntimeToken); err != nil {
+			return fmt.Errorf("set browser runtime token: %w", err)
+		}
+	}
+	browserAuthority, err := browsersvc.LoadAuthority(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("load browser capability authority: %w", err)
+	}
+	browserBroker := browserruntime.New(log, browserRuntimeToken)
 
 	// Fail fast only if a daemon is genuinely still serving the recorded port.
 	// CheckStale confirms the run-file's PID is alive, but that alone is not
@@ -110,6 +139,7 @@ func Run() error {
 	// is handed to httpd, which mounts it at /mux. Raw PTY bytes never flow
 	// through the CDC change_log -- only session-state events do.
 	runtimeAdapter := runtimeselect.New(log)
+	managedPreview := previewserver.New(log, cfg.DataDir)
 	termMgr := terminal.NewManager(runtimeAdapter, cdcPipe.Broadcaster, log)
 	defer termMgr.Close()
 
@@ -118,9 +148,17 @@ func Run() error {
 	// Built before the Lifecycle Manager so the LCM can use it for SCM-driven
 	// agent nudges (CI failure, review feedback, merge conflict).
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
+	lifecycleMessenger := newModeAwareMessenger()
 	notificationHub := notify.NewHub()
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
+	// Resolution transitions that happened while the daemon was down never
+	// reached lifecycle, so re-check open notifications against the durable
+	// session/PR facts before serving. Best-effort: a failure here only leaves
+	// stale rows in the unresolved list, never blocks startup.
+	if err := notificationWriter.Reconcile(ctx); err != nil {
+		log.Warn("notification resolution reconcile failed", "err", err)
+	}
 
 	// Bring up the Lifecycle Manager and the reaper first: it makes the session
 	// lifecycle write path live (reducer write -> store -> DB trigger ->
@@ -140,13 +178,65 @@ func Run() error {
 		return fmt.Errorf("wire agent resolver: %w", err)
 	}
 
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, agents, log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, lifecycleMessenger, notificationWriter, telemetrySink, agents, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, log)
+	chatDrivers := chatdriverregistry.Build(log)
+
+	// Daemon-owned preferences. The store's type is field-compatible with the
+	// service's, adapted here so neither package imports the other.
+	settingsSvc := settingssvc.New(
+		settingsStore{store: store},
+		chatDrivers,
+		func() time.Time { return time.Now().UTC() },
+	)
+
+	// Chat service. The driver registry is the capability gate: a harness with no
+	// registered driver cannot start in chat mode, so an unsupported request fails
+	// loudly instead of silently becoming a TUI session.
+	chatSvc := chatsvc.New(chatsvc.Options{
+		Store:    store,
+		Sessions: store,
+		// Adapts the store's own snapshot type, so the chat service never has to
+		// import the storage layer.
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := store.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns,
+				Messages:     rows.Messages,
+				Activities:   rows.Activities,
+			}, nil
+		}),
+		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, beforeSequence, limit int64) (chatsvc.ConversationRows, error) {
+			rows, err := store.LoadConversationSnapshotPage(ctx, conversationID, beforeSequence, limit)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation:   rows.Conversation,
+				Turns:          rows.Turns,
+				Messages:       rows.Messages,
+				Activities:     rows.Activities,
+				OldestSequence: rows.OldestSequence,
+				HasMoreBefore:  rows.HasMoreBefore,
+			}, nil
+		}),
+		Drivers: chatDrivers,
+		// The LCM satisfies ActivityRecorder directly: a chat turn is a pure
+		// lifecycle reduction, same as a hook signal from a terminal session.
+		Activity: lcStack.LCM,
+		Log:      log,
+		NewID:    uuid.NewString,
+	})
+
+	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -155,12 +245,13 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+	sessMgr.SetTerminalInputGate(termMgr)
+	lifecycleMessenger.Bind(sessMgr)
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	// Lets a resume/restart that reuses a runtime handle reset that pane's
 	// input-grace-period gate (see terminal.Manager.ResetInputGate) instead of
 	// inheriting the exited process's already-open gate.
 	sessMgr.SetInputGateResetter(termMgr)
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()
@@ -172,7 +263,7 @@ func Run() error {
 	}
 	lcStack.trackerDone = startTrackerIntake(ctx, store, sessionSvc, log)
 
-	agentSvc := agentsvc.New()
+	agentSvc := agentsvc.NewWithDeps(agentsvc.Deps{Cache: store, Discoverer: modelcatalog.Discoverer{}, Projects: store})
 	go func() {
 		if _, err := agentSvc.Refresh(ctx); err != nil {
 			log.Warn("initial agent catalog refresh failed", "err", err)
@@ -190,6 +281,7 @@ func Run() error {
 		DefaultPort: mobilebridge.DefaultPort,
 	}
 	mc := &controllers.MobileController{Bridge: bs}
+	browserService := browsersvc.New(sessionSvc, browserBroker, browserAuthority)
 
 	// Standalone shell terminals: user-opened shells with no agent session
 	// behind them. They reuse the same runtime adapter (and therefore the same
@@ -200,6 +292,45 @@ func Run() error {
 	// worktree is torn down (shellTermSvc cannot exist before sessMgr does; see
 	// SetShellTerminalCloser).
 	sessMgr.SetShellTerminalCloser(shellTermSvc)
+	var (
+		usageCollector *usagesvc.Collector
+		usagePipeline  *usagepipeline.Pipeline
+	)
+	if roots, rootsErr := usagesvc.DefaultSourceRoots(ctx); rootsErr != nil {
+		log.Warn("usage collection disabled", "err", rootsErr)
+	} else {
+		usageCollector = usagesvc.NewCollector(store, roots, func(reconcile bool) {
+			if usagePipeline == nil {
+				return
+			}
+			if reconcile {
+				usagePipeline.NotifySourcesChanged()
+			} else {
+				usagePipeline.NotifyInventoryChanged()
+			}
+		})
+		ingestor := usagepipeline.NewIngestor(store, usagepipeline.IngestorConfig{})
+		usagePipeline = usagepipeline.NewPipeline(store, ingestor, []string{
+			roots.ClaudeProjects,
+			roots.CodexSessions,
+			roots.CodexArchived,
+		}, usagepipeline.CoordinatorConfig{
+			Logger:     log,
+			Initialize: usageCollector.BackfillActive,
+			Reconcile: func(reconcileCtx context.Context) error {
+				return usageCollector.ReconcileSources(reconcileCtx, 0)
+			},
+			ReconcilePath: usageCollector.ReconcilePath,
+		})
+		lcStack.LCM.SetUsageFinalizer(usageCollector)
+	}
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	var prActions prsvc.ActionManager
+	if mergeProvider, mergeErr := newGitHubSCMProvider(log); mergeErr != nil {
+		logSCMProviderDisabled(log, mergeErr)
+	} else {
+		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: mergeProvider, Reader: mergeProvider})
+	}
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing
 	// to start the daemon. pushRegistry (interface) is assigned only when load
@@ -230,15 +361,20 @@ func Run() error {
 		Projects:           projectSvc,
 		Agents:             agentSvc,
 		Sessions:           sessionSvc,
+		PRs:                prActions,
 		Reviews:            reviewSvc,
 		Notifications:      notifier,
 		NotificationStream: notificationHub,
 		Push:               pushRegistry,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		ShellTerminals:     shellTermSvc,
+		Conversations:      chatSvc,
+		Settings:           settingsSvc,
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,
+		UsageHooks:         usageCollector,
+		UsageSummary:       usagesvc.NewSummaryReader(store),
 		Telemetry:          telemetrySink,
 		Mobile:             mc,
 		DevImport: devimportsvc.New(devimportsvc.Deps{
@@ -248,6 +384,9 @@ func Run() error {
 				return sqlite.OpenReadOnly(ctx, dataDir)
 			},
 		}),
+		Browser:             browserService,
+		PreviewServer:       managedPreview,
+		SessionCapabilities: browserAuthority,
 	})
 	if err != nil {
 		stop()
@@ -258,10 +397,26 @@ func Run() error {
 		return err
 	}
 	previewDone := preview.NewPoller(store, sessionSvc, "http://"+srv.Addr().String(), preview.PollerConfig{Logger: log}).Start(ctx)
+	_ = os.Unsetenv(browserruntime.RuntimeAddressEnv)
+	if ln, addr, err := browserruntime.Listen(cfg.RunFilePath); err != nil {
+		log.Warn("browser runtime: listener unavailable; agent browser control disabled", "err", err)
+	} else {
+		if err := os.Setenv(browserruntime.RuntimeAddressEnv, addr); err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("publish browser runtime address: %w", err)
+		}
+		log.Info("browser runtime: listening", "addr", addr)
+		go func() {
+			if err := browserBroker.Serve(ctx, ln); err != nil {
+				log.Warn("browser runtime: serve stopped with error", "err", err)
+			}
+		}()
+	}
+	var usageDone <-chan struct{}
 
 	// Late-bind: the LAN listener shares the exact loopback router instance so
 	// the LAN surface and loopback surface never drift apart.
-	lan := httpd.NewMobileLAN(srv.Handler(), mobilebridge.DefaultPort, log)
+	lan := httpd.NewMobileLAN(srv.Handler(), mobilebridge.DefaultPort, log, telemetrySink)
 	bs.LAN = lan
 
 	// Restore Connect Mobile across a daemon restart: if the bridge was left
@@ -282,12 +437,9 @@ func Run() error {
 	if reconcileErr := lcStack.ReconcileRuntime(ctx); reconcileErr != nil {
 		log.Error("reconcile agent processes on boot failed", "err", reconcileErr)
 	}
-
-	// Redeliver any worker_idle events left pending across the restart, now that
-	// sessions (and their orchestrators) have been reconciled. Off the critical
-	// boot path (a store read plus a possible pane write per pending project);
-	// the recovery sweep is the backstop if it does not finish before shutdown.
-	go lcStack.LCM.DispatchAllPendingWorkerIdleEvents(ctx)
+	if usagePipeline != nil {
+		usageDone = usagePipeline.Start(ctx)
+	}
 
 	// ponytail: 5s tolerates a brief frontend restart; tune if dev hot-reload trips it.
 	const supervisorGrace = 5 * time.Second
@@ -319,7 +471,17 @@ func Run() error {
 	// via defer) avoids the LIFO trap where a Stop() that blocks on ctx-cancel
 	// runs before the cancel: a non-signal exit path would hang otherwise.
 	stop()
+	managedPreview.Close()
 	<-previewDone
+	// Close chat controllers before the lifecycle stack: each owns an app-server
+	// child process, and closing them also settles any turn left in flight so a
+	// restart does not read a half-finished turn as still working.
+	chatStopCtx, chatCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	chatSvc.StopAll(chatStopCtx)
+	chatCancel()
+	if usageDone != nil {
+		<-usageDone
+	}
 	lcStack.Stop()
 	lanStopCtx, lanCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer lanCancel()

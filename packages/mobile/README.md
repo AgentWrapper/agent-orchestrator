@@ -1,8 +1,10 @@
 # Agent Orchestrator — Mobile
 
 Expo (expo-router) mobile supervisor for Agent Orchestrator. Four tabs — Kanban, PRs,
-Orchestrator, Settings — plus a spawn flow, a session screen with a live terminal, and a
-preview browser. It is a **thin client**: it talks to the AO daemon running on your
+Orchestrator, Settings — plus a Chat-first spawn flow, a native conversation surface,
+the existing live terminal, and a preview browser. Chat sessions expose durable history,
+streaming activity, approvals, provider controls, attachments, voice input, and a plain
+worktree-shell escape hatch. It is a **thin client**: it talks to the AO daemon running on your
 computer over your local network (or Tailscale). It never runs agents itself.
 
 > **Development builds only — Expo Go is not supported.** The app depends on native modules,
@@ -225,11 +227,15 @@ surgery, regenerate the native projects from scratch with `npx expo prebuild --c
 ```
 app/                 expo-router routes
   (tabs)/            Kanban (index), PRs, Orchestrator, Settings
-  session/[id].tsx   session detail + live terminal
+  session/[id].tsx   persisted-mode router (native Chat or Terminal UI)
+  shell/[handleId]   session-scoped worktree shell over the existing mux
+  preview/[id]       authenticated session preview browser
   spawn.tsx          spawn flow
   pair.tsx           pairing-QR scanner
 lib/
   api.ts             REST client for the daemon API
+  chat/              paged/SSE conversation client and native Chat UI
+  session/           existing TUI/xterm surface and terminal controls
   mux.ts             /mux WebSocket terminal transport
   config.ts          server config — password in SecureStore, the rest in AsyncStorage
   pairing.ts         pairing-QR payload parser
@@ -242,4 +248,7 @@ scripts/             ao-phone-proxy.js — superseded by Connect Mobile, kept fo
 
 ```bash
 npm run typecheck    # tsc --noEmit
+npm test             # pure state/API/parser regression suite
+npx expo export --platform ios
+npx expo export --platform android
 ```

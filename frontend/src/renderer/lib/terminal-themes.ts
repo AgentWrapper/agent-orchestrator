@@ -8,11 +8,14 @@ function cssVar(name: string): string {
 
 /** xterm palettes harmonized to tokens.css (--color-term-* / semantic colors). */
 export function buildTerminalThemes(): { dark: ITheme; light: ITheme } {
+	// Opaque plate — xterm cells must not be translucent or the p-2 gutter and
+	// the glyph grid pick up different composites against app chrome.
+	const terminalBg = cssVar("--color-bg-terminal-opaque") || cssVar("--color-bg-terminal");
 	const dark: ITheme = {
-		background: cssVar("--color-bg-terminal"),
+		background: terminalBg,
 		foreground: cssVar("--color-text-terminal"),
 		cursor: cssVar("--color-working"),
-		cursorAccent: cssVar("--color-bg-terminal"),
+		cursorAccent: terminalBg,
 		selectionBackground: cssVar("--color-term-selection-dark"),
 		selectionInactiveBackground: cssVar("--color-term-selection-inactive"),
 		black: cssVar("--color-term-black"),
@@ -34,10 +37,10 @@ export function buildTerminalThemes(): { dark: ITheme; light: ITheme } {
 	};
 
 	const light: ITheme = {
-		background: cssVar("--color-bg-terminal"),
+		background: terminalBg,
 		foreground: cssVar("--color-text-terminal"),
 		cursor: cssVar("--color-working"),
-		cursorAccent: cssVar("--color-bg-terminal"),
+		cursorAccent: terminalBg,
 		selectionBackground: cssVar("--color-term-selection-light"),
 		selectionInactiveBackground: cssVar("--color-term-selection-inactive-light"),
 		black: cssVar("--color-term-black"),

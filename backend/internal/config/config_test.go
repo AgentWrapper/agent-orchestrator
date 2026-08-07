@@ -10,7 +10,7 @@ import (
 func TestLoadDefaults(t *testing.T) {
 	// Clear every recognised var so we observe pure defaults regardless of the
 	// surrounding environment.
-	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST"} {
+	for _, k := range []string{"AO_PORT", "AO_REQUEST_TIMEOUT", "AO_SHUTDOWN_TIMEOUT", "AO_RUN_FILE", "AO_DATA_DIR", "AO_AGENT", "AO_ALLOWED_ORIGINS", "AO_TELEMETRY_EVENTS", "AO_TELEMETRY_METRICS", "AO_TELEMETRY_REMOTE", "AO_TELEMETRY_POSTHOG_KEY", "AO_TELEMETRY_POSTHOG_HOST", "AO_TELEMETRY_DISABLED_EVENTS", "AO_TELEMETRY_APP_VERSION"} {
 		t.Setenv(k, "")
 	}
 
@@ -83,11 +83,15 @@ func TestLoadAbsolutizesRelativeOverrides(t *testing.T) {
 }
 
 func TestLoadOverrides(t *testing.T) {
+	overrideDir := t.TempDir()
+	runFilePath := filepath.Join(overrideDir, "ao-test-running.json")
+	dataDir := filepath.Join(overrideDir, "ao-test-data")
+
 	t.Setenv("AO_PORT", "4002")
 	t.Setenv("AO_REQUEST_TIMEOUT", "5s")
 	t.Setenv("AO_SHUTDOWN_TIMEOUT", "3s")
-	t.Setenv("AO_RUN_FILE", "/tmp/ao-test-running.json")
-	t.Setenv("AO_DATA_DIR", "/tmp/ao-test-data")
+	t.Setenv("AO_RUN_FILE", runFilePath)
+	t.Setenv("AO_DATA_DIR", dataDir)
 	t.Setenv("AO_TELEMETRY_EVENTS", "on")
 	t.Setenv("AO_TELEMETRY_METRICS", "off")
 	t.Setenv("AO_TELEMETRY_REMOTE", "posthog")
@@ -107,11 +111,11 @@ func TestLoadOverrides(t *testing.T) {
 	if cfg.ShutdownTimeout != 3*time.Second {
 		t.Errorf("ShutdownTimeout = %s, want 3s", cfg.ShutdownTimeout)
 	}
-	if cfg.RunFilePath != "/tmp/ao-test-running.json" {
-		t.Errorf("RunFilePath = %q, want /tmp/ao-test-running.json", cfg.RunFilePath)
+	if cfg.RunFilePath != runFilePath {
+		t.Errorf("RunFilePath = %q, want %q", cfg.RunFilePath, runFilePath)
 	}
-	if cfg.DataDir != "/tmp/ao-test-data" {
-		t.Errorf("DataDir = %q, want /tmp/ao-test-data", cfg.DataDir)
+	if cfg.DataDir != dataDir {
+		t.Errorf("DataDir = %q, want %q", cfg.DataDir, dataDir)
 	}
 	if !cfg.Telemetry.Events || cfg.Telemetry.Metrics {
 		t.Fatalf("Telemetry toggles = %+v", cfg.Telemetry)
@@ -186,4 +190,47 @@ func TestLoadAllowedOrigins(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The kill switch and the supervisor-supplied version are user-visible
+// boundaries: the daemon reads them from the environment the desktop app hands
+// it, so a parsing regression here silently disables the switch.
+func TestLoadTelemetryDisabledEventsAndAppVersion(t *testing.T) {
+	t.Setenv("AO_TELEMETRY_DISABLED_EVENTS", " ao.v2.app.active , ao.renderer.* ,, ")
+	t.Setenv("AO_TELEMETRY_APP_VERSION", "  0.11.2  ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{"ao.v2.app.active", "ao.renderer.*"}
+	if len(cfg.Telemetry.DisabledEvents) != len(want) {
+		t.Fatalf("DisabledEvents = %#v, want %#v", cfg.Telemetry.DisabledEvents, want)
+	}
+	for i, name := range want {
+		if cfg.Telemetry.DisabledEvents[i] != name {
+			t.Fatalf("DisabledEvents[%d] = %q, want %q", i, cfg.Telemetry.DisabledEvents[i], name)
+		}
+	}
+	if cfg.Telemetry.AppVersion != "0.11.2" {
+		t.Fatalf("AppVersion = %q, want trimmed 0.11.2", cfg.Telemetry.AppVersion)
+	}
+}
+
+// An unparseable or blank list must never stop the daemon booting: the switch
+// has to be usable in a hurry, so a bad entry is inert rather than fatal.
+func TestLoadTelemetryDisabledEventsBlankIsInert(t *testing.T) {
+	t.Setenv("AO_TELEMETRY_DISABLED_EVENTS", " , , ")
+	t.Setenv("AO_TELEMETRY_APP_VERSION", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Telemetry.DisabledEvents) != 0 {
+		t.Fatalf("DisabledEvents = %#v, want empty", cfg.Telemetry.DisabledEvents)
+	}
+	if cfg.Telemetry.AppVersion != "" {
+		t.Fatalf("AppVersion = %q, want empty", cfg.Telemetry.AppVersion)
+	}
 }

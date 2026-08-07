@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
+import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { captureRendererEvent } from "../lib/telemetry";
 import {
 	type PRState,
@@ -27,7 +28,6 @@ function toPullRequestFacts(pr: components["schemas"]["SessionPRFacts"]): PullRe
 }
 
 export const workspaceQueryKey = ["workspaces"] as const;
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
 const reportedUnknownSessionFields = new Set<string>();
 
 function reportUnknownSessionField(field: "status" | "activity", value?: string): void {
@@ -46,7 +46,7 @@ function reportUnknownSessionField(field: "status" | "activity", value?: string)
 type FakeAgentSeam = { snapshot: () => WorkspaceSummary[] };
 
 async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
-	if (usePreviewData) {
+	if (usesPreviewWorkspaceData) {
 		const fake =
 			typeof window !== "undefined"
 				? (window as unknown as { __aoFakeAgent?: FakeAgentSeam }).__aoFakeAgent
@@ -54,7 +54,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 		return fake ? fake.snapshot() : mockWorkspaces;
 	}
 	if (!hasTrustedApiBaseUrl()) {
-		return [];
+		throw new Error("AO daemon API is not ready");
 	}
 
 	const [{ data: projectsData, error: projectsError }, { data: sessionsData, error: sessionsError }] =
@@ -88,7 +88,17 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						title: session.displayName ?? session.issueId ?? session.id,
 						issueId: session.issueId,
 						provider: toAgentProvider(session.harness),
+						reviewerHarness:
+							session.reviewerHarness === "claude-code" ||
+							session.reviewerHarness === "codex" ||
+							session.reviewerHarness === "opencode"
+								? session.reviewerHarness
+								: undefined,
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+						// Carried through verbatim: the session surface must render from
+						// the mode this session was created with, not from whatever the
+						// current default happens to be.
+						mode: session.mode === "chat" ? "chat" : "tui",
 						branch: session.branch || undefined,
 						status,
 						scmStatus,
@@ -99,6 +109,8 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						activity,
 						previewUrl: session.previewUrl,
 						previewRevision: session.previewRevision,
+						isPinned: session.isPinned ?? false,
+						pinnedAt: session.pinnedAt ?? undefined,
 						prs: (session.prs ?? []).map(toPullRequestFacts),
 					};
 				}),

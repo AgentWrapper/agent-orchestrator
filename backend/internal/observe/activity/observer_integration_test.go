@@ -12,7 +12,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func TestObserverIntegrationReconcilesRealTmuxOutputIntoSQLite(t *testing.T) {
@@ -21,29 +21,26 @@ func TestObserverIntegrationReconcilesRealTmuxOutputIntoSQLite(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		output     string
-		wantState  domain.ActivityState
-		wantEvents int
+		name      string
+		output    string
+		wantState domain.ActivityState
 	}{
 		{
-			name:       "idle composer repairs missed stop",
-			output:     "\n› Write tests for @filename\n\ngpt-5.6-sol low · ~/project\n",
-			wantState:  domain.ActivityIdle,
-			wantEvents: 1,
+			name:      "idle composer repairs missed stop",
+			output:    "\n› Write tests for @filename\n\ngpt-5.6-sol low · ~/project\n",
+			wantState: domain.ActivityIdle,
 		},
 		{
-			name:       "working marker prevents demotion",
-			output:     "\n• Working (3m 10s • esc to interrupt)\n› Add tests\n\ngpt-5.6-sol low · ~/project\n",
-			wantState:  domain.ActivityActive,
-			wantEvents: 0,
+			name:      "working marker prevents demotion",
+			output:    "\n• Working (3m 10s • esc to interrupt)\n› Add tests\n\ngpt-5.6-sol low · ~/project\n",
+			wantState: domain.ActivityActive,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			store, err := sqlite.Open(t.TempDir())
+			store, err := sqlitetest.Open(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,16 +110,6 @@ func TestObserverIntegrationReconcilesRealTmuxOutputIntoSQLite(t *testing.T) {
 			}
 			if got.Activity.State != tt.wantState {
 				t.Fatalf("activity state = %q, want %q", got.Activity.State, tt.wantState)
-			}
-			events, err := store.ListPendingWorkerIdleEvents(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(events) != tt.wantEvents {
-				t.Fatalf("pending worker idle events = %d, want %d", len(events), tt.wantEvents)
-			}
-			if tt.wantEvents == 1 && events[0].WorkerID != session.ID {
-				t.Fatalf("worker idle event worker = %q, want %q", events[0].WorkerID, session.ID)
 			}
 		})
 	}

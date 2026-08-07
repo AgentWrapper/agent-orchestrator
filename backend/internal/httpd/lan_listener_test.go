@@ -18,7 +18,7 @@ func TestLANManagerAuthGatesSharedHandler(t *testing.T) {
 	})
 	st := &authState{}
 	st.setHash(mobilebridge.HashPassword("secret12"))
-	m := NewLANManager(inner, st, 0, slog.Default()) // port 0 → ephemeral
+	m := NewLANManager(inner, st, 0, slog.Default(), nil) // port 0 → ephemeral
 	port, err := m.Start(0)
 	if err != nil {
 		t.Fatalf("start: %v", err)
@@ -44,17 +44,17 @@ func TestLANManagerAuthGatesSharedHandler(t *testing.T) {
 }
 
 // TestLANManagerBlocksLoopbackOnlyControlRoutes proves the LAN listener never
-// serves /shutdown, /internal/*, /api/v1/mobile*, or developer maintenance
-// routes — even when the request carries a spoofed Host: 127.0.0.1 and valid LAN
-// auth, since gating on Host alone (localControlRequest) is what let a LAN
-// client reach these routes.
+// serves /shutdown, /internal/*, /api/v1/mobile*, /api/v1/dev*, or
+// /api/v1/browser* — even when the request carries a spoofed Host: 127.0.0.1
+// and valid LAN auth, since gating on Host alone (localControlRequest) is what
+// let a LAN client reach these routes.
 func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, "ok")
 	})
 	st := &authState{}
 	st.setHash(mobilebridge.HashPassword("secret12"))
-	m := NewLANManager(inner, st, 0, slog.Default())
+	m := NewLANManager(inner, st, 0, slog.Default(), nil)
 	port, err := m.Start(0)
 	if err != nil {
 		t.Fatalf("start: %v", err)
@@ -66,6 +66,8 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 		"/internal/telemetry/cli-invoked",
 		"/api/v1/mobile/status",
 		"/api/v1/dev/import-projects",
+		"/api/v1/browser/status",
+		"/api/v1/sessions/ao-1/preview/server",
 	}
 	for _, path := range blocked {
 		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
@@ -95,7 +97,7 @@ func TestLANManagerBlocksLoopbackOnlyControlRoutes(t *testing.T) {
 }
 
 func TestLANManagerStartStopIdempotent(t *testing.T) {
-	m := NewLANManager(http.NotFoundHandler(), &authState{}, 0, slog.Default())
+	m := NewLANManager(http.NotFoundHandler(), &authState{}, 0, slog.Default(), nil)
 	p1, _ := m.Start(0)
 	p2, _ := m.Start(0) // idempotent — same port, no error
 	if p1 != p2 {

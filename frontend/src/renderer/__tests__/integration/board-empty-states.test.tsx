@@ -15,7 +15,11 @@ const { getMock, navigateMock, chooseDirectoryMock, spawnOrchestratorMock } = vi
 	spawnOrchestratorMock: vi.fn(),
 }));
 
-vi.mock("../../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnOrchestratorMock }));
+vi.mock("../../lib/spawn-orchestrator", () => ({
+	isChatPreflightError: (error: unknown) =>
+		error instanceof Error && (error as Error & { code?: string }).code === "CHAT_DRIVER_UNAVAILABLE",
+	spawnOrchestrator: spawnOrchestratorMock,
+}));
 
 vi.mock("../../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: vi.fn() },
@@ -90,6 +94,7 @@ function renderBoard(ui: ReactNode) {
 	lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 	lastShell = {
 		daemonStatus: { state: "ready" } as ShellContextValue["daemonStatus"],
+		workspaceStartupState: "ready",
 		createProject: createProjectMock,
 		initializeProjectRepository: initializeProjectRepositoryMock,
 	};
@@ -115,6 +120,31 @@ beforeEach(() => {
 });
 
 describe("global board first launch", () => {
+	it("shows the startup loader instead of import while the daemon is booting", async () => {
+		respondWith([], []);
+		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		lastShell = {
+			daemonStatus: { state: "starting" } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "loading",
+			createProject: createProjectMock,
+			initializeProjectRepository: initializeProjectRepositoryMock,
+		};
+		render(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByTestId("daemon-startup-loader")).toHaveClass("ao-startup-screen");
+		expect(screen.getByRole("status", { name: "Agent Orchestrator is starting" })).toBeInTheDocument();
+		expect(screen.getByText("Agent Orchestrator")).toBeInTheDocument();
+		expect(screen.getByText("Starting local services")).toHaveAttribute("aria-hidden", "true");
+		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
+		expect(columnCount()).toBe(0);
+	});
+
 	it("shows the import chooser instead of empty columns when no projects exist", async () => {
 		respondWith([], []);
 		renderBoard(<SessionsBoard />);
@@ -166,6 +196,28 @@ describe("global board first launch", () => {
 		expect(screen.queryByText("Import to Agent Orchestrator")).not.toBeInTheDocument();
 		expect(columnCount()).toBe(4);
 	});
+
+	it("keeps populated columns visible after the daemon reports a startup failure", async () => {
+		respondWith([project], [workerSession]);
+		lastQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		lastShell = {
+			daemonStatus: { state: "stopped", code: "exited" } as ShellContextValue["daemonStatus"],
+			workspaceStartupState: "loading",
+			createProject: createProjectMock,
+			initializeProjectRepository: initializeProjectRepositoryMock,
+		};
+		render(
+			<QueryClientProvider client={lastQueryClient}>
+				<ShellProvider value={lastShell}>
+					<SessionsBoard />
+				</ShellProvider>
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByText("fix the bug")).toBeInTheDocument();
+		expect(screen.queryByTestId("daemon-startup-loader")).not.toBeInTheDocument();
+		expect(columnCount()).toBe(4);
+	});
 });
 
 describe("project board with no sessions", () => {
@@ -191,6 +243,23 @@ describe("project board with no sessions", () => {
 		await userEvent.click(spawnButton);
 
 		expect(await screen.findByText(/branch is already checked out/)).toBeInTheDocument();
+	});
+
+	it("offers an explicit Terminal UI fallback when Chat preflight fails", async () => {
+		respondWith([project], []);
+		const preflightError = Object.assign(new Error("Claude Code is unavailable"), {
+			code: "CHAT_DRIVER_UNAVAILABLE",
+		});
+		spawnOrchestratorMock.mockRejectedValueOnce(preflightError).mockResolvedValueOnce("proj-1-orchestrator");
+		renderBoard(<SessionsBoard projectId="proj-1" />);
+
+		await screen.findByText("No worker sessions yet");
+		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
+		await userEvent.click(spawnButton);
+		await userEvent.click(await screen.findByRole("button", { name: "Create as Terminal UI" }));
+
+		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(1, "proj-1", "board", false, undefined);
+		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(2, "proj-1", "board", false, "tui");
 	});
 
 	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {

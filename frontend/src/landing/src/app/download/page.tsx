@@ -8,13 +8,15 @@ import {
 import { Download } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
-import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
+import { FaAndroid, FaApple, FaLinux, FaWindows } from "react-icons/fa";
+import { TestFlightDialog } from "./TestFlightDialog";
 import { PlatformDownloadButton } from "./PlatformDownloadButton";
 import { DesktopAppPreview, PhoneAppPreview } from "./StaticAppPreviews";
 
 export const metadata: Metadata = {
   title: "Download",
-  description: "Download Agent Orchestrator for macOS, Windows, or Linux.",
+  description:
+    "Download Agent Orchestrator for macOS, Windows, or Linux, and join the iOS TestFlight beta of the mobile companion.",
 };
 
 interface GitHubReleaseAsset {
@@ -173,9 +175,10 @@ export default async function DownloadPage() {
             <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
-                  src="/feature3.png"
+                  src="/optimized/feature3.webp"
                   alt=""
                   fill
+                  preload
                   sizes="(max-width: 767px) 100vw, 50vw"
                   className="object-cover"
                 />
@@ -200,9 +203,10 @@ export default async function DownloadPage() {
             <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
-                  src="/feature.png"
+                  src="/optimized/feature.webp"
                   alt=""
                   fill
+                  preload
                   sizes="(max-width: 767px) 100vw, 50vw"
                   className="object-cover"
                 />
@@ -211,14 +215,16 @@ export default async function DownloadPage() {
               </div>
 
               <div className="flex flex-1 flex-col">
-                <h2 className="text-xl font-semibold text-foreground">Phones</h2>
+                <h2 className="text-xl font-semibold text-foreground">Mobile</h2>
                 <p className="mt-2 text-base text-muted-foreground">
                   Mobile companion to monitor agent runs and follow reviews from
                   anywhere.
                 </p>
-                <div className="mt-6">
-                  <span className="inline-flex shrink-0 items-center whitespace-nowrap rounded-3xl bg-foreground px-3 py-2 text-sm font-semibold tracking-[-0.5px] text-background sm:px-6 sm:py-3 sm:text-base">
-                    Coming Soon
+                <div className="mt-6 flex flex-wrap items-center gap-3">
+                  <TestFlightDialog />
+                  <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-3xl border border-border px-3 py-2 text-sm font-semibold tracking-[-0.5px] text-muted-foreground sm:px-6 sm:py-3 sm:text-base">
+                    <FaAndroid className="size-4 shrink-0" aria-hidden="true" />
+                    Android coming soon
                   </span>
                 </div>
               </div>

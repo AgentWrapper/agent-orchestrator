@@ -1,5 +1,5 @@
 // Standalone shell terminals: shells the user opens by hand from the topbar or
-// Ctrl+`, with no agent session behind them. They are deliberately kept out of
+// ⌘T / Ctrl+T, with no agent session behind them. They are deliberately kept out of
 // the workspaces query — they are not sessions, never appear on the board, and
 // must not invalidate session state when they come and go.
 
@@ -99,6 +99,11 @@ export function useOpenShellTerminal() {
 		},
 		onSuccess: () => {
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
+		},
+		// Without this, a failed open (worktree gone, no shell resolvable, daemon
+		// busy) leaves the "+" button looking like it silently did nothing.
+		onError: (error) => {
+			console.error("Failed to open shell terminal:", error);
 		},
 	});
 }

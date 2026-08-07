@@ -1,10 +1,7 @@
 import { COMPANY } from "@ao/shared/constants";
 import { FAQ_ITEMS } from "@/app/components/FAQSection/constants";
-import { getBlogPosts } from "./blog";
 import { getComparisonPages } from "./compare";
-
-export const API_URL = "https://api.aoagents.dev";
-export const MCP_SERVER_URL = `${API_URL}/api/v2/agent/mcp`;
+import { getDocPage, getDocsNav, type DocsNavItem } from "./docs";
 
 export function stripMdxSyntax(content: string): string {
 	return (
@@ -24,79 +21,125 @@ export function buildLlmsHeader(): string[] {
 	return [
 		`# ${COMPANY.NAME}`,
 		"",
-		"> Run 10+ parallel coding agents on your machine",
+		"> Open-source desktop application and local CLI (`ao`) to run 10+ parallel AI coding agents in isolated Git worktrees without file conflicts or API proxying.",
 		"",
-		`${COMPANY.NAME} is an open-source desktop application that lets developers run multiple AI coding agents in parallel, each in its own isolated Git worktree. It works with any CLI-based agent including Claude Code, OpenCode, and OpenAI Codex. Agents can work on different branches or features simultaneously without conflicts. ${COMPANY.NAME} is free, does not proxy API calls, and supports macOS with Windows and Linux coming soon.`,
+		`${COMPANY.NAME} is an open-source desktop application that lets developers run multiple AI coding agents in parallel, each in its own isolated Git worktree. It works with any CLI-based agent including Claude Code, OpenCode, and OpenAI Codex. Agents can work on different branches or features simultaneously without conflicts. ${COMPANY.NAME} is free, does not proxy API calls, and supports macOS, Windows, and Linux.`,
 	];
 }
 
-export function buildWhenToUseSection(): string[] {
+export function buildWhenToUseSection(
+	{ referenceDocumentationSection = false }: {
+		referenceDocumentationSection?: boolean;
+	} = {},
+): string[] {
+	const documentationDirection = referenceDocumentationSection
+		? "To learn the product, use the Documentation section below."
+		: "To learn the product, start with the docs index at https://aoagents.dev/docs/.";
+
 	return [
 		"## When to use Agent Orchestrator",
 		"",
 		"Reach for Agent Orchestrator when you need to:",
 		"",
 		"- Run several coding agents (Claude Code, Codex, OpenCode, or any CLI agent) at the same time on one repository without them stepping on each other, each agent gets an isolated Git worktree and its own branch.",
-		"- Orchestrate agent work programmatically: create workspaces, launch agents with a prompt, open terminals, and track tasks from another agent or script via the Agent Orchestrator MCP server.",
+		"- Orchestrate agent work through the desktop app and local `ao` CLI: create workspaces, launch agents with a prompt, open terminals, and track tasks.",
 		"- Schedule recurring agent runs (automations) that execute a prompt on a cron-like schedule in a fresh or existing workspace.",
+		"- Automatically route CI failures and review feedback to the agent session that owns the branch, so the right agent can handle failures without manual babysitting.",
 		"- Review diffs, manage ports, and monitor many concurrent agent sessions from one dashboard.",
 		"",
-		"Agent Orchestrator is not a coding agent itself, it is the workspace and orchestration layer the agents run in. If you are an AI agent, the fastest way to act on a user's Agent Orchestrator account is the MCP server below (OAuth or API key auth); the fastest way to learn the product is the docs index at https://aoagents.dev/docs.",
+		`Agent Orchestrator is not a coding agent itself; it is the local workspace and orchestration layer the agents run in. If you are an AI agent inside an AO-managed session, use the installed \`ao\` CLI. ${documentationDirection}`,
 	];
 }
 
-export function buildDeveloperResourcesSection(): string[] {
+export function buildDeveloperResourcesSection(
+	{ includeDocumentationLinks = true }: {
+		includeDocumentationLinks?: boolean;
+	} = {},
+): string[] {
 	const baseUrl = COMPANY.MARKETING_URL;
 	const docsUrl = COMPANY.DOCS_URL;
 	return [
 		"## Developer resources",
 		"",
-		`- [API docs](${docsUrl}/mcp-server): Agent Orchestrator MCP server documentation`,
-		`- [OpenAPI spec](${API_URL}/openapi.json): OpenAPI 3.1 description of the Agent Orchestrator API surface`,
-		`- [MCP server](${MCP_SERVER_URL}): Model Context Protocol server (Streamable HTTP transport), 27 tools for tasks, workspaces, agents, automations, terminals, hosts, and projects. Alias: ${API_URL}/mcp`,
-		`- [Docs MCP server](${docsUrl}/mcp): search and read the Agent Orchestrator documentation over MCP (Streamable HTTP, no auth)`,
-		`- [MCP server card](${baseUrl}/.well-known/mcp/server-card.json): machine-readable MCP server description`,
-		`- [A2A agent card](${baseUrl}/.well-known/agent-card.json): Agent-to-Agent capability card`,
-		`- [API catalog](${baseUrl}/.well-known/api-catalog): RFC 9727 linkset of API resources`,
-		`- [Auth guide for agents](${baseUrl}/auth.md): how agents obtain credentials (OAuth 2.1 + PKCE with dynamic client registration, or API keys)`,
+		...(includeDocumentationLinks
+			? [
+					`- [Documentation](${docsUrl}/): product and workflow documentation`,
+					`- [Quickstart](${docsUrl}/quickstart/): install and first-run guide`,
+					`- [CLI](${docsUrl}/cli/): local \`ao\` command reference`,
+				]
+			: []),
 		`- [Agent instructions](${baseUrl}/agents.md): when and how AI agents should use Agent Orchestrator`,
-		`- [OAuth protected resource metadata](${API_URL}/.well-known/oauth-protected-resource): RFC 9728`,
-		`- [OAuth authorization server metadata](${API_URL}/.well-known/oauth-authorization-server): RFC 8414`,
-		`- [CLI](${docsUrl}/cli): \`brew install agentwrapper/tap/agent-orchestrator\` or \`curl -fsSL https://aoagents.dev/cli/install.sh | sh\``,
-		`- [Docs llms.txt](${docsUrl}/llms.txt): scoped context for the documentation`,
-		`- [API llms.txt](${baseUrl}/api/llms.txt): scoped index of the API surface`,
 		`- [Blog llms.txt](${baseUrl}/blog/llms.txt): scoped index of blog posts`,
-		`- [Compare llms.txt](${baseUrl}/compare/llms.txt): scoped index of comparison pages`,
+		`- [GitHub](${COMPANY.GITHUB_URL}): source code and releases`,
 	];
 }
 
+function docSlugFromUrl(url: string): string[] {
+	const path = url.replace(/^\/docs\/?/, "");
+	return path ? path.split("/") : [];
+}
+
+function renderDocumentationItem(item: DocsNavItem, depth: number): string[] {
+	const indent = "  ".repeat(depth);
+	if (item.separator) return [`${indent}- **${item.title}**`];
+
+	const page = item.url ? getDocPage(docSlugFromUrl(item.url)) : undefined;
+	const href = item.url
+		? `${COMPANY.MARKETING_URL}${item.url.replace(/\/+$/, "")}/index.html.md`
+		: undefined;
+	const link = href ? `[${item.title}](${href})` : item.title;
+	const label = item.items && item.items.length > 0 ? `**${link}**` : link;
+	const description = page?.description ? `: ${page.description}` : "";
+	const lines = [`${indent}- ${label}${description}`];
+
+	for (const child of item.items ?? []) {
+		lines.push(...renderDocumentationItem(child, depth + 1));
+	}
+
+	return lines;
+}
+
+export function buildDocumentationSection(): string[] {
+	const overview = getDocPage([]);
+	const overviewDescription = overview?.description
+		? `: ${overview.description}`
+		: "";
+	const lines = [
+		"## Documentation",
+		"",
+		`- **[Documentation overview](${COMPANY.DOCS_URL}/index.html.md)**${overviewDescription}`,
+	];
+
+	for (const item of getDocsNav()) {
+		if (item.separator) {
+			if (lines[lines.length - 1] !== "") lines.push("");
+			lines.push(`### ${item.title}`, "");
+			continue;
+		}
+		lines.push(...renderDocumentationItem(item, 0));
+	}
+
+	return lines;
+}
+
 export function buildLlmsTxt(): string {
-	const posts = getBlogPosts();
 	const comparisons = getComparisonPages();
 	const baseUrl = COMPANY.MARKETING_URL;
-	const docsUrl = COMPANY.DOCS_URL;
 
 	const lines: string[] = [
 		...buildLlmsHeader(),
 		"",
-		...buildWhenToUseSection(),
+		...buildWhenToUseSection({ referenceDocumentationSection: true }),
 		"",
-		...buildDeveloperResourcesSection(),
+		...buildDeveloperResourcesSection({ includeDocumentationLinks: false }),
+		`- [Full LLM context](${baseUrl}/llms-full.txt): combined AO overview, developer resources, comparisons, and FAQ`,
 		"",
-		"## Docs",
-		"",
-		`- [Documentation](${docsUrl})`,
-		`- [Getting Started](${docsUrl}/getting-started)`,
-		`- [GitHub](${COMPANY.GITHUB_URL})`,
-		"",
-		"## Blog",
-		"",
-		...posts.map((post) => `- [${post.title}](${baseUrl}/blog/${post.slug})`),
+		...buildDocumentationSection(),
 		"",
 		"## Comparisons",
 		"",
 		...comparisons.map(
-			(page) => `- [${page.title}](${baseUrl}/compare/${page.slug})`,
+			(page) => `- [${page.title}](${baseUrl}/compare/${page.slug}/)`,
 		),
 		"",
 		"## FAQ",

@@ -190,6 +190,12 @@ describe("normalizeApiOperation", () => {
 		expect(normalizeApiOperation("get", "/api/v1/projects/my project id")).toBe("GET /api/v1/projects/:id");
 		expect(normalizeApiOperation("POST", "/api/v1/sessions/ao-42/kill")).toBe("POST /api/v1/sessions/:id/kill");
 		expect(normalizeApiOperation("PUT", "/api/v1/projects/p1/config")).toBe("PUT /api/v1/projects/:id/config");
+		expect(normalizeApiOperation("GET", "/api/v1/agents/claude-code/models")).toBe(
+			"GET /api/v1/agents/:id/models",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/agents/codex/models/refresh")).toBe(
+			"POST /api/v1/agents/:id/models/refresh",
+		);
 	});
 
 	it("leaves collection and non-resource paths untouched", () => {
@@ -210,6 +216,9 @@ describe("normalizeApiOperation", () => {
 		);
 		expect(normalizeApiOperation("GET", "/api/v1/sessions/ao-42/workspace/file")).toBe(
 			"GET /api/v1/sessions/:id/workspace/file",
+		);
+		expect(normalizeApiOperation("POST", "/api/v1/sessions/ao-42/preview/server")).toBe(
+			"POST /api/v1/sessions/:id/preview/server",
 		);
 	});
 

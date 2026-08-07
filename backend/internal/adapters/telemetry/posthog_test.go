@@ -13,7 +13,7 @@ import (
 
 func TestPostHogSinkCapturesEvent(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -73,7 +73,7 @@ func TestPostHogSinkCapturesEvent(t *testing.T) {
 
 func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -139,7 +139,7 @@ func TestPostHogSinkSanitizesPayloads(t *testing.T) {
 
 func TestPostHogSinkSanitizesAppActivePayload(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", roundTripClient(func(req *http.Request) (*http.Response, error) {
+	sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", "", roundTripClient(func(req *http.Request) (*http.Response, error) {
 		defer req.Body.Close()
 		var body map[string]any
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -178,9 +178,18 @@ func TestPostHogSinkSanitizesAppActivePayload(t *testing.T) {
 
 	select {
 	case req := <-requests:
+		if got := req["event"]; got != "ao.v2.app.active" {
+			t.Fatalf("event = %#v, want ao.v2.app.active", got)
+		}
 		props, ok := req["properties"].(map[string]any)
 		if !ok {
 			t.Fatalf("properties type = %T, want map[string]any", req["properties"])
+		}
+		if props["legacy_event_name"] != "ao.app.active" {
+			t.Fatalf("legacy_event_name = %#v, want ao.app.active", props["legacy_event_name"])
+		}
+		if props["telemetry_schema_version"] != float64(2) {
+			t.Fatalf("telemetry_schema_version = %#v, want 2", props["telemetry_schema_version"])
 		}
 		if props["channel"] != "cli" || props["command"] != "spawn" || props["command_path"] != "ao spawn" {
 			t.Fatalf("sanitized properties = %#v, want active CLI metadata", props)
@@ -200,3 +209,60 @@ type roundTripClient func(*http.Request) (*http.Response, error)
 func (f roundTripClient) Do(req *http.Request) (*http.Response, error) { return f(req) }
 
 var _ postHogClient = roundTripClient(nil)
+
+// Daemon events shipped with no version at all, so a session-spawn failure rate
+// could not be attributed to a release. The supervisor supplies the version
+// because the daemon binary has none that release tooling sets.
+func TestPostHogSinkStampsAppVersionWhenSupplied(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	newSink := func(appVersion string) *PostHogSink {
+		sink, err := NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", appVersion, "", roundTripClient(func(req *http.Request) (*http.Response, error) {
+			defer req.Body.Close()
+			var body map[string]any
+			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+				return nil, err
+			}
+			requests <- body
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
+		}), nil)
+		if err != nil {
+			t.Fatalf("NewPostHogSink: %v", err)
+		}
+		return sink
+	}
+
+	emit := func(sink *PostHogSink) map[string]any {
+		sink.Emit(context.Background(), ports.TelemetryEvent{
+			Name:       "ao.session.spawn_failed",
+			Source:     "session_service",
+			OccurredAt: time.Unix(1700000000, 0).UTC(),
+			Level:      ports.TelemetryLevelError,
+		})
+		select {
+		case body := <-requests:
+			props, ok := body["properties"].(map[string]any)
+			if !ok {
+				t.Fatalf("properties type = %T, want map[string]any", body["properties"])
+			}
+			return props
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for capture")
+			return nil
+		}
+	}
+
+	props := emit(newSink(" 0.11.2 "))
+	if props["app_version"] != "0.11.2" || props["ao_version"] != "0.11.2" {
+		t.Fatalf("version properties = %#v / %#v, want trimmed 0.11.2", props["app_version"], props["ao_version"])
+	}
+
+	// An unset supervisor env var must leave the properties off rather than
+	// reporting a misleading placeholder that would pollute version breakdowns.
+	props = emit(newSink(""))
+	if _, ok := props["app_version"]; ok {
+		t.Fatalf("app_version present without the option: %#v", props["app_version"])
+	}
+	if _, ok := props["ao_version"]; ok {
+		t.Fatalf("ao_version present without the option: %#v", props["ao_version"])
+	}
+}

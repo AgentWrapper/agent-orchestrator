@@ -1,6 +1,7 @@
 import { AGENT_HARNESSES, COMPANY } from "@ao/shared/constants";
 import type { Metadata } from "next";
 import Image from "next/image";
+import { preload } from "react-dom";
 import {
   formatStatPlus,
   getGitHubRepoStats,
@@ -18,6 +19,16 @@ const MAILTO_HREF = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
 )}&body=${encodeURIComponent(
   "Hi Prateek,\n\nWe're interested in the AO design partner program.\n\nCompany:\nEngineering team size:\nAgent harnesses we use today (Claude Code / Codex / Cursor / ...):\nWhat we want out of AO:\n",
 )}`;
+const HERO_IMAGE = "/optimized/design-partners/hero-car-engine-olive.webp";
+const SHARED_WORKSPACE_IMAGE =
+  "/optimized/design-partners/shared-workspace-olive.webp";
+
+const ROADMAP_PHASE_IMAGES = {
+  fleet: "/optimized/design-partners/roadmap-fleet-olive.webp",
+  missionControl: "/optimized/design-partners/roadmap-mission-control-olive.webp",
+  roi: "/optimized/design-partners/roadmap-roi-olive.webp",
+  engineRoom: "/optimized/design-partners/roadmap-engine-room-olive.webp",
+} as const;
 
 /** Shown only if the GitHub API request fails. */
 const FALLBACK_STATS = {
@@ -27,7 +38,7 @@ const FALLBACK_STATS = {
 } as const;
 
 export const metadata: Metadata = {
-  title: "Design Partner Program - Agent Orchestrator",
+  title: "Design Partner Program",
   description:
     "Mission control for your agent fleet: shared sessions, ROI observability, and an engine room your org fully owns. Your engineers get leverage; your leadership gets answers.",
   openGraph: {
@@ -88,7 +99,7 @@ const phases: RoadmapPhase[] = [
       "CI failures and review comments route back to the agent that owns the branch",
       "An orchestrator plans the work and spawns the workers",
     ],
-    image: "/design-partners/roadmap-fleet-olive.png",
+    image: ROADMAP_PHASE_IMAGES.fleet,
     imageAlt:
       "One orchestration workstation coordinating five coding-agent modules across separate worktree lanes",
   },
@@ -97,13 +108,13 @@ const phases: RoadmapPhase[] = [
     status: "building now - partners get it first",
     title: "Shared mission control",
     theme:
-      "The fleet becomes a team sport. Execution stays local; coordination moves to one workspace.",
+      "The fleet becomes a team. Execution stays local; coordination moves to one workspace.",
     unlocks: [
       "Team workspaces - the first cloud layer, opt-in by design",
       "Every session durably captured; hand a running fleet to a teammate",
       "One board for the team: running, merged, needs a human",
     ],
-    image: "/design-partners/roadmap-mission-control-olive.png",
+    image: ROADMAP_PHASE_IMAGES.missionControl,
     imageAlt:
       "Three local agent workstations connecting to a shared team mission-control board",
   },
@@ -112,13 +123,13 @@ const phases: RoadmapPhase[] = [
     status: "partners shape the spec",
     title: "The ROI answer",
     theme:
-      "What did the agents ship last week? What did it cost? Answered.",
+      "What did the agents ship last week? What did it cost? Now you have the numbers.",
     unlocks: [
       "Token spend by project, agent, and team",
       "Outcomes, not vibes: agent PRs merged, cycle time, human-rescue rate",
       "Transcripts joined with GitHub, CI, reviews, and trackers - reviewable in one place",
     ],
-    image: "/design-partners/roadmap-roi-olive.png",
+    image: ROADMAP_PHASE_IMAGES.roi,
     imageAlt:
       "A measurement console joining agent cost, merged work, cycle time, and human handoffs",
   },
@@ -133,10 +144,18 @@ const phases: RoadmapPhase[] = [
       "Security policies enforced on every agent; audit trails and SSO across the fleet",
       "The dataset stays yours: full transcripts joined with SCM, CI, and tracker history",
     ],
-    image: "/design-partners/roadmap-engine-room-olive.png",
+    image: ROADMAP_PHASE_IMAGES.engineRoom,
     imageAlt:
       "A self-hosted control plane, security gate, and archive contained inside a private perimeter",
   },
+];
+
+// The hero is excluded: its <Image priority> already preloads it, and as the LCP
+// element it should stay the only image competing for early bandwidth. These are
+// all below the fold, so they warm the cache at low priority instead.
+const BELOW_FOLD_IMAGES = [
+  SHARED_WORKSPACE_IMAGE,
+  ...phases.map((phase) => phase.image),
 ];
 
 function ArrowIcon({ className = "" }: { className?: string }) {
@@ -183,6 +202,11 @@ function TextLink({
 }
 
 export default async function DesignPartnersPage() {
+  // Emitted before the stats await so the browser can fetch artwork in parallel.
+  for (const image of BELOW_FOLD_IMAGES) {
+    preload(image, { as: "image", fetchPriority: "low" });
+  }
+
   const repo = await getGitHubRepoStats();
   const stars = repo?.stars ?? FALLBACK_STATS.stars;
   const forks = repo?.forks ?? FALLBACK_STATS.forks;
@@ -210,9 +234,9 @@ export default async function DesignPartnersPage() {
               </h1>
               <p className="mt-6 max-w-3xl text-pretty text-base leading-8 text-muted-foreground sm:text-xl">
                 Your engineers already run coding agents. Nobody runs the fleet.
-                AO puts every agent, branch, and PR on one board and routes CI
-                failures and review comments back to the agent that owns them.
-                More merged work from the subscriptions you already pay for.
+                AO puts every agent, branch, and PR on one board, routes CI
+                failures and review comments back to the agent that owns them,
+                and tells you what the spend actually produced.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <a
@@ -237,7 +261,7 @@ export default async function DesignPartnersPage() {
             </div>
 
             <Image
-              src="/design-partners/hero-car-engine-olive.png"
+              src={HERO_IMAGE}
               alt="An isometric car with its hood open and software engine highlighted"
               width={1536}
               height={1024}
@@ -277,7 +301,7 @@ export default async function DesignPartnersPage() {
             </p>
           </div>
           <Image
-            src="/design-partners/shared-workspace-olive.png"
+            src={SHARED_WORKSPACE_IMAGE}
             alt="Human workstations and coding-agent modules connected through one shared board and durable archive"
             width={1536}
             height={1024}
@@ -332,7 +356,7 @@ export default async function DesignPartnersPage() {
           </div>
           <p className="mt-8 max-w-4xl text-sm leading-7 text-muted-foreground">
             Best fit: 10-100 engineers. Multiple agent subscriptions in use.
-            Leadership asking what the spend produces. AO ships a new build every
+            Leadership asking what all that agent spend actually produces. AO ships a new build every
             night - what we promise, you watch arrive.
           </p>
         </div>

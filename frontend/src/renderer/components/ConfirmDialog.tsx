@@ -1,5 +1,7 @@
 import { X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
+import { Button } from "./ui/button";
 import {
 	Dialog,
 	DialogClose,
@@ -39,6 +41,7 @@ export function ConfirmDialog({
 	onConfirm,
 	onOpenChange,
 }: ConfirmDialogProps) {
+	const { t } = useTranslation();
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent showCloseButton={false} className={settingsDialogContentClass}>
@@ -47,8 +50,8 @@ export function ConfirmDialog({
 						type="button"
 						disabled={busy}
 						className="settings-dialog-close-button settings-close-button"
-						aria-label="Close dialog"
-						title="Close (Esc)"
+						aria-label={t("confirm.close")}
+						title={t("confirm.closeEsc")}
 					>
 						<X className="size-5" aria-hidden="true" />
 					</button>
@@ -71,21 +74,19 @@ export function ConfirmDialog({
 
 				<div className={settingsDialogFooterClass}>
 					<DialogClose asChild>
-						<button type="button" className="settings-footer-button" disabled={busy}>
-							Cancel
-						</button>
+						<Button type="button" variant="footer" disabled={busy}>
+							{t("confirm.cancel")}
+						</Button>
 					</DialogClose>
-					<button
+					<Button
 						type="button"
-						className={cn(
-							"settings-footer-button border-transparent text-white disabled:cursor-not-allowed disabled:opacity-50",
-							destructive ? "bg-danger-strong" : "bg-settings-accent",
-						)}
+						variant="footer-primary"
+						className={cn(destructive && "bg-danger-strong hover:bg-danger-strong")}
 						disabled={busy}
 						onClick={onConfirm}
 					>
 						{confirmLabel}
-					</button>
+					</Button>
 				</div>
 			</DialogContent>
 		</Dialog>
