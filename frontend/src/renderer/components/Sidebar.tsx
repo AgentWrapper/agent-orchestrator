@@ -122,6 +122,8 @@ type SidebarProps = {
 // route params, and clicks navigate rather than mutate a store.
 function useSelection() {
 	const navigate = useNavigate();
+	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
+	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	return {
@@ -129,8 +131,10 @@ function useSelection() {
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
-		goGlobalSettings: () => void navigate({ to: "/settings" }),
-		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
+		// Settings is a modal — open it in place so the current page (session
+		// terminal, board, etc.) stays underneath.
+		goGlobalSettings: () => openGlobalSettings(),
+		goSettings: (projectId: string) => openProjectSettings(projectId),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
 		goSession: (projectId: string, sessionId: string) =>
 			void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } }),
