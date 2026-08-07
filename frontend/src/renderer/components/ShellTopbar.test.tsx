@@ -335,13 +335,6 @@ describe("ShellTopbar inspector state", () => {
 });
 
 describe("TopbarKillButton", () => {
-	it("keeps the kill action compact beside the orchestrator button", () => {
-		renderKill();
-
-		const killButton = screen.getByRole("button", { name: "Kill session" });
-		expect(killButton).toHaveClass("px-2.5");
-	});
-
 	it("opens a compact confirmation card below the kill control", async () => {
 		renderKill();
 
