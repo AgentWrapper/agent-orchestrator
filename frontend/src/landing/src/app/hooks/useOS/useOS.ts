@@ -49,9 +49,15 @@ function detectMacArch():
 // only signal that separates an iPad from a Mac is that it reports touch
 // points. This is used for the device noun in copy, and to route iPads to the
 // touch flow rather than a QR they have no second device to scan.
+//
+// Match "macintosh" only, never "mac os x": every iPhone UA contains the
+// substring "like Mac OS X" ("iPhone; CPU iPhone OS 17_5 like Mac OS X"), so
+// matching that phrase labels every iPhone an iPad. The explicit iPhone/iPod
+// exclusion keeps that true even if a future UA adds "Macintosh".
 export function isIPadOS(userAgent: string, maxTouchPoints: number): boolean {
 	if (/ipad/i.test(userAgent)) return true;
-	return /macintosh|mac os x/i.test(userAgent) && maxTouchPoints > 1;
+	if (/iphone|ipod/i.test(userAgent)) return false;
+	return /macintosh/i.test(userAgent) && maxTouchPoints > 1;
 }
 
 function detectMobileOS(userAgent: string, maxTouchPoints: number): MobileOS {
