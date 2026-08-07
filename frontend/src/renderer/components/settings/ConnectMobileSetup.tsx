@@ -30,12 +30,12 @@ export function ConnectMobileSetup({ port, enabled }: ConnectMobileSetupProps) {
 				value={mode}
 				onValueChange={(value) => setMode(value as SetupMode)}
 				aria-label={t("mobile.connectionMethod")}
-				className="settings-segment"
+				className="settings-segment rounded-md"
 			>
-				<RadioGroup.Item value="lan" tabIndex={enabled ? 0 : -1} className="settings-segment-item">
+				<RadioGroup.Item value="lan" tabIndex={enabled ? 0 : -1} className="settings-segment-item rounded-md">
 					{t("mobile.lan")}
 				</RadioGroup.Item>
-				<RadioGroup.Item value="tailscale" tabIndex={enabled ? 0 : -1} className="settings-segment-item">
+				<RadioGroup.Item value="tailscale" tabIndex={enabled ? 0 : -1} className="settings-segment-item rounded-md">
 					{t("mobile.tailscale")}
 				</RadioGroup.Item>
 			</RadioGroup.Root>

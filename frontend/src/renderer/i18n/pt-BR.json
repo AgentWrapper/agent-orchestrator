@@ -494,6 +494,7 @@
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.preferences": "Preferências",
 	"settings.models.agentDefault": "Padrão do agente",
+	"settings.models.autoRouteLabel": "Automático (roteia automaticamente)",
 	"settings.models.browse": "Procurar",
 	"settings.models.custom": "Modelo personalizado…",
 	"settings.models.default": "Padrão",

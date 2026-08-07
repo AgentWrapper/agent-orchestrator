@@ -427,60 +427,56 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 
 	// Chip: the value reads as part of a sentence ("Runs with Codex") rather than
 	// as a form field, so the label is carried by that sentence, not by a <Label>.
+	// Built on the same SettingsOptionMenu as the settings-row variant (and the
+	// model chip beside it) so both halves of the pill share one dropdown
+	// component instead of a Select-based menu and a DropdownMenu-based one.
 	if (variant === "chip") {
+		const menuOptions = options.map((agent) => ({
+			value: agent.id,
+			label: agent.label,
+			disabled: agent.disabled,
+		}));
+
 		return (
-			<Select value={value} onValueChange={onChange} disabled={disabled}>
-				{/* The ! overrides are deliberate: SelectTrigger ships a form-control
-				    height, padding and chevron size, and a chip has to match the model
-				    chip beside it rather than the field it descends from. */}
-				<SelectTrigger
-					id={id}
-					size="sm"
-					className={cn(
-						"composer-chip h-control-md! bg-(--color-bg-composer-chip)! px-2! text-control! [&_svg]:size-icon-sm",
-						invalid && "text-error",
-						triggerClassName,
-					)}
-					aria-label={label}
-					aria-invalid={invalid || undefined}
-				>
-					<SelectValue placeholder={placeholder}>
+			<SettingsOptionMenu
+				aria-label={label}
+				value={value}
+				placeholder={placeholder}
+				options={menuOptions}
+				disabled={disabled}
+				onChange={onChange}
+				menuAlign="start"
+				triggerClassName={cn(
+					"composer-chip composer-toolbar-option w-full justify-between",
+					invalid && "text-error",
+					triggerClassName,
+				)}
+				menuClassName={contentClassName}
+				renderTrigger={() => (
+					<span className="flex min-w-0 items-center gap-2">
 						{selectedOption ? (
-							<span className="flex min-w-0 items-center gap-2">
-								<AgentAvatar provider={selectedOption.id} className="size-icon-base" decorative />
-								<span className="min-w-0 truncate" title={selectedOption.label}>
-									{selectedOption.label}
-								</span>
-							</span>
+							<AgentAvatar provider={selectedOption.id} className="size-icon-base" decorative />
 						) : null}
-					</SelectValue>
-				</SelectTrigger>
-				<SelectContent
-					position="popper"
-					side="bottom"
-					align="start"
-					sideOffset={6}
-					className={cn("max-h-select-menu-max!", contentClassName)}
-				>
-					{options.map((agent) => (
-						<SelectItem
-							key={agent.id}
-							value={agent.id}
+						<span className="min-w-0 truncate text-control text-foreground" title={selectedOption?.label ?? placeholder}>
+							{selectedOption?.label ?? placeholder}
+						</span>
+					</span>
+				)}
+				renderMenuItem={(option, selected) => {
+					const agent = options.find((entry) => entry.id === option.value);
+					if (!agent) return option.label;
+					return (
+						<AgentSelectMenuItem
+							agentId={agent.id}
+							label={agent.label}
+							selected={selected}
+							status={agent.status}
+							statusTone={agent.statusTone}
 							disabled={agent.disabled}
-							className="[&>span:last-child]:w-full"
-						>
-							<AgentSelectMenuItem
-								agentId={agent.id}
-								label={agent.label}
-								selected={value === agent.id}
-								status={agent.status}
-								statusTone={agent.statusTone}
-								disabled={agent.disabled}
-							/>
-						</SelectItem>
-					))}
-				</SelectContent>
-			</Select>
+						/>
+					);
+				}}
+			/>
 		);
 	}
 

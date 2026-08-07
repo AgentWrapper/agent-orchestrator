@@ -1,4 +1,4 @@
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw, Search } from "lucide-react";
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AgentModelCatalog } from "../../hooks/useAgentModelsQuery";
@@ -57,6 +57,7 @@ export function AgentModelCombobox({
 	menuAlign = "end",
 	renderTrigger,
 	recentScope,
+	compact = false,
 	"aria-label": ariaLabel,
 }: {
 	value: string;
@@ -67,7 +68,7 @@ export function AgentModelCombobox({
 	/** Rediscovery action, offered inside the menu instead of as standing chrome. */
 	onRefresh?: () => void;
 	refreshing?: boolean;
-	/** Names what happens with no override, e.g. "Let codex choose". */
+	/** Names what happens with no override, e.g. "Use codex's default". */
 	emptyLabel?: string;
 	triggerLabel?: string;
 	triggerClassName?: string;
@@ -75,6 +76,10 @@ export function AgentModelCombobox({
 	renderTrigger?: (label: string) => ReactNode;
 	/** Persists explicit model choices for this agent and pins them below defaults. */
 	recentScope?: string;
+	/** Flat "no override" + plain model names — no search, groups, badges, or
+	 *  refresh action. For contexts where the menu should read like a simple
+	 *  choice, not a model-management surface. */
+	compact?: boolean;
 	"aria-label": string;
 }) {
 	const { t } = useTranslation();
@@ -146,7 +151,7 @@ export function AgentModelCombobox({
 				<button
 					type="button"
 					className={cn(
-						"settings-option-trigger max-w-full min-w-0 hover:text-settings-label focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0",
+						"group/agent-model-trigger settings-option-trigger max-w-full min-w-0 hover:text-settings-label focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0",
 						triggerClassName,
 					)}
 					aria-label={ariaLabel}
@@ -156,22 +161,33 @@ export function AgentModelCombobox({
 					) : (
 						<span className="min-w-0 truncate">{currentLabel}</span>
 					)}
-					<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
+					<ChevronDown
+						className="size-icon-sm shrink-0 opacity-70 transition-transform duration-300 ease-out group-data-[state=open]/agent-model-trigger:rotate-180"
+						aria-hidden="true"
+					/>
 				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent
 				align={menuAlign}
+				// Radix refocuses the trigger on close; Chromium's :focus-visible
+				// heuristic treats that async re-focus as keyboard-style even after a
+				// mouse click, leaving a stray focus ring. Skip the refocus.
+				onCloseAutoFocus={(event) => event.preventDefault()}
 				className="settings-menu-surface max-h-select-menu-max! w-[min(22rem,calc(100vw-2rem))] overflow-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
 			>
 				{showSearch && (
-					<div className="shrink-0 p-1" onKeyDown={(event) => event.stopPropagation()}>
+					<div className="relative shrink-0 p-1" onKeyDown={(event) => event.stopPropagation()}>
+						<Search
+							className="pointer-events-none absolute left-3.5 top-1/2 size-icon-sm -translate-y-1/2 text-settings-muted"
+							aria-hidden="true"
+						/>
 						<input
 							type="search"
 							aria-label={t("settings.models.searchAria", { label: ariaLabel.toLocaleLowerCase() })}
 							value={search}
 							onChange={(event) => setSearch(event.target.value)}
 							placeholder={t("settings.models.searchPlaceholder")}
-							className="menu-search-input"
+							className="menu-search-input pl-8!"
 						/>
 					</div>
 				)}
@@ -190,34 +206,44 @@ export function AgentModelCombobox({
 
 						{groups.map((group, groupIndex) => (
 							<div key={group.key}>
-								{(groupIndex > 0 || normalizedSearch === "") && <DropdownMenuSeparator />}
-								<DropdownMenuLabel className="normal-case tracking-normal">{group.label}</DropdownMenuLabel>
-								{group.models.map((item) => (
-									<DropdownMenuItem
-										key={item.id}
-										onSelect={() => selectModel(item.id)}
-										className={modelItemClass(item.id === value)}
-									>
-										<div className="flex min-w-0 flex-1 items-center gap-3">
-											<div className="min-w-0 flex-1">
-												<div className="flex items-center gap-2">
-													<span className="truncate text-settings-label">{item.label}</span>
-													{item.model.isDefault && (
-														<span className="rounded-full bg-settings-menu-selected px-1.5 py-0.5 text-micro text-settings-muted">
-															{t("settings.models.default")}
-														</span>
+								{!compact && (groupIndex > 0 || normalizedSearch === "") && <DropdownMenuSeparator />}
+								{!compact && <DropdownMenuLabel className="normal-case tracking-normal">{group.label}</DropdownMenuLabel>}
+								{group.models.map((item) =>
+									compact ? (
+										<DropdownMenuItem
+											key={item.id}
+											onSelect={() => selectModel(item.id)}
+											className={modelItemClass(item.id === value)}
+										>
+											<span className="truncate text-settings-label">{item.label}</span>
+										</DropdownMenuItem>
+									) : (
+										<DropdownMenuItem
+											key={item.id}
+											onSelect={() => selectModel(item.id)}
+											className={modelItemClass(item.id === value)}
+										>
+											<div className="flex min-w-0 flex-1 items-center gap-3">
+												<div className="min-w-0 flex-1">
+													<div className="flex items-center gap-2">
+														<span className="truncate text-settings-label">{item.label}</span>
+														{item.model.isDefault && (
+															<span className="rounded-full bg-settings-menu-selected px-1.5 py-0.5 text-micro text-settings-muted">
+																{t("settings.models.default")}
+															</span>
+														)}
+													</div>
+													{shouldShowModelID(item, visibleModels, normalizedSearch) && (
+														<p className="truncate text-xs text-settings-muted">{item.id}</p>
 													)}
 												</div>
-											{shouldShowModelID(item, visibleModels, normalizedSearch) && (
-												<p className="truncate text-xs text-settings-muted">{item.id}</p>
-											)}
-										</div>
-										{group.kind !== "provider" && item.provider !== "Other" && (
-											<span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>
-										)}
-										</div>
-									</DropdownMenuItem>
-								))}
+												{group.kind !== "provider" && item.provider !== "Other" && (
+													<span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>
+												)}
+											</div>
+										</DropdownMenuItem>
+									),
+								)}
 							</div>
 						))}
 
@@ -240,7 +266,7 @@ export function AgentModelCombobox({
 						{/* Rediscovery lives here, not as a standing link beside the field: it is
 						    a rare repair action, and the daemon revalidates a stale catalog on its
 						    own. Keeping it in the menu costs no layout in the calm state. */}
-						{onRefresh && (
+						{!compact && onRefresh && (
 							<>
 								<DropdownMenuSeparator />
 								<DropdownMenuItem
@@ -553,8 +579,8 @@ function groupModels(
 function modelItemClass(selected: boolean): string {
 	return cn(
 		"settings-menu-item min-w-0 cursor-default outline-none",
-		"focus:border-settings-menu focus:bg-settings-menu-selected focus:text-settings-label",
-		"data-highlighted:border-settings-menu data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-label",
-		selected && "border-settings-menu bg-settings-menu-selected",
+		"focus:bg-settings-menu-selected focus:text-settings-title",
+		"data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-title",
+		selected && "border-settings-menu bg-settings-menu-selected text-settings-title",
 	);
 }

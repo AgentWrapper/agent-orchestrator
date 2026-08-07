@@ -1,25 +1,27 @@
 import { useState } from "react";
-import { Keyboard, Mail } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { ConnectMobileModal } from "./ConnectMobileModal";
-import { DeveloperModeSection } from "./settings/DeveloperModeSection";
 import { GeneralSettingsSection } from "./settings/GeneralSettingsSection";
 import { ReportProblemDialog } from "./settings/ReportProblemDialog";
 import { SettingsLinkRow } from "./settings/SettingsRow";
 import { SettingsSection } from "./settings/SettingsSection";
 import { UpdatesSection } from "./settings/UpdatesSection";
-import { DevSettingsSection } from "./settings/DevSettingsSection";
-import { KeyboardShortcutsSettingsDialog } from "./settings/KeyboardShortcutsSettingsDialog";
 
-export type GlobalSettingsSection = "general" | "updates" | "developer" | "help" | "all";
+export type GlobalSettingsSection = "general" | "updates" | "help" | "all";
 
-export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettingsSection }) {
+export function GlobalSettingsForm({
+	section = "all",
+	onOpenKeyboardShortcuts,
+	onOpenConnectMobile,
+}: {
+	section?: GlobalSettingsSection;
+	onOpenKeyboardShortcuts?: () => void;
+	onOpenConnectMobile?: () => void;
+}) {
 	const { t } = useTranslation();
-	const [mobileOpen, setMobileOpen] = useState(false);
 	const [reportProblemOpen, setReportProblemOpen] = useState(false);
-	const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
 	// One section per page means the dialog header already names it, so the
-	// page's leading heading would just repeat that title.
+	// page's leading heading would just repeat that title. Only "all" (no
+	// single-page header) shows every section's own heading.
 	const leadingTitleHidden = section !== "all";
 
 	return (
@@ -32,37 +34,25 @@ export function GlobalSettingsForm({ section = "all" }: { section?: GlobalSettin
 				{(section === "all" || section === "general") && (
 					<>
 						<GeneralSettingsSection
-							onConnectMobile={() => setMobileOpen(true)}
+							onConnectMobile={() => onOpenConnectMobile?.()}
 							titleHidden={leadingTitleHidden}
 						/>
-						<SettingsSection title={t("settings.preferences")}>
+						<SettingsSection title={t("settings.preferences")} grouped>
 							<SettingsLinkRow
-								icon={Keyboard}
 								label={t("settings.keyboardShortcuts")}
-								onClick={() => setKeyboardShortcutsOpen(true)}
+								onClick={() => onOpenKeyboardShortcuts?.()}
 							/>
 						</SettingsSection>
 					</>
 				)}
 				{(section === "all" || section === "updates") && <UpdatesSection titleHidden={leadingTitleHidden} />}
-				{(section === "all" || section === "developer") && (
-					<>
-						<DeveloperModeSection titleHidden={leadingTitleHidden} />
-						<DevSettingsSection titleHidden={leadingTitleHidden} />
-					</>
-				)}
 				{(section === "all" || section === "help") && (
-					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden}>
-						<SettingsLinkRow icon={Mail} label={t("settings.reportProblem")} onClick={() => setReportProblemOpen(true)} />
+					<SettingsSection title={t("settings.getHelp")} titleHidden={leadingTitleHidden} grouped>
+						<SettingsLinkRow label={t("settings.reportProblem")} onClick={() => setReportProblemOpen(true)} />
 					</SettingsSection>
 				)}
 			</div>
-			<ConnectMobileModal open={mobileOpen} onOpenChange={setMobileOpen} />
 			<ReportProblemDialog open={reportProblemOpen} onOpenChange={setReportProblemOpen} />
-			<KeyboardShortcutsSettingsDialog
-				open={keyboardShortcutsOpen}
-				onOpenChange={setKeyboardShortcutsOpen}
-			/>
 		</>
 	);
 }

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Loader2, Paperclip, X } from "lucide-react";
 import {
 	type ClipboardEvent,
@@ -12,6 +12,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
+import { cn } from "../lib/utils";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
@@ -21,7 +22,6 @@ import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFile
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
-	refreshAgentModels,
 	revalidateAgentModels,
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
@@ -374,7 +374,7 @@ export function TaskComposer({
 							installed={agentCatalog?.installed}
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
-							triggerClassName="composer-toolbar-option w-full justify-between bg-transparent!"
+							triggerClassName="composer-toolbar-option w-full justify-between"
 							onChange={(value) => {
 								setAgent(value);
 								setAgentTouched(true);
@@ -411,7 +411,7 @@ export function TaskComposer({
 				</div>
 				<button
 					type="button"
-					className="grid size-control-md place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					className="grid size-(--size-settings-action-height) place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					aria-label={t("newTask.addFile")}
 					onClick={() => fileInputRef.current?.click()}
 				>
@@ -420,11 +420,11 @@ export function TaskComposer({
 				<Button
 					type="submit"
 					variant="primary"
-					size="sm"
+					size="none"
 					disabled={isSubmitting || !projectId}
-					className="min-w-(--size-composer-start-button)"
+					className="h-(--size-settings-action-height) min-w-(--size-composer-start-button) px-3"
 				>
-					{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+					{isSubmitting ? <Loader2 className="size-icon-base animate-spin" aria-hidden="true" /> : null}
 					{isSubmitting ? t("newTask.starting") : t("newTask.start")}
 					{!isSubmitting && (
 						<kbd className="composer-keycap" aria-hidden="true">
@@ -475,16 +475,7 @@ function TaskModelPicker({
 			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
 		}
 	}, [agentId, projectId, queryClient, revalidationQuery.data]);
-	const refreshMutation = useMutation({
-		mutationFn: () => refreshAgentModels(agentId, projectId),
-		onSuccess: (catalog) => queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), catalog),
-	});
 	const warning =
-		(refreshMutation.isError
-			? refreshMutation.error instanceof Error
-				? refreshMutation.error.message
-				: t("settings.models.refreshFailed")
-			: undefined) ??
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error
 				? revalidationQuery.error.message
@@ -508,12 +499,13 @@ function TaskModelPicker({
 	if (catalogLoading) {
 		return (
 			<span
-				className="composer-chip composer-toolbar-option w-full bg-transparent!"
+				className="composer-chip composer-toolbar-option w-full cursor-not-allowed justify-start opacity-50"
 				role="status"
 				aria-label={t("settings.models.loading")}
 				aria-busy="true"
 			>
-				<span className="composer-model-skeleton" aria-hidden="true" />
+				<Loader2 className="size-icon-sm shrink-0 animate-spin text-settings-muted" aria-hidden="true" />
+				<span className="truncate text-settings-muted">{t("settings.models.loading")}</span>
 			</span>
 		);
 	}
@@ -523,22 +515,16 @@ function TaskModelPicker({
 			{ value: "__default__", label: noOverrideLabel },
 			...(catalog.models ?? []).map((item) => ({ value: item.id, label: item.label })),
 		];
-		const visibleModeLabel = mode
-			? (options.find((option) => option.value === mode)?.label ?? mode)
-			: t("newTask.autoModel");
+		const visibleModeLabel = mode ? (options.find((option) => option.value === mode)?.label ?? mode) : noOverrideLabel;
 		return (
 			<SettingsOptionMenu
 				aria-label={t("newTask.model")}
 				value={mode || "__default__"}
 				options={options}
-				triggerClassName="composer-chip composer-toolbar-option w-full justify-between bg-transparent!"
+				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 				menuAlign="start"
 				renderTrigger={() => (
-					<span
-						key={`${agentId}:${mode || "__default__"}`}
-						className="composer-value-swap min-w-0 truncate font-mono text-xs text-foreground"
-						title={visibleModeLabel}
-					>
+					<span className="min-w-0 truncate text-control text-foreground" title={visibleModeLabel}>
 						{visibleModeLabel}
 					</span>
 				)}
@@ -549,6 +535,16 @@ function TaskModelPicker({
 
 	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
 	const modelIsInCatalog = catalog?.models?.some((item) => item.id === value) ?? false;
+	// Cursor's own "auto" model routes each request to whatever it judges best —
+	// a distinct, explicit choice from leaving the field untouched (which just
+	// omits --model and defers to Cursor's own default, currently also "auto").
+	// Relabel so the two don't read as the same option twice. Other agents'
+	// default-flagged model keeps its real name: for them, explicitly picking
+	// it isn't functionally different from leaving the field untouched, so a
+	// second "Default" entry would just duplicate the no-override option.
+	const displayModels = (catalog?.models ?? []).map((item) =>
+		item.id === "auto" ? { ...item, label: t("settings.models.autoRouteLabel") } : item,
+	);
 	const showCustomInput = hasCatalog && (customAgentId === agentId || (value !== "" && !modelIsInCatalog));
 	const selectCatalogModel = (nextModel: string) => {
 		setCustomAgentId(null);
@@ -565,24 +561,19 @@ function TaskModelPicker({
 				key={agentId}
 				aria-label={t("newTask.model")}
 				value={value}
-				models={catalog.models ?? []}
+				models={displayModels}
 				allowCustom={catalog.allowCustom}
 				emptyLabel={noOverrideLabel}
 				onChange={selectCatalogModel}
 				onCustom={selectCustomModel}
-				onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
-				refreshing={refreshMutation.isPending}
+				compact
 				recentScope={agentId}
-				triggerClassName="composer-chip composer-toolbar-option w-full justify-between bg-transparent!"
+				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 				menuAlign="start"
 				renderTrigger={(label) => {
-					const visibleLabel = value ? label : t("newTask.autoModel");
+					const visibleLabel = value ? label : noOverrideLabel;
 					return (
-						<span
-							key={`${agentId}:${value || "__default__"}`}
-							className="composer-value-swap min-w-0 truncate font-mono text-xs text-foreground"
-							title={visibleLabel}
-						>
+						<span className="min-w-0 truncate text-control text-foreground" title={visibleLabel}>
 							{visibleLabel}
 						</span>
 					);
@@ -597,24 +588,30 @@ function TaskModelPicker({
 			<input
 				id={id}
 				aria-label={t("newTask.model")}
-				className="composer-chip composer-toolbar-option min-w-0 flex-1 bg-transparent! font-mono text-xs placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+				className={cn(
+					"composer-chip composer-toolbar-option min-w-0 flex-1 text-control placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50",
+					// When no Browse button trails it, this input is the pill's
+					// rightmost element — its own square corner sits inside the
+					// container's rounded curve, not past it, so overflow-hidden on
+					// the container never clips it. Round it to match explicitly.
+					!hasCatalog && "rounded-r-md!",
+				)}
 				value={value}
 				disabled={agentId === ""}
 				onChange={(event) => onModelChange(event.target.value)}
-				placeholder={query.isFetching ? t("settings.models.loading") : t("newTask.autoModel")}
+				placeholder={query.isFetching ? t("settings.models.loading") : noOverrideLabel}
 			/>
 			{hasCatalog && (
 				<AgentModelCombobox
 					key={agentId}
 					aria-label={t("settings.models.optionsAria", { label: t("newTask.model") })}
 					value={value}
-					models={catalog.models ?? []}
+					models={displayModels}
 					allowCustom={catalog.allowCustom}
 					emptyLabel={noOverrideLabel}
 					onChange={selectCatalogModel}
 					onCustom={selectCustomModel}
-					onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
-					refreshing={refreshMutation.isPending}
+					compact
 					recentScope={agentId}
 					triggerLabel={t("settings.models.browse")}
 					triggerClassName="shrink-0"

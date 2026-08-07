@@ -58,7 +58,7 @@ export function SettingsOptionMenu<T extends string>({
 				<button
 					type="button"
 					className={cn(
-						"settings-option-trigger max-w-full min-w-0 hover:text-settings-label focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
+						"group/settings-option-trigger settings-option-trigger max-w-full min-w-0 bg-[var(--color-bg-settings-trigger)] text-[var(--color-text-settings-trigger)] transition-colors hover:bg-[var(--color-bg-settings-trigger-hover)] hover:text-[var(--color-text-settings-trigger)] data-[state=open]:bg-[var(--color-bg-settings-trigger-hover)] focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0 disabled:cursor-not-allowed disabled:opacity-50",
 						triggerClassName,
 					)}
 					aria-label={ariaLabel}
@@ -71,7 +71,10 @@ export function SettingsOptionMenu<T extends string>({
 							<span className="min-w-0 truncate">{selected?.label ?? placeholder}</span>
 						</>
 					)}
-					<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
+				<ChevronDown
+					className="size-icon-sm shrink-0 transition-transform duration-300 ease-out group-data-[state=open]/settings-option-trigger:rotate-180"
+					aria-hidden="true"
+				/>
 				</button>
 			</DropdownMenuTrigger>
 			{/* bg-settings-menu / border-settings-menu / rounded-(--radius-settings-panel) must
@@ -79,6 +82,11 @@ export function SettingsOptionMenu<T extends string>({
 			    and rounded-lg. */}
 			<DropdownMenuContent
 				align={menuAlign}
+				alignOffset={0}
+				// Radix refocuses the trigger on close; Chromium's :focus-visible
+				// heuristic treats that async re-focus as keyboard-style even after a
+				// mouse click, leaving a stray focus ring. Skip the refocus.
+				onCloseAutoFocus={(event) => event.preventDefault()}
 				className={cn(
 					"settings-menu-surface min-w-[length:var(--size-settings-menu-min-width)] overflow-y-auto! overflow-x-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
 					menuClassName,
@@ -103,9 +111,9 @@ export function SettingsOptionMenu<T extends string>({
 						onSelect={() => onChange(option.value)}
 						className={cn(
 							"settings-menu-item min-w-0 cursor-default outline-none",
-							"focus:border-settings-menu focus:bg-settings-menu-selected focus:text-settings-label",
-							"data-highlighted:border-settings-menu data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-label",
-							option.value === value && "border-settings-menu bg-settings-menu-selected",
+							"focus:bg-settings-menu-selected focus:text-settings-title",
+							"data-highlighted:bg-settings-menu-selected data-highlighted:text-settings-title",
+							option.value === value && "border-settings-menu bg-settings-menu-selected text-settings-title",
 							menuItemClassName,
 						)}
 					>

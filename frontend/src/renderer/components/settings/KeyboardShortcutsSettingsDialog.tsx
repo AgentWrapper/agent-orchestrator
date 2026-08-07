@@ -19,8 +19,10 @@ import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
 import { useKeybindingsStore } from "../../stores/keybindings-store";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import {
 	Dialog,
+	DialogClose,
 	DialogContent,
 	DialogDescription,
 	DialogHeader,
@@ -315,6 +317,7 @@ export function KeyboardShortcutsSettingsDialog({
 			>
 				<DialogContent
 					className={cn(settingsDialogContentClass, "w-[min(760px,calc(100vw-var(--space-8)))]")}
+					showCloseButton={false}
 					onEscapeKeyDown={(event) => {
 						if (recording) {
 							event.preventDefault();
@@ -322,6 +325,12 @@ export function KeyboardShortcutsSettingsDialog({
 						}
 					}}
 				>
+					<DialogClose
+						aria-label={t("settings.close")}
+						className="settings-dialog-close-button settings-close-button border border-transparent transition-colors hover:border-(--color-border-settings-input) hover:bg-[var(--color-bg-settings-input)]"
+					>
+						<X aria-hidden="true" className="size-4" />
+					</DialogClose>
 					<DialogHeader className={settingsDialogHeaderClass}>
 						<DialogTitle className="settings-dialog-title">{t("shortcut.dialogTitle")}</DialogTitle>
 						<DialogDescription className="text-control leading-4 text-settings-muted">
@@ -329,15 +338,15 @@ export function KeyboardShortcutsSettingsDialog({
 						</DialogDescription>
 					</DialogHeader>
 
-					<div className={cn(settingsDialogBodyClass, "gap-3")}>
+					<div className={cn(settingsDialogBodyClass, "min-h-0 flex-1 gap-3")}>
 						<label className="relative">
 							<Search
 								className="pointer-events-none absolute left-3 top-1/2 size-icon-base -translate-y-1/2 text-settings-muted"
 								aria-hidden="true"
 							/>
-							<input
+							<Input
 								type="search"
-								className="settings-field-control h-10 w-full pl-9"
+								className="h-10 pl-9 pr-3"
 								placeholder={t("shortcut.searchPlaceholder")}
 								value={query}
 								onChange={(event) => setQuery(event.target.value)}
@@ -351,10 +360,13 @@ export function KeyboardShortcutsSettingsDialog({
 								const isRecording = recording?.id === shortcut.id;
 								return (
 									<div
-										className="rounded-(--radius-settings-row) border border-(--color-border-settings-input) bg-(--color-bg-settings-row) px-3.5 py-3"
+										className={cn(
+											"flex min-h-(--size-settings-row) items-center rounded-lg bg-(--color-bg-settings-row) px-3 py-3",
+											isRecording && "bg-settings-row-hover",
+										)}
 										key={shortcut.id}
 									>
-										<div className="flex items-center gap-3">
+										<div className="flex min-w-0 flex-1 items-center gap-3">
 											<div className="min-w-0 flex-1">
 												<div className="flex items-center gap-2">
 													<span className="text-sm font-medium text-settings-label">{shortcutLabel(shortcut.id, t)}</span>
@@ -368,14 +380,14 @@ export function KeyboardShortcutsSettingsDialog({
 											</div>
 
 											{shortcut.customizable === false ? (
-												<span className="text-caption text-settings-muted">{t("shortcut.fixedIndexed")}</span>
+												<span className="ml-auto text-caption text-settings-muted">{t("shortcut.fixedIndexed")}</span>
 											) : isRecording ? (
-												<div className="flex min-w-52 items-center gap-2 rounded-md border border-(--color-settings-accent) px-3 py-2 text-caption text-settings-label">
+												<div className="ml-auto flex min-w-52 items-center gap-2 rounded-md border border-(--color-settings-accent) px-3 py-2 text-caption text-settings-label">
 													<Keyboard className="size-icon-base animate-pulse" aria-hidden="true" />
 													{t("shortcut.pressRecording")}
 												</div>
 											) : (
-												<div className="flex flex-wrap items-center justify-end gap-1.5">
+													<div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
 													{bindings.length === 0 ? (
 														<span className="text-caption text-settings-muted">{t("shortcut.unassigned")}</span>
 													) : (
@@ -462,12 +474,13 @@ export function KeyboardShortcutsSettingsDialog({
 						{confirmResetAll ? (
 							<>
 								<span className="mr-auto text-caption text-settings-muted">{t("shortcut.resetAllConfirm")}</span>
-								<Button type="button" variant="footer" onClick={() => setConfirmResetAll(false)}>
+								<Button type="button" variant="footer" className="rounded-md" onClick={() => setConfirmResetAll(false)}>
 									{t("confirm.cancel")}
 								</Button>
 								<Button
 									type="button"
 									variant="footer-primary"
+									className="rounded-md"
 									onClick={() => {
 										void resetAll().then(() => {
 											setConfirmResetAll(false);
@@ -482,7 +495,7 @@ export function KeyboardShortcutsSettingsDialog({
 							<Button
 								type="button"
 								variant="footer"
-								className="mr-auto"
+								className="rounded-md"
 								disabled={Object.keys(overrides).length === 0}
 								onClick={() => setConfirmResetAll(true)}
 							>

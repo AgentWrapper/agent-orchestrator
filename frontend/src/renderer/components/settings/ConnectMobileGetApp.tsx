@@ -25,11 +25,11 @@ export function ConnectMobileGetApp() {
 	const [showQR, setShowQR] = useState(false);
 
 	return (
-		<div className="mt-6 flex flex-col rounded-(--radius-settings-dialog-lg) border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-dialog)] px-3.5 py-3">
-			<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">{t("mobile.getApp")}</span>
+		<div className="flex flex-col">
+			<span className="px-3 py-3 text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">{t("mobile.getApp")}</span>
 
 			{/* iOS — items-center so the action cluster sits on the row's optical centre. */}
-			<div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border-settings-input)] pt-3">
+			<div className="flex items-center justify-between gap-3 px-3 py-3">
 				<div className="flex min-w-0 flex-col">
 					<span className="text-sm leading-5 text-settings-label">{t("mobile.ios")}</span>
 					<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
@@ -40,6 +40,7 @@ export function ConnectMobileGetApp() {
 					<Button
 						type="button"
 						variant="footer"
+						className="rounded-md"
 						aria-label={t("mobile.joinTestFlightAria")}
 						onClick={() => void aoBridge.app.openExternal(TESTFLIGHT_URL)}
 					>
@@ -51,7 +52,7 @@ export function ConnectMobileGetApp() {
 						aria-expanded={showQR}
 						onClick={() => setShowQR((v) => !v)}
 						className={cn(
-							"inline-flex size-(--size-settings-action-height) items-center justify-center rounded-(--radius-settings-action) transition-colors hover:bg-[var(--color-bg-settings-input)]",
+							"inline-flex size-(--size-settings-action-height) items-center justify-center rounded-md border border-transparent transition-colors hover:border-(--color-border-settings-input) hover:bg-[var(--color-bg-settings-input)]",
 							showQR ? "bg-[var(--color-bg-settings-input)] text-settings-title" : "text-settings-muted",
 						)}
 					>
@@ -68,14 +69,14 @@ export function ConnectMobileGetApp() {
 				)}
 				aria-hidden={!showQR}
 			>
-				<div className="overflow-hidden">
+				<div className="overflow-hidden px-4">
 					<div
 						className={cn(
 							"flex flex-col items-center pt-3 transition-opacity duration-300 ease-out",
 							showQR ? "opacity-100" : "opacity-0",
 						)}
 					>
-						<div className="rounded-xl bg-white p-2 shadow-[var(--shadow-settings-qr)]">
+						<div className="rounded-md border border-(--color-border-settings-input) bg-white p-2">
 							<QRCodeSVG value={TESTFLIGHT_URL} size={TESTFLIGHT_QR_SIZE} className="block" />
 						</div>
 						<p className="mt-2 text-caption text-settings-muted">{t("mobile.qrHint")}</p>
@@ -84,7 +85,7 @@ export function ConnectMobileGetApp() {
 			</div>
 
 			{/* Android — internal testing signup until a Play Store beta is live. */}
-			<div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--color-border-settings-input)] pt-3">
+			<div className="flex items-center justify-between gap-3 px-3 py-3">
 				<div className="flex min-w-0 flex-col">
 					<span className="text-sm leading-5 text-settings-label">{t("mobile.android")}</span>
 					<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
@@ -94,6 +95,7 @@ export function ConnectMobileGetApp() {
 				<Button
 					type="button"
 					variant="footer"
+					className="rounded-md"
 					aria-label={t("mobile.androidSignupAria")}
 					onClick={() => void aoBridge.app.openExternal(ANDROID_SIGNUP_URL)}
 				>

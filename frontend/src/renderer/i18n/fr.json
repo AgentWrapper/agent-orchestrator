@@ -494,6 +494,7 @@
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.preferences": "Préférences",
 	"settings.models.agentDefault": "Valeur par défaut de l’agent",
+	"settings.models.autoRouteLabel": "Auto (achemine automatiquement)",
 	"settings.models.browse": "Parcourir",
 	"settings.models.custom": "Modèle personnalisé…",
 	"settings.models.default": "Par défaut",
