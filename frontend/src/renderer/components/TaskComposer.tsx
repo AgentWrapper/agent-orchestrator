@@ -589,7 +589,7 @@ function TaskModelPicker({
 				id={id}
 				aria-label={t("newTask.model")}
 				className={cn(
-					"composer-chip composer-toolbar-option min-w-0 flex-1 text-control placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50",
+					"composer-chip composer-toolbar-option min-w-0 flex-1 text-control placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50",
 					// When no Browse button trails it, this input is the pill's
 					// rightmost element — its own square corner sits inside the
 					// container's rounded curve, not past it, so overflow-hidden on
