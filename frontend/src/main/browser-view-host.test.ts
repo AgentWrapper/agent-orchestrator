@@ -509,6 +509,22 @@ describe("browser:clear", () => {
 });
 
 describe("browser:capture", () => {
+	it("shows AO's empty state while keeping an initialized blank target alive", async () => {
+		const { emit, invoke, view } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+
+		emit("browser:setBounds", 1, {
+			viewId: "1:sess-1",
+			rect: { x: 10, y: 20, width: 320, height: 240 },
+			visible: true,
+		});
+		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 10, y: 20, width: 320, height: 240 });
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
+
+		await invoke("browser:navigate", { viewId: "1:sess-1", url: "http://localhost:3000" });
+		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+	});
+
 	it("returns the current page as a data URL", async () => {
 		const { invoke } = setupHost();
 		await invoke("browser:ensure", "sess-1");
@@ -562,6 +578,32 @@ describe("browser:capture", () => {
 });
 
 describe("agent browser runtime", () => {
+	it("waits for a new blank target before native automation starts", async () => {
+		let releaseBlank: (() => void) | undefined;
+		const blankReady = new Promise<void>((resolve) => {
+			releaseBlank = resolve;
+		});
+		const runAction = vi.fn(async () => ({ snapshot: "(empty accessibility snapshot)", refs: {} }));
+		const runtime = {
+			runAction,
+			closeSession: vi.fn(async () => undefined),
+			dispose: vi.fn(async () => undefined),
+		} as unknown as import("./agent-browser-runtime").AgentBrowserRuntime;
+		const { host, webContents } = setupHost(runtime);
+		webContents.loadURL.mockImplementation(async (url: string) => {
+			if (url === "about:blank") await blankReady;
+		});
+
+		const request = host.execute("sess-1", "snapshot");
+		await Promise.resolve();
+		expect(runAction).not.toHaveBeenCalled();
+
+		releaseBlank?.();
+		await request;
+		expect(webContents.loadURL).toHaveBeenCalledWith("about:blank");
+		expect(runAction).toHaveBeenCalledTimes(1);
+	});
+
 	it("routes the native adapter through only the current session targets", async () => {
 		const runAction = vi.fn(async (_sessionId, _action, _args, provider) => ({
 			snapshot: provider.listTargets().map((target: { id: string }) => target.id).join(","),
@@ -618,7 +660,7 @@ describe("agent browser runtime", () => {
 		await expect(host.execute("sess-1", "open", { url: "search these words" })).rejects.toMatchObject({
 			code: "INVALID_URL",
 		});
-		expect(webContents.loadURL).not.toHaveBeenCalled();
+		expect(webContents.loadURL.mock.calls.some(([url]) => url !== "about:blank")).toBe(false);
 	});
 
 	it("destroys a headless session target through the daemon lifecycle command", async () => {

@@ -240,6 +240,7 @@ type BrowserEntry = {
 	sessionId: string;
 	tabId: string;
 	view: BrowserViewLike;
+	ready: Promise<void>;
 	state: BrowserNavState;
 	annotationEnabled: boolean;
 	networkCapture?: BrowserNetworkCapture;
@@ -488,6 +489,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			sessionId: session.sessionId,
 			tabId,
 			view,
+			ready: Promise.resolve(),
 			state,
 			annotationEnabled: false,
 		};
@@ -531,6 +533,13 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		view.webContents.on("focus", () => {
 			lastFocusedViewId = session.viewId;
 		});
+		// A newly-created WebContentsView reports about:blank before its renderer
+		// has actually been initialized. CDP commands can hang until that initial
+		// document has completed, so make readiness explicit for every tab.
+		entry.ready = view.webContents.loadURL("about:blank");
+		// Keep an unobserved tab initialization failure from becoming an unhandled
+		// rejection; callers that need the target still await the original promise.
+		void entry.ready.catch(() => undefined);
 		if (activate) activateTab(session, tabId, false);
 		return entry;
 	};
@@ -583,6 +592,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			normalizedURL = normalized.href;
 		}
 		const entry = createTab(session, activate);
+		await entry.ready;
 		if (normalizedURL) {
 			const navigation = navigateEntry(entry, normalizedURL);
 			pushTabsState(options, session, { kind: reason, tabId: entry.tabId });
@@ -643,7 +653,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		return {
 			listTargets: () => [...session.tabs.values()].map(target),
 			createTarget: async (url) => target(await openTab(session, url === "about:blank" ? undefined : url, true)),
-			activateTarget: (targetId) => {
+			activateTarget: async (targetId) => {
+				const entry = session.tabs.get(targetId);
+				if (!entry) throw browserError("TAB_NOT_FOUND", `Browser tab ${targetId} does not exist`);
+				await entry.ready;
 				activateTab(session, targetId);
 			},
 			closeTarget: (targetId) => {
@@ -661,6 +674,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!devtools) return pushDevToolsState(session);
 		const entry = session.tabs.get(tabId);
 		if (!entry) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+		await entry.ready;
 		if (!options.agentBrowserRuntime) {
 			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
 		}
@@ -741,6 +755,13 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			applyBrowserViewBounds(entry.view, OFFSCREEN_BOUNDS, false);
 			return;
 		}
+		// Keep the initialized blank target available to automation, but let the
+		// renderer show AO's empty-page UI instead of Chromium's white about:blank.
+		const currentURL = entry.view.webContents.getURL();
+		if (!currentURL || currentURL === "about:blank") {
+			applyBrowserViewBounds(entry.view, session.bounds, false);
+			return;
+		}
 		applyBrowserViewBounds(
 			entry.view,
 			session.bounds,
@@ -799,6 +820,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
+		await entry.ready;
 		cancelAnnotation(options, entry, "navigation");
 		const normalized = normalizeBrowserURL(url);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
@@ -832,7 +854,8 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		session.bounds = OFFSCREEN_BOUNDS;
 		applySessionBounds(session, entry);
 		forgetIfFocused(viewId);
-		await entry.view.webContents.loadURL("about:blank");
+		entry.ready = entry.view.webContents.loadURL("about:blank");
+		await entry.ready;
 		entry.view.webContents.clearHistory();
 		return pushNavState(options, entry);
 	};
@@ -842,6 +865,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		if (!session) return null;
 		const entry = activeEntry(session);
 		try {
+			await entry.ready;
 			const image = await entry.view.webContents.capturePage();
 			if (image.isEmpty()) return null;
 			const size = image.getSize();
@@ -1064,6 +1088,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				if (!options.agentBrowserRuntime) {
 					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
 				}
+				await activeEntry(session).ready;
 				return options.agentBrowserRuntime.runAction(
 					sessionId,
 					nativeAction,
@@ -1072,8 +1097,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					signal,
 				);
 			};
-			try {
-				switch (action) {
+			switch (action) {
 				case "open": {
 					const url = stringArg(args, "url", "URL_REQUIRED", "url is required");
 					await runNative(action, { url: normalizeAgentBrowserURL(url) });
@@ -1166,6 +1190,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					if (!options.agentBrowserRuntime) {
 						throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
 					}
+					await activeEntry(session).ready;
 					return options.agentBrowserRuntime.screenshot(sessionId, agentBrowserTargets(session), signal);
 				case "network-start":
 					return startNetworkCapture(
@@ -1186,8 +1211,6 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					return normalizeNativeMessages(await runNative(action), action);
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
-				}
-			} finally {
 			}
 		},
 		dispose: () => {
@@ -1441,6 +1464,7 @@ function wireAutomationEvents(contents: BrowserWebContents, entry: BrowserEntry)
 
 
 async function ensureDebugger(entry: BrowserEntry): Promise<void> {
+	await entry.ready;
 	const debug = entry.view.webContents.debugger;
 	if (!debug) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Browser debugger is unavailable");
 	if (!debug.isAttached()) {

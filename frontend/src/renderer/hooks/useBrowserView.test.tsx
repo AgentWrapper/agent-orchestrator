@@ -169,6 +169,23 @@ describe("useBrowserView", () => {
 		expect(result.current.viewId).toBe("42:sess-1");
 	});
 
+	it("keeps an active blank target live", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() => result.current.slotRef(slot));
+
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
+	});
+
 	it("tracks popup tabs and routes manual select and close actions", async () => {
 		const bridge = setupBridge();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
@@ -229,6 +246,52 @@ describe("useBrowserView", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it("clears the previous tab handoff when selecting a blank tab", async () => {
+		const bridge = setupBridge();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "First tab",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		await act(async () => {
+			await result.current.prepareForOverlay();
+		});
+		expect(result.current.mirrorFrame).not.toBeNull();
+
+		bridge.selectTab.mockImplementationOnce(async ({ viewId, tabId }) => {
+			act(() =>
+				bridge.emit({
+					viewId,
+					url: "",
+					title: "",
+					canGoBack: false,
+					canGoForward: false,
+					isLoading: false,
+				}),
+			);
+			return {
+				viewId,
+				activeTabId: tabId,
+				tabs: [{ id: tabId, url: "", title: "", active: true }],
+			};
+		});
+
+		await act(async () => {
+			await result.current.selectTab("t1");
+		});
+
+		expect(result.current.navState.url).toBe("");
+		expect(result.current.mirrorFrame).toBeNull();
+		expect(result.current.visualTransition).toBeNull();
 	});
 
 	it("does not block tab switching on a slow transition capture", async () => {

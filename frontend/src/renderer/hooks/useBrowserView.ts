@@ -261,7 +261,7 @@ export function useBrowserView({
 		const id = viewIdRef.current;
 		const node = slotNodeRef.current;
 		if (!id) return;
-		if (!activeRef.current || !node || !node.isConnected || !hasUrlRef.current || hiddenByFullscreen(node)) {
+		if (!activeRef.current || !node || !node.isConnected || hiddenByFullscreen(node)) {
 			sendHiddenBounds(id);
 			return;
 		}
@@ -405,9 +405,18 @@ export function useBrowserView({
 	useEffect(() => {
 		return window.ao?.browser.onNavState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
+			if (!state.url) {
+				// A blank tab has no native pixels to cover these handoff frames with.
+				// Drop any frame from the previously selected tab so AO's empty state
+				// is revealed as soon as the blank tab becomes active.
+				clearMirrorTimer();
+				clearVisualTransitionTimer();
+				setMirrorFrame(null);
+				setVisualTransition(null);
+			}
 			setNavState(state);
 		});
-	}, []);
+	}, [clearMirrorTimer, clearVisualTransitionTimer]);
 
 	useEffect(() => {
 		return window.ao?.browser.onTabsState((state) => {
@@ -439,7 +448,7 @@ export function useBrowserView({
 	);
 
 	useLayoutEffect(() => {
-		if (navState.url && active) {
+		if (active) {
 			scheduleSettleMeasure();
 		} else {
 			sendHiddenBounds();
