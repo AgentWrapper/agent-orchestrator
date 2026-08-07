@@ -158,7 +158,7 @@ beforeEach(() => {
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 	useWorkspaceQueryMock.mockReset();
 	useWorkspaceQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false });
-	useUiStore.setState({ inspectorSessions: {} });
+	useUiStore.setState({ inspectorSessions: {}, settingsModal: null });
 });
 
 describe("ShellTopbar status pill", () => {
@@ -270,10 +270,8 @@ describe("ShellTopbar orchestrator actions", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Open orchestrator" }));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
 

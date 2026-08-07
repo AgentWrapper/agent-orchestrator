@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL } from "../shared/shortcuts";
+import { CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL, FOCUS_TERMINAL_SHORTCUT_CHANNEL, KEYBOARD_SHORTCUTS_HELP_CHANNEL, NEXT_SESSION_SHORTCUT_CHANNEL, NEXT_TAB_SHORTCUT_CHANNEL, NEW_SESSION_SHORTCUT_CHANNEL, NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL, OPEN_SETTINGS_SHORTCUT_CHANNEL, PREVIOUS_SESSION_SHORTCUT_CHANNEL, PREVIOUS_TAB_SHORTCUT_CHANNEL } from "../shared/shortcuts";
 import { attachAppShortcuts } from "./app-shortcuts";
 
 type InputEvent = {
@@ -157,6 +157,8 @@ describe("attachAppShortcuts", () => {
 		["settings", { key: ",", control: true }, OPEN_SETTINGS_SHORTCUT_CHANNEL],
 		["previous session", { key: "PageUp", control: true }, PREVIOUS_SESSION_SHORTCUT_CHANNEL],
 		["next session", { key: "PageDown", control: true }, NEXT_SESSION_SHORTCUT_CHANNEL],
+		["previous tab", { key: "Tab", control: true, shift: true }, PREVIOUS_TAB_SHORTCUT_CHANNEL],
+		["next tab", { key: "Tab", control: true }, NEXT_TAB_SHORTCUT_CHANNEL],
 		["focus terminal", { key: "T", control: true, shift: true }, FOCUS_TERMINAL_SHORTCUT_CHANNEL],
 	] as const)("forwards the Windows/Linux %s shortcut", (_label, input, channel) => {
 		const source = fakeSource();

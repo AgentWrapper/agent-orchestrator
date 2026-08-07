@@ -15,7 +15,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
+	chatdriverregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/chatdriver/registry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/runtimeselect"
 	"github.com/aoagents/agent-orchestrator/backend/internal/browserruntime"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
@@ -33,11 +36,13 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/runfile"
 	agentsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/agent"
 	browsersvc "github.com/aoagents/agent-orchestrator/backend/internal/service/browser"
+	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 	devimportsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/devimport"
 	importsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/importer"
 	notificationsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/notification"
 	prsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/pr"
 	projectsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/project"
+	settingssvc "github.com/aoagents/agent-orchestrator/backend/internal/service/settings"
 	usagesvc "github.com/aoagents/agent-orchestrator/backend/internal/service/usage"
 	"github.com/aoagents/agent-orchestrator/backend/internal/skillassets"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
@@ -143,6 +148,7 @@ func Run() error {
 	// Built before the Lifecycle Manager so the LCM can use it for SCM-driven
 	// agent nudges (CI failure, review feedback, merge conflict).
 	messenger := newSessionMessenger(store, runtimeAdapter, log)
+	lifecycleMessenger := newModeAwareMessenger()
 	notificationHub := notify.NewHub()
 	notifier := notificationsvc.New(notificationsvc.Deps{Store: store})
 	notificationWriter := notify.New(notify.Deps{Store: store, Publisher: notificationHub})
@@ -172,13 +178,65 @@ func Run() error {
 		return fmt.Errorf("wire agent resolver: %w", err)
 	}
 
-	lcStack := startLifecycle(ctx, store, runtimeAdapter, messenger, notificationWriter, telemetrySink, agents, log)
+	lcStack := startLifecycle(ctx, store, runtimeAdapter, lifecycleMessenger, notificationWriter, telemetrySink, agents, log)
 
 	// Wire the controller-facing session service over the same store + LCM, the
 	// selected runtime, routed git/scratch workspaces, the per-session agent
 	// resolver (AO_AGENT validated here for compatibility), and the agent
 	// messenger, then mount it on the API.
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, log)
+	chatDrivers := chatdriverregistry.Build(log)
+
+	// Daemon-owned preferences. The store's type is field-compatible with the
+	// service's, adapted here so neither package imports the other.
+	settingsSvc := settingssvc.New(
+		settingsStore{store: store},
+		chatDrivers,
+		func() time.Time { return time.Now().UTC() },
+	)
+
+	// Chat service. The driver registry is the capability gate: a harness with no
+	// registered driver cannot start in chat mode, so an unsupported request fails
+	// loudly instead of silently becoming a TUI session.
+	chatSvc := chatsvc.New(chatsvc.Options{
+		Store:    store,
+		Sessions: store,
+		// Adapts the store's own snapshot type, so the chat service never has to
+		// import the storage layer.
+		Reader: chatsvc.SnapshotReaderFunc(func(ctx context.Context, conversationID string) (chatsvc.ConversationRows, error) {
+			rows, err := store.LoadConversationSnapshot(ctx, conversationID)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation: rows.Conversation,
+				Turns:        rows.Turns,
+				Messages:     rows.Messages,
+				Activities:   rows.Activities,
+			}, nil
+		}),
+		PageReader: chatsvc.SnapshotPageReaderFunc(func(ctx context.Context, conversationID string, beforeSequence, limit int64) (chatsvc.ConversationRows, error) {
+			rows, err := store.LoadConversationSnapshotPage(ctx, conversationID, beforeSequence, limit)
+			if err != nil {
+				return chatsvc.ConversationRows{}, err
+			}
+			return chatsvc.ConversationRows{
+				Conversation:   rows.Conversation,
+				Turns:          rows.Turns,
+				Messages:       rows.Messages,
+				Activities:     rows.Activities,
+				OldestSequence: rows.OldestSequence,
+				HasMoreBefore:  rows.HasMoreBefore,
+			}, nil
+		}),
+		Drivers: chatDrivers,
+		// The LCM satisfies ActivityRecorder directly: a chat turn is a pure
+		// lifecycle reduction, same as a hook signal from a terminal session.
+		Activity: lcStack.LCM,
+		Log:      log,
+		NewID:    uuid.NewString,
+	})
+
+	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()
@@ -187,6 +245,8 @@ func Run() error {
 		}
 		return fmt.Errorf("wire session service: %w", err)
 	}
+	sessMgr.SetTerminalInputGate(termMgr)
+	lifecycleMessenger.Bind(sessionLifecycleMessenger{sessMgr})
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
@@ -304,6 +364,8 @@ func Run() error {
 		Push:               pushRegistry,
 		Import:             importsvc.New(importsvc.Deps{Store: store}),
 		ShellTerminals:     shellTermSvc,
+		Conversations:      chatSvc,
+		Settings:           settingsSvc,
 		CDC:                store,
 		Events:             cdcPipe.Broadcaster,
 		Activity:           lcStack.LCM,
@@ -407,6 +469,12 @@ func Run() error {
 	stop()
 	managedPreview.Close()
 	<-previewDone
+	// Close chat controllers before the lifecycle stack: each owns an app-server
+	// child process, and closing them also settles any turn left in flight so a
+	// restart does not read a half-finished turn as still working.
+	chatStopCtx, chatCancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	chatSvc.StopAll(chatStopCtx)
+	chatCancel()
 	if usageDone != nil {
 		<-usageDone
 	}

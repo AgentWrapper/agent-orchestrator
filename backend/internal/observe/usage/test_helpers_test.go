@@ -9,6 +9,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func parseRecords(source domain.UsageSourceContext, records []jsonlRecord, nextOffset int64, now time.Time) parseResult {
@@ -37,7 +38,7 @@ func seedUsageTestSession(
 	now time.Time,
 ) (*sqlite.Store, domain.SessionRecord) {
 	t.Helper()
-	store, err := sqlite.Open(dataDir)
+	store, err := sqlitetest.Open(dataDir)
 	mustNoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	ctx := context.Background()

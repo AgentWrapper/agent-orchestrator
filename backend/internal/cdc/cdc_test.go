@@ -10,11 +10,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/cdc"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func newStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	s, err := sqlite.Open(t.TempDir())
+	s, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

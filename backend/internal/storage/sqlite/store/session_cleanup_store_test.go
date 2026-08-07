@@ -213,3 +213,48 @@ func requireCleanupEqual(t *testing.T, got, want domain.SessionCleanupRecord) {
 		t.Fatalf("nextAttemptAt = %v, want %v", got.NextAttemptAt, want.NextAttemptAt)
 	}
 }
+
+// Ordinary UpdateSession writes cannot change controller ownership. Only
+// Lifecycle Manager's dedicated compare-and-swap may do that, so unrelated
+// metadata updates cannot accidentally switch the interface.
+func TestOrdinarySessionUpdatesCannotChangeControllerMode(t *testing.T) {
+	s := newTestStore(t)
+	seedProject(t, s, "cm")
+	ctx := context.Background()
+
+	rec := sampleRecord("cm")
+	rec.Mode = domain.SessionModeChat
+	rec.Metadata.ProviderConversationID = "thread-1"
+	created, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if created.Mode != domain.SessionModeChat {
+		t.Fatalf("created mode = %q, want chat", created.Mode)
+	}
+
+	// A caller trying to flip the mode, alongside a legitimate change.
+	created.Mode = domain.SessionModeTUI
+	created.DisplayName = "renamed"
+	created.Metadata.ProviderConversationID = "thread-2"
+	if err := s.UpdateSession(ctx, created); err != nil {
+		t.Fatalf("UpdateSession: %v", err)
+	}
+
+	after, found, err := s.GetSession(ctx, created.ID)
+	if err != nil || !found {
+		t.Fatalf("GetSession: err=%v found=%v", err, found)
+	}
+	if after.Mode != domain.SessionModeChat {
+		t.Fatalf("ordinary update changed controller mode to %q", after.Mode)
+	}
+	// The controller handle, by contrast, is meant to be updatable: a resume
+	// rebinds it.
+	if after.Metadata.ProviderConversationID != "thread-2" {
+		t.Errorf("provider conversation id = %q, want the update to have applied",
+			after.Metadata.ProviderConversationID)
+	}
+	if after.DisplayName != "renamed" {
+		t.Errorf("display name = %q, want the update to have applied", after.DisplayName)
+	}
+}

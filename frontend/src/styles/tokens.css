@@ -78,6 +78,12 @@
 	--color-text-primary: var(--foreground);
 	--color-text-muted: var(--muted-foreground);
 	--color-text-passive: var(--chart-3);
+	--color-brand-logo: #79b0dc;
+	--color-brand-logo-bright: #a5cde7;
+	--color-brand-logo-foreground: #0a0b0d;
+	--color-text-markdown-code: var(--color-brand-logo);
+	--color-text-markdown-link: var(--color-brand-logo); /* underline distinguishes links */
+	--color-text-markdown-link-hover: var(--color-brand-logo-bright);
 	--color-text-terminal: #d7d7d2;
 	--color-text-terminal-dim: #7c7c7c;
 
@@ -409,6 +415,12 @@
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 	--size-import-modal-max: 896px;
 	--size-import-folder-dialog: 640px;
+	--size-composer-prompt-min: 112px;
+	--size-composer-start-button: 7.25rem;
+	/* Task composer — inline toolbar values. Quieter than a filled control at rest
+	 * so the task field stays the only thing with visual weight. */
+	--color-bg-composer-chip: color-mix(in oklab, var(--input) 55%, transparent);
+	--color-bg-composer-chip-hover: var(--secondary);
 	/* Shared equal edge inset for modal header/body/footer sections. */
 	--size-modal-padding: var(--space-6);
 	--size-import-modal-padding: var(--space-8);
@@ -666,6 +678,12 @@
 	--color-text-primary: var(--foreground);
 	--color-text-muted: var(--muted-foreground);
 	--color-text-passive: var(--chart-3);
+	--color-brand-logo: #304c83;
+	--color-brand-logo-bright: #466daa;
+	--color-brand-logo-foreground: #ffffff;
+	--color-text-markdown-code: var(--color-brand-logo);
+	--color-text-markdown-link: var(--color-brand-logo);
+	--color-text-markdown-link-hover: var(--color-brand-logo-bright);
 	--color-text-terminal: #24292f;
 	--color-text-terminal-dim: #6b7280;
 

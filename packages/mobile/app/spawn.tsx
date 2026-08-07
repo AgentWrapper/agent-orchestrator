@@ -1,19 +1,23 @@
 import { useRouter } from "expo-router";
+import { Feather } from "@expo/vector-icons";
 import { useEffect, useMemo, useState } from "react";
 import {
 	InteractionManager,
 	KeyboardAvoidingView,
 	Platform,
+	Pressable,
 	ScrollView,
 	StyleSheet,
 	Text,
 	TextInput,
+	View,
 } from "react-native";
 import { AgentLogo } from "../lib/AgentLogo";
 import { agentErrorCopy } from "../lib/agentError";
 import { defaultAgent, rankAgents } from "../lib/agentPicker";
-import { ApiError, getAgents, type AgentCatalog } from "../lib/api";
+import { ApiError, getAgents, getSettings, type AgentCatalog, type SessionMode } from "../lib/api";
 import { classifyConnectionFailure, describeConnectionFailure } from "../lib/connectionError";
+import { chatErrorCopy, isChatPreflightError } from "../lib/chatError";
 import { haptics } from "../lib/haptics";
 import { agentSheetRoute, projectSheetRoute } from "../lib/sheetResult";
 import { useApp } from "../lib/store";
@@ -29,6 +33,8 @@ export default function SpawnModal() {
 
 	const [projectId, setProjectId] = useState<string | null>(null);
 	const [harness, setHarness] = useState("");
+	const [mode, setMode] = useState<SessionMode>("chat");
+	const [chatHarnesses, setChatHarnesses] = useState<string[]>([]);
 	const [name, setName] = useState("");
 	const [prompt, setPrompt] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -37,6 +43,7 @@ export default function SpawnModal() {
 	const [catalog, setCatalog] = useState<AgentCatalog | null>(null);
 	const [catalogError, setCatalogError] = useState<string | null>(null);
 	const [loading, setLoading] = useState(true);
+	const [offerTUI, setOfferTUI] = useState(false);
 
 	// Seed from the active project, or the only project. Mirrors the store's
 	// `targetProject()`; kept here because the screen needs it as UI state to
@@ -51,12 +58,14 @@ export default function SpawnModal() {
 		if (!config) return;
 		let cancelled = false;
 		setLoading(true);
-		getAgents(config)
-			.then((c) => {
+		Promise.all([getAgents(config), getSettings(config)])
+			.then(([c, settings]) => {
 				if (cancelled) return;
 				setCatalog(c);
+				setChatHarnesses(settings.chatHarnesses);
 				setCatalogError(null);
-				setHarness((h) => h || (defaultAgent(rankAgents(c)) ?? ""));
+				const ranked = rankAgents(c).filter((agent) => settings.chatHarnesses.includes(agent.id));
+				setHarness((h) => (h && settings.chatHarnesses.includes(h) ? h : (defaultAgent(ranked) ?? "")));
 			})
 			.catch((e) => {
 				// Previously swallowed into `catalog = null`, which left an empty
@@ -73,7 +82,8 @@ export default function SpawnModal() {
 
 	// Refreshing the catalog moved into the agent sheet route, which owns its own
 	// copy of it — see app/sheets/agent.tsx.
-	const agents = useMemo(() => rankAgents(catalog), [catalog]);
+	const allAgents = useMemo(() => rankAgents(catalog), [catalog]);
+	const agents = useMemo(() => mode === "chat" ? allAgents.filter((agent) => chatHarnesses.includes(agent.id)) : allAgents, [allAgents, chatHarnesses, mode]);
 	const selectedAgent = agents.find((a) => a.id === harness);
 	const project = projects.find((p) => p.id === projectId);
 
@@ -88,15 +98,17 @@ export default function SpawnModal() {
 		}
 		setBusy(true);
 		setError(null);
+		setOfferTUI(false);
 		try {
 			const session = await spawn({
 				projectId: projectId ?? undefined,
 				prompt: prompt.trim() || undefined,
 				issueId: name.trim() || undefined,
 				harness: harness || undefined,
+				mode,
 			});
 			haptics.success();
-			// Dismiss the modal first, then open the freshly spawned session's terminal
+			// Dismiss the modal first, then open the freshly spawned session's mode-aware surface
 			// once the dismiss transition has settled. Firing both navigations in the
 			// same tick overlaps their animations (the modal retracts while the session
 			// is already sliding in); runAfterInteractions waits for the modal's
@@ -113,6 +125,7 @@ export default function SpawnModal() {
 		} catch (e) {
 			haptics.error();
 			setError(spawnErrorCopy(e));
+			setOfferTUI(mode === "chat" && isChatPreflightError(e));
 			setBusy(false);
 		}
 	};
@@ -149,9 +162,25 @@ export default function SpawnModal() {
 						// The collapsed row carries the mark too, as desktop's trigger does.
 						leading={selectedAgent ? <AgentLogo harness={selectedAgent.id} size={20} /> : undefined}
 						disabled={loading}
-						onPress={() => router.push(agentSheetRoute({ selected: harness, onSelect: setHarness }))}
+						onPress={() => router.push(agentSheetRoute({ selected: harness, onSelect: setHarness, allowed: mode === "chat" ? chatHarnesses : undefined, mode }))}
 					/>
 				</SettingsGroup>
+
+				<Text style={styles.label}>INTERFACE</Text>
+				<View accessibilityRole="radiogroup" style={styles.modeControl}>
+					<ModeChoice
+						label="Chat"
+						detail="Native conversation"
+						selected={mode === "chat"}
+						onPress={() => {
+							setMode("chat");
+							setHarness((current) => chatHarnesses.includes(current) ? current : (defaultAgent(allAgents.filter((agent) => chatHarnesses.includes(agent.id))) ?? ""));
+						}}
+					/>
+					<ModeChoice label="Terminal UI" detail="Agent's own TUI" selected={mode === "tui"} onPress={() => { setMode("tui"); setHarness((current) => current || (defaultAgent(allAgents) ?? "")); }} />
+				</View>
+				<Text style={styles.hint}>{mode === "chat" ? "Chat is the mobile default. The agent runs through its structured controller; no tmux is created for it." : "Compatibility mode. The agent runs inside tmux and mobile mirrors its terminal."}</Text>
+				{mode === "chat" && !loading && agents.length === 0 ? <Text style={styles.warn}>No installed agent on this AO host currently supports Chat. Choose Terminal UI or install/authenticate a Chat-capable agent.</Text> : null}
 
 				{catalogError ? <Text style={styles.warn}>{catalogError}</Text> : null}
 
@@ -179,13 +208,14 @@ export default function SpawnModal() {
 				/>
 
 				{error ? <Text style={styles.error}>{error}</Text> : null}
+				{offerTUI ? <Button title="Create as Terminal UI instead" variant="ghost" icon="terminal" onPress={() => { setMode("tui"); setOfferTUI(false); setError(null); }} style={{ marginTop: 12 }} /> : null}
 
 				<Button
 					title="Spawn agent"
 					icon="zap"
 					loading={busy}
 					onPress={onSpawn}
-					disabled={!projectId}
+					disabled={!projectId || !harness}
 					style={{ marginTop: 20 }}
 				/>
 				<Button title="Cancel" variant="ghost" onPress={() => router.back()} style={{ marginTop: 10 }} />
@@ -195,10 +225,28 @@ export default function SpawnModal() {
 	);
 }
 
+function ModeChoice({ label, detail, selected, onPress }: { label: string; detail: string; selected: boolean; onPress(): void }) {
+	const t = useTheme();
+	const styles = useThemedStyles(makeStyles);
+	return (
+		<Pressable
+			accessibilityRole="radio"
+			accessibilityState={{ selected }}
+			onPress={() => { haptics.select(); onPress(); }}
+			style={({ pressed }) => [styles.modeChoice, selected && styles.modeChoiceSelected, pressed && { opacity: 0.75 }]}
+		>
+			<Feather name={label === "Chat" ? "message-square" : "terminal"} size={16} color={selected ? t.blue : t.textTertiary} />
+			<View style={{ flex: 1 }}><Text style={[styles.modeLabel, selected && { color: t.blue }]}>{label}</Text><Text style={styles.modeDetail}>{detail}</Text></View>
+			{selected ? <Feather name="check" size={15} color={t.blue} /> : null}
+		</Pressable>
+	);
+}
+
 // Human copy for a failed spawn, matching every other screen. This one used to
 // render `e.message` — the wire string, e.g. "401 - missing or invalid
 // connection password".
 function spawnErrorCopy(e: unknown): string {
+	if (isChatPreflightError(e)) return chatErrorCopy(e);
 	const status = e instanceof ApiError ? e.status : undefined;
 	const { title, message } = describeConnectionFailure(classifyConnectionFailure(status), {
 		host: "",
@@ -235,4 +283,9 @@ const makeStyles = (t: Theme) =>
 		hint: { color: t.textTertiary, fontSize: 12, lineHeight: 17, marginTop: 8, marginHorizontal: 4 },
 		warn: { color: t.amber, fontSize: 13, lineHeight: 18, marginTop: 4 },
 		error: { color: t.red, fontSize: 13, lineHeight: 18, marginTop: 16 },
+		modeControl: { flexDirection: "row", gap: 9 },
+		modeChoice: { flex: 1, minHeight: 64, flexDirection: "row", alignItems: "center", gap: 8, padding: 10, borderRadius: 12, borderWidth: 1, borderColor: t.borderSubtle, backgroundColor: t.bgElevated },
+		modeChoiceSelected: { borderColor: t.blue, backgroundColor: t.tintBlue },
+		modeLabel: { color: t.textPrimary, fontSize: 13, fontWeight: "700" },
+		modeDetail: { color: t.textTertiary, fontSize: 9, marginTop: 2 },
 	});

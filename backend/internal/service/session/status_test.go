@@ -27,6 +27,13 @@ func silentRec(age time.Duration) domain.SessionRecord {
 	}
 }
 
+// chatRec marks a record as a Chat-mode session, whose activity reaches AO
+// through its own controller rather than an agent hook pipeline.
+func chatRec(rec domain.SessionRecord) domain.SessionRecord {
+	rec.Mode = domain.SessionModeChat
+	return rec
+}
+
 func statusPR(facts domain.PRFacts) []domain.PRFacts { return []domain.PRFacts{facts} }
 
 func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
@@ -60,6 +67,10 @@ func TestServiceDerivesStatusFromSessionFactsAndPR(t *testing.T) {
 		// A hook-less harness can never signal: its silence stays idle forever
 		// instead of degrading into a false "needs you".
 		{"hookless-silent-stays-idle", silentRec(2 * noSignalGrace), nil, true, domain.StatusIdle},
+		// A chat session's silence is not evidence of anything. AO owns the
+		// provider connection, so a lost controller arrives as exited; an idle
+		// chat session is simply waiting on the user and must not read as broken.
+		{"chat-silent-stays-idle", chatRec(silentRec(4 * noSignalGrace)), nil, false, domain.StatusIdle},
 		// Right after spawn the agent legitimately hasn't called back yet.
 		{"silent-within-grace-is-idle", silentRec(10 * time.Second), nil, false, domain.StatusIdle},
 		{"silent-at-grace-boundary-is-idle", silentRec(noSignalGrace), nil, false, domain.StatusIdle},

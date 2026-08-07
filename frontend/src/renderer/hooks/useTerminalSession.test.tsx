@@ -149,6 +149,7 @@ function setup({
 	daemonReady = true,
 	attachedSession = session as WorkspaceSession | undefined,
 	isVisible = true,
+	inputDisabled = false,
 } = {}) {
 	const muxes: FakeMux[] = [];
 	const createMux = () => {
@@ -161,15 +162,21 @@ function setup({
 	const wrapper = ({ children }: { children: ReactNode }) => (
 		<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
 	);
+	const initialProps: { daemonReady: boolean; isVisible?: boolean; inputDisabled?: boolean } = {
+		daemonReady,
+		isVisible,
+		inputDisabled,
+	};
 	const view = renderHook(
-		({ daemonReady: ready, isVisible: visible = true }: { daemonReady: boolean; isVisible?: boolean }) =>
+		({ daemonReady: ready, isVisible: visible = true, inputDisabled: blocked = false }: { daemonReady: boolean; isVisible?: boolean; inputDisabled?: boolean }) =>
 			useTerminalSession(attachedSession, {
 				coverInitialReplay,
 				daemonReady: ready,
 				createMux,
+				inputDisabled: blocked,
 				isVisible: visible,
 			}),
-		{ initialProps: { daemonReady, isVisible }, wrapper },
+		{ initialProps, wrapper },
 	);
 	const terminal = createFakeTerminal();
 	let detach: () => void = () => undefined;
@@ -241,6 +248,19 @@ describe("useTerminalSession", () => {
 			["handle-1", "\x1b[1;5D"],
 			["handle-1", "\x1b[<64;1;1M"],
 		]);
+	});
+
+	it("keeps the attachment live but refuses input while a controller handoff owns it", () => {
+		const { view, terminal, muxes } = setup({ inputDisabled: true });
+		act(() => muxes[0].emitOpened("handle-1"));
+
+		terminal.typeKeys("must not run\r");
+		expect(muxes[0].inputs).toEqual([]);
+		expect(view.result.current.state).toBe("attached");
+
+		view.rerender({ daemonReady: true, isVisible: true, inputDisabled: false });
+		terminal.typeKeys("safe now\r");
+		expect(muxes[0].inputs).toEqual([["handle-1", "safe now\r"]]);
 	});
 
 	it("keeps receiving output while hidden without accepting input or resizing the PTY", () => {

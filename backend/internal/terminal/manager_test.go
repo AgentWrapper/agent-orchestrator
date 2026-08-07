@@ -130,6 +130,66 @@ func TestServeBuffersInputUntilAttachReady(t *testing.T) {
 	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "status\n" })
 }
 
+func TestBeginInputDrainBlocksMuxWritesUntilReleased(t *testing.T) {
+	pty := newFakePTY()
+	mgr := NewManager(&fakeSource{alive: true, spawner: &fakeSpawner{ptys: []*fakePTY{pty}}}, nil, testLogger(), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	_, release := mgr.BeginInputDrain("t1")
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("lost work\n"))}
+	// The pong proves the sequential read loop has already handled the data frame.
+	conn.in <- clientMsg{Ch: chSystem, Type: msgPing}
+	recv(t, conn, chSystem, msgPong, time.Second)
+	if got := string(pty.writtenBytes()); got != "" {
+		t.Fatalf("blocked terminal wrote %q", got)
+	}
+
+	release()
+	release() // release is safe under duplicate cleanup paths.
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("allowed\n"))}
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "allowed\n" })
+}
+
+func TestBeginInputDrainReturnsTheLastAcceptedWriteBarrier(t *testing.T) {
+	pty := newFakePTY()
+	mgr := NewManager(&fakeSource{alive: true, spawner: &fakeSpawner{ptys: []*fakePTY{pty}}}, nil, testLogger(), WithHeartbeat(0))
+	defer mgr.Close()
+
+	conn := newFakeConn()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go mgr.Serve(ctx, conn)
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgOpen}
+	recv(t, conn, chTerminal, msgOpened, time.Second)
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("before\n"))}
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "before\n" })
+
+	first, release := mgr.BeginInputDrain("t1")
+	if first.IsZero() {
+		t.Fatal("accepted input did not produce a drain barrier")
+	}
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("blocked\n"))}
+	conn.in <- clientMsg{Ch: chSystem, Type: msgPing}
+	recv(t, conn, chSystem, msgPong, time.Second)
+	release()
+
+	conn.in <- clientMsg{Ch: chTerminal, ID: "t1", Type: msgData, Data: base64.StdEncoding.EncodeToString([]byte("after\n"))}
+	eventually(t, time.Second, func() bool { return string(pty.writtenBytes()) == "before\nafter\n" })
+	second, releaseSecond := mgr.BeginInputDrain("t1")
+	defer releaseSecond()
+	if !second.After(first) {
+		t.Fatalf("second barrier = %s, want after first %s", second, first)
+	}
+}
+
 // nextTerminal returns the next frame on conn.out (no skipping), so callers can
 // assert frame ordering rather than just presence.
 func nextTerminal(t *testing.T, c *fakeConn) serverMsg {

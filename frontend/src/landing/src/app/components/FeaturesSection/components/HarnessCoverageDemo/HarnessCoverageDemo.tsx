@@ -76,9 +76,9 @@ function HarnessIcon({ src }: { src: string }) {
 		<Image
 			src={src}
 			alt=""
-			width={16}
-			height={16}
-			className="size-4 shrink-0"
+			width={14}
+			height={14}
+			className="size-3.5 shrink-0"
 			draggable={false}
 		/>
 	);
@@ -236,7 +236,7 @@ export function HarnessCoverageDemo() {
 		>
 			<div
 				ref={rootRef}
-				className="relative h-[340px] overflow-hidden p-3 sm:h-[318px] sm:p-4"
+				className="relative h-[300px] overflow-hidden p-3 sm:h-[280px]"
 				onPointerEnter={() => setInteracting(true)}
 				onPointerLeave={() => setInteracting(false)}
 				onFocusCapture={() => setInteracting(true)}
@@ -247,12 +247,12 @@ export function HarnessCoverageDemo() {
 				}}
 			>
 				<div className="flex flex-col gap-1.5">
-					<h2 className="text-[10px] font-bold uppercase leading-4 tracking-[0.06em] text-[var(--preview-muted-foreground)]">
+					<h2 className="text-[9px] font-bold uppercase leading-4 tracking-[0.06em] text-[var(--preview-muted-foreground)]">
 						Agents
 					</h2>
 
 					<SettingsRow
-						icon={<Bot className="size-4 shrink-0 text-[var(--preview-muted-foreground)]" aria-hidden="true" />}
+						icon={<Bot className="size-3.5 shrink-0 text-[var(--preview-muted-foreground)]" aria-hidden="true" />}
 						label="Default worker agent"
 						trailing={
 							<HarnessTrigger
@@ -264,7 +264,7 @@ export function HarnessCoverageDemo() {
 					/>
 
 					<SettingsRow
-						icon={<Network className="size-4 shrink-0 text-[var(--preview-muted-foreground)]" aria-hidden="true" />}
+						icon={<Network className="size-3.5 shrink-0 text-[var(--preview-muted-foreground)]" aria-hidden="true" />}
 						label="Default orchestrator agent"
 						trailing={
 							<HarnessTrigger
@@ -276,15 +276,15 @@ export function HarnessCoverageDemo() {
 					/>
 
 					<SettingsRow
-						icon={<RefreshCw className="size-4 shrink-0 text-[var(--preview-muted-foreground)]" aria-hidden="true" />}
+						icon={<RefreshCw className="size-3.5 shrink-0 text-[var(--preview-muted-foreground)]" aria-hidden="true" />}
 						label="Refresh agents"
 						trailing={
 							<button
 								type="button"
 								onClick={refresh}
-								className="inline-flex items-center gap-1.5 rounded-lg px-1 py-0.5 text-[11px] text-[var(--preview-muted-foreground)] outline-none transition-colors hover:text-[var(--preview-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
+								className="inline-flex items-center gap-1.5 rounded-lg px-1 py-0.5 text-[10px] text-[var(--preview-muted-foreground)] outline-none transition-colors hover:text-[var(--preview-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
 							>
-								<RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />
+								<RefreshCw className={`size-3 ${refreshing ? "animate-spin" : ""}`} aria-hidden="true" />
 								{refreshing ? "Refreshing…" : "Refresh"}
 							</button>
 						}
@@ -293,58 +293,58 @@ export function HarnessCoverageDemo() {
 
 				<AnimatePresence mode="wait">
 					{openField ? (
-						<motion.div
-							key={openField}
-							initial={{ opacity: 0, y: -6, scale: 0.98 }}
-							animate={{ opacity: 1, y: 0, scale: 1 }}
-							exit={{ opacity: 0, y: -4, scale: 0.98 }}
-							transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
-							className={`absolute right-3 z-10 flex max-h-[200px] w-[min(18rem,calc(100%-24px))] flex-col overflow-hidden rounded-[14px] border border-[var(--preview-border)] bg-[var(--preview-muted)] p-2 shadow-[0_16px_40px_rgba(0,0,0,0.5)] sm:right-4 ${
-								openField === "worker" ? "top-[58px] sm:top-[62px]" : "top-[106px] sm:top-[110px]"
-							}`}
-						>
+					<motion.div
+						key={openField}
+						initial={{ opacity: 0, y: -6, scale: 0.98 }}
+						animate={{ opacity: 1, y: 0, scale: 1 }}
+						exit={{ opacity: 0, y: -4, scale: 0.98 }}
+						transition={{ duration: 0.16, ease: [0.2, 0, 0, 1] }}
+						className={`absolute right-3 z-10 flex max-h-[180px] w-[min(16rem,calc(100%-24px))] flex-col overflow-hidden rounded-[12px] border border-[var(--preview-border)] bg-[var(--preview-muted)] p-1.5 shadow-[0_16px_40px_rgba(0,0,0,0.5)] ${
+							openField === "worker" ? "top-[50px]" : "top-[94px]"
+						}`}
+					>
 							<div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto">
 								{harnesses.map((harness, index) => {
 									const selected =
 										openField === "worker" ? worker === index : orchestrator === index;
 									const disabled = !isSelectable(harness.status);
 									return (
-										<button
-											type="button"
-											key={harness.id}
-											disabled={disabled}
-											onClick={() => chooseHarness(index)}
-											className={`flex min-h-9 w-full items-center gap-3 rounded-2xl px-3 py-2 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)] disabled:cursor-not-allowed ${
-												selected
-													? "bg-[color-mix(in_oklab,var(--preview-foreground)_12%,transparent)]"
-													: "hover:bg-[color-mix(in_oklab,var(--preview-foreground)_8%,transparent)]"
-											} ${disabled ? "opacity-45" : ""}`}
+									<button
+										type="button"
+										key={harness.id}
+										disabled={disabled}
+										onClick={() => chooseHarness(index)}
+										className={`flex min-h-8 w-full items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)] disabled:cursor-not-allowed ${
+											selected
+												? "bg-[color-mix(in_oklab,var(--preview-foreground)_12%,transparent)]"
+												: "hover:bg-[color-mix(in_oklab,var(--preview-foreground)_8%,transparent)]"
+										} ${disabled ? "opacity-45" : ""}`}
+									>
+										<HarnessIcon src={harness.icon} />
+										<span
+											className={`min-w-0 flex-1 truncate text-[11px] ${
+												disabled
+													? "text-[var(--preview-muted-foreground)]"
+													: "text-[var(--preview-foreground)]"
+											}`}
 										>
-											<HarnessIcon src={harness.icon} />
-											<span
-												className={`min-w-0 flex-1 truncate text-[12px] ${
-													disabled
-														? "text-[var(--preview-muted-foreground)]"
-														: "text-[var(--preview-foreground)]"
-												}`}
-											>
-												{harness.label}
-											</span>
-											<span
-												className="shrink-0 text-[10px]"
-												style={{
-													color:
-														harness.status === "Authorized"
-															? previewStatus.success
-															: previewStatus.warning,
-												}}
-											>
-												{harness.status}
-											</span>
-											{selected ? (
-												<Check className="size-3 shrink-0 text-[var(--preview-foreground)]" aria-hidden="true" />
-											) : null}
-										</button>
+											{harness.label}
+										</span>
+										<span
+											className="shrink-0 text-[9.5px]"
+											style={{
+												color:
+													harness.status === "Authorized"
+														? previewStatus.success
+														: previewStatus.warning,
+											}}
+										>
+											{harness.status}
+										</span>
+										{selected ? (
+											<Check className="size-2.5 shrink-0 text-[var(--preview-foreground)]" aria-hidden="true" />
+										) : null}
+									</button>
 									);
 								})}
 							</div>
@@ -352,17 +352,17 @@ export function HarnessCoverageDemo() {
 					) : null}
 				</AnimatePresence>
 
-				<div className="absolute bottom-3 left-3 right-3 flex items-center justify-between border-t border-[var(--preview-border)] pt-3 sm:bottom-4 sm:left-4 sm:right-4">
-					<span className="hidden text-[9px] text-[var(--preview-muted-foreground)] sm:block">
-						Selections apply to new sessions.
-					</span>
-					<button
-						type="button"
-						className="h-8 rounded-2xl bg-[#4f8afa] px-4 text-[11px] font-medium text-white outline-none transition-transform active:scale-[0.96] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
-					>
-						Save changes
-					</button>
-				</div>
+			<div className="absolute bottom-3 left-3 right-3 flex items-center justify-between border-t border-[var(--preview-border)] pt-2.5">
+				<span className="hidden text-[8.5px] text-[var(--preview-muted-foreground)] sm:block">
+					Selections apply to new sessions.
+				</span>
+				<button
+					type="button"
+					className="h-[26px] rounded-xl bg-[#4f8afa] px-3 text-[10px] font-medium text-white outline-none transition-transform active:scale-[0.96] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
+				>
+					Save changes
+				</button>
+			</div>
 			</div>
 		</FeaturePreviewShell>
 	);
@@ -378,10 +378,10 @@ function SettingsRow({
 	trailing: ReactNode;
 }) {
 	return (
-		<div className="flex h-[42px] items-center justify-between gap-3 rounded-2xl bg-[var(--preview-card)] px-3.5 transition-[background-color,box-shadow] duration-150">
-			<div className="flex min-w-0 items-center gap-3">
+		<div className="flex h-[36px] items-center justify-between gap-3 rounded-xl bg-[var(--preview-card)] px-3 transition-[background-color,box-shadow] duration-150">
+			<div className="flex min-w-0 items-center gap-2.5">
 				{icon}
-				<span className="truncate text-[12px] leading-5 text-[var(--preview-foreground)]">{label}</span>
+				<span className="truncate text-[11px] leading-5 text-[var(--preview-foreground)]">{label}</span>
 			</div>
 			<div className="flex min-w-0 shrink-0 items-center justify-end">{trailing}</div>
 		</div>
@@ -404,12 +404,12 @@ function HarnessTrigger({
 			type="button"
 			aria-expanded={open}
 			onClick={onClick}
-			className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-2xl px-1 py-0.5 text-left text-[11px] text-[var(--preview-muted-foreground)] outline-none transition-colors hover:text-[var(--preview-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
+			className="inline-flex max-w-full min-w-0 items-center gap-1.5 rounded-xl px-1 py-0.5 text-left text-[10px] text-[var(--preview-muted-foreground)] outline-none transition-colors hover:text-[var(--preview-foreground)] focus-visible:ring-2 focus-visible:ring-[var(--preview-ring)]"
 		>
 			<HarnessIcon src={harness.icon} />
 			<span className="min-w-0 truncate">{harness.label}</span>
 			<ChevronDown
-				className={`size-3 shrink-0 opacity-70 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
+				className={`size-2.5 shrink-0 opacity-70 transition-transform duration-150 ${open ? "rotate-180" : ""}`}
 				aria-hidden="true"
 			/>
 		</button>

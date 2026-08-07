@@ -1,6 +1,6 @@
 # Agent Orchestrator Architecture
 
-Agent Orchestrator is a long-running Go daemon that supervises multiple parallel AI coding agent sessions. Each session runs in an isolated git worktree with its own runtime, while the daemon coordinates lifecycle, observes external state, and routes feedback.
+Agent Orchestrator is a long-running Go daemon that supervises multiple parallel AI coding agent sessions. Every session owns an isolated git worktree and one committed interface mode at a time. A TUI session runs its agent inside a tmux/conpty runtime; a Chat session runs a native protocol controller without an agent terminal runtime. A durable handoff may move a compatible native conversation between them, but both controllers are never live at once. The daemon coordinates both through the same session, lifecycle, workspace, storage, and observation boundaries.
 
 ## Table of Contents
 
@@ -38,6 +38,8 @@ The only persistent session state is:
 
 - `activity_state` — What the agent last reported (`active`, `idle`, `waiting_input`, `blocked`, `exited`). `waiting_input` is an agent at an empty prompt awaiting its next instruction; `blocked` is an agent stopped on a pending permission/approval decision — automation must never inject input into a blocked session.
 - `is_terminated` — Whether the session should be treated as over
+- `session_mode` plus its runtime/provider handle and generation — The currently committed controller epoch
+- `session_interface_transitions` — Durable checkpoints for an in-progress or completed TUI↔Chat handoff
 - PR facts — `pr`, `pr_checks`, `pr_comment` tables
 
 ### What is NOT Durable
@@ -52,6 +54,7 @@ Display status like `working`, `needs_input`, `ci_failed`, `mergeable` are **com
 graph TB
     subgraph Frontend
         FE[Electron + React UI]
+        Mobile[Expo + React Native UI]
         CLI[ao CLI]
     end
 
@@ -67,6 +70,7 @@ graph TB
         PRSvc[PR Service]
         ReviewSvc[Review Service]
         SessionMgr[Session Manager]
+        ChatSvc[Chat Service]
         LCM[Lifecycle Manager]
     end
 
@@ -84,21 +88,26 @@ graph TB
     subgraph Adapters["Adapters"]
         AgentAdapter[Agent Adapters]
         RuntimeAdapter[Runtime tmux/conpty]
+        ChatDriver[Native Chat / ACP Drivers]
         WorkspaceAdapter[Workspace git worktree]
         SCMAdapter[SCM GitHub]
     end
 
     FE -->|REST/SSE| Controllers
+    Mobile -->|Authenticated LAN REST/SSE| Controllers
+    Mobile -->|Authenticated mux| Terminal
     CLI -->|REST| Controllers
     Controllers --> SessionSvc
     Controllers --> ProjectSvc
     Controllers --> PRSvc
 
     SessionSvc --> SessionMgr
+    SessionMgr --> ChatSvc
     SessionMgr --> LCM
     SessionMgr --> AgentAdapter
     SessionMgr --> RuntimeAdapter
     SessionMgr --> WorkspaceAdapter
+    ChatSvc --> ChatDriver
 
     LCM --> SQLite
     LCM --> AgentAdapter
@@ -187,6 +196,7 @@ backend/internal/
 ├── service/             # Controller-facing services
 │   ├── project/         # Project CRUD
 │   ├── session/         # Session read-model assembly
+│   ├── chat/            # Runtime-less Chat controllers + durable projection
 │   ├── pr/              # PR observation service
 │   └── review/          # Code review service
 ├── session_manager/     # Internal session command engine
@@ -201,6 +211,7 @@ backend/internal/
 ├── terminal/            # Terminal session protocol
 ├── adapters/            # Concrete adapter implementations
 │   ├── agent/           # 23+ agent harnesses
+│   ├── chatdriver/      # Native provider protocols and reusable ACP transport
 │   ├── runtime/         # tmux/conpty runtimes
 │   ├── workspace/       # git worktree
 │   ├── scm/             # GitHub
@@ -220,6 +231,8 @@ sequenceDiagram
     participant LCM as Lifecycle Manager
     participant Agent as Agent Adapter
     participant Runtime as Runtime Adapter
+    participant ChatSvc as Chat Service
+    participant ChatDriver as Chat Driver
     participant WS as Workspace Adapter
     participant DB as SQLite
     participant CDC as CDC Broadcaster
@@ -227,6 +240,14 @@ sequenceDiagram
     UI->>HTTP: POST /sessions
     HTTP->>Svc: Spawn(config)
     Svc->>Mgr: Spawn(config)
+
+    Mgr->>Mgr: Resolve initial mode
+    alt initial mode = chat
+        Mgr->>ChatSvc: Preflight binary/auth/protocol
+        ChatSvc->>ChatDriver: Probe installed provider
+    else initial mode = tui
+        Mgr->>Runtime: Validate runtime prerequisites
+    end
 
     Note over Mgr: 1. Create session row
     Mgr->>DB: Insert session
@@ -237,16 +258,21 @@ sequenceDiagram
     Mgr->>WS: Create(project, branch)
     WS->>WS: git worktree add
 
-    Note over Mgr: 3. Launch runtime
-    Mgr->>Runtime: Create(session)
-    Runtime->>Runtime: Start tmux/conpty
+    alt persisted mode = tui
+        Note over Mgr: 3a. Launch terminal controller
+        Mgr->>Runtime: Create(session)
+        Runtime->>Runtime: Start tmux/conpty
+        Mgr->>Agent: GetLaunchCommand()
+        Agent-->>Mgr: launch command
+        Mgr->>Runtime: Execute(agent command)
+    else persisted mode = chat
+        Note over Mgr: 3b. Launch native Chat controller
+        Mgr->>ChatSvc: StartChat(session, worktree, harness)
+        ChatSvc->>ChatDriver: Start or resume provider conversation
+        Note over Runtime: No agent runtime handle is created
+    end
 
-    Note over Mgr: 4. Start agent
-    Mgr->>Agent: GetLaunchCommand()
-    Agent-->>Mgr: launch command
-    Mgr->>Runtime: Execute(agent command)
-
-    Note over Mgr: 5. Mark spawned
+    Note over Mgr: 4. Mark spawned
     Mgr->>LCM: MarkSpawned(handle)
     LCM->>DB: Update activity_state
     DB->>CDC: trigger change_log
@@ -265,18 +291,83 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Start([User spawns session]) --> Validate[Validate project config]
-    Validate --> CreateRow[Create session row in SQLite]
+    Start([User spawns session]) --> Validate[Validate project config and explicit mode]
+    Validate --> InitialMode{Resolved initial mode}
+    InitialMode -->|chat| Preflight[Probe native Chat driver]
+    InitialMode -->|tui| RuntimePreflight[Validate runtime prerequisites]
+    Preflight --> CreateRow[Create session row in SQLite]
+    RuntimePreflight --> CreateRow
+    CreateRow --> Trigger1[CDC: session.created]
     CreateRow --> CreateWS[Create git worktree]
-    CreateWS --> CreateRT[Launch runtime tmux/conpty]
+    CreateWS --> LaunchMode{Persisted mode}
+    LaunchMode -->|tui| CreateRT[Launch runtime tmux/conpty]
     CreateRT --> GetCmd[Get agent launch command]
     GetCmd --> ExecAgent[Execute agent in runtime]
+    LaunchMode -->|chat| ChatController[Start or resume provider controller]
+    ChatController --> Fence[Claim controller generation]
     ExecAgent --> MarkSpawned[MarkSpawned in LCM]
-    MarkSpawned --> Trigger1[CDC: session.created]
-    Trigger1 --> Trigger2[CDC: session.updated]
+    Fence --> MarkSpawned
+    MarkSpawned --> Trigger2[CDC: session.updated]
+    Trigger1 --> Done
     Trigger2 --> Done([Session running])
 
 ```
+
+### Session Interface Handoff
+
+An interface switch is a controller replacement inside the existing AO session,
+not a new session. The session id, project, worktree, branch, lifecycle facts,
+PR ownership, and provider-native conversation id stay the same. Only the
+mode-owned controller changes.
+
+The generic coordinator lives in `session_manager`; providers opt in through the
+small `AgentInterfaceHandoff` capability only after their TUI resume id and Chat
+protocol id are proven to name the same native conversation. Claude Code and
+Codex currently satisfy that contract. Merely having a Chat/ACP driver is not
+enough to enable switching for another harness.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Manager as Session Manager
+    participant Lifecycle as Lifecycle Manager
+    participant DB as SQLite
+    participant Source as Current Controller
+    participant Target as Target Controller
+
+    Client->>Manager: POST interface-transition(target, policy)
+    Manager->>DB: Claim one active transition
+    Manager->>Target: Preflight binary/auth/protocol
+    alt policy = drain
+        Manager->>Source: Close intake; finish accepted work
+    else policy = interrupt
+        Manager->>Source: Cancel active and queued work
+    end
+    Manager->>Source: Stop and wait for shutdown
+    Manager->>Lifecycle: CommitControllerEpoch(source, target, native id)
+    Lifecycle->>DB: CAS mode + clear old generation/handles + idle fact
+    Manager->>Target: Native resume(same conversation id)
+    Manager->>DB: Persist new handle/generation; complete transition
+    DB-->>Client: session_updated CDC invalidation
+```
+
+The session row is the commit point. If target startup fails, the coordinator
+CASes the row back and resumes the source. If the daemon dies mid-handoff, boot
+reconciliation marks the interrupted transition for recovery and restores the
+controller named by the last committed `session_mode`. Lifecycle/automation
+messages received during the no-controller gap are held in a durable outbox and
+delivered through whichever controller ultimately owns the session. Terminal
+transition paths, transient delivery failures, and daemon restarts all retain
+the message for retry; Chat retries carry a stable idempotency key. Old Chat
+events are fenced by controller generation; old TUI hooks are fenced by runtime
+launch id.
+
+`drain` is loss-minimizing and may wait on an approval or user-input request;
+`interrupt` sends the provider's cancellation first, allows a short transcript
+flush, and then stops the source. Files and completed provider context survive.
+There is no provider-neutral way to migrate a currently executing tool call or a
+detached background process, and AO does not synthesize terminal screen output
+into structured Chat history.
 
 ### Observation Flow
 
@@ -315,25 +406,30 @@ flowchart TD
 sequenceDiagram
     participant SCM as SCM Observer
     participant LCM as Lifecycle Manager
-    participant Agent as Agent Adapter
-    participant Runtime as Runtime Adapter
+    participant Dispatch as Mode-aware Messenger
+    participant TUI as Runtime Messenger
+    participant Chat as Chat Controller
 
     SCM->>SCM: Observe PR comment
     SCM->>LCM: ApplySCMObservation()
     LCM->>LCM: Detect actionable feedback
-    LCM->>Agent: SendNudge(feedback)
+    LCM->>Dispatch: Send(feedback)
 
     SCM->>SCM: Observe CI failure
     SCM->>LCM: ApplySCMObservation()
     LCM->>LCM: Detect actionable feedback
-    LCM->>Agent: SendNudge(CI failure)
+    LCM->>Dispatch: Send(CI failure)
 
     SCM->>SCM: Observe merge conflict
     SCM->>LCM: ApplySCMObservation()
     LCM->>LCM: Detect actionable feedback
-    LCM->>Agent: SendNudge(merge conflict)
+    LCM->>Dispatch: Send(merge conflict)
 
-    Note over Agent,Runtime: Agent receives nudges via<br/>runtime messages or hooks
+    alt session mode = tui
+        Dispatch->>TUI: Send through runtime handle
+    else session mode = chat
+        Dispatch->>Chat: Enqueue native provider turn
+    end
 ```
 
 ---
@@ -345,6 +441,13 @@ sequenceDiagram
 ```mermaid
 erDiagram
     projects ||--o{ sessions : owns
+    projects ||--o| conversations : owns_orchestrator_narrative
+    sessions ||--o| conversations : owns_worker_narrative
+    sessions ||--o{ session_interface_transitions : records_controller_handoffs
+    session_interface_transitions ||--o{ session_interface_transition_messages : holds_messages_during_gap
+    conversations ||--o{ conversation_turns : contains
+    conversations ||--o{ conversation_messages : contains
+    conversations ||--o{ conversation_activities : contains
     sessions ||--o{ pull_requests : owns
     pull_requests ||--o{ pr_checks : has
     pull_requests ||--o{ pr_review_threads : has
@@ -365,9 +468,22 @@ erDiagram
         string id PK
         string project_id FK
         string harness
+        string session_mode
+        string runtime_handle_id
+        string provider_conversation_id
+        string controller_generation
         string activity_state
         boolean is_terminated
         jsonb metadata
+    }
+
+    conversations {
+        string id PK
+        string scope
+        string project_id FK
+        string session_id FK
+        string current_session_id FK
+        integer latest_sequence
     }
 
     pull_requests {
@@ -487,8 +603,9 @@ The `lifecycle.Manager` is the **canonical write path** for all session lifecycl
 ```mermaid
 flowchart TD
     subgraph Inputs["Observation Inputs"]
-        RuntimeObs[Runtime Observations]
+        RuntimeObs[TUI Runtime Observations]
         ActivitySignals[Agent Activity Signals]
+        ChatSignals[Chat Controller Signals]
         SCMObs[SCM Observations]
     end
 
@@ -507,6 +624,7 @@ flowchart TD
 
     RuntimeObs --> Reducer
     ActivitySignals --> Reducer
+    ChatSignals --> Reducer
     SCMObs --> Reducer
 
     Reducer --> StateMachine
@@ -540,7 +658,7 @@ stateDiagram-v2
 
     note right of Active
         Agent is working
-        Runtime alive
+        TUI runtime or Chat controller alive
     end note
 
     note right of Waiting
@@ -550,7 +668,7 @@ stateDiagram-v2
 
     note right of Terminated
         Session over
-        Runtime cleaned up
+        Mode-owned controller cleaned up
     end note
 ```
 
@@ -620,7 +738,7 @@ flowchart TD
     List --> ForEach[For each session]
 
     ForEach --> GetHandle{Has runtime<br/>handle?}
-    GetHandle -->|No| Skip[Skip session]
+    GetHandle -->|No, including Chat| Skip[Skip runtime probe]
     GetHandle -->|Yes| Probe[Probe runtime]
 
     Probe --> Result{Probe result}
@@ -730,6 +848,13 @@ The daemon runs two independent HTTP listeners sharing the same chi router:
 1. **Primary (Loopback) Listener** — binds `127.0.0.1:3001` with no authentication. All existing daemon operations (CLI, desktop app) use this listener.
 2. **LAN Listener** (Connect Mobile) — an opt-in second listener that binds `0.0.0.0:3011` (or ephemeral fallback) **only when explicitly enabled** by the user through the desktop app's Settings. It wraps the shared router in bearer-password authentication middleware, serves app API routes to mobile clients, but never exposes loopback-gated control routes (`/shutdown`, telemetry, mobile control commands). All traffic is plaintext HTTP on a home network only, by deliberate security decision — see `docs/adr/0001-lan-listener-for-mobile.md` for rationale and threat model. Auth state (hashed password, per-source lockout) is persisted to `~/.ao/mobile/config.json` and restored on daemon boot.
 
+The mobile app is a second thin renderer over those same session resources. It
+branches on the session's persisted `mode`: TUI attaches the existing mux PTY,
+while Chat reads the paged conversation projection and uses the durable CDC SSE
+stream only for targeted invalidation/reconnect. Sends, approvals, input,
+provider configuration, compaction, rollback, and shell creation remain daemon
+commands; no provider or lifecycle policy is implemented in React Native.
+
 For implementation details and security model, consult `docs/adr/0001-lan-listener-for-mobile.md` and the glossary in `CONTEXT.md`.
 
 ### Request Flow
@@ -750,12 +875,17 @@ sequenceDiagram
     Controller->>Controller: decode JSON
     Controller->>Service: Spawn(config)
     Service->>Manager: Spawn(config)
+    Manager->>Manager: Resolve mode and preflight its controller
     Manager->>Store: Create session
     Store->>DB: INSERT INTO sessions
     DB->>Store: session record
     Store->>Manager: session record
-    Manager->>Manager: Create workspace
-    Manager->>Manager: Launch runtime
+    Manager->>Manager: Create and provision workspace
+    alt mode = tui
+        Manager->>Manager: Launch terminal runtime/controller
+    else mode = chat
+        Manager->>Manager: Launch runtime-less Chat controller
+    end
     Manager->>Service: Session response
     Service->>Controller: enriched session
     Controller->>Controller: encode JSON
@@ -765,6 +895,12 @@ sequenceDiagram
 ---
 
 ## Terminal Multiplexing
+
+The mux is the primary agent controller only for TUI-mode sessions. Chat-mode
+sessions have no agent runtime handle and never attach their provider through
+tmux. They may still open session-scoped shell terminals as a worktree escape
+hatch; those shells are separate resources and do not become the agent
+controller.
 
 ### Terminal Architecture
 
@@ -881,7 +1017,7 @@ Agent Orchestrator's architecture is designed around:
 - **Port-based design** — Core code depends on interfaces, not implementations
 - **Durable minimalism** — Store only facts, compute everything else
 - **Event-driven updates** — CDC broadcasts changes to all subscribers
-- **Isolation** — Each session in its own worktree with its own runtime
+- **Isolation** — Each session owns a worktree and exactly one live mode-specific controller, including across handoffs
 - **Safety** — Conservative termination, path validation, gitignored hooks
 
 This architecture enables parallel AI agents to work safely while maintaining complete visibility and control.

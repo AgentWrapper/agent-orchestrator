@@ -24,6 +24,14 @@ vi.mock("../lib/api-client", () => ({
 		PUT: putMock,
 		POST: postMock,
 	},
+	apiErrorCode: (error: unknown) =>
+		typeof error === "object" && error !== null && "code" in error
+			? String((error as { code: unknown }).code)
+			: undefined,
+	apiErrorRequestId: (error: unknown) =>
+		typeof error === "object" && error !== null && "requestId" in error
+			? String((error as { requestId: unknown }).requestId)
+			: undefined,
 	apiErrorMessage: (error: unknown) => {
 		if (error instanceof Error) return error.message;
 		if (typeof error === "object" && error !== null && "message" in error) {
@@ -353,17 +361,13 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(workerModel);
 		expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
 			"Agent default",
-			"GPT-5.6 SolDefaultgpt-5.6-sol",
-			"GPT-5.5gpt-5.5",
-			"GPT-5.4gpt-5.4",
+			"GPT-5.6 SolDefault",
+			"GPT-5.5",
+			"GPT-5.4",
 			"Custom model…",
 		]);
-		const search = screen.getByRole("searchbox", { name: "Search worker model" });
-		await userEvent.type(search, "5.5");
-		expect(screen.getAllByRole("menuitem")).toHaveLength(1);
-		expect(screen.getByRole("menuitem", { name: /GPT-5\.5/ })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: /GPT-5\.4/ })).not.toBeInTheDocument();
-		await userEvent.clear(search);
+		// A compact catalog stays immediately scannable and does not spend a row on search.
+		expect(screen.queryByRole("searchbox", { name: "Search worker model" })).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("menuitem", { name: /GPT-5\.4/ }));
 		expect(workerModel).toHaveTextContent("GPT-5.4");
 

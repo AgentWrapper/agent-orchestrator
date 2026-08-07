@@ -13,6 +13,7 @@ import (
 	sessionsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/session"
 	sessionmanager "github.com/aoagents/agent-orchestrator/backend/internal/session_manager"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 type stubRuntime struct {
@@ -128,7 +129,7 @@ type stack struct {
 func newStack(t *testing.T) *stack {
 	t.Helper()
 	ctx := context.Background()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
