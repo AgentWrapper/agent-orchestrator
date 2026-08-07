@@ -131,7 +131,7 @@ export type WorkspaceSession = {
 	issueId?: string;
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
-	reviewerHarness?: "claude-code" | "codex" | "opencode";
+	reviewerHarness?: "claude-code" | "codex" | "opencode" | "muse";
 	kind?: SessionKind;
 	/**
 	 * Which controller is currently committed for this session. The session

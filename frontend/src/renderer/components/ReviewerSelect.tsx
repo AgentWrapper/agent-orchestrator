@@ -34,6 +34,7 @@ const REVIEWER_HARNESS_IDS = [
 	"kilocode",
 	"kiro",
 	"kimi",
+	"muse",
 	"opencode",
 	"pi",
 	"qwen",
@@ -49,7 +50,7 @@ void _everyReviewerHarnessIsListed;
 
 export const KNOWN_REVIEWER_HARNESS_IDS: ReadonlySet<string> = new Set(REVIEWER_HARNESS_IDS);
 
-const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
+const REVIEWER_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "muse", "aider"] as const;
 const REVIEWER_AGENT_PRIORITY_RANK = new Map<string, number>(
 	REVIEWER_AGENT_PRIORITY.map((agent, index) => [agent, index]),
 );

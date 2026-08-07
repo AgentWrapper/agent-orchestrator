@@ -91,7 +91,8 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						reviewerHarness:
 							session.reviewerHarness === "claude-code" ||
 							session.reviewerHarness === "codex" ||
-							session.reviewerHarness === "opencode"
+							session.reviewerHarness === "opencode" ||
+							session.reviewerHarness === "muse"
 								? session.reviewerHarness
 								: undefined,
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,

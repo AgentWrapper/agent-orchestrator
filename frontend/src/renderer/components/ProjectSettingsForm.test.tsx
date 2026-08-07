@@ -642,6 +642,59 @@ describe("ProjectSettingsForm", () => {
 		expect(labels).toContain("Pi");
 	});
 
+	it("offers Muse Code as a reviewer", async () => {
+		const muse = { id: "muse", label: "Muse Code", authStatus: "authorized" };
+		mockProject({
+			id: "proj-1",
+			name: "Project One",
+			kind: "single_repo",
+			path: "/repo/project-one",
+			repo: "",
+			defaultBranch: "main",
+			config: {
+				worker: { agent: "muse" },
+				orchestrator: { agent: "claude-code" },
+			},
+		});
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return {
+					data: {
+						supported: [...agentCatalogResponse.data.supported, muse],
+						installed: [...agentCatalogResponse.data.installed, muse],
+						authorized: [...agentCatalogResponse.data.authorized, muse],
+					},
+					error: undefined,
+				};
+			}
+			return {
+				data: {
+					status: "ok",
+					project: {
+						id: "proj-1",
+						name: "Project One",
+						kind: "single_repo",
+						path: "/repo/project-one",
+						repo: "",
+						defaultBranch: "main",
+						config: {
+							worker: { agent: "muse" },
+							orchestrator: { agent: "claude-code" },
+						},
+					},
+				},
+				error: undefined,
+			};
+		});
+
+		renderSettings("proj-1", undefined, "workflow");
+
+		const reviewer = await screen.findByRole("button", { name: "Default reviewer agent" });
+		await userEvent.click(reviewer);
+
+		expect(await screen.findByRole("menuitem", { name: /Muse Code/ })).toBeInTheDocument();
+	});
+
 	it("orders reviewers using the default agent priority", async () => {
 		mockProject({
 			id: "proj-1",
