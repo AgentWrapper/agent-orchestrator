@@ -2006,8 +2006,10 @@ func TestSpawnOrchestratorVerifiesReplacementHarness(t *testing.T) {
 func TestDelegateTaskPassesAttachmentsToSpawnConfig(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}
+	st.sessions["orch"] = domain.SessionRecord{ID: "orch", ProjectID: "mer", Kind: domain.KindOrchestrator}
 	fc := &fakeCommander{}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st})
+	svc.runBackground = runInline
 
 	_, err := svc.DelegateTask(context.Background(), DelegateTaskInput{
 		ProjectID:      "mer",
