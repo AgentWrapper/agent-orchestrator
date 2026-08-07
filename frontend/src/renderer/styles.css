@@ -2973,11 +2973,17 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 .browser-panel__toolbar {
 	display: flex;
 	align-items: center;
-	gap: 5px;
+	gap: 2px;
 	flex-shrink: 0;
 	min-width: 0;
-	min-height: 44px;
-	padding: 7px 8px;
+	/* Matches the 28px (--size-control-md) buttons + 3px top/bottom exactly, so
+	   this is the actual driver of the bar's height — a bigger min-height here
+	   would silently swallow any padding reduction above it (buttons would just
+	   stay centered in the leftover space instead of the bar getting shorter). */
+	min-height: 34px;
+	/* No right padding: the new-tab button's own column is flush against this
+	   edge so it lines up with the docked rail directly below it. */
+	padding: 3px 0 3px 4px;
 	border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
 	background:
 		linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, white 2%), var(--surface)),
@@ -3070,12 +3076,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	box-shadow:
 		0 0 0 3px color-mix(in srgb, var(--color-accent) 18%, transparent),
 		inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
-}
-
-.browser-panel__tabs-trigger {
-	min-width: 42px;
-	border: 1px solid color-mix(in srgb, var(--color-border) 56%, transparent);
-	background: color-mix(in srgb, var(--surface) 86%, var(--bg));
 }
 
 .browser-panel__content {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
 	BrowserAgentActivityState,
 	BrowserNavState,
@@ -51,6 +51,8 @@ export type BrowserViewModel = {
 	tabNotice: string;
 	selectTab: (tabId: string) => Promise<void>;
 	closeTab: (tabId: string) => Promise<void>;
+	openTab: () => Promise<void>;
+	reorderTabs: (orderedIds: string[]) => void;
 	prepareForOverlay: () => Promise<void>;
 	finishOverlay: () => void;
 	agentBrowserActive: boolean;
@@ -139,6 +141,10 @@ export function useBrowserView({
 	const [mirrorStream, setMirrorStream] = useState<MediaStream | null>(null);
 	const [annotationMode, setAnnotationModeState] = useState(false);
 	const [tabsState, setTabsState] = useState<BrowserTabsState>(EMPTY_TABS_STATE);
+	// Display-only tab order (drag-to-reorder). Re-projected onto every incoming
+	// tabsState push below, since the main process's own tab order is not
+	// authoritative and browser:tabsState pushes on every nav/title event.
+	const [tabOrder, setTabOrder] = useState<string[]>([]);
 	const [tabNotice, setTabNotice] = useState("");
 	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
 	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
@@ -286,6 +292,9 @@ export function useBrowserView({
 		// is what restores it.
 		previewTriggerRef.current = hasNativeBrowser ? (consumedPreviewTriggers.get(sessionId) ?? null) : null;
 		setTabsState(EMPTY_TABS_STATE);
+		// Tab ids (`t1`, `t2`, ...) restart per session, so a stale order from the
+		// previous session could otherwise silently reapply to the new one.
+		setTabOrder([]);
 		setTabNotice("");
 		setAgentBrowserActive(false);
 		setAgentBrowserActivity(null);
@@ -355,6 +364,26 @@ export function useBrowserView({
 			}, 3_000);
 		});
 	}, []);
+
+	// Re-project the persisted display order onto every incoming tabsState push:
+	// browser:tabsState fires on every nav/title-update/loading-state change for
+	// any tab, so a one-shot local reorder would otherwise be clobbered by the
+	// very next push. New tabs (via "+", popups, agent tab-new) append at the end.
+	useEffect(() => {
+		const incomingIds = tabsState.tabs.map((tab) => tab.id);
+		setTabOrder((prev) => {
+			const kept = prev.filter((id) => incomingIds.includes(id));
+			const added = incomingIds.filter((id) => !kept.includes(id));
+			return kept.length === prev.length && added.length === 0 ? prev : [...kept, ...added];
+		});
+	}, [tabsState.tabs]);
+
+	const tabs = useMemo(() => {
+		const byId = new Map(tabsState.tabs.map((tab) => [tab.id, tab]));
+		return tabOrder.map((id) => byId.get(id)).filter((tab): tab is BrowserTabState => Boolean(tab));
+	}, [tabOrder, tabsState.tabs]);
+
+	const reorderTabs = useCallback((orderedIds: string[]) => setTabOrder(orderedIds), []);
 
 	useEffect(() => {
 		return window.ao?.browser.onAgentActivity((state) => {
@@ -576,6 +605,13 @@ export function useBrowserView({
 		[hasNativeBrowser],
 	);
 
+	const openTab = useCallback(async () => {
+		const viewId = viewIdRef.current;
+		if (!viewId || !hasNativeBrowser) return;
+		const state = await window.ao!.browser.openTab({ viewId });
+		if (viewIdRef.current === state.viewId) setTabsState(state);
+	}, [hasNativeBrowser]);
+
 	useEffect(() => {
 		const handleDone = (payload: BrowserAnnotationSubmitPayload | BrowserAnnotationCancelPayload) => {
 			if (payload.viewId !== viewIdRef.current) return;
@@ -683,11 +719,13 @@ export function useBrowserView({
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
-		tabs: tabsState.tabs,
+		tabs,
 		activeTabId: tabsState.activeTabId,
 		tabNotice,
 		selectTab,
 		closeTab,
+		openTab,
+		reorderTabs,
 		prepareForOverlay,
 		finishOverlay,
 		agentBrowserActive,

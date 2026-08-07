@@ -1,30 +1,25 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	ArrowLeft,
 	ArrowRight,
-	Check,
 	Globe2,
 	Layers3,
 	Maximize2,
 	Minimize2,
 	MousePointer2,
+	Plus,
 	RefreshCw,
 	X,
 } from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
+import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import type { WorkspaceSession } from "../types/workspace";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuLabel,
-	DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
+import { BrowserTabsRail, type BrowserTabsRailHandle } from "./BrowserTabsRail";
 import { cn } from "../lib/utils";
 import { appI18n, type MessageKey } from "../i18n";
 
@@ -36,6 +31,11 @@ type BrowserPanelProps = {
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
+
+// Docked rail visibility: collapsed (0px, tab access via the toolbar trigger) is
+// the default; pinning restores an always-visible icon rail. Persisted so it's a
+// one-time choice, not a state.
+const RAIL_PINNED_STORAGE_KEY = "ao.browserTabs.railPinned";
 
 export type BrowserAnnotationQueueModel = {
 	status: AnnotationStatus;
@@ -242,6 +242,8 @@ export function BrowserPanelView({
 		tabNotice,
 		selectTab,
 		closeTab,
+		openTab,
+		reorderTabs,
 		prepareForOverlay,
 		finishOverlay,
 		agentBrowserActive,
@@ -254,10 +256,17 @@ export function BrowserPanelView({
 		annotationQueue;
 	const showStaticPreview = !window.ao?.browser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
-	const canPopOut = poppedOut || Boolean(navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
-	const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
-	const tabsMenuWarmupRef = useRef<Promise<void> | null>(null);
+	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
+	const railRef = useRef<BrowserTabsRailHandle>(null);
+	const urlInputRef = useRef<HTMLInputElement>(null);
+	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
+	const showTabsTrigger = !poppedOut && !pinned && tabs.length >= 2;
+
+	const handlePinnedChange = useCallback((next: boolean) => {
+		setPinned(next);
+		window.localStorage.setItem(RAIL_PINNED_STORAGE_KEY, next ? "1" : "0");
+	}, []);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -303,42 +312,29 @@ export function BrowserPanelView({
 		}
 	};
 
-	const prepareTabsMenuFrame = useCallback(() => {
-		if (!tabsMenuWarmupRef.current) {
-			tabsMenuWarmupRef.current = prepareForOverlay().finally(() => {
-				tabsMenuWarmupRef.current = null;
-			});
-		}
-		return tabsMenuWarmupRef.current;
-	}, [prepareForOverlay]);
-
-	const warmTabsMenuFrame = useCallback(() => {
-		void prepareTabsMenuFrame();
-	}, [prepareTabsMenuFrame]);
-	// Radix restores focus to the trigger when the menu closes. Preparing on
-	// focus would start a new capture after cleanup; keyboard opens prepare below.
-
-	const openTabsMenu = useCallback(async () => {
-		if (tabs.length === 0) return;
-		await prepareTabsMenuFrame();
-		setTabsMenuOpen(true);
-	}, [prepareTabsMenuFrame, tabs.length]);
-
-	const handleTabsMenuOpenChange = useCallback(
-		(next: boolean) => {
-			if (!next) {
-				setTabsMenuOpen(false);
-				finishOverlay();
-				return;
-			}
-			void openTabsMenu();
+	// The hover-flyout warms a frame the same way the old dropdown trigger did;
+	// selecting a tab always tears the overlay/mirror down afterward.
+	const handleFlyoutOpenChange = useCallback(
+		(open: boolean) => {
+			if (open) void prepareForOverlay();
 		},
-		[finishOverlay, openTabsMenu],
+		[prepareForOverlay],
 	);
+
+	// The button lives in the toolbar, not inside the rail, so a fast
+	// hover-rail-then-click-here still needs to force the flyout closed first —
+	// same reason rows inside the rail do it (see BrowserTabsRail.tsx). A blank
+	// new tab has nowhere to go on its own, so send focus straight to the URL
+	// bar afterward instead of leaving the user to click into it themselves.
+	const handleOpenTab = useCallback(async () => {
+		railRef.current?.closeFlyout(true);
+		await openTab();
+		urlInputRef.current?.focus();
+		urlInputRef.current?.select();
+	}, [openTab]);
 
 	const handleSelectTab = useCallback(
 		async (tabId: string) => {
-			setTabsMenuOpen(false);
 			try {
 				await selectTab(tabId);
 			} catch {
@@ -349,19 +345,6 @@ export function BrowserPanelView({
 		},
 		[finishOverlay, selectTab],
 	);
-
-	const handleTabsTriggerPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
-		if (tabsMenuOpen || tabs.length === 0) return;
-		event.preventDefault();
-		void openTabsMenu();
-	};
-
-	const handleTabsTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-		if (tabsMenuOpen || tabs.length === 0) return;
-		if (event.key !== "Enter" && event.key !== " " && event.key !== "ArrowDown") return;
-		event.preventDefault();
-		void openTabsMenu();
-	};
 
 	const annotationStatusLabel =
 		status === "picking"
@@ -390,7 +373,7 @@ export function BrowserPanelView({
 			role="tabpanel"
 		>
 			<form
-				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface p-1.5"
+				className="browser-panel__toolbar flex shrink-0 min-w-0 items-center gap-1 border-b border-border bg-surface"
 				data-testid="browser-toolbar"
 				onSubmit={submit}
 			>
@@ -472,6 +455,7 @@ export function BrowserPanelView({
 						className="browser-panel__url-input h-browser-url pl-browser-url font-mono text-xs"
 						onChange={(event) => setUrlInput(event.target.value)}
 						placeholder={t("browser.urlPlaceholder")}
+						ref={urlInputRef}
 						value={urlInput}
 					/>
 				</div>
@@ -480,66 +464,10 @@ export function BrowserPanelView({
 						{tabNotice}
 					</span>
 				) : null}
-				<DropdownMenu modal={false} onOpenChange={handleTabsMenuOpenChange} open={tabsMenuOpen}>
-					<DropdownMenuTrigger asChild>
-						<Button
-							aria-label={t("browser.tabsAria", { count: tabs.length })}
-							className={cn("browser-panel__tabs-trigger gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
-							disabled={tabs.length === 0}
-							onKeyDown={handleTabsTriggerKeyDown}
-							onPointerDown={handleTabsTriggerPointerDown}
-							onPointerEnter={warmTabsMenuFrame}
-							size="sm"
-							title={t("browser.tabsTitle", { count: tabs.length })}
-							type="button"
-							variant="ghost"
-						>
-							<Layers3 aria-hidden="true" className="size-icon-base" />
-							<span className="font-mono text-caption">{tabs.length}</span>
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
-						<DropdownMenuLabel>{t("browser.tabs")}</DropdownMenuLabel>
-						{tabs.map((tab) => {
-							const label = browserTabLabel(tab.title, tab.url);
-							return (
-								<div className="flex min-w-0 items-center gap-0.5" key={tab.id}>
-									<DropdownMenuItem
-										className="min-w-0 flex-1 cursor-pointer py-2"
-										onSelect={() => void handleSelectTab(tab.id)}
-										textValue={`${label.title} ${label.subtitle}`}
-									>
-										<span className="flex size-4 shrink-0 items-center justify-center">
-											{tab.id === activeTabId ? <Check aria-hidden="true" className="text-accent" /> : null}
-										</span>
-										<span className="min-w-0 flex-1">
-											<span className="block truncate text-xs text-foreground">{label.title}</span>
-											<span className="block truncate font-mono text-caption text-passive">{label.subtitle}</span>
-										</span>
-									</DropdownMenuItem>
-									<DropdownMenuItem
-										aria-label={t("browser.closeTab", { title: label.title })}
-										className="size-8 shrink-0 cursor-pointer justify-center px-0"
-										disabled={tabs.length === 1}
-										onSelect={() => void closeTab(tab.id)}
-										title={tabs.length === 1 ? t("browser.onlyTab") : t("browser.closeTab", { title: label.title })}
-									>
-										<X aria-hidden="true" className="size-icon-sm" />
-									</DropdownMenuItem>
-								</div>
-							);
-						})}
-					</DropdownMenuContent>
-				</DropdownMenu>
 				<Button
 					aria-label={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
-					disabled={!canPopOut}
-					onClick={() => {
-						if (!canPopOut) return;
-						onTogglePopOut(!poppedOut);
-					}}
+					onClick={() => onTogglePopOut(!poppedOut)}
 					size="icon-sm"
-					title={canPopOut ? undefined : t("browser.openPageFirst")}
 					type="button"
 					variant="ghost"
 				>
@@ -549,33 +477,117 @@ export function BrowserPanelView({
 						<Maximize2 aria-hidden="true" className="size-icon-base" />
 					)}
 				</Button>
-			</form>
-			<div
-				className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
-				data-testid="browser-viewport"
-			>
-				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-				{mirrorStream ? (
-					<MirrorVideo stream={mirrorStream} />
-				) : mirrorUrl ? (
-					<img alt="" className="absolute inset-0 h-full w-full object-fill" src={mirrorUrl} />
-				) : null}
-				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
-				{navState.url === "" ? (
-					<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
-						<p>{t("browser.emptyUrl")}</p>
+				{/* Docked mode has no reserved rail column by default (see
+				    BrowserTabsRail.tsx) — this trigger is the only way to reach the tab
+				    list until the user pins the rail. Hidden at a single tab, same as
+				    the rail's own hover trigger was before this existed. Hover/focus
+				    drive the rail's flyout imperatively since the two live in separate
+				    DOM subtrees (toolbar row vs. body row) — see BrowserTabsRail.tsx's
+				    BrowserTabsRailHandle for why the close side stays debounced here. */}
+				{showTabsTrigger ? (
+					<div className="flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
+						<Button
+							aria-label={t("browser.tabsTitle", { count: tabs.length })}
+							className="relative"
+							onBlur={() => railRef.current?.closeFlyout()}
+							onFocus={() => railRef.current?.openFlyout(true)}
+							onPointerEnter={() => railRef.current?.openFlyout()}
+							onPointerLeave={() => railRef.current?.closeFlyout()}
+							size="icon-sm"
+							title={t("browser.tabsTitle", { count: tabs.length })}
+							type="button"
+							variant="ghost"
+						>
+							<Layers3 aria-hidden="true" className="size-icon-base" />
+							<span
+								aria-hidden="true"
+								className="pointer-events-none absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] font-semibold leading-4 text-background shadow-sm"
+							>
+								{tabs.length}
+							</span>
+						</Button>
 					</div>
 				) : null}
-				{navState.error ? (
-					<p
-						className={cn(
-							"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
-							"rounded-md text-xs text-destructive",
-						)}
-						data-testid="browser-preview-error"
-					>
-						{navState.error}
-					</p>
+				{/* Fixed at the rail's own width (w-8) and flush against the panel's
+				    right edge (the form has no right padding) so this column lines up
+				    with the docked rail directly below it. Popped-out has no icon rail
+				    to align with, and gets its own "+" row inside BrowserTabsRail. */}
+				{!poppedOut ? (
+					<div className="flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
+						<Button
+							aria-label={t("browser.openNewTab")}
+							disabled={!canOpenTab}
+							onClick={() => void handleOpenTab()}
+							size="icon-sm"
+							title={t("browser.openNewTab")}
+							type="button"
+							variant="ghost"
+						>
+							<Plus aria-hidden="true" className="size-icon-base" />
+						</Button>
+					</div>
+				) : null}
+			</form>
+			<div className="browser-panel__body flex min-h-0 flex-1 overflow-hidden">
+				{/* Docked keeps the rail on the right (out of the way of the toolbar/
+				    address bar); popped-out keeps it on the left. */}
+				{poppedOut ? (
+					<BrowserTabsRail
+						activeTabId={activeTabId}
+						onCloseTab={closeTab}
+						onFlyoutOpenChange={handleFlyoutOpenChange}
+						onOpenTab={handleOpenTab}
+						onPinnedChange={handlePinnedChange}
+						onReorderTabs={reorderTabs}
+						onSelectTab={handleSelectTab}
+						pinned={pinned}
+						poppedOut={poppedOut}
+						ref={railRef}
+						tabs={tabs}
+					/>
+				) : null}
+				<div
+					className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
+					data-testid="browser-viewport"
+				>
+					<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
+					{mirrorStream ? (
+						<MirrorVideo stream={mirrorStream} />
+					) : mirrorUrl ? (
+						<img alt="" className="absolute inset-0 h-full w-full object-fill" src={mirrorUrl} />
+					) : null}
+					{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
+					{navState.url === "" ? (
+						<div className="pointer-events-none absolute inset-0 grid place-items-center p-5 text-center font-mono text-xs text-passive">
+							<p>{t("browser.emptyUrl")}</p>
+						</div>
+					) : null}
+					{navState.error ? (
+						<p
+							className={cn(
+								"absolute inset-x-2.5 bottom-2.5 m-0 border border-error/35 bg-error/8 px-2.5 py-2",
+								"rounded-md text-xs text-destructive",
+							)}
+							data-testid="browser-preview-error"
+						>
+							{navState.error}
+						</p>
+					) : null}
+				</div>
+				{!poppedOut ? (
+					<BrowserTabsRail
+						activeTabId={activeTabId}
+						onCloseTab={closeTab}
+						onFlyoutOpenChange={handleFlyoutOpenChange}
+						onOpenTab={handleOpenTab}
+						onPinnedChange={handlePinnedChange}
+						onReorderTabs={reorderTabs}
+						onSelectTab={handleSelectTab}
+						pinned={pinned}
+						poppedOut={poppedOut}
+						ref={railRef}
+						tabs={tabs}
+					/>
 				) : null}
 			</div>
 		</div>
@@ -626,18 +638,6 @@ function browserActionVerb(action: string): string {
 		}
 	})();
 	return appI18n.t(key);
-}
-
-function browserTabLabel(title: string, url: string): { title: string; subtitle: string } {
-	const cleanTitle = title.trim();
-	if (!url) return { title: cleanTitle || appI18n.t("browser.newTab"), subtitle: appI18n.t("browser.blankPage") };
-	try {
-		const parsed = new URL(url);
-		const subtitle = parsed.protocol === "file:" ? parsed.pathname.split("/").filter(Boolean).at(-1) || url : parsed.host;
-		return { title: cleanTitle || subtitle, subtitle };
-	} catch {
-		return { title: cleanTitle || url, subtitle: url };
-	}
 }
 
 function MirrorVideo({ stream }: { stream: MediaStream }) {

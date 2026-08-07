@@ -8,6 +8,7 @@ import type {
 	WebContents,
 	WebFrameMain,
 } from "electron";
+import { nativeImage } from "electron";
 import { randomUUID } from "node:crypto";
 import type {
 	BrowserAnnotationCancelPayload,
@@ -19,6 +20,7 @@ import type {
 	BrowserAnnotationSubmitPayload,
 } from "../shared/browser-annotations";
 import { attachAppShortcuts } from "./app-shortcuts";
+import { MAX_BROWSER_TABS } from "../shared/browser-tabs";
 import type { KeybindingOverrides } from "../shared/shortcuts";
 
 function isValidAnnotationContext(value: unknown): value is BrowserAnnotationContext {
@@ -84,6 +86,7 @@ export type BrowserTabState = {
 	url: string;
 	title: string;
 	active: boolean;
+	favicon?: string;
 };
 
 export type BrowserTabsState = {
@@ -119,6 +122,11 @@ type BrowserNavigateInput = {
 type BrowserTabInput = {
 	viewId: string;
 	tabId: string;
+};
+
+type BrowserOpenTabInput = {
+	viewId: string;
+	url?: string;
 };
 
 type BrowserWebContents = Pick<
@@ -209,6 +217,16 @@ type BrowserEntry = {
 	consoleMessages: BrowserLogEntry[];
 	errors: BrowserLogEntry[];
 	networkCapture?: BrowserNetworkCapture;
+	favicon?: string;
+	// URL of the favicon currently applied to `favicon` (fetch succeeded).
+	faviconSourceUrl?: string;
+	// URL of a favicon fetch currently in flight, so a duplicate event for the
+	// same URL doesn't start a second fetch while one is already pending.
+	faviconPendingUrl?: string;
+	// Origin `favicon` was captured for, so a same-tab navigation to a new
+	// origin can drop the (now-stale) favicon immediately instead of leaving
+	// the previous site's icon showing until the new one finishes loading.
+	faviconOrigin?: string;
 };
 
 type BrowserSessionEntry = {
@@ -279,7 +297,8 @@ const BROWSER_VIEW_BORDER_RADIUS = 8;
 const DEFAULT_NETWORK_CAPTURE_SECONDS = 60;
 const MAX_NETWORK_CAPTURE_SECONDS = 300;
 const MAX_NETWORK_REQUESTS = 200;
-const MAX_BROWSER_TABS = 16;
+const FAVICON_SIZE = 32;
+const MAX_FAVICON_BYTES = 256 * 1024;
 const MAX_EXTERNAL_TEXT_BYTES = 1 << 20;
 const MAX_SNAPSHOT_LINES = 1_000;
 const MAX_LOG_MESSAGE_CHARS = 16_384;
@@ -457,6 +476,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			() => applySessionBounds(session, entry),
 			() => pushTabsState(options, session),
 		);
+		wireFaviconEvents(view.webContents, entry, () => pushTabsState(options, session));
 		wireAutomationEvents(view.webContents, entry);
 		// The preview is a separate WebContentsView, so renderer-window keydown
 		// listeners never see keys typed here. Forward application shortcuts to the
@@ -838,6 +858,12 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 			? closeTab(session, input.tabId)
 			: emptyTabsState(input.viewId);
 	});
+	handle("browser:openTab", async (event, input: BrowserOpenTabInput) => {
+		const session = entries.get(input.viewId);
+		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
+		await openTab(session, input.url, true);
+		return listTabs(session);
+	});
 	handle("browser:annotation:setMode", (event, input: BrowserAnnotationModeInput) => setAnnotationMode(event, input));
 	on("browser:destroy", (event, viewId: string) => {
 		if (isRendererOwned(event, viewId)) destroy(viewId);
@@ -1075,17 +1101,13 @@ function activeEntry(session: BrowserSessionEntry): BrowserEntry {
 	return entry;
 }
 
-function tabResult(entry: BrowserEntry, active: boolean): {
-	id: string;
-	url: string;
-	title: string;
-	active: boolean;
-} {
+function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState {
 	return {
 		id: entry.tabId,
 		url: entry.view.webContents.getURL(),
 		title: entry.view.webContents.getTitle(),
 		active,
+		...(entry.favicon ? { favicon: entry.favicon } : {}),
 	};
 }
 
@@ -1147,7 +1169,8 @@ function wireNavEvents(
 		syncTabs();
 		if (isActive()) pushNavState(options, entry);
 	};
-	contents.on("did-navigate", () => {
+	contents.on("did-navigate", (_event, url) => {
+		clearStaleFavicon(entry, url);
 		if (isActive()) syncActiveBounds();
 		update();
 	});
@@ -1170,6 +1193,85 @@ function wireNavEvents(
 		entry.state = { ...readNavState(entry), error: String(errorDescription || "Unable to load page") };
 		if (isActive()) options.mainWindow.webContents.send("browser:navState", entry.state);
 	});
+}
+
+// A same-tab navigation to a different site (search result, link, address bar)
+// keeps the previous site's favicon displayed until the new one has been
+// fetched and decoded — a real network round trip — which reads as a laggy
+// icon swap. Clear it as soon as the new origin is known (favicons are
+// near-always origin-scoped, so a same-origin navigation likely keeps the
+// same one and is left alone) so the rail falls back to the generic icon
+// immediately instead of showing the *wrong* one while it waits. Called from
+// wireNavEvents' own did-navigate handler rather than registering a second
+// listener for the same event.
+function clearStaleFavicon(entry: BrowserEntry, url: string): void {
+	const origin = originOf(url);
+	if (origin && origin === entry.faviconOrigin) return;
+	entry.favicon = undefined;
+	entry.faviconSourceUrl = undefined;
+	entry.faviconPendingUrl = undefined;
+	entry.faviconOrigin = undefined;
+}
+
+function wireFaviconEvents(contents: BrowserWebContents, entry: BrowserEntry, syncTabs: () => void): void {
+	contents.on("page-favicon-updated", (_event, favicons) => {
+		const url = favicons[0];
+		// Not yet applied (faviconSourceUrl) and not already in flight
+		// (faviconPendingUrl) — a page re-announcing the same favicon while a
+		// prior fetch for it is still pending must not start a duplicate.
+		if (!url || url === entry.faviconSourceUrl || url === entry.faviconPendingUrl) return;
+		entry.faviconPendingUrl = url;
+		void fetchFavicon(entry, url).then((dataUrl) => {
+			if (entry.faviconPendingUrl === url) entry.faviconPendingUrl = undefined;
+			// Leave faviconSourceUrl unset on failure (rather than marking the
+			// URL "seen") so a later page-favicon-updated event for the same
+			// URL — browsers re-fire these on soft/in-page navigations — gets a
+			// fresh attempt instead of being permanently stuck on the fallback
+			// icon from one transient fetch failure.
+			if (entry.faviconSourceUrl !== url && dataUrl) {
+				entry.faviconSourceUrl = url;
+				entry.favicon = dataUrl;
+				entry.faviconOrigin = originOf(url);
+				syncTabs();
+			}
+		});
+	});
+}
+
+function originOf(url: string): string | undefined {
+	try {
+		return new URL(url).origin;
+	} catch {
+		return undefined;
+	}
+}
+
+// Fetched through the tab's own isolated partition (not the shell session), so
+// it carries whatever cookies/proxy config that site's tab already has, and
+// resized/re-encoded like other browser-view thumbnail capture in this file.
+async function fetchFavicon(entry: BrowserEntry, url: string): Promise<string | undefined> {
+	try {
+		// Some sites inline a tiny favicon as a data: URI rather than serving a
+		// file — decode it directly instead of rejecting it as an unsupported
+		// scheme, still normalized/capped through the same resize path.
+		if (url.startsWith("data:")) {
+			const image = nativeImage.createFromDataURL(url);
+			if (image.isEmpty()) return undefined;
+			return image.resize({ width: FAVICON_SIZE, height: FAVICON_SIZE, quality: "good" }).toDataURL();
+		}
+		const parsed = new URL(url);
+		if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+		const tabSession = (entry.view.webContents as unknown as WebContents).session;
+		const response = await tabSession.fetch(url);
+		if (!response.ok) return undefined;
+		const buffer = Buffer.from(await response.arrayBuffer());
+		if (buffer.byteLength === 0 || buffer.byteLength > MAX_FAVICON_BYTES) return undefined;
+		const image = nativeImage.createFromBuffer(buffer);
+		if (image.isEmpty()) return undefined;
+		return image.resize({ width: FAVICON_SIZE, height: FAVICON_SIZE, quality: "good" }).toDataURL();
+	} catch {
+		return undefined;
+	}
 }
 
 function cancelAnnotation(
