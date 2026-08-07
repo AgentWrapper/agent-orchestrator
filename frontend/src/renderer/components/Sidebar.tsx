@@ -249,6 +249,7 @@ export function Sidebar({
 			onPointerLeave={onPreviewLeave}
 			overlay={isOverlay}
 			className={cn(
+				"sidebar-focusless",
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
 				isOverlay && "z-sidebar-preview shadow-2xl",
 				isOverlay || !underTopbar

@@ -249,6 +249,13 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("suppresses focus chrome without removing keyboard focusability", () => {
+		renderSidebar();
+
+		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveClass("sidebar-focusless");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveAttribute("tabindex", "0");
+	});
+
 	it("aligns the Settings footer hairline and row height with the board Archive bar", () => {
 		renderSidebar();
 

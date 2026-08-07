@@ -1261,6 +1261,12 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
 }
 
+/* Sidebar controls remain keyboard-focusable without painting rings or outlines. */
+.sidebar-focusless :focus-visible {
+	outline: none !important;
+	box-shadow: none !important;
+}
+
 /* Expanded-only sidebar chrome waits for the rail width transition to finish
  * before painting, so tap-to-expand does not flash labels inside the narrow
  * collapsed rail. */
