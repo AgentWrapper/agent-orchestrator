@@ -580,11 +580,15 @@ function ProjectItem({
 		}
 	};
 
+	// Expanded + already on the project board → collapse. Expanded + on a
+	// session (orchestrator or worker) → board. Collapsed → expand + board.
+	// Do not treat orchestratorActive like the board: the project row is the
+	// one-click path back from the orchestrator button.
 	const onProjectClick = () => {
 		if (!expanded) {
 			onToggle();
 			selection.goProject(workspace.id);
-		} else if (projectActive) {
+		} else if (dashboardActive) {
 			onToggle();
 		} else {
 			selection.goProject(workspace.id);
