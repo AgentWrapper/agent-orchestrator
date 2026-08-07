@@ -176,9 +176,6 @@ export function AgentModelCombobox({
 					</div>
 				)}
 
-				{/* The menu has a max-height rather than a definite height, so h-full lets
-				    this list grow behind the clipped shell. A zero-min grid track makes the
-				    list consume the available space and retain its content as scroll overflow. */}
 				<div className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
 					<div
 						ref={scrollRef}
