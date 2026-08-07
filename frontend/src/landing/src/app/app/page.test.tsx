@@ -906,10 +906,28 @@ it("shares a project from its three-dot menu with the selected role", async () =
   ).toBeVisible();
   fireEvent.click(screen.getByRole("radio", { name: /Editor/ }));
   fireEvent.click(screen.getByRole("button", { name: /Restricted/ }));
+  expect(
+    screen.getByText(
+      "Only listed people can access. Copy the link and send it to them.",
+    ),
+  ).toBeVisible();
   fireEvent.change(screen.getByLabelText("People"), {
     target: { value: "reader@example.com" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Create link" }));
+  expect(
+    screen.getByRole("button", { name: "Cancel recipient changes" }),
+  ).toBeVisible();
+  const createLink = screen.getByRole("button", { name: "Create link" });
+  expect(createLink).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(screen.getByText("Listed people")).toBeVisible();
+  expect(
+    screen.getByText(
+      "Only listed people can access. Copy the link and send it to them.",
+    ),
+  ).toBeVisible();
+  expect(createLink).toBeEnabled();
+  fireEvent.click(createLink);
 
   await waitFor(() =>
     expect(apiMocks.createProjectShareLink).toHaveBeenCalledWith(
@@ -1286,6 +1304,52 @@ it("shows shared projects with their sessions without switching workspace", asyn
   expect(
     screen.getByRole("menuitemradio", { name: /Personal.*owner/i }),
   ).toHaveAttribute("aria-checked", "true");
+});
+
+it("keeps Trusted project management after per-agent access is overridden", async () => {
+  const sharedStandaloneProject: CloudProject = {
+    ...project,
+    id: "shared-standalone-project",
+    orgId: "shared-org",
+    displayName: "Shared standalone",
+    repositoryUrl: "ao-standalone://shared-org/shared-standalone",
+    config: { source: "standalone" },
+  };
+  const sharedAgent: CloudSession = {
+    ...worker,
+    id: "shared-standalone-agent",
+    projectId: sharedStandaloneProject.id,
+    displayName: "Shared agent",
+  };
+  apiMocks.projects.mockResolvedValue({ projects: [] });
+  apiMocks.sharedProjects.mockResolvedValue({
+    shares: [
+      {
+        id: "trusted-overridden-share",
+        orgId: "shared-org",
+        project: sharedStandaloneProject,
+        role: "editor",
+        sandboxType: "trusted",
+        agentAccessOverridden: true,
+        sharedByEmail: "teammate@example.com",
+        sharedByName: "Teammate",
+        redeemedAt: "2026-08-06T00:00:00Z",
+      },
+    ],
+  });
+  apiMocks.sessions.mockImplementation((orgId: string) =>
+    Promise.resolve({
+      sessions: orgId === "shared-org" ? [sharedAgent] : [],
+    }),
+  );
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(
+    await screen.findByRole("button", { name: sharedAgent.displayName }),
+  );
+
+  expect(await screen.findByRole("button", { name: "New agent" })).toBeEnabled();
 });
 
 it("shows a shared top-level standalone agent as a flat shared row", async () => {

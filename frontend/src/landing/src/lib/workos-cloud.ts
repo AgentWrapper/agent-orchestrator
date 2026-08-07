@@ -1,9 +1,11 @@
 import type { CloudAuthSession } from "@/lib/cloud-api";
 import { env } from "@/env";
 
-function workOSRoute(path: string) {
+function workOSRoute(path: string, returnTo?: string) {
   const webURL = env.NEXT_PUBLIC_WEB_URL;
-  return webURL ? new URL(path, webURL).toString() : path;
+  const route = new URL(path, webURL ?? "https://ao.local");
+  if (returnTo) route.searchParams.set("returnTo", returnTo);
+  return webURL ? route.toString() : `${route.pathname}${route.search}`;
 }
 
 export async function restoreWorkOSSession(): Promise<CloudAuthSession | null> {
@@ -22,12 +24,12 @@ export async function restoreWorkOSSession(): Promise<CloudAuthSession | null> {
   }
 }
 
-export function redirectToWorkOSSignIn() {
-  window.location.assign(workOSRoute("/auth/workos/sign-in"));
+export function redirectToWorkOSSignIn(returnTo?: string) {
+  window.location.assign(workOSRoute("/auth/workos/sign-in", returnTo));
 }
 
-export function redirectToWorkOSSignUp() {
-  window.location.assign(workOSRoute("/auth/workos/sign-up"));
+export function redirectToWorkOSSignUp(returnTo?: string) {
+  window.location.assign(workOSRoute("/auth/workos/sign-up", returnTo));
 }
 
 export function redirectToWorkOSLogout() {

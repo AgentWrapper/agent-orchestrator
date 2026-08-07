@@ -72,6 +72,7 @@ import {
   type CloudUserOrganization,
   type ProviderConnection,
 } from "@/lib/cloud-api";
+import { cloudAppReturnTo } from "@/lib/auth-return-to";
 import {
   CLOUD_AGENTS,
   connectedAgentIDs,
@@ -405,6 +406,17 @@ function sharedProjectAccessLabel(share: CloudSharedProject) {
   return share.role;
 }
 
+function parseShareRecipientEmails(value: string) {
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,]/)
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  );
+}
+
 function OrchestratorIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
   return (
     <svg
@@ -525,7 +537,12 @@ export default function CloudAppPage() {
   );
   useEffect(() => {
     if (status === "unauthenticated") {
-      window.location.replace("/auth");
+      const returnTo = cloudAppReturnTo(
+        `${window.location.pathname}${window.location.search}`,
+      );
+      window.location.replace(
+        `/auth?returnTo=${encodeURIComponent(returnTo)}`,
+      );
     }
   }, [status]);
   const [projects, setProjects] = useState<CloudProject[]>([]);
@@ -602,6 +619,8 @@ export default function CloudAppPage() {
     "anyone" | "restricted"
   >("anyone");
   const [shareRecipientEmails, setShareRecipientEmails] = useState("");
+  const [shareRecipientDraft, setShareRecipientDraft] = useState("");
+  const [shareRecipientsEditing, setShareRecipientsEditing] = useState(true);
   const [shareRecipientOrgIds, setShareRecipientOrgIds] = useState<string[]>([]);
   const [shareAccess, setShareAccess] = useState<CloudProjectShareAccess | null>(
     null,
@@ -1644,12 +1663,33 @@ export default function CloudAppPage() {
     }
   };
 
+  const saveShareRecipients = () => {
+    const recipients = parseShareRecipientEmails(shareRecipientDraft);
+    if (recipients.length === 0) {
+      setError("Add at least one email for restricted sharing.");
+      return;
+    }
+    const saved = recipients.join(", ");
+    setShareRecipientEmails(saved);
+    setShareRecipientDraft(saved);
+    setShareRecipientsEditing(false);
+    setShareLink("");
+    setShareCopied(false);
+    setError(null);
+  };
+
+  const cancelShareRecipientEditing = () => {
+    setShareRecipientDraft(shareRecipientEmails);
+    setShareRecipientsEditing(false);
+    if (parseShareRecipientEmails(shareRecipientEmails).length === 0) {
+      setShareAccessScope("anyone");
+    }
+    setError(null);
+  };
+
   const createProjectShareLink = async () => {
     if (!api || !selectedOrgId || !shareProject) return;
-    const recipientEmails = shareRecipientEmails
-      .split(/[\n,]/)
-      .map((email) => email.trim())
-      .filter(Boolean);
+    const recipientEmails = parseShareRecipientEmails(shareRecipientEmails);
     if (
       shareAccessScope === "restricted" &&
       recipientEmails.length === 0 &&
@@ -1868,6 +1908,8 @@ export default function CloudAppPage() {
     setShareRole("viewer");
     setShareAccessScope("anyone");
     setShareRecipientEmails("");
+    setShareRecipientDraft("");
+    setShareRecipientsEditing(true);
     setShareRecipientOrgIds([]);
     setShareAccess(null);
     setShareLink("");
@@ -3303,6 +3345,13 @@ export default function CloudAppPage() {
                       }`}
                       onClick={() => {
                         setShareAccessScope(option.scope);
+                        if (option.scope === "restricted") {
+                          setShareRecipientDraft(shareRecipientEmails);
+                          setShareRecipientsEditing(
+                            parseShareRecipientEmails(shareRecipientEmails)
+                              .length === 0,
+                          );
+                        }
                         setShareLink("");
                         setShareCopied(false);
                       }}
@@ -3318,20 +3367,75 @@ export default function CloudAppPage() {
                 })}
               </div>
               {shareAccessScope === "restricted" ? (
-                <div className="space-y-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-3">
-                  <label className="block text-xs text-white/45">
-                    People
-                    <textarea
-                      className={`${field} mt-1.5 min-h-16 resize-none py-2`}
-                      value={shareRecipientEmails}
-                      placeholder="teammate@company.com, reviewer@company.com"
-                      onChange={(event) => {
-                        setShareRecipientEmails(event.target.value);
-                        setShareLink("");
-                        setShareCopied(false);
-                      }}
-                    />
-                  </label>
+                <div className="space-y-2">
+                  <div className="space-y-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-3">
+                    {shareRecipientsEditing ? (
+                      <>
+                        <label className="block text-xs text-white/45">
+                          People
+                          <textarea
+                            className={`${field} mt-1.5 min-h-16 resize-none py-2`}
+                            value={shareRecipientDraft}
+                            placeholder="teammate@company.com, reviewer@company.com"
+                            onChange={(event) =>
+                              setShareRecipientDraft(event.target.value)
+                            }
+                          />
+                        </label>
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="button"
+                            className={button}
+                            onClick={cancelShareRecipientEditing}
+                            aria-label="Cancel recipient changes"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className={primaryButton}
+                            onClick={saveShareRecipients}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="text-xs font-medium text-white/65">
+                            Listed people
+                          </div>
+                          <button
+                            type="button"
+                            className={button}
+                            onClick={() => {
+                              setShareRecipientDraft(shareRecipientEmails);
+                              setShareRecipientsEditing(true);
+                            }}
+                          >
+                            Edit
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {parseShareRecipientEmails(shareRecipientEmails).map(
+                            (email) => (
+                              <span
+                                key={email}
+                                className="rounded-md border border-white/[0.08] bg-black/15 px-2 py-1 text-[11px] text-white/55"
+                              >
+                                {email}
+                              </span>
+                            ),
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <p className="px-1 text-[11px] leading-4 text-white/35">
+                    Only listed people can access. Copy the link and send it to
+                    them.
+                  </p>
                 </div>
               ) : null}
             </div>
@@ -3750,7 +3854,11 @@ export default function CloudAppPage() {
                 <button
                   type="button"
                   className={primaryButton}
-                  disabled={loading}
+                  disabled={
+                    loading ||
+                    (shareAccessScope === "restricted" &&
+                      shareRecipientsEditing)
+                  }
                   onClick={() => void createProjectShareLink()}
                 >
                   <ExternalLink className="size-3.5" />

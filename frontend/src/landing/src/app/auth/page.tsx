@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 
 import { env } from "@/env";
+import { cloudAppReturnTo } from "@/lib/auth-return-to";
 import { CloudAPI } from "@/lib/cloud-api";
 import { redirectToWorkOSSignIn } from "@/lib/workos-cloud";
 
@@ -22,6 +23,10 @@ export default function EmailAuthPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const isWorkOS = env.NEXT_PUBLIC_AO_AUTH_MODE === "workos";
+  const returnTo = () =>
+    cloudAppReturnTo(
+      new URLSearchParams(window.location.search).get("returnTo"),
+    );
 
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -38,7 +43,7 @@ export default function EmailAuthPage() {
                 displayName: name.trim(),
               });
       window.localStorage.setItem("ao-cloud-session", JSON.stringify(session));
-      window.location.replace("/app");
+      window.location.replace(returnTo());
     } catch (authError) {
       setError(
         authError instanceof Error
@@ -86,7 +91,7 @@ export default function EmailAuthPage() {
               <button
                 type="button"
                 className="inline-flex h-10 w-full items-center justify-center rounded-md bg-[#4d8dff] px-4 text-sm font-medium text-white transition-[background-color,transform,opacity] hover:bg-[#397df0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8bb5ff] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0b0d] active:scale-[0.99] motion-reduce:transform-none"
-                onClick={redirectToWorkOSSignIn}
+                onClick={() => redirectToWorkOSSignIn(returnTo())}
               >
                 Continue to Cloud
               </button>

@@ -121,6 +121,7 @@ func TestSharedProjectPolicyCapabilities(t *testing.T) {
 		SessionRoles:         map[clouddomain.ProjectID]map[clouddomain.SessionID]string{projectID: {session.ID: "editor"}},
 		SessionCommandGuards: map[clouddomain.ProjectID]map[clouddomain.SessionID]bool{projectID: {session.ID: true}},
 		AllSessions:          map[clouddomain.ProjectID]struct{}{},
+		ManagedProjects:      map[clouddomain.ProjectID]struct{}{},
 	}
 	if !standard.canEditSession(session) {
 		t.Fatal("standard policy should edit selected sessions")
@@ -138,12 +139,18 @@ func TestSharedProjectPolicyCapabilities(t *testing.T) {
 		SessionCommandGuards:    map[clouddomain.ProjectID]map[clouddomain.SessionID]bool{},
 		AllSessions:             map[clouddomain.ProjectID]struct{}{projectID: {}},
 		AllSessionsCommandGuard: map[clouddomain.ProjectID]bool{projectID: false},
+		ManagedProjects:         map[clouddomain.ProjectID]struct{}{projectID: {}},
 	}
 	if !trusted.canManageProject(projectID) {
 		t.Fatal("trusted policy should manage project-level sharing")
 	}
 	if trusted.requiresDangerousCommandGuard(session) {
 		t.Fatal("trusted policy should not require dangerous command guard")
+	}
+	wholeProjectEditor := trusted
+	wholeProjectEditor.ManagedProjects = map[clouddomain.ProjectID]struct{}{}
+	if !wholeProjectEditor.canManageProject(projectID) {
+		t.Fatal("an existing whole-project editor grant should retain management")
 	}
 }
 
@@ -178,8 +185,11 @@ func TestAddSharedProjectGrantKeepsEmptyAgentScopesRestricted(t *testing.T) {
 		AgentAccessOverridden: true,
 		Role:                  "editor",
 	})
-	if trustedOverride.allowsSession(session) || trustedOverride.canManageProject(projectID) {
-		t.Fatal("an explicit empty per-person override must not become trusted project-wide access")
+	if trustedOverride.allowsSession(session) {
+		t.Fatal("an explicit empty per-person override must still restrict agent access")
+	}
+	if !trustedOverride.canManageProject(projectID) {
+		t.Fatal("a Trusted member must retain project management after an agent override")
 	}
 
 	trustedDefault := newAccess()

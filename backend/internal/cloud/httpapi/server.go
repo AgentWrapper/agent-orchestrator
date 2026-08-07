@@ -230,6 +230,7 @@ type sharedProjectAccess struct {
 	SessionCommandGuards    map[clouddomain.ProjectID]map[clouddomain.SessionID]bool
 	AllSessions             map[clouddomain.ProjectID]struct{}
 	AllSessionsCommandGuard map[clouddomain.ProjectID]bool
+	ManagedProjects         map[clouddomain.ProjectID]struct{}
 }
 
 func (access sharedProjectAccess) allowsProject(projectID clouddomain.ProjectID) bool {
@@ -272,8 +273,9 @@ func (access sharedProjectAccess) canEditSession(session clouddomain.Session) bo
 }
 
 func (access sharedProjectAccess) canManageProject(projectID clouddomain.ProjectID) bool {
+	_, trusted := access.ManagedProjects[projectID]
 	return access.allowsProject(projectID) &&
-		access.allowsAllProjectSessions(projectID) &&
+		(trusted || access.allowsAllProjectSessions(projectID)) &&
 		access.Roles[projectID] == "editor"
 }
 
@@ -1048,6 +1050,7 @@ func (s *Server) sharedAccessForOrg(
 		SessionCommandGuards:    map[clouddomain.ProjectID]map[clouddomain.SessionID]bool{},
 		AllSessions:             map[clouddomain.ProjectID]struct{}{},
 		AllSessionsCommandGuard: map[clouddomain.ProjectID]bool{},
+		ManagedProjects:         map[clouddomain.ProjectID]struct{}{},
 	}
 	for _, grant := range grants {
 		if grant.OrgID != orgID {
@@ -1066,12 +1069,18 @@ func addSharedProjectGrant(access *sharedProjectAccess, grant cloudpostgres.Shar
 	if access.AllSessionsCommandGuard == nil {
 		access.AllSessionsCommandGuard = map[clouddomain.ProjectID]bool{}
 	}
+	if access.ManagedProjects == nil {
+		access.ManagedProjects = map[clouddomain.ProjectID]struct{}{}
+	}
 	if _, ok := access.SessionCommandGuards[projectID]; !ok {
 		access.SessionCommandGuards[projectID] = map[clouddomain.SessionID]bool{}
 	}
 	policyCommandGuard := grant.ProjectCommandGuard || grant.PolicyCommandGuard
 	access.ProjectIDs[projectID] = struct{}{}
 	access.Roles[projectID] = grant.Role
+	if grant.SandboxType == "trusted" && grant.Role == "editor" {
+		access.ManagedProjects[projectID] = struct{}{}
+	}
 	if len(grant.SessionRoles) > 0 {
 		if _, ok := access.SessionRoles[projectID]; !ok {
 			access.SessionRoles[projectID] = map[clouddomain.SessionID]string{}
@@ -2104,12 +2113,8 @@ func (s *Server) createSession(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusForbidden, "PROJECT_FORBIDDEN", "This shared link does not grant access to that project.")
 			return
 		}
-		if !shared.allowsAllProjectSessions(input.ProjectID) {
-			writeError(w, r, http.StatusForbidden, "PROJECT_FORBIDDEN", "This shared link grants access only to selected agents.")
-			return
-		}
-		if shared.Roles[input.ProjectID] != "editor" {
-			writeError(w, r, http.StatusForbidden, "ORG_ROLE_REQUIRED", "Viewer access is read-only for this project.")
+		if !shared.canManageProject(input.ProjectID) {
+			writeError(w, r, http.StatusForbidden, "PROJECT_SHARE_MANAGER_REQUIRED", "Only trusted project collaborators can create agents.")
 			return
 		}
 	}
