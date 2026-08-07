@@ -201,6 +201,15 @@ type TerminalActivityDetector interface {
 	DetectTerminalActivity(output string) (domain.ActivityState, bool)
 }
 
+// ContinuousTerminalActivityDetector is implemented by adapters whose TUI is
+// the only authoritative source for some activity transitions. These adapters
+// are sampled on every observer tick, including while idle or waiting for
+// input, so terminal state can move in either direction.
+type ContinuousTerminalActivityDetector interface {
+	TerminalActivityDetector
+	ContinuouslyDetectTerminalActivity() bool
+}
+
 // PromptReadinessHints describes when an after-start prompt should be sent.
 // Empty hints mean "send immediately" to preserve existing adapter behavior.
 type PromptReadinessHints struct {
