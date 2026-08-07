@@ -291,6 +291,7 @@ func (l *agentLauncher) prepareIdleInvocation(spec LaunchSpec) (ports.ReviewInvo
 		WorkerSessionID:  spec.WorkerID,
 		AgentSessionID:   spec.AgentSessionID,
 		WorkspacePath:    spec.WorkspacePath,
+		DataDir:          l.dataDir,
 		Prompt:           prompt,
 		SystemPrompt:     "",
 		SystemPromptFile: systemPath,

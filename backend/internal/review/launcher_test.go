@@ -397,7 +397,8 @@ func TestLauncherSpawnReplacesStalePane(t *testing.T) {
 func TestLauncherRestoreTerminalStartsIdlePane(t *testing.T) {
 	reviewer := &fakeReviewer{}
 	rt := &fakeRuntime{}
-	l := newTestLauncher(t, reviewer, rt)
+	dataDir := t.TempDir()
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt, dataDir)
 	spec := launchSpec()
 	spec.PreviousRuns = []domain.ReviewRun{{
 		ID:             "run-1",
@@ -434,6 +435,9 @@ func TestLauncherRestoreTerminalStartsIdlePane(t *testing.T) {
 	if reviewer.gotInv.RunID != "" || reviewer.gotInv.PRURL != "" || reviewer.gotInv.TargetSHA != "" {
 		t.Fatalf("restore invocation should not start review work: %+v", reviewer.gotInv)
 	}
+	if reviewer.gotInv.DataDir != dataDir {
+		t.Fatalf("restore invocation data dir = %q, want %q", reviewer.gotInv.DataDir, dataDir)
+	}
 }
 
 func TestLauncherRestoreTerminalUsesReviewerRestoreCommandWhenAvailable(t *testing.T) {
@@ -445,7 +449,8 @@ func TestLauncherRestoreTerminalUsesReviewerRestoreCommandWhenAvailable(t *testi
 		},
 	}
 	rt := &fakeRuntime{}
-	l := newTestLauncher(t, reviewer, rt)
+	dataDir := t.TempDir()
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, rt, dataDir)
 	spec := launchSpec()
 	spec.AgentSessionID = "native-reviewer-1"
 
@@ -461,6 +466,9 @@ func TestLauncherRestoreTerminalUsesReviewerRestoreCommandWhenAvailable(t *testi
 	}
 	if reviewer.gotRestore.AgentSessionID != "native-reviewer-1" {
 		t.Fatalf("restore invocation agent session id = %q", reviewer.gotRestore.AgentSessionID)
+	}
+	if reviewer.gotRestore.DataDir != dataDir {
+		t.Fatalf("restore invocation data dir = %q, want %q", reviewer.gotRestore.DataDir, dataDir)
 	}
 	if strings.Join(rt.createCfg.Argv, " ") != "agent resume native-reviewer-1" {
 		t.Fatalf("runtime argv = %#v", rt.createCfg.Argv)
