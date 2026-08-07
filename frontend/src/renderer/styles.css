@@ -568,12 +568,18 @@
 	gap: var(--size-settings-row-icon-gap);
 	border-radius: var(--radius-settings-row);
 	background-color: var(--color-bg-settings-row);
-	padding: var(--size-settings-row-padding);
+	padding-inline: var(--size-settings-row-padding);
+	padding-block: var(--size-settings-row-padding);
 }
 
 /* Tailwind preflight clears button backgrounds; keep settings rows filled. */
 button.settings-row-bar {
 	background-color: var(--color-bg-settings-row);
+}
+
+@utility settings-link-row {
+	border: 1px solid var(--color-border-settings);
+	border-radius: var(--radius-settings-row);
 }
 
 @utility settings-menu-item {
