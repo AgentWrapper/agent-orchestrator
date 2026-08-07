@@ -21,15 +21,26 @@ export type MobileTelemetry = {
 	active(storage?: ActiveStorage, now?: Date): Promise<void>;
 };
 
+export type MobileTelemetryOptions = {
+	disabledEvents?: readonly string[];
+	/**
+	 * Returns false to drop an event that has hit the per-name rate cap. Sync so
+	 * capture() stays non-blocking; runtime.ts backs it with an in-memory,
+	 * persisted limiter. Omitted in tests that are not exercising the cap.
+	 */
+	allow?: (event: string) => boolean;
+};
+
 export function createMobileTelemetry(
 	client: MobileTelemetryClient,
 	context: Record<string, unknown>,
-	disabledEvents: readonly string[] = [],
+	options: MobileTelemetryOptions = {},
 ): MobileTelemetry {
 	// Context rides as super-properties, so every event is tagged with
 	// client/platform/version without the call sites repeating it.
 	void client.register(context);
-	const denied = new Set(disabledEvents);
+	const denied = new Set(options.disabledEvents ?? []);
+	const allow = options.allow ?? (() => true);
 
 	const capture = (event: MobileEventName, properties?: Record<string, unknown>): void => {
 		// Fail closed on the event name: an event not in the allowlist is never
@@ -37,6 +48,9 @@ export function createMobileTelemetry(
 		if (!(event in MOBILE_ALLOWLIST)) return;
 		// Build-time kill switch, mirroring the desktop denylist.
 		if (denied.has(event)) return;
+		// Per-name rate cap: the runaway backstop. Checked last so a legitimate
+		// event is only dropped when the name is genuinely over its window.
+		if (!allow(event)) return;
 		client.capture(event, {
 			...sanitizeMobileProperties(event, properties),
 			// Anonymous rate, belt-and-braces with personProfiles:"never" at init.

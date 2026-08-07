@@ -12,6 +12,7 @@ import {
 	MOBILE_TELEMETRY_DISABLED,
 } from "./config";
 import { MOBILE_EVENTS } from "./events";
+import { checkRateLimit, type RateLimitState } from "./rateLimit";
 import { createMobileTelemetry, type MobileTelemetry } from "./telemetry";
 
 // The one file that touches the SDK and the native runtime. Everything else in
@@ -33,6 +34,36 @@ let telemetry: MobileTelemetry | null = null;
  * Idempotent: repeated calls return the same instance, so mounting the init
  * component more than once cannot create a second client.
  */
+const RATE_STORAGE_KEY = "ao.telemetry.rateLimit";
+let rateState: RateLimitState = {};
+let rateStateLoaded = false;
+
+// Seed the per-name counters from storage once, so a crash-restart loop cannot
+// reset the daily ceiling. Best-effort: a read failure just starts from empty.
+function loadRateState(): void {
+	if (rateStateLoaded) return;
+	rateStateLoaded = true;
+	void AsyncStorage.getItem(RATE_STORAGE_KEY).then((raw) => {
+		if (!raw) return;
+		try {
+			// Current in-memory counts win over persisted, in case events fired
+			// before the async read resolved.
+			rateState = { ...(JSON.parse(raw) as RateLimitState), ...rateState };
+		} catch {
+			/* ignore corrupt state; start fresh */
+		}
+	});
+}
+
+// Sync predicate for the facade: advances the in-memory window and persists it
+// fire-and-forget. Returns false once a name is over its minute or day cap.
+function allowEvent(name: string): boolean {
+	const { allowed, state } = checkRateLimit(rateState, name, Date.now());
+	rateState = state;
+	void AsyncStorage.setItem(RATE_STORAGE_KEY, JSON.stringify(state)).catch(() => {});
+	return allowed;
+}
+
 export function initMobileTelemetry(): MobileTelemetry | null {
 	if (telemetry) return telemetry;
 	// Dev gate: a dev client (npm start / Expo Go) must never send to the
@@ -61,7 +92,11 @@ export function initMobileTelemetry(): MobileTelemetry | null {
 		appVersion: version,
 	});
 
-	telemetry = createMobileTelemetry(client, context, MOBILE_DISABLED_EVENTS);
+	loadRateState();
+	telemetry = createMobileTelemetry(client, context, {
+		disabledEvents: MOBILE_DISABLED_EVENTS,
+		allow: allowEvent,
+	});
 	return telemetry;
 }
 
