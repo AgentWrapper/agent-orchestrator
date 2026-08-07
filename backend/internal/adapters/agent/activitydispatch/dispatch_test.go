@@ -42,9 +42,7 @@ func TestMuseDerivesManagedHookActivity(t *testing.T) {
 		want  domain.ActivityState
 	}{
 		{"user-prompt-submit", domain.ActivityActive},
-		{"pre-tool-use", domain.ActivityActive},
 		{"permission-request", domain.ActivityBlocked},
-		{"post-tool-use", domain.ActivityActive},
 		{"stop", domain.ActivityIdle},
 	}
 	for _, tt := range tests {

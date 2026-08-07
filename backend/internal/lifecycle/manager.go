@@ -413,7 +413,7 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 		return nil
 	}
 	if !s.ExpectedUpdatedAt.IsZero() &&
-		(rec.Activity.State != domain.ActivityActive || !rec.UpdatedAt.Equal(s.ExpectedUpdatedAt)) {
+		!rec.UpdatedAt.Equal(s.ExpectedUpdatedAt) {
 		m.mu.Unlock()
 		return nil
 	}
