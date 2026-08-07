@@ -63,10 +63,19 @@ describe("createMobileTelemetry", () => {
 
 	it("drops an event named in the build-time kill switch", () => {
 		const { client, captures } = fakeClient();
-		const t = createMobileTelemetry(client, {}, [MOBILE_EVENTS.connected]);
+		const t = createMobileTelemetry(client, {}, { disabledEvents: [MOBILE_EVENTS.connected] });
 		t.capture(MOBILE_EVENTS.connected, { trigger: "launch" });
 		t.capture(MOBILE_EVENTS.paired, { method: "qr" });
 		expect(captures.map((c) => c.event)).toEqual([MOBILE_EVENTS.paired]);
+	});
+
+	it("drops an event the rate limiter rejects", () => {
+		const { client, captures } = fakeClient();
+		let calls = 0;
+		const t = createMobileTelemetry(client, {}, { allow: () => (++calls <= 1) });
+		t.capture(MOBILE_EVENTS.paired, { method: "qr" }); // 1st: allowed
+		t.capture(MOBILE_EVENTS.paired, { method: "qr" }); // 2nd: rate-limited
+		expect(captures).toHaveLength(1);
 	});
 
 	it("emits the daily active heartbeat once per UTC day", async () => {
