@@ -92,7 +92,7 @@ export function AgentModelCombobox({
 	const normalizedSearch = normalizeSearch(search);
 	const searchIndex = useMemo(() => buildModelSearchIndex(models), [models]);
 	const selected = searchIndex.byID.get(normalizeSearch(value));
-	const showSearch = !compact && models.length > MODEL_SEARCH_THRESHOLD;
+	const showSearch = models.length > MODEL_SEARCH_THRESHOLD;
 
 	const rankedModels = useMemo(() => {
 		if (!normalizedSearch) {
