@@ -811,7 +811,7 @@ func agentOperations() []operation {
 	}
 }
 
-// mobileOperations declares the 4 /mobile control operations. These are
+// mobileOperations declares the 5 /mobile control operations. These are
 // mounted on the loopback router (mountMobile in router.go), not the REST
 // /api/v1 group — only the desktop/CLI may enable, disable, or regenerate the
 // phone's LAN access; the phone never toggles its own connection. Must stay
@@ -849,6 +849,17 @@ func mobileOperations() []operation {
 			summary: "Rotate the Connect Mobile password, dropping any connected phone",
 			resps: []respUnit{
 				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusForbidden, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/mobile/secure-pairing", id: "setMobileSecurePairing", tag: "mobile",
+			summary: "Turn TLS-over-Tailscale secure pairing on or off",
+			reqBody: controllers.SetSecurePairingRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.MobileStatusResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusForbidden, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 			},

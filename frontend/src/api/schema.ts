@@ -226,6 +226,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/mobile/secure-pairing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Turn TLS-over-Tailscale secure pairing on or off */
+        post: operations["setMobileSecurePairing"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/mobile/status": {
         parameters: {
             query?: never;
@@ -1431,6 +1448,14 @@ export interface components {
         ContainerReapConfig: {
             disabled?: boolean;
         };
+        ControllersSecurePairingStatus: {
+            active: boolean;
+            available: boolean;
+            enabled: boolean;
+            host: string;
+            port: number;
+            reason: string;
+        };
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
@@ -1462,6 +1487,9 @@ export interface components {
             terminateOnPrMerge: boolean;
             /** Format: date-time */
             updatedAt: string;
+        };
+        ControllersSetSecurePairingRequest: {
+            enabled: boolean;
         };
         ControllersSpawnAttachmentInput: {
             data: string;
@@ -1835,6 +1863,8 @@ export interface components {
             host: string;
             password: string;
             port: number;
+            securePairing: components["schemas"]["ControllersSecurePairingStatus"];
+            tailscaleHost: string;
             warning: string;
         };
         NotificationEnvelope: {
@@ -3156,6 +3186,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MobileStatusResponse"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    setMobileSecurePairing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ControllersSetSecurePairingRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MobileStatusResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
                 };
             };
             /** @description Forbidden */
