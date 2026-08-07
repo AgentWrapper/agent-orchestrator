@@ -61,6 +61,20 @@ describe("AgentModelCombobox", () => {
 		expect(screen.queryByRole("menuitem", { name: /Model 1000/ })).not.toBeInTheDocument();
 	});
 
+	it("shows machine IDs only when they disambiguate duplicate model names", async () => {
+		renderCombobox([
+			{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", provider: "OpenAI" },
+			{ id: "anthropic/opus-standard", label: "Opus", provider: "Anthropic" },
+			{ id: "anthropic/opus-long", label: "Opus", provider: "Anthropic" },
+		]);
+
+		await userEvent.click(screen.getByRole("button", { name: "Worker model" }));
+
+		expect(screen.queryByText("gpt-5.6-sol")).not.toBeInTheDocument();
+		expect(screen.getByText("anthropic/opus-standard")).toBeInTheDocument();
+		expect(screen.getByText("anthropic/opus-long")).toBeInTheDocument();
+	});
+
 	it("searches the full catalog and groups matching models by provider", async () => {
 		const models = Array.from({ length: 100 }, (_, index) => ({
 			id: `provider-${index % 2}/model-${index}`,

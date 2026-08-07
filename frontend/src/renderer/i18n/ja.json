@@ -313,6 +313,7 @@
 	"newTask.projectDefault": "プロジェクトのデフォルト",
 	"newTask.runsWith": "実行環境",
 	"newTask.letAgentChoose": "{{agent}} に選ばせる",
+	"newTask.autoModel": "自動",
 	"newTask.fromProjectAgent": "エージェントはプロジェクト設定から",
 	"newTask.fromGlobalAgent": "エージェントは全体のデフォルトから",
 	"newTask.fromProjectModel": "モデルはプロジェクト設定から",

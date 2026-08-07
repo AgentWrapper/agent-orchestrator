@@ -315,6 +315,7 @@
 	"newTask.projectDefault": "Predeterminado del proyecto",
 	"newTask.runsWith": "Se ejecuta con",
 	"newTask.letAgentChoose": "Que elija {{agent}}",
+	"newTask.autoModel": "Automático",
 	"newTask.fromProjectAgent": "Agente de los ajustes del proyecto",
 	"newTask.fromGlobalAgent": "Agente del predeterminado global",
 	"newTask.fromProjectModel": "modelo de los ajustes del proyecto",

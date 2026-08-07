@@ -361,9 +361,9 @@ describe("ProjectSettingsForm", () => {
 		await userEvent.click(workerModel);
 		expect((await screen.findAllByRole("menuitem")).map((item) => item.textContent)).toEqual([
 			"Agent default",
-			"GPT-5.6 SolDefaultgpt-5.6-sol",
-			"GPT-5.5gpt-5.5",
-			"GPT-5.4gpt-5.4",
+			"GPT-5.6 SolDefault",
+			"GPT-5.5",
+			"GPT-5.4",
 			"Custom model…",
 		]);
 		const search = screen.getByRole("searchbox", { name: "Search worker model" });

@@ -313,6 +313,7 @@
 	"newTask.projectDefault": "프로젝트 기본값",
 	"newTask.runsWith": "실행 대상",
 	"newTask.letAgentChoose": "{{agent}}이(가) 선택",
+	"newTask.autoModel": "자동",
 	"newTask.fromProjectAgent": "에이전트는 프로젝트 설정에서",
 	"newTask.fromGlobalAgent": "에이전트는 전역 기본값에서",
 	"newTask.fromProjectModel": "모델은 프로젝트 설정에서",

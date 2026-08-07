@@ -340,6 +340,7 @@
 	"newTask.projectDefault": "Project default",
 	"newTask.runsWith": "Runs with",
 	"newTask.letAgentChoose": "Let {{agent}} choose",
+	"newTask.autoModel": "Auto",
 	"newTask.fromProjectAgent": "Agent from project settings",
 	"newTask.fromGlobalAgent": "Agent from global default",
 	"newTask.fromProjectModel": "model from project settings",

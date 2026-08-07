@@ -788,14 +788,24 @@ button.settings-row-bar {
 	}
 
 	&:focus-visible {
-		border-color: var(--bridge-accent);
+		border-color: transparent;
 		box-shadow: 0 0 0 2px var(--bridge-accent-weak);
 		outline: none;
 	}
 
 	&[data-state="open"] {
 		background-color: var(--color-bg-composer-chip-hover);
-		border-color: var(--color-border);
+		border-color: transparent;
+	}
+}
+
+/* Model menus can contain hundreds of entries. Keep scrolling available without
+   reserving a scrollbar gutter that reads as an empty column in the popover. */
+@utility model-menu-scroll {
+	scrollbar-width: none;
+
+	&::-webkit-scrollbar {
+		display: none;
 	}
 }
 

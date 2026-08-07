@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -239,6 +240,36 @@ describe("TaskComposer", () => {
 		expect(await screen.findByDisplayValue("gpt-5-codex")).toBeInTheDocument();
 		// Named in words ("model chosen by codex") rather than labelled "Agent default".
 		expect(screen.getByText(/model chosen by codex/)).toBeInTheDocument();
+	});
+
+	it("shows an agent-chosen model as a compact automatic value", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "catalog",
+						models: [{ id: "gpt-5", label: "GPT-5" }],
+						allowCustom: true,
+					},
+				};
+			}
+			return { data: { status: "ok", project: { agent: "codex", config: {} } } };
+		});
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const picker = await screen.findByRole("button", { name: "Model" });
+		expect(picker).toHaveTextContent("Auto");
+		expect(picker).not.toHaveTextContent("Let codex choose");
+		expect(screen.getByText(/model chosen by codex/)).toBeInTheDocument();
+
+		await userEvent.click(picker);
+		expect(await screen.findByText("Let codex choose")).toBeInTheDocument();
 	});
 
 	it("uses the project worker model as the new task model default", async () => {

@@ -340,6 +340,7 @@
 	"newTask.projectDefault": "项目默认",
 	"newTask.runsWith": "运行于",
 	"newTask.letAgentChoose": "由 {{agent}} 选择",
+	"newTask.autoModel": "自动",
 	"newTask.fromProjectAgent": "代理来自项目设置",
 	"newTask.fromGlobalAgent": "代理来自全局默认",
 	"newTask.fromProjectModel": "模型来自项目设置",

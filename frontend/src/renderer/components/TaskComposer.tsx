@@ -163,15 +163,20 @@ export function TaskComposer({
 				? t("newTask.fromProjectAgent")
 				: t("newTask.fromGlobalAgent")
 			: undefined;
+	const hasResolvedModelDefault =
+		defaultModelForSelectedAgent !== "" || defaultModeForSelectedAgent !== "";
 	const modelIsDefault =
-		(model !== "" || mode !== "") &&
+		hasResolvedModelDefault &&
 		model === defaultModelForSelectedAgent &&
 		mode === defaultModeForSelectedAgent;
-	const modelProvenance = !modelIsDefault
-		? undefined
-		: projectModelForSelectedAgent !== "" || projectModeForSelectedAgent !== ""
-			? t("newTask.fromProjectModel")
-			: t("newTask.fromAgentModel", { agent: selectedAgentLabel });
+	const modelProvenance =
+		model === "" && mode === "" && selectedAgentLabel
+			? t("newTask.fromAgentModel", { agent: selectedAgentLabel })
+			: !modelIsDefault
+				? undefined
+				: projectModelForSelectedAgent !== "" || projectModeForSelectedAgent !== ""
+					? t("newTask.fromProjectModel")
+					: t("newTask.fromAgentModel", { agent: selectedAgentLabel });
 	const provenance = [agentProvenance, modelProvenance].filter(Boolean).join(" · ");
 
 	useEffect(() => {
@@ -435,6 +440,12 @@ function TaskModelPicker({
 				value={mode || "__default__"}
 				options={options}
 				triggerClassName="composer-chip"
+				menuAlign="start"
+				renderTrigger={(selected) => (
+					<span className="min-w-0 truncate text-foreground">
+						{mode ? selected?.label : t("newTask.autoModel")}
+					</span>
+				)}
 				onChange={(nextMode) => onModeChange(nextMode === "__default__" ? "" : nextMode)}
 			/>
 		);
@@ -465,6 +476,12 @@ function TaskModelPicker({
 				onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
 				refreshing={refreshMutation.isPending}
 				triggerClassName="composer-chip"
+				menuAlign="start"
+				renderTrigger={(label) => (
+					<span className="min-w-0 truncate text-foreground">
+						{value ? label : t("newTask.autoModel")}
+					</span>
+				)}
 			/>
 		);
 	}
@@ -475,11 +492,11 @@ function TaskModelPicker({
 			<input
 				id={id}
 				aria-label={t("newTask.model")}
-				className="composer-chip w-(--size-composer-model-input) placeholder:text-passive disabled:cursor-not-allowed disabled:opacity-50"
+				className="composer-chip w-(--size-composer-model-input) placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
 				value={value}
 				disabled={agentId === ""}
 				onChange={(event) => onModelChange(event.target.value)}
-				placeholder={query.isFetching ? t("settings.models.loading") : noOverrideLabel}
+				placeholder={query.isFetching ? t("settings.models.loading") : t("newTask.autoModel")}
 			/>
 			{hasCatalog && (
 				<AgentModelCombobox

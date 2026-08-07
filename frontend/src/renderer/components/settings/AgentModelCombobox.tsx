@@ -51,6 +51,7 @@ export function AgentModelCombobox({
 	emptyLabel,
 	triggerLabel,
 	triggerClassName,
+	menuAlign = "end",
 	renderTrigger,
 	"aria-label": ariaLabel,
 }: {
@@ -66,6 +67,7 @@ export function AgentModelCombobox({
 	emptyLabel?: string;
 	triggerLabel?: string;
 	triggerClassName?: string;
+	menuAlign?: "start" | "center" | "end";
 	renderTrigger?: (label: string) => ReactNode;
 	"aria-label": string;
 }) {
@@ -109,10 +111,10 @@ export function AgentModelCombobox({
 				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent
-				align="end"
-				className="settings-menu-surface max-h-select-menu-max! w-[min(28rem,calc(100vw-2rem))] overflow-y-auto! overflow-x-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
+				align={menuAlign}
+				className="settings-menu-surface max-h-select-menu-max! w-[min(22rem,calc(100vw-2rem))] overflow-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
 			>
-				<div className="p-1" onKeyDown={(event) => event.stopPropagation()}>
+				<div className="shrink-0 p-1" onKeyDown={(event) => event.stopPropagation()}>
 					<input
 						type="search"
 						aria-label={t("settings.models.searchAria", { label: ariaLabel.toLocaleLowerCase() })}
@@ -123,88 +125,94 @@ export function AgentModelCombobox({
 					/>
 				</div>
 
-				{normalizedSearch === "" && (
-					<DropdownMenuItem onSelect={() => onChange("")} className={modelItemClass(value === "")}>
-						{noOverrideLabel}
-					</DropdownMenuItem>
-				)}
+				<div className="model-menu-scroll min-h-0 overflow-y-auto overscroll-contain">
+					{normalizedSearch === "" && (
+						<DropdownMenuItem onSelect={() => onChange("")} className={modelItemClass(value === "")}>
+							{noOverrideLabel}
+						</DropdownMenuItem>
+					)}
 
-				{groups.map((group, groupIndex) => (
-					<div key={group.name}>
-						{(groupIndex > 0 || normalizedSearch === "") && <DropdownMenuSeparator />}
-						<DropdownMenuLabel className="normal-case tracking-normal">{group.name}</DropdownMenuLabel>
-						{group.models.map((item) => (
-							<DropdownMenuItem
-								key={item.id}
-								onSelect={() => onChange(item.id)}
-								className={modelItemClass(item.id === value)}
-							>
-								<div className="flex min-w-0 flex-1 items-center gap-3">
-									<div className="min-w-0 flex-1">
-										<div className="flex items-center gap-2">
-											<span className="truncate text-settings-label">{item.label}</span>
-											{item.model.isDefault && (
-												<span className="rounded-full bg-settings-menu-selected px-1.5 py-0.5 text-micro text-settings-muted">
-											{t("settings.models.default")}
-												</span>
+					{groups.map((group, groupIndex) => (
+						<div key={group.name}>
+							{(groupIndex > 0 || normalizedSearch === "") && <DropdownMenuSeparator />}
+							<DropdownMenuLabel className="normal-case tracking-normal">{group.name}</DropdownMenuLabel>
+							{group.models.map((item) => (
+								<DropdownMenuItem
+									key={item.id}
+									onSelect={() => onChange(item.id)}
+									className={modelItemClass(item.id === value)}
+								>
+									<div className="flex min-w-0 flex-1 items-center gap-3">
+										<div className="min-w-0 flex-1">
+											<div className="flex items-center gap-2">
+												<span className="truncate text-settings-label">{item.label}</span>
+												{item.model.isDefault && (
+													<span className="rounded-full bg-settings-menu-selected px-1.5 py-0.5 text-micro text-settings-muted">
+														{t("settings.models.default")}
+													</span>
+												)}
+											</div>
+											{shouldShowModelID(item, group.models, normalizedSearch) && (
+												<p className="truncate text-xs text-settings-muted">{item.id}</p>
 											)}
 										</div>
-										{item.id !== item.label && <p className="truncate text-xs text-settings-muted">{item.id}</p>}
+										{group.name !== item.provider && item.provider !== "Other" && (
+											<span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>
+										)}
 									</div>
-									{group.name !== item.provider && item.provider !== "Other" && (
-										<span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>
-									)}
-								</div>
-							</DropdownMenuItem>
-						))}
-					</div>
-				))}
+								</DropdownMenuItem>
+							))}
+						</div>
+					))}
 
-				{showCustomSearchAction && (
-					<DropdownMenuItem onSelect={() => onCustom(customSearchValue)} className={modelItemClass(false)}>
-						{t("settings.models.useCustom", { model: customSearchValue })}
-					</DropdownMenuItem>
-				)}
-				{normalizedSearch !== "" && rankedModels.length === 0 && !allowCustom && (
-					<p className="px-2 py-1.5 text-xs text-settings-muted">{t("settings.models.noMatches")}</p>
-				)}
-				{normalizedSearch === "" && allowCustom && (
-					<>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem onSelect={() => onCustom("")} className={modelItemClass(false)}>
-							{t("settings.models.custom")}
+					{showCustomSearchAction && (
+						<DropdownMenuItem onSelect={() => onCustom(customSearchValue)} className={modelItemClass(false)}>
+							{t("settings.models.useCustom", { model: customSearchValue })}
 						</DropdownMenuItem>
-					</>
-				)}
-				{/* Rediscovery lives here, not as a standing link beside the field: it is
-				    a rare repair action, and the daemon revalidates a stale catalog on its
-				    own. Keeping it in the menu costs no layout in the calm state. */}
-				{onRefresh && (
-					<>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem
-							disabled={refreshing}
-							onSelect={(event) => {
-								event.preventDefault();
-								onRefresh();
-							}}
-							className={modelItemClass(false)}
-						>
-							<RefreshCw
-								className={cn("size-icon-sm shrink-0 opacity-70", refreshing && "animate-spin")}
-								aria-hidden="true"
-							/>
-							{refreshing ? t("settings.models.refreshing") : t("settings.models.refreshList")}
-						</DropdownMenuItem>
-					</>
-				)}
-				<p className="px-2 py-1.5 text-xs text-settings-muted" aria-live="polite">
-					{t("settings.models.matchingCount", {
-						visible: visibleModels.length.toLocaleString(),
-						total: rankedModels.length.toLocaleString(),
-					})}
-					{normalizedSearch === "" && rankedModels.length > MAX_VISIBLE_MODELS ? t("settings.models.typeToNarrow") : ""}
-				</p>
+					)}
+					{normalizedSearch !== "" && rankedModels.length === 0 && !allowCustom && (
+						<p className="px-2 py-1.5 text-xs text-settings-muted">{t("settings.models.noMatches")}</p>
+					)}
+					{normalizedSearch === "" && allowCustom && (
+						<>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem onSelect={() => onCustom("")} className={modelItemClass(false)}>
+								{t("settings.models.custom")}
+							</DropdownMenuItem>
+						</>
+					)}
+					{/* Rediscovery lives here, not as a standing link beside the field: it is
+					    a rare repair action, and the daemon revalidates a stale catalog on its
+					    own. Keeping it in the menu costs no layout in the calm state. */}
+					{onRefresh && (
+						<>
+							<DropdownMenuSeparator />
+							<DropdownMenuItem
+								disabled={refreshing}
+								onSelect={(event) => {
+									event.preventDefault();
+									onRefresh();
+								}}
+								className={modelItemClass(false)}
+							>
+								<RefreshCw
+									className={cn("size-icon-sm shrink-0 opacity-70", refreshing && "animate-spin")}
+									aria-hidden="true"
+								/>
+								{refreshing ? t("settings.models.refreshing") : t("settings.models.refreshList")}
+							</DropdownMenuItem>
+						</>
+					)}
+					<p className="px-2 py-1.5 text-xs text-settings-muted" aria-live="polite">
+						{t("settings.models.matchingCount", {
+							visible: visibleModels.length.toLocaleString(),
+							total: rankedModels.length.toLocaleString(),
+						})}
+						{normalizedSearch === "" && rankedModels.length > MAX_VISIBLE_MODELS
+							? t("settings.models.typeToNarrow")
+							: ""}
+					</p>
+				</div>
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);
@@ -212,6 +220,18 @@ export function AgentModelCombobox({
 
 function normalizeSearch(value: string): string {
 	return value.trim().toLocaleLowerCase();
+}
+
+function shouldShowModelID(item: IndexedModel, siblings: IndexedModel[], search: string): boolean {
+	if (item.id === item.label) return false;
+
+	const label = normalizeSearch(item.label);
+	const duplicateLabel = siblings.some(
+		(candidate) => candidate.id !== item.id && normalizeSearch(candidate.label) === label,
+	);
+	if (duplicateLabel) return true;
+
+	return search !== "" && normalizeSearch(item.id).includes(search) && !label.includes(search);
 }
 
 function providerFromModelID(modelID: string): string {
