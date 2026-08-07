@@ -143,7 +143,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 		}
 		if (!hasConfiguredOrchestratorAgent(project)) {
 			if (project) {
-				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+				useUiStore.getState().openProjectSettings(projectId);
 			}
 			return;
 		}

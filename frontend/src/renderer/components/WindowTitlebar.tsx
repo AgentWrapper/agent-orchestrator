@@ -1,4 +1,3 @@
-import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { PanelLeft } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -72,10 +71,9 @@ export function WindowTitlebar({
 }: {
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
-	const navigate = useNavigate();
 	const { t } = useTranslation();
 	const theme = useResolvedTheme();
-	const { isSidebarOpen, toggleSidebar } = useUiStore();
+	const { isSidebarOpen, toggleSidebar, openGlobalSettings } = useUiStore();
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
 	// Electron draws the min/max/close overlay natively and can't read our CSS, so
@@ -120,7 +118,7 @@ export function WindowTitlebar({
 			</button>
 			<nav className="window-titlebar__menus">
 				<TopMenu id="file" label={t("titlebar.file")} openMenu={openMenu} setOpenMenu={setOpenMenu}>
-					<DropdownMenuItem onSelect={() => void navigate({ to: "/settings" })}>{t("shell.settings")}</DropdownMenuItem>
+					<DropdownMenuItem onSelect={() => openGlobalSettings()}>{t("shell.settings")}</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onSelect={act("app.quit")}>
 						{t("titlebar.quit")}

@@ -226,7 +226,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
 			if (workspace) {
-				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+				useUiStore.getState().openProjectSettings(projectId);
 			}
 			return;
 		}

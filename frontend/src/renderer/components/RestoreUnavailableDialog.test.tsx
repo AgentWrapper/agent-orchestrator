@@ -1,17 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useUiStore } from "../stores/ui-store";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { RestoreUnavailableDialog } from "./RestoreUnavailableDialog";
 
-const { navigateMock, spawnMock, workspaceQueryMock } = vi.hoisted(() => ({
-	navigateMock: vi.fn(),
+const { spawnMock, workspaceQueryMock } = vi.hoisted(() => ({
 	spawnMock: vi.fn(),
 	workspaceQueryMock: vi.fn(),
-}));
-
-vi.mock("@tanstack/react-router", () => ({
-	useNavigate: () => navigateMock,
 }));
 
 vi.mock("../hooks/useWorkspaceQuery", () => ({
@@ -44,6 +40,7 @@ const workspace: WorkspaceSummary = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	useUiStore.setState({ settingsModal: null });
 	workspaceQueryMock.mockReturnValue({ data: [workspace], isLoading: false });
 });
 
@@ -66,11 +63,8 @@ describe("RestoreUnavailableDialog", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Configure orchestrator agent" }));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
 		expect(onOpenChange).toHaveBeenCalledWith(false);
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
 		expect(spawnMock).not.toHaveBeenCalled();
 		expect(onRecreated).not.toHaveBeenCalled();
 	});
