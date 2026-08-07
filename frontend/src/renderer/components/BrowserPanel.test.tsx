@@ -242,7 +242,7 @@ describe("BrowserPanel", () => {
 		expect(hookState.stop).toHaveBeenCalled();
 	});
 
-	it("lets the user select a tab directly from the icon rail", async () => {
+	it("lets the user select a tab from the hover flyout", async () => {
 		hookState.tabs = [
 			{ id: "t1", url: "http://localhost:3000/", title: "First app", active: false },
 			{ id: "t2", url: "http://localhost:4173/", title: "Second app", active: true },
@@ -250,7 +250,20 @@ describe("BrowserPanel", () => {
 		hookState.activeTabId = "t2";
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		await userEvent.click(screen.getByRole("button", { name: "First app — localhost:3000" }));
+		// Docked defaults to a collapsed (0px) rail once there's more than one
+		// tab, so tabs are only reachable through the hover flyout unless the
+		// user has pinned the rail — same open sequence as the flyout tests below.
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+
+		await userEvent.click(screen.getByRole("button", { name: "First app" }));
 
 		await waitFor(() => expect(hookState.selectTab).toHaveBeenCalledWith("t1"));
 		expect(hookState.finishOverlay).toHaveBeenCalledTimes(1);
@@ -264,7 +277,17 @@ describe("BrowserPanel", () => {
 		hookState.selectTab.mockRejectedValueOnce(new Error("selection failed"));
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);
 
-		await userEvent.click(screen.getByRole("button", { name: "Second app — localhost:4173" }));
+		vi.useFakeTimers();
+		try {
+			fireEvent.pointerEnter(screen.getByTestId("browser-tabs-rail"));
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+		} finally {
+			vi.useRealTimers();
+		}
+
+		await userEvent.click(screen.getByRole("button", { name: "Second app" }));
 
 		await waitFor(() => expect(hookState.finishOverlay).toHaveBeenCalled());
 	});
