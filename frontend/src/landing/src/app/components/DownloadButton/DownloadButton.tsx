@@ -73,7 +73,7 @@ function getDownloadPlatform(platform: Platform): DownloadPlatform {
   return "apple";
 }
 
-function MonitorIcon() {
+function MobileIcon() {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -86,8 +86,8 @@ function MonitorIcon() {
       className="size-4 shrink-0"
       aria-hidden="true"
     >
-      <rect x="2" y="3" width="20" height="14" rx="2" />
-      <path d="M8 21h8M12 17v4" />
+      <rect x="5" y="2" width="14" height="20" rx="2" />
+      <path d="M12 18h.01" />
     </svg>
   );
 }
@@ -112,17 +112,13 @@ export function DownloadButton({
 }: DownloadButtonProps) {
   const { platform } = usePlatform();
   const downloadPlatform = getDownloadPlatform(platform);
-  // AO is a desktop app, so a phone can't run any build — point mobile visitors
-  // at the desktop download with a label that sets that expectation.
   const isMobile = platform === Platform.Mobile;
   const sizeClasses =
     size === "sm"
       ? "h-8 px-3 text-sm"
       : "px-3 sm:px-6 py-2 sm:py-3 text-sm sm:text-base";
   const label = isMobile
-    ? size === "sm"
-      ? "Get for desktop"
-      : "Get AO for desktop"
+    ? "Download AO Mobile"
     : getLabel(size, downloadPlatform);
 
   const buttonClasses = `bg-foreground text-background ${sizeClasses} rounded-2xl tracking-[-0.5px] font-semibold hover:opacity-90 transition-opacity flex items-center gap-2 whitespace-nowrap shrink-0 ${className}`;
@@ -140,7 +136,7 @@ export function DownloadButton({
         })
       }
     >
-      {isMobile ? <MonitorIcon /> : <PlatformIcon platform={downloadPlatform} />}
+      {isMobile ? <MobileIcon /> : <PlatformIcon platform={downloadPlatform} />}
       {label}
     </Link>
   );

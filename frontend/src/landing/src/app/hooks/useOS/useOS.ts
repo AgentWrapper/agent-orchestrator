@@ -11,8 +11,11 @@ export const Platform = {
 
 export type Platform = (typeof Platform)[keyof typeof Platform];
 
+export type MobileOS = "ios" | "android" | null;
+
 export interface PlatformInfo {
 	platform: Platform;
+	mobileOS: MobileOS;
 }
 
 function detectMacArch():
@@ -42,30 +45,62 @@ function detectMacArch():
 	}
 }
 
-function detectPlatform(): PlatformInfo {
-	if (typeof navigator === "undefined") {
-		return { platform: Platform.Unknown };
+// Modern iPadOS reports a desktop "Macintosh" user agent for compat, so the
+// only signal that separates an iPad from a Mac is that it reports touch
+// points. This is used for the device noun in copy, and to route iPads to the
+// touch flow rather than a QR they have no second device to scan.
+//
+// Match "macintosh" only, never "mac os x": every iPhone UA contains the
+// substring "like Mac OS X" ("iPhone; CPU iPhone OS 17_5 like Mac OS X"), so
+// matching that phrase labels every iPhone an iPad. The explicit iPhone/iPod
+// exclusion keeps that true even if a future UA adds "Macintosh".
+export function isIPadOS(userAgent: string, maxTouchPoints: number): boolean {
+	if (/ipad/i.test(userAgent)) return true;
+	if (/iphone|ipod/i.test(userAgent)) return false;
+	return /macintosh/i.test(userAgent) && maxTouchPoints > 1;
+}
+
+function detectMobileOS(userAgent: string, maxTouchPoints: number): MobileOS {
+	if (/iphone|ipod/i.test(userAgent) || isIPadOS(userAgent, maxTouchPoints)) {
+		return "ios";
 	}
+	if (/android/i.test(userAgent)) return "android";
+	return null;
+}
 
-	const userAgent = navigator.userAgent;
+export function detectPlatformInfo(
+	userAgent: string,
+	maxTouchPoints: number,
+): PlatformInfo {
+	const mobileOS = detectMobileOS(userAgent, maxTouchPoints);
 
-	if (/android|iphone|ipad|ipod|mobile|tablet/i.test(userAgent)) {
-		return { platform: Platform.Mobile };
+	if (mobileOS !== null || /mobile|tablet/i.test(userAgent)) {
+		return { platform: Platform.Mobile, mobileOS };
 	}
 
 	if (/mac os x|macintosh/i.test(userAgent)) {
-		return { platform: detectMacArch() };
+		return { platform: detectMacArch(), mobileOS };
 	}
 	if (/windows/i.test(userAgent)) {
-		return { platform: Platform.Windows };
+		return { platform: Platform.Windows, mobileOS };
 	}
 	if (/linux|x11/i.test(userAgent)) {
-		return { platform: Platform.Linux };
+		return { platform: Platform.Linux, mobileOS };
 	}
-	return { platform: Platform.Unknown };
+	return { platform: Platform.Unknown, mobileOS };
 }
 
-const DEFAULT_PLATFORM: PlatformInfo = { platform: Platform.Unknown };
+function detectPlatform(): PlatformInfo {
+	if (typeof navigator === "undefined") {
+		return { platform: Platform.Unknown, mobileOS: null };
+	}
+	return detectPlatformInfo(navigator.userAgent, navigator.maxTouchPoints);
+}
+
+const DEFAULT_PLATFORM: PlatformInfo = {
+	platform: Platform.Unknown,
+	mobileOS: null,
+};
 
 export function usePlatform(): PlatformInfo {
 	const [platform, setPlatform] = useState<PlatformInfo>(DEFAULT_PLATFORM);

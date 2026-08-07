@@ -9,7 +9,7 @@ import { Download } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
 import { FaAndroid, FaApple, FaLinux, FaWindows } from "react-icons/fa";
-import { TestFlightDialog } from "./TestFlightDialog";
+import { MobileAppCTA } from "./MobileAppCTA";
 import { PlatformDownloadButton } from "./PlatformDownloadButton";
 import { DesktopAppPreview, PhoneAppPreview } from "./StaticAppPreviews";
 
@@ -172,7 +172,7 @@ export default async function DownloadPage() {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
+            <article className="order-2 flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5 md:order-1">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
                   src="/optimized/feature3.webp"
@@ -200,7 +200,7 @@ export default async function DownloadPage() {
               </div>
             </article>
 
-            <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
+            <article className="order-1 flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5 md:order-2">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
                   src="/optimized/feature.webp"
@@ -221,7 +221,7 @@ export default async function DownloadPage() {
                   anywhere.
                 </p>
                 <div className="mt-6 flex flex-wrap items-center gap-3">
-                  <TestFlightDialog />
+                  <MobileAppCTA />
                   <span className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-3xl border border-border px-3 py-2 text-sm font-semibold tracking-[-0.5px] text-muted-foreground sm:px-6 sm:py-3 sm:text-base">
                     <FaAndroid className="size-4 shrink-0" aria-hidden="true" />
                     Android coming soon
