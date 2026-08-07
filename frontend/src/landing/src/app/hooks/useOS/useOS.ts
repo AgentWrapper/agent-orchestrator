@@ -68,15 +68,13 @@ function detectMobileOS(userAgent: string, maxTouchPoints: number): MobileOS {
 	return null;
 }
 
-function detectPlatform(): PlatformInfo {
-	if (typeof navigator === "undefined") {
-		return { platform: Platform.Unknown, mobileOS: null };
-	}
+export function detectPlatformInfo(
+	userAgent: string,
+	maxTouchPoints: number,
+): PlatformInfo {
+	const mobileOS = detectMobileOS(userAgent, maxTouchPoints);
 
-	const userAgent = navigator.userAgent;
-	const mobileOS = detectMobileOS(userAgent, navigator.maxTouchPoints);
-
-	if (/android|iphone|ipad|ipod|mobile|tablet/i.test(userAgent)) {
+	if (mobileOS !== null || /mobile|tablet/i.test(userAgent)) {
 		return { platform: Platform.Mobile, mobileOS };
 	}
 
@@ -90,6 +88,13 @@ function detectPlatform(): PlatformInfo {
 		return { platform: Platform.Linux, mobileOS };
 	}
 	return { platform: Platform.Unknown, mobileOS };
+}
+
+function detectPlatform(): PlatformInfo {
+	if (typeof navigator === "undefined") {
+		return { platform: Platform.Unknown, mobileOS: null };
+	}
+	return detectPlatformInfo(navigator.userAgent, navigator.maxTouchPoints);
 }
 
 const DEFAULT_PLATFORM: PlatformInfo = {
