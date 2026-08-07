@@ -217,3 +217,77 @@ ON CONFLICT (session_id, harness) DO UPDATE SET
 		t.Fatalf("review_session table count = %d, want 0", reviewSessionTableCount)
 	}
 }
+
+func TestPrepareReviewPerHarnessMigrationRepairsApplied0080StaleReviewShape(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	if _, err := db.Exec(`
+CREATE TABLE goose_db_version (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	version_id INTEGER NOT NULL,
+	is_applied INTEGER NOT NULL,
+	tstamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO goose_db_version (version_id, is_applied) VALUES (48, 1), (49, 1), (80, 1);
+CREATE TABLE projects (
+	id TEXT PRIMARY KEY
+);
+CREATE TABLE sessions (
+	id TEXT PRIMARY KEY,
+	project_id TEXT NOT NULL REFERENCES projects(id)
+);
+INSERT INTO projects (id) VALUES ('project-1');
+INSERT INTO sessions (id, project_id) VALUES ('session-1', 'project-1');
+CREATE TABLE review (
+	id                 TEXT PRIMARY KEY,
+	session_id         TEXT NOT NULL,
+	project_id         TEXT NOT NULL,
+	harness            TEXT NOT NULL,
+	pr_url             TEXT NOT NULL DEFAULT '',
+	reviewer_handle_id TEXT NOT NULL DEFAULT '',
+	created_at         TIMESTAMP NOT NULL,
+	updated_at         TIMESTAMP NOT NULL,
+	UNIQUE(session_id)
+);
+`); err != nil {
+		t.Fatalf("seed drifted review schema: %v", err)
+	}
+
+	if err := prepareReviewPerHarnessMigration(db); err != nil {
+		t.Fatalf("repair review schema: %v", err)
+	}
+
+	var agentSessionColumn int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review') WHERE name = 'agent_session_id'`).Scan(&agentSessionColumn); err != nil {
+		t.Fatalf("query review columns: %v", err)
+	}
+	if agentSessionColumn != 1 {
+		t.Fatalf("agent_session_id column count = %d, want 1", agentSessionColumn)
+	}
+
+	if _, err := db.Exec(`
+INSERT INTO review (
+	id, session_id, project_id, harness, pr_url, reviewer_handle_id,
+	agent_session_id, created_at, updated_at
+) VALUES (
+	'review-muse', 'session-1', 'project-1', 'muse', 'pr-1',
+	'muse-handle', '', '2026-08-03T00:00:00Z', '2026-08-03T00:00:00Z'
+)
+ON CONFLICT (session_id, harness) DO UPDATE SET
+	reviewer_handle_id = excluded.reviewer_handle_id,
+	updated_at = excluded.updated_at;`); err != nil {
+		t.Fatalf("per-harness upsert after repair: %v", err)
+	}
+
+	var reviewSessionTableCount int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'review_session'`).Scan(&reviewSessionTableCount); err != nil {
+		t.Fatalf("query review_session table: %v", err)
+	}
+	if reviewSessionTableCount != 0 {
+		t.Fatalf("review_session table count = %d, want 0", reviewSessionTableCount)
+	}
+}
