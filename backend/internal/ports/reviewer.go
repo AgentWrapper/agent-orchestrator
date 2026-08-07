@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -28,6 +29,13 @@ const (
 	// ReviewCancelInterrupt sends the terminal interrupt key sequence to the
 	// reviewer process while preserving the terminal pane.
 	ReviewCancelInterrupt ReviewCancelMode = "interrupt"
+	// ReviewCancelMessage sends an in-band message to the reviewer process. Use
+	// this for harnesses where Ctrl-C exits the TUI instead of cancelling only
+	// the active turn.
+	ReviewCancelMessage ReviewCancelMode = "message"
+	// ReviewCancelInput sends raw terminal input to the reviewer process without
+	// appending Enter. Use this for TUI keybindings such as Escape.
+	ReviewCancelInput ReviewCancelMode = "input"
 )
 
 // ReviewCancelSpec is the adapter-selected cancellation behavior for a running
@@ -35,12 +43,22 @@ const (
 type ReviewCancelSpec struct {
 	Mode       ReviewCancelMode
 	Interrupts int
+	Message    string
+	Input      string
+	Inputs     []string
+	InputDelay time.Duration
 }
 
 // ReviewerCanceller is implemented by reviewer adapters that explicitly define
 // how their running CLI should be cancelled.
 type ReviewerCanceller interface {
 	ReviewCancel(ctx context.Context) (ReviewCancelSpec, error)
+}
+
+// ReviewerRestorer is implemented by prompt-driven reviewers that can resume a
+// native agent conversation after AO recreates the terminal pane.
+type ReviewerRestorer interface {
+	ReviewRestoreCommand(ctx context.Context, inv ReviewInvocation) (cmd ReviewCommandSpec, ok bool, err error)
 }
 
 // ReviewInvocation describes one review pass for a reviewer to act on. All ids
@@ -55,6 +73,9 @@ type ReviewInvocation struct {
 	RunID string
 	// WorkerSessionID is the worker whose PR is under review.
 	WorkerSessionID domain.SessionID
+	// AgentSessionID is the reviewer's native agent conversation id, used only
+	// to resume a destroyed/recreated reviewer terminal.
+	AgentSessionID string
 	// PRURL is the pull request to review.
 	PRURL string
 	// TargetSHA is the PR head commit under review.
@@ -95,11 +116,13 @@ type ReviewTask struct {
 	TargetSHA string
 }
 
-// ReviewCommandSpec is how to launch a reviewer: the argv and any extra env the
-// adapter needs. AO supplies the workspace and review-tracking env around it.
+// ReviewCommandSpec is how to launch a reviewer: the argv, any extra env, and
+// any launch-time native session id the adapter can determine. AO supplies the
+// workspace and review-tracking env around it.
 type ReviewCommandSpec struct {
-	Argv []string
-	Env  map[string]string
+	Argv           []string
+	Env            map[string]string
+	AgentSessionID string
 }
 
 // ReviewerResolver maps a reviewer harness onto its adapter. ok=false means no

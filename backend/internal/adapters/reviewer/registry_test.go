@@ -26,10 +26,30 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 			t.Errorf("reviewer harness %q does not implement cancellation", h)
 		} else if spec, err := canceller.ReviewCancel(context.Background()); err != nil {
 			t.Errorf("reviewer harness %q cancel spec: %v", h, err)
-		} else if spec.Mode != ports.ReviewCancelInterrupt {
-			t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInterrupt)
-		} else if spec.Interrupts != 2 {
-			t.Errorf("reviewer harness %q cancel interrupts = %d, want 2", h, spec.Interrupts)
+		} else {
+			switch h {
+			case domain.ReviewerCodex:
+				if spec.Mode != ports.ReviewCancelInput {
+					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInput)
+				}
+				if spec.Input != "\x1b" || len(spec.Inputs) != 0 {
+					t.Errorf("reviewer harness %q cancel input = %q inputs=%#v, want single escape", h, spec.Input, spec.Inputs)
+				}
+			case domain.ReviewerClaudeCode, domain.ReviewerOpenCode:
+				if spec.Mode != ports.ReviewCancelInput {
+					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInput)
+				}
+				if len(spec.Inputs) != 2 || spec.Inputs[0] != "\x1b" || spec.Inputs[1] != "\x1b" {
+					t.Errorf("reviewer harness %q cancel inputs = %#v, want double escape", h, spec.Inputs)
+				}
+			default:
+				if spec.Mode != ports.ReviewCancelInterrupt {
+					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInterrupt)
+				}
+				if spec.Interrupts != 2 {
+					t.Errorf("reviewer harness %q cancel interrupts = %d, want 2", h, spec.Interrupts)
+				}
+			}
 		}
 		registered[h] = true
 	}

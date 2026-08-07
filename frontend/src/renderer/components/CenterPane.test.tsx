@@ -211,6 +211,31 @@ describe("CenterPane toolbar session label", () => {
 		expect(shortcutMocks.closeableStates.at(-1)).toBe(false);
 	});
 
+	it("shows reviewer as its own active harness tab", () => {
+		renderCenterPane({
+			session: worker,
+			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			terminalTarget: { kind: "reviewer", handleId: "review-sess-1", harness: "codex", sessionId: worker.id },
+		});
+
+		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("tab", { name: /^do the thing/ })).not.toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("tab", { name: "Reviewer" }).querySelector("img")).toHaveAttribute("src");
+		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
+	});
+
+	it("opens reviewer from the tab strip when a reviewer handle exists", () => {
+		const onSelectReviewerTerminal = vi.fn();
+		renderCenterPane({
+			session: worker,
+			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			onSelectReviewerTerminal,
+		});
+
+		fireEvent.click(screen.getByRole("tab", { name: "Reviewer" }));
+		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
+	});
+
 	// The button used to open a dropdown that also listed every session across
 	// every project (#3208); it now only ever creates a terminal.
 	it("opens a new terminal straight from the tab-strip button", () => {
