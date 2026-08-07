@@ -42,11 +42,10 @@ func New() *Plugin {
 // launch. See ports.ActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }
 
-// EmitsBlockedActivity is false: codex reports permission prompts as
-// waiting_input — it installs no post-tool-use hook, so a blocked state could
-// never be cleared mid-turn. confirmActive must not nudge it (an Enter could
-// answer a pending decision it cannot report as blocked). See
-// ports.ActivitySignaler.
+// EmitsBlockedActivity remains false because Codex permission-request hooks
+// still map to waiting_input rather than a correlatable blocked tool flight.
+// The request_user_input hooks make that native wait observable and clearable,
+// but do not make automated Enter confirmation safe for every Codex prompt.
 func (p *Plugin) EmitsBlockedActivity() bool { return false }
 
 // ExitDetectionMode opts Codex into AO's process supervisor. Codex hooks
@@ -111,6 +110,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	cmd = []string{binary}
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
+	appendDefaultModeRequestUserInputFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	appendSessionHookFlags(&cmd)
@@ -153,6 +153,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = append(cmd, binary, "resume")
 	appendNoUpdateCheckFlag(&cmd)
 	appendHideRateLimitNudgeFlag(&cmd)
+	appendDefaultModeRequestUserInputFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
 	appendSessionHookFlags(&cmd)
@@ -365,6 +366,7 @@ func DoctorLaunchProbes() [][]string {
 	overrideProbe := []string{"features", "list"}
 	appendNoUpdateCheckFlag(&overrideProbe)
 	appendHideRateLimitNudgeFlag(&overrideProbe)
+	appendDefaultModeRequestUserInputFlag(&overrideProbe)
 	appendSessionHookFlags(&overrideProbe)
 	appendWorkspaceTrustFlag(&overrideProbe, os.TempDir())
 	return [][]string{flagProbe, overrideProbe}
@@ -380,6 +382,10 @@ func appendHideRateLimitNudgeFlag(cmd *[]string) {
 	// In a headless AO pane that dialog hangs the session invisibly and
 	// swallows the auto-submitted spawn prompt, so suppress it.
 	*cmd = append(*cmd, "-c", "notice.hide_rate_limit_model_nudge=true")
+}
+
+func appendDefaultModeRequestUserInputFlag(cmd *[]string) {
+	*cmd = append(*cmd, "-c", "features.default_mode_request_user_input=true")
 }
 
 func appendHookTrustBypassFlag(cmd *[]string) {
