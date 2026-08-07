@@ -164,7 +164,7 @@ describe("GlobalSettingsForm", () => {
 		renderForm();
 
 		const connectMobile = await screen.findByRole("button", { name: "Connect Mobile" });
-		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard Shortcuts" });
+		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard shortcuts" });
 
 		for (const row of [connectMobile, keyboardShortcuts]) {
 			expect(row).toHaveClass("settings-row-bar", "settings-link-row");
