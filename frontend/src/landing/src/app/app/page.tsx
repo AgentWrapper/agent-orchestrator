@@ -63,6 +63,7 @@ import {
   type CloudProject,
   type CloudProjectShareAccess,
   type CloudProjectShareGrant,
+  type CloudProjectShareLink,
   type CloudProjectSharePolicy,
   type CloudRepository,
   type CloudSession,
@@ -415,6 +416,19 @@ function parseShareRecipientEmails(value: string) {
         .filter(Boolean),
     ),
   );
+}
+
+function latestProjectShareLink(
+  access: CloudProjectShareAccess,
+): CloudProjectShareLink | undefined {
+  const links = [
+    ...access.links,
+    ...(access.policies ?? []).flatMap((policy) => policy.links ?? []),
+  ];
+  return links.reduce<CloudProjectShareLink | undefined>((latest, link) => {
+    if (!latest) return link;
+    return (link.createdAt ?? "") > (latest.createdAt ?? "") ? link : latest;
+  }, undefined);
 }
 
 function OrchestratorIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
@@ -1375,7 +1389,7 @@ export default function CloudAppPage() {
     }
   };
 
-  const loadProjectShareAccess = useCallback(async () => {
+  const loadProjectShareAccess = useCallback(async (restoreLinkDraft = false) => {
     if (!api || !selectedOrgId || !shareProject) {
       setShareAccess(null);
       return;
@@ -1384,6 +1398,35 @@ export default function CloudAppPage() {
     try {
       const result = await api.projectShareAccess(selectedOrgId, shareProject.id);
       setShareAccess(result.access);
+      if (restoreLinkDraft) {
+        const latestLink = latestProjectShareLink(result.access);
+        if (latestLink) {
+          const recipientEmails = (latestLink.recipients ?? [])
+            .filter((recipient) => recipient.recipientType === "email")
+            .flatMap((recipient) => (recipient.email ? [recipient.email] : []));
+          const recipientOrgIds = (latestLink.recipients ?? [])
+            .filter((recipient) => recipient.recipientType === "org")
+            .flatMap((recipient) => (recipient.orgId ? [recipient.orgId] : []));
+          const savedRecipients = recipientEmails.join(", ");
+          setShareAccessScope(latestLink.accessScope);
+          setShareRecipientEmails(savedRecipients);
+          setShareRecipientDraft(savedRecipients);
+          setShareRecipientOrgIds(recipientOrgIds);
+          setShareRecipientsEditing(
+            latestLink.accessScope === "restricted" &&
+              recipientEmails.length === 0 &&
+              recipientOrgIds.length === 0,
+          );
+          setShareSessionId(latestLink.sessionId ?? "");
+          setShareRole(latestLink.role);
+          const linkedPolicy = (result.access.policies ?? []).find((policy) =>
+            (policy.links ?? []).some((link) => link.id === latestLink.id),
+          );
+          if (linkedPolicy) {
+            setSharePolicySelection(policySelection(linkedPolicy));
+          }
+        }
+      }
     } catch (accessError) {
       setError(
         accessError instanceof Error
@@ -1397,7 +1440,7 @@ export default function CloudAppPage() {
 
   useEffect(() => {
     if (!shareProject) return;
-    void loadProjectShareAccess();
+    void loadProjectShareAccess(true);
   }, [loadProjectShareAccess, shareProject]);
 
   const createSessionAndOpen = async (
@@ -3343,6 +3386,7 @@ export default function CloudAppPage() {
                           ? "border-[#4d8dff]/55 bg-[#4d8dff]/10"
                           : "border-white/[0.07] bg-white/[0.02] hover:border-white/[0.13] hover:bg-white/[0.04]"
                       }`}
+                      aria-pressed={selected}
                       onClick={() => {
                         setShareAccessScope(option.scope);
                         if (option.scope === "restricted") {

@@ -944,6 +944,58 @@ it("shares a project from its three-dot menu with the selected role", async () =
   expect(await screen.findByDisplayValue(/share=share-token/)).toBeVisible();
 });
 
+it("restores the latest restricted recipient list when sharing again", async () => {
+  apiMocks.projectShareAccess.mockResolvedValue({
+    access: {
+      commandGuardEnforced: false,
+      links: [
+        {
+          id: "restricted-link",
+          accessScope: "restricted",
+          role: "editor",
+          recipients: [
+            {
+              id: "recipient-one",
+              shareLinkId: "restricted-link",
+              recipientType: "email",
+              email: "reader@example.com",
+              createdAt: "2026-08-07T00:00:00Z",
+            },
+          ],
+          createdAt: "2026-08-07T00:00:00Z",
+        },
+      ],
+      grants: [],
+    },
+  });
+  render(<CloudAppPage />);
+
+  const openShareDialog = async () => {
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: `More actions for ${project.displayName}`,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Share project" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Restricted/ })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
+    );
+  };
+
+  await openShareDialog();
+  expect(screen.getByText("reader@example.com")).toBeVisible();
+  expect(screen.queryByLabelText("People")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await openShareDialog();
+
+  expect(screen.getByText("reader@example.com")).toBeVisible();
+  expect(screen.queryByLabelText("People")).not.toBeInTheDocument();
+});
+
 it("manages redeemed project share access", async () => {
   apiMocks.sessions.mockResolvedValue({ sessions: [worker] });
   apiMocks.projectShareAccess.mockResolvedValue({
