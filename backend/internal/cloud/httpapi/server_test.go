@@ -46,6 +46,19 @@ func TestReadOnlyTerminalAllowsResizeButRejectsInput(t *testing.T) {
 	}
 }
 
+func TestTerminalResetEventsIncludeAgentRestarts(t *testing.T) {
+	for _, eventType := range []string{"worker.connected", "agent.restarting"} {
+		if !terminalResetEvent(eventType) {
+			t.Fatalf("terminalResetEvent(%q) = false, want true", eventType)
+		}
+	}
+	for _, eventType := range []string{"terminal.output", "agent.started", ""} {
+		if terminalResetEvent(eventType) {
+			t.Fatalf("terminalResetEvent(%q) = true, want false", eventType)
+		}
+	}
+}
+
 func TestDangerousShellCommandDetection(t *testing.T) {
 	for _, input := range []string{
 		"rm -rf /tmp/test",

@@ -4601,6 +4601,10 @@ func terminalOutputEvent(kind string) string {
 	return "terminal.output"
 }
 
+func terminalResetEvent(eventType string) bool {
+	return eventType == "worker.connected" || eventType == "agent.restarting"
+}
+
 func ticketHasScope(scopes []string, expected string) bool {
 	for _, scope := range scopes {
 		if scope == expected {
@@ -4649,7 +4653,7 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	live := make(chan clouddomain.Event, 1024)
 	unsubscribe := s.events.Subscribe(ticket.AccountID, ticket.SessionID, func(event clouddomain.Event) {
 		if event.Type != terminalOutputEvent(kind) &&
-			event.Type != "worker.connected" &&
+			!terminalResetEvent(event.Type) &&
 			event.Type != "agent.command_guard_blocked" {
 			return
 		}
@@ -4669,6 +4673,18 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		return
+	}
+	restartSequence, err := s.store.LatestEventSequenceByType(
+		ctx,
+		ticket.AccountID,
+		ticket.SessionID,
+		"agent.restarting",
+	)
+	if err != nil {
+		return
+	}
+	if restartSequence > resetSequence {
+		resetSequence = restartSequence
 	}
 	if resetSequence > after {
 		if err := writeTerminalMessage(ctx, socket, terminalServerMessage{
@@ -4739,7 +4755,7 @@ func (s *Server) terminalSocket(w http.ResponseWriter, r *http.Request) {
 		case <-readErrors:
 			return
 		case event := <-live:
-			if event.Type == "worker.connected" {
+			if terminalResetEvent(event.Type) {
 				if event.Sequence <= sent {
 					continue
 				}

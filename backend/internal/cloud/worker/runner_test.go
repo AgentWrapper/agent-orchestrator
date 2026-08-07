@@ -1176,6 +1176,48 @@ func TestRegressionRestartedClaudeSessionUsesRestoreCommand(t *testing.T) {
 	}
 }
 
+func TestRegressionEnvironmentRestartStartsFreshClaudeWithoutTranscript(t *testing.T) {
+	configDir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+	if err := os.WriteFile(
+		filepath.Join(dataDir, "agent-session-initialized"),
+		[]byte("initialized\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	agent := &recordingCloudAgentLauncher{
+		launch:    []string{"agent", "new"},
+		restore:   []string{"agent", "resume", "native-session"},
+		restoreOK: true,
+	}
+	got, err := cloudAgentRestartCommand(
+		context.Background(),
+		agent,
+		ports.LaunchConfig{WorkspacePath: "/workspace/repository"},
+		clouddomain.Session{
+			ID:             "session-one",
+			Harness:        "claude-code",
+			AgentSessionID: "native-session",
+		},
+		dataDir,
+	)
+	if err != nil {
+		t.Fatalf("cloudAgentRestartCommand() error = %v", err)
+	}
+	if !reflect.DeepEqual(got, agent.launch) {
+		t.Fatalf("cloudAgentRestartCommand() = %#v, want %#v", got, agent.launch)
+	}
+	if agent.launchCalls != 1 || agent.restoreCalls != 0 {
+		t.Fatalf(
+			"launch calls = %d, restore calls = %d; want 1, 0",
+			agent.launchCalls,
+			agent.restoreCalls,
+		)
+	}
+}
+
 func TestPrepareCloudPromptDeliveryUsesHarnessCommand(t *testing.T) {
 	agent := &recordingCloudAgentLauncher{
 		strategy: ports.PromptDeliveryInCommand,
@@ -1252,6 +1294,7 @@ type recordingCloudAgentLauncher struct {
 	restore        []string
 	restoreOK      bool
 	launchCalls    int
+	restoreCalls   int
 	restoreConfig  ports.RestoreConfig
 	strategy       ports.PromptDeliveryStrategy
 	strategyCalls  int
@@ -1279,6 +1322,7 @@ func (a *recordingCloudAgentLauncher) GetRestoreCommand(
 	_ context.Context,
 	config ports.RestoreConfig,
 ) ([]string, bool, error) {
+	a.restoreCalls++
 	a.restoreConfig = config
 	return a.restore, a.restoreOK, nil
 }

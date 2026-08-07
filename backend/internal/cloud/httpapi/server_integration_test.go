@@ -668,6 +668,34 @@ func TestWorkerAndBrowserTerminalReplayLiveRouting(t *testing.T) {
 		t.Fatalf("browser output = %#v", outputMessage)
 	}
 
+	restartResponse := requestJSON(
+		t,
+		server,
+		http.MethodPost,
+		"/api/cloud/v1/worker/events",
+		"",
+		map[string]any{
+			"type":    "agent.restarting",
+			"payload": map[string]string{"reason": "environment_updated"},
+		},
+		map[string]string{"Authorization": "Worker " + bootstrapBody.WorkerToken},
+	)
+	defer restartResponse.Body.Close()
+	if restartResponse.StatusCode != http.StatusAccepted {
+		t.Fatalf("agent restart event status = %d", restartResponse.StatusCode)
+	}
+	_, restartResetData, err := terminalSocket.Read(ctx)
+	if err != nil {
+		t.Fatalf("read agent restart terminal reset: %v", err)
+	}
+	var restartReset terminalServerMessage
+	if err := json.Unmarshal(restartResetData, &restartReset); err != nil {
+		t.Fatalf("decode agent restart terminal reset: %v", err)
+	}
+	if restartReset.Type != "reset" || restartReset.Sequence <= outputMessage.Sequence {
+		t.Fatalf("agent restart terminal reset = %#v", restartReset)
+	}
+
 	input := base64.StdEncoding.EncodeToString([]byte("hello"))
 	if err := terminalSocket.Write(ctx, websocket.MessageText, []byte(`{"type":"input","data":"`+input+`"}`)); err != nil {
 		t.Fatalf("write browser input: %v", err)

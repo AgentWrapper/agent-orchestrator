@@ -364,15 +364,19 @@ func (r *Runner) Run(ctx context.Context) error {
 		if !errors.Is(err, errSessionEnvironmentRestart) {
 			return err
 		}
-		restoreAgent = true
+		if err := r.client.Event(ctx, "agent.restarting", map[string]string{
+			"reason": "environment_updated",
+		}); err != nil {
+			return fmt.Errorf("report agent environment restart: %w", err)
+		}
 		launchConfig.Prompt = ""
 		commandPromptSequence = 0
-		argv, err = cloudAgentCommand(
+		argv, err = cloudAgentRestartCommand(
 			ctx,
 			agent,
 			launchConfig,
 			r.bootstrap.Launch.Session,
-			restoreAgent,
+			r.dataDir,
 		)
 		if err != nil {
 			return err
@@ -557,6 +561,20 @@ func cloudAgentCommand(
 	return argv, nil
 }
 
+func cloudAgentRestartCommand(
+	ctx context.Context,
+	agent cloudAgentLauncher,
+	launchConfig ports.LaunchConfig,
+	session clouddomain.Session,
+	dataDir string,
+) ([]string, error) {
+	restore, err := shouldRestoreAgentSession(session, dataDir)
+	if err != nil {
+		return nil, err
+	}
+	return cloudAgentCommand(ctx, agent, launchConfig, session, restore)
+}
+
 func (r *Runner) runInteractiveAgent(
 	ctx context.Context,
 	argv []string,
@@ -623,9 +641,6 @@ func (r *Runner) runInteractiveAgent(
 			return
 		case <-restartRequested:
 			environmentRestart.Store(true)
-			_ = r.client.Event(ctx, "agent.restarting", map[string]string{
-				"reason": "environment_updated",
-			})
 			if workspaceCommand.Process != nil {
 				_ = workspaceCommand.Process.Kill()
 			}
