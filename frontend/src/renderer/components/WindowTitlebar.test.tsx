@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -41,5 +42,13 @@ describe("WindowTitlebar", () => {
 		expect(actionMock).toHaveBeenNthCalledWith(1, "window.minimize");
 		expect(actionMock).toHaveBeenNthCalledWith(2, "window.maximize");
 		expect(actionMock).toHaveBeenNthCalledWith(3, "window.close");
+	});
+
+	it("keeps maximized overlays below the custom Windows titlebar", () => {
+		const css = readFileSync("src/renderer/styles.css", "utf8");
+
+		expect(css).toMatch(
+			/\.platform-windows \.browser-popout-overlay,\s*\.platform-windows \.files-popout-overlay\s*{\s*top: var\(--size-window-titlebar\);/s,
+		);
 	});
 });
