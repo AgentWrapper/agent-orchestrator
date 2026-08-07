@@ -835,6 +835,27 @@ describe("startAutoUpdates", () => {
     });
   });
 
+  it("surfaces the nudge when automatic checks reject without an error event", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("checking-for-update")?.();
+      return Promise.reject(new Error("net::ERR_FAILED"));
+    });
+
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    // Restored to the pre-check status (not stuck on "checking"), and no nudge
+    // below the threshold.
+    expect(module.getUpdateStatus()).toEqual({ state: "idle" });
+
+    await module.startAutoUpdates(stateDir);
+    expect(module.getUpdateStatus()).toEqual({
+      state: "idle",
+      staleCheckNudge: true,
+    });
+  });
+
   it("clears the nudge once a check succeeds again", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { module, autoUpdater, updaterEvents } = await importAutoUpdater();

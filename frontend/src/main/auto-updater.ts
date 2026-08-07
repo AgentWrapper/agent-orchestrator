@@ -596,8 +596,19 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
       configureFeed(settings);
       autoUpdater.autoDownload = true;
       autoUpdater.autoInstallOnAppQuit = true;
-      const result = await autoUpdater.checkForUpdates();
-      if (result?.downloadPromise) await result.downloadPromise;
+      try {
+        const result = await autoUpdater.checkForUpdates();
+        if (result?.downloadPromise) await result.downloadPromise;
+      } catch (err) {
+        // electron-updater normally also emits "error" (handled in
+        // wireUpdaterEvents); a reject-only failure must still restore the
+        // pre-check status so the renderer is neither stuck on "checking" nor
+        // denied the stale-check nudge once the streak crosses the threshold
+        // (#3526). Record before restoring so the restore broadcast is stamped.
+        if (isNetError(err)) recordAutomaticNetFailure();
+        restoreAutomaticCheckPreviousStatus();
+        throw err;
+      }
     });
   } catch (err) {
     console.error("auto-update check failed:", err);
