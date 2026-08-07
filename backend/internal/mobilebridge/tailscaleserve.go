@@ -18,6 +18,7 @@ type Serve struct {
 	Run TailscaleRunner
 }
 
+// NewServe returns a Serve backed by the real tailscale CLI.
 func NewServe() *Serve { return &Serve{} }
 
 func (s *Serve) run(ctx context.Context, args ...string) ([]byte, error) {
