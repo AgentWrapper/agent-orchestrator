@@ -8,6 +8,15 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
+func readMuseFixture(t *testing.T, name string) string {
+	t.Helper()
+	output, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(output)
+}
+
 func TestDeriveActivityState(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -36,54 +45,40 @@ func TestDetectTerminalActivityCapturedMuseFrames(t *testing.T) {
 		name    string
 		fixture string
 		want    domain.ActivityState
-		wantOK  bool
 	}{
-		{"awaiting structured input", "awaiting_user_input.txt", domain.ActivityWaitingInput, true},
-		{"awaiting compact structured input", "awaiting_user_input_compact.txt", domain.ActivityWaitingInput, true},
-		{"resumed generation", "active_generation.txt", domain.ActivityActive, true},
-		{"plain idle composer", "idle_composer.txt", domain.ActivityIdle, true},
+		{"awaiting structured input", "awaiting_user_input.txt", domain.ActivityWaitingInput},
+		{"awaiting compact structured input", "awaiting_user_input_compact.txt", domain.ActivityWaitingInput},
+		{"resumed generation", "active_generation.txt", domain.ActivityActive},
+		{"plain idle composer", "idle_composer.txt", domain.ActivityIdle},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			output, err := os.ReadFile(filepath.Join("testdata", tt.fixture))
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, ok := (&Plugin{}).DetectTerminalActivity(string(output))
-			if got != tt.want || ok != tt.wantOK {
-				t.Fatalf("DetectTerminalActivity(%s) = (%q, %v), want (%q, %v)", tt.fixture, got, ok, tt.want, tt.wantOK)
+			got, ok := (&Plugin{}).DetectTerminalActivity(readMuseFixture(t, tt.fixture))
+			if got != tt.want || !ok {
+				t.Fatalf("DetectTerminalActivity(%s) = (%q, %v), want (%q, true)", tt.fixture, got, ok, tt.want)
 			}
 		})
 	}
 }
 
-func TestDetectTerminalActivityPrefersResumedGenerationOverPickerScrollback(t *testing.T) {
-	waiting, err := os.ReadFile(filepath.Join("testdata", "awaiting_user_input.txt"))
-	if err != nil {
-		t.Fatal(err)
+func TestDetectTerminalActivityUsesNewestMarker(t *testing.T) {
+	waiting := readMuseFixture(t, "awaiting_user_input.txt")
+	active := readMuseFixture(t, "active_generation.txt")
+	tests := []struct {
+		name   string
+		output string
+		want   domain.ActivityState
+	}{
+		{"generation after picker", waiting + "\n" + active, domain.ActivityActive},
+		{"picker after generation", active + "\n" + waiting, domain.ActivityWaitingInput},
 	}
-	active, err := os.ReadFile(filepath.Join("testdata", "active_generation.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok := (&Plugin{}).DetectTerminalActivity(string(waiting) + "\n" + string(active))
-	if !ok || got != domain.ActivityActive {
-		t.Fatalf("DetectTerminalActivity(scrollback + active) = (%q, %v), want (%q, true)", got, ok, domain.ActivityActive)
-	}
-}
-
-func TestDetectTerminalActivityPrefersNewPickerOverGenerationScrollback(t *testing.T) {
-	active, err := os.ReadFile(filepath.Join("testdata", "active_generation.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	waiting, err := os.ReadFile(filepath.Join("testdata", "awaiting_user_input.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, ok := (&Plugin{}).DetectTerminalActivity(string(active) + "\n" + string(waiting))
-	if !ok || got != domain.ActivityWaitingInput {
-		t.Fatalf("DetectTerminalActivity(active scrollback + picker) = (%q, %v), want (%q, true)", got, ok, domain.ActivityWaitingInput)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := (&Plugin{}).DetectTerminalActivity(tt.output)
+			if got != tt.want || !ok {
+				t.Fatalf("DetectTerminalActivity() = (%q, %v), want (%q, true)", got, ok, tt.want)
+			}
+		})
 	}
 }
 

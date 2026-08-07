@@ -118,80 +118,40 @@ func TestPollKeepsGenuineLongCodexTurnActive(t *testing.T) {
 	}
 }
 
-func TestPollReconcilesFreshMuseAtStructuredInputPicker(t *testing.T) {
+func TestPollContinuouslyReconcilesMuse(t *testing.T) {
 	now := time.Unix(500, 0).UTC()
-	session := activeSession(now, domain.HarnessMuse)
-	session.Activity.LastActivityAt = now.Add(-time.Second)
-	session.UpdatedAt = now.Add(-time.Second)
-	sink := &fakeSink{}
-	runtime := &fakeRuntime{output: "› 1. Confirm\n  2. Cancel\nEnter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt\n⟩\nmuse-spark-1.2-contributor · high · ~/project · YOLO\n"}
-	observer := New(
-		fakeSessions{rows: []domain.SessionRecord{session}},
-		sink,
-		runtime,
-		fakeAgents{domain.HarnessMuse: muse.New()},
-		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
-	)
+	tests := []struct {
+		name    string
+		current domain.ActivityState
+		output  string
+		want    domain.ActivityState
+		event   string
+	}{
+		{"fresh active to waiting", domain.ActivityActive, "◆ Request user input AO Muse Fix  1m 02s)\n", domain.ActivityWaitingInput, "terminal-waiting-input"},
+		{"waiting to active", domain.ActivityWaitingInput, "◇ Finishing up (25s · esc to interrupt)\n", domain.ActivityActive, "terminal-active"},
+		{"idle to waiting", domain.ActivityIdle, "Enter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt\n", domain.ActivityWaitingInput, "terminal-waiting-input"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := activeSession(now, domain.HarnessMuse)
+			session.Activity = domain.Activity{State: tt.current, LastActivityAt: now.Add(-time.Second)}
+			session.UpdatedAt = now.Add(-time.Second)
+			sink := &fakeSink{}
+			observer := New(
+				fakeSessions{rows: []domain.SessionRecord{session}},
+				sink,
+				&fakeRuntime{output: tt.output},
+				fakeAgents{domain.HarnessMuse: muse.New()},
+				Config{Clock: func() time.Time { return now }, Logger: testLogger()},
+			)
 
-	if err := observer.Poll(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.signals) != 1 {
-		t.Fatalf("signals = %d, want 1", len(sink.signals))
-	}
-	signal := sink.signals[0]
-	if signal.State != domain.ActivityWaitingInput || signal.Event != "terminal-waiting-input" {
-		t.Fatalf("unexpected reconciliation: %+v", signal)
-	}
-}
-
-func TestPollReconcilesWaitingMuseWhenGenerationResumes(t *testing.T) {
-	now := time.Unix(500, 0).UTC()
-	session := activeSession(now, domain.HarnessMuse)
-	session.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: now.Add(-time.Second)}
-	session.UpdatedAt = now.Add(-time.Second)
-	sink := &fakeSink{}
-	runtime := &fakeRuntime{output: "◇ Finishing up (25s · esc to interrupt)\n⟩\nmuse-spark-1.2-contributor · high · ~/project · YOLO\n"}
-	observer := New(
-		fakeSessions{rows: []domain.SessionRecord{session}},
-		sink,
-		runtime,
-		fakeAgents{domain.HarnessMuse: muse.New()},
-		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
-	)
-
-	if err := observer.Poll(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.signals) != 1 {
-		t.Fatalf("signals = %d, want 1", len(sink.signals))
-	}
-	signal := sink.signals[0]
-	if signal.State != domain.ActivityActive || signal.Event != "terminal-active" {
-		t.Fatalf("unexpected reconciliation: %+v", signal)
-	}
-}
-
-func TestPollReconcilesIdleMuseAtStructuredInputPicker(t *testing.T) {
-	now := time.Unix(500, 0).UTC()
-	session := activeSession(now, domain.HarnessMuse)
-	session.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Second)}
-	session.UpdatedAt = now.Add(-time.Second)
-	sink := &fakeSink{}
-	runtime := &fakeRuntime{output: "› Confirm the change?\nEnter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt\n"}
-	observer := New(
-		fakeSessions{rows: []domain.SessionRecord{session}},
-		sink,
-		runtime,
-		fakeAgents{domain.HarnessMuse: muse.New()},
-		Config{Clock: func() time.Time { return now }, Logger: testLogger()},
-	)
-
-	if err := observer.Poll(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(sink.signals) != 1 || sink.signals[0].State != domain.ActivityWaitingInput {
-		t.Fatalf("unexpected reconciliation: %+v", sink.signals)
+			if err := observer.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.signals) != 1 || sink.signals[0].State != tt.want || sink.signals[0].Event != tt.event {
+				t.Fatalf("unexpected reconciliation: %+v", sink.signals)
+			}
+		})
 	}
 }
 

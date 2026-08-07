@@ -62,11 +62,10 @@ func (p *Plugin) DetectTerminalActivity(output string) (domain.ActivityState, bo
 	hasComposer := false
 	hasFooter := false
 	for _, line := range recent {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "⟩" {
+		if line == "⟩" {
 			hasComposer = true
 		}
-		if strings.Contains(trimmed, " · ") && strings.Contains(trimmed, "muse-") {
+		if strings.Contains(line, " · ") && strings.Contains(line, "muse-") {
 			hasFooter = true
 		}
 	}
