@@ -77,7 +77,6 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		envVars[key] = value
 	}
 	envVars["AO_DATA_DIR"] = env.DataDir
-	envVars["AO_REVIEW_GATEWAY_MANIFEST"] = env.ManifestPath
 	return ports.ReviewCommandSpec{
 		Argv:             []string{binary, "--bare", "--approval-mode", "plan"},
 		Env:              envVars,
@@ -98,9 +97,8 @@ func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (s
 	return inv.Prompt, nil
 }
 
-// ReviewProcessReusable returns false because Qwen's gateway manifest is fixed
-// in the launch environment. A new review task needs a fresh process with a
-// fresh AO_REVIEW_GATEWAY_MANIFEST value.
+// ReviewProcessReusable returns false because Qwen's request-scoped reviewer
+// context is fixed at launch.
 func (*Reviewer) ReviewProcessReusable() bool { return false }
 
 // ReviewPromptReadinessHints waits for Qwen's input footer before injecting the
@@ -129,14 +127,9 @@ func (r *Reviewer) prepareEnvironment(inv ports.ReviewInvocation) (reviewgateway
 	if strings.TrimSpace(dataDir) == "" {
 		return reviewgateway.Environment{}, errors.New("qwen reviewer: AO data directory is required")
 	}
-	manifest := reviewgateway.Manifest{
-		ReviewerID: inv.ReviewerID, WorkerSessionID: inv.WorkerSessionID,
-		WorkspacePath: inv.WorkspacePath, TaskPromptRoot: inv.TaskPromptRoot,
-		Tasks: reviewGatewayTasks(inv),
-	}
-	env, err := reviewgateway.PrepareEnvironment(dataDir, manifest)
+	env, err := reviewgateway.PrepareHostTrustedEnvironment(dataDir, inv.ReviewerID)
 	if err != nil {
-		return reviewgateway.Environment{}, fmt.Errorf("qwen reviewer: prepare gateway environment: %w", err)
+		return reviewgateway.Environment{}, fmt.Errorf("qwen reviewer: prepare environment: %w", err)
 	}
 	return env, nil
 }
@@ -206,21 +199,4 @@ func validEnvName(name string) bool {
 		}
 	}
 	return true
-}
-
-func reviewGatewayTasks(inv ports.ReviewInvocation) []reviewgateway.Task {
-	if len(inv.ReviewQueue) == 0 {
-		return []reviewgateway.Task{{
-			RunID: inv.RunID, PRURL: inv.PRURL, TargetSHA: inv.TargetSHA,
-			TaskPromptFile: inv.TaskPromptFile,
-		}}
-	}
-	tasks := make([]reviewgateway.Task, 0, len(inv.ReviewQueue))
-	for _, task := range inv.ReviewQueue {
-		tasks = append(tasks, reviewgateway.Task{
-			RunID: task.RunID, PRURL: task.PRURL, TargetSHA: task.TargetSHA,
-			TaskPromptFile: inv.TaskPromptFile,
-		})
-	}
-	return tasks
 }

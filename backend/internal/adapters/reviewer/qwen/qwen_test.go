@@ -2,7 +2,6 @@ package qwen
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/reviewgateway"
 )
 
 func invocation(t *testing.T) ports.ReviewInvocation {
@@ -64,14 +62,19 @@ func TestReviewCommandIsExactPermanentTUIWithPostReadinessReference(t *testing.T
 	if spec.WorkingDirectory == inv.WorkspacePath || !strings.HasPrefix(spec.WorkingDirectory, inv.DataDir+string(filepath.Separator)) {
 		t.Fatalf("working directory = %q", spec.WorkingDirectory)
 	}
-	if spec.Env["HOME"] == "" || spec.Env["TMPDIR"] == "" || spec.Env["AO_REVIEW_GATEWAY_MANIFEST"] == "" {
+	if spec.Env["HOME"] == "" || spec.Env["TMPDIR"] == "" || spec.Env["AO_DATA_DIR"] != inv.DataDir {
 		t.Fatalf("neutral environment = %#v", spec.Env)
 	}
 	if strings.HasPrefix(spec.Env["HOME"], inv.WorkspacePath) {
 		t.Fatalf("HOME points into checkout: %q", spec.Env["HOME"])
 	}
-	if _, err := os.Stat(spec.Env["AO_REVIEW_GATEWAY_MANIFEST"]); err != nil {
-		t.Fatalf("gateway manifest: %v", err)
+	if _, ok := spec.Env["AO_REVIEW_GATEWAY_MANIFEST"]; ok {
+		t.Fatalf("unexpected gateway manifest env = %#v", spec.Env)
+	}
+	for _, path := range []string{spec.WorkingDirectory, spec.Env["HOME"], spec.Env["TMPDIR"]} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("neutral runtime path %q: %v", path, err)
+		}
 	}
 }
 
@@ -178,49 +181,6 @@ func TestReviewCommandPreflightShapeNeedsNoRequestData(t *testing.T) {
 	}
 }
 
-func TestReviewCommandManifestAuthorizesEntireReviewQueue(t *testing.T) {
-	reviewer := New()
-	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
-	inv := invocation(t)
-	inv.ReviewQueue = []ports.ReviewTask{
-		{
-			RunID:     "run-1",
-			PRURL:     "https://github.com/acme/widgets/pull/42",
-			TargetSHA: "0123456789abcdef",
-		},
-		{
-			RunID:     "run-2",
-			PRURL:     "https://github.com/acme/widgets/pull/43",
-			TargetSHA: "fedcba9876543210",
-		},
-	}
-
-	spec, err := reviewer.ReviewCommand(context.Background(), inv)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(spec.Env["AO_REVIEW_GATEWAY_MANIFEST"])
-	if err != nil {
-		t.Fatalf("read gateway manifest: %v", err)
-	}
-	var manifest reviewgateway.Manifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
-		t.Fatalf("decode gateway manifest: %v", err)
-	}
-	if len(manifest.Tasks) != len(inv.ReviewQueue) {
-		t.Fatalf("manifest tasks = %+v, want %d queued tasks", manifest.Tasks, len(inv.ReviewQueue))
-	}
-	for i, got := range manifest.Tasks {
-		want := inv.ReviewQueue[i]
-		if got.RunID != want.RunID || got.PRURL != want.PRURL || got.TargetSHA != want.TargetSHA {
-			t.Fatalf("manifest task %d = %+v, want %+v", i, got, want)
-		}
-		if got.TaskPromptFile != inv.TaskPromptFile {
-			t.Fatalf("manifest task %d prompt file = %q, want %q", i, got.TaskPromptFile, inv.TaskPromptFile)
-		}
-	}
-}
-
 func TestReviewCommandRejectsRelativeBinary(t *testing.T) {
 	reviewer := New()
 	reviewer.resolveBinary = func(context.Context) (string, error) { return "qwen", nil }
@@ -238,9 +198,9 @@ func TestReviewMessageReusesPaneInjectionWithoutAddingAuthority(t *testing.T) {
 	}
 }
 
-func TestReviewProcessIsNotReusableBecauseManifestIsLaunchScoped(t *testing.T) {
+func TestReviewProcessIsNotReusableBecauseContextIsLaunchScoped(t *testing.T) {
 	if New().ReviewProcessReusable() {
-		t.Fatal("Qwen reviewer must launch a fresh process for each task so AO_REVIEW_GATEWAY_MANIFEST cannot go stale")
+		t.Fatal("Qwen reviewer must launch a fresh process for each task")
 	}
 }
 
