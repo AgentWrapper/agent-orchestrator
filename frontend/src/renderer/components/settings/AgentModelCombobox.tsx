@@ -169,6 +169,10 @@ export function AgentModelCombobox({
 			</DropdownMenuTrigger>
 			<DropdownMenuContent
 				align={menuAlign}
+				// Radix refocuses the trigger on close; Chromium's :focus-visible
+				// heuristic treats that async re-focus as keyboard-style even after a
+				// mouse click, leaving a stray focus ring. Skip the refocus.
+				onCloseAutoFocus={(event) => event.preventDefault()}
 				className="settings-menu-surface max-h-select-menu-max! w-[min(22rem,calc(100vw-2rem))] overflow-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
 			>
 				{showSearch && (

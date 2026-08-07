@@ -83,6 +83,10 @@ export function SettingsOptionMenu<T extends string>({
 			<DropdownMenuContent
 				align={menuAlign}
 				alignOffset={0}
+				// Radix refocuses the trigger on close; Chromium's :focus-visible
+				// heuristic treats that async re-focus as keyboard-style even after a
+				// mouse click, leaving a stray focus ring. Skip the refocus.
+				onCloseAutoFocus={(event) => event.preventDefault()}
 				className={cn(
 					"settings-menu-surface min-w-[length:var(--size-settings-menu-min-width)] overflow-y-auto! overflow-x-hidden! max-h-select-menu-max! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu",
 					menuClassName,
