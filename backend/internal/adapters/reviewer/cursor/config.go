@@ -37,6 +37,7 @@ var reviewerDeniedPermissions = []string{
 
 type reviewerConfig struct {
 	Version     int                 `json:"version"`
+	AuthInfo    map[string]any      `json:"authInfo,omitempty"`
 	Permissions reviewerPermissions `json:"permissions"`
 }
 
@@ -74,8 +75,13 @@ func installReviewerConfig(ctx context.Context, inv ports.ReviewInvocation) erro
 		return fmt.Errorf("cursor reviewer: create profile: %w", err)
 	}
 
+	authInfo, err := hostCursorAuthInfo()
+	if err != nil {
+		return fmt.Errorf("cursor reviewer: read host auth info: %w", err)
+	}
 	config := reviewerConfig{
-		Version: 1,
+		Version:  1,
+		AuthInfo: authInfo,
 		Permissions: reviewerPermissions{
 			Allow: reviewerAllowList(inv.TaskPromptRoot),
 			Deny:  append([]string(nil), reviewerDeniedPermissions...),
@@ -91,6 +97,62 @@ func installReviewerConfig(ctx context.Context, inv ports.ReviewInvocation) erro
 		return fmt.Errorf("cursor reviewer: write configuration: %w", err)
 	}
 	return nil
+}
+
+func hostCursorAuthInfo() (map[string]any, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".cursor", cursorConfigFileName))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return nil, nil
+	}
+	type cursorConfig struct {
+		AuthInfo map[string]any `json:"authInfo"`
+	}
+	var configs []cursorConfig
+	if err := json.Unmarshal(data, &configs); err != nil {
+		var config cursorConfig
+		if err := json.Unmarshal(data, &config); err != nil {
+			return nil, err
+		}
+		configs = []cursorConfig{config}
+	}
+	for _, config := range configs {
+		if cursorAuthInfoHasIdentity(config.AuthInfo) {
+			return config.AuthInfo, nil
+		}
+	}
+	return nil, nil
+}
+
+func cursorAuthInfoHasIdentity(info map[string]any) bool {
+	if len(info) == 0 {
+		return false
+	}
+	for _, key := range []string{"userId", "authId", "email", "displayName"} {
+		value, ok := info[key]
+		if !ok {
+			continue
+		}
+		switch v := value.(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				return true
+			}
+		case nil:
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 func reviewerAllowList(taskPromptRoot string) []string {

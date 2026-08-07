@@ -4,10 +4,13 @@ package qwen
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	workerqwen "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/qwen"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -39,6 +42,7 @@ func (r *Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerQwen
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 var _ ports.ReviewerReusePolicy = (*Reviewer)(nil)
+var _ ports.ReviewerPromptReadinessProvider = (*Reviewer)(nil)
 
 // ReviewCommand launches only Qwen's permanent interactive TUI. The task
 // reference is injected after runtime creation so neither prompts nor prompt
@@ -64,7 +68,14 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
+	settingsEnv, err := seedHostQwenSettings(env.ConfigRoot)
+	if err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
 	envVars := env.TUIEnvironment()
+	for key, value := range settingsEnv {
+		envVars[key] = value
+	}
 	envVars["AO_DATA_DIR"] = env.DataDir
 	envVars["AO_REVIEW_GATEWAY_MANIFEST"] = env.ManifestPath
 	return ports.ReviewCommandSpec{
@@ -92,6 +103,21 @@ func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (s
 // fresh AO_REVIEW_GATEWAY_MANIFEST value.
 func (*Reviewer) ReviewProcessReusable() bool { return false }
 
+// ReviewPromptReadinessHints waits for Qwen's input footer before injecting the
+// task reference, avoiding a blind startup race while keeping timeout best-effort.
+func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{
+		InitialDelay: 2 * time.Second,
+		Patterns:     []string{"Type your message or @path/to/file"},
+		PollInterval: 200 * time.Millisecond,
+		Timeout:      15 * time.Second,
+		Lines:        80,
+	}, nil
+}
+
 // ReviewCancel matches the pinned Qwen TUI behavior: one Escape aborts the
 // active turn without exiting the long-lived process. Ctrl-C is a quit action.
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
@@ -113,6 +139,70 @@ func (r *Reviewer) prepareEnvironment(inv ports.ReviewInvocation) (reviewgateway
 		return reviewgateway.Environment{}, fmt.Errorf("qwen reviewer: prepare gateway environment: %w", err)
 	}
 	return env, nil
+}
+
+func seedHostQwenSettings(configRoot string) (map[string]string, error) {
+	if strings.TrimSpace(configRoot) == "" {
+		return nil, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return nil, nil
+	}
+	src := filepath.Join(home, ".qwen", "settings.json")
+	data, err := os.ReadFile(src)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("qwen reviewer: read host settings: %w", err)
+	}
+	dstDir := filepath.Join(configRoot, ".qwen")
+	if err := os.MkdirAll(dstDir, 0o700); err != nil {
+		return nil, fmt.Errorf("qwen reviewer: create private settings dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dstDir, "settings.json"), data, 0o600); err != nil {
+		return nil, fmt.Errorf("qwen reviewer: write private settings: %w", err)
+	}
+	settingsEnv, err := qwenSettingsEnv(data)
+	if err != nil {
+		return nil, fmt.Errorf("qwen reviewer: parse host settings env: %w", err)
+	}
+	return settingsEnv, nil
+}
+
+func qwenSettingsEnv(data []byte) (map[string]string, error) {
+	var root struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for key, value := range root.Env {
+		if !validEnvName(key) || strings.TrimSpace(value) == "" {
+			continue
+		}
+		out[key] = value
+	}
+	return out, nil
+}
+
+func validEnvName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_':
+		case r >= 'A' && r <= 'Z':
+		case r >= 'a' && r <= 'z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func reviewGatewayTasks(inv ports.ReviewInvocation) []reviewgateway.Task {

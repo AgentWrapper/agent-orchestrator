@@ -47,7 +47,7 @@ func invocation(t *testing.T) ports.ReviewInvocation {
 
 func TestReviewCommandLaunchesHostTrustedPlanTUI(t *testing.T) {
 	inv := invocation(t)
-	spec, err := testReviewer(t, "vibe 2.17.1", strings.Join(requiredFlags, "\n")).ReviewCommand(context.Background(), inv)
+	spec, err := testReviewer(t, "vibe 2.23.2", strings.Join(requiredFlags, "\n")).ReviewCommand(context.Background(), inv)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +60,48 @@ func TestReviewCommandLaunchesHostTrustedPlanTUI(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := testReviewer(t, "vibe 2.17.1", strings.Join(requiredFlags, "\n")).ReviewCommand(ctx, inv); !errors.Is(err, context.Canceled) {
+	if _, err := testReviewer(t, "vibe 2.23.2", strings.Join(requiredFlags, "\n")).ReviewCommand(ctx, inv); !errors.Is(err, context.Canceled) {
 		t.Fatalf("ReviewCommand canceled context err = %v", err)
+	}
+}
+
+func TestReviewCommandSeedsPrivateProfileFromHostVibeHome(t *testing.T) {
+	hostVibeHome := t.TempDir()
+	t.Setenv("VIBE_HOME", hostVibeHome)
+	hostConfig := []byte("api_key_env_var = \"VIBE_CODE_API_KEY\"\n")
+	hostEnv := []byte("VIBE_CODE_API_KEY=test-key\n")
+	if err := os.WriteFile(filepath.Join(hostVibeHome, "config.toml"), hostConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(hostVibeHome, ".env"), hostEnv, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inv := invocation(t)
+
+	spec, err := testReviewer(t, "vibe 2.23.2", strings.Join(requiredFlags, "\n")).ReviewCommand(context.Background(), inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, want := range map[string][]byte{
+		"config.toml": hostConfig,
+		".env":        hostEnv,
+	} {
+		copied := filepath.Join(spec.Env["VIBE_HOME"], name)
+		data, err := os.ReadFile(copied)
+		if err != nil {
+			t.Fatalf("read copied %s: %v", name, err)
+		}
+		if string(data) != string(want) {
+			t.Fatalf("copied %s = %q", name, string(data))
+		}
+		info, err := os.Stat(copied)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("copied %s mode = %o, want 600", name, info.Mode().Perm())
+		}
 	}
 }
 
@@ -147,7 +187,7 @@ func TestContainedInteractiveSpecModelsShellEditorAndApprovalToggleRisks(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Vibe 2.17.1's `!` shell remains reachable from the interactive prompt,
+	// Vibe's `!` shell remains reachable from the interactive prompt,
 	// regardless of the plan agent's tool policy. This is why the command may
 	// never launch without OS containment.
 	if !slices.Equal(staged.UncontainedRisks, []string{
@@ -169,17 +209,17 @@ func TestContainedInteractiveSpecModelsShellEditorAndApprovalToggleRisks(t *test
 	}
 }
 
-func TestCompatibilityProbePinsVibe2171AndInteractiveFlags(t *testing.T) {
+func TestCompatibilityProbeAcceptsPinnedVibe2232AndInteractiveFlags(t *testing.T) {
 	help := strings.Join(requiredFlags, "\n")
-	if err := testReviewer(t, "vibe 2.17.1\n", help).verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", map[string]string{"HOME": "/ao/profile"}); err != nil {
+	if err := testReviewer(t, "vibe 2.23.2\n", help).verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", map[string]string{"HOME": "/ao/profile"}); err != nil {
 		t.Fatalf("verifyCompatibility: %v", err)
 	}
-	for _, version := range []string{"vibe 2.17.0", "vibe 2.18.0", "vibe unknown"} {
+	for _, version := range []string{"vibe 2.23.1", "vibe 2.24.0", "vibe unknown"} {
 		if err := testReviewer(t, version, help).verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", nil); err == nil || !strings.Contains(err.Error(), pinnedVersion) {
 			t.Fatalf("version %q err = %v, want pinned-version rejection", version, err)
 		}
 	}
-	missing := testReviewer(t, "vibe 2.17.1", strings.Replace(help, "--workdir", "", 1))
+	missing := testReviewer(t, "vibe 2.23.2", strings.Replace(help, "--workdir", "", 1))
 	if err := missing.verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", nil); err == nil || !strings.Contains(err.Error(), "--workdir") {
 		t.Fatalf("missing flag err = %v", err)
 	}

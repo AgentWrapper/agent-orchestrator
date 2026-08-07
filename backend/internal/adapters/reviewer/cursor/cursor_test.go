@@ -245,6 +245,46 @@ func TestPreLaunchWritesIsolatedReviewerConfig(t *testing.T) {
 	}
 }
 
+func TestPreLaunchSeedsAuthInfoIntoIsolatedReviewerConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	userConfigPath := filepath.Join(home, ".cursor", cursorConfigFileName)
+	if err := os.MkdirAll(filepath.Dir(userConfigPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userConfigPath, []byte(`{"version":1,"authInfo":{"email":"user@example.com","userId":"user-1","authId":"auth-1"},"model":{"modelId":"host-model"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inv := ports.ReviewInvocation{
+		ReviewerID:     "review-w1",
+		DataDir:        t.TempDir(),
+		WorkspacePath:  t.TempDir(),
+		TaskPromptRoot: filepath.Join(t.TempDir(), "prompts"),
+	}
+
+	if err := New().PreLaunch(context.Background(), inv); err != nil {
+		t.Fatalf("PreLaunch: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(reviewerProfileDir(inv), cursorConfigFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		AuthInfo map[string]any `json:"authInfo"`
+		Model    any            `json:"model"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.AuthInfo["email"] != "user@example.com" || config.AuthInfo["userId"] != "user-1" || config.AuthInfo["authId"] != "auth-1" {
+		t.Fatalf("authInfo was not seeded: %s", data)
+	}
+	if config.Model != nil {
+		t.Fatalf("reviewer config should not seed host model settings: %s", data)
+	}
+}
+
 func TestPreLaunchWithoutPromptRootOmitsExternalRead(t *testing.T) {
 	inv := ports.ReviewInvocation{ReviewerID: "review-w1", DataDir: t.TempDir(), WorkspacePath: t.TempDir()}
 	if err := New().PreLaunch(context.Background(), inv); err != nil {

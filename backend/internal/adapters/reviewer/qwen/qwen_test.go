@@ -75,6 +75,87 @@ func TestReviewCommandIsExactPermanentTUIWithPostReadinessReference(t *testing.T
 	}
 }
 
+func TestReviewCommandSeedsPrivateProfileFromHostSettings(t *testing.T) {
+	hostHome := t.TempDir()
+	t.Setenv("HOME", hostHome)
+	settings := filepath.Join(hostHome, ".qwen", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(settings, []byte(`{"model":{"name":"GLM-5.2"},"env":{"ZAI_API_KEY":"test-key"}}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reviewer := New()
+	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
+
+	spec, err := reviewer.ReviewCommand(context.Background(), invocation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	copied := filepath.Join(spec.Env["HOME"], ".qwen", "settings.json")
+	data, err := os.ReadFile(copied)
+	if err != nil {
+		t.Fatalf("read copied settings: %v", err)
+	}
+	if string(data) != `{"model":{"name":"GLM-5.2"},"env":{"ZAI_API_KEY":"test-key"}}`+"\n" {
+		t.Fatalf("copied settings = %q", string(data))
+	}
+	info, err := os.Stat(copied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("copied settings mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestReviewCommandExportsEnvValuesFromHostSettings(t *testing.T) {
+	hostHome := t.TempDir()
+	t.Setenv("HOME", hostHome)
+	settings := filepath.Join(hostHome, ".qwen", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{
+		"env": {
+			"ZAI_API_KEY": "test-key",
+			"EMPTY_VALUE": "",
+			"bad-name": "ignored"
+		}
+	}` + "\n"
+	if err := os.WriteFile(settings, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reviewer := New()
+	reviewer.resolveBinary = func(context.Context) (string, error) { return "/opt/qwen/bin/qwen", nil }
+
+	spec, err := reviewer.ReviewCommand(context.Background(), invocation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if spec.Env["ZAI_API_KEY"] != "test-key" {
+		t.Fatalf("ZAI_API_KEY was not exported into reviewer env")
+	}
+	if _, ok := spec.Env["EMPTY_VALUE"]; ok {
+		t.Fatalf("empty settings env value should not be exported")
+	}
+	if _, ok := spec.Env["bad-name"]; ok {
+		t.Fatalf("invalid env name should not be exported")
+	}
+}
+
+func TestReviewPromptReadinessHintsWaitForQwenInput(t *testing.T) {
+	hints, err := New().ReviewPromptReadinessHints(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.InitialDelay <= 0 || hints.Timeout <= 0 || !contains(hints.Patterns, "Type your message or @path/to/file") {
+		t.Fatalf("readiness hints = %+v", hints)
+	}
+}
+
 func TestReviewCommandRequiresAODataDir(t *testing.T) {
 	inv := invocation(t)
 	inv.DataDir = ""
@@ -182,4 +263,13 @@ func TestQwenReviewerIdentityAndHostTrustWarning(t *testing.T) {
 			t.Fatalf("warning %q does not contain %q", HostTrustWarning, phrase)
 		}
 	}
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

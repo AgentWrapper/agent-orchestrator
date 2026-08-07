@@ -110,6 +110,49 @@ func TestReviewCommandLaunchesHostTrustedInteractiveRun(t *testing.T) {
 	}
 }
 
+func TestReviewCommandSeedsPrivateProfileFromHostConfig(t *testing.T) {
+	hostHome := t.TempDir()
+	t.Setenv("HOME", hostHome)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	hostConfig := filepath.Join(hostHome, ".config", "goose", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(hostConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := []byte("providers:\n  openrouter:\n    configured: true\n    model: anthropic/claude-sonnet-4\n")
+	if err := os.WriteFile(hostConfig, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := testReviewer(t, pinnedVersion, pinnedSessionHelp)
+	dataDir := t.TempDir()
+
+	spec, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
+		DataDir:        dataDir,
+		ReviewerID:     "review-worker-1",
+		WorkspacePath:  "/host/worktree",
+		TaskPromptRoot: "/host/ao/prompts/reviewer",
+		Prompt:         "Read AO task ref 4f09.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	copied := filepath.Join(spec.Env["XDG_CONFIG_HOME"], "goose", "config.yaml")
+	data, err := os.ReadFile(copied)
+	if err != nil {
+		t.Fatalf("read copied config: %v", err)
+	}
+	if string(data) != string(config) {
+		t.Fatalf("copied config = %q", string(data))
+	}
+	info, err := os.Stat(copied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("copied config mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
 func TestCompatibilityProbePinsExactVersionAndHelp(t *testing.T) {
 	r, calls := testReviewer(t, " 1.38.0\n", pinnedSessionHelp)
 	if err := r.verifyCompatibility(context.Background(), gooseBinary, map[string]string{"HOME": "/ao/profile"}); err != nil {

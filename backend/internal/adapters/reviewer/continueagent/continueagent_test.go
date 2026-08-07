@@ -3,6 +3,7 @@ package continueagent
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,6 +30,61 @@ func TestReviewCommandLaunchesReadonlyHostTrustedTUI(t *testing.T) {
 	}
 	if spec.Env["HOME"] != filepath.Join(dataDir, "reviewer-runtime", "review-worker-1", "config") || spec.Env["CONTINUE_CLI_ENABLE_TELEMETRY"] != "0" {
 		t.Fatalf("AO-owned environment = %#v", spec.Env)
+	}
+}
+
+func TestReviewCommandSeedsPrivateProfileFromHostConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	hostConfig := filepath.Join(home, ".continue", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(hostConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	config := []byte("models:\n  - provider: anthropic\n    apiKey: continue-key\n")
+	if err := os.WriteFile(hostConfig, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+
+	spec, err := testReviewer().ReviewCommand(context.Background(), ports.ReviewInvocation{
+		DataDir: dataDir, ReviewerID: "review-worker-1", TaskPromptRoot: filepath.Join(dataDir, "prompts"),
+		WorkspacePath: "/host/project", Prompt: "task-ref:opaque",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	copied := filepath.Join(spec.Env["HOME"], ".continue", "config.yaml")
+	data, err := os.ReadFile(copied)
+	if err != nil {
+		t.Fatalf("read copied config: %v", err)
+	}
+	if string(data) != string(config) {
+		t.Fatalf("copied config = %q", string(data))
+	}
+	info, err := os.Stat(copied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("copied config mode = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestReviewCommandExportsContinueAPIKey(t *testing.T) {
+	t.Setenv("CONTINUE_API_KEY", "continue-key")
+	dataDir := t.TempDir()
+
+	spec, err := testReviewer().ReviewCommand(context.Background(), ports.ReviewInvocation{
+		DataDir: dataDir, ReviewerID: "review-worker-1", TaskPromptRoot: filepath.Join(dataDir, "prompts"),
+		WorkspacePath: "/host/project", Prompt: "task-ref:opaque",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if spec.Env["CONTINUE_API_KEY"] != "continue-key" {
+		t.Fatal("CONTINUE_API_KEY was not exported into reviewer env")
 	}
 }
 

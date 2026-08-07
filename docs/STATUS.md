@@ -62,7 +62,7 @@ surface (`npm run sqlc`, `npm run api`).
   Escape-based turn cancellation. Kiro also uses its native Escape
   cancellation. Continue, Qwen, and Vibe also use Escape cancellation. Agy,
   Continue, Devin, Droid, Goose, Kimi, Qwen, and Vibe are explicitly experimental and host-trusted. Grok, Crush, Auggie, Cline, and Autohand are experimental user-approved reviewers that retain their native approval prompts instead of receiving broad unattended flags:
-  their restrictive modes and prompts are not OS or network containment.
+  native modes, autonomous settings, and prompts are not OS or network containment.
 - The provider-neutral interactive-reviewer capability gateway and neutral
   AO-owned working-directory contract are available. The experimental
   host-trusted adapters remain candidates for future contained execution once

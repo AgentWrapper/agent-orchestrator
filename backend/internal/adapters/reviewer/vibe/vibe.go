@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	pinnedVersion = "2.17.1"
+	pinnedVersion = "2.23.2"
 	reviewerAgent = "plan"
 )
 
@@ -99,6 +99,9 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	envVars := env.TUIEnvironment()
 	envVars["AO_DATA_DIR"] = env.DataDir
 	envVars["VIBE_HOME"] = env.ConfigRoot
+	if err := seedHostVibeProfile(env.ConfigRoot); err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
 	if err := r.verifyCompatibility(ctx, binary, envVars); err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
@@ -147,6 +150,44 @@ func (r *Reviewer) verifyCompatibility(ctx context.Context, binary string, env m
 	return nil
 }
 
+func seedHostVibeProfile(vibeHome string) error {
+	if strings.TrimSpace(vibeHome) == "" {
+		return nil
+	}
+	srcRoot := hostVibeHome()
+	if srcRoot == "" || srcRoot == vibeHome {
+		return nil
+	}
+	for _, name := range []string{"config.toml", ".env"} {
+		src := filepath.Join(srcRoot, name)
+		data, err := os.ReadFile(src)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("vibe reviewer: read host profile %s: %w", name, err)
+		}
+		if err := os.MkdirAll(vibeHome, 0o700); err != nil {
+			return fmt.Errorf("vibe reviewer: create private profile: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(vibeHome, name), data, 0o600); err != nil {
+			return fmt.Errorf("vibe reviewer: write private profile %s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func hostVibeHome() string {
+	if value := strings.TrimSpace(os.Getenv("VIBE_HOME")); value != "" {
+		return value
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	return filepath.Join(home, ".vibe")
+}
+
 func appendEnvironment(base []string, overrides map[string]string) []string {
 	result := append([]string(nil), base...)
 	for key, value := range overrides {
@@ -161,7 +202,7 @@ func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (s
 	return inv.Prompt, nil
 }
 
-// ReviewCancel uses Vibe 2.17.1's native one-Escape interrupt binding.
+// ReviewCancel uses Vibe's native one-Escape interrupt binding.
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
 	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelEscape, Interrupts: 1, Input: "\x1b"}, nil
 }

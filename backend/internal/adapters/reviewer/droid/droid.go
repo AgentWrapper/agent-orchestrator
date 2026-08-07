@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	workerdroid "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/droid"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
@@ -20,8 +21,8 @@ import (
 const settingsFilename = "droid-reviewer-settings.json"
 
 // HostTrustWarning describes the authority retained by Droid's interactive
-// terminal. Spec mode and autonomy-off reduce accidental model actions but do
-// not isolate the direct Bash mode or mutable slash-command surfaces.
+// terminal. Reviewer runs need autonomous execution, so AO cannot rely on Droid
+// settings as an isolation boundary.
 const HostTrustWarning = "experimental host-trusted reviewer: Droid has no OS isolation; terminal users can invoke Bash mode, change interaction/autonomy settings, or enable additional integrations"
 
 // Reviewer builds Droid's persistent interactive reviewer command.
@@ -39,6 +40,7 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerDroid 
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerPromptReadinessProvider = (*Reviewer)(nil)
 
 // ReviewCommand starts only Droid's normal interactive TUI. It never uses
 // `droid exec`, output formats, prompt files, or unsafe permission bypasses.
@@ -79,6 +81,15 @@ func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInv
 	return cmd, true, err
 }
 
+// ReviewPromptReadinessHints gives Droid's startup screen enough time to accept
+// pasted task input before AO submits the initial review reference.
+func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{InitialDelay: 2 * time.Second}, nil
+}
+
 func writeReviewerSettings(promptRoot string) (string, error) {
 	if !filepath.IsAbs(promptRoot) {
 		return "", errors.New("droid reviewer: absolute task prompt root is required")
@@ -88,8 +99,7 @@ func writeReviewerSettings(promptRoot string) (string, error) {
 	}
 	settings := map[string]any{
 		"sessionDefaultSettings": map[string]any{
-			"interactionMode": "spec",
-			"autonomyLevel":   "off",
+			"autonomyLevel": "high",
 		},
 		"cloudSessionSync":         false,
 		"ideAutoConnect":           false,

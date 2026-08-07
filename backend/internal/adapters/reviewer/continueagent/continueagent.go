@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -63,15 +64,47 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, fmt.Errorf("continue reviewer: prepare AO-owned profile: %w", err)
 	}
+	if err := seedHostContinueConfig(env.ConfigRoot); err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
 	envVars := env.TUIEnvironment()
 	envVars["AO_DATA_DIR"] = env.DataDir
 	envVars["CONTINUE_CLI_ENABLE_TELEMETRY"] = "0"
+	if key := strings.TrimSpace(os.Getenv("CONTINUE_API_KEY")); key != "" {
+		envVars["CONTINUE_API_KEY"] = key
+	}
 	return ports.ReviewCommandSpec{
 		Argv:             []string{binary, "--readonly"},
 		Env:              envVars,
 		InitialMessage:   inv.Prompt,
 		WorkingDirectory: inv.WorkspacePath,
 	}, nil
+}
+
+func seedHostContinueConfig(configRoot string) error {
+	if strings.TrimSpace(configRoot) == "" {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return nil
+	}
+	src := filepath.Join(home, ".continue", "config.yaml")
+	data, err := os.ReadFile(src)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("continue reviewer: read host config: %w", err)
+	}
+	dstDir := filepath.Join(configRoot, ".continue")
+	if err := os.MkdirAll(dstDir, 0o700); err != nil {
+		return fmt.Errorf("continue reviewer: create private config dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dstDir, "config.yaml"), data, 0o600); err != nil {
+		return fmt.Errorf("continue reviewer: write private config: %w", err)
+	}
+	return nil
 }
 
 // ReviewRestoreCommand restores a recorded Continue reviewer pane by relaunching

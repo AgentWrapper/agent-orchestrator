@@ -7,11 +7,12 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-func TestReviewCommandUsesRestrictedInteractiveSettings(t *testing.T) {
+func TestReviewCommandUsesAutonomousInteractiveSettings(t *testing.T) {
 	r := &Reviewer{resolveBinary: func(context.Context) (string, error) { return "/opt/droid", nil }}
 	root := t.TempDir()
 	inv := ports.ReviewInvocation{
@@ -30,19 +31,39 @@ func TestReviewCommandUsesRestrictedInteractiveSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var settings struct {
+	var rawSettings map[string]any
+	if err := json.Unmarshal(raw, &rawSettings); err != nil {
+		t.Fatal(err)
+	}
+	if session, ok := rawSettings["sessionDefaultSettings"].(map[string]any); ok {
+		if _, ok := session["interactionMode"]; ok {
+			t.Fatalf("settings should not force spec interaction mode: %s", raw)
+		}
+	} else {
+		t.Fatalf("settings missing sessionDefaultSettings: %s", raw)
+	}
+	var parsed struct {
 		Session struct {
-			InteractionMode string `json:"interactionMode"`
-			AutonomyLevel   string `json:"autonomyLevel"`
+			AutonomyLevel string `json:"autonomyLevel"`
 		} `json:"sessionDefaultSettings"`
 		CloudSessionSync bool `json:"cloudSessionSync"`
 		IDEAutoConnect   bool `json:"ideAutoConnect"`
 	}
-	if err := json.Unmarshal(raw, &settings); err != nil {
+	if err := json.Unmarshal(raw, &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if settings.Session.InteractionMode != "spec" || settings.Session.AutonomyLevel != "off" || settings.CloudSessionSync || settings.IDEAutoConnect {
-		t.Fatalf("settings = %#v", settings)
+	if parsed.Session.AutonomyLevel != "high" || parsed.CloudSessionSync || parsed.IDEAutoConnect {
+		t.Fatalf("settings = %#v", parsed)
+	}
+}
+
+func TestReviewPromptReadinessHintsDelayInitialInjection(t *testing.T) {
+	hints, err := (&Reviewer{}).ReviewPromptReadinessHints(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.InitialDelay < 2*time.Second {
+		t.Fatalf("initial delay = %s, want at least 2s", hints.InitialDelay)
 	}
 }
 

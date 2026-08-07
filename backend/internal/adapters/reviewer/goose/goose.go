@@ -88,6 +88,9 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	}
 	env := profile.TUIEnvironment()
 	env["AO_DATA_DIR"] = profile.DataDir
+	if err := seedHostGooseConfig(profile.ConfigRoot); err != nil {
+		return ports.ReviewCommandSpec{}, err
+	}
 	for key, value := range map[string]string{
 		"CONTEXT_FILE_NAMES":           "[]",
 		"GOOSE_DISABLE_SESSION_NAMING": "true",
@@ -142,6 +145,52 @@ func (r *Reviewer) verifyCompatibility(ctx context.Context, binary string, env m
 		return fmt.Errorf("installed Goose %s is incompatible: session help contract drifted (sha256 %s)", pinnedVersion, got)
 	}
 	return nil
+}
+
+func seedHostGooseConfig(configRoot string) error {
+	if strings.TrimSpace(configRoot) == "" {
+		return nil
+	}
+	for _, src := range hostGooseConfigPaths() {
+		data, err := os.ReadFile(src)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("goose reviewer: read host config: %w", err)
+		}
+		dstDir := filepath.Join(configRoot, "goose")
+		if err := os.MkdirAll(dstDir, 0o700); err != nil {
+			return fmt.Errorf("goose reviewer: create private config dir: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(dstDir, "config.yaml"), data, 0o600); err != nil {
+			return fmt.Errorf("goose reviewer: write private config: %w", err)
+		}
+		return nil
+	}
+	return nil
+}
+
+func hostGooseConfigPaths() []string {
+	seen := map[string]struct{}{}
+	paths := []string{}
+	add := func(path string) {
+		if strings.TrimSpace(path) == "" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
+		add(filepath.Join(xdg, "goose", "config.yaml"))
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		add(filepath.Join(home, ".config", "goose", "config.yaml"))
+	}
+	return paths
 }
 
 func appendEnvironment(base []string, overrides map[string]string) []string {

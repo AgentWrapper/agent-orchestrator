@@ -43,9 +43,10 @@ future interactive reviewer adapters.
 
 This is an enforceable capability API when invoked, but it is not by itself a
 process sandbox. Agy, Continue, Devin, Droid, Goose, Kimi, Qwen, and Vibe may be
-explicitly selected only as experimental host-trusted reviewers. Their restrictive modes reduce
-accidental authority but do not contain terminal-user shell escapes, profiles,
-project plugins, external editors, approval-mode changes, or network access.
+explicitly selected only as experimental host-trusted reviewers. Their native
+modes and reviewer-specific autonomous settings do not contain terminal-user
+shell escapes, profiles, project plugins, external editors, approval-mode
+changes, or network access.
 
 ## Required isolation provider
 

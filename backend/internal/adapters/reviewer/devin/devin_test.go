@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -29,6 +30,16 @@ func TestReviewCommandUsesVisibleInteractiveTUI(t *testing.T) {
 		if slices.Contains(spec.Argv, forbidden) {
 			t.Fatalf("argv contains forbidden flag %q: %#v", forbidden, spec.Argv)
 		}
+	}
+}
+
+func TestReviewPromptReadinessHintsDelayInitialInjection(t *testing.T) {
+	hints, err := (&Reviewer{}).ReviewPromptReadinessHints(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hints.InitialDelay < 2*time.Second {
+		t.Fatalf("initial delay = %s, want at least 2s", hints.InitialDelay)
 	}
 }
 

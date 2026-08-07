@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	workerdevin "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/devin"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -33,6 +34,7 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerDevin 
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerPromptReadinessProvider = (*Reviewer)(nil)
 
 // ReviewCommand starts only Devin's normal interactive TUI. The initial task
 // is injected after the pane starts; print mode, prompt argv, ACP, cloud
@@ -63,6 +65,15 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
 	cmd, err := r.ReviewCommand(ctx, inv)
 	return cmd, true, err
+}
+
+// ReviewPromptReadinessHints gives Devin's startup screen enough time to accept
+// pasted task input before AO submits the initial review reference.
+func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptReadinessHints, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.PromptReadinessHints{}, err
+	}
+	return ports.PromptReadinessHints{InitialDelay: 2 * time.Second}, nil
 }
 
 func initialMessage(inv ports.ReviewInvocation) (string, error) {
