@@ -347,13 +347,13 @@ func reviewHasSessionHarnessUnique(db *sql.DB) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	defer func() { _ = rows.Close() }()
 	uniqueIndexes := []string{}
 	for rows.Next() {
 		var seq int
 		var name, origin string
 		var unique, partial int
 		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
-			_ = rows.Close()
 			return false, err
 		}
 		if unique == 0 {
@@ -362,10 +362,6 @@ func reviewHasSessionHarnessUnique(db *sql.DB) (bool, error) {
 		uniqueIndexes = append(uniqueIndexes, name)
 	}
 	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return false, err
-	}
-	if err := rows.Close(); err != nil {
 		return false, err
 	}
 	for _, name := range uniqueIndexes {
@@ -381,7 +377,7 @@ func indexColumnsMatch(db *sql.DB, indexName string, want []string) bool {
 	if err != nil {
 		return false
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	got := make([]string, 0, len(want))
 	for rows.Next() {
 		var seqno, cid int
