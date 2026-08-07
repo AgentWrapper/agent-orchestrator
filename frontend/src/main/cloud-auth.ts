@@ -13,7 +13,6 @@ const CLIENT_ID =
   import.meta.env.VITE_WORKOS_CLIENT_ID?.trim() ||
   (process.env.VITEST ? "client_test" : "");
 const REDIRECT_URI = "ao-app://callback";
-const SIGN_OUT_URI = "ao-app://signed-out";
 const AUTH_STORE_FILE = "cloud-auth.bin";
 const LEGACY_SESSION_FILE = "cloud-session.json";
 const PKCE_TTL_MS = 10 * 60 * 1000;
@@ -176,6 +175,7 @@ export async function beginCloudSignIn(dataDir: string): Promise<void> {
       clientId: CLIENT_ID,
       provider: "authkit",
       prompt: "login",
+      maxAge: 0,
       redirectUri: REDIRECT_URI,
     });
   const store = await readAuthStore(dataDir);
@@ -232,19 +232,7 @@ export async function handleCloudDeepLink(
 }
 
 export async function signOutCloud(dataDir: string): Promise<void> {
-  const store = await readAuthStore(dataDir);
-  const sessionId = store.session
-    ? jwtPayload(store.session.accessToken)?.sid
-    : undefined;
   await removeAuthStore(dataDir);
-  if (workos && typeof sessionId === "string" && sessionId) {
-    await shell.openExternal(
-      workos.userManagement.getLogoutUrl({
-        sessionId,
-        returnTo: SIGN_OUT_URI,
-      }),
-    );
-  }
 }
 
 export function registerCloudProtocol(): void {

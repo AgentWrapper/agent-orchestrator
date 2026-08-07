@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   authenticateWithCode: vi.fn(),
   authenticateWithRefreshToken: vi.fn(),
   getAuthorizationUrlWithPKCE: vi.fn(),
-  getLogoutUrl: vi.fn(),
   openExternal: vi.fn(),
 }));
 
@@ -21,7 +20,6 @@ vi.mock("@workos-inc/node", () => ({
       authenticateWithCode: mocks.authenticateWithCode,
       authenticateWithRefreshToken: mocks.authenticateWithRefreshToken,
       getAuthorizationUrlWithPKCE: mocks.getAuthorizationUrlWithPKCE,
-      getLogoutUrl: mocks.getLogoutUrl,
     },
   }),
 }));
@@ -67,7 +65,6 @@ describe("native WorkOS authentication", () => {
         lastName: "Example",
       },
     });
-    mocks.getLogoutUrl.mockReturnValue("https://workos.example/logout");
   });
 
   afterEach(async () => {
@@ -83,6 +80,7 @@ describe("native WorkOS authentication", () => {
       expect.objectContaining({
         provider: "authkit",
         prompt: "login",
+        maxAge: 0,
         redirectUri: "ao-app://callback",
       }),
     );
@@ -115,22 +113,17 @@ describe("native WorkOS authentication", () => {
     ).rejects.toThrow("state did not match");
   });
 
-  it("returns the browser to the signed-out page after logout", async () => {
+  it("signs out locally without opening the browser", async () => {
     await beginCloudSignIn(dataDir);
     await handleCloudDeepLink(
       "ao-app://callback?code=code_123&state=state_123",
       dataDir,
     );
+    mocks.openExternal.mockClear();
 
     await signOutCloud(dataDir);
 
-    expect(mocks.getLogoutUrl).toHaveBeenCalledWith({
-      sessionId: "session_123",
-      returnTo: "ao-app://signed-out",
-    });
-    expect(mocks.openExternal).toHaveBeenLastCalledWith(
-      "https://workos.example/logout",
-    );
+    expect(mocks.openExternal).not.toHaveBeenCalled();
     await expect(getCloudSession(dataDir)).resolves.toBeNull();
   });
 });

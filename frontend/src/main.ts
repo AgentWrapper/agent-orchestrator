@@ -1610,13 +1610,6 @@ function focusCloudWindow(): void {
 
 async function handleCloudDeepLinkAndFocus(url: string): Promise<void> {
 	try {
-		const parsedURL = new URL(url);
-		if (parsedURL.protocol === "ao-app:" && parsedURL.hostname === "signed-out") {
-			notifyRenderersOfCloudSession(null);
-			focusCloudWindow();
-			return;
-		}
-
 		const session = await handleCloudDeepLink(url, cloudDataDir());
 		if (!session) return;
 		notifyRenderersOfCloudSession(session);
