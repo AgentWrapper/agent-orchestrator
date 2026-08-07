@@ -192,10 +192,10 @@ export function AgentModelCombobox({
 					</div>
 				)}
 
-				<div className="relative min-h-0 flex-1 overflow-hidden">
+				<div className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
 					<div
 						ref={scrollRef}
-						className="model-menu-scroll h-full min-h-0 overflow-y-auto overscroll-contain"
+						className="model-menu-scroll min-h-0 overflow-y-auto overscroll-contain"
 						onScroll={updateScrollCue}
 					>
 						{normalizedSearch === "" && (

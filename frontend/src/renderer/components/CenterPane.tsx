@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, Shield } from "lucide-react";
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
@@ -14,9 +14,9 @@ import { cn } from "../lib/utils";
 import { useUiStore, type Theme } from "../stores/ui-store";
 import type { TerminalTarget } from "../types/terminal";
 import { isOrchestratorSession, type WorkspaceSession } from "../types/workspace";
+import { AgentAvatar } from "./AgentAvatar";
 import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
-import { AgentAvatar } from "./AgentAvatar";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
@@ -26,7 +26,8 @@ type CenterPaneProps = {
 	theme: Theme;
 	daemonReady: boolean;
 	terminalTarget?: TerminalTarget;
-	onSelectWorkerTerminal?: () => void;
+	reviewerTerminal?: { handleId: string; harness: string };
+	onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 	/** Standalone shells to render as tabs beside the session's own pane. */
 	shellTerminals?: ShellTerminal[];
 	onSelectSessionTerminal?: () => void;
@@ -65,7 +66,8 @@ export function CenterPane({
 	theme,
 	daemonReady,
 	terminalTarget,
-	onSelectWorkerTerminal,
+	reviewerTerminal,
+	onSelectReviewerTerminal,
 	shellTerminals = [],
 	onSelectSessionTerminal,
 	onSelectShellTerminal,
@@ -252,14 +254,23 @@ export function CenterPane({
 						>
 							{session ? (
 								<SessionPaneTab
-									isActive={target.kind !== "shell"}
+									isActive={target.kind === "worker"}
 									label={sessionTabLabel}
 									onSelect={onSelectSessionTerminal}
 									session={session}
 								/>
 							) : (
-								<SessionPaneTab isActive={target.kind !== "shell"} label={sessionTabLabel} />
+								<SessionPaneTab isActive={target.kind === "worker"} label={sessionTabLabel} />
 							)}
+							{reviewerTerminal ? (
+								<SessionPaneTab
+									icon={<AgentAvatar provider={reviewerTerminal.harness} className="size-icon-base" decorative />}
+									isActive={target.kind === "reviewer"}
+									label={t("terminal.reviewer")}
+									onSelect={() => onSelectReviewerTerminal?.(reviewerTerminal)}
+									title={reviewerTerminal.harness}
+								/>
+							) : null}
 							{shellTerminals.map((shell) => (
 								<ShellTerminalTab
 									key={shell.handleId}
@@ -360,24 +371,6 @@ export function CenterPane({
 			onWheelCapture={handleWheelZoom}
 		>
 			{isFullscreen ? terminalTopbar : <SessionTopbarPortal>{terminalTopbar}</SessionTopbarPortal>}
-			{target.kind === "reviewer" ? (
-				<div className="flex h-toolbar shrink-0 items-center gap-3 border-b border-border px-4">
-					<button
-						aria-label={t("terminal.backToAgent")}
-						className="inline-flex h-control-board-sm items-center gap-1.5 rounded-md border border-border bg-transparent px-2.5 text-xs font-semibold leading-none text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground"
-						onClick={onSelectWorkerTerminal}
-						type="button"
-					>
-						<ChevronLeft aria-hidden="true" className="size-icon-lg" />
-						<span>{t("terminal.agent")}</span>
-					</button>
-					<span className="inline-flex items-center gap-1.5 font-mono text-xs font-semibold text-success-bright">
-						<Shield aria-hidden="true" className="size-icon-lg" />
-						{t("terminal.reviewer")}
-					</span>
-					<span className="ml-auto truncate font-mono text-xs text-passive">{target.harness}</span>
-				</div>
-			) : null}
 			<div
 				aria-label={t("terminal.panelAria", { title: activeTerminalLabel })}
 				className="relative min-h-0 flex-1"
@@ -401,14 +394,19 @@ type SessionPaneTabProps = {
 	isActive: boolean;
 	onSelect?: () => void;
 	session?: WorkspaceSession;
+	icon?: ReactNode;
+	title?: string;
 };
 
-// The session's permanent anchor tab. It is intentionally more substantial
-// than auxiliary shells and is the only terminal tab branded by the harness.
-function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabProps) {
+// Shared tab chrome: the open tab is highlighted with the same rounded
+// background as the inspector rail tabs (Summary · Reviews · Browser), and
+// the full label only becomes the hover tooltip when the tab strip is
+// crowded enough to truncate it.
+function SessionPaneTab({ label, isActive, onSelect, session, icon, title }: SessionPaneTabProps) {
 	const { t } = useTranslation();
 	const { ref, isTruncated } = useTruncatedText<HTMLButtonElement>(label);
 	const activity = session ? getAgentActivityView(session.activity, t) : undefined;
+	const tabIcon = session ? <AgentAvatar className="size-icon-base" decorative provider={session.provider} /> : icon;
 	return (
 		<span
 			data-terminal-role="primary"
@@ -419,7 +417,6 @@ function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabPr
 					: "text-muted-foreground hover:bg-raised hover:text-foreground",
 			)}
 		>
-			{session ? <AgentAvatar className="size-icon-base" decorative provider={session.provider} /> : null}
 			<button
 				ref={ref}
 				aria-current={isActive}
@@ -432,9 +429,10 @@ function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabPr
 				onClick={onSelect}
 				role="tab"
 				tabIndex={isActive ? 0 : -1}
-				title={isTruncated ? label : t("terminal.sessionAria")}
+				title={title ?? (isTruncated ? label : t("terminal.sessionAria"))}
 				type="button"
 			>
+				{tabIcon}
 				<span className="truncate">{label}</span>
 				{activity ? (
 					<span

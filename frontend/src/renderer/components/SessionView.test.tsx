@@ -1,5 +1,6 @@
 import { StrictMode, type ReactNode, type Ref } from "react";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render as rtlRender, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { SessionView } from "./SessionView";
 import { useUiStore } from "../stores/ui-store";
@@ -19,6 +20,7 @@ const interfaceTransitionState = vi.hoisted(() => ({
 		| { supported: boolean; targetMode?: "chat" | "tui"; reason?: string }
 		| undefined,
 }));
+const reviewGetMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@tanstack/react-router", () => ({
 	useNavigate: () => navigateMock,
@@ -48,6 +50,13 @@ vi.mock("../hooks/useSessionInterfaceTransition", () => ({
 		cancelling: false,
 		cancelError: undefined,
 	}),
+}));
+
+vi.mock("../lib/api-client", () => ({
+	apiClient: {
+		GET: reviewGetMock,
+	},
+	apiErrorMessage: (_error: unknown, fallback: string) => fallback,
 }));
 
 type FakePanelHandle = {
@@ -136,31 +145,41 @@ vi.mock("./chat/SessionChatSurface", () => ({
 }));
 vi.mock("./CenterPane", () => ({
 	CenterPane: ({
-		terminalTarget,
 		session,
 		shellTerminals = [],
 		onCloseShellTerminal,
 		onSelectShellTerminal,
 		onSelectSessionTerminal,
+		onSelectReviewerTerminal,
 		onNewShellTerminal,
 		topbarActions,
+		reviewerTerminal,
+		terminalTarget,
 	}: {
-		terminalTarget?: { kind: string; handleId?: string };
 		session?: WorkspaceSession;
 		shellTerminals?: Array<{ handleId: string; title: string }>;
 		onCloseShellTerminal?: (handleId: string) => void;
 		onSelectShellTerminal?: (handleId: string) => void;
 		onSelectSessionTerminal?: () => void;
+		onSelectReviewerTerminal?: (target: { handleId: string; harness: string }) => void;
 		onNewShellTerminal?: () => void;
 		topbarActions?: ReactNode;
+		reviewerTerminal?: { handleId: string; harness: string };
+		terminalTarget?: { kind: string; handleId?: string };
 	}) => (
 		<div>
 			terminal center
 			{topbarActions}
 			<div data-testid="terminal-target">
-				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : "worker"}
+				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : (terminalTarget?.kind ?? "worker")}
 			</div>
 			<div data-testid="session-tab">{session?.title ?? ""}</div>
+			<div data-testid="reviewer-harness">{reviewerTerminal?.harness ?? ""}</div>
+			{reviewerTerminal ? (
+				<button type="button" onClick={() => onSelectReviewerTerminal?.(reviewerTerminal)}>
+					select reviewer tab
+				</button>
+			) : null}
 			<div data-testid="shell-tabs">{shellTerminals.map((s) => s.title).join(",")}</div>
 			{shellTerminals.map((s) => (
 				<button key={s.handleId} type="button" onClick={() => onSelectShellTerminal?.(s.handleId)}>
@@ -383,6 +402,18 @@ function inspectorButton(): HTMLElement {
 	return button;
 }
 
+function render(ui: ReactNode) {
+	const client = new QueryClient({
+		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+	});
+	return {
+		...rtlRender(ui, {
+			wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+		}),
+		client,
+	};
+}
+
 describe("SessionView", () => {
 	beforeEach(() => {
 		nativeFullScreenMock.mockReturnValue(false);
@@ -393,6 +424,7 @@ describe("SessionView", () => {
 			delete session.isTerminated;
 			session.status = "working";
 			delete session.mode;
+			session.prs = [];
 		}
 		workspaceQueryState.data = workspaces;
 		workspaceQueryState.isLoading = false;
@@ -405,13 +437,15 @@ describe("SessionView", () => {
 		browserDestroy.mockReset();
 		browserViewOptions.current = undefined;
 		shellTerminalsState.data = [];
-		navigateMock.mockReset();
-		openShellTerminalMock.mockReset();
-		closeShellTerminalMock.mockReset();
-		interfaceTransitionMock.start.mockReset();
+	navigateMock.mockReset();
+	openShellTerminalMock.mockReset();
+	closeShellTerminalMock.mockReset();
+	interfaceTransitionMock.start.mockReset();
 		interfaceTransitionMock.resetStartError.mockReset();
 		interfaceTransitionMock.cancel.mockReset();
 		interfaceTransitionState.status = undefined;
+		reviewGetMock.mockReset();
+		reviewGetMock.mockResolvedValue({ data: { reviewerHandleId: "", reviews: [], runs: [] }, error: undefined });
 	});
 
 	// Regression: shell terminals are an app-wide list, so without a per-session
@@ -648,6 +682,100 @@ describe("SessionView", () => {
 		expect(closeShellTerminalMock).toHaveBeenCalledWith("sh-a");
 		expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker");
 		expect(useUiStore.getState().activeShellTerminalHandleId).toBeNull();
+	});
+
+	it("uses the stored reviewer harness for the reviewer tab icon when no latest run is current", async () => {
+		const worker = workerSession("sess-1");
+		worker.prs = [
+			{
+				url: "https://github.com/acme/repo/pull/7",
+				number: 7,
+				state: "open",
+				ci: "passing",
+				review: "none",
+				mergeability: "mergeable",
+				reviewComments: false,
+				updatedAt: "2026-06-15T00:00:00Z",
+			},
+		];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [], runs: [] },
+			error: undefined,
+		});
+
+		render(<SessionView sessionId="sess-1" />);
+
+		await waitFor(() => expect(screen.getByTestId("reviewer-harness")).toHaveTextContent("codex"));
+	});
+
+	it("returns to the session terminal when the reviewer handle is cleared", async () => {
+		const worker = workerSession("sess-1");
+		worker.prs = [
+			{
+				url: "https://github.com/acme/repo/pull/7",
+				number: 7,
+				state: "open",
+				ci: "passing",
+				review: "none",
+				mergeability: "mergeable",
+				reviewComments: false,
+				updatedAt: "2026-06-15T00:00:00Z",
+			},
+		];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
+			error: undefined,
+		});
+
+		const view = render(<SessionView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "select reviewer tab" });
+		fireEvent.click(screen.getByRole("button", { name: "select reviewer tab" }));
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+
+		act(() => {
+			view.client.setQueryData(["session-reviews", "sess-1"], { reviewerHandleId: "", reviews: [] });
+		});
+
+		await waitFor(() => expect(screen.getByTestId("terminal-target")).toHaveTextContent("worker"));
+		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
+	});
+
+	it("restores the selected reviewer terminal when the session becomes active again", async () => {
+		const worker = workerSession("sess-1");
+		worker.prs = [
+			{
+				url: "https://github.com/acme/repo/pull/7",
+				number: 7,
+				state: "open",
+				ci: "passing",
+				review: "none",
+				mergeability: "mergeable",
+				reviewComments: false,
+				updatedAt: "2026-06-15T00:00:00Z",
+			},
+		];
+		reviewGetMock.mockResolvedValueOnce({
+			data: { reviewerHandleId: "review-sess-1", reviewerHarness: "codex", reviews: [] },
+			error: undefined,
+		});
+
+		const view = render(<SessionView sessionId="sess-1" />);
+		await screen.findByRole("button", { name: "select reviewer tab" });
+		fireEvent.click(screen.getByRole("button", { name: "select reviewer tab" }));
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+
+		worker.status = "terminated";
+		worker.isTerminated = true;
+		view.rerender(<SessionView sessionId="sess-1" />);
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
+		expect(screen.queryByRole("button", { name: "select reviewer tab" })).not.toBeInTheDocument();
+
+		worker.status = "working";
+		worker.isTerminated = false;
+		view.rerender(<SessionView sessionId="sess-1" />);
+
+		await screen.findByRole("button", { name: "select reviewer tab" });
+		expect(screen.getByTestId("terminal-target")).toHaveTextContent("reviewer");
 	});
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS

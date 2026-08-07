@@ -562,24 +562,14 @@
 	);
 }
 
-/* Windows / Linux: rectangular frameless window. There is no rounded macOS
- * window to inset into, so flush the framed panel on every side — top is
- * already covered by the custom titlebar / ShellTopbar, and the left is flush
- * to the sidebar globally (padding-left: 0). Zero the remaining right/bottom
- * insets so the panel fills the full window width instead of floating with a
- * gap on the right and bottom. */
+/* Windows / Linux: a ShellTopbar already supplies the top chrome, so the
+ * framed panel needs no additional top inset. Windows uses its custom
+ * frameless titlebar; Linux uses the standard ShellTopbar. The right/bottom
+ * insets and the shared --radius-center-panel rounding are kept so the panel
+ * matches the macOS framed look. */
 .platform-windows .center-panel-shell,
 .platform-linux .center-panel-shell {
 	padding-top: 0;
-	padding-right: 0;
-	padding-bottom: 0;
-}
-
-/* macOS nested-radius formula (window_radius − inset) only makes sense inside
- * a rounded macOS window. Strip it so the framed panel has sharp corners. */
-.platform-windows .center-panel-surface,
-.platform-linux .center-panel-surface {
-	border-radius: 0;
 }
 
 @utility settings-row-bar {
@@ -2023,7 +2013,6 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	align-items: center;
 	gap: 8px;
 	padding: 0 10px;
-	border-bottom: 1px solid var(--border);
 	/* Matches the shell chrome (bg-sidebar) and the Window Controls Overlay
 	   color pushed in WindowTitlebar/main.ts, so the native min/max/close
 	   strip blends into the bar instead of reading as a separate box. */
