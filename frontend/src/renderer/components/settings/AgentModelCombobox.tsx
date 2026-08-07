@@ -57,6 +57,7 @@ export function AgentModelCombobox({
 	menuAlign = "end",
 	renderTrigger,
 	recentScope,
+	compact = false,
 	"aria-label": ariaLabel,
 }: {
 	value: string;
@@ -75,6 +76,10 @@ export function AgentModelCombobox({
 	renderTrigger?: (label: string) => ReactNode;
 	/** Persists explicit model choices for this agent and pins them below defaults. */
 	recentScope?: string;
+	/** Flat "no override" + plain model names — no search, groups, badges, or
+	 *  refresh action. For contexts where the menu should read like a simple
+	 *  choice, not a model-management surface. */
+	compact?: boolean;
 	"aria-label": string;
 }) {
 	const { t } = useTranslation();
@@ -87,7 +92,7 @@ export function AgentModelCombobox({
 	const normalizedSearch = normalizeSearch(search);
 	const searchIndex = useMemo(() => buildModelSearchIndex(models), [models]);
 	const selected = searchIndex.byID.get(normalizeSearch(value));
-	const showSearch = models.length > MODEL_SEARCH_THRESHOLD;
+	const showSearch = !compact && models.length > MODEL_SEARCH_THRESHOLD;
 
 	const rankedModels = useMemo(() => {
 		if (!normalizedSearch) {
@@ -193,34 +198,44 @@ export function AgentModelCombobox({
 
 						{groups.map((group, groupIndex) => (
 							<div key={group.key}>
-								{(groupIndex > 0 || normalizedSearch === "") && <DropdownMenuSeparator />}
-								<DropdownMenuLabel className="normal-case tracking-normal">{group.label}</DropdownMenuLabel>
-								{group.models.map((item) => (
-									<DropdownMenuItem
-										key={item.id}
-										onSelect={() => selectModel(item.id)}
-										className={modelItemClass(item.id === value)}
-									>
-										<div className="flex min-w-0 flex-1 items-center gap-3">
-											<div className="min-w-0 flex-1">
-												<div className="flex items-center gap-2">
-													<span className="truncate text-settings-label">{item.label}</span>
-													{item.model.isDefault && (
-														<span className="rounded-full bg-settings-menu-selected px-1.5 py-0.5 text-micro text-settings-muted">
-															{t("settings.models.default")}
-														</span>
+								{!compact && (groupIndex > 0 || normalizedSearch === "") && <DropdownMenuSeparator />}
+								{!compact && <DropdownMenuLabel className="normal-case tracking-normal">{group.label}</DropdownMenuLabel>}
+								{group.models.map((item) =>
+									compact ? (
+										<DropdownMenuItem
+											key={item.id}
+											onSelect={() => selectModel(item.id)}
+											className={modelItemClass(item.id === value)}
+										>
+											<span className="truncate text-settings-label">{item.label}</span>
+										</DropdownMenuItem>
+									) : (
+										<DropdownMenuItem
+											key={item.id}
+											onSelect={() => selectModel(item.id)}
+											className={modelItemClass(item.id === value)}
+										>
+											<div className="flex min-w-0 flex-1 items-center gap-3">
+												<div className="min-w-0 flex-1">
+													<div className="flex items-center gap-2">
+														<span className="truncate text-settings-label">{item.label}</span>
+														{item.model.isDefault && (
+															<span className="rounded-full bg-settings-menu-selected px-1.5 py-0.5 text-micro text-settings-muted">
+																{t("settings.models.default")}
+															</span>
+														)}
+													</div>
+													{shouldShowModelID(item, visibleModels, normalizedSearch) && (
+														<p className="truncate text-xs text-settings-muted">{item.id}</p>
 													)}
 												</div>
-												{shouldShowModelID(item, visibleModels, normalizedSearch) && (
-													<p className="truncate text-xs text-settings-muted">{item.id}</p>
+												{group.kind !== "provider" && item.provider !== "Other" && (
+													<span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>
 												)}
 											</div>
-											{group.kind !== "provider" && item.provider !== "Other" && (
-												<span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>
-											)}
-										</div>
-									</DropdownMenuItem>
-								))}
+										</DropdownMenuItem>
+									),
+								)}
 							</div>
 						))}
 
@@ -243,7 +258,7 @@ export function AgentModelCombobox({
 						{/* Rediscovery lives here, not as a standing link beside the field: it is
 						    a rare repair action, and the daemon revalidates a stale catalog on its
 						    own. Keeping it in the menu costs no layout in the calm state. */}
-						{onRefresh && (
+						{!compact && onRefresh && (
 							<>
 								<DropdownMenuSeparator />
 								<DropdownMenuItem

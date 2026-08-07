@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FileText, Loader2, Paperclip, X } from "lucide-react";
 import {
 	type ClipboardEvent,
@@ -21,7 +21,6 @@ import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFile
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
-	refreshAgentModels,
 	revalidateAgentModels,
 	type AgentModelCatalog,
 } from "../hooks/useAgentModelsQuery";
@@ -475,16 +474,7 @@ function TaskModelPicker({
 			queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), revalidationQuery.data);
 		}
 	}, [agentId, projectId, queryClient, revalidationQuery.data]);
-	const refreshMutation = useMutation({
-		mutationFn: () => refreshAgentModels(agentId, projectId),
-		onSuccess: (catalog) => queryClient.setQueryData(agentModelsQueryKey(agentId, projectId), catalog),
-	});
 	const warning =
-		(refreshMutation.isError
-			? refreshMutation.error instanceof Error
-				? refreshMutation.error.message
-				: t("settings.models.refreshFailed")
-			: undefined) ??
 		(revalidationQuery.isError
 			? revalidationQuery.error instanceof Error
 				? revalidationQuery.error.message
@@ -570,8 +560,7 @@ function TaskModelPicker({
 				emptyLabel={noOverrideLabel}
 				onChange={selectCatalogModel}
 				onCustom={selectCustomModel}
-				onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
-				refreshing={refreshMutation.isPending}
+				compact
 				recentScope={agentId}
 				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 				menuAlign="start"
@@ -613,8 +602,7 @@ function TaskModelPicker({
 					emptyLabel={noOverrideLabel}
 					onChange={selectCatalogModel}
 					onCustom={selectCustomModel}
-					onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
-					refreshing={refreshMutation.isPending}
+					compact
 					recentScope={agentId}
 					triggerLabel={t("settings.models.browse")}
 					triggerClassName="shrink-0"
