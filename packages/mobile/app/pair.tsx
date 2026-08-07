@@ -16,7 +16,7 @@ import {
 import type { Theme } from "../lib/theme";
 import { haptics } from "../lib/haptics";
 import { clearOnboardingSkipped } from "../lib/onboardingStore";
-import { parsePairingPayload } from "../lib/pairing";
+import { applyPairingPayload, parsePairingPayload } from "../lib/pairing";
 import { connectSheetRoute } from "../lib/sheetResult";
 import { useApp } from "../lib/store";
 import { Button, NumberedStep } from "../lib/ui";
@@ -83,12 +83,7 @@ export default function PairScreen() {
 		rejected.current = null;
 		scanned.current = true;
 		const cfg = await loadConfig();
-		await verify({
-			...cfg,
-			host: parsed.host,
-			httpPort: parsed.port,
-			password: parsed.password || cfg.password,
-		});
+		await verify(applyPairingPayload(cfg, parsed));
 	}
 
 	async function verify(target: ServerConfig) {
