@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pressly/goose/v3"
 
@@ -63,8 +64,25 @@ var shippedMigrations = map[int64]string{
 	43: "0043_add_session_pinned.sql",
 	44: "0044_backfill_review_run_batch_id.sql",
 	47: "0047_agent_model_catalog.sql",
-	48: "0048_add_session_browser_capability_verifier.sql",
+	48: "0048_review_agent_session_id.sql",
+	49: "0049_review_per_harness.sql",
 	52: "0052_model_usage.sql",
+	53: "0053_allow_muse_harness.sql",
+	66: "0066_chat_session_mode.sql",
+	67: "0067_app_settings.sql",
+	68: "0068_conversation_turn_settings.sql",
+	69: "0069_conversation_compaction.sql",
+	70: "0070_command_output_and_diffs.sql",
+	71: "0071_conversation_usage.sql",
+	72: "0072_conversation_history_ops.sql",
+	73: "0073_conversation_provider_state.sql",
+	74: "0074_activity_kinds_mcp_and_auto_review.sql",
+	75: "0075_conversation_user_input.sql",
+	76: "0076_conversation_delivery_content_and_cost.sql",
+	77: "0077_cancelled_conversation_activities.sql",
+	78: "0078_session_interface_transitions.sql",
+	79: "0079_session_interface_transition_delivery.sql",
+	80: "0080_review_per_harness.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -75,8 +93,8 @@ var shippedMigrations = map[int64]string{
 //   - 22 shipped in a nightly (#2412) and was deleted by the revert.
 //
 // Beware of the adjacent hazard this cannot catch: at least one field profile
-// has versions 40 through 46 recorded as applied by a foreign build
-// (#3475/#3476), so migrations numbered up to 0046 are skipped there entirely.
+// has versions 40 through 51 recorded as applied by a foreign build
+// (#3475/#3476), so migrations numbered up to 0051 are skipped there entirely.
 // Any such migration whose schema the generated queries depend on must add a
 // schemaRepairs entry in db.go.
 func burnedVersion(v int64) bool {
@@ -200,6 +218,26 @@ INSERT INTO projects (
 	if sessions[0].Metadata.DiffBaseSHA != rec.Metadata.DiffBaseSHA || sessions[0].Metadata.DiffBaseRef != rec.Metadata.DiffBaseRef {
 		t.Fatalf("diff base metadata = (%q, %q), want it round-tripped",
 			sessions[0].Metadata.DiffBaseSHA, sessions[0].Metadata.DiffBaseRef)
+	}
+	now := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
+	if err := store.UpsertReview(ctx, domain.Review{
+		ID:               "review-1",
+		SessionID:        created.ID,
+		ProjectID:        "mer",
+		Harness:          domain.ReviewerCodex,
+		ReviewerHandleID: "review-mer-1",
+		AgentSessionID:   "reviewer-native-1",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatalf("upsert review on repaired schema: %v", err)
+	}
+	review, ok, err := store.GetReviewBySessionAndHarness(ctx, created.ID, domain.ReviewerCodex)
+	if err != nil {
+		t.Fatalf("get review on repaired schema: %v", err)
+	}
+	if !ok || review.AgentSessionID != "reviewer-native-1" {
+		t.Fatalf("review = %+v, ok=%v, want persisted reviewer native id", review, ok)
 	}
 
 	// The repair is idempotent: a second startup on the repaired database (and

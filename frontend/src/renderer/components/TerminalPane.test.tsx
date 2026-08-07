@@ -222,6 +222,16 @@ function activeXterm(): HTMLElement {
 }
 
 describe("TerminalPane empty states", () => {
+	it("uses the full top, right, and bottom extent for the terminal grid", () => {
+		const view = renderPane({ ...worker, terminalHandleId: "term-1" });
+		try {
+			expect(screen.getByTestId("xterm").parentElement).toHaveClass("pl-2");
+			expect(screen.getByTestId("xterm").parentElement).not.toHaveClass("pt-2", "pr-2", "pb-2", "p-2");
+		} finally {
+			view.restore();
+		}
+	});
+
 	it("shows a no-selection message when no session is selected", () => {
 		const view = renderPane();
 		try {
@@ -622,6 +632,7 @@ describe("providerScrollsByKeyboard", () => {
 		expect(providerScrollsByKeyboard("opencode")).toBe(true);
 		expect(providerScrollsByKeyboard("kilocode")).toBe(true);
 		expect(providerScrollsByKeyboard("grok")).toBe(true);
+		expect(providerScrollsByKeyboard("muse")).toBe(true);
 	});
 
 	it("is false for mouse-report/native-scroll providers", () => {

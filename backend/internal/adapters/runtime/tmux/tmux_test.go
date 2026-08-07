@@ -1079,6 +1079,19 @@ func TestInterruptSendsCtrlC(t *testing.T) {
 	}
 }
 
+func TestSendInputSendsEscapeWithoutEnter(t *testing.T) {
+	r, fr := newTestRuntime(0)
+	if err := r.SendInput(context.Background(), ports.RuntimeHandle{ID: "sess-1"}, "\x1b"); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("calls = %d, want 1", len(fr.calls))
+	}
+	if got, want := fr.calls[0].args, sendKeysLiteralArgs("sess-1", "\x1b"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("escape args = %#v, want %#v", got, want)
+	}
+}
+
 // -- GetOutput tests --
 
 func TestGetOutputValidatesLines(t *testing.T) {

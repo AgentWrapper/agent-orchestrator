@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AgentLogo } from "../../lib/AgentLogo";
 import { ApiError, type DashboardSession, type OrchestratorLink } from "../../lib/api";
 import { classifyConnectionFailure, describeConnectionFailure } from "../../lib/connectionError";
+import { chatErrorCopy, isChatPreflightError } from "../../lib/chatError";
 import { haptics } from "../../lib/haptics";
 import { launchIntent, orchestratorState, orchestratorStatus, workersOf, zoneCounts } from "../../lib/orchestratorView";
 import { useApp } from "../../lib/store";
@@ -120,7 +121,7 @@ function OrchestratorCard({
 	const intent = launchIntent(state);
 	const zones = zoneCounts(workers);
 
-	const openTerminal = (id: string) => router.push({ pathname: "/session/[id]", params: { id, projectId } });
+	const openSession = (id: string) => router.push({ pathname: "/session/[id]", params: { id, projectId } });
 
 	// Jump to the board scoped to this project — the natural next move after
 	// reading "1 needs you". Same call pair Settings' project picker uses.
@@ -130,13 +131,20 @@ function OrchestratorCard({
 		router.navigate("/");
 	};
 
-	const runLaunch = async () => {
+	const runLaunch = async (mode: "chat" | "tui" = "chat") => {
 		setBusy(true);
 		try {
-			const l = await launchConductor(projectId, intent.clean);
-			if (l?.id) openTerminal(l.id);
+			const l = await launchConductor(projectId, intent.clean, mode);
+			if (l?.id) openSession(l.id);
 		} catch (e) {
 			haptics.error();
+			if (mode === "chat" && isChatPreflightError(e)) {
+				Alert.alert("Chat is unavailable", chatErrorCopy(e), [
+					{ text: "Cancel", style: "cancel" },
+					{ text: "Start Terminal UI", onPress: () => void runLaunch("tui") },
+				]);
+				return;
+			}
 			// Human copy, not raw daemon prose — this screen was the last place in
 			// the app still surfacing "409 Conflict - …" to a user.
 			const httpStatus = e instanceof ApiError ? e.status : undefined;
@@ -218,7 +226,7 @@ function OrchestratorCard({
 				{running ? (
 					<View style={styles.actions}>
 						<IconButton icon="rotate-ccw" label="Restart orchestrator" loading={busy} onPress={onLaunch} />
-						<IconButton icon="terminal" label="Open orchestrator" onPress={() => link && openTerminal(link.id)} />
+						<IconButton icon={link?.mode === "chat" ? "message-square" : "terminal"} label="Open orchestrator" onPress={() => link && openSession(link.id)} />
 					</View>
 				) : (
 					<Pressable

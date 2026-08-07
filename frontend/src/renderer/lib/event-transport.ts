@@ -4,6 +4,7 @@ import { getApiBaseUrl, hasTrustedApiBaseUrl, subscribeApiBaseUrl } from "./api-
 import { setEventsConnectionState } from "./events-connection";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { sessionScmSummaryQueryKey } from "../hooks/useSessionScmSummary";
+import { conversationQueryKey } from "../hooks/useConversation";
 import { sessionUsageQueryRoot } from "../hooks/useSessionUsageSummaries";
 
 export type EventTransport = {
@@ -45,15 +46,55 @@ export function createEventTransport(queryClient: QueryClient): EventTransport {
 	return {
 		connect() {
 			let debounce: ReturnType<typeof setTimeout> | undefined;
+			const pendingConversationSessions = new Set<string>();
+			let workspaceInvalidationPending = false;
 			let retryTimer: ReturnType<typeof setTimeout> | undefined;
 			let source: EventSource | undefined;
 			let sourceBaseUrl: string | undefined;
-			const refreshWorkspaces = () => {
+			const refreshWorkspaces = (event?: Event) => {
+				let conversationOnly = false;
+				if (event && "data" in event) {
+					try {
+						const decoded = JSON.parse(String((event as MessageEvent).data)) as {
+							sessionId?: unknown;
+							payload?: unknown;
+						};
+						// The SSE endpoint sends the complete durable CDC event. Routing
+						// fields such as sessionId live on that envelope, while trigger-built
+						// details such as conversationId live inside its payload. Do not
+						// mistake the payload for the entire event: doing so refreshes the
+						// sidebar but leaves a Chat timeline frozen on its pre-turn snapshot.
+						const payload =
+							typeof decoded.payload === "object" && decoded.payload !== null
+								? (decoded.payload as { conversationId?: unknown })
+								: undefined;
+						if (
+							typeof decoded.sessionId === "string" &&
+							decoded.sessionId &&
+							typeof payload?.conversationId === "string" &&
+							payload.conversationId
+						) {
+							pendingConversationSessions.add(decoded.sessionId);
+							conversationOnly = true;
+						}
+					} catch {
+						// A malformed CDC payload still invalidates workspaces; it simply
+						// cannot target a conversation cache precisely.
+					}
+				}
+				if (!conversationOnly) workspaceInvalidationPending = true;
 				if (debounce) clearTimeout(debounce);
 				debounce = setTimeout(() => {
-					void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-					void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
-					void queryClient.invalidateQueries({ queryKey: sessionUsageQueryRoot });
+					if (workspaceInvalidationPending) {
+						void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+						void queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey() });
+						void queryClient.invalidateQueries({ queryKey: sessionUsageQueryRoot });
+						workspaceInvalidationPending = false;
+					}
+					for (const sessionId of pendingConversationSessions) {
+						void queryClient.invalidateQueries({ queryKey: conversationQueryKey(sessionId) });
+					}
+					pendingConversationSessions.clear();
 				}, INVALIDATE_DEBOUNCE_MS);
 			};
 

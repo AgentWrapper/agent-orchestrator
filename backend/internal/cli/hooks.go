@@ -58,6 +58,16 @@ type usageHookMetadata struct {
 	SubagentTranscriptPath string `json:"subagentTranscriptPath,omitempty"`
 }
 
+// setReviewActivityAPIRequest mirrors POST /api/v1/reviews/{id}/activity.
+// Reviewer hooks only persist reviewer-owned restore metadata for now; they do
+// not feed worker lifecycle/tool-flight state.
+type setReviewActivityAPIRequest struct {
+	State          string `json:"state,omitempty"`
+	Event          string `json:"event,omitempty"`
+	AgentSessionID string `json:"agentSessionId,omitempty"`
+	LaunchID       string `json:"launchId,omitempty"`
+}
+
 // maxActivityMetaLen caps the correlation fields lifted from a native hook
 // payload before they go on the wire — they are ids/names, anything longer is
 // garbage and gets dropped rather than truncated (a truncated id would never
@@ -167,6 +177,13 @@ func newHooksCommand(ctx *commandContext) *cobra.Command {
 }
 
 func (c *commandContext) runHook(ctx context.Context, agent, event string) error {
+	reviewSessionID := strings.TrimSpace(os.Getenv("AO_REVIEW_SESSION_ID"))
+	if reviewSessionID != "" {
+		if !sessionIDPattern.MatchString(reviewSessionID) {
+			return nil
+		}
+		return c.runReviewHook(ctx, agent, event, reviewSessionID)
+	}
 	sessionID := strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
 	if !sessionIDPattern.MatchString(sessionID) {
 		// Not an AO-managed session (unset/empty), or an id we won't put in a
@@ -214,6 +231,34 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)
+	}
+	return nil
+}
+
+func (c *commandContext) runReviewHook(ctx context.Context, agent, event, reviewSessionID string) error {
+	payload, err := io.ReadAll(c.deps.In)
+	if err != nil {
+		c.reportHookFailure(agent, event, reviewSessionID, fmt.Errorf("read stdin: %w", err))
+	}
+	state, hasActivity := activitydispatch.Derive(agent, event, payload)
+	agentSessionID := ""
+	if activitydispatch.SupportsHarness(domain.AgentHarness(agent)) {
+		agentSessionID = hookAgentSessionID(payload)
+	}
+	if !hasActivity && agentSessionID == "" {
+		return nil
+	}
+	path := "reviews/" + url.PathEscape(reviewSessionID) + "/activity"
+	req := setReviewActivityAPIRequest{
+		Event:          event,
+		AgentSessionID: agentSessionID,
+		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+	}
+	if hasActivity {
+		req.State = string(state)
+	}
+	if err := c.postJSON(ctx, path, req, nil); err != nil {
+		c.reportHookFailure(agent, event, reviewSessionID, err)
 	}
 	return nil
 }
