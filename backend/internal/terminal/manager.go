@@ -259,38 +259,60 @@ func (m *Manager) forget(a *attachment) {
 	m.mu.Unlock()
 }
 
-// inputGateFor returns the shared input gate for pane id, creating it on the
-// first call. Every attachment for this id (every reattach, every client)
-// gets the SAME gate back and shares its one-shot timer (see inputGate) —
-// callers still must call gate.start on their own successful attach, since
-// only the pane's first successful publish may actually arm it.
+// inputGateFor returns the gate id was armed with, or nil if it was never
+// armed. Holding input is OPT-IN per agent launch (see ArmInputGate): a pane
+// nobody armed — a standalone shell, or a long-running pane this process only
+// learned about by attaching to it — is never delayed, since there is no
+// agent TUI mid-startup to protect it from. Every attachment for an armed id
+// shares that one gate and its single timer.
 func (m *Manager) inputGateFor(id string) *inputGate {
 	m.gatesMu.Lock()
 	defer m.gatesMu.Unlock()
+	return m.gates[id]
+}
+
+// ArmInputGate holds id's typed input until a fresh grace window elapses,
+// because a new agent process is starting in that pane. Call it once per
+// agent launch — both a first spawn and a resume/restart that reuses the same
+// runtime handle (see ports.RuntimeRestarter) — since the launch, not the
+// pane, is what needs protecting: the previous process's gate is already open
+// and would let the replacement TUI's first keystrokes race raw-mode entry.
+//
+// Arming re-blocks the clients ALREADY attached to the pane, not just the
+// next one to open. A tmux restart keeps its clients attached, so those
+// attachments never reattach and would otherwise sail through on the
+// inputReady they earned from the process that just exited.
+//
+// Panes that are never armed (standalone shells) keep accepting input
+// immediately; see inputGateFor.
+func (m *Manager) ArmInputGate(id string) {
+	if m.inputGraceWindow <= 0 {
+		return
+	}
+	gate := newInputGate()
+	m.gatesMu.Lock()
 	if m.gates == nil {
 		m.gates = map[string]*inputGate{}
 	}
-	g, ok := m.gates[id]
-	if !ok {
-		g = newInputGate()
-		m.gates[id] = g
-	}
-	return g
-}
-
-// ResetInputGate drops id's shared input gate so its NEXT attach mints and
-// arms a fresh one. Call this when a genuinely new agent process starts on an
-// already-known pane id — a resume or restart that reuses the same runtime
-// handle (see ports.RuntimeRestarter) — because the existing gate, if already
-// open, would otherwise let the replacement TUI's early keystrokes through
-// before it has had any chance to reach raw mode, reproducing the original
-// race on every resume. Reattaching to the SAME still-running process must
-// never call this: doing so would needlessly re-delay input for a pane that
-// was never actually restarted.
-func (m *Manager) ResetInputGate(id string) {
-	m.gatesMu.Lock()
-	delete(m.gates, id)
+	m.gates[id] = gate
 	m.gatesMu.Unlock()
+
+	// Snapshot the live viewers under the lock, then re-arm outside it:
+	// rearmInput starts a timer and spawns a waiter, neither of which should
+	// run while the shared-terminal arbiter's lock is held.
+	m.sharedMu.Lock()
+	var live []*attachment
+	if s := m.shared[id]; s != nil {
+		live = make([]*attachment, 0, len(s.members))
+		for _, mem := range s.members {
+			live = append(live, mem.att)
+		}
+	}
+	m.sharedMu.Unlock()
+
+	for _, att := range live {
+		att.rearmInput(m.ctx, gate, m.inputGraceWindow)
+	}
 }
 
 // joinTerminal registers a client (its connection + attach Stream + requested
@@ -532,6 +554,9 @@ func (c *connState) openTerminal(id string, rows, cols uint16, role string) {
 			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgExited})
 		},
 		c.mgr.log)
+	// nil unless this pane's agent launch armed a gate (see ArmInputGate);
+	// unarmed panes — standalone shells, already-running panes this process
+	// merely attached to — accept input immediately.
 	a.inputGate = c.mgr.inputGateFor(id)
 	a.inputGraceWindow = c.mgr.inputGraceWindow
 	if err := c.mgr.track(a); err != nil {

@@ -327,6 +327,38 @@ func (a *attachment) setPTY(ctx context.Context, p ports.Stream) bool {
 	return true
 }
 
+// rearmInput re-blocks this ALREADY-ATTACHED client behind a fresh gate,
+// because a new agent process has just been launched into the pane it is
+// still attached to. A tmux restart replaces the process inside the pane
+// without disturbing its attached clients, so no reattach — and therefore no
+// setPTY — will happen for this attachment: swapping the gate alone would
+// leave inputReady true and let the replacement TUI's first keystrokes race
+// raw-mode entry exactly as before. The timer is started here rather than
+// deferred to setPTY for the same reason: with a live PTY there is no later
+// publish to start it, and an unarmed gate would block input forever.
+//
+// With no PTY yet (the pane's first launch, armed before any client attached)
+// this only records the gate; setPTY starts it on the first successful
+// publish, so a slow attach cannot burn the window before the pane is up.
+func (a *attachment) rearmInput(ctx context.Context, gate *inputGate, window time.Duration) {
+	a.mu.Lock()
+	if a.closed || a.exited {
+		a.mu.Unlock()
+		return
+	}
+	a.inputGate = gate
+	a.inputGraceWindow = window
+	a.inputReady = false
+	pty := a.pty
+	a.mu.Unlock()
+
+	if pty == nil {
+		return
+	}
+	gate.start(window)
+	go a.releaseInputWhenGateOpens(ctx, gate)
+}
+
 // releaseInputWhenGateOpens waits for the pane's shared gate to open. If ctx
 // ends first (daemon shutdown, attachment closed) — wait reports which one
 // actually happened — buffered input is abandoned rather than flushed: a

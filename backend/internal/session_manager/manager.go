@@ -275,50 +275,49 @@ type Manager struct {
 	shellTerminals   ShellTerminalCloser
 
 	// inputGatesMu guards inputGates. It is late-bound (set after New via
-	// SetInputGateResetter) rather than threaded through every constructor
+	// SetInputGateArmer) rather than threaded through every constructor
 	// call site, matching how this package already wires other optional
 	// cross-cutting collaborators post-construction (e.g. SetCompletionTerminator
 	// on the LCM in daemon wiring). nil is a valid, tested no-op.
 	inputGatesMu sync.Mutex
-	inputGates   InputGateResetter
+	inputGates   InputGateArmer
 
 	terminalInputGateMu sync.Mutex
 	terminalInputGate   TerminalInputGate
 }
 
-// InputGateResetter drops a pane's remembered "already past its input grace
-// period" state. terminal.Manager satisfies it; the interface lives here (the
-// consumer) rather than in package terminal so this package does not import
-// the terminal package for one method.
-type InputGateResetter interface {
-	ResetInputGate(id string)
+// InputGateArmer holds a pane's typed input for a short grace window while a
+// newly launched agent's TUI reaches raw mode. terminal.Manager satisfies it;
+// the interface lives here (the consumer) rather than in package terminal so
+// this package does not import the terminal package for one method.
+type InputGateArmer interface {
+	ArmInputGate(id string)
 }
 
-// SetInputGateResetter wires relaunchSession to reset a pane's input gate on
-// every genuine (re)launch of its agent process — see resetInputGate. Safe to
-// leave unset: a nil resetter makes resetInputGate a no-op, matching every
-// existing test in this package that does not construct one.
-func (m *Manager) SetInputGateResetter(r InputGateResetter) {
+// SetInputGateArmer wires every agent launch to arm its pane's input gate —
+// see armInputGate. Safe to leave unset: a nil armer makes armInputGate a
+// no-op, matching every existing test in this package that does not construct
+// one.
+func (m *Manager) SetInputGateArmer(a InputGateArmer) {
 	m.inputGatesMu.Lock()
 	defer m.inputGatesMu.Unlock()
-	m.inputGates = r
+	m.inputGates = a
 }
 
-// resetInputGate tells the terminal layer that handleID's pane is about to run
-// a brand new agent process, not merely being reattached to. Without this, a
-// resume or restart that reuses the same runtime handle (ports.RuntimeRestarter)
-// would find the pane's gate already open from the process that just exited,
-// and the replacement TUI's early keystrokes would race raw-mode entry all
-// over again — the exact bug this gate exists to prevent, just triggered by
-// resume instead of a fresh spawn.
-func (m *Manager) resetInputGate(handleID string) {
+// armInputGate tells the terminal layer a brand new agent process is starting
+// in handleID's pane, so the pane should hold typed input until that process
+// has had a chance to enter raw mode. Called on EVERY launch, first spawn and
+// resume alike: holding is opt-in per launch, so a pane nobody armed (a
+// standalone shell) is never delayed, while a resume that reuses the runtime
+// handle re-arms instead of inheriting the exited process's open gate.
+func (m *Manager) armInputGate(handleID string) {
 	m.inputGatesMu.Lock()
-	r := m.inputGates
+	a := m.inputGates
 	m.inputGatesMu.Unlock()
-	if r == nil {
+	if a == nil {
 		return
 	}
-	r.ResetInputGate(handleID)
+	a.ArmInputGate(handleID)
 }
 
 // SetShellTerminalCloser wires every worktree-releasing path to gate the
@@ -701,6 +700,10 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: runtime: %w", id, err)
 	}
+	// Hold this pane's input until the freshly launched agent's TUI has had a
+	// chance to reach raw mode. Armed here, before any client can attach, so
+	// the very first keystroke of a brand new session is covered.
+	m.armInputGate(handle.ID)
 
 	metadata := domain.SessionMetadata{
 		Branch:            ws.Branch,
@@ -1526,10 +1529,11 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, fmt.Errorf("%s %s: runtime: %w", operation, rec.ID, err)
 	}
 	// A brand new agent process is about to run on handle.ID, whether that
-	// meant a fresh Create or a Restart that reused the runtime handle — either
-	// way the pane's remembered input-grace-period state (if any) belongs to
-	// the process that just exited, not this one, and must not carry over.
-	m.resetInputGate(handle.ID)
+	// meant a fresh Create or a Restart that reused the runtime handle. Either
+	// way the open gate belongs to the process that just exited, and a tmux
+	// restart keeps its clients attached — so this re-arms those live
+	// attachments too, not just the next one to open.
+	m.armInputGate(handle.ID)
 	metadata := domain.SessionMetadata{
 		Branch:            ws.Branch,
 		WorkspacePath:     ws.Path,
