@@ -1484,8 +1484,9 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
 }
 
-/* Sidebar controls remain keyboard-focusable without painting rings or outlines. */
+/* Keep keyboard focus visible without adding a ring to the sidebar chrome. */
 .sidebar-focusless :focus-visible {
+	background-color: var(--color-interactive-hover) !important;
 	outline: none !important;
 	box-shadow: none !important;
 }
