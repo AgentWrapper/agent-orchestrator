@@ -100,6 +100,11 @@ export function useOpenShellTerminal() {
 		onSuccess: () => {
 			void queryClient.invalidateQueries({ queryKey: shellTerminalsQueryKey });
 		},
+		// Without this, a failed open (worktree gone, no shell resolvable, daemon
+		// busy) leaves the "+" button looking like it silently did nothing.
+		onError: (error) => {
+			console.error("Failed to open shell terminal:", error);
+		},
 	});
 }
 

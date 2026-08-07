@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func TestRunProjectsDryRunWritesNothing(t *testing.T) {
@@ -112,7 +113,7 @@ func TestRunProjectsRejectsSymlinkedSameSourceAndTarget(t *testing.T) {
 
 func openStore(t *testing.T, dataDir string) *sqlite.Store {
 	t.Helper()
-	store, err := sqlite.Open(dataDir)
+	store, err := sqlitetest.Open(dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -175,9 +175,10 @@ export default async function DownloadPage() {
             <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
-                  src="/feature3.png"
+                  src="/optimized/feature3.webp"
                   alt=""
                   fill
+                  preload
                   sizes="(max-width: 767px) 100vw, 50vw"
                   className="object-cover"
                 />
@@ -202,9 +203,10 @@ export default async function DownloadPage() {
             <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
-                  src="/feature.png"
+                  src="/optimized/feature.webp"
                   alt=""
                   fill
+                  preload
                   sizes="(max-width: 767px) 100vw, 50vw"
                   className="object-cover"
                 />

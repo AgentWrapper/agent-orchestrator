@@ -13,6 +13,8 @@ export const shortcutLabelKeys: Record<AppShortcutId, MessageKey> = {
 	"open-project": "shortcut.open-project",
 	"previous-session": "shortcut.previous-session",
 	"next-session": "shortcut.next-session",
+	"previous-tab": "shortcut.previous-tab",
+	"next-tab": "shortcut.next-tab",
 	"toggle-inspector": "shortcut.toggle-inspector",
 	"focus-terminal": "shortcut.focus-terminal",
 };

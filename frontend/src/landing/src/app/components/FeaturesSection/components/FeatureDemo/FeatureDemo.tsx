@@ -1,28 +1,37 @@
+import Image from "next/image";
 import type { ReactNode } from "react";
 
 interface FeatureDemoProps {
 	children: ReactNode;
 	backgroundImage: string;
 	className?: string;
+	preload?: boolean;
 }
 
 export function FeatureDemo({
 	children,
 	backgroundImage,
 	className = "",
+	preload = false,
 }: FeatureDemoProps) {
 	return (
 		<div
-			className={`relative w-full min-h-[300px] lg:aspect-4/3 overflow-hidden ${className}`}
+			className={`relative w-full overflow-hidden sm:min-h-[300px] lg:aspect-4/3 ${className}`}
 		>
-			<div
-				className="absolute inset-0 h-full w-full bg-cover bg-center"
-				style={{ backgroundImage: `url('${backgroundImage}')` }}
+			<Image
+				src={backgroundImage}
+				alt=""
+				fill
+				preload={preload}
+				loading={preload ? "eager" : "lazy"}
+				fetchPriority={preload ? "high" : "auto"}
+				sizes="(max-width: 640px) 100vw, (max-width: 1279px) 92vw, 50vw"
+				className="pointer-events-none select-none object-cover"
 			/>
 			<div className="absolute inset-0 bg-background/35" />
 
 			{/* Content overlay */}
-			<div className="relative z-10 w-full h-full flex items-center justify-start sm:justify-center p-4 sm:p-6">
+			<div className="relative z-10 flex h-full w-full items-center justify-start p-4 sm:justify-center sm:p-6">
 				{children}
 			</div>
 		</div>
