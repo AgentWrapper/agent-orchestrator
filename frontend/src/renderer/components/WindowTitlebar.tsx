@@ -25,6 +25,10 @@ const isWindows =
 
 type MenuKey = "file" | "edit" | "view" | "window" | "help";
 
+function cssToken(styles: CSSStyleDeclaration, name: string, fallback: string): string {
+	return styles.getPropertyValue(name).trim() || fallback;
+}
+
 // Dispatch a native-menu action to the main process (see menu:action in main.ts).
 const act = (action: string) => () => {
 	void window.ao?.menu?.action(action);
@@ -75,6 +79,7 @@ export function WindowTitlebar({
 	const navigate = useNavigate();
 	const { t } = useTranslation();
 	const theme = useResolvedTheme();
+	const themeStyle = useUiStore((state) => state.themeStyle);
 	const { isSidebarOpen, toggleSidebar } = useUiStore();
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
 
@@ -84,10 +89,12 @@ export function WindowTitlebar({
 		if (!isWindows) return;
 		// Keep in sync with --color-bg-sidebar (tokens.css) — the titlebar paints
 		// that colour, so the native buttons must match it.
-		const overlay =
-			theme === "light" ? { color: "#fcfcfc", symbolColor: "#3f444c" } : { color: "#17181c", symbolColor: "#c7ccd4" };
-		void window.ao?.window?.setOverlay(overlay);
-	}, [theme]);
+		const styles = getComputedStyle(document.documentElement);
+		void window.ao?.window?.setOverlay({
+			color: cssToken(styles, "--color-bg-sidebar", theme === "light" ? "#fcfcfc" : "#17181c"),
+			symbolColor: cssToken(styles, "--fg-muted", theme === "light" ? "#3f444c" : "#c7ccd4"),
+		});
+	}, [theme, themeStyle]);
 
 	// Tell main to forget the last-focused panel whenever real shell UI (not this menu) gets focus, so its fallback target doesn't go stale.
 	useEffect(() => {
