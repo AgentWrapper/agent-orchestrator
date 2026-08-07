@@ -1021,6 +1021,12 @@ textarea,
 	height: 100%;
 }
 
+/* Positioning context for the one-shot settle-fit cover canvas in XtermTerminal.
+   Applied only while a cover is up on a host that was otherwise position:static. */
+.ao-xterm-settle-fit-host {
+	position: relative;
+}
+
 /* Normal-buffer panes (codex, a plain shell) now keep scrollback (scrollback:5000
    in XtermTerminal), so the viewport becomes scrollable. Hide the scrollbar so it
    doesn't reserve width and shift the cell grid; the wheel still scrolls via the

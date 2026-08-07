@@ -83,12 +83,13 @@ function loadRenderer(term: Terminal): void {
 		fallbackLoaded = true;
 		try {
 			term.loadAddon(new CanvasAddon());
+			forceTerminalRepaint(term);
 		} catch (error) {
 			console.warn("xterm: WebGL and canvas renderers unavailable; box-drawing may drift", error);
 		}
 	};
 	try {
-		const webgl = new WebglAddon();
+		const webgl = new WebglAddon(true);
 		webgl.onContextLoss(() => {
 			webgl.dispose();
 			loadCanvasFallback();
@@ -183,12 +184,129 @@ function terminalHasFocus(host: HTMLElement): boolean {
 type XtermInternal = Terminal & {
 	_core?: {
 		element?: HTMLElement;
+		_renderService?: {
+			_renderRows: (start: number, end: number) => void;
+		};
 		_selectionService?: {
 			enable: () => void;
 			shouldForceSelection: (event: MouseEvent) => boolean;
 		};
 	};
 };
+
+// After fit()/resize, xterm clears the canvas then queues redraw via a
+// RenderDebouncer (next animation frame). That gap can flash blank. Calling
+// _renderRows fills the surface in this turn. Private RenderService API —
+// coupled to @xterm/xterm; if an upgrade removes it this becomes a silent no-op.
+function forceTerminalRepaint(term: Terminal): void {
+	const rows = term.rows;
+	if (rows <= 0) return;
+	try {
+		(term as XtermInternal)._core?._renderService?._renderRows(0, rows - 1);
+	} catch {
+		// Internal render API — ignore if unavailable or mid-teardown.
+	}
+}
+
+const SETTLE_FIT_COVER_CLASS = "ao-xterm-settle-fit-cover";
+// Only applied while a settle cover is up, and only when the host was `static`
+// (absolute/relative hosts are left alone). Removed with the cover / on dispose.
+const SETTLE_FIT_HOST_CLASS = "ao-xterm-settle-fit-host";
+
+// Hide the live screen for the duration of a settled fit.fit(), showing the last
+// good frame on top so WebGL's clear is never presented. One-shot only — does not
+// change scheduleStableFit / isVisible behavior. `isActive` gates the deferred
+// cover drop so an unmounted terminal does not touch a detached host.
+function withSettledFitCover(
+	term: Terminal,
+	host: HTMLElement,
+	apply: () => void,
+	isActive: () => boolean = () => true,
+): void {
+	const screen = term.element?.querySelector(".xterm-screen") as HTMLElement | null;
+	const primary = screen?.querySelector("canvas") as HTMLCanvasElement | null;
+	if (!screen || !primary || primary.width <= 0 || primary.height <= 0) {
+		apply();
+		return;
+	}
+
+	for (const node of host.querySelectorAll(`canvas.${SETTLE_FIT_COVER_CLASS}`)) {
+		node.remove();
+	}
+	host.classList.remove(SETTLE_FIT_HOST_CLASS);
+
+	const prevCssW = Math.max(1, primary.clientWidth);
+	const prevCssH = Math.max(1, primary.clientHeight);
+	const cover = document.createElement("canvas");
+	cover.className = SETTLE_FIT_COVER_CLASS;
+	cover.setAttribute("aria-hidden", "true");
+	cover.width = primary.width;
+	cover.height = primary.height;
+	const fill = getComputedStyle(screen).backgroundColor || "#000";
+	const ctx = cover.getContext("2d");
+	let snapshotOk = false;
+	if (ctx) {
+		ctx.fillStyle = fill;
+		ctx.fillRect(0, 0, cover.width, cover.height);
+		try {
+			// Needs WebglAddon(preserveDrawingBuffer=true); otherwise drawImage can
+			// throw or copy an empty buffer after the WebGL clear.
+			ctx.drawImage(primary, 0, 0);
+			snapshotOk = true;
+		} catch {
+			// SecurityError / lost context — fall through uncovered below.
+		}
+	}
+	// Without a real frame, a stretched fill-only cover is worse than a brief
+	// clear: skip the overlay and rely on forceTerminalRepaint in the caller.
+	if (!snapshotOk) {
+		apply();
+		return;
+	}
+
+	const needsRelativeHost = getComputedStyle(host).position === "static";
+	if (needsRelativeHost) host.classList.add(SETTLE_FIT_HOST_CLASS);
+
+	const hostW = host.clientWidth;
+	const hostH = host.clientHeight;
+	// Stretch the last frame to the current host box for this one settle so empty
+	// margins from a grown pane are not visible under the cover.
+	const scaleX = hostW > 0 ? hostW / prevCssW : 1;
+	const scaleY = hostH > 0 ? hostH / prevCssH : 1;
+	cover.style.cssText = [
+		"left:0",
+		"pointer-events:none",
+		"position:absolute",
+		"top:0",
+		"transform-origin:0 0",
+		`transform:scale(${scaleX},${scaleY})`,
+		"z-index:2",
+		`width:${prevCssW}px`,
+		`height:${prevCssH}px`,
+	].join(";");
+	host.appendChild(cover);
+	screen.style.visibility = "hidden";
+
+	const dropCover = () => {
+		if (cover.isConnected) cover.remove();
+		if (needsRelativeHost) host.classList.remove(SETTLE_FIT_HOST_CLASS);
+	};
+
+	try {
+		apply();
+	} finally {
+		screen.style.visibility = "";
+		// Two frames: let the live canvas composite after clear+repaint before
+		// dropping the cover (one frame is often still blank on WebGL).
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				// Dispose clears covers/class synchronously; this is a no-op then.
+				if (!isActive()) return;
+				dropCover();
+			});
+		});
+	}
+}
 
 type DevXtermHost = HTMLDivElement & {
 	__aoXtermForTest?: Terminal;
@@ -559,8 +677,19 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			// Parked terminals keep their last measured box and continue parsing
 			// output, but must not refit or emit PTY resizes while hidden.
 			if (callbacksRef.current.isVisible === false) return;
+			// Mid-drag: host box is moving and quiet/cap timers are armed. Fitting
+			// here (e.g. from the stabilizer) bypasses settle scheduling and flashes.
+			if (fitQuietTimer !== null || fitCapTimer !== null) return;
 			try {
-				fit.fit();
+				withSettledFitCover(
+					term,
+					host,
+					() => {
+						fit.fit();
+						forceTerminalRepaint(term);
+					},
+					() => !disposed,
+				);
 			} catch {
 				// Container momentarily has no size (hidden/unmounting) — a later
 				// trigger retries.
@@ -569,17 +698,25 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		// ResizeObserver fires for every intermediate box during native fullscreen,
 		// sidebar drags and other animated application layout. Fitting on every
 		// callback repeatedly reallocates xterm's WebGL surface. Keep only the
-		// latest proposal and commit once the box has been quiet, with a cap so a
-		// continuously moving window cannot postpone the terminal forever.
-		const FIT_QUIET_MS = 120;
+		// latest proposal and commit once the box has been quiet. Cap expiry
+		// during a drag only re-arms — never fit mid-gesture (that was the multi-
+		// flash path). A longer quiet window than the PTY debounce avoids settling
+		// on brief pauses inside one inspector drag; release still gets one fit.
+		const FIT_QUIET_MS = 160;
 		const FIT_CAP_MS = 500;
 		let fitQuietTimer: ReturnType<typeof setTimeout> | null = null;
 		let fitCapTimer: ReturnType<typeof setTimeout> | null = null;
 		let fitAllowsHidden = false;
 		let disposed = false;
 		const fitSettledListeners = new Set<() => void>();
-		const flushScheduledFit = () => {
+		const flushScheduledFit = (fromCap = false) => {
 			if (disposed) return;
+			// Never fit while resize events are still arriving. Cap during a drag
+			// only re-arms; the quiet timer (release / real pause) owns the commit.
+			if (fromCap && fitQuietTimer !== null) {
+				fitCapTimer = setTimeout(() => flushScheduledFit(true), FIT_CAP_MS);
+				return;
+			}
 			if (fitQuietTimer !== null) {
 				clearTimeout(fitQuietTimer);
 				fitQuietTimer = null;
@@ -590,7 +727,15 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			}
 			if (fitAllowsHidden || callbacksRef.current.isVisible !== false) {
 				try {
-					fit.fit();
+					withSettledFitCover(
+						term,
+						host,
+						() => {
+							fit.fit();
+							forceTerminalRepaint(term);
+						},
+						() => !disposed,
+					);
 				} catch {
 					// The next observer/window event retries if the host is transiently
 					// unmeasurable (for example while entering fullscreen).
@@ -606,8 +751,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			fitAllowsHidden ||= allowHidden;
 			if (onSettled) fitSettledListeners.add(onSettled);
 			if (fitQuietTimer !== null) clearTimeout(fitQuietTimer);
-			fitQuietTimer = setTimeout(flushScheduledFit, FIT_QUIET_MS);
-			if (fitCapTimer === null) fitCapTimer = setTimeout(flushScheduledFit, FIT_CAP_MS);
+			fitQuietTimer = setTimeout(() => flushScheduledFit(false), FIT_QUIET_MS);
+			if (fitCapTimer === null) {
+				fitCapTimer = setTimeout(() => flushScheduledFit(true), FIT_CAP_MS);
+			}
 		};
 		// While activation preparation is pending, observer/window events must keep
 		// extending the same quiet window even though the container is intentionally
@@ -660,6 +807,9 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		let refits = 0;
 		let pending: { cols: number; rows: number } | null = null;
 		const stabilizer = term.onRender(() => {
+			// Host is mid-resize: scheduleStableFit owns the next fit. Acting here
+			// would fit on every differing proposeDimensions while the pane moves.
+			if (fitQuietTimer !== null || fitCapTimer !== null) return;
 			const proposed = fit.proposeDimensions();
 			if (!proposed || !proposed.cols || !proposed.rows) return;
 			if (proposed.cols !== term.cols || proposed.rows !== term.rows) {
@@ -878,6 +1028,10 @@ export function XtermTerminal(props: XtermTerminalProps) {
 			if (fitQuietTimer !== null) clearTimeout(fitQuietTimer);
 			if (fitCapTimer !== null) clearTimeout(fitCapTimer);
 			fitSettledListeners.clear();
+			for (const node of host.querySelectorAll(`canvas.${SETTLE_FIT_COVER_CLASS}`)) {
+				node.remove();
+			}
+			host.classList.remove(SETTLE_FIT_HOST_CLASS);
 			observer.disconnect();
 			stabilizer.dispose();
 			window.removeEventListener("resize", scheduleVisibleFit);
