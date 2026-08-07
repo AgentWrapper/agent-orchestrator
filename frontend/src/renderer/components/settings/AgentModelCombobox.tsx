@@ -1,4 +1,4 @@
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw, Search } from "lucide-react";
 import { type ReactNode, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { AgentModelCatalog } from "../../hooks/useAgentModelsQuery";
@@ -176,14 +176,18 @@ export function AgentModelCombobox({
 				className="settings-menu-surface max-h-select-menu-max! w-[min(22rem,calc(100vw-2rem))] overflow-hidden! rounded-(--radius-settings-panel) border-settings-menu bg-settings-menu"
 			>
 				{showSearch && (
-					<div className="shrink-0 p-1" onKeyDown={(event) => event.stopPropagation()}>
+					<div className="relative shrink-0 p-1" onKeyDown={(event) => event.stopPropagation()}>
+						<Search
+							className="pointer-events-none absolute left-3.5 top-1/2 size-icon-sm -translate-y-1/2 text-settings-muted"
+							aria-hidden="true"
+						/>
 						<input
 							type="search"
 							aria-label={t("settings.models.searchAria", { label: ariaLabel.toLocaleLowerCase() })}
 							value={search}
 							onChange={(event) => setSearch(event.target.value)}
 							placeholder={t("settings.models.searchPlaceholder")}
-							className="menu-search-input"
+							className="menu-search-input pl-8!"
 						/>
 					</div>
 				)}
