@@ -176,10 +176,13 @@ export function AgentModelCombobox({
 					</div>
 				)}
 
-				<div className="relative min-h-0 flex-1 overflow-hidden">
+				{/* The menu has a max-height rather than a definite height, so h-full lets
+				    this list grow behind the clipped shell. A zero-min grid track makes the
+				    list consume the available space and retain its content as scroll overflow. */}
+				<div className="relative grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] overflow-hidden">
 					<div
 						ref={scrollRef}
-						className="model-menu-scroll h-full min-h-0 overflow-y-auto overscroll-contain"
+						className="model-menu-scroll min-h-0 overflow-y-auto overscroll-contain"
 						onScroll={updateScrollCue}
 					>
 						{normalizedSearch === "" && (
@@ -208,13 +211,13 @@ export function AgentModelCombobox({
 														</span>
 													)}
 												</div>
-												{shouldShowModelID(item, visibleModels, normalizedSearch) && (
-													<p className="truncate text-xs text-settings-muted">{item.id}</p>
-												)}
-											</div>
-											{group.kind !== "provider" && item.provider !== "Other" && (
-												<span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>
+											{shouldShowModelID(item, visibleModels, normalizedSearch) && (
+												<p className="truncate text-xs text-settings-muted">{item.id}</p>
 											)}
+										</div>
+										{group.kind !== "provider" && item.provider !== "Other" && (
+											<span className="shrink-0 text-xs text-settings-muted">{item.provider}</span>
+										)}
 										</div>
 									</DropdownMenuItem>
 								))}
