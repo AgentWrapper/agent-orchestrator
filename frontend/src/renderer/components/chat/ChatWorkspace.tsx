@@ -1229,7 +1229,7 @@ function Timeline({
 					size="sm"
 					variant="outline"
 					onClick={() => setPinned(true)}
-					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 bg-raised shadow-sm"
+					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 bg-raised shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
 				>
 					<ArrowDown aria-hidden="true" className="size-3.5" />
 					Jump to latest
