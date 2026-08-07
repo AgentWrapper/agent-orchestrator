@@ -277,21 +277,31 @@ export function TaskComposer({
 				onDragOver={handleDragOver}
 				onDragLeave={() => setIsDragging(false)}
 			>
-				<textarea
-					id={promptId}
-					autoFocus={autoFocusTitle}
-					className="min-h-textarea-min w-full resize-none bg-transparent px-(--size-modal-padding) pb-4 pt-1 text-md leading-relaxed text-foreground outline-none placeholder:text-passive"
-					placeholder={t("newTask.taskPlaceholder")}
-					value={prompt}
-					onChange={(event) => setPrompt(event.target.value)}
-					onPaste={handlePaste}
-					onKeyDown={(event) => {
-						if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
-							event.preventDefault();
-							event.currentTarget.form?.requestSubmit();
-						}
-					}}
-				/>
+				<div className="composer-prompt-surface relative">
+					<textarea
+						id={promptId}
+						autoFocus={autoFocusTitle}
+						className="min-h-textarea-min w-full resize-none bg-transparent px-(--size-modal-padding) pb-12 pt-1 text-md leading-relaxed text-foreground outline-none placeholder:text-passive"
+						placeholder={t("newTask.taskPlaceholder")}
+						value={prompt}
+						onChange={(event) => setPrompt(event.target.value)}
+						onPaste={handlePaste}
+						onKeyDown={(event) => {
+							if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
+								event.preventDefault();
+								event.currentTarget.form?.requestSubmit();
+							}
+						}}
+					/>
+					<button
+						type="button"
+						className="absolute bottom-2 right-(--size-modal-padding) grid size-9 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground"
+						aria-label={t("newTask.addFile")}
+						onClick={() => fileInputRef.current?.click()}
+					>
+						<Paperclip className="size-icon-sm" aria-hidden="true" />
+					</button>
+				</div>
 			</div>
 
 			{attachments.length > 0 && (
@@ -420,14 +430,6 @@ export function TaskComposer({
 					</span>
 				</p>
 				<div className="flex shrink-0 items-center gap-2">
-					<button
-						type="button"
-						className="grid size-9 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground"
-						aria-label={t("newTask.addFile")}
-						onClick={() => fileInputRef.current?.click()}
-					>
-						<Paperclip className="size-icon-sm" aria-hidden="true" />
-					</button>
 					{onCancel && (
 						<Button type="button" variant="secondary" disabled={isSubmitting} onClick={onCancel}>
 							{t("newTask.cancel")}

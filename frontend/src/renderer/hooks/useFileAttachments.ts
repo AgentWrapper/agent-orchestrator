@@ -33,8 +33,8 @@ export type FileAttachmentPayload = {
 	name?: string;
 };
 
-// Client-side mirror of the backend raster-only allowlist
-// (backend/internal/httpd/controllers/sessions.go attachmentExtByMime).
+// Client-side mirror of the backend image-preview allowlist. Non-image files can
+// still be attached; they render with the generic file icon.
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp"]);
 
 export const isSupportedImageAttachment = (type: string) =>

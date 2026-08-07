@@ -136,6 +136,16 @@ describe("TaskComposer", () => {
 		expect(screen.getByLabelText("Model")).toHaveClass("composer-run-target-segment");
 	});
 
+	it("keeps the file attach control inside the prompt surface", () => {
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		expect(screen.getByRole("button", { name: "Add file" }).closest(".composer-prompt-surface")).not.toBeNull();
+	});
+
 	it("emits busy state around an in-flight create and reports the new session", async () => {
 		const onSubmittingChange = vi.fn();
 		const onCreated = vi.fn();

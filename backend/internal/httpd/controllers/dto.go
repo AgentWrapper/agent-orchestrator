@@ -172,18 +172,18 @@ type SpawnSessionRequest struct {
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
-	// Attachments are images pasted or dropped into the task brief. Each carries
+	// Attachments are files pasted or dropped into the task brief. Each carries
 	// its bytes as standard base64 (no data: URL prefix). The daemon writes them
 	// into the session worktree and appends path references to the prompt.
 	Attachments []SpawnAttachmentInput `json:"attachments,omitempty"`
 }
 
-// SpawnAttachmentInput is one image attached to a spawn request.
+// SpawnAttachmentInput is one file attached to a spawn request.
 type SpawnAttachmentInput struct {
 	// MimeType is the browser-reported content type (e.g. "image/png"). Used to
-	// derive the on-disk file extension; only image/* types are accepted.
+	// derive the on-disk file extension. Explicitly blocked types are rejected.
 	MimeType string `json:"mimeType,omitempty"`
-	// Data is the raw image bytes, standard base64-encoded, without any
+	// Data is the raw file bytes, standard base64-encoded, without any
 	// "data:...;base64," prefix.
 	Data string `json:"data"`
 }
@@ -202,15 +202,15 @@ type SpawnSessionResponse struct {
 	SystemPromptBytes int         `json:"systemPromptBytes"`
 }
 
-// StageSessionAttachmentsRequest attaches images to a session that is already
+// StageSessionAttachmentsRequest attaches files to a session that is already
 // running, for a caller that will name the returned paths in its next message.
 type StageSessionAttachmentsRequest struct {
 	// Attachments each carry their bytes as standard base64 (no data: URL prefix).
-	// The same count, size, and raster-only rules as spawn apply.
+	// The same count, size, and blocked-type rules as spawn apply.
 	Attachments []SpawnAttachmentInput `json:"attachments"`
 }
 
-// StageSessionAttachmentsResponse is where the images were written.
+// StageSessionAttachmentsResponse is where the files were written.
 type StageSessionAttachmentsResponse struct {
 	SessionID domain.SessionID `json:"sessionId"`
 	// Paths are worktree-relative and forward-slashed, in the order submitted. They
@@ -480,7 +480,7 @@ type DelegateTaskRequest struct {
 	// Mode is omitted for the daemon-owned default. The UI sends tui only when
 	// the user explicitly accepts the fallback after Chat preflight fails.
 	Mode domain.SessionMode `json:"mode,omitempty" enum:"tui,chat"`
-	// Attachments are images pasted, dropped, or picked into the delegated task
+	// Attachments are files pasted, dropped, or picked into the delegated task
 	// brief. Each carries bytes as standard base64 (no data: URL prefix). The
 	// daemon writes them into the spawned worker worktree and appends path
 	// references to the worker prompt.
