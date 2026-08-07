@@ -374,7 +374,7 @@ export function TaskComposer({
 							installed={agentCatalog?.installed}
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
-							triggerClassName="composer-toolbar-option w-full justify-between bg-transparent!"
+							triggerClassName="composer-toolbar-option w-full justify-between"
 							onChange={(value) => {
 								setAgent(value);
 								setAgentTouched(true);
@@ -508,7 +508,7 @@ function TaskModelPicker({
 	if (catalogLoading) {
 		return (
 			<span
-				className="composer-chip composer-toolbar-option w-full justify-center bg-transparent!"
+				className="composer-chip composer-toolbar-option w-full justify-center"
 				role="status"
 				aria-label={t("settings.models.loading")}
 				aria-busy="true"
@@ -531,12 +531,12 @@ function TaskModelPicker({
 				aria-label={t("newTask.model")}
 				value={mode || "__default__"}
 				options={options}
-				triggerClassName="composer-chip composer-toolbar-option w-full justify-between bg-transparent!"
+				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 				menuAlign="start"
 				renderTrigger={() => (
 					<span
 						key={`${agentId}:${mode || "__default__"}`}
-						className="composer-value-swap min-w-0 truncate font-mono text-xs text-foreground"
+						className="composer-value-swap min-w-0 truncate text-control text-foreground"
 						title={visibleModeLabel}
 					>
 						{visibleModeLabel}
@@ -573,14 +573,14 @@ function TaskModelPicker({
 				onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
 				refreshing={refreshMutation.isPending}
 				recentScope={agentId}
-				triggerClassName="composer-chip composer-toolbar-option w-full justify-between bg-transparent!"
+				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 				menuAlign="start"
 				renderTrigger={(label) => {
 					const visibleLabel = value ? label : t("newTask.autoModel");
 					return (
 						<span
 							key={`${agentId}:${value || "__default__"}`}
-							className="composer-value-swap min-w-0 truncate font-mono text-xs text-foreground"
+							className="composer-value-swap min-w-0 truncate text-control text-foreground"
 							title={visibleLabel}
 						>
 							{visibleLabel}
@@ -597,7 +597,7 @@ function TaskModelPicker({
 			<input
 				id={id}
 				aria-label={t("newTask.model")}
-				className="composer-chip composer-toolbar-option min-w-0 flex-1 bg-transparent! font-mono text-xs placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+				className="composer-chip composer-toolbar-option min-w-0 flex-1 text-control placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
 				value={value}
 				disabled={agentId === ""}
 				onChange={(event) => onModelChange(event.target.value)}

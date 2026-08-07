@@ -431,13 +431,15 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 		return (
 			<Select value={value} onValueChange={onChange} disabled={disabled}>
 				{/* The ! overrides are deliberate: SelectTrigger ships a form-control
-				    height, padding and chevron size, and a chip has to match the model
-				    chip beside it rather than the field it descends from. */}
+				    height and padding, and a chip has to match the model chip beside
+				    it rather than the field it descends from. Background is owned
+				    entirely by composer-toolbar-option's !important rules, which beat
+				    SelectTrigger's own bg-input/50 by specificity — no override needed. */}
 				<SelectTrigger
 					id={id}
 					size="sm"
 					className={cn(
-						"composer-chip h-(--size-settings-action-height)! bg-(--color-bg-composer-chip)! px-2! text-control! [&_svg]:size-icon-sm",
+						"composer-chip h-(--size-settings-action-height)! px-2! text-control! [&_svg]:size-icon-sm",
 						invalid && "text-error",
 						triggerClassName,
 					)}

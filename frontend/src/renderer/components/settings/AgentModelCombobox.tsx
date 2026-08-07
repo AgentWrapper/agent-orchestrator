@@ -146,7 +146,7 @@ export function AgentModelCombobox({
 				<button
 					type="button"
 					className={cn(
-						"settings-option-trigger max-w-full min-w-0 hover:text-settings-label focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0",
+						"group/agent-model-trigger settings-option-trigger max-w-full min-w-0 hover:text-settings-label focus:outline-none focus-visible:outline-none focus-visible:ring-0 data-[state=open]:outline-none data-[state=open]:ring-0",
 						triggerClassName,
 					)}
 					aria-label={ariaLabel}
@@ -156,7 +156,10 @@ export function AgentModelCombobox({
 					) : (
 						<span className="min-w-0 truncate">{currentLabel}</span>
 					)}
-					<ChevronDown className="size-icon-sm shrink-0 opacity-70" aria-hidden="true" />
+					<ChevronDown
+						className="size-icon-sm shrink-0 opacity-70 transition-transform duration-300 ease-out group-data-[state=open]/agent-model-trigger:rotate-180"
+						aria-hidden="true"
+					/>
 				</button>
 			</DropdownMenuTrigger>
 			<DropdownMenuContent
