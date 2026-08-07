@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowLeft, ArrowRight, Globe2, Maximize2, Minimize2, MousePointer2, Plus, RefreshCw, X } from "lucide-react";
+import {
+	ArrowLeft,
+	ArrowRight,
+	Globe2,
+	Layers3,
+	Maximize2,
+	Minimize2,
+	MousePointer2,
+	Plus,
+	RefreshCw,
+	X,
+} from "lucide-react";
 import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { useBrowserView, type BrowserViewModel } from "../hooks/useBrowserView";
 import { formatBrowserAnnotationMessage, type BrowserAnnotationSubmitPayload } from "../../shared/browser-annotations";
@@ -20,6 +31,11 @@ type BrowserPanelProps = {
 };
 
 type AnnotationStatus = "idle" | "picking" | "queued" | "sending" | "sent" | "error";
+
+// Docked rail visibility: collapsed (0px, tab access via the toolbar trigger) is
+// the default; pinning restores an always-visible icon rail. Persisted so it's a
+// one-time choice, not a state.
+const RAIL_PINNED_STORAGE_KEY = "ao.browserTabs.railPinned";
 
 export type BrowserAnnotationQueueModel = {
 	status: AnnotationStatus;
@@ -244,6 +260,13 @@ export function BrowserPanelView({
 	const canOpenTab = tabs.length < MAX_BROWSER_TABS;
 	const railRef = useRef<BrowserTabsRailHandle>(null);
 	const urlInputRef = useRef<HTMLInputElement>(null);
+	const [pinned, setPinned] = useState(() => window.localStorage.getItem(RAIL_PINNED_STORAGE_KEY) === "1");
+	const showTabsTrigger = !poppedOut && !pinned && tabs.length >= 2;
+
+	const handlePinnedChange = useCallback((next: boolean) => {
+		setPinned(next);
+		window.localStorage.setItem(RAIL_PINNED_STORAGE_KEY, next ? "1" : "0");
+	}, []);
 
 	useEffect(() => {
 		setUrlInput(navState.url);
@@ -304,7 +327,7 @@ export function BrowserPanelView({
 	// new tab has nowhere to go on its own, so send focus straight to the URL
 	// bar afterward instead of leaving the user to click into it themselves.
 	const handleOpenTab = useCallback(async () => {
-		railRef.current?.closeFlyout();
+		railRef.current?.closeFlyout(true);
 		await openTab();
 		urlInputRef.current?.focus();
 		urlInputRef.current?.select();
@@ -454,6 +477,37 @@ export function BrowserPanelView({
 						<Maximize2 aria-hidden="true" className="size-icon-base" />
 					)}
 				</Button>
+				{/* Docked mode has no reserved rail column by default (see
+				    BrowserTabsRail.tsx) — this trigger is the only way to reach the tab
+				    list until the user pins the rail. Hidden at a single tab, same as
+				    the rail's own hover trigger was before this existed. Hover/focus
+				    drive the rail's flyout imperatively since the two live in separate
+				    DOM subtrees (toolbar row vs. body row) — see BrowserTabsRail.tsx's
+				    BrowserTabsRailHandle for why the close side stays debounced here. */}
+				{showTabsTrigger ? (
+					<div className="flex w-8 shrink-0 items-center justify-center self-stretch border-l border-border">
+						<Button
+							aria-label={t("browser.tabsTitle", { count: tabs.length })}
+							className="relative"
+							onBlur={() => railRef.current?.closeFlyout()}
+							onFocus={() => railRef.current?.openFlyout(true)}
+							onPointerEnter={() => railRef.current?.openFlyout()}
+							onPointerLeave={() => railRef.current?.closeFlyout()}
+							size="icon-sm"
+							title={t("browser.tabsTitle", { count: tabs.length })}
+							type="button"
+							variant="ghost"
+						>
+							<Layers3 aria-hidden="true" className="size-icon-base" />
+							<span
+								aria-hidden="true"
+								className="pointer-events-none absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-foreground px-1 font-mono text-[9px] font-semibold leading-4 text-background shadow-sm"
+							>
+								{tabs.length}
+							</span>
+						</Button>
+					</div>
+				) : null}
 				{/* Fixed at the rail's own width (w-8) and flush against the panel's
 				    right edge (the form has no right padding) so this column lines up
 				    with the docked rail directly below it. Popped-out has no icon rail
@@ -483,8 +537,10 @@ export function BrowserPanelView({
 						onCloseTab={closeTab}
 						onFlyoutOpenChange={handleFlyoutOpenChange}
 						onOpenTab={handleOpenTab}
+						onPinnedChange={handlePinnedChange}
 						onReorderTabs={reorderTabs}
 						onSelectTab={handleSelectTab}
+						pinned={pinned}
 						poppedOut={poppedOut}
 						ref={railRef}
 						tabs={tabs}
@@ -524,8 +580,10 @@ export function BrowserPanelView({
 						onCloseTab={closeTab}
 						onFlyoutOpenChange={handleFlyoutOpenChange}
 						onOpenTab={handleOpenTab}
+						onPinnedChange={handlePinnedChange}
 						onReorderTabs={reorderTabs}
 						onSelectTab={handleSelectTab}
+						pinned={pinned}
 						poppedOut={poppedOut}
 						ref={railRef}
 						tabs={tabs}

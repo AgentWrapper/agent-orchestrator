@@ -26,7 +26,7 @@ import {
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Globe2, Plus, X } from "lucide-react";
+import { Globe2, Pin, PinOff, Plus, X } from "lucide-react";
 import type { BrowserTabState } from "../../main/browser-view-host";
 import { MAX_BROWSER_TABS } from "../../shared/browser-tabs";
 import { browserTabLabel } from "../lib/browser-tab-label";
@@ -40,16 +40,22 @@ const HOVER_OPEN_DELAY_MS = 150;
 const HOVER_CLOSE_DELAY_MS = 140;
 
 export type BrowserTabsRailHandle = {
-	// Lets the toolbar's "+" button (outside the rail) force the hover flyout
-	// closed before creating a tab, the same safeguard rows inside the rail
+	// Lets the toolbar's tab-count trigger (outside the rail) drive the same
+	// hover-intent flyout the rail itself uses once docked mode is collapsed to
+	// 0px — see the wiring note on the trigger button in BrowserPanel.tsx.
+	openFlyout: (immediate?: boolean) => void;
+	// Lets the toolbar's "+" button and tab-count trigger (both outside the rail)
+	// force the hover flyout closed, the same safeguard rows inside the rail
 	// already get — see the comment above handleSelectTab/handleCloseTab.
-	closeFlyout: () => void;
+	closeFlyout: (immediate?: boolean) => void;
 };
 
 type BrowserTabsRailProps = {
 	tabs: BrowserTabState[];
 	activeTabId: string;
 	poppedOut: boolean;
+	pinned: boolean;
+	onPinnedChange: (pinned: boolean) => void;
 	onSelectTab: (tabId: string) => Promise<void>;
 	onCloseTab: (tabId: string) => Promise<void>;
 	onOpenTab: () => Promise<void>;
@@ -58,18 +64,31 @@ type BrowserTabsRailProps = {
 };
 
 export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRailProps>(function BrowserTabsRail(
-	{ tabs, activeTabId, poppedOut, onSelectTab, onCloseTab, onOpenTab, onReorderTabs, onFlyoutOpenChange },
+	{
+		tabs,
+		activeTabId,
+		poppedOut,
+		pinned,
+		onPinnedChange,
+		onSelectTab,
+		onCloseTab,
+		onOpenTab,
+		onReorderTabs,
+		onFlyoutOpenChange,
+	},
 	ref,
 ) {
 	const { t } = useTranslation();
 	const [flyoutOpen, setFlyoutOpen] = useState(false);
 	const openTimerRef = useRef<number | null>(null);
 	const closeTimerRef = useRef<number | null>(null);
-	// Docked is always icon-only with a hover preview; only popped-out/fullscreen
-	// (which has room to spare) is permanently expanded — there's no user-facing
-	// "pin it open while docked" mode. Docked sits on the right of the viewport
-	// (out of the way of the address bar); popped-out stays on the left.
+	// Popped-out/fullscreen (which has room to spare) is permanently expanded.
+	// Docked defaults to collapsed (0px, no reserved column) with tab access via
+	// the toolbar's hover trigger; `pinned` restores an always-visible icon rail
+	// for users who want one. Docked sits on the right of the viewport (out of
+	// the way of the address bar); popped-out stays on the left.
 	const expanded = poppedOut;
+	const collapsed = !expanded && !pinned;
 
 	const { onPointerDown: onResizePointerDown, onDoubleClick: onResizeDoubleClick } = useResizable({
 		cssVar: "--ao-browser-tabs-w",
@@ -140,13 +159,27 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 		[clearCloseTimer, clearOpenTimer, flyoutOpen],
 	);
 
-	useImperativeHandle(ref, () => ({ closeFlyout: () => closeFlyout(true) }), [closeFlyout]);
+	useImperativeHandle(
+		ref,
+		() => ({
+			openFlyout: (immediate?: boolean) => openFlyout(immediate),
+			closeFlyout: (immediate?: boolean) => closeFlyout(immediate),
+		}),
+		[closeFlyout, openFlyout],
+	);
 
 	// Popping out mid-hover would otherwise leave the flyout mounted open on top
 	// of the now-expanded persistent list.
 	useEffect(() => {
 		if (expanded && flyoutOpen) closeFlyout(true);
 	}, [closeFlyout, expanded, flyoutOpen]);
+
+	// The toolbar trigger that opens this flyout only renders once there are 2+
+	// tabs (see BrowserPanel.tsx); dropping back to 1 tab while collapsed would
+	// otherwise leave the flyout stuck open with no trigger left to close it.
+	useEffect(() => {
+		if (collapsed && tabs.length < 2 && flyoutOpen) closeFlyout(true);
+	}, [closeFlyout, collapsed, flyoutOpen, tabs.length]);
 
 	useEffect(() => () => {
 		clearOpenTimer();
@@ -203,8 +236,8 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 		<div
 			className={cn(
 				"browser-tabs-rail relative flex h-full shrink-0 flex-col border-border bg-surface",
-				expanded ? "border-r" : "border-l",
-				expanded ? "w-(--ao-browser-tabs-w)" : "w-8",
+				expanded ? "border-r" : pinned ? "border-l" : "",
+				expanded ? "w-(--ao-browser-tabs-w)" : pinned ? "w-8" : "w-0",
 			)}
 			data-testid="browser-tabs-rail"
 			onBlur={
@@ -238,37 +271,52 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 					<Plus aria-hidden="true" className="size-icon-base shrink-0" />
 					<span className="truncate">{t("browser.newTab")}</span>
 				</button>
+			) : pinned ? (
+				<button
+					aria-label={t("browser.unpinTabs")}
+					className={cn(
+						"flex h-8 w-full shrink-0 items-center justify-center border-b border-border p-1.5 transition-colors",
+						"text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+					)}
+					onClick={() => onPinnedChange(false)}
+					title={t("browser.unpinTabs")}
+					type="button"
+				>
+					<PinOff aria-hidden="true" className="size-icon-base" />
+				</button>
 			) : null}
 			<nav aria-label={t("browser.tabsAria", { count: tabs.length })} className="min-h-0 flex-1 overflow-y-auto">
-				<DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} sensors={sensors}>
-					<SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
-						<div className="flex flex-col">
-							{tabs.map((tab) =>
-								expanded ? (
-									<SortableExpandedTabRow
-										active={tab.id === activeTabId}
-										closeTitle={closeTitle}
-										key={tab.id}
-										onClose={() => handleCloseTab(tab.id)}
-										onSelect={() => handleSelectTab(tab.id)}
-										onlyTab={onlyTab}
-										tab={tab}
-									/>
-								) : (
-									<SortableIconTabRow
-										active={tab.id === activeTabId}
-										closeTitle={closeTitle}
-										key={tab.id}
-										onClose={() => handleCloseTab(tab.id)}
-										onSelect={() => handleSelectTab(tab.id)}
-										onlyTab={onlyTab}
-										tab={tab}
-									/>
-								),
-							)}
-						</div>
-					</SortableContext>
-				</DndContext>
+				{collapsed ? null : (
+					<DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd} sensors={sensors}>
+						<SortableContext items={tabIds} strategy={verticalListSortingStrategy}>
+							<div className="flex flex-col">
+								{tabs.map((tab) =>
+									expanded ? (
+										<SortableExpandedTabRow
+											active={tab.id === activeTabId}
+											closeTitle={closeTitle}
+											key={tab.id}
+											onClose={() => handleCloseTab(tab.id)}
+											onSelect={() => handleSelectTab(tab.id)}
+											onlyTab={onlyTab}
+											tab={tab}
+										/>
+									) : (
+										<SortableIconTabRow
+											active={tab.id === activeTabId}
+											closeTitle={closeTitle}
+											key={tab.id}
+											onClose={() => handleCloseTab(tab.id)}
+											onSelect={() => handleSelectTab(tab.id)}
+											onlyTab={onlyTab}
+											tab={tab}
+										/>
+									),
+								)}
+							</div>
+						</SortableContext>
+					</DndContext>
+				)}
 			</nav>
 			{expanded ? (
 				<div
@@ -297,6 +345,34 @@ export const BrowserTabsRail = forwardRef<BrowserTabsRailHandle, BrowserTabsRail
 					role="menu"
 				>
 					<div className="flex h-full flex-col overflow-y-auto">
+						{/* Always rendered, in both states, so this list has the exact same
+						    row count as the rail it sits beside when pinned (which always
+						    carries its own header row — the unpin button above `<nav>`).
+						    Rendering it only while unpinned left the flyout one row
+						    shorter than the pinned rail, so every row below it landed a
+						    row height out of sync between the two lists. */}
+						<button
+							className={cn(
+								"flex h-8 w-full shrink-0 items-center gap-1.5 border-b border-border p-1.5 text-left text-sm transition-colors",
+								"text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
+							)}
+							onClick={() => {
+								if (pinned) {
+									onPinnedChange(false);
+								} else {
+									onPinnedChange(true);
+									closeFlyout(true);
+								}
+							}}
+							type="button"
+						>
+							{pinned ? (
+								<PinOff aria-hidden="true" className="size-icon-base shrink-0" />
+							) : (
+								<Pin aria-hidden="true" className="size-icon-base shrink-0" />
+							)}
+							<span className="truncate">{pinned ? t("browser.tabsPinned") : t("browser.pinTabs")}</span>
+						</button>
 						{tabs.map((tab) => (
 							<ExpandedTabRow
 								active={tab.id === activeTabId}
