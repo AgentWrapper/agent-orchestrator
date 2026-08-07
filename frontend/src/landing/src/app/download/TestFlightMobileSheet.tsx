@@ -2,7 +2,7 @@
 
 import { TESTFLIGHT_APP_URL, TESTFLIGHT_URL } from "@ao/shared/constants";
 import { AnimatePresence, motion } from "motion/react";
-import { ExternalLink, X } from "lucide-react";
+import { Check, ExternalLink, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
 
@@ -22,9 +22,13 @@ function readHasTestFlight(): boolean {
   }
 }
 
-function rememberHasTestFlight(): void {
+// Writes both ways: the toggle is reversible, so a visitor who taps it by
+// mistake can put the gate back rather than being stuck with a step 2 that
+// sends them nowhere.
+function rememberHasTestFlight(value: boolean): void {
   try {
-    window.localStorage.setItem(STORAGE_KEY, "true");
+    if (value) window.localStorage.setItem(STORAGE_KEY, "true");
+    else window.localStorage.removeItem(STORAGE_KEY);
   } catch {
     // Non-fatal - the gate still works for this page view.
   }
@@ -68,7 +72,21 @@ export function TestFlightMobileSheet({
 
   const unlock = useCallback(() => {
     setHasTestFlight(true);
-    rememberHasTestFlight();
+    rememberHasTestFlight(true);
+  }, []);
+
+  // The toggle is the one control that must never disappear: someone who
+  // already has TestFlight needs the fast path visible on arrival, not hidden
+  // behind having first tapped the step they don't need.
+  const toggleHasTestFlight = useCallback(() => {
+    setHasTestFlight((previous) => {
+      const next = !previous;
+      track(
+        next ? "testflight_already_installed" : "testflight_gate_restored",
+      );
+      rememberHasTestFlight(next);
+      return next;
+    });
   }, []);
 
   return (
@@ -94,7 +112,9 @@ export function TestFlightMobileSheet({
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
             transition={{ type: "spring", duration: 0.36, bounce: 0.08 }}
-            className="relative w-full max-w-md rounded-t-2xl border border-border bg-card px-5 pt-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-[0_-24px_60px_-20px_rgba(0,0,0,0.8)]"
+            // max-h + scroll so a short screen (an SE, or landscape) can still
+            // reach the last control instead of having it clipped off-screen.
+            className="relative max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-2xl border border-border bg-card px-5 pt-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-[0_-24px_60px_-20px_rgba(0,0,0,0.8)]"
           >
             <button
               type="button"
@@ -125,10 +145,18 @@ export function TestFlightMobileSheet({
                   >
                     1
                   </span>
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-foreground">
-                      Install TestFlight
-                    </p>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-sm font-semibold text-foreground">
+                        Install TestFlight
+                      </p>
+                      {hasTestFlight ? (
+                        <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-foreground">
+                          <Check className="size-3.5" aria-hidden="true" />
+                          Ready
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="mt-1 text-sm leading-6 text-muted-foreground">
                       Apple&apos;s free app for betas. Come back here once it
                       finishes installing.
@@ -148,6 +176,26 @@ export function TestFlightMobileSheet({
                   Get TestFlight
                   <ExternalLink className="size-3.5" aria-hidden="true" />
                 </a>
+
+                <button
+                  type="button"
+                  role="checkbox"
+                  aria-checked={hasTestFlight}
+                  onClick={toggleHasTestFlight}
+                  className="mt-2.5 flex w-full items-center justify-center gap-2 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`flex size-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                      hasTestFlight
+                        ? "border-foreground bg-foreground text-background"
+                        : "border-muted-foreground"
+                    }`}
+                  >
+                    {hasTestFlight ? <Check className="size-3" /> : null}
+                  </span>
+                  I already have TestFlight
+                </button>
               </li>
 
               <li>
@@ -203,19 +251,6 @@ export function TestFlightMobileSheet({
                 )}
               </li>
             </ol>
-
-            {hasTestFlight ? null : (
-              <button
-                type="button"
-                onClick={() => {
-                  track("testflight_already_installed");
-                  unlock();
-                }}
-                className="mt-6 w-full py-2 text-sm font-semibold text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
-              >
-                I already have TestFlight
-              </button>
-            )}
           </motion.div>
         </div>
       ) : null}
