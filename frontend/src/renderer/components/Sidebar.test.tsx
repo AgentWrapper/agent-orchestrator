@@ -253,8 +253,8 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		const footer = document.querySelector('[data-sidebar="footer"]');
-		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-0");
-		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-row-md");
+		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
 	});
 
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
@@ -998,6 +998,25 @@ describe("Sidebar", () => {
 		expect(actionCluster).toHaveClass("right-0.5", "gap-px");
 		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(2);
 		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
+	});
+
+	it("scales project actions with the row without scaling for action-button presses", () => {
+		renderSidebar();
+
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		const pressSurface = projectRow?.closest<HTMLElement>("[data-project-press]");
+		const projectActions = screen.getByLabelText("Project actions for Project One");
+
+		if (!projectRow || !pressSurface) throw new Error("Project press surface not found");
+		expect(pressSurface).toContainElement(projectActions);
+
+		fireEvent.pointerDown(projectRow);
+		expect(pressSurface).toHaveClass("scale-[0.98]");
+		fireEvent.pointerUp(projectRow);
+		expect(pressSurface).not.toHaveClass("scale-[0.98]");
+
+		fireEvent.pointerDown(projectActions);
+		expect(pressSurface).not.toHaveClass("scale-[0.98]");
 	});
 
 	it("optically aligns the project folder and label with its action icons", () => {
