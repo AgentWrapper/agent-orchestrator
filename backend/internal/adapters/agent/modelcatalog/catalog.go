@@ -76,6 +76,12 @@ func Base(agentID string) ports.AgentModelCatalog {
 			model("gpt-5.4-mini", "GPT-5.4 mini", false),
 			model("gpt-5.3-codex", "GPT-5.3-Codex", false),
 		)
+	case "muse":
+		return catalog(agentID, "official-catalog", true, now,
+			model("muse-spark", "Muse Spark", true),
+			model("muse-spark-1.1", "Muse Spark 1.1", false),
+			model("muse-spark-1.2", "Muse Spark 1.2", false),
+		)
 	case "amp":
 		c := catalog(agentID, "official-modes", false, now,
 			model("low", "Low", false),

@@ -797,69 +797,57 @@ button.settings-link-row:active {
 	opacity: 0.75;
 }
 
-/* The run target is one configuration with two independently editable halves.
-   Equal tracks keep the model anchored while agent names change; the container
-   query moves the quiet sentence label above it only when the modal is narrow. */
-.composer-run-config {
-	container-type: inline-size;
-}
-
-.composer-run-row {
+/* The composer is one continuous surface. Agent and model share equal, stable
+   tracks so changing provider names never moves the model or the primary action;
+   transparent controls keep the row reading as card padding rather than a form. */
+.composer-toolbar {
 	display: grid;
-	grid-template-columns: auto minmax(0, 1fr);
+	grid-template-columns: minmax(0, 1fr) auto auto;
 	align-items: center;
-	column-gap: var(--space-3);
+	column-gap: var(--space-2);
+	padding: 0 var(--space-3) var(--space-3);
 }
 
-.composer-run-target {
-	position: relative;
+.composer-prompt-surface {
+	border-radius: inherit;
+}
+
+.composer-prompt-surface[data-dragging="true"] {
+	background-color: var(--color-accent-weak);
+	box-shadow: inset 0 0 0 2px var(--bridge-accent);
+}
+
+.composer-run-controls {
 	display: grid;
-	width: 100%;
-	max-width: var(--size-composer-run-options);
 	min-width: 0;
-	height: var(--size-control-md);
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	overflow: hidden;
-	border: 1px solid var(--color-border);
-	border-radius: var(--radius-md);
-	background-color: var(--color-bg-composer-chip);
+	grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+	align-items: center;
+	column-gap: var(--space-2);
 }
 
-.composer-run-target::after {
-	position: absolute;
-	top: var(--space-1_5);
-	bottom: var(--space-1_5);
-	left: 50%;
+.composer-toolbar-slot {
+	min-width: 0;
+}
+
+.composer-toolbar-divider {
 	width: 1px;
+	height: var(--space-4);
 	background-color: var(--color-border);
-	content: "";
-	pointer-events: none;
 }
 
-.composer-run-target .composer-run-target-segment {
-	height: 100%;
-	border-radius: 0 !important;
+.composer-toolbar .composer-toolbar-option {
+	height: var(--size-control-md);
+	border-radius: var(--radius-md) !important;
 	background-color: transparent !important;
 }
 
-.composer-run-target .composer-run-target-segment:hover:not(:disabled),
-.composer-run-target .composer-run-target-segment[data-state="open"] {
+.composer-toolbar .composer-toolbar-option:hover:not(:disabled),
+.composer-toolbar .composer-toolbar-option[data-state="open"] {
 	background-color: var(--color-bg-composer-chip-hover) !important;
 }
 
-.composer-run-target .composer-run-target-segment:focus-visible {
+.composer-toolbar .composer-toolbar-option:focus-visible {
 	box-shadow: inset 0 0 0 2px var(--bridge-accent-weak);
-}
-
-@container (max-width: 26rem) {
-	.composer-run-row {
-		grid-template-columns: minmax(0, 1fr);
-		row-gap: var(--space-2);
-	}
-
-	.composer-run-target {
-		max-width: none;
-	}
 }
 
 .composer-value-swap {
@@ -903,10 +891,8 @@ button.settings-link-row:active {
 	}
 }
 
-/* Inline value control inside the task composer's "Runs with" sentence. Reads as
-   a value you can change, not as a form field: no visible field chrome until
-   hover/focus. The row gives its two controls equal tracks so changing agent
-   labels never shifts the model control. */
+/* Inline value control inside the task composer's bottom toolbar. Reads as a
+   value you can change, not as a form field: no visible chrome until hover/focus. */
 @utility composer-chip {
 	display: inline-flex;
 	width: auto;

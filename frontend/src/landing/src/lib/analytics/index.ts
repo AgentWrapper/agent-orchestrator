@@ -1,5 +1,6 @@
 import posthog from "posthog-js";
 
+import { campaignProperties } from "./campaign";
 import { trackReddit } from "./reddit";
 
 /**
@@ -20,14 +21,18 @@ export function track(
 	// Several callers navigate right after (e.g. the download click handler), and
 	// PostHog's capture throws when called before init — which happens whenever
 	// NEXT_PUBLIC_POSTHOG_KEY is unset (local dev) — aborting that navigation.
+	// Campaign attribution rides on every event, so any funnel step can be broken
+	// down by source, not only the download click. Merged under the caller's own
+	// properties so an explicit property always wins over the ambient campaign.
+	const enriched = { ...campaignProperties(), ...properties };
 	try {
-		posthog.capture(event, properties);
+		posthog.capture(event, enriched);
 	} catch (error) {
 		console.warn("PostHog capture failed", error);
 	}
 
 	const redditEvent = REDDIT_EVENT_MAP[event];
 	if (redditEvent) {
-		trackReddit(redditEvent, properties);
+		trackReddit(redditEvent, enriched);
 	}
 }

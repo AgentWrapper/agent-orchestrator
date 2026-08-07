@@ -7,6 +7,8 @@ import {
   getGitHubRepoStats,
   monthsSince,
 } from "@/lib/github-stats";
+import { DesignPartnerCta } from "./DesignPartnerCta";
+import { DesignPartnerReplay } from "./DesignPartnerReplay";
 import {
   RoadmapSlideshow,
   type RoadmapPhase,
@@ -19,6 +21,16 @@ const MAILTO_HREF = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
 )}&body=${encodeURIComponent(
   "Hi Prateek,\n\nWe're interested in the AO design partner program.\n\nCompany:\nEngineering team size:\nAgent harnesses we use today (Claude Code / Codex / Cursor / ...):\nWhat we want out of AO:\n",
 )}`;
+const HERO_IMAGE = "/optimized/design-partners/hero-car-engine-olive.webp";
+const SHARED_WORKSPACE_IMAGE =
+  "/optimized/design-partners/shared-workspace-olive.webp";
+
+const ROADMAP_PHASE_IMAGES = {
+  fleet: "/optimized/design-partners/roadmap-fleet-olive.webp",
+  missionControl: "/optimized/design-partners/roadmap-mission-control-olive.webp",
+  roi: "/optimized/design-partners/roadmap-roi-olive.webp",
+  engineRoom: "/optimized/design-partners/roadmap-engine-room-olive.webp",
+} as const;
 
 /** Shown only if the GitHub API request fails. */
 const FALLBACK_STATS = {
@@ -89,7 +101,7 @@ const phases: RoadmapPhase[] = [
       "CI failures and review comments route back to the agent that owns the branch",
       "An orchestrator plans the work and spawns the workers",
     ],
-    image: "/design-partners/roadmap-fleet-olive.png",
+    image: ROADMAP_PHASE_IMAGES.fleet,
     imageAlt:
       "One orchestration workstation coordinating five coding-agent modules across separate worktree lanes",
   },
@@ -104,7 +116,7 @@ const phases: RoadmapPhase[] = [
       "Every session durably captured; hand a running fleet to a teammate",
       "One board for the team: running, merged, needs a human",
     ],
-    image: "/design-partners/roadmap-mission-control-olive.png",
+    image: ROADMAP_PHASE_IMAGES.missionControl,
     imageAlt:
       "Three local agent workstations connecting to a shared team mission-control board",
   },
@@ -119,7 +131,7 @@ const phases: RoadmapPhase[] = [
       "Outcomes, not vibes: agent PRs merged, cycle time, human-rescue rate",
       "Transcripts joined with GitHub, CI, reviews, and trackers - reviewable in one place",
     ],
-    image: "/design-partners/roadmap-roi-olive.png",
+    image: ROADMAP_PHASE_IMAGES.roi,
     imageAlt:
       "A measurement console joining agent cost, merged work, cycle time, and human handoffs",
   },
@@ -134,7 +146,7 @@ const phases: RoadmapPhase[] = [
       "Security policies enforced on every agent; audit trails and SSO across the fleet",
       "The dataset stays yours: full transcripts joined with SCM, CI, and tracker history",
     ],
-    image: "/design-partners/roadmap-engine-room-olive.png",
+    image: ROADMAP_PHASE_IMAGES.engineRoom,
     imageAlt:
       "A self-hosted control plane, security gate, and archive contained inside a private perimeter",
   },
@@ -144,7 +156,7 @@ const phases: RoadmapPhase[] = [
 // element it should stay the only image competing for early bandwidth. These are
 // all below the fold, so they warm the cache at low priority instead.
 const BELOW_FOLD_IMAGES = [
-  "/design-partners/shared-workspace-olive.png",
+  SHARED_WORKSPACE_IMAGE,
   ...phases.map((phase) => phase.image),
 ];
 
@@ -174,22 +186,6 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   );
 }
 
-function TextLink({
-  children,
-  href,
-}: {
-  children: React.ReactNode;
-  href: string;
-}) {
-  return (
-    <a
-      href={href}
-      className="inline-flex min-h-11 items-center gap-2 text-foreground underline decoration-border underline-offset-4 transition-colors duration-150 hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
-    >
-      {children}
-    </a>
-  );
-}
 
 export default async function DesignPartnersPage() {
   // Emitted before the stats await so the browser can fetch artwork in parallel.
@@ -214,6 +210,8 @@ export default async function DesignPartnersPage() {
 
   return (
     <main className="bg-background text-foreground">
+      {/* Recording is bounded by this route: unmounting on navigation stops it. */}
+      <DesignPartnerReplay />
       <section className="relative overflow-hidden px-4 pb-20 pt-24 sm:px-8 sm:pb-28 sm:pt-32 lg:px-[30px] lg:pt-36">
         <div className="relative mx-auto max-w-7xl">
           <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.82fr)] lg:gap-8">
@@ -229,21 +227,24 @@ export default async function DesignPartnersPage() {
                 and tells you what the spend actually produced.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
-                <a
+                <DesignPartnerCta
                   href={CAL_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  destination="book_call"
+                  placement="hero"
+                  external
                   className="inline-flex min-h-11 items-center gap-2 rounded-3xl bg-foreground px-6 py-3 text-base font-semibold tracking-[-0.5px] text-background transition-[transform,opacity] duration-150 hover:opacity-90 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background motion-reduce:transition-none"
                 >
                   Book a discovery call
                   <ArrowIcon className="h-4 w-4" />
-                </a>
-                <a
+                </DesignPartnerCta>
+                <DesignPartnerCta
                   href={MAILTO_HREF}
+                  destination="email"
+                  placement="hero"
                   className="inline-flex min-h-11 items-center gap-2 rounded-3xl border border-border bg-background px-6 py-3 text-base font-normal tracking-[-0.5px] text-foreground transition-[transform,background-color] duration-150 hover:bg-muted active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background motion-reduce:transition-none"
                 >
                   or write to {CONTACT_EMAIL}
-                </a>
+                </DesignPartnerCta>
               </div>
               <p className="mt-5 text-sm text-muted-foreground">
                 paid pilots · month-to-month · cancel anytime
@@ -251,7 +252,7 @@ export default async function DesignPartnersPage() {
             </div>
 
             <Image
-              src="/design-partners/hero-car-engine-olive.png"
+              src={HERO_IMAGE}
               alt="An isometric car with its hood open and software engine highlighted"
               width={1536}
               height={1024}
@@ -291,7 +292,7 @@ export default async function DesignPartnersPage() {
             </p>
           </div>
           <Image
-            src="/design-partners/shared-workspace-olive.png"
+            src={SHARED_WORKSPACE_IMAGE}
             alt="Human workstations and coding-agent modules connected through one shared board and durable archive"
             width={1536}
             height={1024}
@@ -370,17 +371,23 @@ export default async function DesignPartnersPage() {
             </h2>
           </div>
           <div className="flex shrink-0 flex-col gap-3 sm:flex-row">
-            <a
+            <DesignPartnerCta
               href={CAL_URL}
-              target="_blank"
-              rel="noopener noreferrer"
+              destination="book_call"
+              placement="closing"
+              external
               className="inline-flex min-h-11 items-center justify-center gap-2 rounded-3xl bg-foreground px-6 py-3 text-base font-semibold tracking-[-0.5px] text-background transition-[transform,opacity] duration-150 hover:opacity-90 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background motion-reduce:transition-none"
             >
               Book a call
-            </a>
-            <TextLink href={MAILTO_HREF}>
+            </DesignPartnerCta>
+            <DesignPartnerCta
+              href={MAILTO_HREF}
+              destination="email"
+              placement="closing"
+              className="inline-flex min-h-11 items-center gap-2 text-foreground underline decoration-border underline-offset-4 transition-colors duration-150 hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background"
+            >
               or write to {CONTACT_EMAIL}
-            </TextLink>
+            </DesignPartnerCta>
           </div>
         </div>
       </section>

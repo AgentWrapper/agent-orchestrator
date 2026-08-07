@@ -515,7 +515,7 @@ func TestActivity_SameStateSignalStillStoresAgentSessionID(t *testing.T) {
 	}
 }
 
-func TestActivity_ReconciledIdleRequiresUnchangedActiveSnapshot(t *testing.T) {
+func TestActivity_TerminalReconciliationRequiresUnchangedSnapshot(t *testing.T) {
 	m, st, _ := newManager()
 	updatedAt := time.Unix(100, 0).UTC()
 	rec := working("mer-1")
@@ -546,6 +546,19 @@ func TestActivity_ReconciledIdleRequiresUnchangedActiveSnapshot(t *testing.T) {
 	}
 	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityIdle {
 		t.Fatalf("current reconciliation left activity %q", got)
+	}
+
+	idleUpdatedAt := st.sessions[rec.ID].UpdatedAt
+	if err := m.ApplyActivitySignal(ctx, rec.ID, ports.ActivitySignal{
+		Valid:             true,
+		State:             domain.ActivityActive,
+		Event:             "terminal-active",
+		ExpectedUpdatedAt: idleUpdatedAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions[rec.ID].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("current idle snapshot did not reconcile to active: %q", got)
 	}
 }
 

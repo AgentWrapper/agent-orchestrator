@@ -3,6 +3,7 @@ package controllers_test
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -1718,7 +1719,7 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom ","mode":"chat"}`)
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom ","mode":"chat","attachments":[{"mimeType":"image/png","data":"AQID"}]}`)
 	if status != http.StatusAccepted {
 		t.Fatalf("delegate = %d, want 202; body=%s", status, body)
 	}
@@ -1733,6 +1734,12 @@ func TestSessionsAPI_DelegateTask(t *testing.T) {
 	}
 	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "Fix it" || svc.delegationInput.RequestedAgent != domain.HarnessCursor || svc.delegationInput.Model != "sonnet-custom" || svc.delegationInput.RequestedMode != domain.SessionModeChat {
 		t.Fatalf("delegation input = %#v", svc.delegationInput)
+	}
+	if len(svc.delegationInput.Attachments) != 1 {
+		t.Fatalf("attachments = %#v, want one", svc.delegationInput.Attachments)
+	}
+	if got := svc.delegationInput.Attachments[0]; got.Ext != ".png" || string(got.Data) != "\x01\x02\x03" {
+		t.Fatalf("attachment = %#v, want decoded png", got)
 	}
 }
 
@@ -1757,13 +1764,53 @@ func TestSessionsAPI_DelegateTaskValidationAndServiceError(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_SESSION_MODE")
 }
 
+func TestSessionsAPI_DelegateTaskRejectsInvalidAttachments(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		code string
+	}{
+		{
+			name: "bad base64",
+			body: `{"projectId":"ao","brief":"Fix it","attachments":[{"mimeType":"image/png","data":"!!!"}]}`,
+			code: "INVALID_ATTACHMENT_DATA",
+		},
+		{
+			name: "empty base64",
+			body: `{"projectId":"ao","brief":"Fix it","attachments":[{"mimeType":"image/png","data":""}]}`,
+			code: "INVALID_ATTACHMENT_DATA",
+		},
+		{
+			name: "svg",
+			body: `{"projectId":"ao","brief":"Fix it","attachments":[{"mimeType":"image/svg+xml","data":"PHN2Zy8+"}]}`,
+			code: "UNSUPPORTED_ATTACHMENT_TYPE",
+		},
+		{
+			name: "too large",
+			body: `{"projectId":"ao","brief":"Fix it","attachments":[{"mimeType":"image/png","data":"` +
+				base64.StdEncoding.EncodeToString([]byte(strings.Repeat("x", (10<<20)+1))) + `"}]}`,
+			code: "ATTACHMENT_TOO_LARGE",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newFakeSessionService()
+			srv := newSessionTestServer(t, svc)
+			body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", tc.body)
+			assertErrorCode(t, body, status, http.StatusBadRequest, tc.code)
+		})
+	}
+}
+
 func TestSessionsAPI_DelegateTaskRejectsOversizedBody(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
 
-	// A brief past the 32 KiB raw-body cap must fail during bounded decoding.
-	// Without MaxBytesReader this would decode and fail later as TASK_TOO_LONG.
-	oversized := `{"projectId":"ao","brief":"` + strings.Repeat("A", 40<<10) + `"}`
+	// A body past the spawn attachment cap is rejected while decoding
+	// (MaxBytesReader), before attachment size validation and without
+	// materializing the whole body.
+	oversized := `{"projectId":"ao","brief":"Fix it","attachments":[{"mimeType":"image/png","data":"` +
+		strings.Repeat("A", 40<<20) + `"}]}`
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", oversized)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
 	if svc.delegationInput.ProjectID != "" {
