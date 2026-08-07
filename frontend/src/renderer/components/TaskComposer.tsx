@@ -498,12 +498,13 @@ function TaskModelPicker({
 	if (catalogLoading) {
 		return (
 			<span
-				className="composer-chip composer-toolbar-option w-full justify-center"
+				className="composer-chip composer-toolbar-option w-full cursor-not-allowed justify-start opacity-50"
 				role="status"
 				aria-label={t("settings.models.loading")}
 				aria-busy="true"
 			>
-				<Loader2 className="size-icon-sm animate-spin text-settings-muted" aria-hidden="true" />
+				<Loader2 className="size-icon-sm shrink-0 animate-spin text-settings-muted" aria-hidden="true" />
+				<span className="truncate text-settings-muted">{t("settings.models.loading")}</span>
 			</span>
 		);
 	}
