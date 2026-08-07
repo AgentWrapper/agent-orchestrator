@@ -999,7 +999,7 @@
 	"settings.dev.decreaseAria": "减少{{label}}",
 	"settings.dev.increaseAria": "增加{{label}}",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "描述任务…",
+	"newTask.taskPlaceholder": "描述任务（可选）…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

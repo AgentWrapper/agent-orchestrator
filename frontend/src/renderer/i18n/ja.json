@@ -1017,7 +1017,7 @@
 	"shell.pinSession": "Pin session",
 	"shell.unpinSession": "Unpin session",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "タスクを説明…",
+	"newTask.taskPlaceholder": "タスクを説明（任意）…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

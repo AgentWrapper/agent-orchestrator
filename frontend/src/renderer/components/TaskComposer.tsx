@@ -27,7 +27,6 @@ import {
 } from "../hooks/useAgentModelsQuery";
 import { AgentModelCombobox } from "./settings/AgentModelCombobox";
 import { SettingsOptionMenu } from "./settings/SettingsOptionMenu";
-import { cn } from "../lib/utils";
 
 type Project = components["schemas"]["Project"];
 type DelegateAgent = components["schemas"]["DelegateTaskRequest"]["agent"];
@@ -61,7 +60,6 @@ class TaskCreateError extends Error {
 export type TaskComposerProps = {
 	projectId?: string;
 	onCreated: (sessionId: string) => void;
-	onCancel?: () => void;
 	onDirtyChange?: (dirty: boolean) => void;
 	onSubmittingChange?: (submitting: boolean) => void;
 	autoFocusTitle?: boolean;
@@ -70,7 +68,6 @@ export type TaskComposerProps = {
 export function TaskComposer({
 	projectId,
 	onCreated,
-	onCancel,
 	onDirtyChange,
 	onSubmittingChange,
 	autoFocusTitle,
@@ -250,14 +247,14 @@ export function TaskComposer({
 		void addFiles(files);
 	};
 
-	const handleDrop = (event: DragEvent<HTMLDivElement>) => {
+	const handleDrop = (event: DragEvent<HTMLFormElement>) => {
 		event.preventDefault();
 		setIsDragging(false);
 		const files = Array.from(event.dataTransfer?.files ?? []);
 		if (files.length > 0) void addFiles(files);
 	};
 
-	const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
+	const handleDragOver = (event: DragEvent<HTMLFormElement>) => {
 		if (Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === "file")) {
 			event.preventDefault();
 			setIsDragging(true);
@@ -265,51 +262,44 @@ export function TaskComposer({
 	};
 
 	return (
-		<form onSubmit={submit} className="flex flex-col">
-			{/* The task is the only thing with weight here: no field label, no border,
-			    just the caret. Everything below it is a decision you usually skip. */}
+		<form
+			onSubmit={submit}
+			className="composer-prompt-surface flex flex-col transition-[background-color,box-shadow]"
+			data-dragging={isDragging || undefined}
+			onDrop={handleDrop}
+			onDragOver={handleDragOver}
+			onDragLeave={(event) => {
+				const nextTarget = event.relatedTarget;
+				if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setIsDragging(false);
+			}}
+		>
+			{/* The whole card is one composer: the prompt carries the hierarchy and the
+			    launch controls sit in its own bottom padding, without a dialog footer. */}
 			<label className="sr-only" htmlFor={promptId}>
 				{t("newTask.task")}
 			</label>
-			<div
-				className={cn("transition", isDragging && "bg-accent-weak ring-2 ring-inset ring-accent")}
-				onDrop={handleDrop}
-				onDragOver={handleDragOver}
-				onDragLeave={() => setIsDragging(false)}
-			>
-				<div className="composer-prompt-surface relative">
-					<textarea
-						id={promptId}
-						autoFocus={autoFocusTitle}
-						className="min-h-textarea-min w-full resize-none bg-transparent px-(--size-modal-padding) pb-12 pt-1 text-md leading-relaxed text-foreground outline-none placeholder:text-passive"
-						placeholder={t("newTask.taskPlaceholder")}
-						value={prompt}
-						onChange={(event) => setPrompt(event.target.value)}
-						onPaste={handlePaste}
-						onKeyDown={(event) => {
-							if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
-								event.preventDefault();
-								event.currentTarget.form?.requestSubmit();
-							}
-						}}
-					/>
-					<button
-						type="button"
-						className="absolute bottom-2 right-(--size-modal-padding) grid size-9 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground"
-						aria-label={t("newTask.addFile")}
-						onClick={() => fileInputRef.current?.click()}
-					>
-						<Paperclip className="size-icon-sm" aria-hidden="true" />
-					</button>
-				</div>
-			</div>
+			<textarea
+				id={promptId}
+				autoFocus={autoFocusTitle}
+				className="min-h-(--size-composer-prompt-min) w-full resize-none bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive"
+				placeholder={t("newTask.taskPlaceholder")}
+				value={prompt}
+				onChange={(event) => setPrompt(event.target.value)}
+				onPaste={handlePaste}
+				onKeyDown={(event) => {
+					if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
+						event.preventDefault();
+						event.currentTarget.form?.requestSubmit();
+					}
+				}}
+			/>
 
 			{attachments.length > 0 && (
-				<ul className="mx-(--size-modal-padding) mb-3 grid max-h-40 grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">
+				<ul className="scrollbar-none flex max-h-24 flex-wrap gap-2 overflow-y-auto px-3 pb-2">
 					{attachments.map((attachment) => (
 						<li
 							key={attachment.id}
-							className="flex items-center gap-2 rounded-md border border-border bg-surface p-1 text-xs text-foreground"
+							className="flex min-w-0 max-w-48 items-center gap-2 rounded-md bg-surface px-1.5 py-1 text-xs text-foreground"
 						>
 							{attachment.dataUrl ? (
 								<img src={attachment.dataUrl} alt="" className="size-7 shrink-0 rounded object-cover" />
@@ -322,7 +312,7 @@ export function TaskComposer({
 							<span className="min-w-0 flex-1 truncate font-medium">{attachment.name}</span>
 							<button
 								type="button"
-								className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition hover:bg-border hover:text-foreground"
+								className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-border hover:text-foreground"
 								aria-label={t("newTask.removeFile", { name: attachment.name })}
 								onClick={() => removeAttachment(attachment.id)}
 							>
@@ -343,11 +333,11 @@ export function TaskComposer({
 				}}
 			/>
 			{attachmentError && (
-				<p className="px-(--size-modal-padding) pb-3 text-caption text-destructive">{attachmentError}</p>
+				<p className="px-4 pb-2 text-caption text-destructive">{attachmentError}</p>
 			)}
 
 			{(error || modelWarning) && (
-				<div className="px-(--size-modal-padding) pb-3">
+				<div className="px-3 pb-2">
 					{error && (
 						<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
 							<span>{error}</span>
@@ -371,14 +361,9 @@ export function TaskComposer({
 				</div>
 			)}
 
-			{/* Two bands: what it will run with, then what you can do about it. One row
-			    holding chips and buttons together reads as a crowded toolbar. */}
-			<div className="composer-run-config border-t border-border/70 px-(--size-modal-padding) py-3">
-				<div className="composer-run-row">
-					{/* One sentence — "Runs with <agent> <model>" — states what will happen,
-					    instead of two labelled fields the reader has to assemble themselves. */}
-					<span className="eyebrow-label shrink-0">{t("newTask.runsWith")}</span>
-					<div className="composer-run-target" role="group" aria-label={t("newTask.runsWith")}>
+			<div className="composer-toolbar">
+				<div className="composer-run-controls" role="group" aria-label={t("newTask.runsWith")}>
+					<div className="composer-toolbar-slot">
 						<RequiredAgentField
 							id={agentId}
 							variant="chip"
@@ -389,7 +374,7 @@ export function TaskComposer({
 							installed={agentCatalog?.installed}
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
-							triggerClassName="composer-run-target-segment w-full justify-between bg-transparent!"
+							triggerClassName="composer-toolbar-option w-full justify-between bg-transparent!"
 							onChange={(value) => {
 								setAgent(value);
 								setAgentTouched(true);
@@ -400,6 +385,9 @@ export function TaskComposer({
 								setModelTouched(false);
 							}}
 						/>
+					</div>
+					<span className="composer-toolbar-divider" aria-hidden="true" />
+					<div className="composer-toolbar-slot">
 						<TaskModelPicker
 							id={modelId}
 							agentId={selectedAgent}
@@ -421,35 +409,29 @@ export function TaskComposer({
 						/>
 					</div>
 				</div>
-			</div>
-
-			<div className="flex items-center justify-between gap-4 border-t border-border/70 px-(--size-modal-padding) py-3">
-				<p className="min-w-0 truncate text-caption text-passive">
-					<span key={prompt.trim() === "" ? "empty" : "writing"} className="composer-value-swap">
-						{prompt.trim() === "" ? t("newTask.emptyHint") : t("newTask.newlineHint")}
-					</span>
-				</p>
-				<div className="flex shrink-0 items-center gap-2">
-					{onCancel && (
-						<Button type="button" variant="secondary" disabled={isSubmitting} onClick={onCancel}>
-							{t("newTask.cancel")}
-						</Button>
+				<button
+					type="button"
+					className="grid size-control-md place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					aria-label={t("newTask.addFile")}
+					onClick={() => fileInputRef.current?.click()}
+				>
+					<Paperclip className="size-icon-base" aria-hidden="true" />
+				</button>
+				<Button
+					type="submit"
+					variant="primary"
+					size="sm"
+					disabled={isSubmitting || !projectId}
+					className="min-w-(--size-composer-start-button)"
+				>
+					{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+					{isSubmitting ? t("newTask.starting") : t("newTask.start")}
+					{!isSubmitting && (
+						<kbd className="composer-keycap" aria-hidden="true">
+							↵
+						</kbd>
 					)}
-					<Button
-						type="submit"
-						variant="primary"
-						disabled={isSubmitting || !projectId}
-						className="min-w-(--size-composer-start-button)"
-					>
-						{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
-						{isSubmitting ? t("newTask.starting") : t("newTask.start")}
-						{!isSubmitting && (
-							<kbd className="composer-keycap" aria-hidden="true">
-								↵
-							</kbd>
-						)}
-					</Button>
-				</div>
+				</Button>
 			</div>
 		</form>
 	);
@@ -510,8 +492,8 @@ function TaskModelPicker({
 			: undefined) ??
 		catalog?.warning ??
 		(query.isError ? (query.error instanceof Error ? query.error.message : t("settings.models.loadFailed")) : undefined);
-	// The composer owns the one place warnings appear, so the chip row never grows
-	// a second line and shifts the footer while you are typing.
+	// The composer owns the one place warnings appear, so a picker never grows a
+	// second line and shifts the launch controls while you are typing.
 	useEffect(() => {
 		onWarningChange(warning);
 	}, [onWarningChange, warning]);
@@ -526,7 +508,7 @@ function TaskModelPicker({
 	if (catalogLoading) {
 		return (
 			<span
-				className="composer-chip composer-run-target-segment w-full bg-transparent!"
+				className="composer-chip composer-toolbar-option w-full bg-transparent!"
 				role="status"
 				aria-label={t("settings.models.loading")}
 				aria-busy="true"
@@ -549,12 +531,12 @@ function TaskModelPicker({
 				aria-label={t("newTask.model")}
 				value={mode || "__default__"}
 				options={options}
-				triggerClassName="composer-chip composer-run-target-segment w-full justify-between bg-transparent!"
+				triggerClassName="composer-chip composer-toolbar-option w-full justify-between bg-transparent!"
 				menuAlign="start"
 				renderTrigger={() => (
 					<span
 						key={`${agentId}:${mode || "__default__"}`}
-						className="composer-value-swap min-w-0 truncate text-foreground"
+						className="composer-value-swap min-w-0 truncate font-mono text-xs text-foreground"
 						title={visibleModeLabel}
 					>
 						{visibleModeLabel}
@@ -591,14 +573,14 @@ function TaskModelPicker({
 				onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
 				refreshing={refreshMutation.isPending}
 				recentScope={agentId}
-				triggerClassName="composer-chip composer-run-target-segment w-full justify-between bg-transparent!"
+				triggerClassName="composer-chip composer-toolbar-option w-full justify-between bg-transparent!"
 				menuAlign="start"
 				renderTrigger={(label) => {
 					const visibleLabel = value ? label : t("newTask.autoModel");
 					return (
 						<span
 							key={`${agentId}:${value || "__default__"}`}
-							className="composer-value-swap min-w-0 truncate text-foreground"
+							className="composer-value-swap min-w-0 truncate font-mono text-xs text-foreground"
 							title={visibleLabel}
 						>
 							{visibleLabel}
@@ -615,7 +597,7 @@ function TaskModelPicker({
 			<input
 				id={id}
 				aria-label={t("newTask.model")}
-				className="composer-chip composer-run-target-segment min-w-0 flex-1 bg-transparent! placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+				className="composer-chip composer-toolbar-option min-w-0 flex-1 bg-transparent! font-mono text-xs placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
 				value={value}
 				disabled={agentId === ""}
 				onChange={(event) => onModelChange(event.target.value)}

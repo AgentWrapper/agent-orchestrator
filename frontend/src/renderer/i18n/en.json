@@ -999,7 +999,7 @@
 	"zone.pending": "In review",
 	"zone.working": "Working",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "Describe the task…",
+	"newTask.taskPlaceholder": "Describe the task (optional)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

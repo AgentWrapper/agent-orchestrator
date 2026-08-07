@@ -1017,7 +1017,7 @@
 	"shell.pinSession": "Pin session",
 	"shell.unpinSession": "Unpin session",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "작업 설명…",
+	"newTask.taskPlaceholder": "작업 설명(선택 사항)…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

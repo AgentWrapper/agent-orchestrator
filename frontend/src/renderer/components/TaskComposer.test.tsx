@@ -98,7 +98,8 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		expect(screen.getByText("Start now — details can come later.")).toBeInTheDocument();
+		expect(task()).toHaveAttribute("placeholder", "Describe the task (optional)…");
+		expect(screen.getByRole("button", { name: "Start task" })).toBeEnabled();
 		fireEvent.click(screen.getByText("Start task"));
 
 		await waitFor(() =>
@@ -110,30 +111,34 @@ describe("TaskComposer", () => {
 		expect(onCreated).toHaveBeenCalledWith("sess-empty");
 	});
 
-	it("replaces the promptless affordance with the newline hint once typing starts", () => {
+	it("keeps prompt guidance in the field instead of adding a separate footer row", () => {
 		render(
 			<Wrap>
 				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
 			</Wrap>,
 		);
 
-		expect(screen.getByText("Start now — details can come later.")).toBeInTheDocument();
-		fireEvent.change(task(), { target: { value: "Investigate the failure" } });
-		expect(screen.getByText("Shift+Enter for a new line")).toBeInTheDocument();
+		expect(task()).toHaveAttribute("placeholder", "Describe the task (optional)…");
 		expect(screen.queryByText("Start now — details can come later.")).not.toBeInTheDocument();
+		expect(screen.queryByText("Shift+Enter for a new line")).not.toBeInTheDocument();
+		fireEvent.change(task(), { target: { value: "Investigate the failure" } });
+		expect(task()).toHaveValue("Investigate the failure");
 	});
 
-	it("renders agent and model as equal segments of one run target", () => {
+	it("keeps agent and model in equal stable toolbar tracks", () => {
 		render(
 			<Wrap>
 				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
 			</Wrap>,
 		);
 
-		const runTarget = screen.getByRole("group", { name: "Runs with" });
-		expect(runTarget).toHaveClass("composer-run-target");
-		expect(screen.getByTestId("agent-field")).toHaveClass("composer-run-target-segment");
-		expect(screen.getByLabelText("Model")).toHaveClass("composer-run-target-segment");
+		const runControls = screen.getByRole("group", { name: "Runs with" });
+		expect(runControls).toHaveClass("composer-run-controls");
+		expect(runControls.closest(".composer-toolbar")).not.toBeNull();
+		expect(runControls.querySelectorAll(".composer-toolbar-slot")).toHaveLength(2);
+		expect(screen.getByTestId("agent-field").closest(".composer-toolbar-slot")).not.toBeNull();
+		expect(screen.getByLabelText("Model").closest(".composer-toolbar-slot")).not.toBeNull();
+		expect(runControls.querySelector(".composer-toolbar-divider")).not.toBeNull();
 	});
 
 	it("keeps the file attach control inside the prompt surface", () => {

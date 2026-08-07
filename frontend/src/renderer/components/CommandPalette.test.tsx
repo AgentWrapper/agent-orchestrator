@@ -125,7 +125,6 @@ vi.mock("./TaskComposer", () => ({
 	TaskComposer: (props: {
 		projectId?: string;
 		onCreated: (id: string) => void;
-		onCancel?: () => void;
 		onDirtyChange?: (dirty: boolean) => void;
 		onSubmittingChange?: (submitting: boolean) => void;
 	}) => (
@@ -140,9 +139,6 @@ vi.mock("./TaskComposer", () => ({
 			</button>
 			<button type="button" onClick={() => props.onCreated("new-session")}>
 				stub-create
-			</button>
-			<button type="button" onClick={() => props.onCancel?.()}>
-				stub-cancel
 			</button>
 		</div>
 	),
