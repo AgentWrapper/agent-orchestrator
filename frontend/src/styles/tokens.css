@@ -347,10 +347,9 @@
 	--size-flex-min: 0px;
 	/* Keeps terminal tabs usable after title truncation while leaving room for several tabs. */
 	--size-shell-tab-min: 64px;
-	/* Browser-style session/shell tabs fill the strip evenly, then overflow once
-	   every tab reaches this readable floor. Hover actions overlay reserved space
-	   inside the tab, so revealing them never changes its width. */
-	--size-session-pane-tab-min: 136px;
+	/* Fixed browser-style session/shell tab width. Hover actions overlay the
+	   content area, so neither the tab nor its neighbours move when they appear. */
+	--size-session-pane-tab: 136px;
 	/* Caps a standalone shell terminal's tab label so several open shells stay
 	   readable side by side instead of one long path crowding out the rest. */
 	--size-shell-tab-max: 140px;

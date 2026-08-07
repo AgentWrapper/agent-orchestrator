@@ -95,6 +95,8 @@ describe("ShellTerminalTab rename", () => {
 		expect(close).toHaveClass("size-control-xs", "session-pane-tab__action-button");
 		expect(close.closest(".session-pane-tab__actions")).toHaveClass(
 			"absolute",
+			"top-0",
+			"bottom-px",
 			"opacity-0",
 			"group-hover:opacity-100",
 		);

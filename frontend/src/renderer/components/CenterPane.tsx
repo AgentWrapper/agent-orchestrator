@@ -682,7 +682,7 @@ function SessionPaneTab({
 				<Pin aria-hidden="true" className="session-pane-tab__pin-indicator absolute right-1 size-icon-xs fill-current text-passive" />
 			) : null}
 			{actions || onTogglePinned || onClose ? (
-				<span className="session-pane-tab__actions pointer-events-none absolute inset-y-0 right-1 flex translate-x-1 items-center gap-0.5 opacity-0 transition-[opacity,transform] duration-fast group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100">
+				<span className="session-pane-tab__actions pointer-events-none absolute top-0 right-1 bottom-px flex translate-x-1 items-center gap-0.5 opacity-0 transition-[opacity,transform] duration-fast group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100">
 					{actions}
 					{onTogglePinned ? (
 						<button

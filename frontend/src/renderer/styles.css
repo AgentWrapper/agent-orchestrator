@@ -1525,14 +1525,20 @@ textarea,
 .session-pane-tab {
 	box-sizing: border-box;
 	height: var(--size-control-md);
-	min-width: var(--size-session-pane-tab-min);
-	max-width: none;
-	flex: 1 0 var(--size-session-pane-tab-min);
+	width: var(--size-session-pane-tab);
+	min-width: var(--size-session-pane-tab);
+	max-width: var(--size-session-pane-tab);
+	flex: 0 0 var(--size-session-pane-tab);
 	align-self: flex-end;
 	gap: var(--space-0_5);
 	border-inline-end: 1px solid var(--color-border);
 	border-radius: 0;
 	padding-inline: var(--space-2);
+	--session-pane-tab-action-surface: color-mix(in oklch, var(--color-background) 96%, var(--color-foreground) 4%);
+}
+
+.session-pane-tab[data-active="true"] {
+	--session-pane-tab-action-surface: color-mix(in oklch, var(--color-background) 93%, var(--color-foreground) 7%);
 }
 
 .session-pane-tab__label {
@@ -1542,12 +1548,7 @@ textarea,
 .session-pane-tab__actions {
 	z-index: 1;
 	padding-left: var(--space-2);
-	background: linear-gradient(
-		to right,
-		transparent,
-		color-mix(in oklch, var(--color-background) 93%, var(--color-foreground) 7%) var(--space-2),
-		color-mix(in oklch, var(--color-background) 93%, var(--color-foreground) 7%)
-	);
+	background: var(--session-pane-tab-action-surface);
 }
 
 .session-pane-tab__pin-indicator {

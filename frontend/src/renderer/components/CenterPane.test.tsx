@@ -341,6 +341,8 @@ describe("CenterPane toolbar session label", () => {
 		const shelf = action.closest(".session-pane-tab__actions");
 		expect(shelf).toHaveClass(
 			"absolute",
+			"top-0",
+			"bottom-px",
 			"opacity-0",
 			"group-hover:opacity-100",
 			"group-focus-within:opacity-100",
