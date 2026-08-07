@@ -81,6 +81,7 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "claude-code", mode: ports.ModelSelectionCatalog, count: 3},
 		{agent: "codex", mode: ports.ModelSelectionCatalog, count: 7},
 		{agent: "amp", mode: ports.ModelSelectionModeList, count: 4},
+		{agent: "muse", mode: ports.ModelSelectionCatalog, count: 3},
 		{agent: "aider", mode: ports.ModelSelectionCatalog},
 		{agent: "autohand", mode: ports.ModelSelectionCatalog},
 		{agent: "qwen", mode: ports.ModelSelectionText},
@@ -94,6 +95,22 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 				t.Fatalf("Base(%q) = %#v", tc.agent, got)
 			}
 		})
+	}
+}
+
+func TestBaseMuseCatalogAllowsCustomModels(t *testing.T) {
+	got := Base("muse")
+	if got.SelectionMode != ports.ModelSelectionCatalog {
+		t.Fatalf("SelectionMode = %q, want catalog", got.SelectionMode)
+	}
+	if !got.AllowCustom {
+		t.Fatal("AllowCustom = false, want true")
+	}
+	if got.Source != "official-catalog" {
+		t.Fatalf("Source = %q, want official-catalog", got.Source)
+	}
+	if len(got.Models) != 3 || got.Models[0].ID != "muse-spark" || !got.Models[0].IsDefault {
+		t.Fatalf("models = %#v", got.Models)
 	}
 }
 
