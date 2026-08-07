@@ -49,6 +49,7 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.ContinuousTerminalActivityDetector = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -107,6 +108,64 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, cfg.Prompt)
 	}
 	return cmd, nil
+}
+
+// GetRestoreCommand builds the argv to resume an existing Muse session:
+//
+//	[env TBH_EVAL_APPEND_DEVELOPER_PROMPT=<instructions> TBH_MANAGED_HOOKS_PATH=<path>] muse --trust-workspace [--approval-mode never|--yolo] [--model <model>] resume <agentSessionId>
+//
+// ok is false when Muse has not emitted its native session id through AO hooks.
+func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+
+	agentSessionID := strings.TrimSpace(cfg.Session.Metadata[ports.MetadataKeyAgentSessionID])
+	if agentSessionID == "" {
+		return nil, false, nil
+	}
+
+	binary, err := p.museBinary(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	systemPrompt, err := museSystemPromptText(cfg.SystemPrompt, cfg.SystemPromptFile)
+	if err != nil {
+		return nil, false, fmt.Errorf("muse.GetRestoreCommand: %w", err)
+	}
+
+	cmd = make([]string, 0, 12)
+	env := make([]string, 0, 2)
+	if systemPrompt != "" {
+		env = append(env, museDeveloperPromptEnvVar+"="+systemPrompt)
+	}
+	if cfg.DataDir != "" || cfg.Session.ID != "" {
+		hooksPath, pathErr := museManagedHooksPath(cfg.DataDir, cfg.Session.ID)
+		if pathErr != nil {
+			return nil, false, fmt.Errorf("muse.GetRestoreCommand: %w", pathErr)
+		}
+		env = append(env, museManagedHooksEnvVar+"="+hooksPath)
+	}
+	if len(env) > 0 {
+		cmd = append(cmd, "env")
+		cmd = append(cmd, env...)
+	}
+
+	cmd = append(cmd, binary, "--trust-workspace")
+	appendApprovalFlags(&cmd, cfg.Permissions)
+	agentbase.AppendModelFlag(&cmd, cfg.Config, "--model")
+	cmd = append(cmd, "resume", agentSessionID)
+	return cmd, true, nil
+}
+
+// SessionInfo surfaces Muse hook-derived metadata.
+func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (ports.SessionInfo, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.SessionInfo{}, false, err
+	}
+	info, ok := agentbase.StandardSessionInfo(session)
+	return info, ok, nil
 }
 
 func appendApprovalFlags(cmd *[]string, mode ports.PermissionMode) {

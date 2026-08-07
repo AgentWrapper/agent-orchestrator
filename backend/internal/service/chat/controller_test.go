@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	chatsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/chat"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/store"
 )
 
@@ -29,11 +30,7 @@ const (
 func openStore(t *testing.T) *sqlite.Store {
 	t.Helper()
 	dir := t.TempDir()
-	st, err := sqlite.Open(dir)
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = st.Close() })
+	st := sqlitetest.MustOpenAt(t, dir)
 
 	ctx := context.Background()
 	if err := st.UpsertProject(ctx, domain.ProjectRecord{

@@ -12,16 +12,12 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func newTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	s, err := sqlite.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = s.Close() })
-	return s
+	return sqlitetest.MustOpen(t)
 }
 
 func seedProject(t *testing.T, s *sqlite.Store, id string) {

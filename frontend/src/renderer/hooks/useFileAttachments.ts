@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 // Client-side mirror of the backend spawn caps in
 // backend/internal/httpd/controllers/sessions.go (maxAttachments /
@@ -33,8 +33,8 @@ export type FileAttachmentPayload = {
 	name?: string;
 };
 
-// Client-side mirror of the backend raster-only allowlist
-// (backend/internal/httpd/controllers/sessions.go attachmentExtByMime).
+// Client-side mirror of the backend image-preview allowlist. Non-image files can
+// still be attached; they render with the generic file icon.
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/bmp"]);
 
 export const isSupportedImageAttachment = (type: string) =>
@@ -71,6 +71,8 @@ const readFileAsBase64 = (file: File): Promise<{ dataUrl: string; data: string }
 export function useFileAttachments() {
 	const [attachments, setAttachments] = useState<FileAttachment[]>([]);
 	const [error, setError] = useState<string | null>(null);
+	const attachmentsRef = useRef<FileAttachment[]>([]);
+	const pendingReadsRef = useRef<Set<Promise<unknown>>>(new Set());
 
 	const addFiles = useCallback(async (files: Iterable<File>) => {
 		// Filter out directories - they have type "" and size 0 in most browsers
@@ -106,11 +108,14 @@ export function useFileAttachments() {
 			return true;
 		});
 
-		const results = await Promise.all(
+		const pendingReads = Promise.all(
 			readable.map((file) =>
 				readFileAsBase64(file).catch(() => null).then((result) => ({ file, result })),
 			),
 		);
+		pendingReadsRef.current.add(pendingReads);
+		const results = await pendingReads;
+		pendingReadsRef.current.delete(pendingReads);
 
 		const fresh: FileAttachment[] = [];
 		for (const { file, result } of results) {
@@ -132,34 +137,36 @@ export function useFileAttachments() {
 			});
 		}
 
-		// Apply count/total-size caps inside the functional updater so they are
-		// computed against the CURRENT state, not a stale closure snapshot.
-		setAttachments((prev) => {
-			const accepted = [...prev];
-			let total = accepted.reduce((sum, a) => sum + a.bytes, 0);
-			for (const a of fresh) {
-				if (accepted.length >= MAX_ATTACHMENTS) {
-					errors.add(`You can attach up to ${MAX_ATTACHMENTS} files.`);
-					break;
-				}
-				if (total + a.bytes > MAX_ATTACHMENTS_BYTES) {
-					errors.add(`Attachments must total under ${mb(MAX_ATTACHMENTS_BYTES)} MB.`);
-					break;
-				}
-				accepted.push(a);
-				total += a.bytes;
+		const accepted = [...attachmentsRef.current];
+		let total = accepted.reduce((sum, a) => sum + a.bytes, 0);
+		for (const a of fresh) {
+			if (accepted.length >= MAX_ATTACHMENTS) {
+				errors.add(`You can attach up to ${MAX_ATTACHMENTS} files.`);
+				break;
 			}
-			return accepted.length === prev.length ? prev : accepted;
-		});
+			if (total + a.bytes > MAX_ATTACHMENTS_BYTES) {
+				errors.add(`Attachments must total under ${mb(MAX_ATTACHMENTS_BYTES)} MB.`);
+				break;
+			}
+			accepted.push(a);
+			total += a.bytes;
+		}
+		if (accepted.length !== attachmentsRef.current.length) {
+			attachmentsRef.current = accepted;
+			setAttachments(accepted);
+		}
 		setError(errors.size > 0 ? Array.from(errors).join(" ") : null);
 	}, []);
 
 	const remove = useCallback((id: string) => {
-		setAttachments((prev) => prev.filter((a) => a.id !== id));
+		const next = attachmentsRef.current.filter((a) => a.id !== id);
+		attachmentsRef.current = next;
+		setAttachments(next);
 		setError(null);
 	}, []);
 
 	const clear = useCallback(() => {
+		attachmentsRef.current = [];
 		setAttachments([]);
 		setError(null);
 	}, []);
@@ -170,5 +177,12 @@ export function useFileAttachments() {
 		[attachments],
 	);
 
-	return { attachments, error, addFiles, remove, clear, toPayload };
+	const toSettledPayload = useCallback(async (): Promise<FileAttachmentPayload[]> => {
+		while (pendingReadsRef.current.size > 0) {
+			await Promise.allSettled(Array.from(pendingReadsRef.current));
+		}
+		return attachmentsRef.current.map(({ mimeType, data }) => ({ mimeType, data }));
+	}, []);
+
+	return { attachments, error, addFiles, remove, clear, toPayload, toSettledPayload };
 }

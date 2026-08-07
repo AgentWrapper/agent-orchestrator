@@ -24,6 +24,7 @@ import (
 	scmobserve "github.com/aoagents/agent-orchestrator/backend/internal/observe/scm"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 var scmTestRepo = ports.SCMRepo{
@@ -180,7 +181,7 @@ func newSCMFixture(t *testing.T, branch string) *scmFixture {
 	t.Helper()
 	ctx := context.Background()
 
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("sqlite.Open: %v", err)
 	}

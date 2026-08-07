@@ -591,7 +591,10 @@ function ShellLayout() {
 		setActiveShellTerminal,
 	]);
 
-	useEffect(() => aoBridge.app.onOpenSettingsShortcut(() => void navigate({ to: "/settings" })), [navigate]);
+	useEffect(
+		() => aoBridge.app.onOpenSettingsShortcut(() => useUiStore.getState().openGlobalSettings()),
+		[],
+	);
 
 	useEffect(() => {
 		const disposePrevious = aoBridge.app.onPreviousSessionShortcut(() => navigateSession(-1));

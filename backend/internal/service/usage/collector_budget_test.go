@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 const (
@@ -296,7 +297,7 @@ func TestCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t
 func testCollectorCodexBudgetFinalizationWaitsThenPersistsPartialAcrossRestart(t *testing.T, hookEvent string) {
 	ctx := context.Background()
 	dataDir := t.TempDir()
-	store, err := sqlite.Open(dataDir)
+	store, err := sqlitetest.Open(dataDir)
 	mustNoError(t, err)
 	root := t.TempDir()
 	now := time.Unix(1700000000, 0).UTC()
