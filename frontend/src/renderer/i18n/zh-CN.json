@@ -584,6 +584,7 @@
 	"settings.updates.latest": "已是最新版本。",
 	"settings.updates.needInstalledApp": "更新功能需要使用已安装的桌面应用。",
 	"settings.updates.noFeatureReleases": "暂无可用的功能版本。",
+	"settings.updates.networkStale": "已有一段时间无法检查更新，重启应用通常可以解决。",
 	"settings.updates.nightlyWarning": "每日构建每天生成，可能不稳定或导致数据丢失。仅在你能接受这些风险时使用。",
 	"settings.updates.onFeatureBuild": "当前运行的是 PR #{{pr}} 的构建。",
 	"settings.updates.returnToNightly": "返回每日构建",

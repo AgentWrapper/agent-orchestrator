@@ -34,6 +34,10 @@ export interface UpdateStatus {
 	// escalated: true when per-channel rules say the user should be nudged harder.
 	stagedAt?: number;
 	escalated?: boolean;
+	// Present when automatic update checks have failed several times in a row
+	// with Chromium network-stack errors (net::ERR_*) — the app's network stack
+	// is wedged and restarting the app usually fixes it (#3526).
+	staleCheckNudge?: boolean;
 }
 
 /** File holding the user's auto-update preferences under the ~/.ao state dir. */

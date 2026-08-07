@@ -245,6 +245,13 @@ export function UpdatesSection({ titleHidden }: { titleHidden?: boolean } = {}) 
 					</p>
 				)}
 
+				{status.staleCheckNudge && (
+					<p className="flex items-center gap-2 px-1 text-xs leading-row text-warning">
+						<AlertTriangle className="size-icon-sm shrink-0" aria-hidden="true" />
+						<span>{t("settings.updates.networkStale")}</span>
+					</p>
+				)}
+
 				{save.isError && (
 					<p className="px-1 text-xs text-error">{save.error instanceof Error ? save.error.message : t("settings.updates.saveFailed")}</p>
 				)}

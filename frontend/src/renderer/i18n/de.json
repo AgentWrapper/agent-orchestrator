@@ -573,6 +573,7 @@
 	"settings.updates.latest": "Sie verwenden die neueste Version.",
 	"settings.updates.needInstalledApp": "Updates erfordern die installierte App.",
 	"settings.updates.noFeatureReleases": "Keine aktiven Feature-Releases.",
+	"settings.updates.networkStale": "Updates konnten seit einiger Zeit nicht geprüft werden — ein Neustart der App behebt das Problem meist.",
 	"settings.updates.nightlyWarning": "Nightly-Builds werden täglich erstellt und können instabil sein oder Daten verlieren. Verwenden Sie Nightly nur, wenn Sie damit einverstanden sind.",
 	"settings.updates.onFeatureBuild": "Sie verwenden den Build von PR #{{pr}}.",
 	"settings.updates.returnToNightly": "Zu Nightly zurückkehren",

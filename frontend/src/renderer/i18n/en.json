@@ -588,6 +588,7 @@
 	"settings.updates.latest": "You're on the latest version.",
 	"settings.updates.needInstalledApp": "Updates need the installed app.",
 	"settings.updates.noFeatureReleases": "No live feature releases.",
+	"settings.updates.networkStale": "Updates haven't been able to check for a while — restarting the app usually fixes this.",
 	"settings.updates.nightlyWarning": "Nightly builds are cut every day and can be unstable or lose data. Only use Nightly if you are comfortable with that.",
 	"settings.updates.onFeatureBuild": "You are on PR #{{pr}}'s build.",
 	"settings.updates.returnToNightly": "Return to Nightly",

@@ -582,6 +582,7 @@
 	"settings.updates.latest": "Vous utilisez la dernière version.",
 	"settings.updates.needInstalledApp": "Les mises à jour nécessitent l'application installée.",
 	"settings.updates.noFeatureReleases": "Aucune version de fonctionnalité active.",
+	"settings.updates.networkStale": "Les mises à jour n'ont pas pu être vérifiées depuis un moment — redémarrer l'application résout généralement le problème.",
 	"settings.updates.nightlyWarning": "Les builds Nightly sont générés chaque jour et peuvent être instables ou entraîner des pertes de données. N'utilisez Nightly que si vous êtes à l'aise avec cela.",
 	"settings.updates.onFeatureBuild": "Vous utilisez le build du PR #{{pr}}.",
 	"settings.updates.returnToNightly": "Revenir à Nightly",
