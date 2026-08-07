@@ -4538,6 +4538,7 @@ components:
           - claude-code
           - codex
           - opencode
+          - muse
           type: string
         scmStatus:
           enum:

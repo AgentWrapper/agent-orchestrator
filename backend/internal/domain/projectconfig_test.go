@@ -46,6 +46,7 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good experimental Devin reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerDevin}}}, false},
 		{"good experimental Droid reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerDroid}}}, false},
 		{"good experimental Kimi reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKimi}}}, false},
+		{"good Muse reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerMuse}}}, false},
 		{"unknown reviewer harness", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: "nope"}}}, true},
 		{"good interactive Amp reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerAmp}}}, false},
 		{"good interactive Aider reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerAider}}}, false},
@@ -134,6 +135,9 @@ func TestResolveReviewerHarness(t *testing.T) {
 	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessOpenCode); got != ReviewerOpenCode {
 		t.Fatalf("opencode worker = %q, want reviewer opencode", got)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessMuse); got != ReviewerMuse {
+		t.Fatalf("muse worker = %q, want reviewer muse", got)
 	}
 	for _, worker := range []AgentHarness{
 		HarnessCopilot, HarnessCursor, HarnessKilocode, HarnessKiro, HarnessPi,

@@ -1521,7 +1521,7 @@ export interface components {
             projectId: string;
             prs: components["schemas"]["SessionPRFacts"][];
             /** @enum {string} */
-            reviewerHarness?: "claude-code" | "codex" | "opencode";
+            reviewerHarness?: "claude-code" | "codex" | "opencode" | "muse";
             /** @enum {string} */
             scmStatus?: "pr_open" | "draft" | "ci_failed" | "review_pending" | "changes_requested" | "approved" | "mergeable" | "merged";
             /** @enum {string} */
