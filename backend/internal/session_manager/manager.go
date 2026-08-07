@@ -2673,12 +2673,12 @@ func promptProjectContext(projectID domain.ProjectID, project domain.ProjectReco
 	}
 }
 
-// attachmentsDir is the worktree-relative directory where spawn image
+// attachmentsDir is the worktree-relative directory where spawn file
 // attachments are written.
 const attachmentsDir = ".ao/attachments"
 
 // writeSpawnAttachments writes each attachment into the worktree under
-// attachmentsDir as image-1<ext>, image-2<ext>, ... and returns the
+// attachmentsDir as attachment-1<ext>, attachment-2<ext>, ... and returns the
 // worktree-relative paths in order. The files are excluded from git via the
 // worktree's info/exclude so they do not dirty the working tree.
 func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
@@ -2692,7 +2692,7 @@ func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttach
 		if ext == "" {
 			ext = ".bin"
 		}
-		name := fmt.Sprintf("image-%d%s", i+1, ext)
+		name := fmt.Sprintf("attachment-%d%s", i+1, ext)
 		if err := os.WriteFile(filepath.Join(dir, name), a.Data, 0o600); err != nil {
 			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
 		}
@@ -2702,7 +2702,7 @@ func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttach
 	return refs, nil
 }
 
-// appendAttachmentReferences appends a block listing the attached image paths so
+// appendAttachmentReferences appends a block listing the attached file paths so
 // the agent knows to read them. Placed after the human's brief.
 func appendAttachmentReferences(prompt string, refs []string) string {
 	if len(refs) == 0 {
@@ -2713,7 +2713,7 @@ func appendAttachmentReferences(prompt string, refs []string) string {
 	if strings.TrimSpace(prompt) != "" {
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Attached images (read these files in the workspace for visual context):")
+	b.WriteString("Attached files (read these files in the workspace for context):")
 	for _, ref := range refs {
 		b.WriteString("\n- ")
 		b.WriteString(ref)

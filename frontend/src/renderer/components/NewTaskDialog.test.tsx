@@ -85,18 +85,31 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("NewTaskDialog", () => {
-	it("shows Task, Agent, and an empty Model field without Title or Branch", async () => {
+	it("renders one continuous composer surface without visible dialog chrome", async () => {
 		renderDialog();
 		await waitForAgentCatalog();
 
-		// Agent and model read as one sentence — "Runs with <agent> <model>" — instead
-		// of two labelled fields, and the agent shows the resolved default by name.
-		expect(screen.getByText("Runs with")).toBeInTheDocument();
+		const dialog = screen.getByRole("dialog", { name: "New task" });
+		expect(dialog.querySelector(".composer-prompt-surface")).not.toBeNull();
+		expect(screen.getByText("New task")).toHaveClass("sr-only");
+		expect(screen.queryByText("Runs with")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Close new task dialog" })).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
 		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent("Claude Code");
 		expect(await screen.findByLabelText("Model")).toHaveValue("");
+		expect(screen.getByRole("button", { name: "Add file" })).toBeInTheDocument();
+		expect(screen.getByLabelText("Task")).toHaveAttribute("placeholder", "Describe the task (optional)…");
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
-		expect(screen.queryByRole("button", { name: "Add image" })).not.toBeInTheDocument();
+	});
+
+	it("dismisses the chrome-free card with Escape", async () => {
+		const { onOpenChange } = renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.keyboard("{Escape}");
+		expect(onOpenChange).toHaveBeenCalledWith(false);
 	});
 
 	it("starts the original task naming the preselected project-default agent and optional model", async () => {

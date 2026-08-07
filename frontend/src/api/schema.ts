@@ -1691,6 +1691,7 @@ export interface components {
         DelegateTaskRequest: {
             /** @enum {string} */
             agent?: "claude-code" | "codex" | "aider" | "opencode" | "grok" | "droid" | "amp" | "agy" | "crush" | "cursor" | "qwen" | "copilot" | "goose" | "auggie" | "continue" | "devin" | "cline" | "kimi" | "muse" | "kiro" | "kilocode" | "vibe" | "pi" | "autohand" | "fake";
+            attachments?: components["schemas"]["ControllersSpawnAttachmentInput"][];
             brief: string;
             /** @enum {string} */
             mode?: "tui" | "chat";

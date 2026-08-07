@@ -436,7 +436,6 @@ export function CommandPalette() {
 							onDirtyChange={onComposerDirtyChange}
 							onSubmittingChange={onComposerSubmittingChange}
 							onCreated={(sessionId) => void handleTaskCreated(view.projectId, sessionId)}
-							onCancel={() => requestDismiss("pop")}
 						/>
 					</div>
 				) : (

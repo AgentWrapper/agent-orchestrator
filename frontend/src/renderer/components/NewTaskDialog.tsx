@@ -1,5 +1,4 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { TaskComposer } from "./TaskComposer";
 
@@ -17,22 +16,10 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-xl -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-lg border border-border bg-popover p-0 text-popover-foreground shadow-xl data-[state=open]:animate-modal-in">
-					{/* An eyebrow, not a heading with a subtitle: the placeholder already
-					    explains the field, so a description line only adds a row to read. */}
-					<div className="flex items-center justify-between gap-4 border-b border-border/70 px-(--size-modal-padding) py-3">
-						<Dialog.Title className="eyebrow-label">{t("newTask.title")}</Dialog.Title>
-						<Dialog.Description className="sr-only">{t("newTask.description")}</Dialog.Description>
-						<Dialog.Close asChild>
-							<button
-								type="button"
-								className="settings-close-button"
-								aria-label={t("newTask.close")}
-							>
-								<X className="size-icon-base" aria-hidden="true" />
-							</button>
-						</Dialog.Close>
-					</div>
-
+					{/* The composer is the dialog's complete visible surface. Keep the title
+					    and description in the accessibility tree without spending visual rows. */}
+					<Dialog.Title className="sr-only">{t("newTask.title")}</Dialog.Title>
+					<Dialog.Description className="sr-only">{t("newTask.description")}</Dialog.Description>
 					<TaskComposer
 						projectId={projectId}
 						autoFocusTitle
@@ -40,7 +27,6 @@ export function NewTaskDialog({ open, projectId, onCreated, onOpenChange }: NewT
 							onCreated(sessionId);
 							onOpenChange(false);
 						}}
-						onCancel={() => onOpenChange(false)}
 					/>
 				</Dialog.Content>
 			</Dialog.Portal>

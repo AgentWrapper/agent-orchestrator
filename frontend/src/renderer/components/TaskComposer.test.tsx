@@ -83,6 +83,7 @@ afterEach(() => {
 	h.get.mockReset();
 	h.post.mockReset();
 	h.capture.mockReset();
+	vi.unstubAllGlobals();
 	h.agentValues.length = 0;
 });
 
@@ -97,7 +98,8 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
-		expect(screen.getByText("Start now — details can come later.")).toBeInTheDocument();
+		expect(task()).toHaveAttribute("placeholder", "Describe the task (optional)…");
+		expect(screen.getByRole("button", { name: "Start task" })).toBeEnabled();
 		fireEvent.click(screen.getByText("Start task"));
 
 		await waitFor(() =>
@@ -109,30 +111,44 @@ describe("TaskComposer", () => {
 		expect(onCreated).toHaveBeenCalledWith("sess-empty");
 	});
 
-	it("replaces the promptless affordance with the newline hint once typing starts", () => {
+	it("keeps prompt guidance in the field instead of adding a separate footer row", () => {
 		render(
 			<Wrap>
 				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
 			</Wrap>,
 		);
 
-		expect(screen.getByText("Start now — details can come later.")).toBeInTheDocument();
-		fireEvent.change(task(), { target: { value: "Investigate the failure" } });
-		expect(screen.getByText("Shift+Enter for a new line")).toBeInTheDocument();
+		expect(task()).toHaveAttribute("placeholder", "Describe the task (optional)…");
 		expect(screen.queryByText("Start now — details can come later.")).not.toBeInTheDocument();
+		expect(screen.queryByText("Shift+Enter for a new line")).not.toBeInTheDocument();
+		fireEvent.change(task(), { target: { value: "Investigate the failure" } });
+		expect(task()).toHaveValue("Investigate the failure");
 	});
 
-	it("renders agent and model as equal segments of one run target", () => {
+	it("keeps agent and model in equal stable toolbar tracks", () => {
 		render(
 			<Wrap>
 				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
 			</Wrap>,
 		);
 
-		const runTarget = screen.getByRole("group", { name: "Runs with" });
-		expect(runTarget).toHaveClass("composer-run-target");
-		expect(screen.getByTestId("agent-field")).toHaveClass("composer-run-target-segment");
-		expect(screen.getByLabelText("Model")).toHaveClass("composer-run-target-segment");
+		const runControls = screen.getByRole("group", { name: "Runs with" });
+		expect(runControls).toHaveClass("composer-run-controls");
+		expect(runControls.closest(".composer-toolbar")).not.toBeNull();
+		expect(runControls.querySelectorAll(".composer-toolbar-slot")).toHaveLength(2);
+		expect(screen.getByTestId("agent-field").closest(".composer-toolbar-slot")).not.toBeNull();
+		expect(screen.getByLabelText("Model").closest(".composer-toolbar-slot")).not.toBeNull();
+		expect(runControls.querySelector(".composer-toolbar-divider")).not.toBeNull();
+	});
+
+	it("keeps the file attach control inside the prompt surface", () => {
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		expect(screen.getByRole("button", { name: "Add file" }).closest(".composer-prompt-surface")).not.toBeNull();
 	});
 
 	it("emits busy state around an in-flight create and reports the new session", async () => {
@@ -154,6 +170,12 @@ describe("TaskComposer", () => {
 		expect(h.post).toHaveBeenCalledWith(
 			"/api/v1/orchestrators/delegate",
 			expect.objectContaining({
+				body: expect.not.objectContaining({ attachments: expect.anything() }),
+			}),
+		);
+		expect(h.post).toHaveBeenCalledWith(
+			"/api/v1/orchestrators/delegate",
+			expect.objectContaining({
 				body: expect.objectContaining({ projectId: "proj-1", brief: "Do the thing" }),
 			}),
 		);
@@ -161,6 +183,97 @@ describe("TaskComposer", () => {
 		await act(async () => resolveCreate({ data: { workerId: "sess-1" } }));
 		await waitFor(() => expect(onCreated).toHaveBeenCalledWith("sess-1"));
 		await waitFor(() => expect(onSubmittingChange).toHaveBeenLastCalledWith(false));
+	});
+
+	it("attaches a selected file and sends it in the delegate body", async () => {
+		h.post.mockResolvedValueOnce({ data: { workerId: "sess-1" } });
+
+		const { container } = render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		const file = new File([new Uint8Array([1, 2, 3])], "notes.txt", { type: "text/plain" });
+		fireEvent.change(input, { target: { files: [file] } });
+
+		expect(await screen.findByText("notes.txt")).toBeInTheDocument();
+
+		fireEvent.change(task(), { target: { value: "Use the notes" } });
+		fireEvent.click(screen.getByText("Start task"));
+
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		const body = h.post.mock.calls[0][1].body as {
+			attachments?: Array<{ mimeType: string; data: string }>;
+		};
+		expect(body.attachments).toHaveLength(1);
+		expect(body.attachments?.[0].mimeType).toBe("text/plain");
+		expect(body.attachments?.[0].data.length).toBeGreaterThan(0);
+	});
+
+	it("waits for a selected file read before submitting", async () => {
+		h.post.mockResolvedValueOnce({ data: { workerId: "sess-1" } });
+		let finishRead!: () => void;
+		class SlowFileReader {
+			error: Error | null = null;
+			result: string | ArrayBuffer | null = null;
+			onerror: (() => void) | null = null;
+			onload: (() => void) | null = null;
+
+			readAsDataURL(file: File) {
+				finishRead = () => {
+					this.result = `data:${file.type};base64,AQID`;
+					this.onload?.();
+				};
+			}
+		}
+		vi.stubGlobal("FileReader", SlowFileReader);
+
+		const { container } = render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		fireEvent.change(input, {
+			target: { files: [new File([new Uint8Array([1, 2, 3])], "slow.txt", { type: "text/plain" })] },
+		});
+		fireEvent.change(task(), { target: { value: "Use the slow file" } });
+		fireEvent.click(screen.getByText("Start task"));
+
+		expect(h.post).not.toHaveBeenCalled();
+
+		await act(async () => finishRead());
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		expect(h.post.mock.calls[0][1].body).toMatchObject({
+			attachments: [{ mimeType: "text/plain", data: "AQID" }],
+		});
+	});
+
+	it("removes a selected file before submitting", async () => {
+		h.post.mockResolvedValueOnce({ data: { workerId: "sess-1" } });
+
+		const { container } = render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		const file = new File([new Uint8Array([1, 2, 3])], "notes.txt", { type: "text/plain" });
+		fireEvent.change(input, { target: { files: [file] } });
+
+		expect(await screen.findByText("notes.txt")).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: "Remove notes.txt" }));
+		await waitFor(() => expect(screen.queryByText("notes.txt")).not.toBeInTheDocument());
+
+		fireEvent.change(task(), { target: { value: "No attachment now" } });
+		fireEvent.click(screen.getByText("Start task"));
+
+		await waitFor(() => expect(h.post).toHaveBeenCalledTimes(1));
+		expect(h.post.mock.calls[0][1].body).not.toHaveProperty("attachments");
 	});
 
 	it("clears busy state when a create rejects", async () => {

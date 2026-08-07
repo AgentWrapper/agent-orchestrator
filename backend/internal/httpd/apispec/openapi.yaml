@@ -5025,6 +5025,10 @@ components:
           - autohand
           - fake
           type: string
+        attachments:
+          items:
+            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+          type: array
         brief:
           maxLength: 4096
           type: string
