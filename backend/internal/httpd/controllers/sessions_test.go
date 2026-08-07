@@ -1747,8 +1747,13 @@ func TestSessionsAPI_DelegateTaskValidationAndServiceError(t *testing.T) {
 	svc := newFakeSessionService()
 	srv := newSessionTestServer(t, svc)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"  "}`)
-	assertErrorCode(t, body, status, http.StatusBadRequest, "TASK_REQUIRED")
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":""}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("promptless delegate = %d, want 202; body=%s", status, body)
+	}
+	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "" {
+		t.Fatalf("promptless delegation input = %#v", svc.delegationInput)
+	}
 
 	svc.delegationErr = apierr.Invalid("UNKNOWN_HARNESS", "Unknown requested agent", nil)
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it"}`)

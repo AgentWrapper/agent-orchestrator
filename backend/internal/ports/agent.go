@@ -165,11 +165,16 @@ type AgentModelDiscoveryRequest struct {
 	Env        map[string]string
 }
 
-// AgentModelDiscoverer isolates CLI execution and executable fingerprinting
-// from the core agent service.
+// AgentModelDiscoverer isolates CLI execution and discovery-input
+// fingerprinting from the core agent service.
 type AgentModelDiscoverer interface {
 	Discover(ctx context.Context, request AgentModelDiscoveryRequest) (AgentModelCatalog, error)
-	BinaryVersion(ctx context.Context, binary string) string
+	// CatalogFingerprint summarizes every input a discovery run would read: the
+	// resolved executable plus any configuration the adapter consults. The
+	// service compares it against the cached catalog's fingerprint, so it must
+	// change whenever the catalog those inputs produce would change, and it must
+	// stay cheap enough to compute before deciding to skip discovery.
+	CatalogFingerprint(ctx context.Context, request AgentModelDiscoveryRequest) string
 	Manual(agentID string) AgentModelCatalog
 }
 
@@ -199,6 +204,15 @@ type AgentPromptReadinessProvider interface {
 // TerminalActivityDetector derives activity only from authoritative terminal UI markers.
 type TerminalActivityDetector interface {
 	DetectTerminalActivity(output string) (domain.ActivityState, bool)
+}
+
+// ContinuousTerminalActivityDetector is implemented by adapters whose TUI is
+// the only authoritative source for some activity transitions. These adapters
+// are sampled on every observer tick, including while idle or waiting for
+// input, so terminal state can move in either direction.
+type ContinuousTerminalActivityDetector interface {
+	TerminalActivityDetector
+	ContinuouslyDetectTerminalActivity() bool
 }
 
 // PromptReadinessHints describes when an after-start prompt should be sent.

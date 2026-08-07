@@ -115,7 +115,7 @@ func TestGetLaunchCommandInjectsSystemPromptWithoutProjectFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"env", museSystemPromptEnvVar + "=follow AO rules",
+		"env", museDeveloperPromptEnvVar + "=follow AO rules",
 		"muse", "--trust-workspace", "fix it",
 	}
 	if !reflect.DeepEqual(cmd, want) {
@@ -164,7 +164,7 @@ func TestGetLaunchCommandCombinesSystemPromptAndManagedHooksEnvironment(t *testi
 	}
 	want := []string{
 		"env",
-		museSystemPromptEnvVar + "=follow AO rules",
+		museDeveloperPromptEnvVar + "=follow AO rules",
 		museManagedHooksEnvVar + "=" + hooksPath,
 		"muse", "--trust-workspace",
 	}
@@ -183,7 +183,7 @@ func TestGetLaunchCommandReadsSystemPromptFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"env", museSystemPromptEnvVar + "=file rules", "muse", "--trust-workspace"}
+	want := []string{"env", museDeveloperPromptEnvVar + "=file rules", "muse", "--trust-workspace"}
 	if !reflect.DeepEqual(cmd, want) {
 		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
@@ -446,17 +446,112 @@ func TestResolveMuseBinaryAcceptsOfficialVersionSignature(t *testing.T) {
 	}
 }
 
-func TestRestoreAndSessionInfoAreNoOps(t *testing.T) {
-	p := &Plugin{}
+func TestGetRestoreCommandUsesMuseNativeSessionID(t *testing.T) {
+	p := &Plugin{resolvedBinary: "muse"}
 	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
-		Session: ports.SessionRef{Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "session-id"}},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "muse-native-1"},
+		},
 	})
-	if err != nil || ok || cmd != nil {
-		t.Fatalf("restore = (%#v, %v, %v), want (nil, false, nil)", cmd, ok, err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	info, ok, err := p.SessionInfo(context.Background(), ports.SessionRef{})
-	if err != nil || ok || !reflect.DeepEqual(info, ports.SessionInfo{}) {
-		t.Fatalf("session info = (%#v, %v, %v), want zero/false/nil", info, ok, err)
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{"muse", "--trust-workspace", "resume", "muse-native-1"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandPreservesModel(t *testing.T) {
+	p := &Plugin{resolvedBinary: "muse"}
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Config: ports.AgentConfig{Model: "muse-spark"},
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "muse-native-1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := []string{"muse", "--trust-workspace", "--model", "muse-spark", "resume", "muse-native-1"}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandInjectsPromptAndManagedHooksEnvironment(t *testing.T) {
+	dataDir := t.TempDir()
+	p := &Plugin{resolvedBinary: "muse"}
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		DataDir:      dataDir,
+		SystemPrompt: "follow AO rules\n",
+		Session: ports.SessionRef{
+			ID:       "agent-orchestrator-96",
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "muse-native-1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	hooksPath, err := museManagedHooksPath(dataDir, "agent-orchestrator-96")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"env",
+		museDeveloperPromptEnvVar + "=follow AO rules",
+		museManagedHooksEnvVar + "=" + hooksPath,
+		"muse", "--trust-workspace", "resume", "muse-native-1",
+	}
+	if !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
+	}
+}
+
+func TestGetRestoreCommandRequiresAgentSessionID(t *testing.T) {
+	tests := []struct {
+		name    string
+		session ports.SessionRef
+	}{
+		{"missing metadata", ports.SessionRef{}},
+		{"missing agent session metadata", ports.SessionRef{Metadata: map[string]string{}}},
+		{"blank agent session metadata", ports.SessionRef{Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "   "}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Plugin{resolvedBinary: "muse"}
+			cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{Session: tt.session})
+			if err != nil || ok || cmd != nil {
+				t.Fatalf("restore = (%#v, %v, %v), want (nil, false, nil)", cmd, ok, err)
+			}
+		})
+	}
+}
+
+func TestSessionInfoReturnsAgentSessionID(t *testing.T) {
+	info, ok, err := (&Plugin{}).SessionInfo(context.Background(), ports.SessionRef{
+		Metadata: map[string]string{
+			ports.MetadataKeyAgentSessionID: "muse-native-1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok = false, want true")
+	}
+	want := ports.SessionInfo{AgentSessionID: "muse-native-1"}
+	if !reflect.DeepEqual(info, want) {
+		t.Fatalf("info = %#v, want %#v", info, want)
 	}
 }
 

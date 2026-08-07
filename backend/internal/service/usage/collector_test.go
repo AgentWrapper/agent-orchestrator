@@ -15,6 +15,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func TestCollectorRegistersFinalizesAndReactivatesSource(t *testing.T) {
@@ -1706,7 +1707,7 @@ func TestSourceIdentityDoesNotChangeAsFirstRecordIsWritten(t *testing.T) {
 
 func collectorTestStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	mustNoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	if err := store.UpsertProject(context.Background(), domain.ProjectRecord{
