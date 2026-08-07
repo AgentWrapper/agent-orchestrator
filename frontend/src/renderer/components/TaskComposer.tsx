@@ -266,7 +266,7 @@ export function TaskComposer({
 
 			{/* Two bands: what it will run with, then what you can do about it. One row
 			    holding chips and buttons together reads as a crowded toolbar. */}
-			<div className="composer-run-config border-t border-border/70 px-(--size-modal-padding) py-3">
+			<div className="composer-run-config border-t border-(--color-border-settings-dialog-header) px-(--size-modal-padding) py-3">
 				<div className="composer-run-row">
 					{/* One sentence — "Runs with <agent> <model>" — states what will happen,
 					    instead of two labelled fields the reader has to assemble themselves. */}
@@ -316,7 +316,7 @@ export function TaskComposer({
 				</div>
 			</div>
 
-			<div className="flex items-center justify-between gap-4 border-t border-border/70 px-(--size-modal-padding) py-3">
+			<div className="flex items-center justify-between gap-4 border-t border-(--color-border-settings-dialog-header) px-(--size-modal-padding) py-3">
 				<p className="min-w-0 truncate text-caption text-passive">
 					<span key={prompt.trim() === "" ? "empty" : "writing"} className="composer-value-swap">
 						{prompt.trim() === "" ? t("newTask.emptyHint") : t("newTask.newlineHint")}
