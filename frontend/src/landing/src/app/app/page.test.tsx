@@ -1138,6 +1138,97 @@ it("creates custom standalone policies and manages one person's agents", async (
   );
 });
 
+it("shares a top-level standalone agent with the full policy surface", async () => {
+  const standaloneAgentProject: CloudProject = {
+    ...project,
+    id: "standalone-agent-project",
+    displayName: "test-cat",
+    repositoryUrl: "ao-standalone://org-one/test-cat",
+    config: { source: "standalone-agent" },
+  };
+  const standaloneAgent: CloudSession = {
+    ...worker,
+    id: "standalone-agent-session",
+    projectId: standaloneAgentProject.id,
+    displayName: "test-cat",
+  };
+  const customPolicy = {
+    id: "policy-reviewers",
+    orgId: "org-one",
+    projectId: standaloneAgentProject.id,
+    createdByUserId: "user-one",
+    name: "Reviewers",
+    sandboxType: "standard" as const,
+    commandGuardEnabled: true,
+    status: "active" as const,
+    sessionRoles: [{ sessionId: standaloneAgent.id, role: "viewer" as const }],
+    grants: [],
+    links: [],
+    createdAt: "2026-08-06T00:00:00Z",
+    updatedAt: "2026-08-06T00:00:00Z",
+  };
+  apiMocks.projects.mockResolvedValue({ projects: [standaloneAgentProject] });
+  apiMocks.sessions.mockResolvedValue({ sessions: [standaloneAgent] });
+  apiMocks.projectShareAccess.mockResolvedValue({
+    access: {
+      commandGuardEnforced: false,
+      links: [],
+      grants: [],
+      policies: [customPolicy],
+    },
+  });
+
+  render(<CloudAppPage />);
+
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: `More actions for ${standaloneAgent.displayName}`,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Share agent" }));
+
+  expect(
+    await screen.findByRole("dialog", {
+      name: `Share agent - ${standaloneAgentProject.displayName}`,
+    }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByLabelText("Share policy"));
+  expect(
+    await screen.findByRole("option", { name: /Read-only/ }),
+  ).toBeVisible();
+  expect(screen.getByRole("option", { name: /Standard/ })).toBeVisible();
+  expect(screen.getByRole("option", { name: /Trusted/ })).toBeVisible();
+  expect(screen.getByRole("option", { name: /Reviewers/ })).toHaveTextContent(
+    "Command guard on",
+  );
+
+  fireEvent.click(screen.getByRole("option", { name: /Standard/ }));
+  fireEvent.click(screen.getByRole("button", { name: "Create link" }));
+
+  await waitFor(() =>
+    expect(apiMocks.createProjectSharePolicy).toHaveBeenCalledWith(
+      "org-one",
+      standaloneAgentProject.id,
+      {
+        name: "Standard",
+        sandboxType: "standard",
+        commandGuardEnabled: true,
+        sessionRoles: [{ sessionId: standaloneAgent.id, role: "editor" }],
+      },
+    ),
+  );
+  await waitFor(() =>
+    expect(apiMocks.createProjectShareLink).toHaveBeenCalledWith(
+      "org-one",
+      standaloneAgentProject.id,
+      expect.objectContaining({
+        policyId: "policy-one",
+        role: "editor",
+      }),
+    ),
+  );
+});
+
 it("shows shared projects with their sessions without switching workspace", async () => {
   const sharedProject: CloudProject = {
     ...project,
@@ -1195,6 +1286,55 @@ it("shows shared projects with their sessions without switching workspace", asyn
   expect(
     screen.getByRole("menuitemradio", { name: /Personal.*owner/i }),
   ).toHaveAttribute("aria-checked", "true");
+});
+
+it("shows a shared top-level standalone agent as a flat shared row", async () => {
+  const sharedAgentProject: CloudProject = {
+    ...project,
+    id: "shared-agent-project",
+    orgId: "shared-org",
+    displayName: "Shared cat",
+    repositoryUrl: "ao-standalone://shared-org/shared-cat",
+    config: { source: "standalone-agent" },
+  };
+  const sharedAgent: CloudSession = {
+    ...worker,
+    id: "shared-agent-session",
+    projectId: sharedAgentProject.id,
+    displayName: "Shared cat",
+  };
+  apiMocks.projects.mockResolvedValue({ projects: [] });
+  apiMocks.sharedProjects.mockResolvedValue({
+    shares: [
+      {
+        id: "share-agent",
+        orgId: "shared-org",
+        project: sharedAgentProject,
+        role: "editor",
+        sandboxType: "standard",
+        sharedByEmail: "teammate@example.com",
+        sharedByName: "Teammate",
+        redeemedAt: "2026-08-06T00:00:00Z",
+      },
+    ],
+  });
+  apiMocks.sessions.mockImplementation((orgId: string) =>
+    Promise.resolve({
+      sessions: orgId === "shared-org" ? [sharedAgent] : [],
+    }),
+  );
+
+  render(<CloudAppPage />);
+
+  const sharedAgentButton = await screen.findByRole("button", {
+    name: "Shared cat, shared by Teammate",
+  });
+  expect(sharedAgentButton).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Collapse Shared cat" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(sharedAgentButton);
+  expect(await screen.findByRole("status")).toHaveTextContent("Connecting agent");
 });
 
 it("silently ignores a share link redeemed by its creator", async () => {

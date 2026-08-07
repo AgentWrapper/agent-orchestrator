@@ -1113,6 +1113,14 @@ export default function CloudAppPage() {
       .filter(({ projectId }) => projectId === project.id)
       .map((cloudSession) => ({ project, cloudSession })),
   );
+  const sharedStandaloneAgentRows = sharedProjects.flatMap((share) =>
+    isTopLevelStandaloneAgentProject(share.project)
+      ? (share.sessions ?? []).map((cloudSession) => ({ share, cloudSession }))
+      : [],
+  );
+  const sharedProjectItems = sharedProjects.filter(
+    ({ project }) => !isTopLevelStandaloneAgentProject(project),
+  );
   const selectedShareTrustedStandalone =
     Boolean(selectedShare) &&
     selectedProjectStandalone &&
@@ -2491,6 +2499,20 @@ export default function CloudAppPage() {
                               className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-white/70 hover:bg-white/[0.06] hover:text-white"
                               onClick={() => {
                                 setSessionMenuOpenId(null);
+                                setShareProject(project);
+                                setShareSessionId("");
+                                setShareRole("viewer");
+                                setShareLink("");
+                              }}
+                            >
+                              <ExternalLink className="size-3.5" />
+                              Share agent
+                            </button>
+                            <button
+                              type="button"
+                              className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-xs text-white/70 hover:bg-white/[0.06] hover:text-white"
+                              onClick={() => {
+                                setSessionMenuOpenId(null);
                                 setRenameSession(cloudSession);
                               }}
                             >
@@ -2530,7 +2552,71 @@ export default function CloudAppPage() {
                 ) : null}
               </div>
               <div className="space-y-1">
-                {sharedProjects.map((share) => {
+                {sharedStandaloneAgentRows.map(({ share, cloudSession }) => {
+                  const sharedBy = share.sharedByName || share.sharedByEmail;
+                  const agentActive =
+                    selectedShareId === share.id &&
+                    selectedSessionId === cloudSession.id &&
+                    view === "session";
+                  return (
+                    <div key={share.id}>
+                      <button
+                        className={`flex h-8 w-full min-w-0 items-center rounded-lg text-left text-[12px] ${
+                          sidebarCollapsed
+                            ? "justify-center px-0"
+                            : "gap-2 px-2"
+                        } ${
+                          agentActive
+                            ? "bg-white/[0.07] text-white"
+                            : "text-[#9ba1aa] hover:bg-white/[0.04] hover:text-white"
+                        }`}
+                        onClick={() => {
+                          setSelectedShareId(share.id);
+                          setSelectedProjectId(share.project.id);
+                          setSelectedSessionId(cloudSession.id);
+                          setView("session");
+                        }}
+                        aria-label={`${cloudSession.displayName}, shared by ${sharedBy}`}
+                        title={
+                          sidebarCollapsed
+                            ? `${cloudSession.displayName} shared by ${sharedBy}`
+                            : undefined
+                        }
+                      >
+                        <AgentAvatar
+                          agent={cloudSession.harness}
+                          className="size-[15px]"
+                        />
+                        {!sidebarCollapsed ? (
+                          <>
+                            <span className="truncate">
+                              {cloudSession.displayName}
+                            </span>
+                            {activeChatSessionIds.has(cloudSession.id) ? (
+                              <LoaderCircle
+                                className="ml-auto size-3.5 shrink-0 animate-spin text-[#4d8dff] motion-reduce:animate-none"
+                                aria-label="Working"
+                              />
+                            ) : (
+                              <span
+                                className={`ml-auto size-1.5 shrink-0 rounded-full ${statusColor(
+                                  cloudSession,
+                                )}`}
+                                aria-hidden="true"
+                              />
+                            )}
+                          </>
+                        ) : null}
+                      </button>
+                      {!sidebarCollapsed ? (
+                        <div className="ml-8 -mt-0.5 truncate pr-2 text-[10px] text-white/30">
+                          {sharedBy} · {sharedProjectAccessLabel(share)}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {sharedProjectItems.map((share) => {
                   const disclosureID = `shared:${share.id}`;
                   const expanded = !collapsedProjectIds.has(disclosureID);
                   const standaloneProject = isStandaloneProject(share.project);
@@ -3103,7 +3189,7 @@ export default function CloudAppPage() {
       ) : null}
       {shareProject ? (
         <Overlay
-          title={`Share project - ${shareProject.displayName}`}
+          title={`${isTopLevelStandaloneAgentProject(shareProject) ? "Share agent" : "Share project"} - ${shareProject.displayName}`}
           onClose={closeProjectShare}
         >
           <div className="space-y-6 p-5 sm:p-6">
