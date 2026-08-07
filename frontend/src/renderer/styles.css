@@ -854,28 +854,6 @@ button.settings-link-row:active {
 	box-shadow: inset 0 0 0 2px var(--bridge-accent-weak);
 }
 
-.composer-value-swap {
-	display: inline-block;
-	animation: composer-value-in var(--duration-fast) ease-out;
-}
-
-@keyframes composer-value-in {
-	from {
-		opacity: 0;
-		transform: translateY(2px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.composer-value-swap {
-		animation: none;
-	}
-}
-
 /* Inline value control inside the task composer's bottom toolbar. Reads as a
    value you can change, not as a form field: no visible chrome until hover/focus. */
 @utility composer-chip {

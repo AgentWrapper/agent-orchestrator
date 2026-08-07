@@ -522,11 +522,7 @@ function TaskModelPicker({
 				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 				menuAlign="start"
 				renderTrigger={() => (
-					<span
-						key={`${agentId}:${mode || "__default__"}`}
-						className="composer-value-swap min-w-0 truncate text-control text-foreground"
-						title={visibleModeLabel}
-					>
+					<span className="min-w-0 truncate text-control text-foreground" title={visibleModeLabel}>
 						{visibleModeLabel}
 					</span>
 				)}
@@ -572,11 +568,7 @@ function TaskModelPicker({
 				renderTrigger={(label) => {
 					const visibleLabel = value ? label : noOverrideLabel;
 					return (
-						<span
-							key={`${agentId}:${value || "__default__"}`}
-							className="composer-value-swap min-w-0 truncate text-control text-foreground"
-							title={visibleLabel}
-						>
+						<span className="min-w-0 truncate text-control text-foreground" title={visibleLabel}>
 							{visibleLabel}
 						</span>
 					);
