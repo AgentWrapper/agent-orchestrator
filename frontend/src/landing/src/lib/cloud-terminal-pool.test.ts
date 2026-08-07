@@ -90,19 +90,23 @@ it("sends resize but not input for a read-only shared terminal", async () => {
     sequence: 1,
   });
   FakeWebSocket.instance.message({
+    type: "reset",
+    sequence: 2,
+  });
+  FakeWebSocket.instance.message({
     type: "replay_complete",
-    sequence: 1,
+    sequence: 2,
   });
   FakeWebSocket.instance.message({
     type: "error",
     message: "Command guard blocked a destructive command.",
-    sequence: 2,
+    sequence: 3,
   });
   connection.sendInput("x");
 
   expect(events).toContain("reset");
   expect(notices).toContain("Command guard blocked a destructive command.");
-  expect(FakeWebSocket.instance.send).toHaveBeenCalledTimes(3);
+  expect(FakeWebSocket.instance.send).toHaveBeenCalledTimes(5);
   expect(FakeWebSocket.instance.send).toHaveBeenNthCalledWith(
     1,
     JSON.stringify({ type: "resize", rows: 40, cols: 120 }),
@@ -113,6 +117,14 @@ it("sends resize but not input for a read-only shared terminal", async () => {
   );
   expect(FakeWebSocket.instance.send).toHaveBeenNthCalledWith(
     3,
+    JSON.stringify({ type: "resize", rows: 40, cols: 120 }),
+  );
+  expect(FakeWebSocket.instance.send).toHaveBeenNthCalledWith(
+    4,
+    JSON.stringify({ type: "resize", rows: 40, cols: 119 }),
+  );
+  expect(FakeWebSocket.instance.send).toHaveBeenNthCalledWith(
+    5,
     JSON.stringify({ type: "resize", rows: 40, cols: 120 }),
   );
 });

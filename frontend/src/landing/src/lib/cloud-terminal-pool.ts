@@ -142,6 +142,7 @@ class CloudTerminalConnection {
           this.history = [];
           this.historyBytes = 0;
           this.emit({ type: "reset" });
+          this.forceRedraw();
           return;
         }
         if (message.type === "error") {
