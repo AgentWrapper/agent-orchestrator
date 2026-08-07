@@ -64,3 +64,30 @@ export function checkRateLimit(
 	};
 	return { allowed: true, state: next };
 }
+
+/**
+ * Merges persisted state into in-memory state at launch, preserving the daily
+ * ceiling across a restart. The naive spread ({...persisted, ...current}) lets a
+ * count that advanced in the race before the async load resolved overwrite the
+ * higher persisted count, which would reset the ceiling a restart is meant to
+ * carry over. For the same UTC day this takes the max of both; a persisted entry
+ * from an older day is dropped, since its counts no longer apply.
+ */
+export function mergeRateState(persisted: RateLimitState, current: RateLimitState): RateLimitState {
+	const out: RateLimitState = { ...persisted };
+	for (const name of Object.keys(current)) {
+		const cur = current[name];
+		const prev = out[name];
+		if (!prev || prev.day !== cur.day) {
+			out[name] = cur;
+			continue;
+		}
+		out[name] = {
+			day: cur.day,
+			dayCount: Math.max(prev.dayCount, cur.dayCount),
+			minuteStart: Math.max(prev.minuteStart, cur.minuteStart),
+			minuteCount: Math.max(prev.minuteCount, cur.minuteCount),
+		};
+	}
+	return out;
+}

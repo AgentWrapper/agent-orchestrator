@@ -12,7 +12,7 @@ import {
 	MOBILE_TELEMETRY_DISABLED,
 } from "./config";
 import { MOBILE_EVENTS } from "./events";
-import { checkRateLimit, type RateLimitState } from "./rateLimit";
+import { checkRateLimit, mergeRateState, type RateLimitState } from "./rateLimit";
 import { createMobileTelemetry, type MobileTelemetry } from "./telemetry";
 
 // The one file that touches the SDK and the native runtime. Everything else in
@@ -46,9 +46,9 @@ function loadRateState(): void {
 	void AsyncStorage.getItem(RATE_STORAGE_KEY).then((raw) => {
 		if (!raw) return;
 		try {
-			// Current in-memory counts win over persisted, in case events fired
-			// before the async read resolved.
-			rateState = { ...(JSON.parse(raw) as RateLimitState), ...rateState };
+			// Take the max per name so a count that advanced in the race before
+			// this read resolved cannot lower the persisted daily ceiling.
+			rateState = mergeRateState(JSON.parse(raw) as RateLimitState, rateState);
 		} catch {
 			/* ignore corrupt state; start fresh */
 		}

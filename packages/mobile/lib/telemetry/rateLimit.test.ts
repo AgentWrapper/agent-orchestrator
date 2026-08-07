@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	checkRateLimit,
+	mergeRateState,
 	EVENTS_PER_NAME_PER_DAY,
 	EVENTS_PER_NAME_PER_MINUTE,
 	type RateLimitState,
@@ -64,5 +65,28 @@ describe("checkRateLimit", () => {
 		}
 		expect(checkRateLimit(state, "a", T0).allowed).toBe(false);
 		expect(checkRateLimit(state, "b", T0).allowed).toBe(true);
+	});
+});
+
+describe("mergeRateState (restart persistence)", () => {
+	const DAY = "2026-08-07";
+	// The race this exists for: an event advanced in memory before the persisted
+	// state loaded. The higher persisted day count must survive, or a restart
+	// resets the ceiling.
+	it("keeps the higher day count for the same day, so a restart cannot reset it", () => {
+		const persisted = { "ao.v2.mobile_app.connected": { minuteStart: 0, minuteCount: 0, day: DAY, dayCount: 199 } };
+		const current = { "ao.v2.mobile_app.connected": { minuteStart: 1, minuteCount: 1, day: DAY, dayCount: 1 } };
+		expect(mergeRateState(persisted, current)["ao.v2.mobile_app.connected"].dayCount).toBe(199);
+	});
+
+	it("drops a persisted entry from an older day", () => {
+		const persisted = { x: { minuteStart: 0, minuteCount: 0, day: "2026-08-06", dayCount: 200 } };
+		const current = { x: { minuteStart: 0, minuteCount: 1, day: DAY, dayCount: 1 } };
+		expect(mergeRateState(persisted, current).x.dayCount).toBe(1);
+	});
+
+	it("carries a persisted name the current session hasn't touched", () => {
+		const persisted = { y: { minuteStart: 0, minuteCount: 0, day: DAY, dayCount: 42 } };
+		expect(mergeRateState(persisted, {}).y.dayCount).toBe(42);
 	});
 });
