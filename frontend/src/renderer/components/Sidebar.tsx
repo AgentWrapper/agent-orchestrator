@@ -187,7 +187,6 @@ export function Sidebar({
 	onRemoveProject,
 }: SidebarProps) {
 	const { t } = useTranslation();
-	const prefersReducedMotion = useReducedMotion();
 	const selection = useSelection();
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
@@ -217,9 +216,8 @@ export function Sidebar({
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
-	// Section disclosure: Pinned / Projects headers collapse their bodies.
+	// Section disclosure: Pinned header collapses its body. Projects stays open.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
-	const [projectsOpen, setProjectsOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
 	// identity: derived from the version string, not the update-channel setting
 	// (the setting can be changed mid-session; the binary cannot).
@@ -363,19 +361,12 @@ export function Sidebar({
 					</div>
 				)}
 
-				{/* Projects — collapsible section; + sits inside the same hover pill. */}
+				{/* Projects — always open; + sits inside the same hover pill. */}
 				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
 					<SectionDisclosure
-						icon={
-							projectsOpen ? (
-								<FolderOpen strokeWidth={1.75} aria-hidden="true" />
-							) : (
-								<Folder strokeWidth={1.75} aria-hidden="true" />
-							)
-						}
+						icon={<FolderOpen strokeWidth={1.75} aria-hidden="true" />}
 						label={t("shell.projects")}
-						open={projectsOpen}
-						onToggle={() => setProjectsOpen((v) => !v)}
+						collapsible={false}
 						trailing={
 							<CreateProjectButton
 								hideTrigger={workspaces.length === 0}
@@ -388,52 +379,31 @@ export function Sidebar({
 			</div>
 
 			<SidebarContent className="gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				{/* Expanded sidebar animates the project tree in/out when toggled.
-				    isCollapsed is intentionally excluded — in offcanvas mode the panel
-				    slides off-screen entirely, so forcing height:"auto" on collapse
-				    would make the section expand before the panel hides. */}
-				<motion.div
-					animate={{ height: projectsOpen ? "auto" : 0, overflow: projectsOpen ? "visible" : "hidden" }}
-					initial={false}
-					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					className="w-full"
-				>
-					{/* Inner animator: slides up + fades out on collapse. */}
-					<motion.div
-						animate={{
-							y: projectsOpen ? 0 : -20,
-							opacity: projectsOpen ? 1 : 0,
-						}}
-						initial={false}
-						transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					>
-						<SidebarGroup className="p-0">
-							{/* Tree (project-sidebar__tree) */}
-							<SidebarGroupContent>
-								{workspaceError ? (
-									<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
-										<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
-										<p className="mt-1 text-caption text-passive">{workspaceError}</p>
-									</div>
-								) : workspaces.length === 0 ? null : (
-									<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
-										{workspaces.map((workspace) => (
-											<ProjectItem
-												key={workspace.id}
-												workspace={workspace}
-												expanded={!collapsedIds.has(workspace.id)}
-												selection={selection}
-												onToggle={() => toggleCollapsed(workspace.id)}
-												onRemoveProject={onRemoveProject}
-											/>
-										))}
-										{isCollapsed && <CreateProjectListItem />}
-									</SidebarMenu>
-								)}
-							</SidebarGroupContent>
-						</SidebarGroup>
-					</motion.div>
-				</motion.div>
+				<SidebarGroup className="p-0">
+					{/* Tree (project-sidebar__tree) */}
+					<SidebarGroupContent>
+						{workspaceError ? (
+							<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
+								<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
+								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
+							</div>
+						) : workspaces.length === 0 ? null : (
+							<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
+								{workspaces.map((workspace) => (
+									<ProjectItem
+										key={workspace.id}
+										workspace={workspace}
+										expanded={!collapsedIds.has(workspace.id)}
+										selection={selection}
+										onToggle={() => toggleCollapsed(workspace.id)}
+										onRemoveProject={onRemoveProject}
+									/>
+								))}
+								{isCollapsed && <CreateProjectListItem />}
+							</SidebarMenu>
+						)}
+					</SidebarGroupContent>
+				</SidebarGroup>
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.
@@ -660,32 +630,32 @@ function ProjectItem({
 		onKeyDown={onProjectKeyDown}
 		className={cn(
 			NAV_ROW_CLASS,
-			"pr-sidebar-project-actions [&_svg]:size-icon-md",
+			// gap-2 matches SectionDisclosure so project icons/labels share the
+			// Projects header's left edge (NAV_ROW defaults to gap-2.5).
+			"gap-2 pr-sidebar-project-actions [&_svg]:size-icon-md",
 			"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 		)}
 	>
-		{/* Expanded sidebar: visual folder/chevron icon (decorative — toggle button is a sibling) */}
+		{/* Expanded sidebar: visual folder/chevron icon (decorative — toggle button is a sibling).
+		    size-icon-md matches the Projects section row; an 18px centered box was
+		    optically indenting these icons relative to the header. */}
 		<span
 			aria-hidden="true"
-			className="relative shrink-0 group-data-[collapsible=icon]:hidden inline-flex size-[18px] items-center justify-center text-muted-foreground"
+			className="relative inline-flex size-icon-md shrink-0 items-center justify-center text-muted-foreground group-data-[collapsible=icon]:hidden"
 		>
 			{rowHovered ? (
 				<motion.span
 					animate={{ rotate: expanded ? 90 : 0 }}
 					initial={false}
 					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					className="inline-flex size-[18px] items-center justify-center translate-y-px"
+					className="inline-flex size-icon-md items-center justify-center translate-y-px"
 				>
-					<ChevronRight className="size-3.5!" strokeWidth={1.75} />
+					<ChevronRight strokeWidth={1.75} />
 				</motion.span>
+			) : expanded ? (
+				<FolderOpen strokeWidth={1.75} />
 			) : (
-				<span className="inline-flex size-[18px] items-center justify-center">
-					{expanded ? (
-						<FolderOpen className="size-4" strokeWidth={1.75} />
-					) : (
-						<Folder className="size-4" strokeWidth={1.75} />
-					)}
-				</span>
+				<Folder strokeWidth={1.75} />
 			)}
 		</span>
 		{/* Collapsed icon rail: folder icon */}
@@ -1112,30 +1082,46 @@ function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus;
 function SectionDisclosure({
 	icon,
 	label,
-	open,
+	open = true,
 	onToggle,
 	className,
 	trailing,
+	collapsible = true,
 }: {
 	icon: ReactNode;
 	label: string;
-	open: boolean;
-	onToggle: () => void;
+	open?: boolean;
+	onToggle?: () => void;
 	className?: string;
 	/** Optional trailing control (e.g. Projects "+") — stays inside the hover pill. */
 	trailing?: ReactNode;
+	/** When false, render a static label row with no chevron or toggle. */
+	collapsible?: boolean;
 }) {
 	const labelRow = (
 		<>
 			{icon}
 			<span className="truncate">{label}</span>
-			<ChevronRight
-				aria-hidden="true"
-				className={cn("size-3.5! shrink-0 transition-transform duration-150", open && "rotate-90")}
-				strokeWidth={2}
-			/>
+			{collapsible ? (
+				<ChevronRight
+					aria-hidden="true"
+					className={cn("size-3.5! shrink-0 transition-transform duration-150", open && "rotate-90")}
+					strokeWidth={2}
+				/>
+			) : null}
 		</>
 	);
+
+	if (!collapsible) {
+		return (
+			<div className={cn(SECTION_ROW_CLASS, trailing && "pr-1", className)}>
+				<div className="flex min-w-0 flex-1 items-center gap-2">
+					{labelRow}
+				</div>
+				{trailing}
+			</div>
+		);
+	}
 
 	if (trailing) {
 		return (
