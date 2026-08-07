@@ -765,7 +765,8 @@ button.settings-row-bar {
 
 /* Inline value control inside the task composer's "Runs with" sentence. Reads as
    a value you can change, not as a form field: no visible field chrome until
-   hover/focus, and it sizes to its content instead of a column. */
+   hover/focus. The row gives its two controls equal tracks so changing agent
+   labels never shifts the model control. */
 @utility composer-chip {
 	display: inline-flex;
 	width: auto;

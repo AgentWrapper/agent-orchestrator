@@ -267,21 +267,22 @@ export function TaskComposer({
 			{/* Two bands: what it will run with, then what you can do about it. One row
 			    holding chips and buttons together reads as a crowded toolbar. */}
 			<div className="border-t border-border/70 px-(--size-modal-padding) py-3">
-				<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+				<div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3">
 					{/* One sentence — "Runs with <agent> <model>" — states what will happen,
 					    instead of two labelled fields the reader has to assemble themselves. */}
 					<span className="eyebrow-label shrink-0">{t("newTask.runsWith")}</span>
-					<div className="flex min-w-0 flex-wrap items-center gap-2">
+					<div className="grid w-full max-w-(--size-composer-run-options) min-w-0 grid-cols-2 gap-2">
 						<RequiredAgentField
 							id={agentId}
 							variant="chip"
 							label={t("newTask.agent")}
 							placeholder={t("newTask.selectAgent")}
-							value={agent}
+							value={selectedAgent}
 							authorized={agentCatalog?.authorized}
 							installed={agentCatalog?.installed}
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
+							triggerClassName="w-full justify-between"
 							onChange={(value) => {
 								setAgent(value);
 								setAgentTouched(true);
@@ -411,7 +412,7 @@ function TaskModelPicker({
 				aria-label={t("newTask.model")}
 				value={mode || "__default__"}
 				options={options}
-				triggerClassName="composer-chip"
+				triggerClassName="composer-chip w-full justify-between"
 				menuAlign="start"
 				renderTrigger={(selected) => (
 					<span className="min-w-0 truncate text-foreground">
@@ -447,7 +448,7 @@ function TaskModelPicker({
 				onCustom={selectCustomModel}
 				onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
 				refreshing={refreshMutation.isPending}
-				triggerClassName="composer-chip"
+				triggerClassName="composer-chip w-full justify-between"
 				menuAlign="start"
 				renderTrigger={(label) => (
 					<span className="min-w-0 truncate text-foreground">
@@ -458,13 +459,13 @@ function TaskModelPicker({
 		);
 	}
 
-	// Free-text agents keep an input, sized to the sentence rather than a column.
+	// Free-text agents keep an input inside the same stable model track.
 	return (
-		<span className="inline-flex min-w-0 items-center gap-1.5">
+		<span className="inline-flex w-full min-w-0 items-center gap-1.5">
 			<input
 				id={id}
 				aria-label={t("newTask.model")}
-				className="composer-chip w-(--size-composer-model-input) placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+				className="composer-chip min-w-0 flex-1 placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
 				value={value}
 				disabled={agentId === ""}
 				onChange={(event) => onModelChange(event.target.value)}

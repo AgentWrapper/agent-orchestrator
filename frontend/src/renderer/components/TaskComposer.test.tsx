@@ -4,7 +4,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const h = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), capture: vi.fn() }));
+const h = vi.hoisted(() => ({
+	get: vi.fn(),
+	post: vi.fn(),
+	capture: vi.fn(),
+	agentValues: [] as string[],
+}));
 
 vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
@@ -14,7 +19,10 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 }));
 
 vi.mock("./CreateProjectAgentSheet", () => ({
-	RequiredAgentField: ({ value }: { value: string }) => <div data-testid="agent-field" data-value={value} />,
+	RequiredAgentField: ({ value }: { value: string }) => {
+		h.agentValues.push(value);
+		return <div data-testid="agent-field" data-value={value} />;
+	},
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -58,6 +66,7 @@ afterEach(() => {
 	h.get.mockReset();
 	h.post.mockReset();
 	h.capture.mockReset();
+	h.agentValues.length = 0;
 });
 
 describe("TaskComposer", () => {
@@ -191,6 +200,33 @@ describe("TaskComposer", () => {
 				expect.objectContaining({ body: expect.objectContaining({ agent: "codex" }) }),
 			),
 		);
+	});
+
+	it("renders a known default agent without an empty intermediate selection", async () => {
+		h.get.mockImplementation(async (path: string) => {
+			if (path.includes("/models")) {
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "text",
+						models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", isDefault: true }],
+						allowCustom: true,
+					},
+				};
+			}
+			return { data: { status: "ok", project: { agent: "codex", config: {} } } };
+		});
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		queryClient.setQueryData(["project", "proj-1"], { agent: "codex", config: {} });
+
+		render(
+			<QueryClientProvider client={queryClient}>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</QueryClientProvider>,
+		);
+
+		expect(await screen.findByDisplayValue("gpt-5.6-sol")).toBeInTheDocument();
+		expect(h.agentValues).not.toContain("");
 	});
 
 	it("falls back to the global default agent when the project sets no worker agent", async () => {
