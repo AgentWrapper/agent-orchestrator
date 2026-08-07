@@ -1289,6 +1289,44 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getByText("Changes requested")).toBeInTheDocument();
 	});
 
+	it.each([
+		["review runs list", true],
+		["legacy review-state fallback", false],
+	])("keeps suppressed AO review summaries visible from the %s", async (_source, includeRuns) => {
+		const suppressedRun = {
+			...approvedReview,
+			status: "suppressed",
+			verdict: "changes_requested",
+			body: "Keep this suppressed review visible.",
+			suppressedAt: "2026-06-16T10:07:00Z",
+		};
+		const state = {
+			...reviewState(3, "changes_requested", "abc123"),
+			latestRun: suppressedRun,
+		};
+		const previous = getMock.getMockImplementation()!;
+		getMock.mockImplementation(async (path: string, opts?: unknown) => {
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				return {
+					data: {
+						reviewerHandleId: "reviewer-pane",
+						reviews: [state],
+						runs: includeRuns ? [suppressedRun] : [],
+					},
+				};
+			}
+			return previous(path, opts);
+		});
+
+		renderWithQuery(
+			<SessionInspector session={session([pr(3, "open")], { autoInjectReviewFeedback: false })} />,
+		);
+		await openReviewsSection();
+
+		expect(await screen.findByText("Keep this suppressed review visible.")).toBeInTheDocument();
+		expect(screen.queryByText("No past review summaries.")).not.toBeInTheDocument();
+	});
+
 	it("shows eligible and up-to-date open PR review rows", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [
 			reviewState(3, "needs_review", "abc123"),

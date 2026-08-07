@@ -2080,7 +2080,9 @@ function openReviewStatesFor(session: WorkspaceSession, reviewStates: PRReviewSt
 function runsByPRFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[]): Map<string, ReviewRunFacts[]> {
 	const byPR = new Map<string, ReviewRunFacts[]>();
 	for (const run of runs.filter(
-		(run) => (run.status === "complete" || run.status === "delivered") && Boolean(run.body?.trim()),
+		(run) =>
+			(run.status === "complete" || run.status === "delivered" || run.status === "suppressed") &&
+			Boolean(run.body?.trim()),
 	)) {
 		byPR.set(run.prUrl, [...(byPR.get(run.prUrl) ?? []), run]);
 	}
@@ -2089,7 +2091,7 @@ function runsByPRFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[])
 			const fallback = [state.latestRun, state.previousRun].filter(
 				(run): run is ReviewRunFacts =>
 					Boolean(run) &&
-					(run!.status === "complete" || run!.status === "delivered") &&
+					(run!.status === "complete" || run!.status === "delivered" || run!.status === "suppressed") &&
 					Boolean(run!.body?.trim()),
 			);
 			if (fallback.length > 0) byPR.set(state.prUrl, fallback);
