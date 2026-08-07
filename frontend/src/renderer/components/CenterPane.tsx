@@ -1,12 +1,15 @@
-import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, Shield } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Maximize2, Minimize2, Minus, Plus, Shield } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode, type WheelEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultShortcutBindings, shortcutBindingLabel } from "../../shared/shortcuts";
 import { useOverflowScroll } from "../hooks/useOverflowScroll";
+import { findActiveAgentSwitch, useAgentSwitches } from "../hooks/useAgentSwitches";
+import { useSwitchAgentState } from "../hooks/useSwitchAgent";
 import { useTruncatedText } from "../hooks/useTruncatedText";
 import type { ShellTerminal } from "../hooks/useShellTerminals";
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN } from "../lib/design-tokens";
 import { getAgentActivityView } from "../lib/session-presentation";
+import { agentLabel } from "../lib/agent-options";
 import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
 import { aoBridge } from "../lib/bridge";
 import { handleTerminalTabListKeyDown } from "../lib/terminal-tabs";
@@ -18,6 +21,7 @@ import { ShellTerminalTab } from "./ShellTerminalTab";
 import { TerminalPane } from "./TerminalPane";
 import { AgentAvatar } from "./AgentAvatar";
 import { SessionTopbarPortal } from "./SessionTopbarPortal";
+import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
@@ -82,6 +86,14 @@ export function CenterPane({
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
+	const agentSwitches = useAgentSwitches(session?.id ?? "").data ?? [];
+	const activeAgentSwitch = findActiveAgentSwitch(agentSwitches);
+	const switchMutation = useSwitchAgentState(session?.id ?? "");
+	const switchSource = activeAgentSwitch?.fromHarness ?? switchMutation.input?.session.provider;
+	const switchTarget = activeAgentSwitch?.targetHarness ?? switchMutation.input?.targetHarness;
+	const isSwitchingAgent = Boolean(
+		(activeAgentSwitch || switchMutation.isPending) && switchSource && switchTarget,
+	);
 	const target = terminalTarget ?? { kind: "worker" };
 	const sessionTabLabel = session
 		? isOrchestratorSession(session)
@@ -355,14 +367,73 @@ export function CenterPane({
 				className="relative min-h-0 flex-1"
 				role="tabpanel"
 			>
-				<TerminalPane
-					daemonReady={daemonReady}
-					fontSize={fontSize}
-					session={session}
-					terminalTarget={target}
-					theme={theme}
-				/>
+				<div
+					className="h-full min-h-0"
+					data-testid="terminal-interaction-surface"
+					inert={isSwitchingAgent ? true : undefined}
+				>
+					<TerminalPane
+						daemonReady={daemonReady}
+						fontSize={fontSize}
+						session={session}
+						terminalTarget={target}
+						theme={theme}
+					/>
+				</div>
+				{isSwitchingAgent && switchSource && switchTarget ? (
+					<AgentSwitchTerminalOverlay source={switchSource} target={switchTarget} />
+				) : null}
 			</div>
+		</div>
+	);
+}
+
+function AgentSwitchTerminalOverlay({ source, target }: { source: string; target: string }) {
+	const { t } = useTranslation();
+	const overlayRef = useRef<HTMLDivElement | null>(null);
+	const title = t("switchAgent.progressTitle", {
+		source: agentLabel(source),
+		target: agentLabel(target),
+	});
+
+	useEffect(() => {
+		overlayRef.current?.focus({ preventScroll: true });
+	}, [source, target]);
+
+	return (
+		<div
+			ref={overlayRef}
+			aria-label={title}
+			aria-live="polite"
+			className="absolute inset-0 z-20 flex cursor-wait items-center justify-center bg-terminal/95 backdrop-blur-[3px]"
+			data-testid="agent-switch-terminal-overlay"
+			role="status"
+			tabIndex={-1}
+		>
+			<div className="flex flex-col items-center gap-5 px-6 text-center">
+				<div className="flex items-center gap-5 sm:gap-7">
+					<SwitchingAgentMark harness={source} />
+					<div aria-hidden="true" className="flex items-center gap-2 text-accent">
+						<div className="relative h-1 w-20 overflow-hidden rounded-full bg-border-strong/70 sm:w-28">
+							<span className="agent-switch-transfer-pulse absolute inset-y-0 w-10 rounded-full bg-gradient-to-r from-transparent via-accent to-transparent" />
+						</div>
+						<ArrowRight className="size-icon-lg shrink-0" />
+					</div>
+					<SwitchingAgentMark harness={target} />
+				</div>
+				<p className="font-mono text-control font-medium text-foreground">{title}</p>
+			</div>
+		</div>
+	);
+}
+
+function SwitchingAgentMark({ harness }: { harness: string }) {
+	return (
+		<div className="flex min-w-20 flex-col items-center gap-2">
+			<span className="grid size-14 place-items-center rounded-xl border border-border-strong bg-surface/90 shadow-lg shadow-black/20">
+				<AgentAvatar className="size-8" decorative provider={harness} />
+			</span>
+			<span className="text-caption font-medium text-muted-foreground">{agentLabel(harness)}</span>
 		</div>
 	);
 }
@@ -421,6 +492,7 @@ function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabPr
 					</span>
 				) : null}
 			</button>
+			{session ? <TerminalSwitchAgentButton key={session.id} session={session} /> : null}
 		</span>
 	);
 }

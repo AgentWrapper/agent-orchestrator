@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentSwitch } from "../hooks/useAgentSwitches";
 import { useUiStore } from "../stores/ui-store";
 import type { SessionActivityState, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { ShellTopbar, TopbarKillButton } from "./ShellTopbar";
@@ -95,20 +94,6 @@ function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSessio
 	};
 }
 
-function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
-	return {
-		agentHandoffStatus: "not_attempted",
-		fromHarness: "claude-code",
-		id: "switch-1",
-		requestedAt: "2026-06-10T00:00:00Z",
-		sessionId: "sess-1",
-		state: "starting_target",
-		targetHarness: "codex",
-		updatedAt: "2026-06-10T00:00:01Z",
-		...overrides,
-	};
-}
-
 function renderTopbar(session: WorkspaceSession, embedded = false) {
 	return renderTopbarSessions([session], session.id, embedded);
 }
@@ -186,7 +171,7 @@ describe("ShellTopbar status pill", () => {
 
 		expect(screen.queryByText("ao/sess-1")).not.toBeInTheDocument();
 		expect(screen.queryByText("Working")).not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Switch agent" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Switch agent" })).not.toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Kill session" })).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Open orchestrator" })).toBeInTheDocument();
 	});
@@ -353,173 +338,6 @@ describe("ShellTopbar inspector state", () => {
 
 		expect(useUiStore.getState().inspectorSessions["sess-1"]?.isOpen).toBe(true);
 		expect(useUiStore.getState().inspectorSessions["sess-2"]).toEqual({ isOpen: true, view: "browser" });
-	});
-});
-
-describe("ShellTopbar agent switching", () => {
-	it.each(["cursor", "kimi"] as const)("does not offer switching from an active %s session", (provider) => {
-		renderTopbar(sessionWith({ provider }));
-
-		expect(screen.queryByRole("button", { name: "Switch agent" })).not.toBeInTheDocument();
-	});
-
-	it("keeps one live switch control across worker navigation and removes it for orchestrators", async () => {
-		const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-		const codexWorker = sessionWith({
-			...secondWorker,
-			provider: "codex",
-		});
-
-		try {
-			const view = renderTopbarSessions([worker, codexWorker, orchestrator], worker.id);
-
-			expect(screen.getAllByRole("button", { name: "Switch agent" })).toHaveLength(1);
-			await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
-			expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
-
-			paramsMock.sessionId = codexWorker.id;
-			view.rerenderTopbar();
-			expect(screen.queryByRole("dialog", { name: "Switch agent" })).not.toBeInTheDocument();
-			expect(screen.getAllByRole("button", { name: "Switch agent" })).toHaveLength(1);
-			await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
-			expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
-
-			paramsMock.sessionId = orchestrator.id;
-			view.rerenderTopbar();
-			expect(screen.queryByRole("button", { name: "Switch agent" })).not.toBeInTheDocument();
-			expect(screen.queryByRole("dialog", { name: "Switch agent" })).not.toBeInTheDocument();
-			expect(screen.getByRole("button", { name: "Open Kanban" })).toBeInTheDocument();
-
-			paramsMock.sessionId = undefined;
-			view.rerenderTopbar();
-			expect(screen.queryByRole("button", { name: "Switch agent" })).not.toBeInTheDocument();
-			expect(
-				consoleError.mock.calls.some((call) => String(call[0]).includes("same key")),
-			).toBe(false);
-		} finally {
-			consoleError.mockRestore();
-		}
-	});
-
-	it("does not offer switching for terminated sessions", () => {
-		renderTopbar(sessionWith({ isTerminated: true, status: "terminated" }));
-		expect(screen.queryByRole("button", { name: "Switch agent" })).not.toBeInTheDocument();
-	});
-
-	it("posts the opposite harness, trimmed note, and generated idempotency key", async () => {
-		const { queryClient } = renderTopbar(sessionWith());
-		const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
-		const activeSwitch = switchRecord();
-		postMock.mockResolvedValue({ data: { switch: activeSwitch }, error: undefined, response: { status: 200 } });
-		getMock.mockResolvedValueOnce({ data: { switches: [] }, error: undefined, response: { status: 200 } });
-		getMock.mockResolvedValue({ data: { switches: [activeSwitch] }, error: undefined, response: { status: 200 } });
-
-		await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
-		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
-		await userEvent.type(within(dialog).getByLabelText("Note (optional)"), "  Check the failing tests first.  ");
-		await userEvent.click(within(dialog).getByRole("button", { name: "Switch agent" }));
-
-		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
-		expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/switch-agent", {
-			params: { path: { sessionId: "sess-1" } },
-			body: {
-				targetHarness: "codex",
-				note: "Check the failing tests first.",
-				idempotencyKey: expect.any(String),
-			},
-		});
-		expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
-		expect(invalidateQueries).toHaveBeenCalledWith({
-			queryKey: ["session-agent-switches", "sess-1"],
-		});
-		expect(await screen.findByRole("button", { name: "Switching to Codex…" })).toHaveAttribute(
-			"aria-busy",
-			"true",
-		);
-		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-	});
-
-	it("restores durable non-terminal progress and keeps it inspectable when the source is exited", async () => {
-		getMock.mockResolvedValue({
-			data: { switches: [switchRecord({ state: "starting_target" })] },
-			error: undefined,
-			response: { status: 200 },
-		});
-		renderTopbar(
-			sessionWith({
-				activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
-				status: "exited",
-			}),
-		);
-
-		const progressButton = await screen.findByRole("button", { name: "Switching to Codex…" });
-		expect(progressButton).toHaveAttribute("aria-busy", "true");
-		await userEvent.click(progressButton);
-
-		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
-		expect(within(dialog).getByRole("status")).toHaveTextContent(
-			"Switching from Claude Code to CodexStarting target agent",
-		);
-		expect(within(dialog).queryByRole("textbox", { name: "Note (optional)" })).not.toBeInTheDocument();
-		expect(within(dialog).queryByRole("button", { name: "Switch agent" })).not.toBeInTheDocument();
-		expect(getMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/agent-switches", {
-			params: { path: { sessionId: "sess-1" } },
-		});
-	});
-
-	it("distinguishes unconfirmed delivery from other terminal switch failures", async () => {
-		getMock.mockResolvedValue({
-			data: {
-				switches: [
-					switchRecord({ state: "failed", errorCode: "target_start_failed" }),
-					switchRecord({
-						id: "switch-unconfirmed",
-						state: "failed",
-						errorCode: "delivery_unconfirmed",
-					}),
-					switchRecord({
-						id: "switch-older",
-						fromHarness: "codex",
-						state: "completed",
-						targetHarness: "claude-code",
-					}),
-				],
-			},
-			error: undefined,
-			response: { status: 200 },
-		});
-		renderTopbar(sessionWith());
-
-		await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
-		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
-		const history = await within(dialog).findByTestId("agent-switch-history");
-		expect(history).toHaveTextContent("Claude Code → Codex");
-		expect(history).toHaveTextContent("Codex → Claude Code");
-		expect(history).toHaveTextContent("Completed");
-		const failedEntry = within(history).getByText("target_start_failed").closest("li");
-		const unconfirmedEntry = within(history).getByText("delivery_unconfirmed").closest("li");
-		expect(failedEntry).not.toBeNull();
-		expect(unconfirmedEntry).not.toBeNull();
-		expect(within(failedEntry!).getByText("Failed")).toBeInTheDocument();
-		expect(within(unconfirmedEntry!).getByText("Delivery unconfirmed")).toBeInTheDocument();
-		expect(within(history).queryByRole("button")).not.toBeInTheDocument();
-		expect(within(dialog).getByRole("textbox", { name: "Note (optional)" })).toBeInTheDocument();
-	});
-
-	it("keeps the dialog open and surfaces a daemon error", async () => {
-		postMock.mockResolvedValue({
-			data: undefined,
-			error: { message: "target agent is unavailable" },
-			response: { status: 409 },
-		});
-		renderTopbar(sessionWith());
-
-		await userEvent.click(screen.getByRole("button", { name: "Switch agent" }));
-		const dialog = screen.getByRole("dialog", { name: "Switch agent" });
-		await userEvent.click(within(dialog).getByRole("button", { name: "Switch agent" }));
-
-		expect(await within(dialog).findByRole("alert")).toHaveTextContent("target agent is unavailable");
-		expect(screen.getByRole("dialog", { name: "Switch agent" })).toBeInTheDocument();
 	});
 });
 
