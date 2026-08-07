@@ -17,6 +17,7 @@ type fakeECS struct {
 	runInput     *awsecs.RunTaskInput
 	describeTask types.Task
 	listARNs     []string
+	listInput    *awsecs.ListTasksInput
 	stopInput    *awsecs.StopTaskInput
 }
 
@@ -45,9 +46,10 @@ func (f *fakeECS) DescribeTasks(
 
 func (f *fakeECS) ListTasks(
 	_ context.Context,
-	_ *awsecs.ListTasksInput,
+	input *awsecs.ListTasksInput,
 	_ ...func(*awsecs.Options),
 ) (*awsecs.ListTasksOutput, error) {
+	f.listInput = input
 	return &awsecs.ListTasksOutput{TaskArns: f.listARNs}, nil
 }
 
@@ -97,6 +99,9 @@ func TestCreateRunsFargateTaskWithWorkerEnvironment(t *testing.T) {
 	if aws.ToString(input.StartedBy) != "ao-session-one" {
 		t.Fatalf("StartedBy = %q", aws.ToString(input.StartedBy))
 	}
+	if input.ClientToken != nil {
+		t.Fatalf("ClientToken = %q, want unset for recreatable session", aws.ToString(input.ClientToken))
+	}
 	if aws.ToString(input.Overrides.Cpu) != "8192" || aws.ToString(input.Overrides.Memory) != "16384" {
 		t.Fatalf("resource overrides = cpu %q memory %q", aws.ToString(input.Overrides.Cpu), aws.ToString(input.Overrides.Memory))
 	}
@@ -139,6 +144,70 @@ func TestFindBySessionReturnsListedTask(t *testing.T) {
 	}
 	if environment.State != "running" {
 		t.Fatalf("State = %q", environment.State)
+	}
+}
+
+func TestCreateWarmTaskContainsNoTenantIdentity(t *testing.T) {
+	api := &fakeECS{}
+	client := testClient(t, api)
+	_, err := client.CreateWarmTask(
+		context.Background(),
+		"pool-task-one",
+		"release-one",
+		"https://cloud.example",
+		"unique-enrollment-token",
+		clouddomain.DefaultResourceProfile(),
+	)
+	if err != nil {
+		t.Fatalf("CreateWarmTask() error = %v", err)
+	}
+	if got := aws.ToString(api.runInput.StartedBy); got != "ao-warm-pool-task-one" {
+		t.Fatalf("StartedBy = %q", got)
+	}
+	if got := aws.ToString(api.runInput.ClientToken); got != "ao-warm-pool-task-one" {
+		t.Fatalf("ClientToken = %q", got)
+	}
+	values := map[string]string{}
+	for _, pair := range api.runInput.Overrides.ContainerOverrides[0].Environment {
+		values[aws.ToString(pair.Name)] = aws.ToString(pair.Value)
+	}
+	if values["AO_WORKER_WARM_POOL"] != "true" ||
+		values["AO_WORKER_BOOTSTRAP_TOKEN"] != "unique-enrollment-token" {
+		t.Fatalf("warm environment = %#v", values)
+	}
+	for _, forbidden := range []string{"AO_CLOUD_SESSION_ID", "AO_ACCOUNT_ID", "GITHUB_TOKEN"} {
+		if _, ok := values[forbidden]; ok {
+			t.Fatalf("warm environment contains %s", forbidden)
+		}
+	}
+	if aws.ToString(api.runInput.Overrides.Cpu) != "4096" ||
+		aws.ToString(api.runInput.Overrides.Memory) != "8192" {
+		t.Fatalf(
+			"warm resources = cpu %q memory %q",
+			aws.ToString(api.runInput.Overrides.Cpu),
+			aws.ToString(api.runInput.Overrides.Memory),
+		)
+	}
+}
+
+func TestFindWarmTaskUsesPoolReservationIdentity(t *testing.T) {
+	api := &fakeECS{
+		listARNs: []string{"arn:aws:ecs:task/warm"},
+		describeTask: types.Task{
+			TaskArn:    aws.String("arn:aws:ecs:task/warm"),
+			LastStatus: aws.String("RUNNING"),
+		},
+	}
+	client := testClient(t, api)
+	environment, found, err := client.FindWarmTask(context.Background(), "pool-task-one")
+	if err != nil {
+		t.Fatalf("FindWarmTask() error = %v", err)
+	}
+	if !found || environment.State != "running" {
+		t.Fatalf("environment = %#v, found = %v", environment, found)
+	}
+	if got := aws.ToString(api.listInput.StartedBy); got != "ao-warm-pool-task-one" {
+		t.Fatalf("StartedBy = %q", got)
 	}
 }
 

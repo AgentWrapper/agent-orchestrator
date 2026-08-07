@@ -50,6 +50,8 @@ type Config struct {
 	ECSSubnets               []string
 	ECSSecurityGroups        []string
 	ECSAssignPublicIP        bool
+	ECSWarmPoolSize          int
+	ECSWarmPoolGeneration    string
 	EncryptionKey            []byte
 	WorkerSigningKey         []byte
 	ReconcileInterval        time.Duration
@@ -95,6 +97,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	ecsWarmPoolSize, err := envInt("AO_ECS_WARM_POOL_SIZE", 0)
+	if err != nil {
+		return Config{}, err
+	}
 
 	cfg := Config{
 		ListenAddr:               envOr("AO_CLOUD_LISTEN_ADDR", "127.0.0.1:3010"),
@@ -123,6 +129,8 @@ func Load() (Config, error) {
 		ECSSubnets:               envList("AO_ECS_SUBNETS"),
 		ECSSecurityGroups:        envList("AO_ECS_SECURITY_GROUPS"),
 		ECSAssignPublicIP:        envBool("AO_ECS_ASSIGN_PUBLIC_IP", false),
+		ECSWarmPoolSize:          ecsWarmPoolSize,
+		ECSWarmPoolGeneration:    strings.TrimSpace(os.Getenv("AO_ECS_WARM_POOL_GENERATION")),
 		EncryptionKey:            encryptionKey,
 		WorkerSigningKey:         workerSigningKey,
 		ReconcileInterval:        2 * time.Second,
@@ -192,6 +200,17 @@ func (c Config) Validate() error {
 	}
 	if c.MaxActiveSandboxesPerOrg < 0 {
 		return errors.New("AO_MAX_ACTIVE_SANDBOXES_PER_ORG must be greater than or equal to 0")
+	}
+	if c.ECSWarmPoolSize < 0 || c.ECSWarmPoolSize > 10 {
+		return errors.New("AO_ECS_WARM_POOL_SIZE must be between 0 and 10")
+	}
+	if c.ECSWarmPoolSize > 0 {
+		if c.SandboxProvider != "ecs" {
+			return errors.New("AO_ECS_WARM_POOL_SIZE requires AO_SANDBOX_PROVIDER=ecs")
+		}
+		if strings.TrimSpace(c.ECSWarmPoolGeneration) == "" {
+			return errors.New("AO_ECS_WARM_POOL_GENERATION is required when the ECS warm pool is enabled")
+		}
 	}
 	switch c.AuthMode {
 	case "local":

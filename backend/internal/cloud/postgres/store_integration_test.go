@@ -399,8 +399,16 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RedeemWorkerBootstrapTicket() error = %v", err)
 	}
-	if _, err := store.RedeemWorkerBootstrapTicket(ctx, retryableTicket); !errors.Is(err, ErrInvalidTicket) {
-		t.Fatalf("retry RedeemWorkerBootstrapTicket() error = %v, want ErrInvalidTicket", err)
+	replayed, err := store.RedeemWorkerBootstrapTicket(ctx, retryableTicket)
+	if err != nil {
+		t.Fatalf("retry RedeemWorkerBootstrapTicket() error = %v", err)
+	}
+	if replayed.WorkerEpoch != firstRedemption.WorkerEpoch {
+		t.Fatalf(
+			"retry worker epoch = %d, want %d",
+			replayed.WorkerEpoch,
+			firstRedemption.WorkerEpoch,
+		)
 	}
 	if firstRedemption.WorkerEpoch <= consumed.WorkerEpoch {
 		t.Fatalf(
@@ -408,6 +416,95 @@ func TestCreateSessionIsIdempotentAndEventsAreOrdered(t *testing.T) {
 			firstRedemption.WorkerEpoch,
 			consumed.WorkerEpoch,
 		)
+	}
+}
+
+func TestECSWarmTaskClaimIsSingleUseAndActivatesBootstrap(t *testing.T) {
+	store := integrationStore(t)
+	ctx := context.Background()
+	account, err := store.EnsureAccount(ctx, uuid.NewString(), "Warm Pool Tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, account.ID, CreateProjectInput{
+		DisplayName:   "Warm Pool",
+		RepositoryURL: "ao-standalone://" + uuid.NewString(),
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(name string) CreateSessionResult {
+		result, createErr := store.CreateSession(ctx, account.ID, CreateSessionInput{
+			IdempotencyKey: uuid.NewString(),
+			ProjectID:      project.ID,
+			Kind:           "worker",
+			Harness:        "claude-code",
+			DisplayName:    name,
+			Resource:       clouddomain.DefaultResourceProfile(),
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return result
+	}
+	first := create("first")
+	second := create("second")
+	warm, token, reserved, err := store.ReserveECSWarmTask(ctx, "release-one", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reserved {
+		t.Fatal("ReserveECSWarmTask() reserved = false")
+	}
+	if err := store.ActivateECSWarmTask(ctx, warm.ID, "arn:task:warm"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkECSWarmTaskReady(ctx, warm.ID); err != nil {
+		t.Fatal(err)
+	}
+	lease := func(sessionID clouddomain.SessionID) {
+		if _, leaseErr := store.pool.Exec(ctx, `
+			UPDATE ao_sandboxes
+			SET reconcile_lease_owner = 'test-owner',
+				reconcile_lease_until = now() + interval '1 minute'
+			WHERE session_id = $1
+		`, sessionID); leaseErr != nil {
+			t.Fatal(leaseErr)
+		}
+	}
+	lease(first.Session.ID)
+	arn, claimed, err := store.ClaimECSWarmTask(
+		ctx,
+		"test-owner",
+		"release-one",
+		first.Sandbox,
+		[]string{"worker:connect"},
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !claimed || arn != "arn:task:warm" {
+		t.Fatalf("claim = %v %q", claimed, arn)
+	}
+	ticket, err := store.RedeemWorkerBootstrapTicket(ctx, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ticket.SessionID != first.Session.ID {
+		t.Fatalf("ticket session = %q, want %q", ticket.SessionID, first.Session.ID)
+	}
+	lease(second.Session.ID)
+	if _, claimed, err := store.ClaimECSWarmTask(
+		ctx,
+		"test-owner",
+		"release-one",
+		second.Sandbox,
+		[]string{"worker:connect"},
+		time.Minute,
+	); err != nil || claimed {
+		t.Fatalf("second claim = %v, error = %v", claimed, err)
 	}
 }
 

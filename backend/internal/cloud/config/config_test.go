@@ -79,6 +79,46 @@ func TestLoadRejectsInvalidSandboxQuota(t *testing.T) {
 	}
 }
 
+func TestLoadReadsECSWarmPoolConfiguration(t *testing.T) {
+	configureECS(t)
+	t.Setenv("AO_ECS_WARM_POOL_SIZE", "4")
+	t.Setenv("AO_ECS_WARM_POOL_GENERATION", "release-one")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ECSWarmPoolSize != 4 || cfg.ECSWarmPoolGeneration != "release-one" {
+		t.Fatalf(
+			"warm pool = size %d generation %q",
+			cfg.ECSWarmPoolSize,
+			cfg.ECSWarmPoolGeneration,
+		)
+	}
+}
+
+func TestLoadRejectsWarmPoolWithoutGeneration(t *testing.T) {
+	configureECS(t)
+	t.Setenv("AO_ECS_WARM_POOL_SIZE", "4")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "AO_ECS_WARM_POOL_GENERATION") {
+		t.Fatalf("Load() error = %v, want missing warm generation", err)
+	}
+}
+
+func TestLoadRejectsWarmPoolForNonECSProvider(t *testing.T) {
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "docker")
+	t.Setenv("AO_ECS_WARM_POOL_SIZE", "4")
+	t.Setenv("AO_ECS_WARM_POOL_GENERATION", "release-one")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
+
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "AO_SANDBOX_PROVIDER=ecs") {
+		t.Fatalf("Load() error = %v, want ECS-only warm pool", err)
+	}
+}
+
 func TestLoadDoesNotRequireExternalAuthConfiguration(t *testing.T) {
 	t.Setenv("AO_DATABASE_URL", "postgres://example")
 	t.Setenv("AO_SANDBOX_PROVIDER", "docker")
@@ -88,6 +128,17 @@ func TestLoadDoesNotRequireExternalAuthConfiguration(t *testing.T) {
 	if _, err := Load(); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
+}
+
+func configureECS(t *testing.T) {
+	t.Helper()
+	t.Setenv("AO_DATABASE_URL", "postgres://example")
+	t.Setenv("AO_SANDBOX_PROVIDER", "ecs")
+	t.Setenv("AO_ECS_CLUSTER", "cluster")
+	t.Setenv("AO_ECS_TASK_DEFINITION", "task:1")
+	t.Setenv("AO_ECS_SUBNETS", "subnet-one")
+	t.Setenv("AO_ENCRYPTION_KEY", "0000000000000000000000000000000000000000000000000000000000000000")
+	t.Setenv("AO_WORKER_SIGNING_KEY", "1111111111111111111111111111111111111111111111111111111111111111")
 }
 
 func TestLoadRejectsInvalidTarget(t *testing.T) {

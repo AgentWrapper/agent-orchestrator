@@ -86,8 +86,59 @@ func New(api ecsAPI, cfg Config) (*Client, error) {
 
 // Create runs one Fargate task for the session.
 func (c *Client) Create(ctx context.Context, spec cloudsandbox.Spec) (cloudsandbox.Environment, error) {
-	environment := make([]types.KeyValuePair, 0, len(spec.Environment))
-	for key, value := range spec.Environment {
+	return c.runTask(
+		ctx,
+		startedBy(spec.SessionID),
+		"",
+		spec.Environment,
+		spec.ResourceProfile,
+		[]types.Tag{
+			{Key: aws.String("ao.session_id"), Value: aws.String(string(spec.SessionID))},
+			{Key: aws.String("ao.managed"), Value: aws.String("true")},
+		},
+	)
+}
+
+// CreateWarmTask runs one clean task that waits for a single session assignment.
+func (c *Client) CreateWarmTask(
+	ctx context.Context,
+	id, generation, publicURL, enrollmentToken string,
+	resource clouddomain.ResourceProfile,
+) (cloudsandbox.Environment, error) {
+	return c.runTask(
+		ctx,
+		warmStartedBy(id),
+		warmStartedBy(id),
+		map[string]string{
+			"AO_CLOUD_PUBLIC_URL":       strings.TrimRight(publicURL, "/"),
+			"AO_WORKER_BOOTSTRAP_TOKEN": enrollmentToken,
+			"AO_WORKER_WARM_POOL":       "true",
+			"AO_WORKSPACE_DIR":          "/workspace/repository",
+			"AO_DATA_DIR":               "/workspace/.ao/worker",
+			"HOME":                      "/workspace/.ao/home",
+			"CLAUDE_CONFIG_DIR":         "/workspace/.ao/home/.claude",
+			"CODEX_HOME":                "/workspace/.ao/home/.codex",
+		},
+		resource,
+		[]types.Tag{
+			{Key: aws.String("ao.managed"), Value: aws.String("true")},
+			{Key: aws.String("ao.lifecycle"), Value: aws.String("warm")},
+			{Key: aws.String("ao.pool_generation"), Value: aws.String(generation)},
+			{Key: aws.String("ao.pool_task_id"), Value: aws.String(id)},
+		},
+	)
+}
+
+func (c *Client) runTask(
+	ctx context.Context,
+	startedByValue string,
+	clientToken string,
+	specEnvironment map[string]string,
+	resource clouddomain.ResourceProfile,
+	tags []types.Tag,
+) (cloudsandbox.Environment, error) {
+	environment := make([]types.KeyValuePair, 0, len(specEnvironment))
+	for key, value := range specEnvironment {
 		k := key
 		v := value
 		environment = append(environment, types.KeyValuePair{Name: &k, Value: &v})
@@ -97,7 +148,7 @@ func (c *Client) Create(ctx context.Context, spec cloudsandbox.Spec) (cloudsandb
 		TaskDefinition: aws.String(c.taskDefinition),
 		LaunchType:     types.LaunchTypeFargate,
 		Count:          aws.Int32(1),
-		StartedBy:      aws.String(startedBy(spec.SessionID)),
+		StartedBy:      aws.String(startedByValue),
 		NetworkConfiguration: &types.NetworkConfiguration{
 			AwsvpcConfiguration: &types.AwsVpcConfiguration{
 				AssignPublicIp: c.assignPublicIP,
@@ -113,16 +164,16 @@ func (c *Client) Create(ctx context.Context, spec cloudsandbox.Spec) (cloudsandb
 				},
 			},
 		},
-		Tags: []types.Tag{
-			{Key: aws.String("ao.session_id"), Value: aws.String(string(spec.SessionID))},
-			{Key: aws.String("ao.managed"), Value: aws.String("true")},
-		},
+		Tags: tags,
 	}
-	if spec.ResourceProfile.CPU > 0 {
-		input.Overrides.Cpu = aws.String(strconv.Itoa(spec.ResourceProfile.CPU * 1024))
+	if clientToken != "" {
+		input.ClientToken = aws.String(clientToken)
 	}
-	if spec.ResourceProfile.Memory > 0 {
-		input.Overrides.Memory = aws.String(strconv.Itoa(spec.ResourceProfile.Memory * 1024))
+	if resource.CPU > 0 {
+		input.Overrides.Cpu = aws.String(strconv.Itoa(resource.CPU * 1024))
+	}
+	if resource.Memory > 0 {
+		input.Overrides.Memory = aws.String(strconv.Itoa(resource.Memory * 1024))
 	}
 	output, err := c.api.RunTask(ctx, input)
 	if err != nil {
@@ -157,6 +208,28 @@ func (c *Client) FindBySession(
 	})
 	if err != nil {
 		return cloudsandbox.Environment{}, false, fmt.Errorf("list ECS tasks: %w", err)
+	}
+	if len(output.TaskArns) == 0 {
+		return cloudsandbox.Environment{}, false, nil
+	}
+	task, err := c.describeOne(ctx, output.TaskArns[0])
+	if err != nil {
+		return cloudsandbox.Environment{}, false, err
+	}
+	return taskEnvironment(task), true, nil
+}
+
+// FindWarmTask finds a task launched for one durable warm-pool reservation.
+func (c *Client) FindWarmTask(
+	ctx context.Context,
+	id string,
+) (cloudsandbox.Environment, bool, error) {
+	output, err := c.api.ListTasks(ctx, &awsecs.ListTasksInput{
+		Cluster:   aws.String(c.cluster),
+		StartedBy: aws.String(warmStartedBy(id)),
+	})
+	if err != nil {
+		return cloudsandbox.Environment{}, false, fmt.Errorf("list ECS warm tasks: %w", err)
 	}
 	if len(output.TaskArns) == 0 {
 		return cloudsandbox.Environment{}, false, nil
@@ -267,6 +340,10 @@ func ecsState(value *string) string {
 
 func startedBy(sessionID clouddomain.SessionID) string {
 	return "ao-" + string(sessionID)
+}
+
+func warmStartedBy(id string) string {
+	return "ao-warm-" + id
 }
 
 func compact(values []string) []string {

@@ -37,6 +37,7 @@ type Reconciler struct {
 	interval       time.Duration
 	log            *slog.Logger
 	workerBinary   []byte
+	warmGeneration string
 }
 
 type providerResolver interface {
@@ -71,6 +72,12 @@ func New(
 		workerBinary:   append([]byte(nil), workerBinary...),
 		log:            log,
 	}
+}
+
+// WithECSWarmPool enables one-shot assignment from a global ECS warm generation.
+func (r *Reconciler) WithECSWarmPool(generation string) *Reconciler {
+	r.warmGeneration = strings.TrimSpace(generation)
+	return r
 }
 
 // Run reconciles sandboxes until ctx is canceled.
@@ -238,6 +245,13 @@ func (r *Reconciler) reconcileSandbox(ctx context.Context, sandbox clouddomain.S
 }
 
 func (r *Reconciler) deleteSession(ctx context.Context, sandbox clouddomain.Sandbox) error {
+	if marker, ok := r.store.(interface {
+		StopECSWarmTaskForSession(context.Context, clouddomain.SessionID) error
+	}); ok {
+		if err := marker.StopECSWarmTaskForSession(ctx, sandbox.SessionID); err != nil {
+			return err
+		}
+	}
 	if err := r.store.DeleteSession(ctx, sandbox.AccountID, sandbox.SessionID); err != nil &&
 		!errors.Is(err, cloudpostgres.ErrSessionNotFound) {
 		return err
@@ -272,6 +286,50 @@ func (r *Reconciler) provision(
 	sandbox clouddomain.Sandbox,
 	provider cloudsandbox.Provider,
 ) error {
+	if sandbox.Provider == "ecs" && r.warmGeneration != "" {
+		if claimer, ok := r.store.(interface {
+			ClaimECSWarmTask(
+				context.Context,
+				string,
+				string,
+				clouddomain.Sandbox,
+				[]string,
+				time.Duration,
+			) (string, bool, error)
+		}); ok {
+			taskARN, claimed, err := claimer.ClaimECSWarmTask(
+				ctx,
+				r.owner,
+				r.warmGeneration,
+				sandbox,
+				workerBootstrapScopes(),
+				10*time.Minute,
+			)
+			if err != nil {
+				return r.fail(ctx, sandbox, err)
+			}
+			if claimed {
+				payload, _ := json.Marshal(map[string]any{
+					"provider": "ecs",
+					"warm":     true,
+				})
+				_, _ = r.store.AppendEvent(
+					ctx,
+					sandbox.AccountID,
+					sandbox.SessionID,
+					"sandbox.provisioning",
+					payload,
+				)
+				r.log.Info(
+					"claimed ECS warm task",
+					"session_id", sandbox.SessionID,
+					"provider_id", taskARN,
+					"generation", r.warmGeneration,
+				)
+				return nil
+			}
+		}
+	}
 	existing, found, err := provider.FindBySession(ctx, sandbox.SessionID)
 	if err != nil {
 		return r.fail(ctx, sandbox, err)
@@ -321,7 +379,7 @@ func (r *Reconciler) workerSpec(
 		sandbox.AccountID,
 		sandbox.SessionID,
 		"worker_bootstrap",
-		[]string{"worker:connect", "worker:event", "worker:terminal", "worker:git", "worker:orchestrate"},
+		workerBootstrapScopes(),
 		10*time.Minute,
 	)
 	if err != nil {
@@ -351,6 +409,16 @@ func (r *Reconciler) workerSpec(
 		AutoStopMinutes:   30,
 		AutoDeleteMinutes: 7 * 24 * 60,
 	}, nil
+}
+
+func workerBootstrapScopes() []string {
+	return []string{
+		"worker:connect",
+		"worker:event",
+		"worker:terminal",
+		"worker:git",
+		"worker:orchestrate",
+	}
 }
 
 func (r *Reconciler) fail(ctx context.Context, sandbox clouddomain.Sandbox, cause error) error {

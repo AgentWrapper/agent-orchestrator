@@ -284,6 +284,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	hookEnvironment := workerEnvironment(
 		r.client.getToken(),
+		r.bootstrap.SessionID,
 		r.bootstrap.Launch.RepositoryURL,
 	)
 	hookEnvironment["AO_SESSION_BRANCH"] = r.bootstrap.Launch.Session.Branch
@@ -343,6 +344,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	workspaceEnvironment := append(
 		sanitizedProcessEnvironment(),
 		envList(workspaceShellEnvironment(
+			r.bootstrap.SessionID,
 			r.bootstrap.Launch.Session.Branch,
 			r.bootstrap.Launch.RepositoryURL,
 		))...,
@@ -1432,21 +1434,21 @@ func updateJSONFile(path string, update func(map[string]any)) error {
 	return nil
 }
 
-func workerEnvironment(token, repositoryURL string) map[string]string {
+func workerEnvironment(token, sessionID, repositoryURL string) map[string]string {
 	environment := map[string]string{
 		"AO_CLOUD_PUBLIC_URL": os.Getenv("AO_CLOUD_PUBLIC_URL"),
 		"AO_WORKER_TOKEN":     token,
-		"AO_SESSION_ID":       os.Getenv("AO_CLOUD_SESSION_ID"),
+		"AO_SESSION_ID":       sessionID,
 		"AO_DATA_DIR":         os.Getenv("AO_DATA_DIR"),
 	}
 	addGitHubRepositoryEnvironment(environment, repositoryURL)
 	return environment
 }
 
-func workspaceShellEnvironment(branch, repositoryURL string) map[string]string {
+func workspaceShellEnvironment(sessionID, branch, repositoryURL string) map[string]string {
 	environment := map[string]string{
 		"AO_CLOUD_PUBLIC_URL": os.Getenv("AO_CLOUD_PUBLIC_URL"),
-		"AO_SESSION_ID":       os.Getenv("AO_CLOUD_SESSION_ID"),
+		"AO_SESSION_ID":       sessionID,
 		"AO_SESSION_BRANCH":   branch,
 	}
 	addGitHubRepositoryEnvironment(environment, repositoryURL)

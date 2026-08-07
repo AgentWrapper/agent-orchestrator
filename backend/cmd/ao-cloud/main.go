@@ -28,6 +28,7 @@ import (
 	cloudgithubapp "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm/githubapp"
 	cloudlocalgh "github.com/aoagents/agent-orchestrator/backend/internal/cloud/scm/localgh"
 	cloudsecrets "github.com/aoagents/agent-orchestrator/backend/internal/cloud/secrets"
+	cloudwarmpool "github.com/aoagents/agent-orchestrator/backend/internal/cloud/warmpool"
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
 	cloudworkerhub "github.com/aoagents/agent-orchestrator/backend/internal/cloud/workerhub"
 )
@@ -144,7 +145,7 @@ func run(log *slog.Logger) error {
 	if cfg.SandboxProvider == "docker" {
 		dockerProvider = clouddocker.New(cfg.DockerWorkerImage)
 	}
-	var ecsProvider cloudsandbox.Provider
+	var ecsProvider *cloudecs.Client
 	if cfg.SandboxProvider == "ecs" {
 		loadOptions := []func(*awsconfig.LoadOptions) error{}
 		if cfg.ECSRegion != "" {
@@ -192,6 +193,25 @@ func run(log *slog.Logger) error {
 		workerBinary,
 		log,
 	)
+	if ecsProvider != nil {
+		if cfg.ECSWarmPoolSize > 0 {
+			reconciler.WithECSWarmPool(cfg.ECSWarmPoolGeneration)
+		}
+		warmPoolManager := cloudwarmpool.New(
+			store,
+			ecsProvider,
+			cfg.PublicURL,
+			cfg.ECSWarmPoolGeneration,
+			cfg.ECSWarmPoolSize,
+			log,
+		)
+		go func() {
+			if err := warmPoolManager.Run(ctx); err != nil {
+				log.Error("ECS warm-pool manager stopped", "err", err)
+				stop()
+			}
+		}()
+	}
 	go func() {
 		if err := reconciler.Run(ctx); err != nil {
 			log.Error("sandbox reconciler stopped", "err", err)

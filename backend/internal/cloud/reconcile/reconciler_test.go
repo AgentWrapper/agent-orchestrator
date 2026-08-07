@@ -16,6 +16,9 @@ type fakeStore struct {
 	id             string
 	events         []string
 	deletedSession clouddomain.SessionID
+	warmClaimed    bool
+	warmARN        string
+	warmStopped    clouddomain.SessionID
 }
 
 func (f *fakeStore) ClaimSandboxes(context.Context, string, int, time.Duration) ([]clouddomain.Sandbox, error) {
@@ -59,6 +62,23 @@ func (f *fakeStore) AppendEvent(
 }
 func (f *fakeStore) DeleteSession(_ context.Context, _ clouddomain.AccountID, sessionID clouddomain.SessionID) error {
 	f.deletedSession = sessionID
+	return nil
+}
+func (f *fakeStore) ClaimECSWarmTask(
+	context.Context,
+	string,
+	string,
+	clouddomain.Sandbox,
+	[]string,
+	time.Duration,
+) (string, bool, error) {
+	return f.warmARN, f.warmClaimed, nil
+}
+func (f *fakeStore) StopECSWarmTaskForSession(
+	_ context.Context,
+	sessionID clouddomain.SessionID,
+) error {
+	f.warmStopped = sessionID
 	return nil
 }
 
@@ -186,6 +206,73 @@ func TestProvisionIssuesScopedBootstrapAndLabelsSandbox(t *testing.T) {
 	}
 	if len(store.events) != 1 || store.events[0] != "sandbox.provisioning" {
 		t.Fatalf("events = %#v", store.events)
+	}
+}
+
+func TestProvisionClaimsWarmECSTaskBeforeColdLaunch(t *testing.T) {
+	store := &fakeStore{
+		claimed: []clouddomain.Sandbox{{
+			SessionID:       "session-one",
+			AccountID:       "account-one",
+			OrgID:           "account-one",
+			Provider:        "ecs",
+			DesiredState:    "running",
+			ObservedState:   "requested",
+			ResourceProfile: clouddomain.DefaultResourceProfile(),
+		}},
+		warmClaimed: true,
+		warmARN:     "arn:aws:ecs:task/warm",
+	}
+	provider := &fakeProvider{}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"",
+		"",
+		time.Second,
+		nil,
+		nil,
+	).WithECSWarmPool("release-one")
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
+	}
+	if provider.created.Environment != nil {
+		t.Fatalf("cold provider Create called: %#v", provider.created)
+	}
+	if len(store.events) != 1 || store.events[0] != "sandbox.provisioning" {
+		t.Fatalf("events = %#v", store.events)
+	}
+}
+
+func TestProvisionFallsBackToColdECSWhenPoolIsEmpty(t *testing.T) {
+	store := &fakeStore{claimed: []clouddomain.Sandbox{{
+		SessionID:       "session-one",
+		AccountID:       "account-one",
+		OrgID:           "account-one",
+		Provider:        "ecs",
+		DesiredState:    "running",
+		ObservedState:   "requested",
+		ResourceProfile: clouddomain.DefaultResourceProfile(),
+	}}}
+	provider := &fakeProvider{}
+	reconciler := New(
+		store,
+		fakeResolver{provider: provider},
+		"https://cloud.example",
+		"",
+		"",
+		time.Second,
+		nil,
+		nil,
+	).WithECSWarmPool("release-one")
+
+	if err := reconciler.reconcileOnce(context.Background()); err != nil {
+		t.Fatalf("reconcileOnce() error = %v", err)
+	}
+	if provider.created.Environment["AO_WORKER_BOOTSTRAP_TOKEN"] != "one-use-ticket" {
+		t.Fatalf("cold launch environment = %#v", provider.created.Environment)
 	}
 }
 
@@ -349,6 +436,9 @@ func TestDeletedSandboxRemovesProviderEnvironmentAndSession(t *testing.T) {
 	}
 	if provider.deleted != "provider-one" {
 		t.Fatalf("deleted provider ID = %q, want provider-one", provider.deleted)
+	}
+	if store.warmStopped != "session-one" {
+		t.Fatalf("stopped warm session = %q", store.warmStopped)
 	}
 	if store.state != "" {
 		t.Fatalf("deleted session should not leave sandbox observation state %q", store.state)

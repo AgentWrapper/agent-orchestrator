@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	cloudworker "github.com/aoagents/agent-orchestrator/backend/internal/cloud/worker"
 )
@@ -45,8 +46,13 @@ func run(log *slog.Logger) error {
 	if bootstrapToken == "" {
 		return errors.New("AO_WORKER_BOOTSTRAP_TOKEN is required")
 	}
-	bootstrap, err := client.Bootstrap(ctx, bootstrapToken, cloudworker.Version, cloudworker.DefaultCapabilities)
+	warmPool := strings.EqualFold(strings.TrimSpace(os.Getenv("AO_WORKER_WARM_POOL")), "true")
+	bootstrap, err := bootstrapWorker(ctx, client, bootstrapToken, warmPool, 2*time.Second, log)
 	_ = os.Unsetenv("AO_WORKER_BOOTSTRAP_TOKEN")
+	_ = os.Unsetenv("AO_WORKER_WARM_POOL")
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("bootstrap worker: %w", err)
 	}
@@ -71,6 +77,39 @@ func run(log *slog.Logger) error {
 		"harness", bootstrap.Launch.Session.Harness,
 	)
 	return cloudworker.NewRunner(client, bootstrap, workspaceDir, dataDir).Run(ctx)
+}
+
+func bootstrapWorker(
+	ctx context.Context,
+	client *cloudworker.Client,
+	bootstrapToken string,
+	warmPool bool,
+	retryInterval time.Duration,
+	log *slog.Logger,
+) (cloudworker.BootstrapResponse, error) {
+	if retryInterval <= 0 {
+		retryInterval = 2 * time.Second
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	for {
+		bootstrap, err := client.Bootstrap(
+			ctx,
+			bootstrapToken,
+			cloudworker.Version,
+			cloudworker.DefaultCapabilities,
+		)
+		if err == nil || !warmPool {
+			return bootstrap, err
+		}
+		log.Debug("warm worker waiting for assignment", "err", err)
+		select {
+		case <-ctx.Done():
+			return cloudworker.BootstrapResponse{}, ctx.Err()
+		case <-time.After(retryInterval):
+		}
+	}
 }
 
 func currentWorkerToken() string {

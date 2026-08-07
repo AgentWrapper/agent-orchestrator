@@ -2717,6 +2717,13 @@ func (s *Server) deleteSessionSandbox(
 		!errors.Is(err, cloudsandbox.ErrNotFound) {
 		return err
 	}
+	if marker, ok := s.store.(interface {
+		StopECSWarmTaskForSession(context.Context, clouddomain.SessionID) error
+	}); ok {
+		if err := marker.StopECSWarmTaskForSession(ctx, sessionID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

@@ -1305,14 +1305,22 @@ func readJSONObject(t *testing.T, path string) map[string]any {
 
 func TestCloudWorkerEnvironmentsTargetCanonicalGitHubRepository(t *testing.T) {
 	const repositoryURL = "https://github.com/amoreX/flowlens.git"
-	agentEnvironment := workerEnvironment("worker-token", repositoryURL)
-	workspaceEnvironment := workspaceShellEnvironment("ao/readme-tweak", repositoryURL)
+	t.Setenv("AO_CLOUD_SESSION_ID", "stale-task-environment")
+	agentEnvironment := workerEnvironment("worker-token", "session-one", repositoryURL)
+	workspaceEnvironment := workspaceShellEnvironment(
+		"session-one",
+		"ao/readme-tweak",
+		repositoryURL,
+	)
 	for name, environment := range map[string]map[string]string{
 		"agent":     agentEnvironment,
 		"workspace": workspaceEnvironment,
 	} {
 		if got := environment["GH_REPO"]; got != "amoreX/flowlens" {
 			t.Fatalf("%s GH_REPO = %q, want amoreX/flowlens", name, got)
+		}
+		if got := environment["AO_SESSION_ID"]; got != "session-one" {
+			t.Fatalf("%s AO_SESSION_ID = %q, want bootstrap session", name, got)
 		}
 	}
 	if got := agentEnvironment["AO_WORKER_TOKEN"]; got != "worker-token" {
@@ -1324,7 +1332,11 @@ func TestCloudWorkerEnvironmentsTargetCanonicalGitHubRepository(t *testing.T) {
 }
 
 func TestCloudWorkerEnvironmentOmitsInvalidGitHubRepository(t *testing.T) {
-	environment := workerEnvironment("worker-token", "https://example.com/repository")
+	environment := workerEnvironment(
+		"worker-token",
+		"session-one",
+		"https://example.com/repository",
+	)
 	if _, ok := environment["GH_REPO"]; ok {
 		t.Fatalf("invalid repository produced GH_REPO = %q", environment["GH_REPO"])
 	}
