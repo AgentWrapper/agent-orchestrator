@@ -443,6 +443,13 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
+/* Windows has a custom titlebar above the framed panel, so avoid a second
+ * vertical inset under the window controls while preserving right/bottom frame
+ * spacing for the rounded panel. */
+.platform-windows .center-panel-shell {
+	padding-top: 0;
+}
+
 /* macOS + Linux: inset on all sides except left (flush with sidebar). */
 .center-panel-shell.center-panel-shell--mac {
 	padding-top: var(--size-center-panel-inset-mac);
