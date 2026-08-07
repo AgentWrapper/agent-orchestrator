@@ -110,6 +110,21 @@ func (p *Plugin) GetAgentHooks(ctx context.Context, cfg ports.WorkspaceHookConfi
 	return nil
 }
 
+// InstallWorkspaceTrust seeds Cursor's workspace trust marker for callers that
+// manage their own Cursor profile and do not install worker hooks.
+func (p *Plugin) InstallWorkspaceTrust(ctx context.Context, cfg ports.WorkspaceHookConfig) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.WorkspacePath) == "" {
+		return errors.New("cursor.InstallWorkspaceTrust: WorkspacePath is required")
+	}
+	if err := ensureCursorWorkspaceTrusted(cfg); err != nil {
+		return fmt.Errorf("cursor.InstallWorkspaceTrust: %w", err)
+	}
+	return nil
+}
+
 // UninstallHooks removes AO's Cursor hooks from the workspace-local
 // .cursor/hooks.json file, leaving user-defined hooks untouched. A missing file
 // is a no-op.

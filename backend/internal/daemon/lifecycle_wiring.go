@@ -223,7 +223,7 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
+		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir, reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store,
 		reviewsvc.WithLifecycleReducer(lcm),
@@ -338,6 +338,26 @@ func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
 	}
 	agent, ok := adapter.(ports.Agent)
 	return agent, ok
+}
+
+type reviewerAgentAuth struct {
+	agents ports.AgentResolver
+}
+
+func (r reviewerAgentAuth) AuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error) {
+	if r.agents == nil {
+		return "", false, nil
+	}
+	agent, ok := r.agents.Agent(domain.AgentHarness(harness))
+	if !ok {
+		return "", false, nil
+	}
+	checker, ok := agent.(ports.AgentAuthChecker)
+	if !ok {
+		return "", false, nil
+	}
+	status, err := checker.AuthStatus(ctx)
+	return status, true, err
 }
 
 // buildAgentResolver constructs the per-session agent resolver the Session

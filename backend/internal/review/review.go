@@ -728,6 +728,25 @@ func (e *Engine) Cancel(ctx stdctx.Context, workerID domain.SessionID) (CancelRe
 	if err != nil {
 		return CancelResult{}, err
 	}
+	if len(running) == 0 {
+		review, ok, err := e.currentReviewForSession(ctx, workerID, harness)
+		if err != nil {
+			return CancelResult{}, err
+		}
+		handle := ""
+		if ok {
+			handle = review.ReviewerHandleID
+		}
+		prs, err := e.prs.ListPRsBySession(ctx, workerID)
+		if err != nil {
+			return CancelResult{}, err
+		}
+		runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
+		if err != nil {
+			return CancelResult{}, err
+		}
+		return CancelResult{ReviewerHandleID: handle, Reviews: Plan(prs, runs)}, nil
+	}
 	review, ok, err := e.currentReviewForCancel(ctx, workerID, harness, running)
 	if err != nil {
 		return CancelResult{}, err

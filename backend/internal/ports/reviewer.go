@@ -61,6 +61,20 @@ type ReviewerRestorer interface {
 	ReviewRestoreCommand(ctx context.Context, inv ReviewInvocation) (cmd ReviewCommandSpec, ok bool, err error)
 }
 
+// ReviewerReusePolicy is implemented by interactive reviewer adapters that
+// need a fresh TUI for each task because request-scoped context is fixed at
+// process launch. Returning false forces a fresh launch for every pass.
+type ReviewerReusePolicy interface {
+	ReviewProcessReusable() bool
+}
+
+// ReviewerPromptReadinessProvider lets an interactive reviewer describe when
+// its terminal prompt is ready for InitialMessage injection. Reviewers without
+// this capability receive a conservative startup delay from the launcher.
+type ReviewerPromptReadinessProvider interface {
+	ReviewPromptReadinessHints(ctx context.Context) (PromptReadinessHints, error)
+}
+
 // ReviewInvocation describes one review pass for a reviewer to act on. All ids
 // the reviewer needs are passed explicitly here (and embedded in the prompt /
 // message), never through environment variables.
@@ -87,6 +101,9 @@ type ReviewInvocation struct {
 	ReviewIndex int
 	// WorkspacePath is the worker's checkout the reviewer reads.
 	WorkspacePath string
+	// DataDir is AO's owned state root. Reviewer prelaunch hooks may use it for
+	// profile installation but must not write outside AO/workspace boundaries.
+	DataDir string
 	// Prompt and SystemPrompt are the review instructions AO authored centrally,
 	// mirroring the worker's LaunchConfig.Prompt / SystemPrompt split: SystemPrompt
 	// carries the standing reviewer role, Prompt the per-pass task. A prompt-driven
@@ -123,6 +140,13 @@ type ReviewCommandSpec struct {
 	Argv           []string
 	Env            map[string]string
 	AgentSessionID string
+	// InitialMessage is injected after the process starts. Interactive-only
+	// reviewers use this instead of placing a task on the command line.
+	InitialMessage string
+	// WorkingDirectory overrides the worker checkout as the process working
+	// directory. Secure interactive reviewers use an AO-owned neutral directory;
+	// this routing field is not itself a process sandbox.
+	WorkingDirectory string
 }
 
 // ReviewerResolver maps a reviewer harness onto its adapter. ok=false means no
