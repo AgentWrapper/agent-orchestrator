@@ -558,8 +558,11 @@ function ProjectItem({
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
+	// Expand a collapsed project so opening the orchestrator also reveals its
+	// session list — otherwise the tree stays shut while you're inside it.
 	const openOrchestrator = async () => {
 		if (isProjectRestarting) return;
+		if (!expanded) onToggle();
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
 			return;

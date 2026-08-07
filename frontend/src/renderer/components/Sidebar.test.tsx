@@ -487,6 +487,32 @@ describe("Sidebar", () => {
 		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
 	});
 
+	it("expands a collapsed project when opening its orchestrator", async () => {
+		const user = userEvent.setup();
+		const orchestrator: WorkspaceSession = {
+			...session,
+			id: "proj-1-orc",
+			title: "Orchestrator",
+			kind: "orchestrator",
+		};
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
+
+		await user.click(screen.getByRole("button", { name: "Open Project One orchestrator" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-orc" },
+		});
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "true");
+	});
+
 	it("defaults worker and orchestrator agents when creating a project", async () => {
 		const user = userEvent.setup();
 		const onCreateProject = vi.fn().mockResolvedValue(undefined) as CreateProjectHandler;
