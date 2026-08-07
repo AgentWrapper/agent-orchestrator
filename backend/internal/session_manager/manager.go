@@ -154,6 +154,15 @@ type TerminalInputGate interface {
 	BeginInputDrain(terminalID string) (lastInputAt time.Time, release func())
 }
 
+// ReviewerTerminator tears down a worker's reviewer pane when the worker leaves
+// its live lifecycle. It is late-bound like ShellTerminalCloser because review
+// services are assembled after the session manager in daemon wiring.
+type ReviewerTerminator interface {
+	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
+	TeardownReviewerTerminal(ctx context.Context, workerID domain.SessionID) error
+	RestoreReviewer(ctx context.Context, workerID domain.SessionID) error
+}
+
 type runtimeController interface {
 	Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error)
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
@@ -276,6 +285,9 @@ type Manager struct {
 
 	terminalInputGateMu sync.Mutex
 	terminalInputGate   TerminalInputGate
+
+	reviewersMu sync.Mutex
+	reviewers   ReviewerTerminator
 }
 
 // SetShellTerminalCloser wires every worktree-releasing path to gate the
@@ -330,6 +342,44 @@ func (m *Manager) beginShellTerminalTeardown(ctx context.Context, id domain.Sess
 		return nil, nil
 	}
 	return closer.BeginSessionTeardown(ctx, id)
+}
+
+// SetReviewerTerminator wires worker lifecycle paths to the worker's reviewer
+// pane. Safe to leave unset: a nil terminator is a no-op.
+func (m *Manager) SetReviewerTerminator(terminator ReviewerTerminator) {
+	m.reviewersMu.Lock()
+	defer m.reviewersMu.Unlock()
+	m.reviewers = terminator
+}
+
+func (m *Manager) terminateReviewer(ctx context.Context, id domain.SessionID, body string) error {
+	m.reviewersMu.Lock()
+	terminator := m.reviewers
+	m.reviewersMu.Unlock()
+	if terminator == nil {
+		return nil
+	}
+	return terminator.TerminateReviewer(ctx, id, body)
+}
+
+func (m *Manager) teardownReviewerTerminal(ctx context.Context, id domain.SessionID) error {
+	m.reviewersMu.Lock()
+	terminator := m.reviewers
+	m.reviewersMu.Unlock()
+	if terminator == nil {
+		return nil
+	}
+	return terminator.TeardownReviewerTerminal(ctx, id)
+}
+
+func (m *Manager) restoreReviewer(ctx context.Context, id domain.SessionID) error {
+	m.reviewersMu.Lock()
+	reviewer := m.reviewers
+	m.reviewersMu.Unlock()
+	if reviewer == nil {
+		return nil
+	}
+	return reviewer.RestoreReviewer(ctx, id)
 }
 
 // PreviewLifecycle is the narrow teardown hook consumed by Session Manager.
@@ -1082,6 +1132,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
 	}
+	if err := m.terminateReviewer(ctx, id, "cancelled by worker session termination"); err != nil {
+		return false, fmt.Errorf("kill %s: reviewer: %w", id, err)
+	}
 	// Gate shut any shell terminal scoped to this session BEFORE the worktree
 	// goes away: an open shell whose cwd is that directory can otherwise
 	// survive the removal (and on Windows can even block it — an open handle
@@ -1341,7 +1394,16 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 }
 
 func (m *Manager) relaunchRestoredSession(ctx context.Context, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo) (RestoreResult, error) {
-	return m.relaunchSession(ctx, "restore", rec, project, ws, nil)
+	result, err := m.relaunchSession(ctx, "restore", rec, project, ws, nil)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	if rec.Kind == domain.KindWorker {
+		if err := m.restoreReviewer(ctx, rec.ID); err != nil {
+			m.logger.Warn("restore: reviewer terminal restore failed; worker remains restored", "sessionID", rec.ID, "error", err)
+		}
+	}
+	return result, nil
 }
 
 // ResumeAgentWithMode replaces an exited agent inside its still-live session.
@@ -1648,12 +1710,19 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 		return fmt.Errorf("save %s: upsert worktree row: %w", rec.ID, err)
 	}
 
-	// 3. Mark terminal via the LCM (same path Kill uses).
+	// 3. Remove reviewer panes before the worktree disappears, while preserving
+	// review rows and native reviewer ids for restore. This is shutdown recovery,
+	// not user intent to cancel review history.
+	if err := m.teardownReviewerTerminal(ctx, rec.ID); err != nil {
+		return fmt.Errorf("save %s: teardown reviewer: %w", rec.ID, err)
+	}
+
+	// 4. Mark terminal via the LCM (same path Kill uses).
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
 	}
 
-	// 4. Runtime teardown (best-effort; same pattern as Kill).
+	// 5. Runtime teardown (best-effort; same pattern as Kill).
 	handle := runtimeHandle(rec.Metadata)
 	if destroyRuntime && handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
@@ -1661,7 +1730,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 		}
 	}
 
-	// 5. Force-remove the worktree (safe: work is captured in step 1 and the
+	// 6. Force-remove the worktree (safe: work is captured in step 1 and the
 	// DB write in step 2 is already committed).
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
 		m.logger.Warn("save-teardown-all: force destroy failed", "sessionID", rec.ID, "error", err)
@@ -2115,6 +2184,9 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 		}); err != nil {
 			return fmt.Errorf("save %s repo %s: upsert worktree row: %w", rec.ID, row.RepoName, err)
 		}
+	}
+	if err := m.teardownReviewerTerminal(ctx, rec.ID); err != nil {
+		return fmt.Errorf("save %s: teardown reviewer: %w", rec.ID, err)
 	}
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
@@ -2698,12 +2770,12 @@ func promptProjectContext(projectID domain.ProjectID, project domain.ProjectReco
 	}
 }
 
-// attachmentsDir is the worktree-relative directory where spawn image
+// attachmentsDir is the worktree-relative directory where spawn file
 // attachments are written.
 const attachmentsDir = ".ao/attachments"
 
 // writeSpawnAttachments writes each attachment into the worktree under
-// attachmentsDir as image-1<ext>, image-2<ext>, ... and returns the
+// attachmentsDir as attachment-1<ext>, attachment-2<ext>, ... and returns the
 // worktree-relative paths in order. The files are excluded from git via the
 // worktree's info/exclude so they do not dirty the working tree.
 func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttachment) ([]string, error) {
@@ -2717,7 +2789,7 @@ func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttach
 		if ext == "" {
 			ext = ".bin"
 		}
-		name := fmt.Sprintf("image-%d%s", i+1, ext)
+		name := fmt.Sprintf("attachment-%d%s", i+1, ext)
 		if err := os.WriteFile(filepath.Join(dir, name), a.Data, 0o600); err != nil {
 			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
 		}
@@ -2727,7 +2799,7 @@ func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttach
 	return refs, nil
 }
 
-// appendAttachmentReferences appends a block listing the attached image paths so
+// appendAttachmentReferences appends a block listing the attached file paths so
 // the agent knows to read them. Placed after the human's brief.
 func appendAttachmentReferences(prompt string, refs []string) string {
 	if len(refs) == 0 {
@@ -2738,7 +2810,7 @@ func appendAttachmentReferences(prompt string, refs []string) string {
 	if strings.TrimSpace(prompt) != "" {
 		b.WriteString("\n\n")
 	}
-	b.WriteString("Attached images (read these files in the workspace for visual context):")
+	b.WriteString("Attached files (read these files in the workspace for context):")
 	for _, ref := range refs {
 		b.WriteString("\n- ")
 		b.WriteString(ref)
@@ -3413,6 +3485,14 @@ func launchBinary(argv []string) (string, bool) {
 }
 
 func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]string, argv []string) {
+	AugmentRuntimePATHForLaunchBinary(ctx, env, argv, m.lookPath)
+}
+
+// AugmentRuntimePATHForLaunchBinary prepends the resolved launch binary
+// directory to the runtime PATH. For Node-backed CLI shims, it also prepends a
+// concrete Node runtime directory so shebangs like `#!/usr/bin/env node` work
+// in GUI-launched terminals whose PATH may not include shell manager setup.
+func AugmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]string, argv []string, lookPath func(string) (string, error)) {
 	bin, ok := launchBinary(argv)
 	if !ok || !filepath.IsAbs(bin) {
 		return
@@ -3423,7 +3503,7 @@ func (m *Manager) augmentRuntimePATHForLaunchBinary(ctx context.Context, env map
 	}
 	dirs := []string{launchDir}
 	if isNodeLaunchBinary(bin) {
-		if nodeDir := m.nodeRuntimeDir(ctx); nodeDir != "" && nodeDir != launchDir {
+		if nodeDir := nodeRuntimeDir(ctx, lookPath); nodeDir != "" && nodeDir != launchDir {
 			dirs = append(dirs, nodeDir)
 		}
 	}
@@ -3476,11 +3556,14 @@ func containsPathDir(parts []string, dir string) bool {
 	return false
 }
 
-func (m *Manager) nodeRuntimeDir(ctx context.Context) string {
+func nodeRuntimeDir(ctx context.Context, lookPath func(string) (string, error)) string {
 	if err := ctx.Err(); err != nil || runtime.GOOS == "windows" {
 		return ""
 	}
-	if node, err := m.lookPath("node"); err == nil && node != "" {
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	if node, err := lookPath("node"); err == nil && node != "" {
 		return filepath.Dir(node)
 	}
 	home, err := os.UserHomeDir()

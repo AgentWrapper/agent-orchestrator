@@ -125,7 +125,6 @@ vi.mock("./TaskComposer", () => ({
 	TaskComposer: (props: {
 		projectId?: string;
 		onCreated: (id: string) => void;
-		onCancel?: () => void;
 		onDirtyChange?: (dirty: boolean) => void;
 		onSubmittingChange?: (submitting: boolean) => void;
 	}) => (
@@ -140,9 +139,6 @@ vi.mock("./TaskComposer", () => ({
 			</button>
 			<button type="button" onClick={() => props.onCreated("new-session")}>
 				stub-create
-			</button>
-			<button type="button" onClick={() => props.onCancel?.()}>
-				stub-cancel
 			</button>
 		</div>
 	),
@@ -210,6 +206,7 @@ beforeEach(() => {
 			themePreference: "dark",
 			resolvedTheme: "dark",
 			restartingProjectIds: new Set(),
+			settingsModal: null,
 		});
 	});
 });
@@ -497,10 +494,8 @@ describe("CommandPalette actions", () => {
 		await screen.findByPlaceholderText(/search projects/i);
 		fireEvent.click(screen.getByText("Open orchestrator"));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-2" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-2" });
+		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnMock).not.toHaveBeenCalled();
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});

@@ -10,6 +10,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/claudecode"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/muse"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -114,6 +115,43 @@ func TestPollKeepsGenuineLongCodexTurnActive(t *testing.T) {
 	}
 	if len(sink.signals) != 0 {
 		t.Fatalf("long active turn emitted reconciliation: %+v", sink.signals)
+	}
+}
+
+func TestPollContinuouslyReconcilesMuse(t *testing.T) {
+	now := time.Unix(500, 0).UTC()
+	tests := []struct {
+		name    string
+		current domain.ActivityState
+		output  string
+		want    domain.ActivityState
+		event   string
+	}{
+		{"fresh active to waiting", domain.ActivityActive, "◆ Request user input AO Muse Fix  1m 02s)\n", domain.ActivityWaitingInput, "terminal-waiting-input"},
+		{"waiting to active", domain.ActivityWaitingInput, "◇ Finishing up (25s · esc to interrupt)\n", domain.ActivityActive, "terminal-active"},
+		{"idle to waiting", domain.ActivityIdle, "Enter to select · ↑/↓ to move · Tab for an optional note · Esc to interrupt\n", domain.ActivityWaitingInput, "terminal-waiting-input"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := activeSession(now, domain.HarnessMuse)
+			session.Activity = domain.Activity{State: tt.current, LastActivityAt: now.Add(-time.Second)}
+			session.UpdatedAt = now.Add(-time.Second)
+			sink := &fakeSink{}
+			observer := New(
+				fakeSessions{rows: []domain.SessionRecord{session}},
+				sink,
+				&fakeRuntime{output: tt.output},
+				fakeAgents{domain.HarnessMuse: muse.New()},
+				Config{Clock: func() time.Time { return now }, Logger: testLogger()},
+			)
+
+			if err := observer.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(sink.signals) != 1 || sink.signals[0].State != tt.want || sink.signals[0].Event != tt.event {
+				t.Fatalf("unexpected reconciliation: %+v", sink.signals)
+			}
+		})
 	}
 }
 

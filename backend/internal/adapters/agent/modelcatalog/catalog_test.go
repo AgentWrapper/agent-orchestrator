@@ -3,6 +3,8 @@ package modelcatalog
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +83,7 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "claude-code", mode: ports.ModelSelectionCatalog, count: 3},
 		{agent: "codex", mode: ports.ModelSelectionCatalog, count: 7},
 		{agent: "amp", mode: ports.ModelSelectionModeList, count: 4},
+		{agent: "muse", mode: ports.ModelSelectionCatalog, count: 3},
 		{agent: "aider", mode: ports.ModelSelectionCatalog},
 		{agent: "autohand", mode: ports.ModelSelectionCatalog},
 		{agent: "qwen", mode: ports.ModelSelectionText},
@@ -94,6 +97,22 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 				t.Fatalf("Base(%q) = %#v", tc.agent, got)
 			}
 		})
+	}
+}
+
+func TestBaseMuseCatalogAllowsCustomModels(t *testing.T) {
+	got := Base("muse")
+	if got.SelectionMode != ports.ModelSelectionCatalog {
+		t.Fatalf("SelectionMode = %q, want catalog", got.SelectionMode)
+	}
+	if !got.AllowCustom {
+		t.Fatal("AllowCustom = false, want true")
+	}
+	if got.Source != "official-catalog" {
+		t.Fatalf("Source = %q, want official-catalog", got.Source)
+	}
+	if len(got.Models) != 3 || got.Models[0].ID != "muse-spark" || !got.Models[0].IsDefault {
+		t.Fatalf("models = %#v", got.Models)
 	}
 }
 
@@ -196,5 +215,181 @@ func TestParseJSONModelsSupportsKiroAndDevinFields(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Fatalf("models = %#v, missing %#v", got, want)
+	}
+}
+
+func writeClaudeSettings(t *testing.T, dir, model string) {
+	t.Helper()
+	settingsDir := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "{}"
+	if model != "" {
+		body = `{"model": "` + model + `"}`
+	}
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func claudeDefaultID(catalog ports.AgentModelCatalog) string {
+	for _, item := range catalog.Models {
+		if item.IsDefault {
+			return item.ID
+		}
+	}
+	return ""
+}
+
+func TestClaudeCodeDiscoveryFlagsTheConfiguredAliasAsDefault(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	dir := t.TempDir()
+	writeClaudeSettings(t, dir, "opus")
+
+	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id := claudeDefaultID(got); id != "opus" {
+		t.Fatalf("default = %q, want opus (models %#v)", id, got.Models)
+	}
+	if len(got.Models) != 3 {
+		t.Fatalf("models = %#v, want the three published aliases", got.Models)
+	}
+}
+
+func TestClaudeCodeDiscoveryAddsAConfiguredModelOutsideTheAliases(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	dir := t.TempDir()
+	writeClaudeSettings(t, dir, "opus[1m]")
+
+	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without the appended entry the picker would name a default it cannot select.
+	if id := claudeDefaultID(got); id != "opus[1m]" {
+		t.Fatalf("default = %q, want opus[1m] (models %#v)", id, got.Models)
+	}
+	if len(got.Models) != 4 {
+		t.Fatalf("models = %#v, want the aliases plus the configured model", got.Models)
+	}
+}
+
+func TestClaudeCodeDiscoveryPrefersNearerScopesAndProjectEnv(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	dir := t.TempDir()
+	writeClaudeSettings(t, dir, "haiku")
+	local := filepath.Join(dir, ".claude", "settings.local.json")
+	if err := os.WriteFile(local, []byte(`{"model": "sonnet"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id := claudeDefaultID(got); id != "sonnet" {
+		t.Fatalf("default = %q, want the local settings model", id)
+	}
+
+	// The project's own environment outranks every settings file.
+	got, err = Discover(context.Background(), "claude-code", "", dir, map[string]string{"ANTHROPIC_MODEL": "haiku"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id := claudeDefaultID(got); id != "haiku" {
+		t.Fatalf("default = %q, want the project env model", id)
+	}
+}
+
+func TestClaudeCodeDiscoveryKeepsNoDefaultWhenNothingConfigured(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	writeClaudeSettings(t, dir, "")
+
+	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// AO passes no --model, so the CLI decides. Guessing here would assert a
+	// default AO cannot verify.
+	if id := claudeDefaultID(got); id != "" {
+		t.Fatalf("default = %q, want none", id)
+	}
+	if len(got.Models) != 3 {
+		t.Fatalf("models = %#v, want the three published aliases", got.Models)
+	}
+}
+
+func TestClaudeCodeDiscoveryIgnoresMalformedSettings(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	settingsDir := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(settingsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(settingsDir, "settings.json"), []byte(`{"model": `), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Discover(context.Background(), "claude-code", "", dir, nil)
+	if err != nil {
+		t.Fatalf("malformed settings must not fail discovery: %v", err)
+	}
+	if id := claudeDefaultID(got); id != "" {
+		t.Fatalf("default = %q, want none", id)
+	}
+}
+
+func TestCatalogFingerprintTracksTheConfiguredClaudeCodeModel(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	dir := t.TempDir()
+	writeClaudeSettings(t, dir, "opus")
+
+	first := CatalogFingerprint(context.Background(), "claude-code", "", dir, nil)
+	if first == "" {
+		t.Fatal("fingerprint is empty for a configured model")
+	}
+
+	// A settings edit changes the catalog, so it has to change the fingerprint —
+	// otherwise the cached catalog stays authoritative forever.
+	writeClaudeSettings(t, dir, "haiku")
+	second := CatalogFingerprint(context.Background(), "claude-code", "", dir, nil)
+	if second == first {
+		t.Fatalf("fingerprint unchanged (%q) after the configured model changed", second)
+	}
+
+	writeClaudeSettings(t, dir, "opus")
+	if again := CatalogFingerprint(context.Background(), "claude-code", "", dir, nil); again != first {
+		t.Fatalf("fingerprint = %q, want %q for identical inputs", again, first)
+	}
+}
+
+func TestCatalogFingerprintKeepsTheExecutableOnlyValueForConfiglessAgents(t *testing.T) {
+	dir := t.TempDir()
+	writeClaudeSettings(t, dir, "opus")
+	// codex reads no configuration, so its fingerprint must stay byte-identical
+	// to the executable fingerprint earlier daemons cached under.
+	got := CatalogFingerprint(context.Background(), "codex", "codex", dir, nil)
+	if want := BinaryVersion(context.Background(), "codex"); got != want {
+		t.Fatalf("fingerprint = %q, want the executable fingerprint %q", got, want)
+	}
+}
+
+func TestCatalogFingerprintDistinguishesConfiguredFromUnconfigured(t *testing.T) {
+	t.Setenv("ANTHROPIC_MODEL", "")
+	t.Setenv("HOME", t.TempDir())
+	unset := t.TempDir()
+	writeClaudeSettings(t, unset, "")
+	configured := t.TempDir()
+	writeClaudeSettings(t, configured, "opus")
+
+	if CatalogFingerprint(context.Background(), "claude-code", "", unset, nil) ==
+		CatalogFingerprint(context.Background(), "claude-code", "", configured, nil) {
+		t.Fatal("configuring a model must change the fingerprint")
 	}
 }

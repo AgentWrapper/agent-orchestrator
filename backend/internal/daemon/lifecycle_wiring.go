@@ -131,6 +131,9 @@ type sessionLifecycle interface {
 	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
 	// SetTerminalInputGate prevents mux input from racing a TUI-to-Chat handoff.
 	SetTerminalInputGate(gate sessionmanager.TerminalInputGate)
+	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
+	// service, which is built alongside the controller-facing service below.
+	SetReviewerTerminator(terminator sessionmanager.ReviewerTerminator)
 }
 
 // startSession builds the controller-facing session service: a session manager
@@ -138,7 +141,7 @@ type sessionLifecycle interface {
 // LCM, the per-session agent resolver, and the agent messenger. The returned
 // service is mounted at httpd APIDeps.Sessions. It also returns the manager so
 // the caller can wire Reconcile into the boot sequence.
-func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
+func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.Runtime, store *sqlite.Store, lcm *lifecycle.Manager, messenger ports.AgentMessenger, telemetry ports.EventSink, agents ports.AgentResolver, previewLifecycle sessionmanager.PreviewLifecycle, browserLifecycle sessionmanager.BrowserLifecycle, browserCapabilities sessionmanager.BrowserCapabilityIssuer, chat sessionmanager.ChatLauncher, defaults sessionmanager.SessionModeDefaults, log *slog.Logger) (*sessionsvc.Service, reviewsvc.Manager, sessionLifecycle, error) {
 	gitWS, err := gitworktree.New(gitworktree.Options{
 		// Per-session worktrees live under the data dir, so a single AO_DATA_DIR
 		// override moves all durable per-user state together.
@@ -194,13 +197,15 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		tracker = t
 	}
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
-		Manager:   mgr,
-		Store:     store,
-		PRClaimer: store,
-		SCM:       scmProvider,
-		DataDir:   cfg.DataDir,
-		Tracker:   tracker,
-		Telemetry: telemetry,
+		Manager:           mgr,
+		Store:             store,
+		PRClaimer:         store,
+		SCM:               scmProvider,
+		DataDir:           cfg.DataDir,
+		Tracker:           tracker,
+		Telemetry:         telemetry,
+		Logger:            log,
+		BackgroundContext: ctx,
 		// no_signal only makes sense for harnesses whose adapters install
 		// activity hooks; the deriver registry is the source of truth for that.
 		SignalCapable: activitydispatch.SupportsHarness,
@@ -218,11 +223,12 @@ func startSession(cfg config.Config, runtime runtimeselect.Runtime, store *sqlit
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
+		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir, reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store,
 		reviewsvc.WithLifecycleReducer(lcm),
 		reviewsvc.WithTelemetry(telemetry))
+	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }
 
@@ -332,6 +338,26 @@ func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
 	}
 	agent, ok := adapter.(ports.Agent)
 	return agent, ok
+}
+
+type reviewerAgentAuth struct {
+	agents ports.AgentResolver
+}
+
+func (r reviewerAgentAuth) AuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error) {
+	if r.agents == nil {
+		return "", false, nil
+	}
+	agent, ok := r.agents.Agent(domain.AgentHarness(harness))
+	if !ok {
+		return "", false, nil
+	}
+	checker, ok := agent.(ports.AgentAuthChecker)
+	if !ok {
+		return "", false, nil
+	}
+	status, err := checker.AuthStatus(ctx)
+	return status, true, err
 }
 
 // buildAgentResolver constructs the per-session agent resolver the Session

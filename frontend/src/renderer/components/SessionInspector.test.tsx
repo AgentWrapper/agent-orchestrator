@@ -1371,7 +1371,7 @@ describe("SessionInspector summary reviews", () => {
 
 	it.each([
 		["needs_review", "changes_requested", "Not run", "Run review"],
-		["running", "approved", "Reviewing...", "Cancel review"],
+		["running", "approved", "Reviewing...", "Stop review"],
 	] as const)(
 		"keeps the current AO review state clear while the current head is %s",
 		async (status, previousVerdict, runLabel, actionLabel) => {
@@ -1539,7 +1539,7 @@ describe("SessionInspector summary reviews", () => {
 		await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/ }));
 		await waitFor(() =>
-			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviewer", {
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: "sess-1" } },
 				body: { harness: "opencode" },
 			}),
@@ -1704,9 +1704,9 @@ describe("SessionInspector summary reviews", () => {
 		);
 		await openReviewsSection();
 
-		await waitFor(() => expect(screen.getByRole("button", { name: "Cancel review" })).toBeEnabled());
+		await waitFor(() => expect(screen.getByRole("button", { name: "Stop review" })).toBeEnabled());
 		expect(screen.queryByRole("button", { name: /re-run review/i })).not.toBeInTheDocument();
-		await userEvent.click(screen.getByRole("button", { name: /cancel review/i }));
+		await userEvent.click(screen.getByRole("button", { name: /stop review/i }));
 
 		await waitFor(() => {
 			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/cancel", {

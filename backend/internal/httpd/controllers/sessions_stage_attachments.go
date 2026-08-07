@@ -7,16 +7,16 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
 )
 
-// stageAttachments writes images into a live session's worktree and answers with
+// stageAttachments writes files into a live session's worktree and answers with
 // the paths the caller should name in the message it sends next.
 //
 // Two steps rather than one field on the send body, because the transport is the
-// path and not the bytes: a conversation carries text, and an image reaches the
+// path and not the bytes: a conversation carries text, and a file reaches the
 // agent by being a file the agent can open. Staging separately also means a write
 // that fails is reported before any message claiming to carry an attachment is
 // recorded — the timeline never shows an attachment that is not on disk.
 //
-// The caps and the raster-only allowlist are the spawn ones, unchanged: this is the
+// The caps and blocked-type rules are the spawn ones, unchanged: this is the
 // same operation against a session that already exists.
 func (c *SessionsController) stageAttachments(w http.ResponseWriter, r *http.Request) {
 	if c.Svc == nil {
