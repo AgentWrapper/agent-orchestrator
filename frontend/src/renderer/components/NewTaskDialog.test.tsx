@@ -93,7 +93,6 @@ describe("NewTaskDialog", () => {
 		// of two labelled fields, and the agent shows the resolved default by name.
 		expect(screen.getByText("Runs with")).toBeInTheDocument();
 		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent("Claude Code");
-		expect(screen.getByText(/Agent from project settings/)).toBeInTheDocument();
 		expect(screen.getByLabelText("Model")).toHaveValue("");
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();

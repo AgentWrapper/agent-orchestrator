@@ -181,8 +181,6 @@ describe("TaskComposer", () => {
 		);
 
 		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "codex"));
-		// Provenance is a caption, not a label on the control.
-		expect(screen.getByText(/Agent from project settings/)).toBeInTheDocument();
 
 		fireEvent.change(task(), { target: { value: "Ship it" } });
 		fireEvent.click(screen.getByText("Start task"));
@@ -210,7 +208,6 @@ describe("TaskComposer", () => {
 		);
 
 		await waitFor(() => expect(screen.getByTestId("agent-field")).toHaveAttribute("data-value", "claude-code"));
-		expect(screen.getByText(/Agent from global default/)).toBeInTheDocument();
 	});
 
 	it("preselects the agent's default model when the project configures none", async () => {
@@ -238,8 +235,6 @@ describe("TaskComposer", () => {
 		);
 
 		expect(await screen.findByDisplayValue("gpt-5-codex")).toBeInTheDocument();
-		// Named in words ("model chosen by codex") rather than labelled "Agent default".
-		expect(screen.getByText(/model chosen by codex/)).toBeInTheDocument();
 	});
 
 	it("shows an agent-chosen model as a compact automatic value", async () => {
@@ -266,7 +261,6 @@ describe("TaskComposer", () => {
 		const picker = await screen.findByRole("button", { name: "Model" });
 		expect(picker).toHaveTextContent("Auto");
 		expect(picker).not.toHaveTextContent("Let codex choose");
-		expect(screen.getByText(/model chosen by codex/)).toBeInTheDocument();
 
 		await userEvent.click(picker);
 		expect(await screen.findByText("Let codex choose")).toBeInTheDocument();

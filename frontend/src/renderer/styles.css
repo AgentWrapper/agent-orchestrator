@@ -775,7 +775,10 @@ button.settings-row-bar {
 	align-items: center;
 	gap: calc(var(--spacing) * 2);
 	border: 1px solid transparent;
-	border-radius: var(--radius-md);
+	/* SelectTrigger and settings-option-trigger bring different radii. The
+	   composer owns this shared surface, so both agent and model must resolve to
+	   the same geometry regardless of the primitive underneath. */
+	border-radius: var(--radius-md) !important;
 	background-color: var(--color-bg-composer-chip);
 	padding-inline: var(--space-2);
 	font-size: var(--font-size-base);

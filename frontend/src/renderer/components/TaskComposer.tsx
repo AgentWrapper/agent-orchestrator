@@ -131,7 +131,7 @@ export function TaskComposer({
 	}, [queryClient]);
 	// The composer preselects the agent and model a spawn would actually use
 	// instead of parking the controls on a "default" label the user has to
-	// remember. A caption names where the preselection came from.
+	// remember. Both resolved values remain directly editable.
 	const projectWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
 	const globalDefaultAgent = projectQuery.data?.agent ?? "";
 	const defaultWorkerAgent = projectWorkerAgent || globalDefaultAgent;
@@ -154,30 +154,6 @@ export function TaskComposer({
 
 	const selectedAgentLabel =
 		agentCatalog?.supported?.find((item) => item.id === selectedAgent)?.label || selectedAgent;
-
-	// Says where each inherited value came from, in words. Only inherited values
-	// are named: once you pick something yourself, there is nothing to explain.
-	const agentProvenance =
-		selectedAgent !== "" && selectedAgent === defaultWorkerAgent
-			? projectWorkerAgent !== ""
-				? t("newTask.fromProjectAgent")
-				: t("newTask.fromGlobalAgent")
-			: undefined;
-	const hasResolvedModelDefault =
-		defaultModelForSelectedAgent !== "" || defaultModeForSelectedAgent !== "";
-	const modelIsDefault =
-		hasResolvedModelDefault &&
-		model === defaultModelForSelectedAgent &&
-		mode === defaultModeForSelectedAgent;
-	const modelProvenance =
-		model === "" && mode === "" && selectedAgentLabel
-			? t("newTask.fromAgentModel", { agent: selectedAgentLabel })
-			: !modelIsDefault
-				? undefined
-				: projectModelForSelectedAgent !== "" || projectModeForSelectedAgent !== ""
-					? t("newTask.fromProjectModel")
-					: t("newTask.fromAgentModel", { agent: selectedAgentLabel });
-	const provenance = [agentProvenance, modelProvenance].filter(Boolean).join(" · ");
 
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
@@ -333,10 +309,6 @@ export function TaskComposer({
 						/>
 					</div>
 				</div>
-
-				{/* Provenance in words, on its own line under the values it describes, so an
-				    inherited value explains itself without turning a control into a label. */}
-				{provenance && <p className="mt-1.5 text-caption text-passive">{provenance}</p>}
 			</div>
 
 			<div className="flex items-center justify-between gap-4 border-t border-border/70 px-(--size-modal-padding) py-3">
