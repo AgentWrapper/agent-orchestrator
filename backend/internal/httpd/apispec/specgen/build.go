@@ -1046,6 +1046,19 @@ func reviewOperations() []operation {
 			},
 		},
 		{
+			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/switch", id: "switchReviewSession", tag: "reviews",
+			summary:    "Switch a worker's reviewer harness",
+			pathParams: []any{controllers.SessionIDParam{}},
+			reqBody:    controllers.SetSessionReviewerRequest{},
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListReviewsResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
+				{http.StatusUnprocessableEntity, envelope.APIError{}},
+				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+		{
 			method: http.MethodPost, path: "/api/v1/sessions/{sessionId}/reviews/submit", id: "submitReview", tag: "reviews",
 			summary:    "Record a reviewer's result for a worker's PR",
 			pathParams: []any{controllers.SessionIDParam{}},

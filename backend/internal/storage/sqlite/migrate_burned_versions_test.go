@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pressly/goose/v3"
 
@@ -81,6 +82,7 @@ var shippedMigrations = map[int64]string{
 	77: "0077_cancelled_conversation_activities.sql",
 	78: "0078_session_interface_transitions.sql",
 	79: "0079_session_interface_transition_delivery.sql",
+	80: "0080_review_per_harness.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -216,6 +218,26 @@ INSERT INTO projects (
 	if sessions[0].Metadata.DiffBaseSHA != rec.Metadata.DiffBaseSHA || sessions[0].Metadata.DiffBaseRef != rec.Metadata.DiffBaseRef {
 		t.Fatalf("diff base metadata = (%q, %q), want it round-tripped",
 			sessions[0].Metadata.DiffBaseSHA, sessions[0].Metadata.DiffBaseRef)
+	}
+	now := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
+	if err := store.UpsertReview(ctx, domain.Review{
+		ID:               "review-1",
+		SessionID:        created.ID,
+		ProjectID:        "mer",
+		Harness:          domain.ReviewerCodex,
+		ReviewerHandleID: "review-mer-1",
+		AgentSessionID:   "reviewer-native-1",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}); err != nil {
+		t.Fatalf("upsert review on repaired schema: %v", err)
+	}
+	review, ok, err := store.GetReviewBySessionAndHarness(ctx, created.ID, domain.ReviewerCodex)
+	if err != nil {
+		t.Fatalf("get review on repaired schema: %v", err)
+	}
+	if !ok || review.AgentSessionID != "reviewer-native-1" {
+		t.Fatalf("review = %+v, ok=%v, want persisted reviewer native id", review, ok)
 	}
 
 	// The repair is idempotent: a second startup on the repaired database (and

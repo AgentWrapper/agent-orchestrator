@@ -161,7 +161,7 @@ func TestApplyReviewActivitySignalPersistsNativeReviewerSessionID(t *testing.T) 
 	}
 	svc := New(nil, st)
 
-	if err := svc.ApplyReviewActivitySignal(context.Background(), "review-1", ReviewActivitySignal{
+	if err := svc.ApplyReviewActivitySignal(context.Background(), "review-1", ActivitySignal{
 		Event:          "session-start",
 		AgentSessionID: "opencode-native-2",
 	}); err != nil {
@@ -178,7 +178,7 @@ func TestApplyReviewActivitySignalPersistsNativeReviewerSessionID(t *testing.T) 
 func TestApplyReviewActivitySignalRequiresExistingReviewSession(t *testing.T) {
 	svc := New(nil, &fakeStore{})
 
-	err := svc.ApplyReviewActivitySignal(context.Background(), "missing-review", ReviewActivitySignal{AgentSessionID: "native-1"})
+	err := svc.ApplyReviewActivitySignal(context.Background(), "missing-review", ActivitySignal{AgentSessionID: "native-1"})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}

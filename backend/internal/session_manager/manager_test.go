@@ -1949,12 +1949,14 @@ func (f *fakeShellTerminalCloser) BeginSessionTeardown(_ context.Context, id dom
 }
 
 type fakeReviewerTerminator struct {
-	calls        []domain.SessionID
-	bodies       []string
-	restoreCalls []domain.SessionID
-	err          error
-	restoreErr   error
-	sharedLog    *[]string
+	calls         []domain.SessionID
+	bodies        []string
+	teardownCalls []domain.SessionID
+	restoreCalls  []domain.SessionID
+	err           error
+	teardownErr   error
+	restoreErr    error
+	sharedLog     *[]string
 }
 
 func (f *fakeReviewerTerminator) TerminateReviewer(_ context.Context, id domain.SessionID, body string) error {
@@ -1964,6 +1966,14 @@ func (f *fakeReviewerTerminator) TerminateReviewer(_ context.Context, id domain.
 		*f.sharedLog = append(*f.sharedLog, "TerminateReviewer:"+string(id))
 	}
 	return f.err
+}
+
+func (f *fakeReviewerTerminator) TeardownReviewerTerminal(_ context.Context, id domain.SessionID) error {
+	f.teardownCalls = append(f.teardownCalls, id)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "TeardownReviewerTerminal:"+string(id))
+	}
+	return f.teardownErr
 }
 
 func (f *fakeReviewerTerminator) RestoreReviewer(_ context.Context, id domain.SessionID) error {
@@ -4623,9 +4633,12 @@ func TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy(t *test
 	}
 }
 
-func TestSaveAndTeardownAll_DoesNotTerminateReviewer(t *testing.T) {
+func TestSaveAndTeardownAll_TeardownsReviewerTerminalWithoutTerminate(t *testing.T) {
 	m, st, _, ws := newLifecycleManager()
-	reviewer := &fakeReviewerTerminator{}
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	reviewer := &fakeReviewerTerminator{sharedLog: &sharedLog}
 	m.SetReviewerTerminator(reviewer)
 	ws.stashRef = "refs/ao/preserved/mer-1"
 	st.sessions["mer-1"] = domain.SessionRecord{
@@ -4641,6 +4654,63 @@ func TestSaveAndTeardownAll_DoesNotTerminateReviewer(t *testing.T) {
 	}
 	if len(reviewer.calls) != 0 {
 		t.Fatalf("reviewer terminates = %v, want none for shutdown save/teardown", reviewer.calls)
+	}
+	if len(reviewer.teardownCalls) != 1 || reviewer.teardownCalls[0] != "mer-1" {
+		t.Fatalf("reviewer teardowns = %v, want [mer-1]", reviewer.teardownCalls)
+	}
+	teardownIdx, forceIdx := -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "TeardownReviewerTerminal:mer-1":
+			teardownIdx = i
+		case "ForceDestroy:mer-1":
+			forceIdx = i
+		}
+	}
+	if teardownIdx == -1 || forceIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", sharedLog)
+	}
+	if teardownIdx >= forceIdx {
+		t.Fatalf("call order = %v, want reviewer teardown before force destroy", sharedLog)
+	}
+}
+
+func TestSaveAndTeardownAllThenRestoreAll_TeardownsAndRestoresReviewerTerminal(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	reviewer := &fakeReviewerTerminator{}
+	m.SetReviewerTerminator(reviewer)
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:   "/ws/mer-1",
+			Branch:          "ao/mer-1/root",
+			RuntimeHandleID: "h1",
+			AgentSessionID:  "agent-w",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if len(reviewer.teardownCalls) != 1 || reviewer.teardownCalls[0] != "mer-1" {
+		t.Fatalf("reviewer teardowns = %v, want [mer-1]", reviewer.teardownCalls)
+	}
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("RestoreAll runtime creates = %d, want 1", rt.created)
+	}
+	if len(reviewer.restoreCalls) != 1 || reviewer.restoreCalls[0] != "mer-1" {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be live after RestoreAll")
 	}
 }
 

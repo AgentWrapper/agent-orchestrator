@@ -32,6 +32,7 @@ var (
 // in production; tests use a fake.
 type Store interface {
 	UpsertReview(ctx stdctx.Context, r domain.Review) error
+	SetSessionReviewerHarness(ctx stdctx.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error)
 	GetReviewBySession(ctx stdctx.Context, id domain.SessionID) (domain.Review, bool, error)
 	ClearReviewerHandle(ctx stdctx.Context, id domain.SessionID) error
 	GetReviewBySessionAndHarness(ctx stdctx.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Review, bool, error)
@@ -361,20 +362,53 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 	return TriggerResult{Run: created[0], ReviewerHandleID: handleID, Created: true, Reviews: reviews, Runs: triggerRuns, CreatedRuns: created}, nil
 }
 
+// SwitchReviewer serializes reviewer preference changes with trigger/restore
+// and returns the authoritative post-switch review state.
+func (e *Engine) SwitchReviewer(ctx stdctx.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (SessionReviews, error) {
+	if workerID == "" {
+		return SessionReviews{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	if harness != "" && !harness.IsKnown() {
+		return SessionReviews{}, fmt.Errorf("%w: unknown reviewer harness %q", ErrInvalid, harness)
+	}
+	unlock := e.lockWorker(workerID)
+	defer unlock()
+
+	worker, ok, err := e.sessions.GetSession(ctx, workerID)
+	if err != nil {
+		return SessionReviews{}, err
+	}
+	if !ok {
+		return SessionReviews{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
+	}
+	if ok, err := e.store.SetSessionReviewerHarness(ctx, workerID, harness, e.clock()); err != nil {
+		return SessionReviews{}, err
+	} else if !ok {
+		return SessionReviews{}, fmt.Errorf("%w: worker session %q", ErrNotFound, workerID)
+	}
+	worker.ReviewerHarness = harness
+	selected, err := e.reviewerHarness(ctx, worker)
+	if err != nil {
+		return SessionReviews{}, err
+	}
+	reviewRows, err := e.store.ListReviewsBySession(ctx, workerID)
+	if err != nil {
+		return SessionReviews{}, err
+	}
+	if err := e.destroyOtherReviewerHandles(ctx, workerID, selected, reviewRows); err != nil {
+		return SessionReviews{}, err
+	}
+	if _, err := e.restoreReviewerLocked(ctx, workerID, worker, selected); err != nil {
+		return SessionReviews{}, err
+	}
+	return e.listLocked(ctx, workerID, selected)
+}
+
 func reviewerPaneReusable(reviewRow domain.Review, hadRunningReviewer bool) bool {
 	if strings.TrimSpace(reviewRow.AgentSessionID) != "" {
 		return true
 	}
 	return hadRunningReviewer
-}
-
-func reviewRunsContainRunning(runs []domain.ReviewRun) bool {
-	for _, run := range runs {
-		if run.Status == domain.ReviewRunRunning {
-			return true
-		}
-	}
-	return false
 }
 
 func reviewRunsContainRunningForHarness(runs []domain.ReviewRun, harness domain.ReviewerHarness) bool {
@@ -412,6 +446,8 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 	if workerID == "" {
 		return RestoreReviewerResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
+	unlock := e.lockWorker(workerID)
+	defer unlock()
 	worker, ok, err := e.sessions.GetSession(ctx, workerID)
 	if err != nil {
 		return RestoreReviewerResult{}, err
@@ -422,14 +458,14 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 	if worker.IsTerminated || worker.Metadata.WorkspacePath == "" {
 		return RestoreReviewerResult{}, nil
 	}
-	runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
-	if err != nil {
-		return RestoreReviewerResult{}, err
-	}
 	harness, err := e.reviewerHarness(ctx, worker)
 	if err != nil {
 		return RestoreReviewerResult{}, err
 	}
+	return e.restoreReviewerLocked(ctx, workerID, worker, harness)
+}
+
+func (e *Engine) restoreReviewerLocked(ctx stdctx.Context, workerID domain.SessionID, worker domain.SessionRecord, harness domain.ReviewerHarness) (RestoreReviewerResult, error) {
 	reviewRows, err := e.store.ListReviewsBySession(ctx, workerID)
 	if err != nil {
 		return RestoreReviewerResult{}, err
@@ -438,6 +474,10 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 		return RestoreReviewerResult{}, err
 	}
 	reviewRow, hasReview, err := e.store.GetReviewBySessionAndHarness(ctx, workerID, harness)
+	if err != nil {
+		return RestoreReviewerResult{}, err
+	}
+	runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
 	if err != nil {
 		return RestoreReviewerResult{}, err
 	}
@@ -462,7 +502,6 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 		if err != nil {
 			return RestoreReviewerResult{}, err
 		}
-		hasReview = true
 	}
 	launch, err := e.launcher.RestoreTerminal(ctx, LaunchSpec{
 		ReviewSessionID: reviewRow.ID,
@@ -484,6 +523,35 @@ func (e *Engine) RestoreReviewer(ctx stdctx.Context, workerID domain.SessionID) 
 		return RestoreReviewerResult{}, err
 	}
 	return RestoreReviewerResult{ReviewerHandleID: launch.HandleID, Restored: true}, nil
+}
+
+// TeardownReviewerTerminal destroys reviewer panes before shutdown removes the
+// worker worktree, but preserves review rows and native agent session ids so
+// worker restore can recreate the reviewer terminal later.
+func (e *Engine) TeardownReviewerTerminal(ctx stdctx.Context, workerID domain.SessionID) error {
+	if workerID == "" {
+		return fmt.Errorf("%w: worker session id is required", ErrInvalid)
+	}
+	unlock := e.lockWorker(workerID)
+	defer unlock()
+	reviews, err := e.store.ListReviewsBySession(ctx, workerID)
+	if err != nil {
+		return err
+	}
+	for _, review := range reviews {
+		if review.ReviewerHandleID == "" {
+			continue
+		}
+		if err := e.launcher.Destroy(ctx, review.ReviewerHandleID); err != nil {
+			return err
+		}
+	}
+	if len(reviews) > 0 {
+		if err := e.store.ClearReviewerHandle(ctx, workerID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func reviewRunsForHarness(runs []domain.ReviewRun, harness domain.ReviewerHarness) []domain.ReviewRun {
@@ -611,6 +679,10 @@ func (e *Engine) List(ctx stdctx.Context, workerID domain.SessionID) (SessionRev
 	if err != nil {
 		return SessionReviews{}, err
 	}
+	return e.listLocked(ctx, workerID, selectedHarness)
+}
+
+func (e *Engine) listLocked(ctx stdctx.Context, workerID domain.SessionID, selectedHarness domain.ReviewerHarness) (SessionReviews, error) {
 	runs, err := e.store.ListReviewRunsBySession(ctx, workerID)
 	if err != nil {
 		return SessionReviews{}, err
@@ -742,6 +814,8 @@ func (e *Engine) TerminateReviewer(ctx stdctx.Context, workerID domain.SessionID
 	if workerID == "" {
 		return TerminateResult{}, fmt.Errorf("%w: worker session id is required", ErrInvalid)
 	}
+	unlock := e.lockWorker(workerID)
+	defer unlock()
 	reviews, err := e.store.ListReviewsBySession(ctx, workerID)
 	if err != nil {
 		return TerminateResult{}, err

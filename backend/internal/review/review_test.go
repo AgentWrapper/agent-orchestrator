@@ -45,6 +45,9 @@ func (f *fakeStore) UpsertReview(_ context.Context, r domain.Review) error {
 	f.reviews[r.Harness] = cp
 	return nil
 }
+func (f *fakeStore) SetSessionReviewerHarness(_ context.Context, _ domain.SessionID, _ domain.ReviewerHarness, _ time.Time) (bool, error) {
+	return true, nil
+}
 func (f *fakeStore) GetReviewBySession(_ context.Context, _ domain.SessionID) (domain.Review, bool, error) {
 	if f.review == nil {
 		return domain.Review{}, false, nil
@@ -258,6 +261,9 @@ type fakeLauncher struct {
 	handles          []string
 	preflightErr     error
 	preflighted      bool
+	spawnStarted     chan struct{}
+	unblockSpawn     <-chan struct{}
+	destroyCalled    chan string
 }
 
 func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (LaunchResult, error) {
@@ -265,6 +271,12 @@ func (f *fakeLauncher) Spawn(_ context.Context, spec LaunchSpec) (LaunchResult, 
 	f.spawnCount++
 	f.gotSpec = spec
 	f.specs = append(f.specs, spec)
+	if f.spawnStarted != nil {
+		close(f.spawnStarted)
+	}
+	if f.unblockSpawn != nil {
+		<-f.unblockSpawn
+	}
 	if f.spawnErr != nil {
 		return LaunchResult{}, f.spawnErr
 	}
@@ -299,6 +311,9 @@ func (f *fakeLauncher) Cancel(_ context.Context, handleID string, harness domain
 func (f *fakeLauncher) Destroy(_ context.Context, handleID string) error {
 	f.destroyed = true
 	f.destroyedHandle = handleID
+	if f.destroyCalled != nil {
+		f.destroyCalled <- handleID
+	}
 	return f.destroyErr
 }
 func (f *fakeLauncher) Preflight(_ context.Context, _ domain.ReviewerHarness, _ string) error {
@@ -594,6 +609,55 @@ func TestTerminateReviewerDestroysPaneAndCancelsRunningRuns(t *testing.T) {
 	}
 	if list.ReviewerHandleID != "" {
 		t.Fatalf("list reviewer handle after terminate = %q, want empty", list.ReviewerHandleID)
+	}
+}
+
+func TestTerminateReviewerWaitsForInFlightTriggerSpawn(t *testing.T) {
+	spawnStarted := make(chan struct{})
+	unblockSpawn := make(chan struct{})
+	destroyCalled := make(chan string, 1)
+	store := &fakeStore{}
+	launcher := &fakeLauncher{
+		handle:        "review-mer-1",
+		spawnStarted:  spawnStarted,
+		unblockSpawn:  unblockSpawn,
+		destroyCalled: destroyCalled,
+	}
+	eng := newEngineForTest(store, fakeSessions{rec: liveWorker(), ok: true}, prAt("sha1"), fakeProjects{}, launcher)
+
+	triggerDone := make(chan error, 1)
+	go func() {
+		_, err := eng.Trigger(context.Background(), "mer-1", domain.ReviewerCodex)
+		triggerDone <- err
+	}()
+	<-spawnStarted
+
+	terminateDone := make(chan error, 1)
+	go func() {
+		_, err := eng.TerminateReviewer(context.Background(), "mer-1", "cancelled by worker termination")
+		terminateDone <- err
+	}()
+
+	select {
+	case handleID := <-destroyCalled:
+		t.Fatalf("TerminateReviewer destroyed %q before trigger spawn completed", handleID)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(unblockSpawn)
+	if err := <-triggerDone; err != nil {
+		t.Fatalf("Trigger: %v", err)
+	}
+	if err := <-terminateDone; err != nil {
+		t.Fatalf("TerminateReviewer: %v", err)
+	}
+	if handleID := <-destroyCalled; handleID != "review-mer-1" {
+		t.Fatalf("destroyed handle = %q, want review-mer-1", handleID)
+	}
+	if store.review == nil || store.review.ReviewerHandleID != "" {
+		t.Fatalf("review row after terminate = %+v, want cleared handle", store.review)
+	}
+	if len(store.runs) != 1 || store.runs[0].Status != domain.ReviewRunCancelled {
+		t.Fatalf("runs after terminate = %+v, want cancelled trigger run", store.runs)
 	}
 }
 

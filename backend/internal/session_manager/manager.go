@@ -159,6 +159,7 @@ type TerminalInputGate interface {
 // services are assembled after the session manager in daemon wiring.
 type ReviewerTerminator interface {
 	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
+	TeardownReviewerTerminal(ctx context.Context, workerID domain.SessionID) error
 	RestoreReviewer(ctx context.Context, workerID domain.SessionID) error
 }
 
@@ -285,8 +286,8 @@ type Manager struct {
 	terminalInputGateMu sync.Mutex
 	terminalInputGate   TerminalInputGate
 
-	reviewersMu      sync.Mutex
-	reviewers        ReviewerTerminator
+	reviewersMu sync.Mutex
+	reviewers   ReviewerTerminator
 }
 
 // SetShellTerminalCloser wires every worktree-releasing path to gate the
@@ -359,6 +360,16 @@ func (m *Manager) terminateReviewer(ctx context.Context, id domain.SessionID, bo
 		return nil
 	}
 	return terminator.TerminateReviewer(ctx, id, body)
+}
+
+func (m *Manager) teardownReviewerTerminal(ctx context.Context, id domain.SessionID) error {
+	m.reviewersMu.Lock()
+	terminator := m.reviewers
+	m.reviewersMu.Unlock()
+	if terminator == nil {
+		return nil
+	}
+	return terminator.TeardownReviewerTerminal(ctx, id)
 }
 
 func (m *Manager) restoreReviewer(ctx context.Context, id domain.SessionID) error {
@@ -1680,14 +1691,19 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 		return fmt.Errorf("save %s: upsert worktree row: %w", rec.ID, err)
 	}
 
-	// 3. Mark terminal via the LCM (same path Kill uses). Do not terminate the
-	// reviewer here: shutdown save/teardown is recovery-oriented lifecycle, not
-	// user intent to kill worker-adjacent panes.
+	// 3. Remove reviewer panes before the worktree disappears, while preserving
+	// review rows and native reviewer ids for restore. This is shutdown recovery,
+	// not user intent to cancel review history.
+	if err := m.teardownReviewerTerminal(ctx, rec.ID); err != nil {
+		return fmt.Errorf("save %s: teardown reviewer: %w", rec.ID, err)
+	}
+
+	// 4. Mark terminal via the LCM (same path Kill uses).
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)
 	}
 
-	// 4. Runtime teardown (best-effort; same pattern as Kill).
+	// 5. Runtime teardown (best-effort; same pattern as Kill).
 	handle := runtimeHandle(rec.Metadata)
 	if destroyRuntime && handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
@@ -1695,7 +1711,7 @@ func (m *Manager) saveAndTeardownOne(ctx context.Context, rec domain.SessionReco
 		}
 	}
 
-	// 5. Force-remove the worktree (safe: work is captured in step 1 and the
+	// 6. Force-remove the worktree (safe: work is captured in step 1 and the
 	// DB write in step 2 is already committed).
 	if err := m.workspace.ForceDestroy(ctx, ws); err != nil {
 		m.logger.Warn("save-teardown-all: force destroy failed", "sessionID", rec.ID, "error", err)
@@ -2149,6 +2165,9 @@ func (m *Manager) saveAndTeardownWorkspaceProject(ctx context.Context, rec domai
 		}); err != nil {
 			return fmt.Errorf("save %s repo %s: upsert worktree row: %w", rec.ID, row.RepoName, err)
 		}
+	}
+	if err := m.teardownReviewerTerminal(ctx, rec.ID); err != nil {
+		return fmt.Errorf("save %s: teardown reviewer: %w", rec.ID, err)
 	}
 	if err := m.lcm.MarkTerminated(ctx, rec.ID); err != nil {
 		return fmt.Errorf("save %s: mark terminated: %w", rec.ID, err)

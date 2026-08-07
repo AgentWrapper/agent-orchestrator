@@ -15,6 +15,8 @@ import (
 type captureAgent struct {
 	got        ports.LaunchConfig
 	gotRestore ports.RestoreConfig
+	hooks      []ports.WorkspaceHookConfig
+	prelaunch  []ports.LaunchConfig
 }
 
 func (a *captureAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -27,7 +29,14 @@ func (a *captureAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfi
 func (a *captureAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	return ports.PromptDeliveryInCommand, nil
 }
-func (a *captureAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error { return nil }
+func (a *captureAgent) GetAgentHooks(_ context.Context, cfg ports.WorkspaceHookConfig) error {
+	a.hooks = append(a.hooks, cfg)
+	return nil
+}
+func (a *captureAgent) PreLaunch(_ context.Context, cfg ports.LaunchConfig) error {
+	a.prelaunch = append(a.prelaunch, cfg)
+	return nil
+}
 func (a *captureAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
 	a.gotRestore = cfg
 	id := cfg.Session.Metadata[ports.MetadataKeyAgentSessionID]
@@ -47,12 +56,13 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
 
-	if _, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
+	spec, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
 		ReviewerID:    "review-w1",
 		WorkspacePath: "/ws/w1",
 		Prompt:        "review it",
 		SystemPrompt:  "you are a reviewer",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
 
@@ -62,8 +72,11 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 	if agent.got.Permissions != ports.PermissionModeAuto {
 		t.Fatalf("reviewer must launch in auto permission mode; got %q", agent.got.Permissions)
 	}
-	if agent.got.SessionID != "" {
-		t.Fatalf("reviewer must not pin a resumable Claude session id; got %q", agent.got.SessionID)
+	if agent.got.SessionID == "" {
+		t.Fatal("reviewer must pin the persisted Claude session id")
+	}
+	if spec.AgentSessionID != agent.got.SessionID {
+		t.Fatalf("persisted agent session id = %q, launched session id = %q", spec.AgentSessionID, agent.got.SessionID)
 	}
 	if !contains(agent.got.AllowedTools, "Read") || !contains(agent.got.AllowedTools, "Bash(ao review submit:*)") {
 		t.Fatalf("allowlist missing read-only review tools: %#v", agent.got.AllowedTools)
@@ -72,6 +85,24 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 		if !contains(agent.got.DisallowedTools, denied) {
 			t.Fatalf("disallow list missing %q: %#v", denied, agent.got.DisallowedTools)
 		}
+	}
+}
+
+func TestPreLaunchInstallsSelectedReviewerHooksAndTrustsWorkspace(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	if err := r.PreLaunch(context.Background(), ports.ReviewInvocation{
+		ReviewerID:    "review-w1",
+		WorkspacePath: "/ws/w1",
+	}); err != nil {
+		t.Fatalf("PreLaunch: %v", err)
+	}
+	if len(agent.hooks) != 1 || agent.hooks[0].WorkspacePath != "/ws/w1" {
+		t.Fatalf("hooks = %#v, want selected reviewer hook install for /ws/w1", agent.hooks)
+	}
+	if len(agent.prelaunch) != 1 || agent.prelaunch[0].WorkspacePath != "/ws/w1" || agent.prelaunch[0].SessionID == "" {
+		t.Fatalf("prelaunch = %#v, want trusted workspace with pinned session id", agent.prelaunch)
 	}
 }
 

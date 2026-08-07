@@ -52,8 +52,10 @@ type Manager interface {
 	Trigger(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.TriggerResult, error)
 	Cancel(ctx context.Context, workerID domain.SessionID) (reviewcore.CancelResult, error)
 	TerminateReviewer(ctx context.Context, workerID domain.SessionID, body string) error
+	TeardownReviewerTerminal(ctx context.Context, workerID domain.SessionID) error
 	RestoreReviewer(ctx context.Context, workerID domain.SessionID) error
-	ApplyReviewActivitySignal(ctx context.Context, reviewSessionID string, signal ReviewActivitySignal) error
+	SwitchReviewer(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.SessionReviews, error)
+	ApplyReviewActivitySignal(ctx context.Context, reviewSessionID string, signal ActivitySignal) error
 	Submit(ctx context.Context, workerID domain.SessionID, runID string, verdict domain.ReviewVerdict, body, githubReviewID string) (domain.ReviewRun, error)
 	SubmitMany(ctx context.Context, workerID domain.SessionID, reviews []SubmittedReview) ([]domain.ReviewRun, error)
 	List(ctx context.Context, workerID domain.SessionID) (reviewcore.SessionReviews, error)
@@ -190,23 +192,35 @@ func (s *Service) TerminateReviewer(ctx context.Context, workerID domain.Session
 	return err
 }
 
+// TeardownReviewerTerminal removes reviewer panes during recovery-oriented
+// worker shutdown while preserving review rows and native reviewer session ids.
+func (s *Service) TeardownReviewerTerminal(ctx context.Context, workerID domain.SessionID) error {
+	return s.engine.TeardownReviewerTerminal(ctx, workerID)
+}
+
 // RestoreReviewer relaunches an idle reviewer pane after its worker has been restored.
 func (s *Service) RestoreReviewer(ctx context.Context, workerID domain.SessionID) error {
 	_, err := s.engine.RestoreReviewer(ctx, workerID)
 	return err
 }
 
-// ReviewActivitySignal is reviewer-owned hook metadata. It deliberately does
-// not model activity state for session/Kanban display; for now hooks only keep
-// the reviewer native conversation id up to date for restore.
-type ReviewActivitySignal struct {
+// SwitchReviewer atomically persists a worker's reviewer preference and returns
+// the authoritative post-switch review state.
+func (s *Service) SwitchReviewer(ctx context.Context, workerID domain.SessionID, harness domain.ReviewerHarness) (reviewcore.SessionReviews, error) {
+	return s.engine.SwitchReviewer(ctx, workerID, harness)
+}
+
+// ActivitySignal is reviewer-owned hook metadata. It deliberately does not
+// model activity state for session/Kanban display; for now hooks only keep the
+// reviewer native conversation id up to date for restore.
+type ActivitySignal struct {
 	Event          string
 	AgentSessionID string
 }
 
 // ApplyReviewActivitySignal records reviewer-owned hook facts without touching
 // the worker session lifecycle row.
-func (s *Service) ApplyReviewActivitySignal(ctx context.Context, reviewSessionID string, signal ReviewActivitySignal) error {
+func (s *Service) ApplyReviewActivitySignal(ctx context.Context, reviewSessionID string, signal ActivitySignal) error {
 	if reviewSessionID == "" {
 		return fmt.Errorf("%w: review session id is required", ErrInvalid)
 	}

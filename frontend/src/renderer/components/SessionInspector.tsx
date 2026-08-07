@@ -1172,25 +1172,12 @@ function ReviewsSection({
 	}, [session.id, session.reviewerHarness]);
 	const saveReviewer = useMutation({
 		mutationFn: async (harness: ReviewerHarness | "") => {
-			const activeReviewerHandle = reviewsQuery.data?.reviewerHandleId?.trim();
-			if (activeReviewerHandle) {
-				const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/kill", {
-					params: { path: { sessionId: session.id } },
-				});
-				if (error) throw new Error(apiErrorMessage(error, t("inspector.unableKillReviewSession")));
-				if (data) queryClient.setQueryData(["session-reviews", session.id], data);
-			}
-			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/reviewer", {
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: session.id } },
 				body: { harness: harness || undefined },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to save reviewer"));
-			const { data: restoreData, error: restoreError } = await apiClient.POST(
-				"/api/v1/sessions/{sessionId}/reviews/restore",
-				{ params: { path: { sessionId: session.id } } },
-			);
-			if (restoreError) throw new Error(apiErrorMessage(restoreError, t("inspector.unableRestoreReviewSession")));
-			if (restoreData) queryClient.setQueryData(["session-reviews", session.id], restoreData);
+			if (data) queryClient.setQueryData(["session-reviews", session.id], data);
 		},
 		onSuccess: () => {
 			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });

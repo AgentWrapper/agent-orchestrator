@@ -28,10 +28,12 @@ type fakeReviewService struct {
 	list             reviewcore.SessionReviews
 	submitted        []reviewsvc.SubmittedReview
 	activityID       string
-	activitySignal   reviewsvc.ReviewActivitySignal
+	activitySignal   reviewsvc.ActivitySignal
 	activityErr      error
 	killed           bool
+	teardown         bool
 	restored         bool
+	switchedHarness  domain.ReviewerHarness
 }
 
 func (f *fakeReviewService) Trigger(
@@ -53,7 +55,7 @@ func (f *fakeReviewService) Submit(context.Context, domain.SessionID, string, do
 	return domain.ReviewRun{}, nil
 }
 
-func (f *fakeReviewService) ApplyReviewActivitySignal(_ context.Context, reviewSessionID string, signal reviewsvc.ReviewActivitySignal) error {
+func (f *fakeReviewService) ApplyReviewActivitySignal(_ context.Context, reviewSessionID string, signal reviewsvc.ActivitySignal) error {
 	f.activityID = reviewSessionID
 	f.activitySignal = signal
 	return f.activityErr
@@ -72,12 +74,30 @@ func (f *fakeReviewService) TerminateReviewer(context.Context, domain.SessionID,
 	return nil
 }
 
+func (f *fakeReviewService) TeardownReviewerTerminal(context.Context, domain.SessionID) error {
+	f.teardown = true
+	f.list.ReviewerHandleID = ""
+	return nil
+}
+
 func (f *fakeReviewService) RestoreReviewer(context.Context, domain.SessionID) error {
 	f.restored = true
 	if f.list.ReviewerHandleID == "" {
 		f.list.ReviewerHandleID = "review-mer-1"
 	}
 	return nil
+}
+
+func (f *fakeReviewService) SwitchReviewer(_ context.Context, _ domain.SessionID, harness domain.ReviewerHarness) (reviewcore.SessionReviews, error) {
+	f.switchedHarness = harness
+	f.list.ReviewerHarness = harness
+	if f.list.Runs == nil {
+		f.list.Runs = []domain.ReviewRun{}
+	}
+	if f.list.Reviews == nil {
+		f.list.Reviews = []reviewcore.PRReviewState{}
+	}
+	return f.list, nil
 }
 
 func (f *fakeReviewService) SubmitMany(_ context.Context, _ domain.SessionID, reviews []reviewsvc.SubmittedReview) ([]domain.ReviewRun, error) {
@@ -247,6 +267,29 @@ func TestReviewsRestoreReturnsReviewerHandle(t *testing.T) {
 		t.Fatal("RestoreReviewer was not called")
 	}
 	for _, want := range []string{`"reviewerHandleId":"review-mer-1"`, `"reviews"`, `"runs"`, `"run-1"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("body missing %s: %s", want, body)
+		}
+	}
+}
+
+func TestReviewsSwitchReturnsAuthoritativeReviewState(t *testing.T) {
+	svc := &fakeReviewService{list: reviewcore.SessionReviews{
+		ReviewerHandleID: "review-mer-2",
+		Reviews:          []reviewcore.PRReviewState{{PRURL: "https://github.com/o/r/pull/1", PRNumber: 1, TargetSHA: "sha1", Status: reviewcore.ReviewStateNeedsReview}},
+		Runs:             []domain.ReviewRun{{ID: "run-1", SessionID: "mer-1", Harness: domain.ReviewerClaudeCode}},
+	}}
+	srv := newReviewTestServer(t, svc)
+
+	body, status, headers := doRequest(t, srv, "POST", "/api/v1/sessions/mer-1/reviews/switch", `{"harness":"claude-code"}`)
+	assertJSON(t, headers)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d body=%s", status, body)
+	}
+	if svc.switchedHarness != domain.ReviewerClaudeCode {
+		t.Fatalf("switched harness = %q, want claude-code", svc.switchedHarness)
+	}
+	for _, want := range []string{`"reviewerHandleId":"review-mer-2"`, `"reviewerHarness":"claude-code"`, `"reviews"`, `"runs"`, `"run-1"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("body missing %s: %s", want, body)
 		}

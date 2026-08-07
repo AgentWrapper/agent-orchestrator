@@ -129,7 +129,7 @@ func TestMigration0044BackfillsBatchlessReviewRuns(t *testing.T) {
 	}
 }
 
-func TestMigration0049MovesReviewerSessionsIntoPerHarnessReviewRows(t *testing.T) {
+func TestMigration0080MovesReviewerSessionsIntoPerHarnessReviewRows(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -158,7 +158,7 @@ INSERT INTO review_session (
 		t.Fatalf("seed 0048 review state: %v", err)
 	}
 
-	upTo(t, db, 49)
+	upTo(t, db, 80)
 
 	rows, err := db.Query(`
 SELECT harness, reviewer_handle_id, agent_session_id

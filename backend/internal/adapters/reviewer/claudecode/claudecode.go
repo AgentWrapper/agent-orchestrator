@@ -73,13 +73,12 @@ var reviewerDisallowedTools = []string{
 // through an AO-owned prompt file so only the short task-file reference is
 // terminal-visible.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	agentSessionID := workeragent.SessionUUID(inv.ReviewerID)
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
-		// Reviewer panes are disposable and are never resumed through Claude's
-		// native session store. Pinning the stable AO reviewer handle as Claude's
-		// --session-id makes a replacement race with a previous Claude process
-		// that is still releasing the same UUID. Leave it empty so every fresh
-		// reviewer process gets its own native session id.
-		SessionID:        "",
+		// Pin the same deterministic reviewer-native id we persist. Hooks can
+		// later replace it with Claude's reported id, but restore must never start
+		// from an id that the process was not launched with.
+		SessionID:        agentSessionID,
 		WorkspacePath:    inv.WorkspacePath,
 		Prompt:           inv.Prompt,
 		SystemPrompt:     inv.SystemPrompt,
@@ -94,12 +93,20 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	return ports.ReviewCommandSpec{Argv: argv, AgentSessionID: workeragent.SessionUUID(inv.ReviewerID)}, nil
+	return ports.ReviewCommandSpec{Argv: argv, AgentSessionID: agentSessionID}, nil
 }
 
-// PreLaunch runs any reviewer-specific preflight. For Claude Code this records
-// the worker checkout as trusted before the headless reviewer pane starts.
+// PreLaunch runs reviewer-specific preflight. For Claude Code this installs the
+// selected reviewer's hooks and records the worker checkout as trusted before
+// the headless reviewer pane starts.
 func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error {
+	if hooks, ok := r.agent.(interface {
+		GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error
+	}); ok {
+		if err := hooks.GetAgentHooks(ctx, ports.WorkspaceHookConfig{WorkspacePath: inv.WorkspacePath}); err != nil {
+			return err
+		}
+	}
 	pl, ok := r.agent.(interface {
 		PreLaunch(context.Context, ports.LaunchConfig) error
 	})
@@ -107,7 +114,7 @@ func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) er
 		return nil
 	}
 	return pl.PreLaunch(ctx, ports.LaunchConfig{
-		SessionID:     inv.ReviewerID,
+		SessionID:     workeragent.SessionUUID(inv.ReviewerID),
 		WorkspacePath: inv.WorkspacePath,
 	})
 }
