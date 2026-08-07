@@ -4537,8 +4537,28 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
           - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
         scmStatus:
           enum:
