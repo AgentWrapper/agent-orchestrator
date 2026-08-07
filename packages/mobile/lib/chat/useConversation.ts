@@ -387,5 +387,5 @@ function wait(ms: number): Promise<void> {
 function withAttachmentReferences(text: string, paths: string[]): string {
 	if (paths.length === 0) return text;
 	const references = paths.map((path) => `- ${path}`).join("\n");
-	return `${text.trim()}${text.trim() ? "\n\n" : ""}Attached images are available in the worktree:\n${references}`;
+	return `${text.trim()}${text.trim() ? "\n\n" : ""}Attached files are available in the worktree:\n${references}`;
 }

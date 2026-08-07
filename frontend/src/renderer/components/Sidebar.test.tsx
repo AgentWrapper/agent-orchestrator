@@ -217,7 +217,7 @@ beforeEach(() => {
 	window.localStorage.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
-	useUiStore.setState({ isCommandPaletteOpen: false });
+	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -307,10 +307,8 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByRole("button", { name: "Spawn Project One orchestrator" }));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
 
@@ -460,6 +458,72 @@ describe("Sidebar", () => {
 		await user.click(screen.getByText("Project One"));
 
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+	});
+
+	it("returns to the project board from an orchestrator session without collapsing", async () => {
+		const user = userEvent.setup();
+		const orchestrator: WorkspaceSession = {
+			...session,
+			id: "proj-1-orc",
+			title: "Orchestrator",
+			kind: "orchestrator",
+		};
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = "proj-1-orc";
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+
+		await user.click(screen.getByText("Project One"));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "true");
+	});
+
+	it("collapses an expanded project when its board is already active", async () => {
+		const user = userEvent.setup();
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = undefined;
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+
+		await user.click(screen.getByText("Project One"));
+
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
+	});
+
+	it("expands a collapsed project when opening its orchestrator", async () => {
+		const user = userEvent.setup();
+		const orchestrator: WorkspaceSession = {
+			...session,
+			id: "proj-1-orc",
+			title: "Orchestrator",
+			kind: "orchestrator",
+		};
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
+
+		await user.click(screen.getByRole("button", { name: "Open Project One orchestrator" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-orc" },
+		});
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "true");
 	});
 
 	it("defaults worker and orchestrator agents when creating a project", async () => {
@@ -917,7 +981,8 @@ describe("Sidebar", () => {
 		const user = userEvent.setup();
 		renderSidebar();
 		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("opens the command palette when Search is clicked", async () => {

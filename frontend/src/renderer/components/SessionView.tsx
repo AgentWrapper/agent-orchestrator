@@ -1,7 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
+import type { components } from "../../api/schema";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
@@ -28,7 +30,7 @@ import {
 } from "../hooks/useSessionInterfaceTransition";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { hidesShellTopbar } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
@@ -42,6 +44,9 @@ const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
+type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
+type ReviewerTerminalTarget = { handleId: string; harness: string };
+
 function initialSplitPercent(): number {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
@@ -54,6 +59,13 @@ function previewRevealKey(previewUrl?: string, previewRevision?: number): string
 	if (!target) return "";
 	if (typeof previewRevision === "number") return `revision:${previewRevision}`;
 	return `url:${target}`;
+}
+
+function reviewerTerminalFromReviews(data?: ReviewsResponse): ReviewerTerminalTarget | undefined {
+	const handleId = data?.reviewerHandleId?.trim();
+	if (!handleId) return undefined;
+	const latest = data?.reviews?.find((review) => review.latestRun)?.latestRun;
+	return { handleId, harness: data?.reviewerHarness || latest?.harness || "codex" };
 }
 
 type SessionViewProps = {
@@ -101,6 +113,25 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
+	const reviewerQuery = useQuery({
+		queryKey: ["session-reviews", sessionId],
+		enabled: Boolean(
+			window.ao && session && sessionIsActive(session) && !isOrchestratorSession(session) && session.prs.length > 0,
+		),
+		refetchInterval: (query) => {
+			const data = query.state.data as ReviewsResponse | undefined;
+			return data?.reviews?.some((review) => review.status === "running") ? 2500 : false;
+		},
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
+				params: { path: { sessionId } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
+			return data ?? ({ reviewerHandleId: "", reviews: [], runs: [] } satisfies ReviewsResponse);
+		},
+	});
+	const availableReviewerTerminal = reviewerTerminalFromReviews(reviewerQuery.data);
+	const reviewerTerminal = session && sessionIsActive(session) ? availableReviewerTerminal : undefined;
 
 	// Shell terminals opened inside a session live beside its pane as extra tabs,
 	// scoped to the session on screen so each session has its own shell set.
@@ -200,6 +231,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "worker" });
 	}, [setActiveShellTerminal]);
+	const selectReviewerTerminal = useCallback((target: ReviewerTerminalTarget) => {
+		setActiveShellTerminal(null);
+		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, sessionId });
+	}, [sessionId, setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
@@ -236,6 +271,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				: current,
 		);
 	}, [shellTerminals]);
+	useEffect(() => {
+		setTerminalTarget((current) =>
+			current.kind === "reviewer" &&
+			(!availableReviewerTerminal || availableReviewerTerminal.handleId !== current.handleId)
+				? { kind: "worker" }
+				: current,
+		);
+	}, [availableReviewerTerminal]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
@@ -247,6 +290,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const interfaceTarget =
 		(activeInterfaceTransition ? interfaceSwitch.transition?.targetMode : interfaceSwitch.status?.targetMode) ??
 		(session?.mode === "chat" ? "tui" : "chat");
+	const interfaceBusy = Boolean(
+		session &&
+		(session.status === "working" ||
+			session.status === "needs_input" ||
+			session.activity?.state === "active" ||
+			session.activity?.state === "waiting_input" ||
+			session.activity?.state === "blocked"),
+	);
 	const interfaceWaitingForInput = Boolean(
 		session &&
 		(session.status === "needs_input" ||
@@ -259,17 +310,20 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				await interfaceSwitch.start({ targetMode: interfaceTarget, policy });
 				setInterfaceSwitchDialogOpen(false);
 			} catch {
-				// The mutation owns the typed error. Keep the dialog open so it is
-				// visible instead of also producing an unhandled rejection.
-				setInterfaceSwitchDialogOpen(true);
+				// The mutation owns the typed error. A policy dialog that was already
+				// open stays open; a direct idle switch must not open one on failure.
 			}
 		},
 		[interfaceSwitch, interfaceTarget],
 	);
 	const requestInterfaceSwitch = useCallback(() => {
 		interfaceSwitch.resetStartError();
+		if (!interfaceBusy) {
+			void beginInterfaceSwitch("drain");
+			return;
+		}
 		setInterfaceSwitchDialogOpen(true);
-	}, [interfaceSwitch]);
+	}, [beginInterfaceSwitch, interfaceBusy, interfaceSwitch]);
 	const showInterfaceSwitchAction = Boolean(
 		interfaceSwitch.status || interfaceSwitch.isLoading || interfaceSwitch.statusError,
 	);
@@ -543,8 +597,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								onNewShellTerminal={addShellTerminal}
 								onRenameShellTerminal={renameShellTerminalByHandle}
 								onSelectSessionTerminal={selectSessionTerminal}
+								onSelectReviewerTerminal={selectReviewerTerminal}
 								onSelectShellTerminal={selectShellTerminal}
-								onSelectWorkerTerminal={selectSessionTerminal}
+								reviewerTerminal={reviewerTerminal}
 								session={session}
 								shellTerminals={shellTerminals}
 								terminalTarget={routedTerminalTarget}
@@ -591,14 +646,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
-								onOpenReviewerTerminal={({ handleId, harness }) =>
-									setTerminalTarget({
-										kind: "reviewer",
-											handleId,
-											harness,
-											sessionId,
-										})
-									}
+									onOpenReviewerTerminal={selectReviewerTerminal}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}
