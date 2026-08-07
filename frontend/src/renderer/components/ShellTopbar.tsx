@@ -225,7 +225,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 
 			{!embedded ? <div className="min-w-0 flex-1" /> : null}
 
-			<div className="flex shrink-0 items-center gap-1.5">
+			<div className="flex shrink-0 items-center gap-1">
 				{!boardActionsInPanel && isProjectBoardRoute ? (
 					<>
 						{boardSpawnError ? (
@@ -375,7 +375,7 @@ export function TopbarKillButton({
 	};
 
 	return (
-		<div className="inline-flex items-center gap-1.5" style={noDragStyle}>
+		<div className="inline-flex items-center gap-1" style={noDragStyle}>
 			<SessionTerminationPopover
 				onConfirm={confirmKill}
 				onOpenChange={setConfirmOpen}
