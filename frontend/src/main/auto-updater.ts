@@ -572,7 +572,12 @@ function wireUpdaterEvents(): void {
 }
 
 export function getUpdateStatus(): UpdateStatus {
-  return lastStatus;
+  // Derive the nudge at read time: a streak can cross the threshold without
+  // any broadcast (no checking-for-update → restore no-ops), and Settings
+  // seeds from this getter (#3526).
+  return consecutiveAutomaticNetFailures >= STALE_CHECK_NUDGE_THRESHOLD
+    ? { ...lastStatus, staleCheckNudge: true }
+    : lastStatus;
 }
 
 async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
@@ -612,10 +617,6 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
     });
   } catch (err) {
     console.error("auto-update check failed:", err);
-    // A wedged network stack can reject checkForUpdates() without emitting an
-    // "error" event; count that path too (the per-operation guard prevents
-    // double counting when both fire).
-    if (isNetError(err)) recordAutomaticNetFailure();
   }
   return shouldSchedule;
 }

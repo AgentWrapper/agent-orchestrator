@@ -856,6 +856,28 @@ describe("startAutoUpdates", () => {
     });
   });
 
+  it("stamps the nudge on getUpdateStatus even when no broadcast carried it", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { module, autoUpdater, updaterEvents, statusMessages } =
+      await importAutoUpdater();
+    // No checking-for-update: there is no prior status to restore, so the
+    // failures produce no status broadcast at all.
+    autoUpdater.checkForUpdates.mockImplementation(() => {
+      updaterEvents.get("error")?.(new Error("net::ERR_FAILED"));
+      return Promise.resolve();
+    });
+
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+    await module.startAutoUpdates(stateDir);
+
+    expect(statusMessages()).toEqual([]);
+    expect(module.getUpdateStatus()).toEqual({
+      state: "idle",
+      staleCheckNudge: true,
+    });
+  });
+
   it("clears the nudge once a check succeeds again", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const { module, autoUpdater, updaterEvents } = await importAutoUpdater();
