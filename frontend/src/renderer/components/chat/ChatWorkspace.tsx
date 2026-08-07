@@ -243,9 +243,11 @@ export function ChatWorkspace({
 	// The turn a confirmation is open for. Undo is not reversible and it changes what
 	// the agent knows, so it is never one click.
 	const [confirming, setConfirming] = useState<string | undefined>(undefined);
+	const [draftSeed, setDraftSeed] = useState<{ id: string; text: string } | undefined>(undefined);
 	const [chatFontSize, setChatFontSize] = useState(CHAT_FONT_SIZE_DEFAULT);
 	const [isFullscreen, setIsFullscreen] = useState(false);
 	const surfaceRef = useRef<HTMLElement | null>(null);
+	const draftSeedCounter = useRef(0);
 	const [topbarBounds, setTopbarBounds] = useState<TopbarBounds>({
 		leftInset: 0,
 		rightInset: 0,
@@ -319,6 +321,10 @@ export function ChatWorkspace({
 	const discarded = snapshot.turns.filter((t) => t.rolledBack).length;
 
 	const brokenServers = useMemo(() => brokenMcpServers(snapshot), [snapshot]);
+	const editHumanMessage = useCallback((text: string) => {
+		draftSeedCounter.current += 1;
+		setDraftSeed({ id: String(draftSeedCounter.current), text });
+	}, []);
 
 	return (
 		<section
@@ -376,6 +382,7 @@ export function ChatWorkspace({
 				onResolveInput={onResolveInput}
 				busy={busy}
 				onRollback={rollbackTarget}
+				onEditHumanMessage={editHumanMessage}
 			/>
 
 			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
@@ -400,6 +407,7 @@ export function ChatWorkspace({
 					) : null}
 					<ChatComposer
 						onSend={(text, attachments) => onSend?.(text, attachments)}
+						draftSeed={draftSeed}
 						commandError={commandError}
 						settings={
 							onChooseSettings || onChooseConfigOption ? (
@@ -889,6 +897,7 @@ function Timeline({
 	onResolveInput,
 	busy,
 	onRollback,
+	onEditHumanMessage,
 }: {
 	snapshot: ConversationSnapshot;
 	hasOlder?: boolean;
@@ -898,6 +907,7 @@ function Timeline({
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
 	onRollback?: (turnId: string) => void;
+	onEditHumanMessage?: (text: string) => void;
 }) {
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollContent = useRef<HTMLDivElement>(null);
@@ -916,6 +926,7 @@ function Timeline({
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
 	const rollback = useStableCallback(onRollback);
+	const editHumanMessage = useStableCallback(onEditHumanMessage);
 
 	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
 	const items = useStableList(readable, itemKey, sameContent);
@@ -1133,9 +1144,10 @@ function Timeline({
 								onDecide={decide}
 								onResolveInput={resolveInput}
 								onRollback={rollback}
-							// Only a turn the provider actually accepted can be undone: a turn it
-							// never saw holds no history to discard, and the daemon refuses it
-							// rather than hiding rows the agent still remembers.
+								onEditHumanMessage={editHumanMessage}
+								// Only a turn the provider actually accepted can be undone: a turn it
+								// never saw holds no history to discard, and the daemon refuses it
+								// rather than hiding rows the agent still remembers.
 								canRollback={Boolean(onRollback && group.turnId && group.rollbackable)}
 								busy={busy}
 								queued={Boolean(group.turnId && queued.has(group.turnId))}
@@ -1249,6 +1261,7 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide,
 	onResolveInput,
 	onRollback,
+	onEditHumanMessage,
 	canRollback,
 	busy,
 	queued,
@@ -1257,6 +1270,7 @@ const TurnGroup = memo(function TurnGroup({
 	onDecide: (requestId: string, decisionId: string) => void;
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
+	onEditHumanMessage: (text: string) => void;
 	/** The daemon would accept a rollback of this turn, so offer the affordance. */
 	canRollback: boolean;
 	busy?: boolean;
@@ -1286,6 +1300,7 @@ const TurnGroup = memo(function TurnGroup({
 						item={run.items[0]!}
 						onDecide={onDecide}
 						onResolveInput={onResolveInput}
+						onEditHumanMessage={onEditHumanMessage}
 						busy={busy}
 						queued={queued}
 						showCopy={run.items[0]?.id === copyableMessageId}
@@ -1317,6 +1332,7 @@ function TimelineItem({
 	item,
 	onDecide,
 	onResolveInput,
+	onEditHumanMessage,
 	busy,
 	queued,
 	showCopy,
@@ -1325,6 +1341,7 @@ function TimelineItem({
 	item: ConversationItem;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
+	onEditHumanMessage?: (text: string) => void;
 	busy?: boolean;
 	/**
 	 * The enclosing turn was recorded but not yet sent, so a waiting message can say
@@ -1349,7 +1366,9 @@ function TimelineItem({
 		}
 		// A user-role message that did not come from this human is an automation or
 		// worker relay, and is attributed differently.
-		if (item.origin === "human") return <HumanMessage message={item} queued={queued} />;
+		if (item.origin === "human") {
+			return <HumanMessage message={item} queued={queued} onEdit={onEditHumanMessage} />;
+		}
 		return <OriginMessage message={item} />;
 	}
 	if (item.activityKind === "approval") {

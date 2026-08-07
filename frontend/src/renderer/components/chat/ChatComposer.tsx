@@ -90,6 +90,7 @@ export function ChatComposer({
 	canSteer,
 	steerPending,
 	steerRefusal,
+	draftSeed,
 	commandError,
 }: {
 	onSend: (text: string, attachments?: FileAttachmentPayload[]) => void | Promise<unknown>;
@@ -124,6 +125,8 @@ export function ChatComposer({
 	steerPending?: boolean;
 	/** Why the last steer was refused. */
 	steerRefusal?: string;
+	/** A selected history message to load into the composer as a new draft. */
+	draftSeed?: { id: string; text: string };
 	/** A failed send, approval, interrupt, or settings mutation. */
 	commandError?: string;
 }) {
@@ -178,6 +181,8 @@ export function ChatComposer({
 	// Enter is still pointing at.
 	const steering = Boolean(canSteer && onSteer) && delivery === "steer";
 	const canSend = (text.trim().length > 0 || staged) && !busy && !disabled && !steerPending;
+	const draftSeedId = draftSeed?.id;
+	const draftSeedText = draftSeed?.text;
 
 	// A steer choice belongs to one running turn. Once that turn disappears, return
 	// Enter to the durable queue path so the next turn cannot be steered by accident.
@@ -197,6 +202,14 @@ export function ChatComposer({
 		setText(next);
 		setCaret(nextCaret);
 	}, []);
+
+	useEffect(() => {
+		if (draftSeedText === undefined) return;
+		applyText(draftSeedText, draftSeedText.length);
+		setDismissedAt(null);
+		setHighlighted(0);
+		setSendError(null);
+	}, [applyText, draftSeedId, draftSeedText]);
 
 	useLayoutEffect(() => {
 		const target = pendingCaret.current;

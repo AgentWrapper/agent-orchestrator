@@ -300,6 +300,41 @@ describe("automation reports", () => {
 });
 
 describe("ChatWorkspace message actions", () => {
+	it("copies a human message as the exact text the user sent", async () => {
+		const user = userEvent.setup();
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		await user.click(screen.getAllByRole("button", { name: "Copy user message" })[0]!);
+
+		expect(writeText).toHaveBeenCalledTimes(1);
+		expect(writeText).toHaveBeenCalledWith(
+			"Check the worktree state and tell me what changed since the base commit.",
+		);
+	});
+
+	it("loads a human message into the composer and sends the edited text as a new message", async () => {
+		const user = userEvent.setup();
+		const onSend = vi.fn(async (_text: string) => undefined);
+		render(<ChatWorkspace snapshot={chatFixture} onSend={onSend} />);
+
+		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
+		const composer = screen.getByLabelText("Message the agent");
+		expect(composer).toHaveFocus();
+		expect(composer).toHaveValue(
+			"Check the worktree state and tell me what changed since the base commit.",
+		);
+
+		await user.type(composer, " Include staged files too.");
+		await user.click(screen.getByRole("button", { name: "Send message" }));
+
+		await waitFor(() =>
+			expect(onSend).toHaveBeenCalledWith(
+				"Check the worktree state and tell me what changed since the base commit. Include staged files too.",
+				undefined,
+			),
+		);
+	});
+
 	it("copies an assistant message as the markdown the agent wrote", async () => {
 		const user = userEvent.setup();
 		const snapshot = structuredClone(chatFixture);
