@@ -95,7 +95,7 @@ describe("NewTaskDialog", () => {
 		expect(screen.queryByText("Runs with")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Close new task dialog" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();
-		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent("Claude Code");
+		expect(screen.getByRole("button", { name: "Agent" })).toHaveTextContent("Claude Code");
 		expect(await screen.findByLabelText("Model")).toHaveValue("");
 		expect(screen.getByRole("button", { name: "Add file" })).toBeInTheDocument();
 		expect(screen.getByLabelText("Task")).toHaveAttribute("placeholder", "Describe the task (optional)…");
@@ -172,8 +172,8 @@ describe("NewTaskDialog", () => {
 
 		await user.type(screen.getByLabelText("Task"), "B");
 
-		await user.click(screen.getByRole("combobox", { name: "Agent" }));
-		await user.click(await screen.findByRole("option", { name: "Cursor" }));
+		await user.click(screen.getByRole("button", { name: "Agent" }));
+		await user.click(await screen.findByRole("menuitem", { name: "Cursor" }));
 
 		await user.click(screen.getByRole("button", { name: "Start task" }));
 
@@ -186,8 +186,8 @@ describe("NewTaskDialog", () => {
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
 
-		await user.click(screen.getByRole("combobox", { name: "Agent" }));
-		const options = await screen.findAllByRole("option");
+		await user.click(screen.getByRole("button", { name: "Agent" }));
+		const options = await screen.findAllByRole("menuitem");
 		expect(options.map((option) => option.textContent)).toEqual(["Claude Code", "Cursor", "KiroAuth unknown"]);
 		expect(options[2]).not.toHaveAttribute("aria-disabled", "true");
 		await user.click(options[2]);
