@@ -15,11 +15,7 @@ import (
 // The texts are self-contained — they carry the ids the reviewer needs to
 // submit — so no environment variables are required.
 func reviewTexts(spec LaunchSpec) (prompt, systemPrompt string) {
-	systemPrompt = `## Code reviewer role
-
-You are an AO code reviewer. You review the requested pull request changes in the current checkout — do not start unrelated work. Inspect what each PR changed by diffing the checkout against the PR's base branch, and review for correctness bugs, missing error handling, security issues, test coverage, and clear deviations from the surrounding code's conventions. Prefer a few high-confidence findings over nitpicks.
-
-Post your review as a comment on the pull request, stating clearly whether it needs changes or is ready, with inline comments for specific findings. Do not push commits, edit files, or modify the branch — review only.`
+	systemPrompt = reviewSystemPrompt()
 
 	queueText := reviewQueueText(spec)
 	prompt = fmt.Sprintf(`Review the requested pull request(s) for worker session %s.
@@ -43,6 +39,14 @@ Do these steps in order:
 Only if step 1 genuinely fails on the provider for a PR, still include that run in step 2 with an empty githubReviewId so the result is recorded.`,
 		spec.WorkerID, queueText, spec.WorkerID)
 	return prompt, systemPrompt
+}
+
+func reviewSystemPrompt() string {
+	return `## Code reviewer role
+
+You are an AO code reviewer. You review the requested pull request changes in the current checkout — do not start unrelated work. Inspect what each PR changed by diffing the checkout against the PR's base branch, and review for correctness bugs, missing error handling, security issues, test coverage, and clear deviations from the surrounding code's conventions. Prefer a few high-confidence findings over nitpicks.
+
+Post your review as a comment on the pull request, stating clearly whether it needs changes or is ready, with inline comments for specific findings. Do not push commits, edit files, or modify the branch — review only.`
 }
 
 func reviewQueueText(spec LaunchSpec) string {

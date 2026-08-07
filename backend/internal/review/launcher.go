@@ -29,27 +29,44 @@ type Launcher interface {
 	// mark those rows as failed, matching the existing Spawn failure semantics.
 	Preflight(ctx context.Context, harness domain.ReviewerHarness, workspacePath string) error
 	// Spawn launches a fresh reviewer and returns the runtime handle id of the
-	// live pane (stable per worker, reused across passes).
-	Spawn(ctx context.Context, spec LaunchSpec) (handleID string, err error)
+	// live pane (stable per worker, reused across passes) plus any native agent
+	// session id known at launch time.
+	Spawn(ctx context.Context, spec LaunchSpec) (LaunchResult, error)
+	// RestoreTerminal launches an idle reviewer pane for a worker that already
+	// has review history, without creating or starting a new review run.
+	RestoreTerminal(ctx context.Context, spec LaunchSpec) (LaunchResult, error)
 	// Notify asks an already-running reviewer pane to review a new commit.
 	Notify(ctx context.Context, handleID string, spec LaunchSpec) error
 	// Alive reports whether a reviewer pane is still running.
 	Alive(ctx context.Context, handleID string) (bool, error)
 	// Cancel interrupts a running reviewer pane while keeping the terminal alive.
 	Cancel(ctx context.Context, handleID string, harness domain.ReviewerHarness) error
+	// Destroy tears down a reviewer pane entirely. This is used when the owning
+	// worker session itself is torn down, not for user-facing review cancellation.
+	Destroy(ctx context.Context, handleID string) error
 }
 
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
-	RunID         string
-	BatchID       string
-	WorkerID      domain.SessionID
-	Harness       domain.ReviewerHarness
-	WorkspacePath string
-	PRURL         string
-	TargetSHA     string
-	ReviewQueue   []ports.ReviewTask
-	ReviewIndex   int
+	RunID           string
+	BatchID         string
+	ReviewSessionID string
+	WorkerID        domain.SessionID
+	ProjectID       domain.ProjectID
+	Harness         domain.ReviewerHarness
+	WorkspacePath   string
+	AgentSessionID  string
+	PreviousRuns    []domain.ReviewRun
+	PRURL           string
+	TargetSHA       string
+	ReviewQueue     []ports.ReviewTask
+	ReviewIndex     int
+}
+
+// LaunchResult is the terminal/runtime state created by a reviewer launch.
+type LaunchResult struct {
+	HandleID       string
+	AgentSessionID string
 }
 
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
@@ -60,6 +77,7 @@ type reviewerRuntime interface {
 	Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	Interrupt(ctx context.Context, handle ports.RuntimeHandle) error
 	IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
+	SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 }
 
@@ -128,6 +146,7 @@ func (l *agentLauncher) invocation(spec LaunchSpec) ports.ReviewInvocation {
 		ReviewerID:      reviewerHandleID(spec.WorkerID),
 		RunID:           spec.RunID,
 		WorkerSessionID: spec.WorkerID,
+		AgentSessionID:  spec.AgentSessionID,
 		PRURL:           spec.PRURL,
 		TargetSHA:       spec.TargetSHA,
 		ReviewQueue:     spec.ReviewQueue,
@@ -176,25 +195,120 @@ func (l *agentLauncher) prepareInvocation(spec LaunchSpec) (ports.ReviewInvocati
 	return inv, nil
 }
 
-func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, error) {
-	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
-	if !ok {
-		return "", fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
+func (l *agentLauncher) prepareIdleInvocation(spec LaunchSpec) (ports.ReviewInvocation, error) {
+	promptRoot := filepath.Join(l.dataDir, "prompts", string(spec.WorkerID), "reviewer")
+	systemPath := filepath.Join(promptRoot, "system.md")
+	systemPrompt := reviewSystemPrompt() + "\n\n" +
+		"AO may restore your terminal before a new review task exists. In that state, wait for AO to send a review task file path before reviewing or submitting results.\n"
+	if err := os.MkdirAll(promptRoot, 0o700); err != nil {
+		return ports.ReviewInvocation{}, fmt.Errorf("create reviewer prompt directory: %w", err)
 	}
-	handleID := reviewerHandleID(spec.WorkerID)
+	if err := os.WriteFile(systemPath, []byte(systemPrompt), 0o600); err != nil {
+		return ports.ReviewInvocation{}, fmt.Errorf("write reviewer system prompt: %w", err)
+	}
+	prompt := fmt.Sprintf("Reviewer terminal restored for worker session %s.\n\n%s\n\nWait for AO to send the next review task file path before submitting a new review.", spec.WorkerID, previousReviewHistoryText(spec.PreviousRuns))
+	return ports.ReviewInvocation{
+		ReviewerID:       reviewerHandleID(spec.WorkerID),
+		WorkerSessionID:  spec.WorkerID,
+		AgentSessionID:   spec.AgentSessionID,
+		WorkspacePath:    spec.WorkspacePath,
+		Prompt:           prompt,
+		SystemPrompt:     "",
+		SystemPromptFile: systemPath,
+		TaskPromptRoot:   promptRoot,
+	}, nil
+}
+
+func previousReviewHistoryText(runs []domain.ReviewRun) string {
+	if len(runs) == 0 {
+		return "No previous review runs are recorded for this worker session."
+	}
+	var b strings.Builder
+	b.WriteString("Previous review runs for this worker session, newest first:")
+	const maxRuns = 20
+	for i, run := range runs {
+		if i >= maxRuns {
+			fmt.Fprintf(&b, "\n* ... %d older review run(s) omitted.", len(runs)-maxRuns)
+			break
+		}
+		fmt.Fprintf(&b, "\n* %s", run.PRURL)
+		if run.TargetSHA != "" {
+			fmt.Fprintf(&b, " at %s", run.TargetSHA)
+		}
+		fmt.Fprintf(&b, " - status: %s", run.Status)
+		if run.Verdict != "" {
+			fmt.Fprintf(&b, ", verdict: %s", run.Verdict)
+		}
+		if run.GithubReviewID != "" {
+			fmt.Fprintf(&b, ", GitHub review: %s", run.GithubReviewID)
+		}
+		body := strings.TrimSpace(run.Body)
+		if body != "" {
+			fmt.Fprintf(&b, "\n  Body: %s", truncateReviewHistoryBody(body))
+		}
+	}
+	return b.String()
+}
+
+func truncateReviewHistoryBody(body string) string {
+	const maxBody = 1200
+	body = strings.Join(strings.Fields(body), " ")
+	if len(body) <= maxBody {
+		return body
+	}
+	return strings.TrimSpace(body[:maxBody]) + "..."
+}
+
+func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (LaunchResult, error) {
 	inv, err := l.prepareInvocation(spec)
 	if err != nil {
-		return "", err
+		return LaunchResult{}, err
+	}
+	return l.launchReviewerTerminal(ctx, spec, inv)
+}
+
+func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (LaunchResult, error) {
+	inv, err := l.prepareIdleInvocation(spec)
+	if err != nil {
+		return LaunchResult{}, err
+	}
+	return l.launchReviewerTerminalWithMode(ctx, spec, inv, true)
+}
+
+func (l *agentLauncher) launchReviewerTerminal(ctx context.Context, spec LaunchSpec, inv ports.ReviewInvocation) (LaunchResult, error) {
+	return l.launchReviewerTerminalWithMode(ctx, spec, inv, false)
+}
+
+func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec LaunchSpec, inv ports.ReviewInvocation, restoring bool) (LaunchResult, error) {
+	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
+	if !ok {
+		return LaunchResult{}, fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
 	if pl, ok := reviewer.(preLaunchReviewer); ok {
 		if err := pl.PreLaunch(ctx, inv); err != nil {
-			return "", fmt.Errorf("reviewer pre-launch: %w", err)
+			return LaunchResult{}, fmt.Errorf("reviewer pre-launch: %w", err)
 		}
 	}
-	cmd, err := reviewer.ReviewCommand(ctx, inv)
-	if err != nil {
-		return "", fmt.Errorf("reviewer command: %w", err)
+	var cmd ports.ReviewCommandSpec
+	if restoring {
+		if restorer, ok := reviewer.(ports.ReviewerRestorer); ok {
+			restoreCmd, restoreOK, err := restorer.ReviewRestoreCommand(ctx, inv)
+			if err != nil {
+				return LaunchResult{}, fmt.Errorf("reviewer restore command: %w", err)
+			}
+			if restoreOK {
+				cmd = restoreCmd
+			}
+		}
 	}
+	if len(cmd.Argv) == 0 {
+		var err error
+		cmd, err = reviewer.ReviewCommand(ctx, inv)
+		if err != nil {
+			return LaunchResult{}, fmt.Errorf("reviewer command: %w", err)
+		}
+	}
+	handleID := reviewerHandleID(spec.WorkerID)
 	// The reviewer handle is stable per worker, so a still-live pane from a
 	// previous pass would otherwise block `tmux new-session` (duplicate name) or,
 	// worse, keep serving under its old harness. Destroy any stale pane on this
@@ -202,35 +316,40 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (string, err
 	// sandbox/permissions/env — which are applied only here at Create, never by
 	// Notify. Destroy is idempotent when no pane exists (first spawn / dead pane).
 	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
-		return "", fmt.Errorf("reviewer replace stale pane: %w", err)
+		return LaunchResult{}, fmt.Errorf("reviewer replace stale pane: %w", err)
 	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:     domain.SessionID(handleID),
 		WorkspacePath: spec.WorkspacePath,
 		Argv:          cmd.Argv,
-		Env:           pinnedEnv(cmd.Env),
+		Env:           l.runtimeEnv(ctx, spec, cmd.Argv, cmd.Env),
 	})
 	if err != nil {
-		return "", fmt.Errorf("reviewer runtime: %w", err)
+		return LaunchResult{}, fmt.Errorf("reviewer runtime: %w", err)
 	}
-	return handle.ID, nil
+	agentSessionID := strings.TrimSpace(cmd.AgentSessionID)
+	if agentSessionID == "" {
+		agentSessionID = strings.TrimSpace(spec.AgentSessionID)
+	}
+	return LaunchResult{HandleID: handle.ID, AgentSessionID: agentSessionID}, nil
 }
 
-// pinnedEnv returns the reviewer command's env with PATH pinned to the daemon's
-// own directory, so the bare `ao` the reviewer runs (e.g. `ao review submit`)
-// resolves to this daemon's CLI rather than a foreign `ao` first on the
-// inherited PATH. Mirrors the worker-session pin in the session manager.
-// Best-effort: an unpinnable daemon (not named "ao") keeps the inherited PATH.
-func pinnedEnv(base map[string]string) map[string]string {
-	path, err := sessionmanager.HookPATH(os.Executable, os.Getenv, base)
-	if err != nil {
-		return base
-	}
-	env := make(map[string]string, len(base)+1)
+func (l *agentLauncher) runtimeEnv(ctx context.Context, spec LaunchSpec, argv []string, base map[string]string) map[string]string {
+	env := make(map[string]string, len(base)+3)
 	for k, v := range base {
 		env[k] = v
 	}
-	env["PATH"] = path
+	delete(env, sessionmanager.EnvSessionID)
+	env["AO_REVIEW_SESSION_ID"] = spec.ReviewSessionID
+	env["AO_REVIEW_WORKER_SESSION_ID"] = string(spec.WorkerID)
+	env["AO_REVIEW_HARNESS"] = string(spec.Harness)
+	env[sessionmanager.EnvProjectID] = string(spec.ProjectID)
+	env[sessionmanager.EnvDataDir] = l.dataDir
+	path, err := sessionmanager.HookPATH(os.Executable, os.Getenv, env)
+	if err == nil {
+		env["PATH"] = path
+	}
+	sessionmanager.AugmentRuntimePATHForLaunchBinary(ctx, env, argv, exec.LookPath)
 	return env
 }
 
@@ -277,6 +396,38 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 		return fmt.Errorf("reviewer cancel: %w", err)
 	}
 	switch spec.Mode {
+	case ports.ReviewCancelMessage:
+		message := strings.TrimSpace(spec.Message)
+		if message == "" {
+			return fmt.Errorf("reviewer adapter %q returned empty cancel message", harness)
+		}
+		return l.runtime.SendMessage(ctx, ports.RuntimeHandle{ID: handleID}, message)
+	case ports.ReviewCancelInput:
+		inputs := spec.Inputs
+		if len(inputs) == 0 && spec.Input != "" {
+			inputs = []string{spec.Input}
+		}
+		if len(inputs) == 0 {
+			return fmt.Errorf("reviewer adapter %q returned empty cancel input", harness)
+		}
+		for i, input := range inputs {
+			if input == "" {
+				return fmt.Errorf("reviewer adapter %q returned empty cancel input", harness)
+			}
+			if err := l.runtime.SendInput(ctx, ports.RuntimeHandle{ID: handleID}, input); err != nil {
+				return err
+			}
+			if i < len(inputs)-1 && spec.InputDelay > 0 {
+				timer := time.NewTimer(spec.InputDelay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ctx.Err()
+				case <-timer.C:
+				}
+			}
+		}
+		return nil
 	case ports.ReviewCancelInterrupt:
 		interrupts := spec.Interrupts
 		if interrupts <= 0 {
@@ -300,4 +451,11 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 	default:
 		return fmt.Errorf("reviewer adapter %q returned unsupported cancel mode %q", harness, spec.Mode)
 	}
+}
+
+func (l *agentLauncher) Destroy(ctx context.Context, handleID string) error {
+	if handleID == "" {
+		return nil
+	}
+	return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
 }

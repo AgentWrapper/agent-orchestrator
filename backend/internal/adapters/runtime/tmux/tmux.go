@@ -626,6 +626,20 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 	return nil
 }
 
+// SendInput sends raw terminal input without appending Enter. It is intended
+// for TUI keybindings such as Escape rather than prompt text.
+func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
+	id, err := handleID(handle)
+	if err != nil {
+		return err
+	}
+	args := sendKeysLiteralArgs(id, input)
+	if _, err := r.run(ctx, args...); err != nil {
+		return fmt.Errorf("tmux runtime: send input %s: %w", id, err)
+	}
+	return nil
+}
+
 // GetOutput returns the last `lines` lines of the session pane's captured
 // output.
 func (r *Runtime) GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error) {
