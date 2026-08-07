@@ -779,7 +779,7 @@ export default function CloudAppPage() {
         if (
           inspector &&
           inspector.tab &&
-          ["changes", "browser", "terminal", "files"].includes(inspector.tab)
+          ["changes", "browser", "terminal", "files", "environment"].includes(inspector.tab)
         ) {
           restoredInspectors[sessionId] = {
             open: inspector.open === true,
@@ -799,7 +799,7 @@ export default function CloudAppPage() {
           open: savedInspector.open === true,
           tab:
             savedInspector.tab &&
-            ["changes", "browser", "terminal", "files"].includes(
+            ["changes", "browser", "terminal", "files", "environment"].includes(
               savedInspector.tab,
             )
               ? savedInspector.tab
@@ -1195,6 +1195,9 @@ export default function CloudAppPage() {
     (!selectedShare || selectedShareTrustedStandalone);
   const canAdminSelectedOrg =
     selectedOrgRole === "owner" || selectedOrgRole === "admin";
+  const canManageSessionEnvironment = selectedShare
+    ? selectedShare.role === "editor" && selectedShare.sandboxType === "trusted"
+    : canAdminSelectedOrg;
   const terminalRuntimeAvailable =
     selectedSession?.capabilities?.includes("runtime.pty.v1") === true;
   const daytonaConnections = connections.filter(
@@ -3182,6 +3185,7 @@ export default function CloudAppPage() {
                     orgId={activeOrgId}
                     sessionId={selectedSession.id}
                     runtimeConnected={selectedSession.runtimeConnected}
+                    canManageEnvironment={canManageSessionEnvironment}
                     previewAddress={selectedInspector?.previewAddress}
                     tab={inspectorTab}
                     open={inspectorOpen}

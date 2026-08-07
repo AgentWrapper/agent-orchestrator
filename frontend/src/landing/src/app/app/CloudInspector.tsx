@@ -9,10 +9,14 @@ import {
   Folder,
   GitCompareArrows,
   Globe2,
+  KeyRound,
   LoaderCircle,
   PanelRightClose,
+  Plus,
   RefreshCw,
   TerminalSquare,
+  Trash2,
+  X,
 } from "lucide-react";
 import {
   PointerEvent,
@@ -37,13 +41,19 @@ import {
 
 import { CloudTerminal } from "./CloudTerminal";
 
-export type CloudInspectorTab = "changes" | "browser" | "terminal" | "files";
+export type CloudInspectorTab =
+  | "changes"
+  | "browser"
+  | "terminal"
+  | "files"
+  | "environment";
 
 interface CloudInspectorProps {
   api: CloudAPI;
   orgId: string;
   sessionId: string;
   runtimeConnected: boolean;
+  canManageEnvironment?: boolean;
   previewAddress?: string;
   tab: CloudInspectorTab;
   open: boolean;
@@ -70,6 +80,7 @@ export function CloudInspector({
   orgId,
   sessionId,
   runtimeConnected,
+  canManageEnvironment = false,
   previewAddress,
   tab,
   open,
@@ -79,6 +90,14 @@ export function CloudInspector({
   onWidthChange,
   onClose,
 }: CloudInspectorProps) {
+  const visibleTabs = canManageEnvironment
+    ? [...inspectorTabs, { id: "environment" as const, label: "Environment", icon: KeyRound }]
+    : inspectorTabs;
+
+  useEffect(() => {
+    if (tab === "environment" && !canManageEnvironment) onTabChange("terminal");
+  }, [canManageEnvironment, onTabChange, tab]);
+
   useEffect(() => {
     if (open && runtimeConnected) void warmWorkspaceSession(api, orgId, sessionId);
   }, [api, open, orgId, runtimeConnected, sessionId]);
@@ -127,7 +146,7 @@ export function CloudInspector({
         ) : null}
         <div className="flex h-10 shrink-0 items-center border-b border-[#24272d] px-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto">
-            {inspectorTabs.map((item) => {
+            {visibleTabs.map((item) => {
               const Icon = item.icon;
               return (
                 <button
@@ -159,7 +178,9 @@ export function CloudInspector({
         </div>
 
         <div className="relative min-h-0 flex-1">
-          {!open ? null : !runtimeConnected ? (
+          {!open ? null : tab === "environment" && canManageEnvironment ? (
+            <EnvironmentView api={api} orgId={orgId} sessionId={sessionId} />
+          ) : !runtimeConnected ? (
             <InspectorUnavailable />
           ) : tab === "changes" ? (
             <ChangesView api={api} orgId={orgId} sessionId={sessionId} />
@@ -726,6 +747,265 @@ function diffBaseName(path: string) {
 function diffDirectory(path: string) {
   const separator = path.lastIndexOf("/");
   return separator >= 0 ? path.slice(0, separator + 1) : "";
+}
+
+function EnvironmentView({
+  api,
+  orgId,
+  sessionId,
+}: {
+  api: CloudAPI;
+  orgId: string;
+  sessionId: string;
+}) {
+  const [environment, setEnvironment] = useState<{
+    revision: number;
+    names: string[];
+  } | null>(null);
+  const [replacements, setReplacements] = useState<Record<string, string>>({});
+  const [removals, setRemovals] = useState<Set<string>>(() => new Set());
+  const [newName, setNewName] = useState("");
+  const [newValue, setNewValue] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      setEnvironment(await api.sessionEnvironment(orgId, sessionId));
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Could not load environment variables.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [api, orgId, sessionId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(""), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
+  const names = Array.from(
+    new Set([...(environment?.names ?? []), ...Object.keys(replacements)]),
+  )
+    .filter((name) => !removals.has(name))
+    .sort();
+  const dirty = Object.keys(replacements).length > 0 || removals.size > 0;
+
+  const addVariable = () => {
+    const name = newName.trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || !newValue) {
+      setError("Enter a valid variable name and a value.");
+      return;
+    }
+    setError("");
+    setReplacements((current) => ({ ...current, [name]: newValue }));
+    setRemovals((current) => {
+      const next = new Set(current);
+      next.delete(name);
+      return next;
+    });
+    setNewName("");
+    setNewValue("");
+  };
+
+  const save = async () => {
+    if (!environment || !dirty) return;
+    setSaving(true);
+    setError("");
+    try {
+      const updated = await api.updateSessionEnvironment(orgId, sessionId, {
+        expectedRevision: environment.revision,
+        upserts: Object.entries(replacements).map(([name, value]) => ({
+          name,
+          value,
+        })),
+        removals: Array.from(removals),
+      });
+      setEnvironment(updated);
+      setReplacements({});
+      setRemovals(new Set());
+      setNotice(
+        updated.willRestart
+          ? "Terminal is restarting with the new environment. Your existing agent session will resume."
+          : "Environment saved. This VM will apply it when its worker is updated.",
+      );
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not save environment variables.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-[#0f1114]">
+      {notice ? (
+        <div
+          role="status"
+          className="fixed right-4 top-4 z-50 flex max-w-sm items-start gap-2 rounded-md border border-[#355b46] bg-[#18251e] px-3 py-2.5 text-[11px] leading-5 text-[#a8d9b8] shadow-xl"
+        >
+          <LoaderCircle className="mt-0.5 size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+          <span className="min-w-0 flex-1">{notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice("")}
+            className="grid size-5 shrink-0 place-items-center rounded text-[#80a88d] hover:bg-white/[0.06] hover:text-[#d5f0dd]"
+            aria-label="Dismiss restart notice"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      ) : null}
+      <InspectorToolbar
+        label="Environment"
+        loading={loading || saving}
+        onRefresh={load}
+        summary={environment ? `${environment.names.length} configured` : undefined}
+      />
+      {error ? <InspectorError message={error} /> : null}
+      {loading && !environment ? (
+        <InspectorLoading label="Loading environment…" />
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+          <p className="mb-3 text-[11px] leading-5 text-[#747c87]">
+            Values are encrypted and cannot be viewed after saving. Saving restarts
+            this terminal and resumes the same agent session.
+          </p>
+          <div className="space-y-1.5">
+            {names.map((name) => {
+              const saved = environment?.names.includes(name) ?? false;
+              return (
+                <div
+                  key={name}
+                  className="rounded-md border border-[#292d34] bg-[#15181c] px-2.5 py-2"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#d6dae0]">
+                      {name}
+                    </span>
+                    <span className="font-mono text-[10px] text-[#59616c]">
+                      {saved ? "••••••••" : "Not saved"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!saved) {
+                          setReplacements((current) => {
+                            const next = { ...current };
+                            delete next[name];
+                            return next;
+                          });
+                          return;
+                        }
+                        setRemovals((current) => new Set(current).add(name));
+                        setReplacements((current) => {
+                          const next = { ...current };
+                          delete next[name];
+                          return next;
+                        });
+                      }}
+                      className="grid size-6 place-items-center rounded text-[#7d858f] hover:bg-[#302126] hover:text-[#e38e96]"
+                      aria-label={`Remove ${name}`}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                  {saved ? (
+                    <input
+                      type="password"
+                      value={replacements[name] ?? ""}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setReplacements((current) => {
+                          const next = { ...current };
+                          if (value) next[name] = value;
+                          else delete next[name];
+                          return next;
+                        });
+                      }}
+                      aria-label={`New value for ${name}`}
+                      placeholder="Enter a new value to replace"
+                      autoComplete="new-password"
+                      className="mt-2 h-7 w-full rounded border border-[#2a2e35] bg-[#101215] px-2 font-mono text-[11px] text-[#d4d7dc] outline-none placeholder:text-[#555d68] focus:border-[#4d75c9] focus:ring-1 focus:ring-[#4d75c9]"
+                    />
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-3 rounded-md border border-[#292d34] bg-[#15181c] p-2.5">
+            <div className="grid grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto] gap-2">
+              <input
+                value={newName}
+                onChange={(event) => setNewName(event.target.value)}
+                aria-label="Variable name"
+                placeholder="VARIABLE_NAME"
+                autoCapitalize="none"
+                autoComplete="off"
+                spellCheck={false}
+                className="h-7 min-w-0 rounded border border-[#2a2e35] bg-[#101215] px-2 font-mono text-[11px] text-[#d4d7dc] outline-none placeholder:text-[#555d68] focus:border-[#4d75c9] focus:ring-1 focus:ring-[#4d75c9]"
+              />
+              <input
+                type="password"
+                value={newValue}
+                onChange={(event) => setNewValue(event.target.value)}
+                aria-label="Variable value"
+                placeholder="Secret value"
+                autoComplete="new-password"
+                className="h-7 min-w-0 rounded border border-[#2a2e35] bg-[#101215] px-2 font-mono text-[11px] text-[#d4d7dc] outline-none placeholder:text-[#555d68] focus:border-[#4d75c9] focus:ring-1 focus:ring-[#4d75c9]"
+              />
+              <button
+                type="button"
+                onClick={addVariable}
+                className="grid size-7 place-items-center rounded bg-[#293f69] text-[#b9d0ff] hover:bg-[#345184]"
+                aria-label="Add environment variable"
+              >
+                <Plus className="size-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              disabled={!dirty || saving}
+              onClick={() => {
+                setReplacements({});
+                setRemovals(new Set());
+                setError("");
+              }}
+              className="h-7 rounded px-2.5 text-[11px] text-[#8d949e] hover:bg-[#202329] hover:text-[#d9dce1] disabled:opacity-40"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!dirty || saving}
+              onClick={() => void save()}
+              className="h-7 rounded bg-[#4d7ed8] px-3 text-[11px] text-white hover:bg-[#5b8def] disabled:opacity-40"
+            >
+              {saving ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function BrowserView({

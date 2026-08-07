@@ -18,6 +18,7 @@ type Command struct {
 	Action       string `json:"action,omitempty"`
 	Data         string `json:"data,omitempty"`
 	Sequence     int64  `json:"sequence,omitempty"`
+	Revision     int64  `json:"revision,omitempty"`
 	Rows         uint16 `json:"rows,omitempty"`
 	Cols         uint16 `json:"cols,omitempty"`
 	CommandGuard *bool  `json:"commandGuard,omitempty"`

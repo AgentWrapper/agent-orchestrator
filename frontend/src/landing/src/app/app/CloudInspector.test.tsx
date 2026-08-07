@@ -46,10 +46,25 @@ function inspectorAPI() {
       url: "https://cloud.example/api/cloud/v1/preview/file-token/",
       expiresAt: "2026-07-30T01:00:00Z",
     }),
+    sessionEnvironment: vi.fn().mockResolvedValue({
+      revision: 2,
+      names: ["API_TOKEN"],
+    }),
+    updateSessionEnvironment: vi.fn().mockResolvedValue({
+      revision: 3,
+      names: ["API_TOKEN", "DATABASE_URL"],
+      willRestart: true,
+    }),
   } as unknown as CloudAPI;
 }
 
-function InspectorHarness({ api }: { api: CloudAPI }) {
+function InspectorHarness({
+  api,
+  canManageEnvironment = false,
+}: {
+  api: CloudAPI;
+  canManageEnvironment?: boolean;
+}) {
   const [tab, setTab] = useState<CloudInspectorTab>("changes");
   return (
     <CloudInspector
@@ -57,6 +72,7 @@ function InspectorHarness({ api }: { api: CloudAPI }) {
       orgId="org-one"
       sessionId="session-one"
       runtimeConnected
+      canManageEnvironment={canManageEnvironment}
       tab={tab}
       open
       width={480}
@@ -67,6 +83,44 @@ function InspectorHarness({ api }: { api: CloudAPI }) {
     />
   );
 }
+
+it("manages write-only environment values and reports the in-place restart", async () => {
+  const user = userEvent.setup();
+  const api = inspectorAPI();
+  render(<InspectorHarness api={api} canManageEnvironment />);
+
+  await user.click(screen.getByRole("button", { name: "Environment" }));
+  expect(await screen.findByText("API_TOKEN")).toBeInTheDocument();
+  expect(screen.getByText("••••••••")).toBeInTheDocument();
+
+  await user.type(screen.getByRole("textbox", { name: "Variable name" }), "DATABASE_URL");
+  await user.type(screen.getByLabelText("Variable value"), "postgres://secret");
+  await user.click(screen.getByRole("button", { name: "Add environment variable" }));
+
+  expect(screen.queryByText("postgres://secret")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() =>
+    expect(api.updateSessionEnvironment).toHaveBeenCalledWith(
+      "org-one",
+      "session-one",
+      {
+        expectedRevision: 2,
+        upserts: [{ name: "DATABASE_URL", value: "postgres://secret" }],
+        removals: [],
+      },
+    ),
+  );
+  expect(
+    await screen.findByText(/Terminal is restarting.*existing agent session will resume/),
+  ).toBeInTheDocument();
+});
+
+it("does not expose the environment tab without management permission", () => {
+  render(<InspectorHarness api={inspectorAPI()} />);
+  expect(
+    screen.queryByRole("button", { name: "Environment" }),
+  ).not.toBeInTheDocument();
+});
 
 it("switches between changes, files, and a capability-scoped browser preview", async () => {
   const user = userEvent.setup();

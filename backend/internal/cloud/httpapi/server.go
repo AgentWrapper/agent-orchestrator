@@ -89,6 +89,8 @@ type store interface {
 	UpdateSessionActivity(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
 	UpdateActiveTurnCommandGuard(context.Context, clouddomain.AccountID, clouddomain.SessionID, bool) error
 	WorkerConnectionCurrent(context.Context, clouddomain.AccountID, clouddomain.SessionID, string, int64) (bool, error)
+	GetSessionEnvironment(context.Context, clouddomain.OrgID, clouddomain.SessionID) (cloudpostgres.SessionEnvironment, error)
+	UpdateSessionEnvironment(context.Context, clouddomain.OrgID, clouddomain.SessionID, string, int64, []byte, []byte) (cloudpostgres.SessionEnvironment, error)
 	LatestEventSequenceByType(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) (int64, error)
 	LatestPromptAcceptedSequence(context.Context, clouddomain.AccountID, clouddomain.SessionID) (int64, error)
 	SetAgentSessionID(context.Context, clouddomain.AccountID, clouddomain.SessionID, string) error
@@ -340,6 +342,7 @@ func (s *Server) routes() http.Handler {
 			worker.Use(s.workerAuth)
 			worker.Post("/worker/heartbeat", s.workerHeartbeat)
 			worker.Post("/worker/events", s.workerEvent)
+			worker.Post("/worker/environment", s.workerEnvironment)
 			worker.Post("/worker/workspace-response", s.workerWorkspaceResponse)
 			worker.Get("/worker/connect", s.workerConnect)
 			worker.Get("/worker/orchestrate/sessions", s.workerListSessions)
@@ -436,6 +439,8 @@ func (s *Server) routes() http.Handler {
 				org.With(s.requireOrgRole("member")).Post("/sessions/{sessionId}/interrupt", s.interruptSession)
 				org.Get("/sessions/{sessionId}/events", s.streamEvents)
 				org.Get("/sessions/{sessionId}/scm", s.sessionSCM)
+				org.Get("/sessions/{sessionId}/environment", s.getSessionEnvironment)
+				org.Patch("/sessions/{sessionId}/environment", s.updateSessionEnvironment)
 				org.Get("/sessions/{sessionId}/workspace/files", s.workspaceFiles)
 				org.Get("/sessions/{sessionId}/workspace/file", s.workspaceFile)
 				org.Get("/sessions/{sessionId}/workspace/diff", s.workspaceDiff)
@@ -2855,6 +2860,16 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 	if agentCredential != nil {
 		defer func() { agentCredential.Secret = "" }()
 	}
+	environmentValues, sessionEnvironment, err := s.loadSessionEnvironment(
+		r,
+		clouddomain.OrgID(ticket.AccountID),
+		ticket.SessionID,
+	)
+	if err != nil {
+		s.internalError(w, r, "load worker session environment", err)
+		return
+	}
+	defer clear(environmentValues)
 	localGitHubToken := ""
 	if includeLocalGitHubToken(s.sandboxProvider, s.githubMode(), s.localGitHub != nil) {
 		localGitHubToken, err = s.localGitHub.Token(r.Context())
@@ -2909,6 +2924,10 @@ func (s *Server) workerBootstrap(w http.ResponseWriter, r *http.Request) {
 		Launch:           launchSpec,
 		AgentCredential:  agentCredential,
 		LocalGitHubToken: localGitHubToken,
+		Environment: cloudworker.SessionEnvironment{
+			Revision: sessionEnvironment.Revision,
+			Values:   environmentValues,
+		},
 	})
 }
 
@@ -4323,6 +4342,23 @@ func (s *Server) workerConnect(w http.ResponseWriter, r *http.Request) {
 		claims.Epoch,
 	)
 	defer unregister()
+	sessionEnvironment, err := s.store.GetSessionEnvironment(
+		r.Context(),
+		clouddomain.OrgID(claims.AccountID),
+		claims.SessionID,
+	)
+	if err != nil {
+		return
+	}
+	if sessionEnvironment.Revision > 0 {
+		encoded, _ := json.Marshal(cloudworkerhub.Command{
+			Type:     "environment_sync",
+			Revision: sessionEnvironment.Revision,
+		})
+		if err := s.writeWorkerSocket(r.Context(), socket, encoded); err != nil {
+			return
+		}
+	}
 	s.log.Info("cloud worker command stream connected",
 		"session_id", claims.SessionID,
 		"worker_id", claims.WorkerID,

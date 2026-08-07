@@ -53,6 +53,8 @@ type Runner struct {
 	bootstrap         BootstrapResponse
 	workspaceDir      string
 	dataDir           string
+	environmentMu     sync.RWMutex
+	environment       SessionEnvironment
 	credentialCommand func(context.Context, string, []string, io.Reader) error
 	outputEvent       func(context.Context, string, any) error
 	outputRetryDelay  time.Duration
@@ -208,6 +210,7 @@ func NewRunner(client *Client, bootstrap BootstrapResponse, workspaceDir, dataDi
 		bootstrap:         bootstrap,
 		workspaceDir:      workspaceDir,
 		dataDir:           dataDir,
+		environment:       cloneSessionEnvironment(bootstrap.Environment),
 		credentialCommand: runCredentialCommand,
 		outputEvent:       client.Event,
 		outputRetryDelay:  250 * time.Millisecond,
@@ -339,9 +342,9 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	agentEnvironment := append(sanitizedProcessEnvironment(), envList(hookEnvironment)...)
+	baseAgentEnvironment := append(sanitizedProcessEnvironment(), envList(hookEnvironment)...)
 	clearEnvironmentSecret(hookEnvironment, credentialEnvironmentName)
-	workspaceEnvironment := append(
+	baseWorkspaceEnvironment := append(
 		sanitizedProcessEnvironment(),
 		envList(workspaceShellEnvironment(
 			r.bootstrap.SessionID,
@@ -349,13 +352,108 @@ func (r *Runner) Run(ctx context.Context) error {
 			r.bootstrap.Launch.RepositoryURL,
 		))...,
 	)
-	return r.runInteractiveAgent(
-		ctx,
-		argv,
-		agentEnvironment,
-		workspaceEnvironment,
-		commandPromptSequence,
-	)
+	for {
+		environment := r.currentSessionEnvironment()
+		err = r.runInteractiveAgent(
+			ctx,
+			argv,
+			mergeProcessEnvironment(baseAgentEnvironment, environment.Values),
+			mergeProcessEnvironment(baseWorkspaceEnvironment, environment.Values),
+			commandPromptSequence,
+		)
+		if !errors.Is(err, errSessionEnvironmentRestart) {
+			return err
+		}
+		restoreAgent = true
+		launchConfig.Prompt = ""
+		commandPromptSequence = 0
+		argv, err = cloudAgentCommand(
+			ctx,
+			agent,
+			launchConfig,
+			r.bootstrap.Launch.Session,
+			restoreAgent,
+		)
+		if err != nil {
+			return err
+		}
+		argv = restrictOrchestratorTools(
+			argv,
+			r.bootstrap.Launch.Session.Kind,
+			r.bootstrap.Launch.Session.Harness,
+		)
+	}
+}
+
+var errSessionEnvironmentRestart = errors.New("restart agent for session environment")
+
+func cloneSessionEnvironment(environment SessionEnvironment) SessionEnvironment {
+	cloned := SessionEnvironment{
+		Revision: environment.Revision,
+		Values:   make(map[string]string, len(environment.Values)),
+	}
+	for name, value := range environment.Values {
+		cloned.Values[name] = value
+	}
+	return cloned
+}
+
+func (r *Runner) currentSessionEnvironment() SessionEnvironment {
+	r.environmentMu.RLock()
+	defer r.environmentMu.RUnlock()
+	return cloneSessionEnvironment(r.environment)
+}
+
+func (r *Runner) refreshSessionEnvironment(ctx context.Context, revision int64) (bool, error) {
+	r.environmentMu.RLock()
+	currentRevision := r.environment.Revision
+	r.environmentMu.RUnlock()
+	if revision <= currentRevision {
+		return false, nil
+	}
+	environment, err := r.client.Environment(ctx)
+	if err != nil {
+		return false, fmt.Errorf("fetch session environment: %w", err)
+	}
+	r.environmentMu.Lock()
+	defer r.environmentMu.Unlock()
+	if environment.Revision <= r.environment.Revision {
+		return false, nil
+	}
+	clear(r.environment.Values)
+	r.environment = cloneSessionEnvironment(environment)
+	return true, nil
+}
+
+func mergeProcessEnvironment(base []string, values map[string]string) []string {
+	merged := make(map[string]string, len(base)+len(values))
+	for _, entry := range base {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok {
+			merged[name] = value
+		}
+	}
+	for name, value := range values {
+		if !protectedWorkerEnvironmentName(name) {
+			merged[name] = value
+		}
+	}
+	return envList(merged)
+}
+
+func protectedWorkerEnvironmentName(name string) bool {
+	upper := strings.ToUpper(name)
+	if strings.HasPrefix(upper, "AO_") {
+		return true
+	}
+	switch upper {
+	case "HOME", "PATH", "PWD", "OLDPWD", "SHELL", "SHLVL", "TERM",
+		"CLAUDE_CONFIG_DIR", "CODEX_HOME", "GH_REPO", "GITHUB_TOKEN",
+		"CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CURSOR_API_KEY":
+		return true
+	default:
+		return false
+	}
 }
 
 func prepareWorkerHome() error {
@@ -515,6 +613,27 @@ func (r *Runner) runInteractiveAgent(
 	}()
 	commandCtx, cancelCommands := context.WithCancel(ctx)
 	defer cancelCommands()
+	restartRequested := make(chan struct{}, 1)
+	runDone := make(chan struct{})
+	defer close(runDone)
+	var environmentRestart atomic.Bool
+	go func() {
+		select {
+		case <-runDone:
+			return
+		case <-restartRequested:
+			environmentRestart.Store(true)
+			_ = r.client.Event(ctx, "agent.restarting", map[string]string{
+				"reason": "environment_updated",
+			})
+			if workspaceCommand.Process != nil {
+				_ = workspaceCommand.Process.Kill()
+			}
+			if command.Process != nil {
+				_ = command.Process.Kill()
+			}
+		}
+	}()
 	var commandWG sync.WaitGroup
 	commandWG.Add(1)
 	go func() {
@@ -527,6 +646,7 @@ func (r *Runner) runInteractiveAgent(
 			&terminalWriteMu,
 			&workspaceWriteMu,
 			commandPromptSequence,
+			restartRequested,
 		)
 	}()
 
@@ -542,6 +662,9 @@ func (r *Runner) runInteractiveAgent(
 	cancelCommands()
 	heartbeatWG.Wait()
 	commandWG.Wait()
+	if environmentRestart.Load() {
+		return errSessionEnvironmentRestart
+	}
 	exitCode := 0
 	if waitErr != nil {
 		var exitErr *exec.ExitError
@@ -566,6 +689,7 @@ func (r *Runner) commandLoop(
 	writeMu *sync.Mutex,
 	workspaceWriteMu *sync.Mutex,
 	commandPromptSequence int64,
+	restartRequested chan<- struct{},
 ) {
 	backoff := time.Second
 	var highestPrompt atomic.Int64
@@ -621,6 +745,18 @@ func (r *Runner) commandLoop(
 				switch command.Type {
 				case "workspace_request":
 					r.dispatchWorkspaceCommand(ctx, command)
+					return nil
+				case "environment_sync":
+					changed, err := r.refreshSessionEnvironment(ctx, command.Revision)
+					if err != nil {
+						return err
+					}
+					if changed {
+						select {
+						case restartRequested <- struct{}{}:
+						default:
+						}
+					}
 					return nil
 				case "input":
 					if !terminalInputAllowed(agentReady) {

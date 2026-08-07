@@ -499,6 +499,7 @@ func TestClaudePromptPrecedesBrowserCommandsDuringStartup(t *testing.T) {
 		&writeMu,
 		&workspaceWriteMu,
 		0,
+		make(chan struct{}, 1),
 	)
 
 	select {
@@ -662,6 +663,7 @@ func TestFollowUpPromptRunsAfterCommandDeliveredStartupPrompt(t *testing.T) {
 		&writeMu,
 		&workspaceWriteMu,
 		startupSequence,
+		make(chan struct{}, 1),
 	)
 
 	select {
@@ -1328,6 +1330,74 @@ func TestCloudWorkerEnvironmentsTargetCanonicalGitHubRepository(t *testing.T) {
 	}
 	if got := workspaceEnvironment["AO_SESSION_BRANCH"]; got != "ao/readme-tweak" {
 		t.Fatalf("workspace branch = %q", got)
+	}
+}
+
+func TestMergeProcessEnvironmentKeepsWorkerValuesAuthoritative(t *testing.T) {
+	merged := mergeProcessEnvironment(
+		[]string{"AO_SESSION_ID=session-one", "PATH=/usr/bin", "API_TOKEN=old"},
+		map[string]string{
+			"API_TOKEN":     "secret",
+			"AO_SESSION_ID": "attacker-session",
+			"PATH":          "/tmp/bin",
+		},
+	)
+	values := map[string]string{}
+	for _, entry := range merged {
+		name, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[name] = value
+		}
+	}
+	if values["API_TOKEN"] != "secret" {
+		t.Fatal("custom environment variable was not injected")
+	}
+	if values["AO_SESSION_ID"] != "session-one" || values["PATH"] != "/usr/bin" {
+		t.Fatalf("worker environment was overridden: %#v", values)
+	}
+}
+
+func TestRefreshSessionEnvironmentFetchesOnlyNewerRevision(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/api/cloud/v1/worker/environment" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(SessionEnvironment{
+			Revision: 2,
+			Values:   map[string]string{"DATABASE_URL": "postgres://secret"},
+		})
+	}))
+	t.Cleanup(server.Close)
+	runner := NewRunner(
+		NewClient(server.URL, server.Client()),
+		BootstrapResponse{
+			Environment: SessionEnvironment{
+				Revision: 1,
+				Values:   map[string]string{"OLD_KEY": "old"},
+			},
+		},
+		t.TempDir(),
+		t.TempDir(),
+	)
+
+	changed, err := runner.refreshSessionEnvironment(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("refreshSessionEnvironment() error = %v", err)
+	}
+	if !changed || requests != 1 {
+		t.Fatalf("changed = %v, requests = %d", changed, requests)
+	}
+	current := runner.currentSessionEnvironment()
+	if current.Revision != 2 ||
+		current.Values["DATABASE_URL"] != "postgres://secret" ||
+		current.Values["OLD_KEY"] != "" {
+		t.Fatalf("environment = %#v", current)
+	}
+	changed, err = runner.refreshSessionEnvironment(context.Background(), 2)
+	if err != nil || changed || requests != 1 {
+		t.Fatalf("duplicate refresh: changed=%v requests=%d err=%v", changed, requests, err)
 	}
 }
 

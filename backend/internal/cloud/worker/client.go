@@ -28,6 +28,12 @@ type AgentCredential struct {
 	Secret         string `json:"secret"`
 }
 
+// SessionEnvironment contains the revisioned process environment for this worker.
+type SessionEnvironment struct {
+	Revision int64             `json:"revision"`
+	Values   map[string]string `json:"values"`
+}
+
 // BootstrapResponse contains worker credentials and the session launch specification.
 type BootstrapResponse struct {
 	WorkerToken      string                         `json:"workerToken"`
@@ -38,6 +44,7 @@ type BootstrapResponse struct {
 	Launch           cloudpostgres.WorkerLaunchSpec `json:"launch"`
 	AgentCredential  *AgentCredential               `json:"agentCredential,omitempty"`
 	LocalGitHubToken string                         `json:"localGitHubToken,omitempty"`
+	Environment      SessionEnvironment             `json:"environment"`
 }
 
 // Client communicates with the AO Cloud worker API.
@@ -54,6 +61,21 @@ func NewClient(baseURL string, client *http.Client) *Client {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &Client{baseURL: strings.TrimRight(baseURL, "/"), http: client}
+}
+
+// Environment fetches the latest session-scoped process environment.
+func (c *Client) Environment(ctx context.Context) (SessionEnvironment, error) {
+	var response SessionEnvironment
+	if err := c.do(
+		ctx,
+		"/api/cloud/v1/worker/environment",
+		c.getToken(),
+		map[string]any{},
+		&response,
+	); err != nil {
+		return SessionEnvironment{}, err
+	}
+	return response, nil
 }
 
 // Bootstrap exchanges a one-time ticket for worker credentials and launch data.
@@ -250,4 +272,10 @@ func (c *Client) getToken() string {
 const Version = "0.1.0"
 
 // DefaultCapabilities lists the protocol features supported by this worker.
-var DefaultCapabilities = []string{"pty.v1", "events.v1", "heartbeat.v1", "git.v1"}
+var DefaultCapabilities = []string{
+	"pty.v1",
+	"events.v1",
+	"heartbeat.v1",
+	"git.v1",
+	"environment.sync.v1",
+}

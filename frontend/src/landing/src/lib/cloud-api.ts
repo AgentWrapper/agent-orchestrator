@@ -151,6 +151,13 @@ export interface CloudSession {
   createdAt: string;
 }
 
+export interface CloudSessionEnvironment {
+  revision: number;
+  names: string[];
+  updatedAt?: string;
+  willRestart?: boolean;
+}
+
 export interface CloudSharedProject {
   id: string;
   orgId: string;
@@ -863,6 +870,33 @@ export class CloudAPI {
   async sessionSCM(orgId: string, sessionId: string) {
     return this.request<{ scm: CloudSessionSCM | null }>(
       this.orgPath(orgId, `/sessions/${encodeURIComponent(sessionId)}/scm`),
+    );
+  }
+
+  async sessionEnvironment(orgId: string, sessionId: string) {
+    return this.request<CloudSessionEnvironment>(
+      this.orgPath(
+        orgId,
+        `/sessions/${encodeURIComponent(sessionId)}/environment`,
+      ),
+    );
+  }
+
+  async updateSessionEnvironment(
+    orgId: string,
+    sessionId: string,
+    input: {
+      expectedRevision: number;
+      upserts: Array<{ name: string; value: string }>;
+      removals: string[];
+    },
+  ) {
+    return this.request<CloudSessionEnvironment>(
+      this.orgPath(
+        orgId,
+        `/sessions/${encodeURIComponent(sessionId)}/environment`,
+      ),
+      { method: "PATCH", body: input },
     );
   }
 
