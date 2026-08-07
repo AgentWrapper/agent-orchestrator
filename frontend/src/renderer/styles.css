@@ -575,12 +575,18 @@
 	gap: var(--size-settings-row-icon-gap);
 	border-radius: var(--radius-settings-row);
 	background-color: var(--color-bg-settings-row);
-	padding: var(--size-settings-row-padding);
+	padding-inline: var(--size-settings-row-padding);
+	padding-block: var(--size-settings-row-padding);
 }
 
 /* Tailwind preflight clears button backgrounds; keep settings rows filled. */
 button.settings-row-bar {
 	background-color: var(--color-bg-settings-row);
+}
+
+@utility settings-link-row {
+	border: 1px solid var(--color-border-settings);
+	border-radius: var(--radius-settings-row);
 }
 
 @utility settings-menu-item {
@@ -1476,6 +1482,13 @@ body.is-resizing-x [data-slot="resize-handle"]::after {
 body.is-resizing-x [data-slot="sidebar-gap"],
 body.is-resizing-x [data-slot="sidebar-container"] {
 	transition: none;
+}
+
+/* Keep keyboard focus visible without adding a ring to the sidebar chrome. */
+.sidebar-focusless :focus-visible {
+	background-color: var(--color-interactive-hover) !important;
+	outline: none !important;
+	box-shadow: none !important;
 }
 
 /* Expanded-only sidebar chrome waits for the rail width transition to finish

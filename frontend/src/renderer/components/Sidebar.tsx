@@ -141,30 +141,14 @@ function useSelection() {
 	};
 }
 
-// Activity controls motion; live PR context controls an active session's
-// color. Idle activity remains visible as a static gray dot.
-const ACTIVE_SCM_DOT: Partial<Record<WorkspaceSession["scmStatus"] & string, string>> = {
-	working: "bg-status-working",
-	ci_failed: "bg-status-needs-you",
-	changes_requested: "bg-status-needs-you",
-	draft: "bg-status-in-review",
-	review_pending: "bg-status-in-review",
-	pr_open: "bg-status-in-review",
-	approved: "bg-status-ready",
-	mergeable: "bg-status-ready",
-	merged: "bg-status-merged",
-};
-
+// Agent activity is the shared source for both color and motion. PR and CI
+// state is presented on cards and board lanes instead of repainting this dot.
 function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 	const activity = getAgentActivityView(session.activity);
-	const dotClass =
-		activity.state === "active"
-			? `${ACTIVE_SCM_DOT[session.scmStatus ?? "working"] ?? "bg-status-working"} animate-status-pulse`
-			: activity.indicatorClassName;
 	return (
 		<span
 			aria-hidden="true"
-			className={cn("size-2 shrink-0 rounded-full", dotClass)}
+			className={cn("size-2 shrink-0 rounded-full", activity.indicatorClassName)}
 			data-session-status=""
 		/>
 	);
@@ -267,6 +251,7 @@ export function Sidebar({
 			onPointerLeave={onPreviewLeave}
 			overlay={isOverlay}
 			className={cn(
+				"sidebar-focusless",
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
 				isOverlay && "z-sidebar-preview shadow-2xl",
 				isOverlay || !underTopbar
@@ -407,11 +392,11 @@ export function Sidebar({
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.
-			    Row height matches Archive (`h-row-md`). On macOS the sidebar is
-			    already height-clamped beside the inset center surface. */}
+			    Its hairline and row height match the board Archive bar. On macOS
+			    the sidebar is already height-clamped beside the inset center surface. */}
 			<SidebarFooter
 				className={cn(
-					"relative mt-auto gap-0 overflow-hidden px-2 !pt-1 !pb-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
+					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
 					isMac ? "mb-px" : "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
 				)}
 			>
@@ -431,7 +416,7 @@ export function Sidebar({
 						aria-label={t("shell.settings")}
 						className={cn(
 							NAV_ROW_CLASS,
-							"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+							"flex h-[42px] w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
 						)}
 						onClick={() => selection.goGlobalSettings()}
 						tabIndex={isCollapsed ? -1 : 0}
@@ -510,6 +495,7 @@ function ProjectItem({
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [projectPressed, setProjectPressed] = useState(false);
 	const [rowHovered, setRowHovered] = useState(false);
 	// Skip enter animation on first mount — sessions arrive async and we don't
 	// want them to slide in on every sidebar load. Only animate on subsequent
@@ -616,10 +602,20 @@ function ProjectItem({
 			onMouseEnter={() => setRowHovered(true)}
 			onMouseLeave={() => setRowHovered(false)}
 		>
-		{/* Outer relative context for action cluster absolute positioning */}
-		<div className="relative">
-		{/* Scale wrapper — main button only; action cluster sits outside so clicking it doesn't trigger scale */}
-		<div className="transition-[transform] duration-[100ms] ease-out active:scale-[0.98]">
+		{/* The whole visual row scales when its navigation surface is pressed.
+		    Action-button presses stop before reaching this boundary. */}
+		<div
+			className={cn(
+				"relative transition-[transform] duration-[100ms] ease-out",
+				projectPressed && "scale-[0.98]",
+			)}
+			data-project-press=""
+			onPointerCancel={() => setProjectPressed(false)}
+			onPointerDown={() => setProjectPressed(true)}
+			onPointerLeave={() => setProjectPressed(false)}
+			onPointerUp={() => setProjectPressed(false)}
+		>
+		<div>
 		{/* project-sidebar__proj-row */}
 	<SidebarMenuButton
 		aria-current={dashboardActive ? "page" : undefined}
@@ -641,14 +637,15 @@ function ProjectItem({
 		    optically indenting these icons relative to the header. */}
 		<span
 			aria-hidden="true"
-			className="relative inline-flex size-icon-md shrink-0 items-center justify-center text-muted-foreground group-data-[collapsible=icon]:hidden"
+			className="relative inline-flex size-icon-md shrink-0 translate-y-px items-center justify-center text-muted-foreground group-data-[collapsible=icon]:hidden"
+			data-project-folder-visual=""
 		>
 			{rowHovered ? (
 				<motion.span
 					animate={{ rotate: expanded ? 90 : 0 }}
 					initial={false}
 					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					className="inline-flex size-icon-md items-center justify-center translate-y-px"
+					className="inline-flex size-icon-md items-center justify-center"
 				>
 					<ChevronRight strokeWidth={1.75} />
 				</motion.span>
@@ -669,7 +666,10 @@ function ProjectItem({
 				<Folder className="size-5" strokeWidth={1.75} />
 			)}
 		</span>
-		<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+		<span
+			className="sidebar-expanded-chrome min-w-0 flex-1 translate-y-px truncate group-data-[collapsible=icon]:hidden"
+			data-project-label=""
+		>
 			{workspace.name}
 		</span>
 	</SidebarMenuButton>
@@ -683,16 +683,18 @@ function ProjectItem({
 		onClick={onFolderClick}
 		type="button"
 	/>
-		</div>{/* end scale wrapper */}
-		{/* Per-project actions: orchestrator and kebab menu. Outside scale wrapper
-		so clicking them doesn't trigger the press animation. Always visible
-		(not hover-gated) to avoid CSS :hover group propagation in Chromium. */}
+		</div>
+		{/* Per-project actions: orchestrator and kebab menu. Inside the scaled visual
+		row, but outside its navigation surface so their own presses stay independent.
+		Always visible (not hover-gated) to avoid CSS :hover group propagation in Chromium. */}
 		<div
 			className={cn(
 				"sidebar-expanded-chrome absolute top-0 right-0.5 z-chrome flex h-control-form items-center gap-px",
 				"group-data-[collapsible=icon]:hidden",
 			)}
 			data-project-actions=""
+			onClick={(event) => event.stopPropagation()}
+			onPointerDown={(event) => event.stopPropagation()}
 		>
 			<Tooltip>
 				<TooltipTrigger asChild>
