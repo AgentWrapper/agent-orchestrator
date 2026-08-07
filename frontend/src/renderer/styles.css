@@ -839,6 +839,13 @@ button.settings-link-row:active {
 	background-color: var(--color-border);
 }
 
+/* The divider is the shared edge between the two segments — when either one
+   is focused, it becomes part of that segment's own border/focus ring
+   instead of staying a disconnected neutral line. */
+.composer-run-controls:has(.composer-toolbar-slot :focus-within) .composer-toolbar-divider {
+	background-color: var(--bridge-accent);
+}
+
 .composer-toolbar .composer-toolbar-option {
 	height: var(--size-settings-action-height);
 	border-radius: 0 !important;
