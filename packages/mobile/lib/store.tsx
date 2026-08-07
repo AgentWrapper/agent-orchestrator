@@ -111,6 +111,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [errorStatus, setErrorStatus] = useState<number | null>(null);
 
 	const cfgRef = useRef<ServerConfig | null>(null);
+	// Gate for the connected event: emit only on the not-open -> open transition,
+	// never on every poll tick. openRef tracks the current state; everConnectedRef
+	// tells a fresh launch apart from a later reconnect.
+	const openRef = useRef(false);
+	const everConnectedRef = useRef(false);
 
 	// Load persisted active project once.
 	useEffect(() => {
@@ -155,7 +160,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setError(null);
 			setErrorStatus(null);
 			setConnection("open");
-			mobileTelemetry()?.capture(MOBILE_EVENTS.connected, { trigger: "launch" });
+			if (!openRef.current) {
+				openRef.current = true;
+				const trigger = everConnectedRef.current ? "reconnect" : "launch";
+				everConnectedRef.current = true;
+				mobileTelemetry()?.capture(MOBILE_EVENTS.connected, { trigger });
+			}
 			// Badge count for the board's bell. Deliberately after the session fetch
 			// and separately caught: an older daemon without /notifications must not
 			// knock the board offline. limit:1 because we only read unreadCount.
@@ -175,6 +185,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			// server was never reached (DNS failure, refused, timeout).
 			const status = e instanceof ApiError ? e.status : undefined;
 			setErrorStatus(status ?? null);
+			openRef.current = false;
 			setConnection("closed");
 			// Auth failures are not transient — don't keep polling into a lockout.
 			// Network/other errors are transient, so keep polling for recovery.
@@ -188,6 +199,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	// (Re)start the REST poll whenever the config changes. Stops polling on an
 	// auth failure so the phone can't lock itself out by hammering a bad password.
 	useEffect(() => {
+		// A config change (unpair / re-pair / new host) restarts polling; reset the
+		// connected gate so the first open of the new session is a real transition.
+		openRef.current = false;
 		if (!config || !isConfigured(config)) {
 			setConnection("closed");
 			setLoading(false);

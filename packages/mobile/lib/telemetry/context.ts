@@ -24,7 +24,7 @@ export type TelemetryContext = {
 };
 
 // Bump when the shape of any event payload changes in a way a query relies on.
-export const MOBILE_TELEMETRY_SCHEMA_VERSION = 1;
+export const MOBILE_TELEMETRY_SCHEMA_VERSION = 2;
 
 function platformOf(os: string): TelemetryContext["platform"] {
 	if (os === "ios" || os === "android" || os === "web") return os;

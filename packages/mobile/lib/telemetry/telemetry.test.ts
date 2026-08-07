@@ -38,7 +38,10 @@ describe("createMobileTelemetry", () => {
 			password: "hunter2",
 		});
 		expect(captures).toEqual([
-			{ event: MOBILE_EVENTS.featureUsed, props: { feature: "spawn", outcome: "succeeded" } },
+			{
+				event: MOBILE_EVENTS.featureUsed,
+				props: { feature: "spawn", outcome: "succeeded", $process_person_profile: false },
+			},
 		]);
 	});
 
@@ -49,6 +52,21 @@ describe("createMobileTelemetry", () => {
 		// @ts-expect-error deliberately passing an unknown event name
 		t.capture("ao.mobile_app.typo", { feature: "spawn" });
 		expect(captures).toEqual([]);
+	});
+
+	it("stamps $process_person_profile:false on every event for the anonymous rate", () => {
+		const { client, captures } = fakeClient();
+		const t = createMobileTelemetry(client, {});
+		t.capture(MOBILE_EVENTS.paired, { method: "qr" });
+		expect(captures[0].props?.$process_person_profile).toBe(false);
+	});
+
+	it("drops an event named in the build-time kill switch", () => {
+		const { client, captures } = fakeClient();
+		const t = createMobileTelemetry(client, {}, [MOBILE_EVENTS.connected]);
+		t.capture(MOBILE_EVENTS.connected, { trigger: "launch" });
+		t.capture(MOBILE_EVENTS.paired, { method: "qr" });
+		expect(captures.map((c) => c.event)).toEqual([MOBILE_EVENTS.paired]);
 	});
 
 	it("emits the daily active heartbeat once per UTC day", async () => {

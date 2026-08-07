@@ -89,19 +89,17 @@ export function PushManager(): null {
 	}, [navState?.key, config]);
 
 	function route(data: PushData, coldStart = false) {
-		const type = data.type ?? "";
-		const target = type === "needs_input" ? "session" : type.includes("pr") ? "prs" : "notifications";
+		// Reuse the one routing rule so the reported target can't disagree with
+		// where the tap actually lands: notificationTarget returns /session/:id
+		// only for a needs_input with a sessionId, and /prs for everything else.
+		const destination = notificationTarget({ type: data.type ?? "", sessionId: data.sessionId });
+		const target = destination.startsWith("/session") ? "session" : "prs";
 		mobileTelemetry()?.capture(MOBILE_EVENTS.notificationOpened, { target, cold_start: coldStart });
 		// Best-effort mark-read so unread counts stay consistent with the dashboard.
 		if (config && data.notificationId) {
 			markNotificationRead(config, data.notificationId).catch(() => {});
 		}
-		// Shared with the history screen via notificationTarget: needs_input lands
-		// on the session (which handles a terminated one itself by offering
-		// Restore), and every PR type lands on the PRs tab. Opening an alert from
-		// the tray and opening the same alert from history have to agree, and they
-		// only do if one rule decides both.
-		router.navigate(notificationTarget({ type: data.type ?? "", sessionId: data.sessionId }));
+		router.navigate(destination);
 	}
 
 	return null;

@@ -24,16 +24,25 @@ export type MobileTelemetry = {
 export function createMobileTelemetry(
 	client: MobileTelemetryClient,
 	context: Record<string, unknown>,
+	disabledEvents: readonly string[] = [],
 ): MobileTelemetry {
 	// Context rides as super-properties, so every event is tagged with
 	// client/platform/version without the call sites repeating it.
 	void client.register(context);
+	const denied = new Set(disabledEvents);
 
 	const capture = (event: MobileEventName, properties?: Record<string, unknown>): void => {
-		// Fail closed on the event name too: an event not in the allowlist is
-		// never sent, so a typo cannot ship a bare untracked event.
+		// Fail closed on the event name: an event not in the allowlist is never
+		// sent, so a typo cannot ship a bare untracked event.
 		if (!(event in MOBILE_ALLOWLIST)) return;
-		client.capture(event, sanitizeMobileProperties(event, properties));
+		// Build-time kill switch, mirroring the desktop denylist.
+		if (denied.has(event)) return;
+		client.capture(event, {
+			...sanitizeMobileProperties(event, properties),
+			// Anonymous rate, belt-and-braces with personProfiles:"never" at init.
+			// Matches every desktop and daemon event.
+			$process_person_profile: false,
+		});
 	};
 
 	return {

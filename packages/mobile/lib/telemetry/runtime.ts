@@ -5,7 +5,12 @@ import { Platform } from "react-native";
 import PostHog from "posthog-react-native";
 import { buildMobileContext } from "./context";
 import { type ActiveStorage } from "./dailyActive";
-import { MOBILE_POSTHOG_HOST, MOBILE_POSTHOG_KEY } from "./config";
+import {
+	MOBILE_DISABLED_EVENTS,
+	MOBILE_POSTHOG_HOST,
+	MOBILE_POSTHOG_KEY,
+	MOBILE_TELEMETRY_DISABLED,
+} from "./config";
 import { MOBILE_EVENTS } from "./events";
 import { createMobileTelemetry, type MobileTelemetry } from "./telemetry";
 
@@ -30,11 +35,18 @@ let telemetry: MobileTelemetry | null = null;
  */
 export function initMobileTelemetry(): MobileTelemetry | null {
 	if (telemetry) return telemetry;
+	// Dev gate: a dev client (npm start / Expo Go) must never send to the
+	// production project. Desktop constructs no client unless packaged.
+	if (__DEV__ || MOBILE_TELEMETRY_DISABLED) return null;
 
 	const client = new PostHog(MOBILE_POSTHOG_KEY, {
 		host: MOBILE_POSTHOG_HOST,
 		enableSessionReplay: false,
 		captureAppLifecycleEvents: false,
+		// Anonymous ingestion rate. Identified events bill ~3.3x, and nothing here
+		// calls identify(), so a person profile would only ever cost more for no
+		// signal.
+		personProfiles: "never",
 	});
 
 	const version =
@@ -49,7 +61,7 @@ export function initMobileTelemetry(): MobileTelemetry | null {
 		appVersion: version,
 	});
 
-	telemetry = createMobileTelemetry(client, context);
+	telemetry = createMobileTelemetry(client, context, MOBILE_DISABLED_EVENTS);
 	return telemetry;
 }
 
@@ -65,7 +77,7 @@ export const telemetryActiveStorage: ActiveStorage = {
 };
 
 /** Feature ids the featureUsed allowlist accepts. */
-export type MobileFeature = "spawn" | "merge" | "kill" | "restore" | "conductor" | "send" | "voice_input";
+export type MobileFeature = "spawn" | "merge" | "kill" | "restore" | "conductor" | "send";
 
 /**
  * Runs an action and reports feature_used with its outcome, without changing the

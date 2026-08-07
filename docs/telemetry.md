@@ -49,6 +49,24 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
   which harness *ran*, so an install with six authorized agents that always picks
   one was indistinguishable from an install that only had that one
 - AO version context (`app_version` / `ao_version`), platform, and build mode
+- Mobile app product events (`client = "mobile"` / `"mobile-web"`), all under the
+  `ao.v2.*` namespace and carrying `telemetry_schema_version = 2`:
+  `ao.v2.app.active` (once per UTC day), `ao.v2.mobile_app.paired`
+  (`method`, `from_onboarding`), `ao.v2.mobile_app.connected` (`trigger`,
+  emitted only on the not-open-to-open transition, never per poll tick),
+  `ao.v2.mobile_app.onboarding_started` / `_completed` / `_skipped`,
+  `ao.v2.mobile_app.notification_opened` (`target`, `cold_start`), and
+  `ao.v2.mobile_app.feature_used` (`feature`, `outcome`). Every event carries
+  `$process_person_profile: false` (anonymous rate), and the client is built with
+  `personProfiles: "never"`, `enableSessionReplay: false`, and
+  `captureAppLifecycleEvents: false`. There is no screen recording, no touch or
+  screen autocapture, and no free-text property: the allowlist in
+  `packages/mobile/lib/telemetry/events.ts` drops any unregistered key, so session
+  titles, project names, terminal output, and the connection password cannot
+  leave the device. Identity is posthog-react-native's persisted anonymous
+  install id, device-based and never IP. Errors are out of scope here and go to
+  Sentry, not PostHog. A dev client (`npm start`) constructs no client and sends
+  nothing.
 
 PostHog session recording is disabled in the client via
 `disable_session_recording`, so the project-side replay toggle cannot turn it on.
