@@ -341,6 +341,7 @@
 	"newTask.runsWith": "Runs with",
 	"newTask.letAgentChoose": "Let {{agent}} choose",
 	"newTask.autoModel": "Auto",
+	"newTask.emptyHint": "Start now — details can come later.",
 	"newTask.newlineHint": "Shift+Enter for a new line",
 	"settings.models.refreshList": "Refresh list",
 	"settings.models.refreshing": "Refreshing...",
@@ -485,6 +486,8 @@
 	"settings.models.browse": "Browse",
 	"settings.models.custom": "Custom model…",
 	"settings.models.default": "Default",
+	"settings.models.currentDefaults": "Current & defaults",
+	"settings.models.recent": "Recent",
 	"settings.models.loadFailed": "Could not load models.",
 	"settings.models.loading": "Loading models…",
 	"settings.models.matchingCount": "Showing {{visible}} of {{total}} matching models",
@@ -989,7 +992,7 @@
 	"zone.pending": "In review",
 	"zone.working": "Working",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
+	"newTask.taskPlaceholder": "Describe the task…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

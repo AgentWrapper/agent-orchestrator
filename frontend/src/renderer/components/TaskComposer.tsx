@@ -266,12 +266,12 @@ export function TaskComposer({
 
 			{/* Two bands: what it will run with, then what you can do about it. One row
 			    holding chips and buttons together reads as a crowded toolbar. */}
-			<div className="border-t border-border/70 px-(--size-modal-padding) py-3">
-				<div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3">
+			<div className="composer-run-config border-t border-border/70 px-(--size-modal-padding) py-3">
+				<div className="composer-run-row">
 					{/* One sentence — "Runs with <agent> <model>" — states what will happen,
 					    instead of two labelled fields the reader has to assemble themselves. */}
 					<span className="eyebrow-label shrink-0">{t("newTask.runsWith")}</span>
-					<div className="grid w-full max-w-(--size-composer-run-options) min-w-0 grid-cols-2 gap-2">
+					<div className="composer-run-target" role="group" aria-label={t("newTask.runsWith")}>
 						<RequiredAgentField
 							id={agentId}
 							variant="chip"
@@ -282,10 +282,14 @@ export function TaskComposer({
 							installed={agentCatalog?.installed}
 							supported={agentCatalog?.supported}
 							disabled={agentsQuery.isFetching && agentCatalog === undefined}
-							triggerClassName="w-full justify-between"
+							triggerClassName="composer-run-target-segment w-full justify-between bg-transparent!"
 							onChange={(value) => {
 								setAgent(value);
 								setAgentTouched(true);
+								// Never pair a newly selected agent with the previous agent's model.
+								// The new catalog will resolve its own default into this cleared slot.
+								setModel("");
+								setMode("");
 								setModelTouched(false);
 							}}
 						/>
@@ -313,14 +317,23 @@ export function TaskComposer({
 			</div>
 
 			<div className="flex items-center justify-between gap-4 border-t border-border/70 px-(--size-modal-padding) py-3">
-				<p className="text-caption text-passive">{t("newTask.newlineHint")}</p>
+				<p className="min-w-0 truncate text-caption text-passive">
+					<span key={prompt.trim() === "" ? "empty" : "writing"} className="composer-value-swap">
+						{prompt.trim() === "" ? t("newTask.emptyHint") : t("newTask.newlineHint")}
+					</span>
+				</p>
 				<div className="flex shrink-0 items-center gap-2">
 					{onCancel && (
 						<Button type="button" variant="secondary" disabled={isSubmitting} onClick={onCancel}>
 							{t("newTask.cancel")}
 						</Button>
 					)}
-					<Button type="submit" variant="primary" disabled={isSubmitting || !projectId}>
+					<Button
+						type="submit"
+						variant="primary"
+						disabled={isSubmitting || !projectId}
+						className="min-w-(--size-composer-start-button)"
+					>
 						{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
 						{isSubmitting ? t("newTask.starting") : t("newTask.start")}
 						{!isSubmitting && (
@@ -401,22 +414,43 @@ function TaskModelPicker({
 	const noOverrideLabel = agentLabel
 		? t("newTask.letAgentChoose", { agent: agentLabel })
 		: t("settings.models.agentDefault");
+	const catalogLoading = agentId !== "" && query.isFetching && catalog === undefined;
+
+	if (catalogLoading) {
+		return (
+			<span
+				className="composer-chip composer-run-target-segment w-full bg-transparent!"
+				role="status"
+				aria-label={t("settings.models.loading")}
+				aria-busy="true"
+			>
+				<span className="composer-model-skeleton" aria-hidden="true" />
+			</span>
+		);
+	}
 
 	if (catalog?.selectionMode === "mode") {
 		const options = [
 			{ value: "__default__", label: noOverrideLabel },
 			...(catalog.models ?? []).map((item) => ({ value: item.id, label: item.label })),
 		];
+		const visibleModeLabel = mode
+			? (options.find((option) => option.value === mode)?.label ?? mode)
+			: t("newTask.autoModel");
 		return (
 			<SettingsOptionMenu
 				aria-label={t("newTask.model")}
 				value={mode || "__default__"}
 				options={options}
-				triggerClassName="composer-chip w-full justify-between"
+				triggerClassName="composer-chip composer-run-target-segment w-full justify-between bg-transparent!"
 				menuAlign="start"
-				renderTrigger={(selected) => (
-					<span className="min-w-0 truncate text-foreground">
-						{mode ? selected?.label : t("newTask.autoModel")}
+				renderTrigger={() => (
+					<span
+						key={`${agentId}:${mode || "__default__"}`}
+						className="composer-value-swap min-w-0 truncate text-foreground"
+						title={visibleModeLabel}
+					>
+						{visibleModeLabel}
 					</span>
 				)}
 				onChange={(nextMode) => onModeChange(nextMode === "__default__" ? "" : nextMode)}
@@ -439,6 +473,7 @@ function TaskModelPicker({
 	if (hasCatalog && !showCustomInput) {
 		return (
 			<AgentModelCombobox
+				key={agentId}
 				aria-label={t("newTask.model")}
 				value={value}
 				models={catalog.models ?? []}
@@ -448,13 +483,21 @@ function TaskModelPicker({
 				onCustom={selectCustomModel}
 				onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
 				refreshing={refreshMutation.isPending}
-				triggerClassName="composer-chip w-full justify-between"
+				recentScope={agentId}
+				triggerClassName="composer-chip composer-run-target-segment w-full justify-between bg-transparent!"
 				menuAlign="start"
-				renderTrigger={(label) => (
-					<span className="min-w-0 truncate text-foreground">
-						{value ? label : t("newTask.autoModel")}
-					</span>
-				)}
+				renderTrigger={(label) => {
+					const visibleLabel = value ? label : t("newTask.autoModel");
+					return (
+						<span
+							key={`${agentId}:${value || "__default__"}`}
+							className="composer-value-swap min-w-0 truncate text-foreground"
+							title={visibleLabel}
+						>
+							{visibleLabel}
+						</span>
+					);
+				}}
 			/>
 		);
 	}
@@ -465,7 +508,7 @@ function TaskModelPicker({
 			<input
 				id={id}
 				aria-label={t("newTask.model")}
-				className="composer-chip min-w-0 flex-1 placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+				className="composer-chip composer-run-target-segment min-w-0 flex-1 bg-transparent! placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
 				value={value}
 				disabled={agentId === ""}
 				onChange={(event) => onModelChange(event.target.value)}
@@ -473,6 +516,7 @@ function TaskModelPicker({
 			/>
 			{hasCatalog && (
 				<AgentModelCombobox
+					key={agentId}
 					aria-label={t("settings.models.optionsAria", { label: t("newTask.model") })}
 					value={value}
 					models={catalog.models ?? []}
@@ -482,6 +526,7 @@ function TaskModelPicker({
 					onCustom={selectCustomModel}
 					onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
 					refreshing={refreshMutation.isPending}
+					recentScope={agentId}
 					triggerLabel={t("settings.models.browse")}
 					triggerClassName="shrink-0"
 				/>

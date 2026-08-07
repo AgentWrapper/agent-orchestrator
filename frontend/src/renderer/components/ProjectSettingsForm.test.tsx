@@ -366,12 +366,8 @@ describe("ProjectSettingsForm", () => {
 			"GPT-5.4",
 			"Custom model…",
 		]);
-		const search = screen.getByRole("searchbox", { name: "Search worker model" });
-		await userEvent.type(search, "5.5");
-		expect(screen.getAllByRole("menuitem")).toHaveLength(1);
-		expect(screen.getByRole("menuitem", { name: /GPT-5\.5/ })).toBeInTheDocument();
-		expect(screen.queryByRole("menuitem", { name: /GPT-5\.4/ })).not.toBeInTheDocument();
-		await userEvent.clear(search);
+		// A compact catalog stays immediately scannable and does not spend a row on search.
+		expect(screen.queryByRole("searchbox", { name: "Search worker model" })).not.toBeInTheDocument();
 		await userEvent.click(screen.getByRole("menuitem", { name: /GPT-5\.4/ }));
 		expect(workerModel).toHaveTextContent("GPT-5.4");
 

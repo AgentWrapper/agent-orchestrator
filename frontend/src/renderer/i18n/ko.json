@@ -314,6 +314,7 @@
 	"newTask.runsWith": "실행 대상",
 	"newTask.letAgentChoose": "{{agent}}이(가) 선택",
 	"newTask.autoModel": "자동",
+	"newTask.emptyHint": "지금 시작하고 세부 정보는 나중에 추가하세요.",
 	"newTask.newlineHint": "Shift+Enter로 줄 바꿈",
 	"settings.models.refreshList": "목록 새로고침",
 	"settings.models.refreshing": "새로고침 중…",
@@ -474,6 +475,8 @@
 	"settings.models.browse": "찾아보기",
 	"settings.models.custom": "사용자 지정 모델…",
 	"settings.models.default": "기본값",
+	"settings.models.currentDefaults": "현재 및 기본값",
+	"settings.models.recent": "최근 사용",
 	"settings.models.loadFailed": "모델을 불러올 수 없습니다.",
 	"settings.models.loading": "모델 불러오는 중…",
 	"settings.models.matchingCount": "일치하는 모델 {{total}}개 중 {{visible}}개 표시",
@@ -1007,7 +1010,7 @@
 	"shell.pinSession": "Pin session",
 	"shell.unpinSession": "Unpin session",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
+	"newTask.taskPlaceholder": "작업 설명…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

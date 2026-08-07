@@ -448,7 +448,9 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 						{selectedOption ? (
 							<span className="flex min-w-0 items-center gap-2">
 								<AgentAvatar provider={selectedOption.id} className="size-icon-base" decorative />
-								<span className="min-w-0 truncate">{selectedOption.label}</span>
+								<span className="min-w-0 truncate" title={selectedOption.label}>
+									{selectedOption.label}
+								</span>
 							</span>
 						) : null}
 					</SelectValue>

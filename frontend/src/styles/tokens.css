@@ -416,6 +416,7 @@
 	--size-import-modal-max: 896px;
 	--size-import-folder-dialog: 640px;
 	--size-composer-run-options: 22.5rem;
+	--size-composer-start-button: 7.25rem;
 	/* Task composer — inline value chips in the "Runs with" sentence. Quieter than
 	 * a filled control at rest so the task field stays the only thing with weight. */
 	--color-bg-composer-chip: color-mix(in oklab, var(--input) 55%, transparent);

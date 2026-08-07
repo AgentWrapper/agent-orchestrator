@@ -341,6 +341,7 @@
 	"newTask.runsWith": "运行于",
 	"newTask.letAgentChoose": "由 {{agent}} 选择",
 	"newTask.autoModel": "自动",
+	"newTask.emptyHint": "现在即可开始，详细信息之后再补充。",
 	"newTask.newlineHint": "Shift+Enter 换行",
 	"settings.models.refreshList": "刷新列表",
 	"settings.models.refreshing": "正在刷新…",
@@ -482,6 +483,8 @@
 	"settings.models.browse": "浏览",
 	"settings.models.custom": "自定义模型…",
 	"settings.models.default": "默认",
+	"settings.models.currentDefaults": "当前和默认",
+	"settings.models.recent": "最近使用",
 	"settings.models.loadFailed": "无法加载模型。",
 	"settings.models.loading": "正在加载模型…",
 	"settings.models.matchingCount": "正在显示 {{visible}} 个，共 {{total}} 个匹配模型",
@@ -989,7 +992,7 @@
 	"settings.dev.decreaseAria": "减少{{label}}",
 	"settings.dev.increaseAria": "增加{{label}}",
 	"newTask.task": "Task",
-	"newTask.taskPlaceholder": "Describe the change, constraints, and expected verification.",
+	"newTask.taskPlaceholder": "描述任务…",
 	"newTask.model": "Model",
 	"newTask.taskRequired": "Task is required."
 }

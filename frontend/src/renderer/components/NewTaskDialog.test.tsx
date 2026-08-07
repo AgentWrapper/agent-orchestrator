@@ -93,7 +93,7 @@ describe("NewTaskDialog", () => {
 		// of two labelled fields, and the agent shows the resolved default by name.
 		expect(screen.getByText("Runs with")).toBeInTheDocument();
 		expect(screen.getByRole("combobox", { name: "Agent" })).toHaveTextContent("Claude Code");
-		expect(screen.getByLabelText("Model")).toHaveValue("");
+		expect(await screen.findByLabelText("Model")).toHaveValue("");
 		expect(screen.queryByLabelText("Title")).not.toBeInTheDocument();
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Add image" })).not.toBeInTheDocument();
@@ -229,7 +229,7 @@ describe("NewTaskDialog", () => {
 		await waitForAgentCatalog();
 
 		expect(screen.queryByLabelText("Branch")).not.toBeInTheDocument();
-		expect(screen.getByLabelText("Model")).toHaveValue("");
+		expect(await screen.findByLabelText("Model")).toHaveValue("");
 
 		await user.type(screen.getByLabelText("Task"), "Build a quick prototype in scratch.");
 		await user.click(screen.getByRole("button", { name: "Start task" }));

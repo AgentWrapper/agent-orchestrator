@@ -19,9 +19,26 @@ vi.mock("../hooks/useAgentsQuery", () => ({
 }));
 
 vi.mock("./CreateProjectAgentSheet", () => ({
-	RequiredAgentField: ({ value }: { value: string }) => {
+	RequiredAgentField: ({
+		value,
+		onChange,
+		triggerClassName,
+	}: {
+		value: string;
+		onChange: (value: string) => void;
+		triggerClassName?: string;
+	}) => {
 		h.agentValues.push(value);
-		return <div data-testid="agent-field" data-value={value} />;
+		return (
+			<button
+				type="button"
+				aria-label="Agent"
+				className={triggerClassName}
+				data-testid="agent-field"
+				data-value={value}
+				onClick={() => onChange(value === "codex" ? "claude-code" : "codex")}
+			/>
+		);
 	},
 }));
 
@@ -43,7 +60,7 @@ function Wrap({ children }: { children: ReactNode }) {
 	return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }
 
-const task = () => screen.getByPlaceholderText(/Describe the change/i);
+const task = () => screen.getByRole("textbox", { name: "Task" });
 
 beforeEach(() => {
 	h.get.mockImplementation(async (path: string) => {
@@ -80,6 +97,7 @@ describe("TaskComposer", () => {
 			</Wrap>,
 		);
 
+		expect(screen.getByText("Start now — details can come later.")).toBeInTheDocument();
 		fireEvent.click(screen.getByText("Start task"));
 
 		await waitFor(() =>
@@ -89,6 +107,32 @@ describe("TaskComposer", () => {
 			),
 		);
 		expect(onCreated).toHaveBeenCalledWith("sess-empty");
+	});
+
+	it("replaces the promptless affordance with the newline hint once typing starts", () => {
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		expect(screen.getByText("Start now — details can come later.")).toBeInTheDocument();
+		fireEvent.change(task(), { target: { value: "Investigate the failure" } });
+		expect(screen.getByText("Shift+Enter for a new line")).toBeInTheDocument();
+		expect(screen.queryByText("Start now — details can come later.")).not.toBeInTheDocument();
+	});
+
+	it("renders agent and model as equal segments of one run target", () => {
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		const runTarget = screen.getByRole("group", { name: "Runs with" });
+		expect(runTarget).toHaveClass("composer-run-target");
+		expect(screen.getByTestId("agent-field")).toHaveClass("composer-run-target-segment");
+		expect(screen.getByLabelText("Model")).toHaveClass("composer-run-target-segment");
 	});
 
 	it("emits busy state around an in-flight create and reports the new session", async () => {
@@ -271,6 +315,59 @@ describe("TaskComposer", () => {
 		);
 
 		expect(await screen.findByDisplayValue("gpt-5-codex")).toBeInTheDocument();
+	});
+
+	it("clears a stale model while the newly selected agent catalog resolves", async () => {
+		let resolveClaudeCatalog!: (value: {
+			data: {
+				agent: string;
+				selectionMode: "text";
+				models: Array<{ id: string; label: string; isDefault: boolean }>;
+				allowCustom: boolean;
+			};
+		}) => void;
+		h.get.mockImplementation(async (path: string, request?: { params?: { path?: { agent?: string } } }) => {
+			if (path.includes("/models")) {
+				if (request?.params?.path?.agent === "claude-code") {
+					return new Promise((resolve) => {
+						resolveClaudeCatalog = resolve;
+					});
+				}
+				return {
+					data: {
+						agent: "codex",
+						selectionMode: "text",
+						models: [{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", isDefault: true }],
+						allowCustom: true,
+					},
+				};
+			}
+			return { data: { status: "ok", project: { agent: "codex", config: {} } } };
+		});
+
+		render(
+			<Wrap>
+				<TaskComposer projectId="proj-1" onCreated={vi.fn()} />
+			</Wrap>,
+		);
+
+		expect(await screen.findByDisplayValue("gpt-5.6-sol")).toBeInTheDocument();
+		fireEvent.click(screen.getByTestId("agent-field"));
+
+		expect(screen.queryByDisplayValue("gpt-5.6-sol")).not.toBeInTheDocument();
+		expect(screen.getByRole("status", { name: "Loading models…" })).toBeInTheDocument();
+
+		await act(async () => {
+			resolveClaudeCatalog({
+				data: {
+					agent: "claude-code",
+					selectionMode: "text",
+					models: [{ id: "opus[1m]", label: "opus[1m]", isDefault: true }],
+					allowCustom: true,
+				},
+			});
+		});
+		expect(await screen.findByDisplayValue("opus[1m]")).toBeInTheDocument();
 	});
 
 	it("shows an agent-chosen model as a compact automatic value", async () => {
