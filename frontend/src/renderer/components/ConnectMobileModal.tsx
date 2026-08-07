@@ -201,7 +201,7 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 					) : status ? (
 						<div className="mt-4 flex flex-col">
 							{/* Toggle row — always visible. Flipping it starts/stops the bridge. */}
-							<div className="relative flex items-start justify-between gap-3 rounded-lg border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-row)] px-4 py-3">
+							<div className="relative flex items-start justify-between gap-3 px-3 py-3">
 								<div className="flex min-w-0 flex-col gap-1 pr-2">
 									<span className="text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">
 										{t("mobile.enable")}

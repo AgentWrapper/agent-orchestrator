@@ -25,11 +25,11 @@ export function ConnectMobileGetApp() {
 	const [showQR, setShowQR] = useState(false);
 
 	return (
-		<div className="flex flex-col rounded-lg border border-[var(--color-border-settings-input)] bg-[var(--color-bg-settings-row)]">
-			<span className="px-4 py-3 text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">{t("mobile.getApp")}</span>
+		<div className="flex flex-col">
+			<span className="px-3 py-3 text-subtitle leading-(--leading-settings-mobile-title) text-settings-label">{t("mobile.getApp")}</span>
 
 			{/* iOS — items-center so the action cluster sits on the row's optical centre. */}
-			<div className="flex items-center justify-between gap-3 border-t border-[var(--color-border-settings-input)] px-4 py-3">
+			<div className="flex items-center justify-between gap-3 px-3 py-3">
 				<div className="flex min-w-0 flex-col">
 					<span className="text-sm leading-5 text-settings-label">{t("mobile.ios")}</span>
 					<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">
@@ -85,7 +85,7 @@ export function ConnectMobileGetApp() {
 			</div>
 
 			{/* Android — internal testing signup until a Play Store beta is live. */}
-			<div className="flex items-center justify-between gap-3 border-t border-[var(--color-border-settings-input)] px-4 py-3">
+			<div className="flex items-center justify-between gap-3 px-3 py-3">
 				<div className="flex min-w-0 flex-col">
 					<span className="text-sm leading-5 text-settings-label">{t("mobile.android")}</span>
 					<span className="text-caption leading-(--leading-settings-mobile-hint) text-settings-muted">

@@ -56,7 +56,7 @@ function SessionInterfaceRow() {
 			    here can move a session that already exists. */}
 			<p
 				className={cn(
-					"px-4 pt-0 pb-4 text-xs leading-relaxed",
+					"px-3 pt-0 pb-4 text-xs leading-relaxed",
 					saveError || error ? "text-destructive" : "text-muted-foreground",
 				)}
 			>

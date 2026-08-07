@@ -26,13 +26,13 @@ export function SettingsSection({
 			data-section={sectionId}
 		>
 			{!titleHidden && (
-				<h2 className="text-xs font-medium leading-4 text-settings-muted">{title}</h2>
+				<h2 className="px-3 text-xs font-medium leading-4 text-settings-muted">{title}</h2>
 			)}
 			<div
 				className={cn(
 					"w-full",
 					grouped
-						? "settings-grouped-rows flex w-full flex-col overflow-hidden rounded-lg border border-border divide-y divide-border [&>.settings-row-bar]:rounded-none"
+						? "settings-grouped-rows flex w-full flex-col"
 						: "flex w-full flex-col gap-1.5",
 				)}
 			>

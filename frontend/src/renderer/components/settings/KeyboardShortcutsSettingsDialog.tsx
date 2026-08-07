@@ -361,8 +361,8 @@ export function KeyboardShortcutsSettingsDialog({
 								return (
 									<div
 										className={cn(
-											"flex min-h-(--size-settings-row) items-center rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-row) px-4 py-3",
-											isRecording && "border-(--color-border-settings-menu) bg-settings-row-hover",
+											"flex min-h-(--size-settings-row) items-center rounded-lg bg-(--color-bg-settings-row) px-3 py-3",
+											isRecording && "bg-settings-row-hover",
 										)}
 										key={shortcut.id}
 									>
