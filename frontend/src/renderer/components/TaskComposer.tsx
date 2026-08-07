@@ -537,6 +537,13 @@ function TaskModelPicker({
 
 	const hasCatalog = catalog?.selectionMode === "catalog" && (catalog.models?.length ?? 0) > 0;
 	const modelIsInCatalog = catalog?.models?.some((item) => item.id === value) ?? false;
+	// Cursor's own "auto" model routes each request to whatever it judges best —
+	// a distinct, explicit choice from leaving the field untouched (which just
+	// omits --model and defers to Cursor's own default, currently also "auto").
+	// Relabel so the two don't read as the same option twice.
+	const displayModels = (catalog?.models ?? []).map((item) =>
+		item.id === "auto" ? { ...item, label: t("settings.models.autoRouteLabel") } : item,
+	);
 	const showCustomInput = hasCatalog && (customAgentId === agentId || (value !== "" && !modelIsInCatalog));
 	const selectCatalogModel = (nextModel: string) => {
 		setCustomAgentId(null);
@@ -553,7 +560,7 @@ function TaskModelPicker({
 				key={agentId}
 				aria-label={t("newTask.model")}
 				value={value}
-				models={catalog.models ?? []}
+				models={displayModels}
 				allowCustom={catalog.allowCustom}
 				emptyLabel={noOverrideLabel}
 				onChange={selectCatalogModel}
@@ -595,7 +602,7 @@ function TaskModelPicker({
 					key={agentId}
 					aria-label={t("settings.models.optionsAria", { label: t("newTask.model") })}
 					value={value}
-					models={catalog.models ?? []}
+					models={displayModels}
 					allowCustom={catalog.allowCustom}
 					emptyLabel={noOverrideLabel}
 					onChange={selectCatalogModel}

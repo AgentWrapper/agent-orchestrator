@@ -505,10 +505,10 @@ describe("TaskComposer", () => {
 		);
 
 		const picker = await screen.findByRole("button", { name: "Model" });
-		expect(picker).toHaveTextContent("Let codex choose");
+		expect(picker).toHaveTextContent("Use codex's default");
 
 		await userEvent.click(picker);
-		expect(await screen.findByRole("menuitem", { name: "Let codex choose" })).toBeInTheDocument();
+		expect(await screen.findByRole("menuitem", { name: "Use codex's default" })).toBeInTheDocument();
 	});
 
 	it("uses the project worker model as the new task model default", async () => {

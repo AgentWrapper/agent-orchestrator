@@ -488,6 +488,7 @@
 	"settings.language.ptBR": "Português (Brasil)",
 	"settings.preferences": "Preferencias",
 	"settings.models.agentDefault": "Predeterminado del agente",
+	"settings.models.autoRouteLabel": "Auto (enruta automáticamente)",
 	"settings.models.browse": "Explorar",
 	"settings.models.custom": "Modelo personalizado…",
 	"settings.models.default": "Predeterminado",

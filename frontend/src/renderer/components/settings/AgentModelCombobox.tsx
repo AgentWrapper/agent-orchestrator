@@ -68,7 +68,7 @@ export function AgentModelCombobox({
 	/** Rediscovery action, offered inside the menu instead of as standing chrome. */
 	onRefresh?: () => void;
 	refreshing?: boolean;
-	/** Names what happens with no override, e.g. "Let codex choose". */
+	/** Names what happens with no override, e.g. "Use codex's default". */
 	emptyLabel?: string;
 	triggerLabel?: string;
 	triggerClassName?: string;
