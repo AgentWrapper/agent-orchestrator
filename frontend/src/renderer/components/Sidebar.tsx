@@ -623,32 +623,32 @@ function ProjectItem({
 		onKeyDown={onProjectKeyDown}
 		className={cn(
 			NAV_ROW_CLASS,
-			"pr-sidebar-project-actions [&_svg]:size-icon-md",
+			// gap-2 matches SectionDisclosure so project icons/labels share the
+			// Projects header's left edge (NAV_ROW defaults to gap-2.5).
+			"gap-2 pr-sidebar-project-actions [&_svg]:size-icon-md",
 			"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 		)}
 	>
-		{/* Expanded sidebar: visual folder/chevron icon (decorative — toggle button is a sibling) */}
+		{/* Expanded sidebar: visual folder/chevron icon (decorative — toggle button is a sibling).
+		    size-icon-md matches the Projects section row; an 18px centered box was
+		    optically indenting these icons relative to the header. */}
 		<span
 			aria-hidden="true"
-			className="relative shrink-0 group-data-[collapsible=icon]:hidden inline-flex size-[18px] items-center justify-center text-muted-foreground"
+			className="relative inline-flex size-icon-md shrink-0 items-center justify-center text-muted-foreground group-data-[collapsible=icon]:hidden"
 		>
 			{rowHovered ? (
 				<motion.span
 					animate={{ rotate: expanded ? 90 : 0 }}
 					initial={false}
 					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					className="inline-flex size-[18px] items-center justify-center translate-y-px"
+					className="inline-flex size-icon-md items-center justify-center translate-y-px"
 				>
-					<ChevronRight className="size-3.5!" strokeWidth={1.75} />
+					<ChevronRight strokeWidth={1.75} />
 				</motion.span>
+			) : expanded ? (
+				<FolderOpen strokeWidth={1.75} />
 			) : (
-				<span className="inline-flex size-[18px] items-center justify-center">
-					{expanded ? (
-						<FolderOpen className="size-4" strokeWidth={1.75} />
-					) : (
-						<Folder className="size-4" strokeWidth={1.75} />
-					)}
-				</span>
+				<Folder strokeWidth={1.75} />
 			)}
 		</span>
 		{/* Collapsed icon rail: folder icon */}
