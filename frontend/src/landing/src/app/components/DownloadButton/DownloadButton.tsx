@@ -7,6 +7,14 @@ import { isMacPlatform, Platform, usePlatform } from "../../hooks/useOS";
 interface DownloadButtonProps {
   size?: "sm" | "md";
   className?: string;
+  /**
+   * Where on the page this button lives, e.g. "hero" or "footer".
+   *
+   * Without it every download click looks identical, so we cannot tell which
+   * CTA earns them. GitHub's own counts cannot answer this either: they are
+   * dominated by `latest-*.yml` update polls rather than installs.
+   */
+  placement?: string;
 }
 
 type DownloadPlatform = "apple" | "windows" | "linux";
@@ -100,6 +108,7 @@ function getLabel(size: "sm" | "md", platform: DownloadPlatform) {
 export function DownloadButton({
   size = "md",
   className = "",
+  placement = "unknown",
 }: DownloadButtonProps) {
   const { platform } = usePlatform();
   const downloadPlatform = getDownloadPlatform(platform);
@@ -122,7 +131,14 @@ export function DownloadButton({
     <Link
       href="/download"
       className={buttonClasses}
-      onClick={() => track("download_clicked")}
+      onClick={() =>
+        track("download_clicked", {
+          platform: downloadPlatform,
+          is_mobile: isMobile,
+          placement,
+          size,
+        })
+      }
     >
       {isMobile ? <MonitorIcon /> : <PlatformIcon platform={downloadPlatform} />}
       {label}
