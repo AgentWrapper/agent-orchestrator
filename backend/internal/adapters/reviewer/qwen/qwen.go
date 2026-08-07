@@ -146,7 +146,10 @@ func seedHostQwenSettings(configRoot string) (map[string]string, error) {
 		return nil, nil
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
+	if err == nil {
+		home = strings.TrimSpace(home)
+	}
+	if home == "" {
 		return nil, nil
 	}
 	src := filepath.Join(home, ".qwen", "settings.json")

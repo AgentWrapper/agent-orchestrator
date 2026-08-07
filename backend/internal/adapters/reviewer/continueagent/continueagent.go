@@ -86,7 +86,10 @@ func seedHostContinueConfig(configRoot string) error {
 		return nil
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
+	if err == nil {
+		home = strings.TrimSpace(home)
+	}
+	if home == "" {
 		return nil
 	}
 	src := filepath.Join(home, ".continue", "config.yaml")

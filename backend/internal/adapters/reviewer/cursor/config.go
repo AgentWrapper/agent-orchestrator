@@ -101,7 +101,10 @@ func installReviewerConfig(ctx context.Context, inv ports.ReviewInvocation) erro
 
 func hostCursorAuthInfo() (map[string]any, error) {
 	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
+	if err == nil {
+		home = strings.TrimSpace(home)
+	}
+	if home == "" {
 		return nil, nil
 	}
 	data, err := os.ReadFile(filepath.Join(home, ".cursor", cursorConfigFileName))
