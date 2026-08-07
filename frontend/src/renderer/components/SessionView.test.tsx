@@ -149,7 +149,7 @@ vi.mock("./CenterPane", () => ({
 		onAddProjectSession,
 		onCloseProjectSession,
 		onSelectProjectSession,
-		topbarActions,
+		sessionTabActions,
 	}: {
 		terminalTarget?: { kind: string; handleId?: string; generation?: string };
 		session?: WorkspaceSession;
@@ -163,11 +163,11 @@ vi.mock("./CenterPane", () => ({
 		onAddProjectSession?: (session: WorkspaceSession) => void;
 		onCloseProjectSession?: (session: WorkspaceSession) => void;
 		onSelectProjectSession?: (session: WorkspaceSession) => void;
-		topbarActions?: ReactNode;
+		sessionTabActions?: ReactNode;
 	}) => (
 		<div data-testid="center-pane">
 			terminal center
-			{topbarActions}
+			{sessionTabActions}
 			<div data-testid="terminal-target">
 				{terminalTarget?.kind === "shell" ? terminalTarget.handleId : "worker"}
 			</div>

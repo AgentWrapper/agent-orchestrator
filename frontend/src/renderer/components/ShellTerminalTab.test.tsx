@@ -92,8 +92,12 @@ describe("ShellTerminalTab rename", () => {
 	it("overlays the close affordance without changing an active tab's width", () => {
 		renderTab({ appearance: "connected", isActive: true });
 		const close = screen.getByRole("button", { name: "Close terminal ao" });
-		expect(close).toHaveClass("size-control-xs", "opacity-0", "group-hover:opacity-100");
-		expect(close.closest(".session-pane-tab__actions")).toHaveClass("absolute");
+		expect(close).toHaveClass("size-control-xs", "session-pane-tab__action-button");
+		expect(close.closest(".session-pane-tab__actions")).toHaveClass(
+			"absolute",
+			"opacity-0",
+			"group-hover:opacity-100",
+		);
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveAttribute("aria-selected", "true");
 	});
 
@@ -101,7 +105,11 @@ describe("ShellTerminalTab rename", () => {
 		renderTab({ appearance: "connected", isActive: false });
 
 		const close = screen.getByRole("button", { name: "Close terminal ao" });
-		expect(close).toHaveClass("opacity-0", "group-hover:opacity-100", "group-hover:translate-x-0");
+		expect(close.closest(".session-pane-tab__actions")).toHaveClass(
+			"opacity-0",
+			"group-hover:opacity-100",
+			"group-hover:translate-x-0",
+		);
 		expect(close).not.toHaveClass("w-0", "group-hover:w-control-sm");
 		expect(close.closest(".session-pane-tab__actions")).toHaveClass("absolute");
 		expect(screen.getByRole("tab", { name: "ao" })).toHaveClass(
@@ -116,15 +124,17 @@ describe("ShellTerminalTab rename", () => {
 		);
 	});
 
-	it("uses a rectangular active surface without the old selection underline", () => {
+	it("uses a shorter rectangular active surface with a subtle selection underline", () => {
 		renderTab({ appearance: "connected", isActive: true });
 
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass("self-stretch", "bg-interactive-active");
-		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass(
-			"rounded-md",
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).toHaveClass(
+			"h-control-md",
+			"self-end",
+			"bg-interactive-active",
 			"after:h-px",
 			"after:bg-foreground/65",
 		);
+		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("rounded-md", "self-stretch");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("before:bg-accent");
 		expect(screen.getByRole("tab", { name: "ao" }).parentElement).not.toHaveClass("after:h-0.5");
 	});

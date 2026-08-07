@@ -59,4 +59,19 @@ describe("SessionInterfaceSwitchButton", () => {
 		fireEvent.click(button);
 		expect(onClick).toHaveBeenCalledOnce();
 	});
+
+	it.each([
+		["chat", "Switch to chat UI", "lucide-message-square"],
+		["tui", "Switch to terminal UI", "lucide-square-terminal"],
+	] as const)("renders a compact %s destination control for a terminal tab", (target, label, iconClass) => {
+		const onClick = vi.fn();
+		render(<SessionInterfaceSwitchButton compact target={target} supported onClick={onClick} />);
+
+		const button = screen.getByRole("button", { name: label });
+		expect(button).toHaveClass("session-pane-tab__action-button", "size-control-xs");
+		expect(button).toHaveTextContent("");
+		expect(button.querySelector("svg")).toHaveClass(iconClass);
+		fireEvent.click(button);
+		expect(onClick).toHaveBeenCalledOnce();
+	});
 });

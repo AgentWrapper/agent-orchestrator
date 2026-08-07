@@ -93,14 +93,21 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.queryByText("sess-1")).not.toBeInTheDocument();
 	});
 
-	it("joins the active session tab to the full-width terminal strip", () => {
+	it("uses a shorter active tab with a subtle selection underline", () => {
 		render(<CenterPane session={worker} theme="dark" daemonReady />);
 		const sessionTab = screen.getByRole("tab", { name: "do the thing" });
 		expect(sessionTab).toHaveAttribute("aria-current", "true");
 		expect(sessionTab).toHaveClass("session-pane-tab__label");
-		expect(sessionTab.parentElement).toHaveClass("session-pane-tab", "bg-interactive-active");
+		expect(sessionTab.parentElement).toHaveClass(
+			"session-pane-tab",
+			"h-control-md",
+			"self-end",
+			"bg-interactive-active",
+			"after:h-px",
+			"after:bg-foreground/65",
+		);
 		expect(sessionTab.parentElement).toHaveAttribute("data-active", "true");
-		expect(sessionTab.parentElement).not.toHaveClass("rounded-md", "after:h-px");
+		expect(sessionTab.parentElement).not.toHaveClass("rounded-md", "self-stretch");
 		expect(sessionTab.closest(".h-inspector-tabs")).not.toHaveClass("px-1.5");
 		expect(document.querySelector('button[aria-label="Scroll tabs left"]')).toHaveClass("hidden");
 		expect(sessionTab.closest(".terminal-pane-frame")).not.toHaveClass("px-px");
@@ -261,7 +268,7 @@ describe("CenterPane toolbar session label", () => {
 		const scrollRegion = document.querySelector(".overflow-x-auto");
 		expect(scrollRegion).toHaveClass("scrollbar-none", "min-w-flex-min", "flex-1");
 		for (const tab of screen.getAllByTitle(/^\/tmp\/ws/)) {
-			expect(tab.parentElement).toHaveClass("session-pane-tab", "self-stretch");
+			expect(tab.parentElement).toHaveClass("session-pane-tab", "h-control-md", "self-end");
 			expect(tab.parentElement).not.toHaveClass("min-w-shell-tab-min", "rounded-md");
 			expect(tab).toHaveClass("min-w-0", "w-full");
 		}
@@ -320,8 +327,25 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({ session: worker, shellTerminals: [shell] });
 
 		const shellTab = screen.getByRole("tab", { name: shell.title });
-		expect(shellTab.parentElement).toHaveClass("session-pane-tab", "self-stretch");
+		expect(shellTab.parentElement).toHaveClass("session-pane-tab", "h-control-md", "self-end");
 		expect(shellTab.parentElement).not.toHaveClass("rounded-md");
+	});
+
+	it("places current-session controls in a non-resizing hover action shelf", () => {
+		renderCenterPane({
+			session: worker,
+			sessionTabActions: <button aria-label="Switch to chat UI" type="button" />,
+		});
+
+		const action = screen.getByRole("button", { name: "Switch to chat UI" });
+		const shelf = action.closest(".session-pane-tab__actions");
+		expect(shelf).toHaveClass(
+			"absolute",
+			"opacity-0",
+			"group-hover:opacity-100",
+			"group-focus-within:opacity-100",
+		);
+		expect(screen.getByRole("tab", { name: worker.title })).toHaveClass("w-full", "min-w-0");
 	});
 
 	it("reorders added shell terminal tabs by dragging them", () => {

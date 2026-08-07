@@ -1,4 +1,4 @@
-import { ArrowRightLeft, Loader2, TriangleAlert, X } from "lucide-react";
+import { ArrowRightLeft, Loader2, MessageSquare, SquareTerminal, TriangleAlert, X } from "lucide-react";
 import type { ReactNode } from "react";
 import type {
 	SessionInterfaceMode,
@@ -53,6 +53,7 @@ export function SessionInterfaceSwitchButton({
 	onClick,
 	onCancel,
 	className,
+	compact = false,
 }: {
 	target: SessionInterfaceMode;
 	supported: boolean;
@@ -64,9 +65,37 @@ export function SessionInterfaceSwitchButton({
 	onClick: () => void;
 	onCancel?: () => void;
 	className?: string;
+	compact?: boolean;
 }) {
 	if (transition && interfaceTransitionIsActive(transition)) {
 		const cancellable = interfaceTransitionIsCancellable(transition) && Boolean(onCancel);
+		if (compact) {
+			const statusLabel = `${phaseCopy[transition.phase]} Switching to ${targetTitleLabel(transition.targetMode)}.`;
+			return cancellable ? (
+				<button
+					aria-label={`Cancel switch to ${targetTitleLabel(transition.targetMode)}`}
+					className={cn(
+						"session-pane-tab__action-button inline-flex size-control-xs items-center justify-center rounded-sm text-muted-foreground hover:bg-interactive-hover hover:text-foreground disabled:opacity-40",
+						className,
+					)}
+					disabled={cancelling}
+					onClick={onCancel}
+					title={cancelError || statusLabel}
+					type="button"
+				>
+					<Loader2 aria-hidden="true" className="size-icon-xs animate-spin" />
+				</button>
+			) : (
+				<span
+					aria-label={statusLabel}
+					className={cn("inline-flex size-control-xs items-center justify-center text-muted-foreground", className)}
+					role="status"
+					title={cancelError || statusLabel}
+				>
+					<Loader2 aria-hidden="true" className="size-icon-xs animate-spin" />
+				</span>
+			);
+		}
 		return (
 			<div
 				role="status"
@@ -106,6 +135,28 @@ export function SessionInterfaceSwitchButton({
 	}
 
 	const label = `Switch to ${targetLabel(target)}`;
+	if (compact) {
+		const DestinationIcon = target === "chat" ? MessageSquare : SquareTerminal;
+		return (
+			<button
+				aria-label={label}
+				className={cn(
+					"session-pane-tab__action-button inline-flex size-control-xs items-center justify-center rounded-sm text-muted-foreground transition-[background,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 disabled:opacity-40",
+					className,
+				)}
+				disabled={!supported || pending}
+				onClick={onClick}
+				title={supported ? label : disabledReason}
+				type="button"
+			>
+				{pending ? (
+					<Loader2 aria-hidden="true" className="size-icon-xs animate-spin" />
+				) : (
+					<DestinationIcon aria-hidden="true" className="size-icon-xs" />
+				)}
+			</button>
+		);
+	}
 	return (
 		<Button
 			type="button"

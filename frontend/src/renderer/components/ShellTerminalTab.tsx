@@ -128,11 +128,11 @@ export function ShellTerminalTab({
 				draggable && "cursor-grab active:cursor-grabbing",
 				isDragging && "opacity-45",
 				appearance === "connected"
-					? "session-pane-tab flex self-stretch"
+					? "session-pane-tab flex h-control-md self-end"
 					: "inline-flex gap-1 rounded-md px-2 py-1",
 				appearance === "connected"
 					? isActive
-						? "bg-interactive-active text-foreground"
+						? "bg-interactive-active text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-foreground/65"
 						: "text-passive hover:bg-interactive-hover/60 hover:text-foreground"
 					: isActive
 						? "bg-interactive-active"
@@ -155,7 +155,7 @@ export function ShellTerminalTab({
 					className={cn(
 						"rounded-sm border border-accent bg-background px-1 font-mono text-control font-semibold text-foreground shadow-sm outline-none ring-1 ring-accent",
 						appearance === "connected"
-							? "min-w-0 w-full pr-10 text-left"
+							? cn("min-w-0 w-full text-left", isPinned && "pr-5")
 							: "min-w-flex-min max-w-shell-tab-max",
 					)}
 					onBlur={commit}
@@ -180,7 +180,7 @@ export function ShellTerminalTab({
 					className={cn(
 						"select-none truncate transition-colors",
 						appearance === "connected"
-							? "min-w-0 w-full pr-10 text-left"
+							? cn("min-w-0 w-full text-left", isPinned && "pr-5")
 							: "min-w-flex-min max-w-shell-tab-max",
 						appearance === "connected"
 							? "session-pane-tab__label font-mono font-semibold"
@@ -201,17 +201,15 @@ export function ShellTerminalTab({
 					{shell.title}
 				</button>
 			)}
+			{appearance === "connected" && isPinned ? (
+				<Pin aria-hidden="true" className="session-pane-tab__pin-indicator absolute right-1 size-icon-xs fill-current text-passive" />
+			) : null}
 			{appearance === "connected" ? (
-				<span className="session-pane-tab__actions absolute inset-y-0 right-1 flex items-center gap-0.5">
+				<span className="session-pane-tab__actions pointer-events-none absolute inset-y-0 right-1 flex translate-x-1 items-center gap-0.5 opacity-0 transition-[opacity,transform] duration-fast group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100">
 					{onTogglePinned ? (
 						<button
 							aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: shell.title })}
-							className={cn(
-								"inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive transition-[background,color,opacity,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-								isPinned
-									? "opacity-100"
-									: "pointer-events-none translate-x-1 opacity-0 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100",
-							)}
+							className="session-pane-tab__action-button inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive transition-[background,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 							draggable={false}
 							onClick={(event) => {
 								event.stopPropagation();
@@ -227,7 +225,7 @@ export function ShellTerminalTab({
 					) : null}
 					<button
 						aria-label={t("terminal.closeNamed", { title: shell.title })}
-						className="pointer-events-none inline-flex size-control-xs shrink-0 translate-x-1 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity,transform] group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:pointer-events-auto focus-visible:translate-x-0 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+						className="session-pane-tab__action-button inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive transition-[background,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 						onClick={(event) => {
 							event.stopPropagation();
 							onClose();

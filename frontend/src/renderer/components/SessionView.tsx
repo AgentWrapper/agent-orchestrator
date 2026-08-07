@@ -357,6 +357,26 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 			}}
 		/>
 	) : null;
+	const interfaceSwitchTabAction = session && showInterfaceSwitchAction ? (
+		<SessionInterfaceSwitchButton
+			compact
+			target={interfaceTarget}
+			supported={Boolean(interfaceSwitch.status?.supported) && !activeInterfaceTransition}
+			disabledReason={
+				interfaceSwitch.isLoading
+					? "Checking whether this agent can switch interfaces…"
+					: interfaceSwitch.status?.reason || interfaceSwitch.statusError
+			}
+			pending={interfaceSwitch.starting || activeInterfaceTransition}
+			transition={interfaceSwitch.transition}
+			cancelling={interfaceSwitch.cancelling}
+			cancelError={interfaceSwitch.cancelError}
+			onClick={requestInterfaceSwitch}
+			onCancel={() => {
+				void interfaceSwitch.cancel().catch(() => {});
+			}}
+		/>
+	) : null;
 	// Our route-level Reverb topbar remains the owner of navigation and session
 	// controls. Only the newly introduced interface switch belongs in the
 	// secondary terminal/chat strip.
@@ -650,12 +670,12 @@ export function SessionView({ sessionId, tabOwnerSessionId }: SessionViewProps) 
 								onSelectShellTerminal={selectShellTerminal}
 								onSelectWorkerTerminal={selectSessionTerminal}
 								projectSessions={projectSessions}
+								sessionTabActions={interfaceSwitchTabAction}
 								session={session}
 								shellTerminals={shellTerminals}
 								tabOwnerSessionId={ownerSessionId}
 								terminalTarget={routedTerminalTarget}
 								theme={theme}
-								topbarActions={sessionHeaderActions}
 							/>
 						)}
 						{interfaceSwitch.transition?.id !== dismissedTransitionID ? (

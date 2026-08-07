@@ -59,8 +59,8 @@ type CenterPaneProps = {
 	onRenameShellTerminal?: (handleId: string, title: string) => void;
 	/** Opens a new standalone shell tab (the "+" at the end of the tab bar). */
 	onNewShellTerminal?: () => void;
-	/** Session interface actions consolidated into the terminal bar by SessionView. */
-	topbarActions?: ReactNode;
+	/** Compact actions owned by the current session-backed terminal tab. */
+	sessionTabActions?: ReactNode;
 	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
 	agentInputDisabled?: boolean;
 };
@@ -125,7 +125,7 @@ export function CenterPane({
 	onCloseShellTerminal,
 	onRenameShellTerminal,
 	onNewShellTerminal,
-	topbarActions,
+	sessionTabActions,
 	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
@@ -336,8 +336,8 @@ export function CenterPane({
 			className="terminal-pane-frame flex h-full min-h-0 min-w-flex-min flex-col"
 			onWheelCapture={handleWheelZoom}
 		>
-			<div className="flex h-inspector-tabs shrink-0 items-stretch">
-				<div className="flex min-w-flex-min flex-1 items-stretch gap-0">
+			<div className="flex h-inspector-tabs shrink-0 items-end">
+				<div className="flex min-w-flex-min flex-1 items-end gap-0">
 					<button
 						aria-label={t("terminal.scrollTabsLeft")}
 						className={cn(
@@ -355,7 +355,7 @@ export function CenterPane({
 					    strip. Pinning any tab moves it to the leading pinned group. */}
 					<div
 						ref={tabsOverflow.ref}
-						className="scrollbar-none flex min-w-flex-min flex-1 items-stretch gap-0 overflow-x-auto"
+						className="scrollbar-none flex min-w-flex-min flex-1 items-end gap-0 overflow-x-auto"
 						onKeyDown={handleTerminalTabListKeyDown}
 						role="tablist"
 						aria-label={t("terminal.tabsAria")}
@@ -386,6 +386,7 @@ export function CenterPane({
 												isActive={isCurrent && target.kind !== "shell"}
 												isPinned={tab.isPinned}
 												label={isOrchestratorSession(tab.session) ? t("shell.orchestrator") : tab.session.title}
+												actions={isCurrent ? sessionTabActions : undefined}
 												onClose={isOwner ? undefined : () => onCloseProjectSession?.(tab.session)}
 												onSelect={isCurrent ? onSelectSessionTerminal : () => onSelectProjectSession?.(tab.session)}
 												onTogglePinned={() => toggleTerminalTabPinned(tab.id)}
@@ -439,7 +440,7 @@ export function CenterPane({
 						<DropdownMenuTrigger asChild>
 							<button
 								aria-label={t("terminal.addTab")}
-								className="inline-flex h-full w-control-md shrink-0 items-center justify-center border-l border-border bg-interactive-active text-muted-foreground transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground"
+								className="inline-flex h-control-md w-control-md shrink-0 items-center justify-center border-l border-border bg-interactive-active text-muted-foreground transition-[background,color] duration-fast hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground"
 								title={t("terminal.newWithShortcut", { shortcut: newTerminalShortcutLabel })}
 								type="button"
 							>
@@ -567,11 +568,6 @@ export function CenterPane({
 								)}
 							</button>
 					</div>
-					{topbarActions ? (
-						<div className="ml-1.5 flex shrink-0 self-center items-center border-l border-border/70 pl-1.5">
-							{topbarActions}
-						</div>
-					) : null}
 				</div>
 			</div>
 			{target.kind === "reviewer" ? (
@@ -610,6 +606,7 @@ type SessionPaneTabProps = {
 	label: string;
 	provider: string;
 	isActive: boolean;
+	actions?: ReactNode;
 	draggable?: boolean;
 	isDragging?: boolean;
 	isPinned?: boolean;
@@ -623,14 +620,14 @@ type SessionPaneTabProps = {
 	onDragEnd?: (event: DragEvent<HTMLSpanElement>) => void;
 };
 
-// Shared tab chrome: the open tab is highlighted with the same rounded
-// background as the inspector rail tabs (Summary · Reviews · Browser), and
-// the full label only becomes the hover tooltip when the tab strip is
-// crowded enough to truncate it.
+// Shared browser-style tab chrome. Actions live in an overlay shelf so current
+// and future controls never change the tab's width; a pinned tab keeps only a
+// small passive marker visible while the shelf is closed.
 function SessionPaneTab({
 	label,
 	provider,
 	isActive,
+	actions,
 	draggable = false,
 	isDragging = false,
 	isPinned = false,
@@ -649,10 +646,12 @@ function SessionPaneTab({
 		<span
 			data-active={isActive ? "true" : "false"}
 			className={cn(
-				"session-pane-tab group relative inline-flex items-center transition-colors",
+				"session-pane-tab group relative inline-flex h-control-md self-end items-center transition-colors",
 				draggable && "cursor-grab active:cursor-grabbing",
 				isDragging && "opacity-45",
-				isActive ? "bg-interactive-active" : "hover:bg-interactive-hover/60",
+				isActive
+					? "bg-interactive-active after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-foreground/65"
+					: "hover:bg-interactive-hover/60",
 			)}
 			draggable={draggable}
 			onDragEnd={onDragEnd}
@@ -667,7 +666,7 @@ function SessionPaneTab({
 				aria-selected={isActive}
 				className={cn(
 					"session-pane-tab__label inline-flex min-w-0 w-full items-center gap-1 overflow-hidden font-mono font-semibold transition-colors",
-					onTogglePinned && onClose ? "pr-10" : onTogglePinned || onClose ? "pr-5" : undefined,
+					isPinned && "pr-5",
 					isActive ? "text-foreground" : "text-passive/60 hover:text-passive",
 				)}
 				onClick={onSelect}
@@ -679,17 +678,16 @@ function SessionPaneTab({
 				<AgentAvatar className="size-icon-xs" decorative provider={provider} />
 				<span className="truncate">{label}</span>
 			</button>
-			{onTogglePinned || onClose ? (
-				<span className="session-pane-tab__actions absolute inset-y-0 right-1 flex items-center gap-0.5">
+			{isPinned ? (
+				<Pin aria-hidden="true" className="session-pane-tab__pin-indicator absolute right-1 size-icon-xs fill-current text-passive" />
+			) : null}
+			{actions || onTogglePinned || onClose ? (
+				<span className="session-pane-tab__actions pointer-events-none absolute inset-y-0 right-1 flex translate-x-1 items-center gap-0.5 opacity-0 transition-[opacity,transform] duration-fast group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100">
+					{actions}
 					{onTogglePinned ? (
 						<button
 							aria-label={t(isPinned ? "terminal.unpinTab" : "terminal.pinTab", { title: label })}
-							className={cn(
-								"inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive transition-[background,color,opacity,transform] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50",
-								isPinned
-									? "opacity-100"
-									: "pointer-events-none translate-x-1 opacity-0 group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100",
-							)}
+							className="session-pane-tab__action-button inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive transition-[background,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 							draggable={false}
 							onClick={(event) => {
 								event.stopPropagation();
@@ -704,7 +702,7 @@ function SessionPaneTab({
 					{onClose ? (
 						<button
 							aria-label={t("terminal.closeSessionTab", { label })}
-							className="pointer-events-none inline-flex size-control-xs shrink-0 translate-x-1 items-center justify-center rounded-sm text-passive opacity-0 transition-[background,color,opacity,transform] group-hover:pointer-events-auto group-hover:translate-x-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-x-0 group-focus-within:opacity-100 hover:bg-interactive-hover hover:text-foreground focus-visible:pointer-events-auto focus-visible:translate-x-0 focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+							className="session-pane-tab__action-button inline-flex size-control-xs shrink-0 items-center justify-center rounded-sm text-passive transition-[background,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
 							onClick={(event) => {
 								event.stopPropagation();
 								onClose();
