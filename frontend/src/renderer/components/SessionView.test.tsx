@@ -804,13 +804,13 @@ describe("SessionView", () => {
 
 	// Regression: react-resizable-panels v4 treats bare numeric sizes as PIXELS
 	// (numbers were percentages in the older API the shadcn examples use). Every
-	// constraint needs an explicit unit. The 360px default matches the label
-	// breakpoint; the 240px minimum intentionally permits icon-only mode.
+	// constraint needs an explicit unit. The 360px default and minimum preserve
+	// both the inspector icons and labels at every expanded width.
 	it("gives every terminal/inspector split size an explicit unit", () => {
 		render(<SessionView sessionId="sess-1" />);
 
 		expect(panelSizes("terminal")).toEqual(["72%", "50%"]);
-		expect(panelSizes("inspector")).toEqual(["360px", "240px", "50%"]);
+		expect(panelSizes("inspector")).toEqual(["360px", "360px", "50%"]);
 		expect(screen.getByTestId("panel-inspector")).toHaveClass("session-inspector-panel");
 	});
 
@@ -997,6 +997,13 @@ describe("SessionView", () => {
 		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
 		render(<SessionView sessionId="sess-1" />);
 		expect(panelSizes("inspector")[0]).toBe("400px");
+	});
+
+	it("clamps a persisted inspector width to the expanded minimum", () => {
+		window.localStorage.setItem("ao.inspector.widthPx", "240");
+		act(() => useUiStore.getState().setInspectorOpen("sess-1", true));
+		render(<SessionView sessionId="sess-1" />);
+		expect(panelSizes("inspector")[0]).toBe("360px");
 	});
 
 	it("ignores the legacy percentage width and uses the uniform default", () => {

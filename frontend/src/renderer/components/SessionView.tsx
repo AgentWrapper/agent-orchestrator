@@ -38,11 +38,11 @@ import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/te
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 
-// Inspector labels hide below 360px, so this is the smallest initial width
-// that presents both each destination icon and its name.
+// Keep the inspector at the first width where every destination shows both its
+// icon and label. The user can still collapse it explicitly to zero.
 const INSPECTOR_DEFAULT_PX = 360;
 const INSPECTOR_DEFAULT_SIZE = `${INSPECTOR_DEFAULT_PX}px`;
-const INSPECTOR_MIN_PX = 240;
+const INSPECTOR_MIN_PX = 360;
 const INSPECTOR_MIN_SIZE = `${INSPECTOR_MIN_PX}px`;
 const INSPECTOR_MAX_PERCENT = 50;
 const INSPECTOR_COLLAPSED_SIZE = "0%";
