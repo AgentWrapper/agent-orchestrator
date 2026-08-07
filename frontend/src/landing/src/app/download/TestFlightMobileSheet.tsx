@@ -6,13 +6,14 @@ import { ExternalLink, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { track } from "@/lib/analytics";
 
-// Tapping step 1 navigates away to the App Store. Safari may restore the page
-// from bfcache (state intact) or reload it (state lost) - and on a reload the
-// visitor would come back to a gate they already cleared, which is the exact
-// frustration this sheet exists to remove. So the cleared gate is persisted.
+// Once a visitor clears the gate, it should stay cleared - on a return visit
+// or a manual reload, not just for the rest of this page view. Re-showing a
+// gate they already cleared is the exact frustration this sheet exists to
+// remove. So the cleared gate is persisted.
 const STORAGE_KEY = "ao.testflight.hasApp";
 
 function readHasTestFlight(): boolean {
+  if (typeof window === "undefined") return false;
   try {
     return window.localStorage.getItem(STORAGE_KEY) === "true";
   } catch {
@@ -48,12 +49,7 @@ export function TestFlightMobileSheet({
   onClose,
   deviceName,
 }: TestFlightMobileSheetProps) {
-  const [hasTestFlight, setHasTestFlight] = useState(false);
-
-  // Read after mount so the server render and the first client render agree.
-  useEffect(() => {
-    if (open && readHasTestFlight()) setHasTestFlight(true);
-  }, [open]);
+  const [hasTestFlight, setHasTestFlight] = useState(() => readHasTestFlight());
 
   useEffect(() => {
     if (!open) return;
@@ -104,6 +100,7 @@ export function TestFlightMobileSheet({
               type="button"
               onClick={onClose}
               aria-label="Close"
+              autoFocus
               className="absolute right-4 top-4 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
             >
               <X className="size-4" aria-hidden="true" />

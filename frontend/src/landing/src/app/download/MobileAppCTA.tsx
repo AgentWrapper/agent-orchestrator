@@ -26,6 +26,12 @@ export function MobileAppCTA() {
     );
   }, []);
 
+  // mobileOS is null until usePlatform's effect runs, so the first render here
+  // always matches TestFlightDialog - same as everywhere else - then swaps to
+  // the button + sheet below once iOS is detected. That's a full component
+  // swap (dialog -> sheet), not a text change; it merely looks seamless
+  // because TRIGGER_CLASS here and the trigger className in TestFlightDialog
+  // are byte-identical. Keep the two in sync or the swap will visibly jump.
   // Android and desktop both keep the original QR dialog. Android additionally
   // sees the untouched "Android coming soon" chip beside it.
   if (mobileOS !== "ios") return <TestFlightDialog />;
