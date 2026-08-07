@@ -23,13 +23,14 @@ const (
 	HarnessDevin      AgentHarness = "devin"
 	HarnessCline      AgentHarness = "cline"
 	HarnessKimi       AgentHarness = "kimi"
+	HarnessMuse       AgentHarness = "muse"
 	HarnessKiro       AgentHarness = "kiro"
 	HarnessKilocode   AgentHarness = "kilocode"
 	HarnessVibe       AgentHarness = "vibe"
 	HarnessPi         AgentHarness = "pi"
 	HarnessAutohand   AgentHarness = "autohand"
-	// HarnessFake is a deterministic, LLM-free harness used by e2e tests to
-	// drive the session lifecycle on a scripted timeline (no network, no tokens).
+	// HarnessFake is retained for existing test fixtures and historical session
+	// rows, but is not user-selectable.
 	HarnessFake AgentHarness = "fake"
 )
 
@@ -39,8 +40,8 @@ var AllHarnesses = []AgentHarness{
 	HarnessClaudeCode, HarnessCodex, HarnessAider, HarnessOpenCode, HarnessGrok,
 	HarnessDroid, HarnessAmp, HarnessAgy, HarnessCrush, HarnessCursor, HarnessQwen,
 	HarnessCopilot, HarnessGoose, HarnessAuggie, HarnessContinue, HarnessDevin,
-	HarnessCline, HarnessKimi, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,
-	HarnessAutohand, HarnessFake,
+	HarnessCline, HarnessKimi, HarnessMuse, HarnessKiro, HarnessKilocode, HarnessVibe, HarnessPi,
+	HarnessAutohand,
 }
 
 // IsKnown reports whether h is one of the supported harnesses.

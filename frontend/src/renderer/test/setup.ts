@@ -65,9 +65,13 @@ if (typeof window !== "undefined") {
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
+			onCloseShellTerminalShortcut: () => () => undefined,
+			setCloseShellTerminalShortcutEnabled: () => undefined,
 			onOpenSettingsShortcut: () => () => undefined,
 			onPreviousSessionShortcut: () => () => undefined,
 			onNextSessionShortcut: () => () => undefined,
+			onPreviousTabShortcut: () => () => undefined,
+			onNextTabShortcut: () => () => undefined,
 			onFocusTerminalShortcut: () => () => undefined,
 		},
 		terminal: {
@@ -172,7 +176,13 @@ if (typeof window !== "undefined") {
 		},
 		notifications: {
 			show: async () => undefined,
+			setBadge: async () => undefined,
+			devBounce: async () => undefined,
 			onClick: () => () => undefined,
+		},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
 		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),
@@ -184,8 +194,8 @@ if (typeof window !== "undefined") {
 		},
 		uiSettings: {
 			get: async () => ({ locale: "en" as const }),
-			set: async (settings: { locale: "en" | "zh-CN" }) => ({
-				locale: settings.locale === "zh-CN" ? ("zh-CN" as const) : ("en" as const),
+			set: async (settings: { locale: string }) => ({
+				locale: settings.locale as "en",
 			}),
 		},
 		keybindings: {

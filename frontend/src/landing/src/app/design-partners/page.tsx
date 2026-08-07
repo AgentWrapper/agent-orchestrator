@@ -19,6 +19,16 @@ const MAILTO_HREF = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
 )}&body=${encodeURIComponent(
   "Hi Prateek,\n\nWe're interested in the AO design partner program.\n\nCompany:\nEngineering team size:\nAgent harnesses we use today (Claude Code / Codex / Cursor / ...):\nWhat we want out of AO:\n",
 )}`;
+const HERO_IMAGE = "/optimized/design-partners/hero-car-engine-olive.webp";
+const SHARED_WORKSPACE_IMAGE =
+  "/optimized/design-partners/shared-workspace-olive.webp";
+
+const ROADMAP_PHASE_IMAGES = {
+  fleet: "/optimized/design-partners/roadmap-fleet-olive.webp",
+  missionControl: "/optimized/design-partners/roadmap-mission-control-olive.webp",
+  roi: "/optimized/design-partners/roadmap-roi-olive.webp",
+  engineRoom: "/optimized/design-partners/roadmap-engine-room-olive.webp",
+} as const;
 
 /** Shown only if the GitHub API request fails. */
 const FALLBACK_STATS = {
@@ -89,7 +99,7 @@ const phases: RoadmapPhase[] = [
       "CI failures and review comments route back to the agent that owns the branch",
       "An orchestrator plans the work and spawns the workers",
     ],
-    image: "/design-partners/roadmap-fleet-olive.png",
+    image: ROADMAP_PHASE_IMAGES.fleet,
     imageAlt:
       "One orchestration workstation coordinating five coding-agent modules across separate worktree lanes",
   },
@@ -104,7 +114,7 @@ const phases: RoadmapPhase[] = [
       "Every session durably captured; hand a running fleet to a teammate",
       "One board for the team: running, merged, needs a human",
     ],
-    image: "/design-partners/roadmap-mission-control-olive.png",
+    image: ROADMAP_PHASE_IMAGES.missionControl,
     imageAlt:
       "Three local agent workstations connecting to a shared team mission-control board",
   },
@@ -119,7 +129,7 @@ const phases: RoadmapPhase[] = [
       "Outcomes, not vibes: agent PRs merged, cycle time, human-rescue rate",
       "Transcripts joined with GitHub, CI, reviews, and trackers - reviewable in one place",
     ],
-    image: "/design-partners/roadmap-roi-olive.png",
+    image: ROADMAP_PHASE_IMAGES.roi,
     imageAlt:
       "A measurement console joining agent cost, merged work, cycle time, and human handoffs",
   },
@@ -134,7 +144,7 @@ const phases: RoadmapPhase[] = [
       "Security policies enforced on every agent; audit trails and SSO across the fleet",
       "The dataset stays yours: full transcripts joined with SCM, CI, and tracker history",
     ],
-    image: "/design-partners/roadmap-engine-room-olive.png",
+    image: ROADMAP_PHASE_IMAGES.engineRoom,
     imageAlt:
       "A self-hosted control plane, security gate, and archive contained inside a private perimeter",
   },
@@ -144,7 +154,7 @@ const phases: RoadmapPhase[] = [
 // element it should stay the only image competing for early bandwidth. These are
 // all below the fold, so they warm the cache at low priority instead.
 const BELOW_FOLD_IMAGES = [
-  "/design-partners/shared-workspace-olive.png",
+  SHARED_WORKSPACE_IMAGE,
   ...phases.map((phase) => phase.image),
 ];
 
@@ -251,7 +261,7 @@ export default async function DesignPartnersPage() {
             </div>
 
             <Image
-              src="/design-partners/hero-car-engine-olive.png"
+              src={HERO_IMAGE}
               alt="An isometric car with its hood open and software engine highlighted"
               width={1536}
               height={1024}
@@ -291,7 +301,7 @@ export default async function DesignPartnersPage() {
             </p>
           </div>
           <Image
-            src="/design-partners/shared-workspace-olive.png"
+            src={SHARED_WORKSPACE_IMAGE}
             alt="Human workstations and coding-agent modules connected through one shared board and durable archive"
             width={1536}
             height={1024}

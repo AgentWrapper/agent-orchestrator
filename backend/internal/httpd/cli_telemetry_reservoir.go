@@ -17,13 +17,17 @@ type cliTelemetryReservoir struct {
 
 	path        string
 	activeDay   string
-	activeSlots map[int]struct{}
+	activeDone  bool
 	invokedDay  string
 	invokedSeen map[string]struct{}
 }
 
 type cliTelemetryState struct {
-	ActiveDay   string   `json:"active_day"`
+	ActiveDay string `json:"active_day"`
+	// ActiveDone replaced ActiveSlots when the heartbeat moved from four
+	// six-hour slots to one report per UTC day. ActiveSlots is still written so
+	// a downgraded build reads the day as fully spent instead of emitting again.
+	ActiveDone  bool     `json:"active_done"`
 	ActiveSlots []int    `json:"active_slots"`
 	InvokedDay  string   `json:"invoked_day"`
 	InvokedSeen []string `json:"invoked_seen"`
@@ -31,7 +35,6 @@ type cliTelemetryState struct {
 
 func newCLITelemetryReservoir(dataDir string) *cliTelemetryReservoir {
 	r := &cliTelemetryReservoir{
-		activeSlots: make(map[int]struct{}),
 		invokedSeen: make(map[string]struct{}),
 	}
 	if dataDir != "" {
@@ -41,20 +44,22 @@ func newCLITelemetryReservoir(dataDir string) *cliTelemetryReservoir {
 	return r
 }
 
+// reserveActive hands out one ao.app.active report per UTC day. It was four per
+// day, one per six-hour slot, which cost four events per install for a number
+// that is a unique count and therefore never changed.
 func (r *cliTelemetryReservoir) reserveActive(now time.Time) bool {
 	day := telemetryUTCDate(now)
-	slot := activeCaptureSlot(now)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if r.activeDay != day {
 		r.activeDay = day
-		r.activeSlots = make(map[int]struct{})
+		r.activeDone = false
 	}
-	if _, seen := r.activeSlots[slot]; seen {
+	if r.activeDone {
 		return false
 	}
-	r.activeSlots[slot] = struct{}{}
+	r.activeDone = true
 	_ = r.saveLocked()
 	return true
 }
@@ -81,10 +86,6 @@ func telemetryUTCDate(now time.Time) string {
 	return now.UTC().Format("2006-01-02")
 }
 
-func activeCaptureSlot(now time.Time) int {
-	return now.UTC().Hour() / 6
-}
-
 func cliInvokedReservationKey(actorType, commandPath string) string {
 	return actorType + "\t" + telemetrymeta.NormalizeCommandPath(commandPath)
 }
@@ -102,15 +103,9 @@ func (r *cliTelemetryReservoir) load() {
 		return
 	}
 	r.activeDay = st.ActiveDay
-	r.activeSlots = make(map[int]struct{}, len(st.ActiveSlots))
-	for _, slot := range st.ActiveSlots {
-		if slot >= 0 && slot < 4 {
-			r.activeSlots[slot] = struct{}{}
-		}
-	}
-	if r.activeDay != "" && len(r.activeSlots) == 0 {
-		r.activeSlots[0] = struct{}{}
-	}
+	// A slot record written by an older build means that day already reported,
+	// so an upgrade mid-day cannot hand out a second reservation.
+	r.activeDone = st.ActiveDone || len(st.ActiveSlots) > 0 || st.ActiveDay != ""
 	r.invokedDay = st.InvokedDay
 	r.invokedSeen = make(map[string]struct{}, len(st.InvokedSeen))
 	for _, commandPath := range st.InvokedSeen {
@@ -124,9 +119,9 @@ func (r *cliTelemetryReservoir) saveLocked() error {
 	if r.path == "" {
 		return nil
 	}
-	activeSlots := make([]int, 0, len(r.activeSlots))
-	for slot := range r.activeSlots {
-		activeSlots = append(activeSlots, slot)
+	activeSlots := []int{}
+	if r.activeDone {
+		activeSlots = []int{0, 1, 2, 3}
 	}
 	seen := make([]string, 0, len(r.invokedSeen))
 	for commandPath := range r.invokedSeen {
@@ -134,6 +129,7 @@ func (r *cliTelemetryReservoir) saveLocked() error {
 	}
 	body, err := json.Marshal(cliTelemetryState{
 		ActiveDay:   r.activeDay,
+		ActiveDone:  r.activeDone,
 		ActiveSlots: activeSlots,
 		InvokedDay:  r.invokedDay,
 		InvokedSeen: seen,

@@ -88,7 +88,17 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						title: session.displayName ?? session.issueId ?? session.id,
 						issueId: session.issueId,
 						provider: toAgentProvider(session.harness),
+						reviewerHarness:
+							session.reviewerHarness === "claude-code" ||
+							session.reviewerHarness === "codex" ||
+							session.reviewerHarness === "opencode"
+								? session.reviewerHarness
+								: undefined,
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+						// Carried through verbatim: the session surface must render from
+						// the mode this session was created with, not from whatever the
+						// current default happens to be.
+						mode: session.mode === "chat" ? "chat" : "tui",
 						branch: session.branch || undefined,
 						status,
 						scmStatus,
@@ -99,6 +109,8 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						activity,
 						previewUrl: session.previewUrl,
 						previewRevision: session.previewRevision,
+						isPinned: session.isPinned ?? false,
+						pinnedAt: session.pinnedAt ?? undefined,
 						prs: (session.prs ?? []).map(toPullRequestFacts),
 					};
 				}),

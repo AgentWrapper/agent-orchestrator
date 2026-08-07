@@ -5,14 +5,19 @@ import { CommandPalette } from "../components/CommandPalette";
 import { CenterPanelShell } from "../components/CenterPanelShell";
 import { DaemonFailureBanner } from "../components/DaemonFailureBanner";
 import { NotificationRuntime } from "../components/NotificationCenter";
+import { TrayRuntime } from "../components/TrayRuntime";
 import { GlobalNewTaskDialog } from "../components/GlobalNewTaskDialog";
+import { SettingsDialog } from "../components/SettingsDialog";
 import { KeyboardShortcutsDialog } from "../components/KeyboardShortcutsDialog";
 import { KeyboardShortcutsSettingsDialog } from "../components/settings/KeyboardShortcutsSettingsDialog";
 import { ShellTopbar } from "../components/ShellTopbar";
+import { SessionTopbarHost, SessionTopbarProvider } from "../components/SessionTopbarPortal";
 import { OrchestratorReplacementDialog } from "../components/OrchestratorReplacementDialog";
 import { Sidebar } from "../components/Sidebar";
 import { SidebarProvider } from "../components/ui/sidebar";
 import { TitlebarNav } from "../components/TitlebarNav";
+import { WindowTitlebar } from "../components/WindowTitlebar";
+import { TerminalCacheProvider } from "../components/TerminalPane";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { useDaemonStatus } from "../hooks/useDaemonStatus";
 import { useOpenShellTerminal } from "../hooks/useShellTerminals";
@@ -25,7 +30,7 @@ import { addRendererExceptionStep, captureRendererEvent, captureRendererExceptio
 import { ShellProvider } from "../lib/shell-context";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { captureOrchestratorReplacementFailure } from "../lib/orchestrator-replacement-telemetry";
-import { applyDocumentTheme } from "../lib/theme";
+import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { aoBridge } from "../lib/bridge";
 import { handleModifierLinkClick } from "../lib/external-link-policy";
 import { cn } from "../lib/utils";
@@ -40,6 +45,7 @@ import { useUiStore } from "../stores/ui-store";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { sessionIsActive, toProjectKind, type WorkspaceSummary } from "../types/workspace";
 import type { components } from "../../api/schema";
+import { useAgentInventoryTelemetry } from "../hooks/useAgentInventoryTelemetry";
 
 export const Route = createFileRoute("/_shell")({
 	// Prefetch the workspace list for the whole shell (parent loaders run before
@@ -82,6 +88,8 @@ const shellTopbarHiddenByPlatform = hidesShellTopbar();
 // the old single <App>, with selection now owned by the router (route params)
 // instead of Zustand. The daemon-status effect runs here exactly once.
 function ShellLayout() {
+	// Reports how many agents this install has available, once per launch.
+	useAgentInventoryTelemetry();
 	const navigate = useNavigate();
 	const matchRoute = useMatchRoute();
 	const queryClient = useQueryClient();
@@ -91,7 +99,7 @@ function ShellLayout() {
 	const [workspaceStartupState, setWorkspaceStartupState] = useState<"loading" | "ready" | "error">("loading");
 	const workspaceStartupBaselineRef = useRef(0);
 	const agentCatalogPortRef = useRef<number | undefined>(undefined);
-	const { themePreference, resolvedTheme, isSidebarOpen, toggleSidebar } = useUiStore();
+	const { themePreference, resolvedTheme, themeStyle, isSidebarOpen, toggleSidebar } = useUiStore();
 	const syncSystemTheme = useUiStore((state) => state.syncSystemTheme);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
@@ -165,6 +173,26 @@ function ShellLayout() {
 		!usesPreviewWorkspaceData &&
 		!daemonStatus.code &&
 		(daemonStatus.state !== "ready" || workspaceStartupState === "loading");
+	const cancelSidebarPeekClose = useCallback(() => {
+		if (sidebarPeekCloseTimerRef.current === undefined) return;
+		window.clearTimeout(sidebarPeekCloseTimerRef.current);
+		sidebarPeekCloseTimerRef.current = undefined;
+	}, []);
+
+	const previewSidebar = useCallback(() => {
+		if (isSidebarOpen) return;
+		cancelSidebarPeekClose();
+		setIsSidebarPeekOpen(true);
+	}, [cancelSidebarPeekClose, isSidebarOpen]);
+
+	const scheduleSidebarPeekClose = useCallback(() => {
+		if (isSidebarOpen) return;
+		cancelSidebarPeekClose();
+		sidebarPeekCloseTimerRef.current = window.setTimeout(() => {
+			setIsSidebarPeekOpen(false);
+			sidebarPeekCloseTimerRef.current = undefined;
+		}, 140);
+	}, [cancelSidebarPeekClose, isSidebarOpen]);
 
 	const navigateSession = useCallback(
 		(direction: -1 | 1) => {
@@ -333,13 +361,14 @@ function ShellLayout() {
 	);
 
 	const restartOrchestrator = useCallback(
-		async (projectId: string) => {
+		async (projectId: string, mode?: "chat" | "tui") => {
 			await restartProjectOrchestrator({
 				projectId,
 				queryClient,
 				navigate,
 				setProjectRestarting,
 				setOrchestratorReplacementError,
+				mode,
 				onError: (error) => {
 					captureOrchestratorReplacementFailure(error, projectId);
 				},
@@ -351,6 +380,10 @@ function ShellLayout() {
 	useEffect(() => {
 		applyDocumentTheme(resolvedTheme);
 	}, [resolvedTheme]);
+
+	useEffect(() => {
+		applyDocumentThemeStyle(themeStyle);
+	}, [themeStyle]);
 
 	// A daemon port is not enough to render a trustworthy empty state: the
 	// route loader may have cached [] before Electron reported the port. Fetch
@@ -421,6 +454,47 @@ function ShellLayout() {
 	}, [themePreference]);
 
 	useEffect(() => {
+		if (!isSidebarOpen) return;
+		cancelSidebarPeekClose();
+		setIsSidebarPeekOpen(false);
+	}, [cancelSidebarPeekClose, isSidebarOpen]);
+
+	useEffect(() => cancelSidebarPeekClose, [cancelSidebarPeekClose]);
+
+	useEffect(() => {
+		if (!isSidebarPeekOpen || isSidebarOpen) return;
+
+		const handlePointerMove = (event: PointerEvent) => {
+			const target = event.target instanceof Element ? event.target : null;
+			const isInSidebarPortal = Boolean(target?.closest('[role="dialog"], [role="listbox"], [role="menu"]'));
+			// TitlebarNav / WindowTitlebar sit above the peek in z-order; keep the
+			// preview open while the pointer is on those controls so hover→click
+			// to pin still works.
+			const isInTitlebarChrome = Boolean(
+				target?.closest("[data-slot='titlebar-nav'], .window-titlebar"),
+			);
+			const sidebar = document.querySelector<HTMLElement>('[data-slot="sidebar-container"]');
+			const bounds = sidebar?.getBoundingClientRect();
+			const isInSidebar = Boolean(
+				bounds &&
+				event.clientX >= bounds.left &&
+				event.clientX <= bounds.right &&
+				event.clientY >= bounds.top &&
+				event.clientY <= bounds.bottom,
+			);
+
+			if (isInSidebar || isInSidebarPortal || isInTitlebarChrome) {
+				cancelSidebarPeekClose();
+				return;
+			}
+			scheduleSidebarPeekClose();
+		};
+
+		window.addEventListener("pointermove", handlePointerMove);
+		return () => window.removeEventListener("pointermove", handlePointerMove);
+	}, [cancelSidebarPeekClose, isSidebarOpen, isSidebarPeekOpen, scheduleSidebarPeekClose]);
+
+	useEffect(() => {
 		if (daemonStatus.state !== "ready" || !daemonStatus.port) return;
 		if (agentCatalogPortRef.current === daemonStatus.port) return;
 
@@ -477,14 +551,14 @@ function ShellLayout() {
 
 	useEffect(() => aoBridge.app.onKeyboardShortcutsHelp(() => setIsKeyboardShortcutsOpen(true)), []);
 
-	// New standalone terminal (Ctrl+Shift+`), also detected in the main process so it
+	// New standalone terminal (⌘T / Ctrl+T), also detected in the main process so it
 	// fires from inside a terminal pane. It raises the same store signal as the
 	// tab-strip + button so the two cannot drift apart.
 	useEffect(() => aoBridge.app.onNewShellTerminalShortcut(() => requestNewShellTerminal()), [requestNewShellTerminal]);
 
 	// The shell layout is the single consumer of that signal, because it is the
 	// only component mounted on EVERY route. Owning it here is what lets the
-	// button and Ctrl+Shift+` work from the board, a project page, or a session alike
+	// button and the keyboard shortcut work from the board, a project page, or a session alike
 	// — when the session view owned it, both silently did nothing outside a
 	// session, since nothing was listening.
 	//
@@ -529,41 +603,61 @@ function ShellLayout() {
 	useEffect(
 		() =>
 			aoBridge.app.onFocusTerminalShortcut(() => {
-				document.querySelector<HTMLElement>(".xterm-helper-textarea")?.focus();
+				document
+					.querySelector<HTMLElement>(
+						"[data-terminal-activation-phase='visible'] .xterm-helper-textarea, " +
+							"[data-testid='session-terminal-slot'] .xterm-helper-textarea",
+					)
+					?.focus();
 			}),
 		[],
 	);
 
 	return (
 		<ShellProvider value={{ daemonStatus, workspaceStartupState, createProject, initializeProjectRepository }}>
-			<NotificationRuntime />
-			<GlobalNewTaskDialog />
-			<KeyboardShortcutsDialog
-				open={isKeyboardShortcutsOpen}
-				onOpenChange={setIsKeyboardShortcutsOpen}
-				onCustomize={() => {
-					setIsKeyboardShortcutsOpen(false);
-					setIsKeyboardShortcutsSettingsOpen(true);
-				}}
-			/>
-			<KeyboardShortcutsSettingsDialog
-				open={isKeyboardShortcutsSettingsOpen}
-				onOpenChange={setIsKeyboardShortcutsSettingsOpen}
-			/>
+			<SessionTopbarProvider>
+				<NotificationRuntime />
+				<TrayRuntime />
+				<GlobalNewTaskDialog />
+				<SettingsDialog />
+				<KeyboardShortcutsDialog
+					open={isKeyboardShortcutsOpen}
+					onOpenChange={setIsKeyboardShortcutsOpen}
+					onCustomize={() => {
+						setIsKeyboardShortcutsOpen(false);
+						setIsKeyboardShortcutsSettingsOpen(true);
+					}}
+				/>
+				<KeyboardShortcutsSettingsDialog
+					open={isKeyboardShortcutsSettingsOpen}
+					onOpenChange={setIsKeyboardShortcutsSettingsOpen}
+				/>
+				<TerminalCacheProvider
+					daemonReady={daemonStatus.state === "ready"}
+					theme={resolvedTheme}
+				>
+
 			{/* Shell chrome: Win/Linux hang the sidebar under a topbar. macOS uses a
           titlebar strip above the off-canvas sidebar. Session and board actions
           render inside the center panel when the shell topbar is hidden. */}
-			<div className={cn("flex h-screen min-h-0 flex-col bg-sidebar text-foreground", isWindows && "platform-windows", isLinux && "platform-linux")}>
+			<div
+				className={cn(
+					"flex h-screen min-h-0 flex-col bg-sidebar text-foreground",
+					isWindows && "platform-windows",
+					isLinux && "platform-linux",
+					isFullScreen && "native-fullscreen",
+				)}
+			>
 				{/* Windows-only custom title bar (sidebar toggle + File/Edit/View/…
             menu); paints the chrome the frameless window drops. Renders null on
             macOS/Linux. */}
 				{/* App routes render their topbar inside the framed panel, matching the board chrome across platforms while leaving OS titlebars native. */}
-				{!framedAppTopbar && !hideShellTopbar ? <ShellTopbar /> : null}
+				{!framedAppTopbar && !hideShellTopbar && !routeParams.sessionId ? <ShellTopbar /> : null}
 				{/* Controlled by the ui-store so TitlebarNav / Topbar toggles (which
             call the store directly) stay in sync. --sidebar-width chains to
             the drag-resizable --ao-sidebar-w set on :root by useResizable. */}
 				<SidebarProvider
-					className="min-h-0 flex-1 overflow-x-hidden"
+					className="min-h-0 flex-1 flex-col overflow-x-hidden"
 					keyboardShortcut={false}
 					onOpenChange={(open) => {
 						if (open !== isSidebarOpen) toggleSidebar();
@@ -576,13 +670,16 @@ function ShellLayout() {
 						} as CSSProperties
 					}
 				>
-					{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
+				<div className="flex min-h-0 w-full flex-1 overflow-x-hidden" data-testid="shell-content-row">
+				{/* macOS + Linux reserve a titlebar band for the fixed TitlebarNav
               cluster above a full-height sidebar; Windows hangs the sidebar
               below its custom titlebar. */}
-					<Sidebar
-						hideEdgeBorder={isWelcomeBoard}
-						underTopbar={isMac || isWindows || isLinux}
-						topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
+				<Sidebar
+					hideEdgeBorder={isWelcomeBoard}
+					isOverlay={isSidebarPeekOpen && !isSidebarOpen}
+					onPreviewLeave={scheduleSidebarPeekClose}
+					underTopbar={isMac || isWindows || isLinux}
+					topbarOffset={isWindows ? "titlebar" : hideShellTopbar ? "trafficLights" : "toolbar"}
 						onCreateProject={createProject}
 						onInitializeProject={initializeProjectRepository}
 						onRemoveProject={removeProject}
@@ -596,25 +693,49 @@ function ShellLayout() {
 								selfFramedCenterPanel ? (
 									<Outlet />
 								) : (
-									// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
-									<CenterPanelShell>
-										<Outlet />
-									</CenterPanelShell>
-								)
-							) : framedAppTopbar ? (
-								<CenterPanelShell>
-									<ShellTopbar />
-									<div className="flex min-h-0 flex-1 flex-col">
-										<Outlet />
-									</div>
-								</CenterPanelShell>
-							) : (
-								<CenterPanelShell>
+							// Platform hides shell topbar: full-height panel; session mounts actions in-panel.
+							<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+								{routeParams.sessionId ? (
+									<SessionTopbarHost
+										className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+										data-testid="session-topbar-host"
+									/>
+								) : null}
+								<div className="flex min-h-0 flex-1 flex-col">
 									<Outlet />
-								</CenterPanelShell>
+								</div>
+							</CenterPanelShell>
+						)
+					) : framedAppTopbar ? (
+						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+							{routeParams.sessionId ? (
+								<SessionTopbarHost
+									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+									data-testid="session-topbar-host"
+								/>
+							) : (
+								<ShellTopbar />
 							)}
+							<div className="flex min-h-0 flex-1 flex-col">
+								<Outlet />
+							</div>
+						</CenterPanelShell>
+					) : (
+						<CenterPanelShell className={routeParams.sessionId ? "center-panel-shell--session" : undefined}>
+							{routeParams.sessionId ? (
+								<SessionTopbarHost
+									className="relative z-chrome flex h-inspector-tabs w-full shrink-0 overflow-hidden"
+									data-testid="session-topbar-host"
+								/>
+							) : null}
+							<div className="flex min-h-0 flex-1 flex-col">
+								<Outlet />
+							</div>
+						</CenterPanelShell>
+					)}
 						</div>
 					</main>
+					</div>
 					<DaemonFailureBanner status={daemonStatus} />
 					{/* When ShellTopbar is hidden, keep a macOS window-drag strip over
               the traffic-light band only. The fixed TitlebarNav renders after
@@ -640,6 +761,7 @@ function ShellLayout() {
               Rendered first, real clicks get swallowed by window-drag even
               though DOM hit-testing looks correct. */}
 					<TitlebarNav
+						hasSessionTopbar={Boolean(routeParams.sessionId)}
 						historyLocked={isWelcomeBoard}
 						isFullScreen={isFullScreen}
 					/>
@@ -650,11 +772,14 @@ function ShellLayout() {
 						if (!open && replacementErrorProjectId) setOrchestratorReplacementError(replacementErrorProjectId, null);
 					}}
 					onRetry={(projectId) => void restartOrchestrator(projectId)}
+					onRetryAsTui={(projectId) => void restartOrchestrator(projectId, "tui")}
 					projectId={replacementErrorProjectId}
 					workspaces={workspaces}
 				/>
-				<CommandPalette />
-			</div>
+					<CommandPalette />
+				</div>
+				</TerminalCacheProvider>
+			</SessionTopbarProvider>
 		</ShellProvider>
 	);
 }

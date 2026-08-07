@@ -1,6 +1,7 @@
 package controllers_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
@@ -27,17 +28,24 @@ import (
 )
 
 type fakeSessionService struct {
-	sessions        map[domain.SessionID]domain.Session
-	sent            string
-	cleanupProjects []domain.ProjectID
-	cleanupResult   []domain.SessionID
-	cleanupSkipped  []sessionsvc.CleanupSkipped
-	workspaceFiles  sessionsvc.WorkspaceFiles
-	workspaceFile   sessionsvc.WorkspaceFileDetail
-	spawnErr        error
-	claimErr        error
-	listPRErr       error
-	workspaceErr    error
+	sessions         map[domain.SessionID]domain.Session
+	sent             string
+	delegationInput  sessionsvc.DelegateTaskInput
+	delegationErr    error
+	cleanupProjects  []domain.ProjectID
+	cleanupResult    []domain.SessionID
+	cleanupSkipped   []sessionsvc.CleanupSkipped
+	workspaceFiles   sessionsvc.WorkspaceFiles
+	workspaceFile    sessionsvc.WorkspaceFileDetail
+	workspacePaths   []string
+	spawnErr         error
+	orchestratorMode domain.SessionMode
+	claimErr         error
+	listPRErr        error
+	workspaceErr     error
+	staged           []ports.SpawnAttachment
+	stagedPaths      []string
+	stageErr         error
 }
 
 type fakeManagedPreviewServer struct {
@@ -130,7 +138,8 @@ func (f *fakeSessionService) Spawn(_ context.Context, cfg ports.SpawnConfig) (do
 	return s, len(cfg.Prompt), 0, nil
 }
 
-func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool, requestedMode domain.SessionMode) (domain.Session, error) {
+	f.orchestratorMode = requestedMode
 	if clean {
 		active := true
 		existing, err := f.List(ctx, sessionsvc.ListFilter{ProjectID: projectID, Active: &active, OrchestratorOnly: true})
@@ -143,7 +152,7 @@ func (f *fakeSessionService) SpawnOrchestrator(ctx context.Context, projectID do
 			}
 		}
 	}
-	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	s, _, _, err := f.Spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator, RequestedMode: requestedMode})
 	return s, err
 }
 
@@ -174,6 +183,39 @@ func (f *fakeSessionService) SetTerminateOnPRMerge(_ context.Context, id domain.
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
 	}
 	s.TerminateOnPRMerge = terminate
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) Pin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = true
+	now := time.Now().UTC()
+	s.PinnedAt = &now
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) Unpin(_ context.Context, id domain.SessionID) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.IsPinned = false
+	s.PinnedAt = nil
+	f.sessions[id] = s
+	return s, nil
+}
+
+func (f *fakeSessionService) SetReviewerHarness(_ context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
+	s, ok := f.sessions[id]
+	if !ok {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	s.ReviewerHarness = harness
 	f.sessions[id] = s
 	return s, nil
 }
@@ -232,6 +274,14 @@ func (f *fakeSessionService) Rename(_ context.Context, id domain.SessionID, disp
 func (f *fakeSessionService) Send(_ context.Context, _ domain.SessionID, message string) error {
 	f.sent = message
 	return nil
+}
+
+func (f *fakeSessionService) DelegateTask(_ context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error) {
+	f.delegationInput = in
+	if f.delegationErr != nil {
+		return sessionsvc.DelegateTaskOutcome{}, f.delegationErr
+	}
+	return sessionsvc.DelegateTaskOutcome{WorkerID: "ao-worker", OrchestratorID: "ao-orch"}, nil
 }
 
 func (f *fakeSessionService) ListPRs(_ context.Context, id domain.SessionID) ([]domain.PRFacts, error) {
@@ -301,6 +351,21 @@ func (f *fakeSessionService) ClaimPR(_ context.Context, id domain.SessionID, ref
 	return sessionsvc.ClaimPRResult{PRs: prs, TakenOverFrom: []domain.SessionID{}, BranchChanged: true}, nil
 }
 
+func (f *fakeSessionService) StageAttachments(
+	_ context.Context,
+	id domain.SessionID,
+	attachments []ports.SpawnAttachment,
+) ([]string, error) {
+	if f.stageErr != nil {
+		return nil, f.stageErr
+	}
+	if _, ok := f.sessions[id]; !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	f.staged = attachments
+	return f.stagedPaths, nil
+}
+
 func (f *fakeSessionService) ListWorkspaceFiles(_ context.Context, id domain.SessionID) (sessionsvc.WorkspaceFiles, error) {
 	if f.workspaceErr != nil {
 		return sessionsvc.WorkspaceFiles{}, f.workspaceErr
@@ -312,6 +377,20 @@ func (f *fakeSessionService) ListWorkspaceFiles(_ context.Context, id domain.Ses
 		return f.workspaceFiles, nil
 	}
 	return sessionsvc.WorkspaceFiles{SessionID: id}, nil
+}
+
+func (f *fakeSessionService) WorkspaceWatchPaths(_ context.Context, id domain.SessionID) ([]string, error) {
+	if f.workspaceErr != nil {
+		return nil, f.workspaceErr
+	}
+	session, ok := f.sessions[id]
+	if !ok {
+		return nil, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	if len(f.workspacePaths) > 0 {
+		return f.workspacePaths, nil
+	}
+	return []string{session.Metadata.WorkspacePath}, nil
 }
 
 func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.SessionID, path string) (sessionsvc.WorkspaceFileDetail, error) {
@@ -528,6 +607,50 @@ func TestSessionsAPI_ListSpawnGetAndActions(t *testing.T) {
 		t.Fatalf("session merge policy not updated: %+v", svc.sessions["ao-2"])
 	}
 
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("pin = %d, want 200; body=%s", status, body)
+	}
+	var pinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &pinned)
+	if !pinned.Session.IsPinned {
+		t.Fatalf("pin response = %#v", pinned)
+	}
+	if !svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session pin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	body, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ao-2/pin", "")
+	if status != http.StatusOK {
+		t.Fatalf("unpin = %d, want 200; body=%s", status, body)
+	}
+	var unpinned struct {
+		Session struct {
+			IsPinned bool `json:"isPinned"`
+		} `json:"session"`
+	}
+	mustJSON(t, body, &unpinned)
+	if unpinned.Session.IsPinned {
+		t.Fatalf("unpin response = %#v", unpinned)
+	}
+	if svc.sessions["ao-2"].IsPinned {
+		t.Fatalf("session unpin not updated: %+v", svc.sessions["ao-2"])
+	}
+
+	_, status, _ = doRequest(t, srv, "POST", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("pin unknown = %d, want 404", status)
+	}
+
+	_, status, _ = doRequest(t, srv, "DELETE", "/api/v1/sessions/ghost-1/pin", "")
+	if status != http.StatusNotFound {
+		t.Fatalf("unpin unknown = %d, want 404", status)
+	}
+
 	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators", `{"projectId":"ao"}`)
 	if status != http.StatusCreated {
 		t.Fatalf("orchestrator = %d, want 201; body=%s", status, body)
@@ -550,6 +673,41 @@ func TestSessionsAPI_SpawnRejectsOversizedBody(t *testing.T) {
 		strings.Repeat("A", 40<<20) + `"}]}`
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions", oversized)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+}
+
+func TestSessionsAPI_SpawnRejectsUnknownExplicitMode(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions",
+		`{"projectId":"ao","kind":"worker","harness":"codex","prompt":"fix","mode":"tuii"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "SESSION_MODE_INVALID")
+	if len(svc.sessions) != 1 {
+		t.Fatalf("invalid mode created a session: %#v", svc.sessions)
+	}
+}
+
+func TestSessionsAPI_OrchestratorAcceptsExplicitChatMode(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators",
+		`{"projectId":"ao","mode":"chat"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", status, body)
+	}
+	if svc.orchestratorMode != domain.SessionModeChat {
+		t.Fatalf("requested mode = %q, want chat", svc.orchestratorMode)
+	}
+}
+
+func TestSessionsAPI_OrchestratorRejectsUnknownExplicitMode(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators",
+		`{"projectId":"ao","mode":"chatt"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "SESSION_MODE_INVALID")
 }
 
 func TestSessionsAPI_PreviewDiscoversAndServesStaticIndex(t *testing.T) {
@@ -1393,6 +1551,56 @@ func TestSessionsAPI_GetWorkspaceFileRequiresPath(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "WORKSPACE_PATH_REQUIRED")
 }
 
+func TestSessionsAPI_StreamWorkspaceChanges(t *testing.T) {
+	workspace := t.TempDir()
+	svc := newFakeSessionService()
+	session := svc.sessions["ao-1"]
+	session.Metadata.WorkspacePath = workspace
+	svc.sessions["ao-1"] = session
+	srv := newSessionTestServer(t, svc)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/sessions/ao-1/workspace/events", nil)
+	if err != nil {
+		t.Fatalf("new workspace stream request: %v", err)
+	}
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET workspace stream: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET workspace stream = %d body=%s", resp.StatusCode, body)
+	}
+	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream", contentType)
+	}
+
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatalf("write workspace file: %v", err)
+	}
+	event := make(chan string, 1)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.HasPrefix(scanner.Text(), "event:") {
+				event <- scanner.Text()
+				return
+			}
+		}
+	}()
+	select {
+	case got := <-event:
+		if got != "event: workspace_changed" {
+			t.Fatalf("event = %q, want workspace_changed", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for workspace change event")
+	}
+}
+
 func TestSessionsAPI_SetPreviewEmptyURLNoEntry(t *testing.T) {
 	svc := newFakeSessionService()
 	s := svc.sessions["ao-1"]
@@ -1504,6 +1712,58 @@ func TestSessionsAPI_SendValidation(t *testing.T) {
 
 	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", `{"message":""}`)
 	assertErrorCode(t, body, status, http.StatusBadRequest, "MESSAGE_REQUIRED")
+}
+
+func TestSessionsAPI_DelegateTask(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix\u0000 it","agent":"cursor","model":" sonnet-custom ","mode":"chat"}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("delegate = %d, want 202; body=%s", status, body)
+	}
+	var got struct {
+		OK             bool   `json:"ok"`
+		WorkerID       string `json:"workerId"`
+		OrchestratorID string `json:"orchestratorId"`
+	}
+	mustJSON(t, body, &got)
+	if !got.OK || got.WorkerID != "ao-worker" || got.OrchestratorID != "ao-orch" {
+		t.Fatalf("response = %#v", got)
+	}
+	if svc.delegationInput.ProjectID != "ao" || svc.delegationInput.Brief != "Fix it" || svc.delegationInput.RequestedAgent != domain.HarnessCursor || svc.delegationInput.Model != "sonnet-custom" || svc.delegationInput.RequestedMode != domain.SessionModeChat {
+		t.Fatalf("delegation input = %#v", svc.delegationInput)
+	}
+}
+
+func TestSessionsAPI_DelegateTaskValidationAndServiceError(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"  "}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "TASK_REQUIRED")
+
+	svc.delegationErr = apierr.Invalid("UNKNOWN_HARNESS", "Unknown requested agent", nil)
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "UNKNOWN_HARNESS")
+
+	svc.delegationErr = nil
+	body, status, _ = doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", `{"projectId":"ao","brief":"Fix it","mode":"tuii"}`)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_SESSION_MODE")
+}
+
+func TestSessionsAPI_DelegateTaskRejectsOversizedBody(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	// A brief past the 32 KiB raw-body cap must fail during bounded decoding.
+	// Without MaxBytesReader this would decode and fail later as TASK_TOO_LONG.
+	oversized := `{"projectId":"ao","brief":"` + strings.Repeat("A", 40<<10) + `"}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/orchestrators/delegate", oversized)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	if svc.delegationInput.ProjectID != "" {
+		t.Fatalf("delegate service called with oversized body: %#v", svc.delegationInput)
+	}
 }
 
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {

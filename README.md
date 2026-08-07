@@ -16,11 +16,13 @@ An Agentic IDE that supervises parallel AI coding agents in isolated workspaces,
 <img src="docs/assets/readme/dashboard.png" alt="Agent Orchestrator dashboard showing parallel coding agent sessions" width="100%" />
 </div>
 
+**Languages:** **English** · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md)
+
 ---
 
 ## What is Agent Orchestrator?
 
-Agent Orchestrator is a meta-harness agent IDE for running AI coding agents in parallel. It gives terminal-based agents like Claude Code, Codex, Cursor, Kimi Code, opencode, and others a shared workspace where their sessions, terminals, branches, pull requests, and feedback loops can be supervised from one place.
+Agent Orchestrator is a meta-harness agent IDE for running AI coding agents in parallel. It gives agents like Claude Code, Codex, Cursor, Kimi Code, opencode, and others a shared workspace where their sessions, chat or terminal interfaces, branches, pull requests, and feedback loops can be supervised from one place.
 
 The agents still do the coding. AO provides the harness around them: isolated workspaces, live terminal access, session state, PR awareness, and automatic loops that send CI failures, review comments, and merge conflicts back to the right agent. Instead of manually coordinating a pile of agent terminals, AO turns parallel agent work into a managed workflow.
 
@@ -43,15 +45,15 @@ At a high level, Agent Orchestrator follows a simple loop:
 1. Add a project you want agents to work on.
 2. Start one or more sessions from the desktop app or CLI.
 3. AO creates an isolated git worktree for each session.
-4. AO launches the selected coding agent in that session's terminal runtime.
-5. The local daemon watches session state, terminal activity, pull requests, CI, and review feedback.
+4. AO launches either the agent's terminal UI or a structured Chat controller, according to the session's selected interface.
+5. The local daemon watches session state, controller activity, pull requests, CI, and review feedback.
 6. The desktop app and CLI show the current state and let you send follow-up instructions to the right session.
 
 The result is a local control layer for agentic coding: agents still do the coding, while Agent Orchestrator keeps their workspaces, status, terminals, and feedback loops organized.
 
 ## Features
 
-The desktop app is the main control surface: projects on the left, active sessions in the center, and the selected session's terminal, pull request state, review runs, and browser preview in the inspector.
+The desktop app is the main control surface: projects on the left, active sessions in the center, and the selected session's Chat or terminal interface, pull request state, review runs, and browser preview in the inspector.
 
 <table>
   <tr>
@@ -130,7 +132,7 @@ Reviewer agents are configured separately. The current reviewer harnesses are:
   <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a>
 </p>
 
-**If it runs in a terminal, it runs on Agent Orchestrator.**
+**Use the agent interface that fits the moment: structured Chat or its native terminal UI.**
 
 ## Install
 

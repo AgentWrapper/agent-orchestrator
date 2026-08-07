@@ -17,10 +17,10 @@ export const AGENT_OPTIONS = [
 	"devin",
 	"cline",
 	"kimi",
+	"muse",
 	"kiro",
 	"kilocode",
 	"vibe",
 	"pi",
 	"autohand",
-	"fake",
 ] as const;
