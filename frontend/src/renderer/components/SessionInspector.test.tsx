@@ -1539,7 +1539,7 @@ describe("SessionInspector summary reviews", () => {
 		await userEvent.click(await screen.findByRole("button", { name: /Select reviewer agent/ }));
 		await userEvent.click(await screen.findByRole("menuitem", { name: /opencode/ }));
 		await waitFor(() =>
-			expect(putMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviewer", {
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: "sess-1" } },
 				body: { harness: "opencode" },
 			}),
