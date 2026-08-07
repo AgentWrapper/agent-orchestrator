@@ -261,7 +261,7 @@ export function TaskComposer({
 					<button
 						type="button"
 						className="grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-surface hover:text-foreground"
-						aria-label="Attach file"
+						aria-label={t("newTask.addFile")}
 						onClick={() => fileInputRef.current?.click()}
 					>
 						<Paperclip className="size-icon-sm" aria-hidden="true" />
@@ -310,7 +310,7 @@ export function TaskComposer({
 									<button
 										type="button"
 										className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition hover:bg-border hover:text-foreground"
-										aria-label={`Remove ${attachment.name}`}
+										aria-label={t("newTask.removeFile", { name: attachment.name })}
 										onClick={() => removeAttachment(attachment.id)}
 									>
 										<X className="size-icon-sm" aria-hidden="true" />
