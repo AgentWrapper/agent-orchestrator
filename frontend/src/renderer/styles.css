@@ -788,9 +788,6 @@ button.settings-link-row:active {
 	min-width: 1rem;
 	align-items: center;
 	justify-content: center;
-	border-radius: var(--radius-xs);
-	background-color: color-mix(in oklab, currentcolor 14%, transparent);
-	padding-inline: calc(var(--spacing) * 1);
 	font-family: var(--font-mono);
 	font-size: var(--font-size-xs);
 	line-height: 1.1;

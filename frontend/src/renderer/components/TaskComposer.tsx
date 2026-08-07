@@ -513,9 +513,7 @@ function TaskModelPicker({
 			{ value: "__default__", label: noOverrideLabel },
 			...(catalog.models ?? []).map((item) => ({ value: item.id, label: item.label })),
 		];
-		const visibleModeLabel = mode
-			? (options.find((option) => option.value === mode)?.label ?? mode)
-			: t("newTask.autoModel");
+		const visibleModeLabel = mode ? (options.find((option) => option.value === mode)?.label ?? mode) : noOverrideLabel;
 		return (
 			<SettingsOptionMenu
 				aria-label={t("newTask.model")}
@@ -565,7 +563,7 @@ function TaskModelPicker({
 				triggerClassName="composer-chip composer-toolbar-option w-full justify-between"
 				menuAlign="start"
 				renderTrigger={(label) => {
-					const visibleLabel = value ? label : t("newTask.autoModel");
+					const visibleLabel = value ? label : noOverrideLabel;
 					return (
 						<span
 							key={`${agentId}:${value || "__default__"}`}
@@ -590,7 +588,7 @@ function TaskModelPicker({
 				value={value}
 				disabled={agentId === ""}
 				onChange={(event) => onModelChange(event.target.value)}
-				placeholder={query.isFetching ? t("settings.models.loading") : t("newTask.autoModel")}
+				placeholder={query.isFetching ? t("settings.models.loading") : noOverrideLabel}
 			/>
 			{hasCatalog && (
 				<AgentModelCombobox
