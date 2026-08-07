@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next";
-import { PanelLeft } from "lucide-react";
+import type { TFunction } from "i18next";
+import { Minus, PanelLeft, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useResolvedTheme, useUiStore } from "../stores/ui-store";
+import { useUiStore } from "../stores/ui-store";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -23,16 +24,6 @@ const isWindows =
 	);
 
 type MenuKey = "file" | "edit" | "view" | "window" | "help";
-
-function cssToken(styles: CSSStyleDeclaration, name: string, fallback: string, depth = 0): string {
-	const value = styles.getPropertyValue(name).trim();
-	if (!value) return fallback;
-
-	const match = /^var\(\s*(--[A-Za-z0-9_-]+)\s*\)$/.exec(value);
-	if (match && depth < 10) return cssToken(styles, match[1], fallback, depth + 1);
-
-	return value;
-}
 
 // Dispatch a native-menu action to the main process (see menu:action in main.ts).
 const act = (action: string) => () => {
@@ -76,29 +67,45 @@ function TopMenu({
 	);
 }
 
+function WindowControls({ t }: { t: TFunction }) {
+	return (
+		<div aria-label={t("titlebar.window")} className="window-titlebar__controls" role="group">
+			<button
+				aria-label={t("titlebar.minimize")}
+				className="window-titlebar__control"
+				onClick={act("window.minimize")}
+				type="button"
+			>
+				<Minus aria-hidden="true" className="window-titlebar__control-icon" />
+			</button>
+			<button
+				aria-label={t("titlebar.maximize")}
+				className="window-titlebar__control"
+				onClick={act("window.maximize")}
+				type="button"
+			>
+				<Square aria-hidden="true" className="window-titlebar__control-icon window-titlebar__control-icon--maximize" />
+			</button>
+			<button
+				aria-label={t("titlebar.close")}
+				className="window-titlebar__control window-titlebar__control--close"
+				onClick={act("window.close")}
+				type="button"
+			>
+				<X aria-hidden="true" className="window-titlebar__control-icon" />
+			</button>
+		</div>
+	);
+}
+
 export function WindowTitlebar({
 	onSidebarPreviewEnter,
 }: {
 	onSidebarPreviewEnter?: React.PointerEventHandler<HTMLButtonElement>;
 }) {
 	const { t } = useTranslation();
-	const theme = useResolvedTheme();
-	const themeStyle = useUiStore((state) => state.themeStyle);
 	const { isSidebarOpen, toggleSidebar, openGlobalSettings } = useUiStore();
 	const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
-
-	// Electron draws the min/max/close overlay natively and can't read our CSS, so
-	// push theme-matched colours to it whenever the theme changes.
-	useEffect(() => {
-		if (!isWindows) return;
-		// Keep in sync with --color-bg-sidebar (tokens.css) — the titlebar paints
-		// that colour, so the native buttons must match it.
-		const styles = getComputedStyle(document.documentElement);
-		void window.ao?.window?.setOverlay({
-			color: cssToken(styles, "--color-bg-sidebar", theme === "light" ? "#fcfcfc" : "#17181c"),
-			symbolColor: cssToken(styles, "--fg-muted", theme === "light" ? "#3f444c" : "#c7ccd4"),
-		});
-	}, [theme, themeStyle]);
 
 	// Tell main to forget the last-focused panel whenever real shell UI (not this menu) gets focus, so its fallback target doesn't go stale.
 	useEffect(() => {
@@ -202,6 +209,9 @@ export function WindowTitlebar({
 					<DropdownMenuItem onSelect={act("help.about")}>{t("titlebar.about")}</DropdownMenuItem>
 				</TopMenu>
 			</nav>
+			<div className="window-titlebar__spacer" />
+			<WindowControls t={t} />
 		</header>
 	);
 }
+

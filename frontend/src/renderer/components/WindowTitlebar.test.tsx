@@ -1,7 +1,6 @@
-import { render, waitFor } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-type Overlay = { color: string; symbolColor: string };
 
 const { navigateMock } = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
@@ -12,7 +11,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 describe("WindowTitlebar", () => {
-	let setOverlayMock: (overlay: Overlay) => Promise<void>;
+	let actionMock: (action: string) => Promise<void>;
 
 	async function loadWindowTitlebar() {
 		vi.resetModules();
@@ -25,26 +24,22 @@ describe("WindowTitlebar", () => {
 
 	beforeEach(() => {
 		navigateMock.mockReset();
-		setOverlayMock = vi.fn(async (_overlay: Overlay) => undefined);
-		window.ao!.window.setOverlay = setOverlayMock;
+		actionMock = vi.fn(async (_action: string) => undefined);
+		window.ao!.menu.action = actionMock;
 		document.documentElement.removeAttribute("style");
 	});
 
-	it("tints the native Windows controls from the active CSS theme tokens", async () => {
-		document.documentElement.style.setProperty("--sidebar", "rgb(12, 34, 56)");
-		document.documentElement.style.setProperty("--color-bg-sidebar", "var(--sidebar)");
-		document.documentElement.style.setProperty("--muted-foreground", "rgb(201, 202, 203)");
-		document.documentElement.style.setProperty("--color-text-muted", "var(--muted-foreground)");
-		document.documentElement.style.setProperty("--fg-muted", "var(--color-text-muted)");
+	it("renders custom Windows controls and dispatches window actions", async () => {
 		const { WindowTitlebar } = await loadWindowTitlebar();
 
 		render(<WindowTitlebar />);
 
-		await waitFor(() => {
-			expect(setOverlayMock).toHaveBeenCalledWith({
-				color: "rgb(12, 34, 56)",
-				symbolColor: "rgb(201, 202, 203)",
-			});
-		});
+		await userEvent.click(screen.getByRole("button", { name: "Minimize" }));
+		await userEvent.click(screen.getByRole("button", { name: "Maximize / Restore" }));
+		await userEvent.click(screen.getByRole("button", { name: "Close" }));
+
+		expect(actionMock).toHaveBeenNthCalledWith(1, "window.minimize");
+		expect(actionMock).toHaveBeenNthCalledWith(2, "window.maximize");
+		expect(actionMock).toHaveBeenNthCalledWith(3, "window.close");
 	});
 });

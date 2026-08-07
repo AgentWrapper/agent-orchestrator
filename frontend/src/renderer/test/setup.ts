@@ -78,7 +78,6 @@ if (typeof window !== "undefined") {
 			saveDroppedFile: async () => "",
 		},
 		window: {
-			setOverlay: async () => undefined,
 			isFullScreen: async () => false,
 			onFullScreen: () => () => undefined,
 		},

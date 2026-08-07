@@ -148,11 +148,6 @@ const isDev = !app.isPackaged;
 const DEV_DAEMON_PORT = 3002;
 const DEV_STATE_SUBDIR = "dev"; // ~/.ao/dev/
 
-// Height (px) of the custom Windows title bar. Must stay in sync with
-// --size-window-titlebar (tokens.css) and .window-titlebar, plus the Window
-// Controls Overlay height passed to BrowserWindow, so the native min/max/close
-// buttons line up with the app's bar.
-const TITLEBAR_HEIGHT = 36;
 // Traffic lights stay fixed across sidebar expand/collapse. Y matches the
 // natural macOS titlebar band (TitlebarNav is h-traffic-light-clearance).
 const MAC_WINDOW_BUTTON_X = 14;
@@ -283,18 +278,15 @@ function createWindow(): void {
 		title: "Agent Orchestrator",
 		icon: windowIconPath(),
 		backgroundColor: "#0f1014",
-		// Windows goes frameless with a Window Controls Overlay: Electron still draws
-		// native min/max/close on the right, while the renderer paints its own
-		// VS Code-style title bar (logo + menu) on the left. macOS/Linux keep the
-		// inset traffic-light chrome. Overlay colours are re-synced to the active
-		// theme from the renderer via the window:setOverlay IPC.
+		// Windows goes frameless and the renderer paints the whole titlebar,
+		// including custom min/max/close controls. macOS/Linux keep the inset
+		// traffic-light chrome.
 		...(process.platform === "win32"
 			? {
 					titleBarStyle: "hidden" as const,
 					// Hide the native menu bar. A role-based menu is still installed (for
 					// accelerators) below; the visible menu is painted by WindowTitlebar.
 					autoHideMenuBar: true,
-					titleBarOverlay: { color: "#17181c", symbolColor: "#c7ccd4", height: TITLEBAR_HEIGHT },
 				}
 			: {
 					titleBarStyle: "hiddenInset" as const,
@@ -1261,18 +1253,6 @@ ipcMain.handle("daemon:restart", async () => {
 ipcMain.handle("app:getVersion", () => app.getVersion());
 ipcMain.handle("app:openExternal", async (_event, url: string) => {
 	await openAllowedAppExternalURL(url, shell);
-});
-
-// Re-tint the native window-button overlay (min/max/close) to match the active
-// theme; the renderer calls this on theme change. No-op unless the window was
-// created with a titleBarOverlay (Windows only).
-ipcMain.handle("window:setOverlay", (_event, overlay: { color: string; symbolColor: string }) => {
-	if (process.platform !== "win32" || !mainWindow) return;
-	try {
-		mainWindow.setTitleBarOverlay({ ...overlay, height: TITLEBAR_HEIGHT });
-	} catch {
-		// Window has no overlay on this platform; ignore.
-	}
 });
 
 ipcMain.handle("window:isFullScreen", () => mainWindow?.isFullScreen() ?? false);
