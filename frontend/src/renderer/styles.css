@@ -443,10 +443,11 @@
 	padding-left: var(--size-center-panel-inline-inset);
 }
 
-/* Windows has a custom titlebar above the framed panel, so avoid a second
- * vertical inset under the window controls while preserving right/bottom frame
- * spacing for the rounded panel. */
-.platform-windows .center-panel-shell {
+/* Windows/Linux already have top chrome above the framed panel, so avoid a
+ * second vertical inset while preserving right/bottom frame spacing for the
+ * rounded panel. */
+.platform-windows .center-panel-shell,
+.platform-linux .center-panel-shell {
 	padding-top: 0;
 }
 

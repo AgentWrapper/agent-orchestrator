@@ -214,4 +214,3 @@ export function WindowTitlebar({
 		</header>
 	);
 }
-
