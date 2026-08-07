@@ -11,8 +11,11 @@ export const Platform = {
 
 export type Platform = (typeof Platform)[keyof typeof Platform];
 
+export type MobileOS = "ios" | "android" | null;
+
 export interface PlatformInfo {
 	platform: Platform;
+	mobileOS: MobileOS;
 }
 
 function detectMacArch():
@@ -42,30 +45,51 @@ function detectMacArch():
 	}
 }
 
+// Modern iPadOS reports a desktop "Macintosh" user agent for compat, so the
+// only signal that separates an iPad from a Mac is that it reports touch
+// points. This is used for the device noun in copy, and to route iPads to the
+// touch flow rather than a QR they have no second device to scan.
+export function isIPadOS(userAgent: string, maxTouchPoints: number): boolean {
+	if (/ipad/i.test(userAgent)) return true;
+	return /macintosh|mac os x/i.test(userAgent) && maxTouchPoints > 1;
+}
+
+function detectMobileOS(userAgent: string, maxTouchPoints: number): MobileOS {
+	if (/iphone|ipod/i.test(userAgent) || isIPadOS(userAgent, maxTouchPoints)) {
+		return "ios";
+	}
+	if (/android/i.test(userAgent)) return "android";
+	return null;
+}
+
 function detectPlatform(): PlatformInfo {
 	if (typeof navigator === "undefined") {
-		return { platform: Platform.Unknown };
+		return { platform: Platform.Unknown, mobileOS: null };
 	}
 
 	const userAgent = navigator.userAgent;
+	const mobileOS = detectMobileOS(userAgent, navigator.maxTouchPoints);
 
 	if (/android|iphone|ipad|ipod|mobile|tablet/i.test(userAgent)) {
-		return { platform: Platform.Mobile };
+		return { platform: Platform.Mobile, mobileOS };
 	}
 
 	if (/mac os x|macintosh/i.test(userAgent)) {
-		return { platform: detectMacArch() };
+		return { platform: detectMacArch(), mobileOS };
 	}
 	if (/windows/i.test(userAgent)) {
-		return { platform: Platform.Windows };
+		return { platform: Platform.Windows, mobileOS };
 	}
 	if (/linux|x11/i.test(userAgent)) {
-		return { platform: Platform.Linux };
+		return { platform: Platform.Linux, mobileOS };
 	}
-	return { platform: Platform.Unknown };
+	return { platform: Platform.Unknown, mobileOS };
 }
 
-const DEFAULT_PLATFORM: PlatformInfo = { platform: Platform.Unknown };
+const DEFAULT_PLATFORM: PlatformInfo = {
+	platform: Platform.Unknown,
+	mobileOS: null,
+};
 
 export function usePlatform(): PlatformInfo {
 	const [platform, setPlatform] = useState<PlatformInfo>(DEFAULT_PLATFORM);
