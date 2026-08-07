@@ -82,7 +82,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
-				theme: { set: async () => undefined },
+				theme: { set: async () => undefined, onChanged: () => () => undefined },
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: {
 					writeText: async () => undefined,
@@ -157,8 +157,8 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 					set: async () => undefined,
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en" }),
-					set: async (settings) => settings,
+					get: async () => ({ locale: "en", themePreference: "system" }),
+					set: async (settings) => ({ locale: "en", themePreference: "system", ...settings }),
 				},
 				keybindings: {
 					get: async () => ({}),
@@ -495,7 +495,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
-				theme: { set: async () => undefined },
+				theme: { set: async () => undefined, onChanged: () => () => undefined },
 				menu: { action: async () => undefined, notifyShellFocus: () => undefined },
 				clipboard: { writeText: async () => undefined, readText: async () => "" },
 				daemon: {
@@ -560,8 +560,8 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 					set: async () => undefined,
 				},
 				uiSettings: {
-					get: async () => ({ locale: "en" }),
-					set: async (settings) => settings,
+					get: async () => ({ locale: "en", themePreference: "system" }),
+					set: async (settings) => ({ locale: "en", themePreference: "system", ...settings }),
 				},
 				keybindings: {
 					get: async () => ({}),
