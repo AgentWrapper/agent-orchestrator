@@ -28,7 +28,7 @@ const (
 	ProtocolVersion = 2
 	// RuntimeTokenStdinEnv tells an app-spawned daemon to read its token once
 	// from the inherited private stdin pipe instead of an environment variable.
-	RuntimeTokenStdinEnv = "AO_BROWSER_RUNTIME_TOKEN_STDIN"
+	RuntimeTokenStdinEnv = "AO_BROWSER_RUNTIME_TOKEN_STDIN" //nolint:gosec // Environment variable name, not a credential.
 	// RuntimeAddressEnv carries the exact listener address into running.json so
 	// Electron never has to duplicate the backend's platform-specific naming.
 	RuntimeAddressEnv    = "AO_BROWSER_RUNTIME_ADDRESS"

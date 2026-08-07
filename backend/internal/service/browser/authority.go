@@ -15,6 +15,7 @@ import (
 // capabilities held by surviving workers.
 type Authority struct{}
 
+// NewAuthority returns a stateless browser capability authority.
 func NewAuthority() *Authority { return &Authority{} }
 
 // Issue mints a fresh capability for one worker launch. Relaunching a worker

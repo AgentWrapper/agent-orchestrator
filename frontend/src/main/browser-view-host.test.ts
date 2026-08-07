@@ -332,6 +332,9 @@ function setupTabHost() {
 				return {};
 			}
 			if (action === "get") return { value: active()?.url ?? "" };
+			if (action === "click" && args.ref === "e1") {
+				throw { code: "STALE_REFERENCE", message: "snapshot again" };
+			}
 			return {};
 		}),
 		screenshot: vi.fn(async () => ({ data: "", width: 0, height: 0, untrustedExternalContent: true as const })),
@@ -1063,7 +1066,7 @@ describe("browser:requestMirror", () => {
 });
 
 describe("browser:setBounds parked", () => {
-	it("moves the view offscreen at full size while keeping it visible", async () => {
+	it("moves the blank view offscreen at full size while keeping the native view hidden", async () => {
 		const { emit, invoke, view } = setupHost();
 		await invoke("browser:ensure", "sess-1");
 		view.setBorderRadius.mockClear();
@@ -1080,7 +1083,7 @@ describe("browser:setBounds parked", () => {
 		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
 			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
 		);
-		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 	});
 });
 
@@ -1101,7 +1104,7 @@ describe("browser:setBounds", () => {
 		expect(view.setBounds.mock.invocationCallOrder.at(-1)).toBeLessThan(
 			view.setBorderRadius.mock.invocationCallOrder.at(-1)!,
 		);
-		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 	});
 
 	it("does not let a hidden page navigation grant native visibility", async () => {
@@ -1113,7 +1116,7 @@ describe("browser:setBounds", () => {
 			rect: { x: 100, y: 20, width: 320, height: 240 },
 			visible: true,
 		});
-		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 		emit("browser:setBounds", 1, {
 			viewId: "1:sess-1",
 			rect: { x: 0, y: 0, width: 0, height: 0 },
@@ -1146,7 +1149,7 @@ describe("browser:setBounds", () => {
 
 		expect(webContents.reload).toHaveBeenCalled();
 		expect(view.setBounds).toHaveBeenLastCalledWith({ x: 100, y: 20, width: 320, height: 240 });
-		expect(view.setVisible).toHaveBeenLastCalledWith(true);
+		expect(view.setVisible).toHaveBeenLastCalledWith(false);
 	});
 });
 
