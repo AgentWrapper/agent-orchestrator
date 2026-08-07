@@ -537,10 +537,14 @@ function TaskModelPicker({
 	// Cursor's own "auto" model routes each request to whatever it judges best —
 	// a distinct, explicit choice from leaving the field untouched (which just
 	// omits --model and defers to Cursor's own default, currently also "auto").
-	// Relabel so the two don't read as the same option twice.
-	const displayModels = (catalog?.models ?? []).map((item) =>
-		item.id === "auto" ? { ...item, label: t("settings.models.autoRouteLabel") } : item,
-	);
+	// Relabel so the two don't read as the same option twice. Every other
+	// catalog's own default-flagged model just reads "Default" instead of its
+	// full technical name.
+	const displayModels = (catalog?.models ?? []).map((item) => {
+		if (item.id === "auto") return { ...item, label: t("settings.models.autoRouteLabel") };
+		if (item.isDefault) return { ...item, label: t("settings.models.default") };
+		return item;
+	});
 	const showCustomInput = hasCatalog && (customAgentId === agentId || (value !== "" && !modelIsInCatalog));
 	const selectCatalogModel = (nextModel: string) => {
 		setCustomAgentId(null);
