@@ -19,9 +19,10 @@ export function GlobalSettingsForm({
 }) {
 	const { t } = useTranslation();
 	const [reportProblemOpen, setReportProblemOpen] = useState(false);
-	// The dialog header names the active page, so never repeat that title as the
-	// first group heading.
-	const leadingTitleHidden = true;
+	// One section per page means the dialog header already names it, so the
+	// page's leading heading would just repeat that title. Only "all" (no
+	// single-page header) shows every section's own heading.
+	const leadingTitleHidden = section !== "all";
 
 	return (
 		<>

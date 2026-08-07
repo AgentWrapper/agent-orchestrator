@@ -437,7 +437,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 					id={id}
 					size="sm"
 					className={cn(
-						"composer-chip h-control-md! bg-(--color-bg-composer-chip)! px-2! text-control! [&_svg]:size-icon-sm",
+						"composer-chip h-(--size-settings-action-height)! bg-(--color-bg-composer-chip)! px-2! text-control! [&_svg]:size-icon-sm",
 						invalid && "text-error",
 						triggerClassName,
 					)}

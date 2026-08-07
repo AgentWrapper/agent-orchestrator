@@ -530,7 +530,7 @@
 	"settings.project.intakeAssigneeRequired": "Enabling intake requires an assignee.",
 	"settings.project.loadFailed": "Could not load project.",
 	"settings.project.loading": "Loading project settings…",
-	"settings.project.kind": "kind",
+	"settings.project.kind": "Type",
 	"settings.project.kind.scratch": "scratch",
 	"settings.project.kind.singleRepo": "single repo",
 	"settings.project.kind.unknown": "unknown",

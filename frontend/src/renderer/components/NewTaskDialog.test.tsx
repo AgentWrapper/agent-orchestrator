@@ -85,13 +85,13 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("NewTaskDialog", () => {
-	it("renders one continuous composer surface without visible dialog chrome", async () => {
+	it("renders one continuous composer surface with a visible settings-style title", async () => {
 		renderDialog();
 		await waitForAgentCatalog();
 
 		const dialog = screen.getByRole("dialog", { name: "New task" });
 		expect(dialog.querySelector(".composer-prompt-surface")).not.toBeNull();
-		expect(screen.getByText("New task")).toHaveClass("sr-only");
+		expect(screen.getByText("New task")).toHaveClass("settings-dialog-title");
 		expect(screen.queryByText("Runs with")).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Close new task dialog" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Cancel" })).not.toBeInTheDocument();

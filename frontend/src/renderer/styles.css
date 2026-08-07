@@ -822,7 +822,9 @@ button.settings-link-row:active {
 	min-width: 0;
 	grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
 	align-items: center;
-	column-gap: var(--space-2);
+	overflow: hidden;
+	border-radius: var(--radius-md);
+	background-color: var(--color-bg-settings-trigger);
 }
 
 .composer-toolbar-slot {
@@ -830,20 +832,21 @@ button.settings-link-row:active {
 }
 
 .composer-toolbar-divider {
+	align-self: stretch;
 	width: 1px;
-	height: var(--space-4);
+	height: 100%;
 	background-color: var(--color-border);
 }
 
 .composer-toolbar .composer-toolbar-option {
-	height: var(--size-control-md);
-	border-radius: var(--radius-md) !important;
+	height: var(--size-settings-action-height);
+	border-radius: 0 !important;
 	background-color: transparent !important;
 }
 
 .composer-toolbar .composer-toolbar-option:hover:not(:disabled),
 .composer-toolbar .composer-toolbar-option[data-state="open"] {
-	background-color: var(--color-bg-composer-chip-hover) !important;
+	background-color: var(--color-bg-settings-trigger-hover) !important;
 }
 
 .composer-toolbar .composer-toolbar-option:focus-visible {
@@ -853,14 +856,6 @@ button.settings-link-row:active {
 .composer-value-swap {
 	display: inline-block;
 	animation: composer-value-in var(--duration-fast) ease-out;
-}
-
-.composer-model-skeleton {
-	width: var(--space-10);
-	height: var(--space-2);
-	border-radius: var(--radius-xs);
-	background-color: color-mix(in oklab, currentcolor 14%, transparent);
-	animation: composer-skeleton-pulse 1.2s ease-in-out infinite;
 }
 
 @keyframes composer-value-in {
@@ -874,19 +869,8 @@ button.settings-link-row:active {
 	}
 }
 
-@keyframes composer-skeleton-pulse {
-	0%,
-	100% {
-		opacity: 0.45;
-	}
-	50% {
-		opacity: 0.9;
-	}
-}
-
 @media (prefers-reduced-motion: reduce) {
-	.composer-value-swap,
-	.composer-model-skeleton {
+	.composer-value-swap {
 		animation: none;
 	}
 }
@@ -898,14 +882,14 @@ button.settings-link-row:active {
 	width: auto;
 	min-width: 0;
 	max-width: 100%;
-	height: var(--size-control-md);
+	height: var(--size-settings-action-height);
 	align-items: center;
 	gap: calc(var(--spacing) * 2);
 	border: 1px solid transparent;
 	/* SelectTrigger and settings-option-trigger bring different radii. The
-	   composer owns this shared surface, so both agent and model must resolve to
-	   the same geometry regardless of the primitive underneath. */
-	border-radius: var(--radius-md) !important;
+	   shared container now owns the rounding, so each segment stays square and
+	   only the outer edge reads as one pill. */
+	border-radius: 0 !important;
 	background-color: var(--color-bg-composer-chip);
 	padding-inline: var(--space-2);
 	font-size: var(--font-size-base);
@@ -914,7 +898,7 @@ button.settings-link-row:active {
 	transition-duration: var(--duration-fast);
 
 	&:hover:not(:disabled) {
-		background-color: var(--color-bg-composer-chip-hover);
+		background-color: var(--color-bg-settings-trigger-hover);
 	}
 
 	&:focus-visible {
@@ -924,7 +908,7 @@ button.settings-link-row:active {
 	}
 
 	&[data-state="open"] {
-		background-color: var(--color-bg-composer-chip-hover);
+		background-color: var(--color-bg-settings-trigger-hover);
 		border-color: transparent;
 	}
 }

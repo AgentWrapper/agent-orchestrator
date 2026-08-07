@@ -411,7 +411,7 @@ export function TaskComposer({
 				</div>
 				<button
 					type="button"
-					className="grid size-control-md place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					className="grid size-(--size-settings-action-height) place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 					aria-label={t("newTask.addFile")}
 					onClick={() => fileInputRef.current?.click()}
 				>
@@ -420,9 +420,9 @@ export function TaskComposer({
 				<Button
 					type="submit"
 					variant="primary"
-					size="sm"
+					size="none"
 					disabled={isSubmitting || !projectId}
-					className="min-w-(--size-composer-start-button)"
+					className="h-(--size-settings-action-height) min-w-(--size-composer-start-button) px-3"
 				>
 					{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
 					{isSubmitting ? t("newTask.starting") : t("newTask.start")}
@@ -508,12 +508,12 @@ function TaskModelPicker({
 	if (catalogLoading) {
 		return (
 			<span
-				className="composer-chip composer-toolbar-option w-full bg-transparent!"
+				className="composer-chip composer-toolbar-option w-full justify-center bg-transparent!"
 				role="status"
 				aria-label={t("settings.models.loading")}
 				aria-busy="true"
 			>
-				<span className="composer-model-skeleton" aria-hidden="true" />
+				<Loader2 className="size-icon-sm animate-spin text-settings-muted" aria-hidden="true" />
 			</span>
 		);
 	}
