@@ -28,6 +28,18 @@ function poll(snapshot: ConversationSnapshot): ConversationSnapshot {
 	return structuredClone(snapshot);
 }
 
+function idleSnapshot(snapshot: ConversationSnapshot = chatFixture): ConversationSnapshot {
+	return {
+		...snapshot,
+		controller: { state: "ready" },
+		turns: snapshot.turns.map((turn) =>
+			turn.state === "running"
+				? { ...turn, state: "completed" as const, completedAt: turn.requestedAt }
+				: turn,
+		),
+	};
+}
+
 /** jsdom has no layout, so the scroller's geometry has to be stated. */
 function stubGeometry(node: HTMLElement, { scrollHeight, clientHeight, scrollTop }: {
 	scrollHeight: number;
@@ -312,26 +324,55 @@ describe("ChatWorkspace message actions", () => {
 		);
 	});
 
-	it("loads a human message into the composer and sends the edited text as a new message", async () => {
+	it("edits a human message in place, rolls back to that turn, then sends the replacement", async () => {
 		const user = userEvent.setup();
-		const onSend = vi.fn(async (_text: string) => undefined);
-		render(<ChatWorkspace snapshot={chatFixture} onSend={onSend} />);
+		const calls: string[] = [];
+		const onRollback = vi.fn(async (turnId: string) => {
+			calls.push(`rollback:${turnId}`);
+		});
+		const onSend = vi.fn(async (text: string) => {
+			calls.push(`send:${text}`);
+		});
+		render(<ChatWorkspace snapshot={idleSnapshot()} onRollback={onRollback} onSend={onSend} />);
 
 		await user.click(screen.getAllByRole("button", { name: "Edit user message" })[0]!);
 		const composer = screen.getByLabelText("Message the agent");
-		expect(composer).toHaveFocus();
-		expect(composer).toHaveValue(
-			"Check the worktree state and tell me what changed since the base commit.",
-		);
+		expect(composer).toHaveValue("");
 
-		await user.type(composer, " Include staged files too.");
-		await user.click(screen.getByRole("button", { name: "Send message" }));
+		const editor = screen.getByLabelText("Edit message text");
+		expect(editor).toHaveFocus();
+		expect(editor).toHaveValue("Check the worktree state and tell me what changed since the base commit.");
+
+		await user.clear(editor);
+		await user.type(editor, "Check worktree state, including staged files.");
+		await user.click(screen.getByRole("button", { name: "Save edit" }));
 
 		await waitFor(() =>
-			expect(onSend).toHaveBeenCalledWith(
-				"Check the worktree state and tell me what changed since the base commit. Include staged files too.",
-				undefined,
-			),
+			expect(calls).toEqual([
+				"rollback:turn-1",
+				"send:Check worktree state, including staged files.",
+			]),
+		);
+		expect(onRollback).toHaveBeenCalledWith("turn-1");
+		expect(onSend).toHaveBeenCalledWith("Check worktree state, including staged files.", undefined);
+	});
+
+	it("keeps edit available while another turn is active", async () => {
+		const user = userEvent.setup();
+		render(
+			<ChatWorkspace
+				snapshot={chatFixture}
+				onRollback={vi.fn(async () => undefined)}
+				onSend={vi.fn(async () => undefined)}
+			/>,
+		);
+
+		const editButtons = screen.getAllByRole("button", { name: "Edit user message" });
+		expect(editButtons.length).toBeGreaterThan(0);
+
+		await user.click(editButtons[0]!);
+		expect(screen.getByLabelText("Edit message text")).toHaveValue(
+			"Check the worktree state and tell me what changed since the base commit.",
 		);
 	});
 
