@@ -124,6 +124,16 @@ func (f fakeReviewerResolver) Reviewer(domain.ReviewerHarness) (ports.Reviewer, 
 	return f.reviewer, f.ok
 }
 
+type fakeAgentAuthResolver struct {
+	status ports.AgentAuthStatus
+	ok     bool
+	err    error
+}
+
+func (f fakeAgentAuthResolver) AuthStatus(context.Context, domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error) {
+	return f.status, f.ok, f.err
+}
+
 type fakeRuntime struct {
 	createCfg     ports.RuntimeConfig
 	sentMsg       string
@@ -528,6 +538,39 @@ func TestLauncherPreflightResolvesAdapter(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("adapter compatibility preflight was not called")
+	}
+}
+
+func TestLauncherPreflightUsesAgentAuthCatalogForReviewerAuth(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{
+		Argv: []string{"go"},
+		Preflight: func(context.Context, string) error {
+			return errors.New("reviewer auth failed: please login")
+		},
+	}
+	l := NewLauncher(
+		fakeReviewerResolver{reviewer: reviewer, ok: true},
+		&fakeRuntime{},
+		"",
+		WithAgentAuth(fakeAgentAuthResolver{status: ports.AgentAuthStatusAuthorized, ok: true}),
+	)
+
+	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+}
+
+func TestLauncherPreflightAgentAuthUnauthorizedBlocksReviewer(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{Argv: []string{"go"}}
+	l := NewLauncher(
+		fakeReviewerResolver{reviewer: reviewer, ok: true},
+		&fakeRuntime{},
+		"",
+		WithAgentAuth(fakeAgentAuthResolver{status: ports.AgentAuthStatusUnauthorized, ok: true}),
+	)
+
+	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err == nil || !strings.Contains(err.Error(), "agent auth catalog") {
+		t.Fatalf("err = %v, want agent auth catalog failure", err)
 	}
 }
 

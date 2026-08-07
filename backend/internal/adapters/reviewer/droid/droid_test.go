@@ -14,8 +14,12 @@ import (
 
 func TestReviewCommandUsesAutonomousInteractiveSettings(t *testing.T) {
 	r := &Reviewer{resolveBinary: func(context.Context) (string, error) { return "/opt/droid", nil }}
+	if r.ReviewProcessReusable() {
+		t.Fatal("Droid reviewer tasks must launch fresh with their initial prompt")
+	}
 	root := t.TempDir()
 	inv := ports.ReviewInvocation{
+		WorkspacePath:  "/workspace/pr",
 		TaskPromptRoot: root, SystemPromptFile: filepath.Join(root, "system.md"), Prompt: "Read task.",
 	}
 	spec, err := r.ReviewCommand(context.Background(), inv)
@@ -23,8 +27,8 @@ func TestReviewCommandUsesAutonomousInteractiveSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	settingsPath := filepath.Join(root, settingsFilename)
-	want := []string{"/opt/droid", "--settings", settingsPath, "--append-system-prompt-file", inv.SystemPromptFile}
-	if !slices.Equal(spec.Argv, want) || spec.InitialMessage != inv.Prompt {
+	want := []string{"/opt/droid", "--settings", settingsPath, "--append-system-prompt-file", inv.SystemPromptFile, "--cwd", inv.WorkspacePath, inv.Prompt}
+	if !slices.Equal(spec.Argv, want) || spec.InitialMessage != "" {
 		t.Fatalf("spec = %#v, want argv %#v", spec, want)
 	}
 	raw, err := os.ReadFile(settingsPath)

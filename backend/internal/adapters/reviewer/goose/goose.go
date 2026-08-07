@@ -65,9 +65,13 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return HarnessID }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerReusePolicy = (*Reviewer)(nil)
 
 // ReviewCommand launches Goose's normal interactive run mode with AO-owned CLI
-// state. Host tools, inherited credentials, and network remain host-trusted.
+// state. The first review task is passed as Goose's native instructions file so
+// AO never has to type a backtick-wrapped task path into a pane that may have
+// fallen back to the user's shell. Host tools, inherited credentials, and
+// network remain host-trusted.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ReviewCommandSpec{}, err
@@ -79,6 +83,9 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if strings.TrimSpace(inv.TaskPromptRoot) == "" {
 		return ports.ReviewCommandSpec{Argv: []string{binary}}, nil
 	}
+	if strings.TrimSpace(inv.TaskPromptFile) == "" {
+		return ports.ReviewCommandSpec{}, errors.New("goose reviewer: task prompt file is required")
+	}
 	if !filepath.IsAbs(binary) {
 		return ports.ReviewCommandSpec{}, errors.New("goose reviewer: resolved binary must be absolute")
 	}
@@ -86,16 +93,16 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, fmt.Errorf("goose reviewer: prepare AO-owned profile: %w", err)
 	}
-	env := profile.TUIEnvironment()
-	env["AO_DATA_DIR"] = profile.DataDir
-	if err := seedHostGooseConfig(profile.ConfigRoot); err != nil {
-		return ports.ReviewCommandSpec{}, err
+	env := hostGooseEnvironment(profile)
+	if strings.TrimSpace(os.Getenv("ZHIPU_API_KEY")) == "" {
+		if value := strings.TrimSpace(os.Getenv("ZHIPUAI_API_KEY")); value != "" {
+			env["ZHIPU_API_KEY"] = value
+		}
 	}
 	for key, value := range map[string]string{
 		"CONTEXT_FILE_NAMES":           "[]",
 		"GOOSE_DISABLE_SESSION_NAMING": "true",
 		"GOOSE_MODE":                   "smart_approve",
-		"GOOSE_PATH_ROOT":              profile.StateRoot,
 		"GOOSE_TELEMETRY_OFF":          "1",
 	} {
 		env[key] = value
@@ -107,9 +114,8 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		return ports.ReviewCommandSpec{}, err
 	}
 	return ports.ReviewCommandSpec{
-		Argv:             []string{binary, "run", "-t", "", "--interactive"},
+		Argv:             []string{binary, "run", "--instructions", inv.TaskPromptFile, "--interactive"},
 		Env:              env,
-		InitialMessage:   inv.Prompt,
 		WorkingDirectory: inv.WorkspacePath,
 	}, nil
 }
@@ -120,6 +126,11 @@ func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInv
 	cmd, err := r.ReviewCommand(ctx, inv)
 	return cmd, true, err
 }
+
+// ReviewProcessReusable returns false because Goose reviewer tasks are supplied
+// as launch-time instruction files. A new review task needs a fresh process
+// with a fresh immutable task file, not a message typed into an old pane.
+func (*Reviewer) ReviewProcessReusable() bool { return false }
 
 // ReviewPreflight verifies that the Goose executable is available. The pinned
 // CLI probe runs later with AO-owned state roots in ReviewCommand.
@@ -159,12 +170,16 @@ func seedHostGooseConfig(configRoot string) error {
 		if err != nil {
 			return fmt.Errorf("goose reviewer: read host config: %w", err)
 		}
-		dstDir := filepath.Join(configRoot, "goose")
-		if err := os.MkdirAll(dstDir, 0o700); err != nil {
-			return fmt.Errorf("goose reviewer: create private config dir: %w", err)
-		}
-		if err := os.WriteFile(filepath.Join(dstDir, "config.yaml"), data, 0o600); err != nil {
-			return fmt.Errorf("goose reviewer: write private config: %w", err)
+		for _, dstDir := range []string{
+			filepath.Join(configRoot, "goose"),
+			filepath.Join(configRoot, ".config", "goose"),
+		} {
+			if err := os.MkdirAll(dstDir, 0o700); err != nil {
+				return fmt.Errorf("goose reviewer: create private config dir: %w", err)
+			}
+			if err := os.WriteFile(filepath.Join(dstDir, "config.yaml"), data, 0o600); err != nil {
+				return fmt.Errorf("goose reviewer: write private config: %w", err)
+			}
 		}
 		return nil
 	}
@@ -211,6 +226,35 @@ func (*Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (s
 // active turn; AO must not send a second interrupt that could exit the TUI.
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
 	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 1}, nil
+}
+
+func hostGooseEnvironment(profile reviewgateway.Environment) map[string]string {
+	env := map[string]string{
+		"AO_DATA_DIR": profile.DataDir,
+		"TMPDIR":      profile.TempRoot,
+	}
+	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
+		env["HOME"] = home
+		setDefaultEnv(env, "XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+		setDefaultEnv(env, "XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+		setDefaultEnv(env, "XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+		setDefaultEnv(env, "XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	}
+	for _, key := range []string{"XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			env[key] = value
+		}
+	}
+	return env
+}
+
+func setDefaultEnv(env map[string]string, key, value string) {
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	if _, ok := env[key]; !ok {
+		env[key] = value
+	}
 }
 
 // containedProcessSpec is the future OCI supervisor contract. Environment is

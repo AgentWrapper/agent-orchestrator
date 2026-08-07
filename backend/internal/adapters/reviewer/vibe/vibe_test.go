@@ -47,12 +47,16 @@ func invocation(t *testing.T) ports.ReviewInvocation {
 
 func TestReviewCommandLaunchesHostTrustedPlanTUI(t *testing.T) {
 	inv := invocation(t)
-	spec, err := testReviewer(t, "vibe 2.23.2", strings.Join(requiredFlags, "\n")).ReviewCommand(context.Background(), inv)
+	r := testReviewer(t, "vibe 2.23.2", strings.Join(requiredFlags, "\n"))
+	if r.ReviewProcessReusable() {
+		t.Fatal("Vibe reviewer tasks must launch fresh with their initial prompt")
+	}
+	spec, err := r.ReviewCommand(context.Background(), inv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/opt/vibe/bin/vibe", "--trust", "--workdir", inv.WorkspacePath, "--add-dir", inv.TaskPromptRoot, "--agent", "plan"}
-	if !reflect.DeepEqual(spec.Argv, want) || spec.InitialMessage != inv.Prompt || spec.WorkingDirectory != inv.WorkspacePath {
+	want := []string{"/opt/vibe/bin/vibe", "--trust", "--workdir", inv.WorkspacePath, "--add-dir", inv.TaskPromptRoot, "--agent", "plan", inv.Prompt}
+	if !reflect.DeepEqual(spec.Argv, want) || spec.InitialMessage != "" || spec.WorkingDirectory != inv.WorkspacePath {
 		t.Fatalf("ReviewCommand spec = %+v, want argv %#v", spec, want)
 	}
 	if spec.Env["VIBE_HOME"] != filepath.Join(inv.DataDir, "reviewer-runtime", inv.ReviewerID, "config") || spec.Env["AO_DATA_DIR"] != inv.DataDir {
@@ -209,14 +213,16 @@ func TestContainedInteractiveSpecModelsShellEditorAndApprovalToggleRisks(t *test
 	}
 }
 
-func TestCompatibilityProbeAcceptsPinnedVibe2232AndInteractiveFlags(t *testing.T) {
+func TestCompatibilityProbeAcceptsMinimumVibe2232AndInteractiveFlags(t *testing.T) {
 	help := strings.Join(requiredFlags, "\n")
-	if err := testReviewer(t, "vibe 2.23.2\n", help).verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", map[string]string{"HOME": "/ao/profile"}); err != nil {
-		t.Fatalf("verifyCompatibility: %v", err)
+	for _, version := range []string{"vibe 2.23.2\n", "vibe 2.24.0"} {
+		if err := testReviewer(t, version, help).verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", map[string]string{"HOME": "/ao/profile"}); err != nil {
+			t.Fatalf("version %q verifyCompatibility: %v", version, err)
+		}
 	}
-	for _, version := range []string{"vibe 2.23.1", "vibe 2.24.0", "vibe unknown"} {
+	for _, version := range []string{"vibe 2.23.1", "vibe unknown"} {
 		if err := testReviewer(t, version, help).verifyCompatibility(context.Background(), "/opt/vibe/bin/vibe", nil); err == nil || !strings.Contains(err.Error(), pinnedVersion) {
-			t.Fatalf("version %q err = %v, want pinned-version rejection", version, err)
+			t.Fatalf("version %q err = %v, want minimum-version rejection", version, err)
 		}
 	}
 	missing := testReviewer(t, "vibe 2.23.2", strings.Replace(help, "--workdir", "", 1))

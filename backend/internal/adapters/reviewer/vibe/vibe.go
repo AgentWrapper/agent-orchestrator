@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	agentvibe "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/vibe"
@@ -75,6 +76,7 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return HarnessID }
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerReusePolicy = (*Reviewer)(nil)
 
 // ReviewCommand launches Vibe's persistent plan-agent TUI over the worker
 // checkout. The profile and terminal escape surfaces remain host-trusted.
@@ -113,7 +115,10 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 		argv = append(argv, "--add-dir", inv.TaskPromptRoot)
 	}
 	argv = append(argv, "--agent", reviewerAgent)
-	return ports.ReviewCommandSpec{Argv: argv, Env: envVars, InitialMessage: inv.Prompt, WorkingDirectory: inv.WorkspacePath}, nil
+	if strings.TrimSpace(inv.Prompt) != "" {
+		argv = append(argv, inv.Prompt)
+	}
+	return ports.ReviewCommandSpec{Argv: argv, Env: envVars, WorkingDirectory: inv.WorkspacePath}, nil
 }
 
 // ReviewRestoreCommand restores a recorded Vibe reviewer pane by relaunching
@@ -122,6 +127,11 @@ func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInv
 	cmd, err := r.ReviewCommand(ctx, inv)
 	return cmd, true, err
 }
+
+// ReviewProcessReusable returns false because Vibe reviewer tasks are supplied
+// as the launch-time prompt. A later task must start a fresh process instead of
+// relying on typed injection into an old TUI.
+func (*Reviewer) ReviewProcessReusable() bool { return false }
 
 // ReviewPreflight verifies that the Vibe executable is available. The pinned
 // CLI probe runs later with AO-owned state roots in ReviewCommand.
@@ -135,8 +145,8 @@ func (r *Reviewer) verifyCompatibility(ctx context.Context, binary string, env m
 	if err != nil {
 		return fmt.Errorf("run vibe --version: %w", err)
 	}
-	if !isPinnedVersion(string(version)) {
-		return fmt.Errorf("installed Vibe %q is incompatible: exactly version %s is required", strings.TrimSpace(string(version)), pinnedVersion)
+	if !isSupportedVersion(string(version)) {
+		return fmt.Errorf("installed Vibe %q is incompatible: version %s or newer is required", strings.TrimSpace(string(version)), pinnedVersion)
 	}
 	help, err := r.run(ctx, env, binary, "--help")
 	if err != nil {
@@ -285,6 +295,39 @@ func (r *Reviewer) prepareNeutralEnvironment(reviewerID string) (string, map[str
 	return workingDir, env, nil
 }
 
-func isPinnedVersion(output string) bool {
-	return strings.TrimSpace(output) == "vibe "+pinnedVersion
+func isSupportedVersion(output string) bool {
+	version := strings.TrimPrefix(strings.TrimSpace(output), "vibe ")
+	got, ok := parseVersion(version)
+	if !ok {
+		return false
+	}
+	minimum, ok := parseVersion(pinnedVersion)
+	if !ok {
+		return false
+	}
+	for i := range minimum {
+		if got[i] > minimum[i] {
+			return true
+		}
+		if got[i] < minimum[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func parseVersion(version string) ([3]int, bool) {
+	var result [3]int
+	parts := strings.Split(version, ".")
+	if len(parts) != len(result) {
+		return result, false
+	}
+	for i, part := range parts {
+		value, err := strconv.Atoi(part)
+		if err != nil {
+			return result, false
+		}
+		result[i] = value
+	}
+	return result, true
 }

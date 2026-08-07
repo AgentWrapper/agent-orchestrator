@@ -107,7 +107,7 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		return ports.ReviewCommandSpec{}, fmt.Errorf("create Pi reviewer session directory: %w", err)
 	}
-	manifestPointer, err := activateManifest(inv)
+	reviewEnv, manifestPointer, err := activateManifest(inv)
 	if err != nil {
 		return ports.ReviewCommandSpec{}, fmt.Errorf("prepare Pi reviewer manifest: %w", err)
 	}
@@ -132,15 +132,12 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if inv.Prompt != "" {
 		argv = append(argv, inv.Prompt)
 	}
-	return ports.ReviewCommandSpec{
-		Argv: argv,
-		Env: map[string]string{
-			"AO_PI_REVIEW_WORKSPACE":        inv.WorkspacePath,
-			"AO_PI_REVIEW_PROMPT_ROOT":      inv.TaskPromptRoot,
-			"AO_PI_REVIEW_SESSION":          string(inv.WorkerSessionID),
-			"AO_PI_REVIEW_MANIFEST_POINTER": manifestPointer,
-		},
-	}, nil
+	envVars := reviewEnv.TUIEnvironment()
+	envVars["AO_PI_REVIEW_WORKSPACE"] = inv.WorkspacePath
+	envVars["AO_PI_REVIEW_PROMPT_ROOT"] = inv.TaskPromptRoot
+	envVars["AO_PI_REVIEW_SESSION"] = string(inv.WorkerSessionID)
+	envVars["AO_PI_REVIEW_MANIFEST_POINTER"] = manifestPointer
+	return ports.ReviewCommandSpec{Argv: argv, Env: envVars}, nil
 }
 
 // ReviewRestoreCommand restores a recorded Pi reviewer pane by relaunching with
@@ -155,13 +152,13 @@ func (*Reviewer) ReviewMessage(ctx context.Context, inv ports.ReviewInvocation) 
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if _, err := activateManifest(inv); err != nil {
+	if _, _, err := activateManifest(inv); err != nil {
 		return "", fmt.Errorf("prepare Pi reviewer manifest: %w", err)
 	}
 	return inv.Prompt, nil
 }
 
-func activateManifest(inv ports.ReviewInvocation) (string, error) {
+func activateManifest(inv ports.ReviewInvocation) (reviewgateway.Environment, string, error) {
 	tasks := inv.ReviewQueue
 	if len(tasks) == 0 {
 		tasks = []ports.ReviewTask{{RunID: inv.RunID, PRURL: inv.PRURL, TargetSHA: inv.TargetSHA}}
@@ -179,13 +176,13 @@ func activateManifest(inv ports.ReviewInvocation) (string, error) {
 		Tasks: manifestTasks,
 	})
 	if err != nil {
-		return "", err
+		return reviewgateway.Environment{}, "", err
 	}
 	pointerPath := filepath.Join(env.Root, manifestPointerFilename)
 	if err := hookutil.AtomicWriteFile(pointerPath, []byte(env.ManifestPath+"\n"), 0o600); err != nil {
-		return "", fmt.Errorf("write active manifest pointer: %w", err)
+		return reviewgateway.Environment{}, "", fmt.Errorf("write active manifest pointer: %w", err)
 	}
-	return pointerPath, nil
+	return env, pointerPath, nil
 }
 
 // ReviewCancel selects Pi's official interactive Escape cancellation key.

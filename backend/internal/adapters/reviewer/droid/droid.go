@@ -41,6 +41,7 @@ func (*Reviewer) Harness() domain.ReviewerHarness { return domain.ReviewerDroid 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 var _ ports.ReviewerPromptReadinessProvider = (*Reviewer)(nil)
+var _ ports.ReviewerReusePolicy = (*Reviewer)(nil)
 
 // ReviewCommand starts only Droid's normal interactive TUI. It never uses
 // `droid exec`, output formats, prompt files, or unsafe permission bypasses.
@@ -68,9 +69,14 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if strings.TrimSpace(inv.SystemPromptFile) != "" {
 		argv = append(argv, "--append-system-prompt-file", inv.SystemPromptFile)
 	}
+	if strings.TrimSpace(inv.WorkspacePath) != "" {
+		argv = append(argv, "--cwd", inv.WorkspacePath)
+	}
+	if strings.TrimSpace(inv.Prompt) != "" {
+		argv = append(argv, inv.Prompt)
+	}
 	return ports.ReviewCommandSpec{
-		Argv:           argv,
-		InitialMessage: inv.Prompt,
+		Argv: argv,
 	}, nil
 }
 
@@ -80,6 +86,11 @@ func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInv
 	cmd, err := r.ReviewCommand(ctx, inv)
 	return cmd, true, err
 }
+
+// ReviewProcessReusable returns false because Droid reviewer tasks are supplied
+// as the launch-time prompt. A later task must start a fresh process instead of
+// relying on typed injection into an old TUI.
+func (*Reviewer) ReviewProcessReusable() bool { return false }
 
 // ReviewPromptReadinessHints gives Droid's startup screen enough time to accept
 // pasted task input before AO submits the initial review reference.

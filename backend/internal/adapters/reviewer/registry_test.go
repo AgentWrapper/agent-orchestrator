@@ -19,7 +19,10 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 	oneShotReviewers := map[domain.ReviewerHarness]bool{
 		domain.ReviewerAider:  true,
 		domain.ReviewerAuggie: true,
+		domain.ReviewerDroid:  true,
+		domain.ReviewerGoose:  true,
 		domain.ReviewerQwen:   true,
+		domain.ReviewerVibe:   true,
 	}
 	for _, a := range Constructors() {
 		h := a.Harness()

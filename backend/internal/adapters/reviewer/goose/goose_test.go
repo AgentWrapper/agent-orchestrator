@@ -87,41 +87,68 @@ func testReviewer(t *testing.T, version, help string) (*Reviewer, *[][]string) {
 func TestReviewCommandLaunchesHostTrustedInteractiveRun(t *testing.T) {
 	r, _ := testReviewer(t, pinnedVersion, pinnedSessionHelp)
 	dataDir := t.TempDir()
+	hostHome := t.TempDir()
+	t.Setenv("HOME", hostHome)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("XDG_CACHE_HOME", "")
+	taskPromptFile := "/host/ao/prompts/reviewer/requests/batch-1/run-1/task.md"
 	spec, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
 		DataDir:          dataDir,
 		ReviewerID:       "review-worker-1",
 		WorkspacePath:    "/host/worktree",
 		TaskPromptRoot:   "/host/ao/prompts/reviewer",
+		TaskPromptFile:   taskPromptFile,
 		SystemPromptFile: "/host/ao/prompts/reviewer/system.md",
 		Prompt:           "Read AO task ref 4f09.",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/opt/ao/bin/goose", "run", "-t", "", "--interactive"}
-	if !reflect.DeepEqual(spec.Argv, want) || spec.InitialMessage != "Read AO task ref 4f09." || spec.WorkingDirectory != "/host/worktree" {
+	want := []string{"/opt/ao/bin/goose", "run", "--instructions", taskPromptFile, "--interactive"}
+	if !reflect.DeepEqual(spec.Argv, want) || spec.InitialMessage != "" || spec.WorkingDirectory != "/host/worktree" {
 		t.Fatalf("ReviewCommand spec = %+v", spec)
 	}
 	if spec.Env["GOOSE_MODE"] != "smart_approve" || spec.Env["GOOSE_SYSTEM_PROMPT_FILE_PATH"] != "/host/ao/prompts/reviewer/system.md" {
 		t.Fatalf("ReviewCommand env = %#v", spec.Env)
 	}
-	if spec.Env["HOME"] != filepath.Join(dataDir, "reviewer-runtime", "review-worker-1", "config") || spec.Env["GOOSE_PATH_ROOT"] != filepath.Join(dataDir, "reviewer-runtime", "review-worker-1", "state") {
-		t.Fatalf("AO-owned Goose profile = %#v", spec.Env)
+	if spec.Env["HOME"] != hostHome || spec.Env["XDG_CONFIG_HOME"] != filepath.Join(hostHome, ".config") || spec.Env["XDG_DATA_HOME"] != filepath.Join(hostHome, ".local", "share") || spec.Env["XDG_STATE_HOME"] != filepath.Join(hostHome, ".local", "state") {
+		t.Fatalf("host Goose profile = %#v", spec.Env)
+	}
+	if spec.Env["TMPDIR"] != filepath.Join(dataDir, "reviewer-runtime", "review-worker-1", "tmp") {
+		t.Fatalf("reviewer temp dir = %#v", spec.Env)
+	}
+	if _, ok := spec.Env["GOOSE_PATH_ROOT"]; ok {
+		t.Fatalf("GOOSE_PATH_ROOT should not override host Goose state: %#v", spec.Env)
 	}
 }
 
-func TestReviewCommandSeedsPrivateProfileFromHostConfig(t *testing.T) {
+func TestReviewCommandRejectsMissingTaskPromptFile(t *testing.T) {
+	r, _ := testReviewer(t, pinnedVersion, pinnedSessionHelp)
+	_, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
+		DataDir:        t.TempDir(),
+		ReviewerID:     "review-worker-1",
+		WorkspacePath:  "/host/worktree",
+		TaskPromptRoot: "/host/ao/prompts/reviewer",
+		Prompt:         "Read AO task ref 4f09.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "task prompt file") {
+		t.Fatalf("ReviewCommand error = %v, want task prompt file", err)
+	}
+}
+
+func TestReviewCommandPreservesExplicitHostGooseXDGProfile(t *testing.T) {
 	hostHome := t.TempDir()
+	hostConfig := t.TempDir()
+	hostData := t.TempDir()
+	hostState := t.TempDir()
+	hostCache := t.TempDir()
 	t.Setenv("HOME", hostHome)
-	t.Setenv("XDG_CONFIG_HOME", "")
-	hostConfig := filepath.Join(hostHome, ".config", "goose", "config.yaml")
-	if err := os.MkdirAll(filepath.Dir(hostConfig), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	config := []byte("providers:\n  openrouter:\n    configured: true\n    model: anthropic/claude-sonnet-4\n")
-	if err := os.WriteFile(hostConfig, config, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	t.Setenv("XDG_CONFIG_HOME", hostConfig)
+	t.Setenv("XDG_DATA_HOME", hostData)
+	t.Setenv("XDG_STATE_HOME", hostState)
+	t.Setenv("XDG_CACHE_HOME", hostCache)
 	r, _ := testReviewer(t, pinnedVersion, pinnedSessionHelp)
 	dataDir := t.TempDir()
 
@@ -130,26 +157,37 @@ func TestReviewCommandSeedsPrivateProfileFromHostConfig(t *testing.T) {
 		ReviewerID:     "review-worker-1",
 		WorkspacePath:  "/host/worktree",
 		TaskPromptRoot: "/host/ao/prompts/reviewer",
+		TaskPromptFile: "/host/ao/prompts/reviewer/requests/batch-1/run-1/task.md",
 		Prompt:         "Read AO task ref 4f09.",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	copied := filepath.Join(spec.Env["XDG_CONFIG_HOME"], "goose", "config.yaml")
-	data, err := os.ReadFile(copied)
-	if err != nil {
-		t.Fatalf("read copied config: %v", err)
+	if spec.Env["HOME"] != hostHome || spec.Env["XDG_CONFIG_HOME"] != hostConfig || spec.Env["XDG_DATA_HOME"] != hostData || spec.Env["XDG_STATE_HOME"] != hostState || spec.Env["XDG_CACHE_HOME"] != hostCache {
+		t.Fatalf("ReviewCommand env = %#v", spec.Env)
 	}
-	if string(data) != string(config) {
-		t.Fatalf("copied config = %q", string(data))
+}
+
+func TestReviewCommandAliasesZhipuAPIKeyForGooseProvider(t *testing.T) {
+	t.Setenv("ZHIPUAI_API_KEY", "host-key")
+	t.Setenv("ZHIPU_API_KEY", "")
+	inv := ports.ReviewInvocation{
+		DataDir:        t.TempDir(),
+		ReviewerID:     "review-worker-1",
+		WorkspacePath:  "/host/worktree",
+		TaskPromptRoot: "/host/ao/prompts/reviewer",
+		TaskPromptFile: "/host/ao/prompts/reviewer/requests/batch-1/run-1/task.md",
+		Prompt:         "Read AO task ref 4f09.",
 	}
-	info, err := os.Stat(copied)
+
+	r, _ := testReviewer(t, pinnedVersion, pinnedSessionHelp)
+	spec, err := r.ReviewCommand(context.Background(), inv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("copied config mode = %o, want 600", info.Mode().Perm())
+	if spec.Env["ZHIPU_API_KEY"] != "host-key" {
+		t.Fatalf("ZHIPU_API_KEY = %q, want alias from ZHIPUAI_API_KEY", spec.Env["ZHIPU_API_KEY"])
 	}
 }
 
@@ -299,6 +337,9 @@ func TestReplacementEnvironmentBlocksHostProfileCredentialsAndDiscovery(t *testi
 
 func TestReviewMessageReusesLiveProcessAndCancelIsOneCtrlC(t *testing.T) {
 	r := New()
+	if r.ReviewProcessReusable() {
+		t.Fatal("Goose reviewer tasks must launch fresh with their task file")
+	}
 	message, err := r.ReviewMessage(context.Background(), ports.ReviewInvocation{Prompt: "opaque-task-ref-2"})
 	if err != nil || message != "opaque-task-ref-2" {
 		t.Fatalf("ReviewMessage = %q, %v", message, err)

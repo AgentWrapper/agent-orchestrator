@@ -80,6 +80,7 @@ type agentLauncher struct {
 	reviewers ports.ReviewerResolver
 	runtime   reviewerRuntime
 	dataDir   string
+	auth      agentAuthResolver
 }
 
 type preLaunchReviewer interface {
@@ -90,9 +91,29 @@ type preflightReviewer interface {
 	ReviewPreflight(ctx context.Context, workspacePath string) error
 }
 
+type agentAuthResolver interface {
+	AuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error)
+}
+
+// LauncherOption configures reviewer launcher behavior.
+type LauncherOption func(*agentLauncher)
+
+// WithAgentAuth lets reviewer preflight reuse the agent auth catalog for the
+// same harness. Reviewer-specific auth probes must not be stricter than the
+// normal agent's local auth status.
+func WithAgentAuth(auth agentAuthResolver) LauncherOption {
+	return func(l *agentLauncher) {
+		l.auth = auth
+	}
+}
+
 // NewLauncher builds the production reviewer launcher.
-func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime, dataDir string) Launcher {
-	return &agentLauncher{reviewers: reviewers, runtime: runtime, dataDir: dataDir}
+func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime, dataDir string, opts ...LauncherOption) Launcher {
+	l := &agentLauncher{reviewers: reviewers, runtime: runtime, dataDir: dataDir}
+	for _, opt := range opts {
+		opt(l)
+	}
+	return l
 }
 
 // Preflight checks whether the reviewer for the given harness can be launched
@@ -127,12 +148,43 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 	if _, err := exec.LookPath(bin); err != nil {
 		return fmt.Errorf("reviewer binary %q not found: %w", bin, err)
 	}
+	authStatus, authKnown, err := l.agentAuthStatus(ctx, harness)
+	if err != nil {
+		return err
+	}
+	if authKnown && authStatus == ports.AgentAuthStatusUnauthorized {
+		return fmt.Errorf("agent auth catalog reports reviewer harness %q is unauthorized", harness)
+	}
 	if pf, ok := reviewer.(preflightReviewer); ok {
 		if err := pf.ReviewPreflight(ctx, workspacePath); err != nil {
+			if authKnown && authStatus == ports.AgentAuthStatusAuthorized && looksLikeAuthFailure(err) {
+				return nil
+			}
 			return err
 		}
 	}
 	return nil
+}
+
+func (l *agentLauncher) agentAuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error) {
+	if l.auth == nil {
+		return "", false, nil
+	}
+	status, ok, err := l.auth.AuthStatus(ctx, harness)
+	if err != nil {
+		return "", false, fmt.Errorf("agent auth catalog for reviewer harness %q: %w", harness, err)
+	}
+	return status, ok, nil
+}
+
+func looksLikeAuthFailure(err error) bool {
+	msg := strings.ToLower(err.Error())
+	for _, token := range []string{"auth", "login", "logged in", "credential", "token", "api key", "unauthor"} {
+		if strings.Contains(msg, token) {
+			return true
+		}
+	}
+	return false
 }
 
 // reviewerHandleID is the stable runtime handle for a worker's reviewer pane, so

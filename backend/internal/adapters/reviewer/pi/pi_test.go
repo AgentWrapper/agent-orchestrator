@@ -123,6 +123,14 @@ func TestReviewCommandIsInteractiveAndIsolated(t *testing.T) {
 	if spec.Env["AO_PI_REVIEW_SESSION"] != "worker-1" || spec.Env["AO_PI_REVIEW_PROMPT_ROOT"] != inv.TaskPromptRoot || spec.Env["AO_PI_REVIEW_MANIFEST_POINTER"] == "" {
 		t.Fatalf("env = %#v", spec.Env)
 	}
+	wantProfileRoot := filepath.Join(inv.DataDir, "reviewer-runtime", inv.ReviewerID)
+	if spec.Env["HOME"] != filepath.Join(wantProfileRoot, "config") ||
+		spec.Env["XDG_CONFIG_HOME"] != filepath.Join(wantProfileRoot, "config") ||
+		spec.Env["XDG_STATE_HOME"] != filepath.Join(wantProfileRoot, "state") ||
+		spec.Env["XDG_CACHE_HOME"] != filepath.Join(wantProfileRoot, "cache") ||
+		spec.Env["TMPDIR"] != filepath.Join(wantProfileRoot, "tmp") {
+		t.Fatalf("Pi reviewer must use AO-owned profile roots, env = %#v", spec.Env)
+	}
 	manifest := readActiveManifest(t, spec.Env["AO_PI_REVIEW_MANIFEST_POINTER"])
 	if len(manifest.Tasks) != 1 || manifest.Tasks[0].RunID != inv.RunID || manifest.Tasks[0].PRURL != inv.PRURL || manifest.Tasks[0].TargetSHA != inv.TargetSHA {
 		t.Fatalf("active manifest = %+v", manifest)
