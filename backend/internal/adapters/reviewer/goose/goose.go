@@ -158,56 +158,6 @@ func (r *Reviewer) verifyCompatibility(ctx context.Context, binary string, env m
 	return nil
 }
 
-func seedHostGooseConfig(configRoot string) error {
-	if strings.TrimSpace(configRoot) == "" {
-		return nil
-	}
-	for _, src := range hostGooseConfigPaths() {
-		data, err := os.ReadFile(src)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return fmt.Errorf("goose reviewer: read host config: %w", err)
-		}
-		for _, dstDir := range []string{
-			filepath.Join(configRoot, "goose"),
-			filepath.Join(configRoot, ".config", "goose"),
-		} {
-			if err := os.MkdirAll(dstDir, 0o700); err != nil {
-				return fmt.Errorf("goose reviewer: create private config dir: %w", err)
-			}
-			if err := os.WriteFile(filepath.Join(dstDir, "config.yaml"), data, 0o600); err != nil {
-				return fmt.Errorf("goose reviewer: write private config: %w", err)
-			}
-		}
-		return nil
-	}
-	return nil
-}
-
-func hostGooseConfigPaths() []string {
-	seen := map[string]struct{}{}
-	paths := []string{}
-	add := func(path string) {
-		if strings.TrimSpace(path) == "" {
-			return
-		}
-		if _, ok := seen[path]; ok {
-			return
-		}
-		seen[path] = struct{}{}
-		paths = append(paths, path)
-	}
-	if xdg := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); xdg != "" {
-		add(filepath.Join(xdg, "goose", "config.yaml"))
-	}
-	if home, err := os.UserHomeDir(); err == nil && strings.TrimSpace(home) != "" {
-		add(filepath.Join(home, ".config", "goose", "config.yaml"))
-	}
-	return paths
-}
-
 func appendEnvironment(base []string, overrides map[string]string) []string {
 	result := append([]string(nil), base...)
 	for key, value := range overrides {

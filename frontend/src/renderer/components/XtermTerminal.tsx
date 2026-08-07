@@ -183,6 +183,9 @@ function terminalHasFocus(host: HTMLElement): boolean {
 type XtermInternal = Terminal & {
 	_core?: {
 		element?: HTMLElement;
+		viewport?: {
+			scrollBarWidth: number;
+		};
 		_selectionService?: {
 			enable: () => void;
 			shouldForceSelection: (event: MouseEvent) => boolean;
@@ -248,6 +251,11 @@ function forceSelectionMode(term: Terminal): void {
 	selectionService.shouldForceSelection = () => true;
 	selectionService.enable();
 	element.classList.remove("enable-mouse-events");
+}
+
+function removeHiddenScrollbarReservation(term: Terminal): void {
+	const viewport = (term as XtermInternal)._core?.viewport;
+	if (viewport) viewport.scrollBarWidth = 0;
 }
 
 export function XtermTerminal(props: XtermTerminalProps) {
@@ -363,7 +371,7 @@ export function XtermTerminal(props: XtermTerminalProps) {
 				// rely on the terminal's scrollback (codex, a plain shell). Keep it > 0
 				// so that history survives to be scrolled locally (see the wheel
 				// handler's normal-buffer branch). The scrollbar itself is hidden in
-				// CSS so FitAddon's ~14px reservation doesn't shift the grid.
+				// CSS; its matching FitAddon reservation is removed after open() below.
 				scrollback: 5000,
 				theme: props.theme === "dark" ? dark : light,
 			});
@@ -395,6 +403,11 @@ export function XtermTerminal(props: XtermTerminalProps) {
 		if (import.meta.env.DEV) {
 			(host as DevXtermHost).__aoXtermForTest = term;
 		}
+		// xterm reserves a 15px fallback for macOS overlay scrollbars even when CSS
+		// hides the scrollbar entirely. FitAddon subtracts that private value from
+		// every width proposal, leaving a conspicuous empty strip on the right. The
+		// viewport still scrolls normally without the invisible reservation.
+		removeHiddenScrollbarReservation(term);
 		loadRenderer(term);
 		term.options.macOptionClickForcesSelection = true;
 		forceSelectionMode(term);

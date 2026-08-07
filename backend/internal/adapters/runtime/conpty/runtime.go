@@ -198,12 +198,8 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 	return clientSendInput(sess.addr, "\x03")
 }
 
-// Escape sends the TUI Escape key without changing Interrupt's Ctrl-C contract.
-func (r *Runtime) Escape(ctx context.Context, handle ports.RuntimeHandle) error {
-	return r.SendInput(ctx, handle, "\x1b")
-}
-
-// SendInput writes raw control bytes without appending Enter.
+// SendInput writes raw terminal input without appending Enter. It is intended
+// for TUI keybindings such as Escape rather than prompt text.
 func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
 	sess := r.resolve(handle.ID)
 	if sess == nil {

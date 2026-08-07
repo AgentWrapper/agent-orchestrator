@@ -269,7 +269,7 @@ func TestSendMessage_DeliversChunkedTextAndEnter(t *testing.T) {
 	}
 }
 
-func TestEscapeDeliversEscapeByte(t *testing.T) {
+func TestSendInputDeliversEscapeByte(t *testing.T) {
 	isolateRegistry(t)
 	hosts := map[string]*inProcHost{}
 	rt := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
@@ -282,8 +282,8 @@ func TestEscapeDeliversEscapeByte(t *testing.T) {
 	h := hosts["sess-escape"]
 	defer h.cleanup(t)
 
-	if err := rt.Escape(context.Background(), handle); err != nil {
-		t.Fatalf("Escape: %v", err)
+	if err := rt.SendInput(context.Background(), handle, "\x1b"); err != nil {
+		t.Fatalf("SendInput: %v", err)
 	}
 	inputC := make(chan []byte, 1)
 	go func() {

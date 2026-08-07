@@ -40,16 +40,37 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 			t.Errorf("reviewer harness %q does not implement cancellation", h)
 		} else if spec, err := canceller.ReviewCancel(context.Background()); err != nil {
 			t.Errorf("reviewer harness %q cancel spec: %v", h, err)
-		} else if h == domain.ReviewerKiro || h == domain.ReviewerPi || h == domain.ReviewerQwen || h == domain.ReviewerContinue || h == domain.ReviewerVibe {
-			if spec.Mode != ports.ReviewCancelEscape || spec.Interrupts > 1 {
-				t.Errorf("TUI reviewer %q cancel spec = %+v, want one Escape", h, spec)
+		} else {
+			switch h {
+			case domain.ReviewerCodex, domain.ReviewerKiro, domain.ReviewerPi, domain.ReviewerQwen, domain.ReviewerContinue, domain.ReviewerVibe:
+				if spec.Mode != ports.ReviewCancelInput {
+					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInput)
+				}
+				if spec.Input != "\x1b" || len(spec.Inputs) != 0 {
+					t.Errorf("reviewer harness %q cancel input = %q inputs=%#v, want single escape", h, spec.Input, spec.Inputs)
+				}
+			case domain.ReviewerClaudeCode, domain.ReviewerOpenCode:
+				if spec.Mode != ports.ReviewCancelInput {
+					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInput)
+				}
+				if len(spec.Inputs) != 2 || spec.Inputs[0] != "\x1b" || spec.Inputs[1] != "\x1b" {
+					t.Errorf("reviewer harness %q cancel inputs = %#v, want double escape", h, spec.Inputs)
+				}
+			case domain.ReviewerAgy, domain.ReviewerGoose, domain.ReviewerDevin, domain.ReviewerDroid, domain.ReviewerKimi:
+				if spec.Mode != ports.ReviewCancelInterrupt {
+					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInterrupt)
+				}
+				if spec.Interrupts != 1 {
+					t.Errorf("reviewer harness %q cancel interrupts = %d, want 1", h, spec.Interrupts)
+				}
+			default:
+				if spec.Mode != ports.ReviewCancelInterrupt {
+					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInterrupt)
+				}
+				if spec.Interrupts != 2 {
+					t.Errorf("reviewer harness %q cancel interrupts = %d, want 2", h, spec.Interrupts)
+				}
 			}
-		} else if h == domain.ReviewerAgy || h == domain.ReviewerGoose || h == domain.ReviewerDevin || h == domain.ReviewerDroid || h == domain.ReviewerKimi {
-			if spec.Mode != ports.ReviewCancelInterrupt || spec.Interrupts != 1 {
-				t.Errorf("TUI reviewer %q cancel spec = %+v, want one interrupt", h, spec)
-			}
-		} else if spec.Mode != ports.ReviewCancelInterrupt || spec.Interrupts != 2 {
-			t.Errorf("reviewer harness %q cancel spec = %+v, want two interrupts", h, spec)
 		}
 		policy, hasPolicy := a.(ports.ReviewerReusePolicy)
 		reusable := !hasPolicy || policy.ReviewProcessReusable()

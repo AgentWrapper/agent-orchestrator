@@ -21,7 +21,18 @@ var (
 	agentAuthProbeTimeout    = 10 * time.Second
 	agentRefreshMinInterval  = 10 * time.Second
 	modelCatalogLoadTimeout  = 30 * time.Second
+	// How long a cached catalog is trusted before AO asks a cache-first client to
+	// revalidate in the background. Long, because rediscovery runs an agent CLI:
+	// this covers drift a fingerprint cannot see, not routine correctness.
+	modelCatalogTrustWindow = 6 * time.Hour
 )
+
+// catalogNeedsRevalidation reports whether a cached catalog is old enough to
+// re-check. A zero timestamp comes from a record written before validation was
+// tracked, so it counts as due.
+func catalogNeedsRevalidation(validatedAt time.Time) bool {
+	return validatedAt.IsZero() || time.Since(validatedAt) > modelCatalogTrustWindow
+}
 
 type modelLoadMode uint8
 
@@ -308,15 +319,23 @@ func (s *Service) loadModels(ctx context.Context, agentID, projectID string, mod
 			binary = resolved
 		}
 	}
-	version := s.discoverer.BinaryVersion(ctx, binary)
+	request := ports.AgentModelDiscoveryRequest{
+		AgentID: agentID, Binary: binary, WorkingDir: discovery.workingDir, Env: discovery.env,
+	}
+	// Fingerprints the same inputs the discovery run would read, so a change to
+	// either the executable or the configuration behind it invalidates the cache.
+	version := s.discoverer.CatalogFingerprint(ctx, request)
 	if hasCached && mode != modelLoadRefresh && cached.BinaryVersion == version {
-		cached.Catalog.RefreshRecommended = false
+		// A command-backed catalog can drift without the binary or its config
+		// changing (a provider adds a model), which no fingerprint can see. Ask
+		// cache-first clients to revalidate in the background once the catalog is
+		// old enough, so staleness resolves itself instead of waiting for someone
+		// to press a refresh button.
+		cached.Catalog.RefreshRecommended = catalogNeedsRevalidation(cached.Catalog.ValidatedAt)
 		return cached.Catalog, nil
 	}
 
-	discovered, discoverErr := s.discoverer.Discover(ctx, ports.AgentModelDiscoveryRequest{
-		AgentID: agentID, Binary: binary, WorkingDir: discovery.workingDir, Env: discovery.env,
-	})
+	discovered, discoverErr := s.discoverer.Discover(ctx, request)
 	discovered.BinaryVersion = version
 	discovered.ValidatedAt = time.Now().UTC()
 	discovered.RefreshRecommended = false

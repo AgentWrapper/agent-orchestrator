@@ -187,7 +187,7 @@ func activateManifest(inv ports.ReviewInvocation) (reviewgateway.Environment, st
 
 // ReviewCancel selects Pi's official interactive Escape cancellation key.
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
-	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelEscape, Interrupts: 1, Input: "\x1b"}, nil
+	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInput, Interrupts: 1, Input: "\x1b"}, nil
 }
 
 const piPolicy = `Pi reviewer security policy

@@ -203,7 +203,7 @@ func TestLiveReviewMessageReuseAndOneEscapeCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReviewCancel: %v", err)
 	}
-	if cancel.Mode != ports.ReviewCancelEscape || cancel.Interrupts != 1 || cancel.Input != "\x1b" {
+	if cancel.Mode != ports.ReviewCancelInput || cancel.Input != "\x1b" {
 		t.Fatalf("ReviewCancel = %+v, want one Escape", cancel)
 	}
 }

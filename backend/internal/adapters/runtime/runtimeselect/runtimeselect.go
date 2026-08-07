@@ -20,7 +20,6 @@ type Runtime interface {
 	ports.Runtime // Create, Destroy, IsAlive
 	ports.Attacher
 	Interrupt(ctx context.Context, handle ports.RuntimeHandle) error
-	Escape(ctx context.Context, handle ports.RuntimeHandle) error
 	SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error
 	SendMessage(ctx context.Context, handle ports.RuntimeHandle, message string) error
 	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)

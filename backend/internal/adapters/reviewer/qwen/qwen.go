@@ -119,7 +119,7 @@ func (*Reviewer) ReviewPromptReadinessHints(ctx context.Context) (ports.PromptRe
 // ReviewCancel matches the pinned Qwen TUI behavior: one Escape aborts the
 // active turn without exiting the long-lived process. Ctrl-C is a quit action.
 func (*Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
-	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelEscape, Interrupts: 1}, nil
+	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInput, Input: "\x1b"}, nil
 }
 
 func (r *Reviewer) prepareEnvironment(inv ports.ReviewInvocation) (reviewgateway.Environment, error) {

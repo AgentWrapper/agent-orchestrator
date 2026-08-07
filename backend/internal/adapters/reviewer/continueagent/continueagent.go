@@ -143,7 +143,7 @@ func (*Reviewer) ReviewCancel(ctx context.Context) (ports.ReviewCancelSpec, erro
 		return ports.ReviewCancelSpec{}, err
 	}
 	return ports.ReviewCancelSpec{
-		Mode:       ports.ReviewCancelEscape,
+		Mode:       ports.ReviewCancelInput,
 		Interrupts: 1,
 		Input:      "\x1b",
 	}, nil

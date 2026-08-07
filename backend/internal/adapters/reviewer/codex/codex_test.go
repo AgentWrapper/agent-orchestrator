@@ -9,7 +9,8 @@ import (
 )
 
 type captureAgent struct {
-	got ports.LaunchConfig
+	got        ports.LaunchConfig
+	gotRestore ports.RestoreConfig
 }
 
 func (a *captureAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -23,8 +24,13 @@ func (a *captureAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchCo
 	return ports.PromptDeliveryInCommand, nil
 }
 func (a *captureAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error { return nil }
-func (a *captureAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error) {
-	return nil, false, nil
+func (a *captureAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	a.gotRestore = cfg
+	id := cfg.Session.Metadata[ports.MetadataKeyAgentSessionID]
+	if id == "" {
+		return nil, false, nil
+	}
+	return []string{"agent", "resume", id}, true, nil
 }
 func (a *captureAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
@@ -76,6 +82,19 @@ func TestReviewMessageReturnsTaskPrompt(t *testing.T) {
 	}
 }
 
+func TestReviewCancelSendsSingleEscapeInput(t *testing.T) {
+	spec, err := (&Reviewer{}).ReviewCancel(context.Background())
+	if err != nil {
+		t.Fatalf("ReviewCancel: %v", err)
+	}
+	if spec.Mode != ports.ReviewCancelInput {
+		t.Fatalf("cancel mode = %q, want %q", spec.Mode, ports.ReviewCancelInput)
+	}
+	if spec.Input != "\x1b" || len(spec.Inputs) != 0 {
+		t.Fatalf("input = %q inputs = %#v, want single escape input", spec.Input, spec.Inputs)
+	}
+}
+
 func TestReviewCommandUsesHiddenSystemPromptFile(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
@@ -88,5 +107,39 @@ func TestReviewCommandUsesHiddenSystemPromptFile(t *testing.T) {
 	}
 	if agent.got.Prompt != "Start the AO review task." || agent.got.SystemPrompt != "" || agent.got.SystemPromptFile != "/ao/prompts/reviewer/system.md" {
 		t.Fatalf("launch config = %+v", agent.got)
+	}
+}
+
+func TestReviewRestoreCommandUsesNativeSessionIDAndReadOnlySandbox(t *testing.T) {
+	t.Setenv("AO_PORT", "3103")
+	t.Setenv("AO_DATA_DIR", "")
+	t.Setenv("AO_RUN_FILE", "")
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	got, ok, err := r.ReviewRestoreCommand(context.Background(), ports.ReviewInvocation{
+		ReviewerID:       "review-w1",
+		AgentSessionID:   "codex-native-1",
+		WorkspacePath:    "/ws/w1",
+		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+	})
+	if err != nil {
+		t.Fatalf("ReviewRestoreCommand: %v", err)
+	}
+	if !ok {
+		t.Fatal("ReviewRestoreCommand ok = false, want true")
+	}
+	want := []string{"agent", "resume", "--sandbox", "read-only", "-c", `shell_environment_policy.set.AO_PORT="3103"`, "codex-native-1"}
+	if !slices.Equal(got.Argv, want) {
+		t.Fatalf("argv = %#v, want %#v", got.Argv, want)
+	}
+	if agent.gotRestore.Session.ID != "review-w1" || agent.gotRestore.Session.WorkspacePath != "/ws/w1" {
+		t.Fatalf("restore session = %+v", agent.gotRestore.Session)
+	}
+	if agent.gotRestore.Session.Metadata[ports.MetadataKeyAgentSessionID] != "codex-native-1" {
+		t.Fatalf("restore metadata = %#v", agent.gotRestore.Session.Metadata)
+	}
+	if agent.gotRestore.Permissions != ports.PermissionModeAuto {
+		t.Fatalf("restore permissions = %q, want auto", agent.gotRestore.Permissions)
 	}
 }

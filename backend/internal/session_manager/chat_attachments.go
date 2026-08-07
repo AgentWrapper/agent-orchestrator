@@ -12,19 +12,19 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// StageAttachments writes images into a live session's worktree and returns their
+// StageAttachments writes files into a live session's worktree and returns their
 // worktree-relative paths.
 //
 // This is the spawn attachment path applied to a conversation that is already
-// running: images land in the worktree and the caller names the paths in the
+// running: files land in the worktree and the caller names the paths in the
 // message it sends, so the agent reads them off disk. It exists as its own step
-// because a chat session attaches images repeatedly over its life, while spawn
+// because a chat session attaches files repeatedly over its life, while spawn
 // does it once for the opening brief.
 //
-// Names are randomized rather than sequential. Spawn can use image-1/image-2
-// because it writes exactly once; a chat session writing image-1 on its tenth
-// message would overwrite the image it sent on its first, silently changing what an
-// earlier message in the visible timeline points at.
+// Names are randomized rather than sequential. Spawn can use attachment-1 /
+// attachment-2 because it writes exactly once; a chat session writing the same
+// name on its tenth message would overwrite the file it sent on its first,
+// silently changing what an earlier message in the visible timeline points at.
 func (m *Manager) StageAttachments(
 	ctx context.Context,
 	id domain.SessionID,
@@ -62,7 +62,7 @@ func (m *Manager) StageAttachments(
 		if err != nil {
 			return nil, fmt.Errorf("name attachment %d: %w", i+1, err)
 		}
-		name := "image-" + suffix + ext
+		name := "attachment-" + suffix + ext
 		if err := os.WriteFile(filepath.Join(dir, name), a.Data, 0o600); err != nil {
 			return nil, fmt.Errorf("write attachment %d: %w", i+1, err)
 		}

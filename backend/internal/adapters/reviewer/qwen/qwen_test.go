@@ -209,7 +209,7 @@ func TestReviewCancelUsesOneEscapeAndNeverCtrlC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if spec.Mode != ports.ReviewCancelEscape || spec.Interrupts != 1 {
+	if spec.Mode != ports.ReviewCancelInput || spec.Input != "\x1b" {
 		t.Fatalf("cancel spec = %+v, want one Escape", spec)
 	}
 }

@@ -113,7 +113,7 @@ func TestReviewMessageAndCancelUseInteractiveTUI(t *testing.T) {
 		t.Fatalf("ReviewMessage = %q, %v", msg, err)
 	}
 	cancel, err := r.ReviewCancel(context.Background())
-	if err != nil || cancel.Mode != ports.ReviewCancelEscape || cancel.Interrupts != 0 {
+	if err != nil || cancel.Mode != ports.ReviewCancelInput || cancel.Input != "\x1b" {
 		t.Fatalf("ReviewCancel = %+v, %v", cancel, err)
 	}
 }

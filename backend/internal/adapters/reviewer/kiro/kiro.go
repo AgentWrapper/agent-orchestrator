@@ -79,7 +79,7 @@ func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) 
 // ReviewCancel uses Kiro TUI's cancel-stream key. Ctrl-C is the quit binding,
 // so the shared interrupt cancellation mode is intentionally not used here.
 func (r *Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
-	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelEscape, Input: "\x1b"}, nil
+	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInput, Input: "\x1b"}, nil
 }
 
 func writeReviewerAgent(reviewerDir string, inv ports.ReviewInvocation) error {

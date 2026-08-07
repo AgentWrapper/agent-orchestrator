@@ -626,25 +626,15 @@ func (r *Runtime) Interrupt(ctx context.Context, handle ports.RuntimeHandle) err
 	return nil
 }
 
-// Escape sends the Escape key without changing Interrupt's Ctrl-C contract.
-func (r *Runtime) Escape(ctx context.Context, handle ports.RuntimeHandle) error {
-	id, err := handleID(handle)
-	if err != nil {
-		return err
-	}
-	if _, err := r.run(ctx, sendEscapeArgs(id)...); err != nil {
-		return fmt.Errorf("tmux runtime: escape session %s: %w", id, err)
-	}
-	return nil
-}
-
-// SendInput writes raw literal control bytes without appending Enter.
+// SendInput sends raw terminal input without appending Enter. It is intended
+// for TUI keybindings such as Escape rather than prompt text.
 func (r *Runtime) SendInput(ctx context.Context, handle ports.RuntimeHandle, input string) error {
 	id, err := handleID(handle)
 	if err != nil {
 		return err
 	}
-	if _, err := r.run(ctx, sendKeysLiteralArgs(id, input)...); err != nil {
+	args := sendKeysLiteralArgs(id, input)
+	if _, err := r.run(ctx, args...); err != nil {
 		return fmt.Errorf("tmux runtime: send input %s: %w", id, err)
 	}
 	return nil
