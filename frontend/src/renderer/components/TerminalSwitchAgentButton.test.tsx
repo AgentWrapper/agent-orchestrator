@@ -111,7 +111,7 @@ describe("TerminalSwitchAgentButton", () => {
 		const targetAgent = within(dialog).getByRole("combobox", { name: "Target agent" });
 		expect(targetAgent).toHaveTextContent("Codex");
 		await userEvent.click(targetAgent);
-		expect(screen.getAllByRole("option")).toHaveLength(23);
+		expect(screen.getAllByRole("option")).toHaveLength(24);
 		expect(screen.getByRole("option", { name: /Cursor,\s*Coming soon/ })).toHaveAttribute("data-disabled");
 		await userEvent.keyboard("{Escape}");
 		await userEvent.type(within(dialog).getByLabelText("Note (optional)"), "  Check tests first.  ");

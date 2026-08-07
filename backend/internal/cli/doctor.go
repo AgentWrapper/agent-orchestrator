@@ -54,14 +54,16 @@ const (
 )
 
 type harnessProbe struct {
-	Name       string
-	BinaryName string
-	VersionArg string
+	Name                  string
+	BinaryName            string
+	VersionArg            string
+	ExpectedVersionPrefix string
 }
 
 var doctorHarnesses = []harnessProbe{
 	{Name: "claude-code", BinaryName: "claude", VersionArg: "--version"},
 	{Name: "codex", BinaryName: "codex", VersionArg: "--version"},
+	{Name: "muse", BinaryName: "muse", VersionArg: "--version", ExpectedVersionPrefix: "Muse Code "},
 }
 
 func newDoctorCommand(ctx *commandContext) *cobra.Command {
@@ -387,6 +389,12 @@ func (c *commandContext) checkHarness(ctx context.Context, harness harnessProbe)
 	version := firstOutputLine(out)
 	if version == "" {
 		version = "version output was empty"
+	}
+	if harness.ExpectedVersionPrefix != "" && !strings.HasPrefix(version, harness.ExpectedVersionPrefix) {
+		return doctorCheck{
+			Level: doctorWarn, Section: doctorSectionAgents, Name: harness.Name,
+			Message: fmt.Sprintf("%s resolves to %s, but its version output %q does not identify the expected CLI (%q prefix)", harness.BinaryName, path, version, harness.ExpectedVersionPrefix),
+		}
 	}
 	return doctorCheck{Level: doctorPass, Section: doctorSectionAgents, Name: harness.Name, Message: fmt.Sprintf("%s resolves to %s (%s)", harness.BinaryName, path, version)}
 }

@@ -95,6 +95,24 @@ var (
 	// not satisfy AO's bounded provider-neutral schema. Collection is settled as
 	// rejected before this error is returned.
 	ErrInvalidAgentHandoff = errors.New("session: invalid agent handoff")
+	// ErrInterfaceHandoffUnsupported means the harness has not proven that its
+	// TUI resume identity and Chat protocol identity name the same conversation.
+	ErrInterfaceHandoffUnsupported = errors.New("session: interface handoff unsupported")
+	// ErrNativeConversationMissing means a supported harness has not yet exposed
+	// the native id required to resume it through the other controller.
+	ErrNativeConversationMissing = errors.New("session: native conversation id unavailable")
+	// ErrInterfaceAlreadySelected makes a stale/double switch request an explicit
+	// conflict instead of leaking a generic 500 after the first switch commits.
+	ErrInterfaceAlreadySelected = errors.New("session: requested interface is already selected")
+	// ErrInterfaceTransitionInProgress distinguishes TUI/Chat controller handoff
+	// from a provider agent switch so the API can report the correct operation.
+	ErrInterfaceTransitionInProgress = errors.New("session: interface transition already in progress")
+	// ErrInterfaceTransitionNotFound distinguishes a missing handoff from a
+	// missing session when DELETE is retried after the transition settled.
+	ErrInterfaceTransitionNotFound = errors.New("session: no active interface transition")
+	// ErrInterfaceTransitionNotCancellable protects the no-overlap invariant once
+	// the source controller is already stopping or stopped.
+	ErrInterfaceTransitionNotCancellable = errors.New("session: interface transition can no longer be cancelled")
 	// ErrResumeInProgress prevents concurrent resume requests from replacing the
 	// same runtime twice.
 	ErrResumeInProgress = errors.New("session: agent resume already in progress")
@@ -142,6 +160,7 @@ type lifecycleRecorder interface {
 	CancelLaunch(id domain.SessionID, launchID string)
 	ReleaseLaunch(id domain.SessionID, launchID string)
 	MarkSpawned(ctx context.Context, id domain.SessionID, metadata domain.SessionMetadata) error
+	CommitControllerEpoch(ctx context.Context, id domain.SessionID, source, target domain.SessionMode, nativeConversationID string, startFresh bool) (bool, error)
 	MarkTerminated(ctx context.Context, id domain.SessionID) error
 }
 
@@ -167,6 +186,17 @@ type lifecycleRecorder interface {
 // lifecycle.Manager takes its completion terminator the same way.
 type ShellTerminalCloser interface {
 	BeginSessionTeardown(ctx context.Context, id domain.SessionID) (release func(), err error)
+}
+
+// TerminalInputGate closes the raw terminal input path while an interface
+// transition drains and stops a TUI controller. It is separate from Messenger:
+// xterm keystrokes travel over the terminal mux and never pass through Send.
+type TerminalInputGate interface {
+	// BeginInputDrain atomically blocks later writes and returns the time of the
+	// newest write that was accepted before the block. Session Manager uses that
+	// barrier to avoid trusting an idle hook which predates already-buffered PTY
+	// input.
+	BeginInputDrain(terminalID string) (lastInputAt time.Time, release func())
 }
 
 type runtimeController interface {
@@ -241,7 +271,15 @@ type Manager struct {
 	// each call site re-deriving the check. Send/confirmActive use Deliver for
 	// its Outcome; mutation-owned handoff/startup prompts use the explicit
 	// admitted path while ordinary input remains fenced out.
-	messenger           *sessionguard.Guard
+	messenger *sessionguard.Guard
+	// chat launches the structured controller for a chat-mode session. Nil means
+	// this build cannot run chat sessions, and a chat spawn is refused rather
+	// than silently downgraded to a terminal.
+	// defaults resolves the daemon-owned default session interface for a spawn
+	// that names no mode. Nil falls back to the compatibility default, so a build
+	// without it behaves exactly as before.
+	defaults            SessionModeDefaults
+	chat                ChatLauncher
 	lcm                 lifecycleRecorder
 	preview             PreviewLifecycle
 	browser             BrowserLifecycle
@@ -281,6 +319,17 @@ type Manager struct {
 	// switchDeliveryAckWait bounds the target generation's prompt-submit hook.
 	// Timeout is an explicit failed/ambiguous delivery, never implicit success.
 	switchDeliveryAckWait time.Duration
+
+	transitionMu sync.Mutex
+	transitions  map[domain.SessionID]*interfaceTransitionRun
+	// transitionDeliveryWake drives the durable transition-message outbox. A
+	// daemon-lifetime worker is started by Reconcile; terminal transition paths
+	// also make one immediate delivery attempt so tests and in-process callers do
+	// not depend on the boot worker.
+	transitionDeliveryMu        sync.Mutex
+	transitionDeliveryRunning   bool
+	transitionDeliveryWake      chan struct{}
+	transitionDeliveryAttemptMu sync.Mutex
 	// sendConfirm bounds the best-effort post-send confirmation that the session
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
@@ -292,6 +341,9 @@ type Manager struct {
 	// under lock rather than through the constructor.
 	shellTerminalsMu sync.Mutex
 	shellTerminals   ShellTerminalCloser
+
+	terminalInputGateMu sync.Mutex
+	terminalInputGate   TerminalInputGate
 }
 
 // latestUserPromptRecorder narrows the post-delivery write to the single fact
@@ -310,6 +362,31 @@ func (m *Manager) SetShellTerminalCloser(closer ShellTerminalCloser) {
 	m.shellTerminalsMu.Lock()
 	defer m.shellTerminalsMu.Unlock()
 	m.shellTerminals = closer
+}
+
+// SetTerminalInputGate late-binds the daemon's terminal mux after Session
+// Manager is constructed. Nil preserves the no-op behavior used by narrow tests.
+func (m *Manager) SetTerminalInputGate(gate TerminalInputGate) {
+	m.terminalInputGateMu.Lock()
+	defer m.terminalInputGateMu.Unlock()
+	m.terminalInputGate = gate
+}
+
+func (m *Manager) beginTerminalInputDrain(rec domain.SessionRecord) (lastInputAt time.Time, release func()) {
+	if domain.NormalizeSessionMode(rec.Mode) != domain.SessionModeTUI {
+		return time.Time{}, nil
+	}
+	handle := runtimeHandle(rec.Metadata)
+	if handle.ID == "" {
+		return time.Time{}, nil
+	}
+	m.terminalInputGateMu.Lock()
+	gate := m.terminalInputGate
+	m.terminalInputGateMu.Unlock()
+	if gate == nil {
+		return time.Time{}, nil
+	}
+	return gate.BeginInputDrain(handle.ID)
 }
 
 // beginShellTerminalTeardown starts the shell-terminal gate for id ahead of
@@ -374,11 +451,18 @@ const (
 
 // Deps are the collaborators a Session Manager needs; New wires them together.
 type Deps struct {
-	Runtime             runtimeController
-	Agents              ports.AgentResolver
-	Workspace           ports.Workspace
-	Store               Store
-	Messenger           ports.AgentMessenger
+	Runtime   runtimeController
+	Agents    ports.AgentResolver
+	Workspace ports.Workspace
+	Store     Store
+	Messenger ports.AgentMessenger
+	// Defaults supplies the daemon-owned default session interface for spawns that
+	// name no mode. Nil means always use the compatibility default.
+	Defaults SessionModeDefaults
+	// Chat launches the structured controller for a chat-mode session. Nil means
+	// chat mode is unavailable, and a chat spawn is refused rather than silently
+	// downgraded to a terminal.
+	Chat                ChatLauncher
 	Lifecycle           lifecycleRecorder
 	Preview             PreviewLifecycle
 	Browser             BrowserLifecycle
@@ -410,6 +494,8 @@ func New(d Deps) *Manager {
 		agents:                d.Agents,
 		workspace:             d.Workspace,
 		store:                 d.Store,
+		defaults:              d.Defaults,
+		chat:                  d.Chat,
 		lcm:                   d.Lifecycle,
 		preview:               d.Preview,
 		browser:               d.Browser,
@@ -432,7 +518,9 @@ func New(d Deps) *Manager {
 		// prompt-submit hook even though the continuation is correctly buffered.
 		// Keep the acknowledgement wait below the CLI's four-minute switch timeout
 		// while leaving enough headroom to avoid a false delivery failure.
-		switchDeliveryAckWait: 150 * time.Second,
+		switchDeliveryAckWait:  150 * time.Second,
+		transitions:            make(map[domain.SessionID]*interfaceTransitionRun),
+		transitionDeliveryWake: make(chan struct{}, 1),
 		sendConfirm: sendConfirmConfig{
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
@@ -492,8 +580,28 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: %q", ErrUnknownHarness, cfg.Harness)
 	}
 
-	if err := m.validateRuntimePrerequisites(); err != nil {
-		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+	// Resolve the controller mode here, before anything durable is created, for
+	// the same reason an unknown harness is rejected above: a chat request AO
+	// cannot honor should cost nothing, not leave a terminated row and a worktree
+	// behind. It never falls back to TUI — that would put the user in a terminal
+	// they deliberately did not ask for.
+	mode := m.resolveSessionMode(ctx, cfg.RequestedMode)
+	if mode == domain.SessionModeChat {
+		if m.chat == nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w: chat mode is not available in this build", ports.ErrChatUnsupported)
+		}
+		if err := m.chat.PreflightChat(ctx, cfg.Harness); err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		}
+	}
+	cfg.RequestedMode = mode
+
+	// A chat session runs no agent inside a terminal runtime, so the terminal
+	// prerequisites are not its concern.
+	if mode == domain.SessionModeTUI {
+		if err := m.validateRuntimePrerequisites(); err != nil {
+			return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn: %w", err)
+		}
 	}
 
 	prompt, systemPrompt, err := m.buildSpawnTexts(ctx, cfg)
@@ -551,6 +659,26 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 			m.logger.Warn("spawn: exclude attachments dir", "sessionID", id, "error", err)
 		}
 		prompt = appendAttachmentReferences(prompt, refs)
+	}
+
+	// Everything above is shared: project, harness, prompts, seed row, worktree,
+	// provisioning, attachments. From here the two modes launch different
+	// controllers, and exactly one of them runs.
+	if mode == domain.SessionModeChat {
+		rec, err = m.launchChatController(ctx, chatSpawn{
+			cfg:              cfg,
+			project:          project,
+			projectKind:      projectKind,
+			record:           rec,
+			workspace:        ws,
+			workspaceProject: workspaceProject,
+			prompt:           prompt,
+			systemPrompt:     systemPrompt,
+		})
+		if err != nil {
+			return domain.SessionRecord{}, 0, 0, err
+		}
+		return rec, promptBytes, systemPromptBytes, nil
 	}
 
 	agent, ok := m.agents.Agent(cfg.Harness)
@@ -998,6 +1126,11 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	}
 	defer m.endAgentOperation(id, agentOperationKill)
 
+	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
+		return false, fmt.Errorf("kill %s: interface transition: %w", id, err)
+	} else if active {
+		return false, fmt.Errorf("kill %s: %w", id, ErrInterfaceTransitionInProgress)
+	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return false, fmt.Errorf("kill %s: %w", id, err)
@@ -1019,7 +1152,13 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 		workspaceProject = true
 	}
 
-	if handle.ID != "" {
+	// Exactly one controller exists, so exactly one gets torn down. A chat
+	// session has no runtime handle; its controller owns an app-server child
+	// process, and closing it also settles any turn left in flight so a later
+	// read does not show work that is no longer running.
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		m.stopChatBestEffort(ctx, id)
+	} else if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
 		}
@@ -1258,6 +1397,11 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 	}
 	defer m.endAgentOperation(id, agentOperationRestore)
 
+	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
+		return RestoreResult{}, fmt.Errorf("restore %s: interface transition: %w", id, err)
+	} else if active {
+		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrInterfaceTransitionInProgress)
+	}
 	rec, ok, err := m.store.GetSession(ctx, id)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, err)
@@ -1305,6 +1449,11 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	if err := m.beginAgentResume(ctx, id); err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
 	}
+	if active, err := m.hasActiveInterfaceTransition(ctx, id); err != nil {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: interface transition: %w", id, err)
+	} else if active {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrInterfaceTransitionInProgress)
+	}
 	defer m.endAgentResume(id)
 
 	rec, ok, err := m.store.GetSession(ctx, id)
@@ -1340,6 +1489,28 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 }
 
 func (m *Manager) relaunchSession(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
+	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, false)
+}
+
+// relaunchSessionFresh is reserved for an interface handoff whose adapter
+// proved that the reserved provider id has no persisted conversation behind it.
+// It bypasses native resume on both sides, so an empty Claude session cannot
+// fail target startup (or rollback) with "No conversation found".
+func (m *Manager) relaunchSessionFresh(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle) (RestoreResult, error) {
+	return m.relaunchSessionWithPolicy(ctx, operation, rec, project, ws, restartHandle, true)
+}
+
+func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation string, rec domain.SessionRecord, project domain.ProjectRecord, ws ports.WorkspaceInfo, restartHandle *ports.RuntimeHandle, forceFresh bool) (RestoreResult, error) {
+	// Relaunch dispatches from the currently committed persisted mode, never from
+	// a caller hint. The interface-transition coordinator changes that fact only
+	// after stopping the old controller, then reuses this ordinary restore path.
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
+		if forceFresh {
+			rec.Metadata.ProviderConversationID = ""
+		}
+		return m.resumeChatController(ctx, operation, rec, project, ws)
+	}
+
 	agent, ok := m.agents.Agent(rec.Harness)
 	if !ok {
 		return RestoreResult{}, fmt.Errorf("%s %s: no agent adapter for harness %q", operation, rec.ID, rec.Harness)
@@ -1364,7 +1535,16 @@ func (m *Manager) relaunchSession(ctx context.Context, operation string, rec dom
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
 	}
-	argv, delivery, mode, err := restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata, systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
+	var argv []string
+	var delivery ports.PromptDeliveryStrategy
+	var mode RestoreMode
+	if forceFresh {
+		argv, delivery, mode, err = freshLaunchArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
+			systemPrompt, systemPromptFile, agentConfig, rec.Kind, m.dataDir, true)
+	} else {
+		argv, delivery, mode, err = restoreArgv(ctx, agent, rec.ID, ws.Path, rec.Metadata,
+			systemPrompt, systemPromptFile, agentConfig, rec.Kind, rec.Harness, m.dataDir)
+	}
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
@@ -1592,23 +1772,31 @@ func (m *Manager) reconcileLive(ctx context.Context, rec domain.SessionRecord) e
 	if rec.Metadata.WorkspacePath == "" || (rec.Metadata.Branch == "" && projectKind != domain.ProjectKindScratch) {
 		return nil
 	}
-	handle := runtimeHandle(rec.Metadata)
-	if handle.ID != "" {
-		alive, err := m.runtime.IsAlive(ctx, handle)
-		switch {
-		case err == nil:
-		case errors.Is(err, ports.ErrRuntimeUnavailable):
-			// Boot-time pass with no reachable tmux server (normal after a
-			// machine reboot). The runtime is gone either way; fall through to
-			// save-and-teardown, which keeps the restore marker rather than
-			// silently archiving the session.
-			alive = false
-		default:
-			// A failed probe is not proof of death: leave the session as-is.
-			return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
-		}
-		if alive {
-			return nil // adopt: the session survived the crash.
+	// A chat controller is an in-process child of the daemon, so unlike tmux it can
+	// never have survived the crash: there is nothing to adopt and nothing to
+	// probe. It falls through to the same save-and-teardown a dead runtime gets,
+	// which is what records the restore marker RestoreAll needs — skipping that
+	// would leave the session marked live with no controller behind it, and it
+	// would never be resumed.
+	isChat := domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat
+
+	if !isChat {
+		handle := runtimeHandle(rec.Metadata)
+		if handle.ID != "" {
+			alive, err := m.runtime.IsAlive(ctx, handle)
+			switch {
+			case err == nil:
+			case errors.Is(err, ports.ErrRuntimeUnavailable):
+				// Normal after a machine reboot: the runtime is conclusively gone,
+				// so preserve work and create the restore marker below.
+				alive = false
+			default:
+				// A failed probe is not proof of death: leave the session as-is.
+				return fmt.Errorf("reconcile %s: probe: %w", rec.ID, err)
+			}
+			if alive {
+				return nil // adopt: the session survived the crash.
+			}
 		}
 	}
 	if projectKind == domain.ProjectKindScratch {
@@ -1670,6 +1858,11 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 	if err := m.ReconcileAgentSwitches(ctx); err != nil {
 		return fmt.Errorf("reconcile: agent-switch pass: %w", err)
 	}
+	m.startTransitionMessageDispatcher(ctx)
+	_, err := m.recoverInterruptedInterfaceTransitions(ctx)
+	if err != nil {
+		return fmt.Errorf("reconcile: interface transitions: %w", err)
+	}
 	recs, err := m.store.ListAllSessions(ctx)
 	if err != nil {
 		return fmt.Errorf("reconcile: list sessions: %w", err)
@@ -1694,7 +1887,14 @@ func (m *Manager) Reconcile(ctx context.Context) error {
 			m.logger.Error("reconcile: reap pass failed, skipping", "sessionID", rec.ID, "error", err)
 		}
 	}
-	return m.RestoreAll(ctx)
+	if err := m.RestoreAll(ctx); err != nil {
+		return err
+	}
+	if err := m.deliverAllTransitionMessages(ctx); err != nil {
+		m.logger.Error("reconcile: transition-message delivery deferred for retry", "error", err)
+	}
+	m.wakeTransitionMessageDispatcher()
+	return nil
 }
 
 // RestoreAll relaunches every terminated session that was saved by the last
@@ -2136,6 +2336,31 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // the session is active or the budget is exhausted. Confirmation never fails
 // the send: it only decides whether to nudge again.
 func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string) error {
+	return m.send(ctx, id, message, "")
+}
+
+// send carries an optional idempotency key used by durable transition-message
+// retries. Ordinary callers leave it empty; the outbox preserves the key across
+// restart, rollback, and even a second overlapping handoff.
+func (m *Manager) send(ctx context.Context, id domain.SessionID, message, clientMessageID string) error {
+	// A controller transition deliberately has a short interval with no writer.
+	// Queue internal/lifecycle sends durably instead of racing either controller
+	// or dropping coordination work; the transition worker drains this outbox
+	// only after the target controller is active.
+	if queued, err := m.queueDuringInterfaceTransition(ctx, id, message, clientMessageID); err != nil {
+		return fmt.Errorf("send %s: interface transition: %w", id, err)
+	} else if queued {
+		return nil
+	}
+	// Chat mode has no pane to type into, so it does not go through the messenger
+	// at all. Without this branch the send reached the runtime guard and was
+	// refused as "missing runtime handles" — true of the handles, wrong about the
+	// session, and it left `ao send` and orchestrator-to-worker relay unable to
+	// reach a chat worker.
+	if handled, err := m.sendChat(ctx, id, message, clientMessageID); handled {
+		return err
+	}
+
 	message, err := m.prepareOutboundMessage(ctx, id, message)
 	if err != nil {
 		return err
@@ -2505,6 +2730,9 @@ func seedRecord(cfg ports.SpawnConfig, now time.Time) domain.SessionRecord {
 		Harness:     cfg.Harness,
 		DisplayName: cfg.DisplayName,
 		Activity:    domain.Activity{State: domain.ActivityIdle, LastActivityAt: now},
+		// Resolved before this point and persisted here. There is no UPDATE
+		// statement that can change it afterwards.
+		Mode: domain.NormalizeSessionMode(cfg.RequestedMode),
 	}
 }
 
@@ -3256,10 +3484,18 @@ func restoreArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, wo
 	if ok {
 		return cmd, ports.PromptDeliveryInCommand, RestoreModeNative, nil
 	}
+	return freshLaunchArgv(ctx, agent, id, workspacePath, meta, systemPrompt,
+		systemPromptFile, agentConfig, kind, dataDir, false)
+}
+
+// freshLaunchArgv builds the non-resume half of restoreArgv. Interface
+// transitions also use it when an adapter proves its reserved id has no
+// persisted history, both for preflight and for the actual target launch.
+func freshLaunchArgv(ctx context.Context, agent ports.Agent, id domain.SessionID, workspacePath string, meta domain.SessionMetadata, systemPrompt, systemPromptFile string, agentConfig ports.AgentConfig, kind domain.SessionKind, dataDir string, allowPromptless bool) ([]string, ports.PromptDeliveryStrategy, RestoreMode, error) {
 	// A saved prompt is replayed fresh. An orchestrator is promptless by design
 	// and relaunches with the system prompt only. A promptless WORKER has no task
 	// and no session id to restore from: do not blank-relaunch it.
-	if meta.Prompt == "" && kind != domain.KindOrchestrator {
+	if meta.Prompt == "" && kind != domain.KindOrchestrator && !allowPromptless {
 		return nil, "", "", ErrNotResumable
 	}
 	// Fall through to a fresh launch. Command-delivered agents receive

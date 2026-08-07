@@ -40,27 +40,26 @@ func (s *Store) UpdateSession(ctx context.Context, rec domain.SessionRecord) err
 	return s.qw.UpdateSession(ctx, recordToUpdate(rec))
 }
 
-// UpdateSessionFromActivitySignal writes only lifecycle-hook-owned session
-// fields. The query atomically fences the owner generation observed by the
-// reducer and rejects callbacks from a source while an agent switch is tearing
-// that source down. This prevents a stale full-row write from resurrecting the
-// source or overwriting an already-activated target.
+// UpdateSessionFromActivitySignal projects activity-derived session metadata
+// only when the signal still belongs to the session's active harness launch.
 func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.SessionRecord) (bool, error) {
 	activity := normalActivity(rec.Activity, rec.UpdatedAt)
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	rows, err := s.qw.UpdateSessionFromActivitySignal(ctx, gen.UpdateSessionFromActivitySignalParams{
-		ActivityState:           activity.State,
-		ActivityLastAt:          activity.LastActivityAt,
-		FirstSignalAt:           timeToNullTime(rec.FirstSignalAt),
-		AgentSessionID:          rec.Metadata.AgentSessionID,
-		LatestUserPrompt:        rec.Metadata.LatestUserPrompt,
-		LatestAssistantUpdate:   rec.Metadata.LatestAssistantUpdate,
-		NativeTranscriptPath:    rec.Metadata.NativeTranscriptPath,
-		UpdatedAt:               rec.UpdatedAt,
-		ID:                      rec.ID,
-		ExpectedHarness:         rec.Harness,
-		ExpectedRuntimeLaunchID: rec.Metadata.RuntimeLaunchID,
+		ActivityState:                activity.State,
+		ActivityLastAt:               activity.LastActivityAt,
+		FirstSignalAt:                timeToNullTime(rec.FirstSignalAt),
+		AgentSessionID:               rec.Metadata.AgentSessionID,
+		LatestUserPrompt:             rec.Metadata.LatestUserPrompt,
+		LatestAssistantUpdate:        rec.Metadata.LatestAssistantUpdate,
+		NativeTranscriptPath:         rec.Metadata.NativeTranscriptPath,
+		UpdatedAt:                    rec.UpdatedAt,
+		ID:                           rec.ID,
+		ExpectedHarness:              rec.Harness,
+		ExpectedSessionMode:          domain.NormalizeSessionMode(rec.Mode),
+		ExpectedRuntimeLaunchID:      rec.Metadata.RuntimeLaunchID,
+		ExpectedControllerGeneration: rec.Metadata.ControllerGeneration,
 	})
 	if err != nil {
 		return false, fmt.Errorf("update session %s from activity signal: %w", rec.ID, err)
@@ -68,9 +67,8 @@ func (s *Store) UpdateSessionFromActivitySignal(ctx context.Context, rec domain.
 	return rows > 0, nil
 }
 
-// RecordSessionLatestUserPrompt updates only the user prompt fact owned by the
-// outbound message path. The monotonic timestamp predicate prevents a delayed
-// post-delivery write from overwriting newer lifecycle or agent-switch facts.
+// RecordSessionLatestUserPrompt persists the latest real user direction without
+// rewriting lifecycle state that another goroutine may have advanced.
 func (s *Store) RecordSessionLatestUserPrompt(ctx context.Context, id domain.SessionID, prompt string, updatedAt time.Time) (bool, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -83,6 +81,31 @@ func (s *Store) RecordSessionLatestUserPrompt(ctx context.Context, id domain.Ses
 		return false, fmt.Errorf("record latest user prompt for session %s: %w", id, err)
 	}
 	return rows > 0, nil
+}
+
+// ClaimChatControllerGeneration makes generation the only Chat controller that
+// may project provider events for this session. The narrow update avoids writing
+// a stale full SessionRecord over lifecycle facts changed by another goroutine.
+func (s *Store) ClaimChatControllerGeneration(
+	ctx context.Context,
+	id domain.SessionID,
+	generation string,
+	updatedAt time.Time,
+) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	rows, err := s.qw.ClaimChatControllerGeneration(ctx, gen.ClaimChatControllerGenerationParams{
+		ControllerGeneration: generation,
+		UpdatedAt:            updatedAt,
+		ID:                   id,
+	})
+	if err != nil {
+		return fmt.Errorf("claim chat controller generation for %s: %w", id, err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("claim chat controller generation for %s: chat session not found", id)
+	}
+	return nil
 }
 
 // RenameSession updates only the user-facing display name for an existing
@@ -169,11 +192,10 @@ func (s *Store) SetSessionReviewerHarness(ctx context.Context, id domain.Session
 }
 
 // DeleteSession removes a session row, but only if it is still in seed state
-// (no workspace, runtime/native-session/transcript handles, prompt, recorded
-// user/assistant interaction, and not already terminated). Rows that have
-// observable spawn output are immutable to preserve the no-resurrection
-// guarantee — for those, callers fall back to MarkTerminated
-// (lifecycle.Manager) instead.
+// (no workspace, no runtime handle, no agent session id, no prompt, no handoff
+// metadata, and not already terminated). Rows that have observable spawn output are immutable
+// to preserve the no-resurrection guarantee — for those, callers fall back to
+// MarkTerminated (lifecycle.Manager) instead.
 //
 // The deletion runs in a transaction. It first probes seed state with
 // SessionIsSeed; only if that returns true does it clear the session's
@@ -293,6 +315,7 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		Harness:         row.Harness,
 		ReviewerHarness: row.ReviewerHarness,
 		DisplayName:     row.DisplayName,
+		Mode:            domain.NormalizeSessionMode(row.SessionMode),
 		Activity: domain.Activity{
 			State:          row.ActivityState,
 			LastActivityAt: row.ActivityLastAt,
@@ -317,6 +340,9 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 			NativeTranscriptPath:  row.NativeTranscriptPath,
 			PreviewURL:            row.PreviewURL,
 			PreviewRevision:       row.PreviewRevision,
+
+			ProviderConversationID: row.ProviderConversationID,
+			ControllerGeneration:   row.ControllerGeneration,
 		},
 		CleanupGeneration: row.CleanupGeneration,
 		CreatedAt:         row.CreatedAt,
@@ -357,8 +383,13 @@ func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams
 		PreviewRevision:       rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge:    rec.TerminateOnPRMerge,
 		CleanupGeneration:     rec.CleanupGeneration,
-		CreatedAt:             rec.CreatedAt,
-		UpdatedAt:             rec.UpdatedAt,
+
+		SessionMode:            domain.NormalizeSessionMode(rec.Mode),
+		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		ControllerGeneration:   rec.Metadata.ControllerGeneration,
+
+		CreatedAt: rec.CreatedAt,
+		UpdatedAt: rec.UpdatedAt,
 	}
 }
 
@@ -393,7 +424,11 @@ func recordToUpdate(rec domain.SessionRecord) gen.UpdateSessionParams {
 		PreviewRevision:       rec.Metadata.PreviewRevision,
 		TerminateOnPRMerge:    rec.TerminateOnPRMerge,
 		CleanupGeneration:     rec.CleanupGeneration,
-		UpdatedAt:             rec.UpdatedAt,
+
+		ProviderConversationID: rec.Metadata.ProviderConversationID,
+		ControllerGeneration:   rec.Metadata.ControllerGeneration,
+
+		UpdatedAt: rec.UpdatedAt,
 	}
 }
 

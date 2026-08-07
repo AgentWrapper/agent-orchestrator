@@ -201,7 +201,18 @@ UPDATE sessions SET
 WHERE sessions.id = sqlc.arg(id)
   AND sessions.is_terminated = 0
   AND sessions.harness = sqlc.arg(expected_harness)
-  AND sessions.runtime_launch_id = sqlc.arg(expected_runtime_launch_id)
+  AND sessions.session_mode = sqlc.arg(expected_session_mode)
+  AND (
+      (
+          sqlc.arg(expected_session_mode) <> 'chat'
+          AND sessions.runtime_launch_id = sqlc.arg(expected_runtime_launch_id)
+      )
+      OR
+      (
+          sqlc.arg(expected_session_mode) = 'chat'
+          AND sessions.controller_generation = sqlc.arg(expected_controller_generation)
+      )
+  )
   AND NOT EXISTS (
       SELECT 1
       FROM agent_switches AS active_switch

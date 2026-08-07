@@ -846,7 +846,18 @@ UPDATE sessions SET
 WHERE sessions.id = ?9
   AND sessions.is_terminated = 0
   AND sessions.harness = ?10
-  AND sessions.runtime_launch_id = ?11
+  AND sessions.session_mode = ?11
+  AND (
+      (
+          ?11 <> 'chat'
+          AND sessions.runtime_launch_id = ?12
+      )
+      OR
+      (
+          ?11 = 'chat'
+          AND sessions.controller_generation = ?13
+      )
+  )
   AND NOT EXISTS (
       SELECT 1
       FROM agent_switches AS active_switch
@@ -859,17 +870,19 @@ WHERE sessions.id = ?9
 `
 
 type UpdateSessionFromActivitySignalParams struct {
-	ActivityState           domain.ActivityState
-	ActivityLastAt          time.Time
-	FirstSignalAt           sql.NullTime
-	AgentSessionID          string
-	LatestUserPrompt        string
-	LatestAssistantUpdate   string
-	NativeTranscriptPath    string
-	UpdatedAt               time.Time
-	ID                      domain.SessionID
-	ExpectedHarness         domain.AgentHarness
-	ExpectedRuntimeLaunchID string
+	ActivityState                domain.ActivityState
+	ActivityLastAt               time.Time
+	FirstSignalAt                sql.NullTime
+	AgentSessionID               string
+	LatestUserPrompt             string
+	LatestAssistantUpdate        string
+	NativeTranscriptPath         string
+	UpdatedAt                    time.Time
+	ID                           domain.SessionID
+	ExpectedHarness              domain.AgentHarness
+	ExpectedSessionMode          domain.SessionMode
+	ExpectedRuntimeLaunchID      string
+	ExpectedControllerGeneration string
 }
 
 // Lifecycle reads the session before reducing a hook. Fence the resulting
@@ -889,7 +902,9 @@ func (q *Queries) UpdateSessionFromActivitySignal(ctx context.Context, arg Updat
 		arg.UpdatedAt,
 		arg.ID,
 		arg.ExpectedHarness,
+		arg.ExpectedSessionMode,
 		arg.ExpectedRuntimeLaunchID,
+		arg.ExpectedControllerGeneration,
 	)
 	if err != nil {
 		return 0, err

@@ -71,6 +71,34 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentInterfaceHandoff is an OPTIONAL capability for a TUI adapter whose
+// native resume identity is also understood by its structured Chat driver.
+// Merely supporting GetRestoreCommand is not enough: some harnesses expose a
+// different identifier through their TUI and protocol surfaces.
+type AgentInterfaceHandoff interface {
+	NativeConversationID(
+		ctx context.Context,
+		session SessionRef,
+		currentMode domain.SessionMode,
+		providerConversationID string,
+	) (id string, ok bool, err error)
+}
+
+// AgentInterfaceHandoffHistoryProbe is an OPTIONAL refinement for adapters
+// that reserve a native conversation id before the provider has persisted any
+// history. A missing history record means an interface transition may safely
+// start the target fresh: there is no provider context to carry. Without this
+// capability, Session Manager conservatively treats every declared id as an
+// existing conversation and requires a native resume.
+type AgentInterfaceHandoffHistoryProbe interface {
+	NativeConversationExists(
+		ctx context.Context,
+		session SessionRef,
+		nativeConversationID string,
+		env map[string]string,
+	) (bool, error)
+}
+
 // ModelSelectionMode tells clients how to render an agent's model control.
 type ModelSelectionMode string
 

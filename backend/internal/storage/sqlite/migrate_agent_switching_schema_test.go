@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-func TestMigration0053AgentSwitchIntegrityAndCDC(t *testing.T) {
+func TestMigration0080AgentSwitchIntegrityAndCDC(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	upTo(t, db, 53)
+	upTo(t, db, 80)
 	now := time.Date(2026, time.August, 5, 12, 0, 0, 0, time.UTC)
 	if _, err := db.Exec(`
 INSERT INTO projects (id, path, registered_at)

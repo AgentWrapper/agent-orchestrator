@@ -62,6 +62,13 @@ type Manager struct {
 
 	inputLeaseMu sync.RWMutex
 	inputLease   sessionguard.InputLease
+
+	// inputMu makes BeginInputDrain atomic with pane writes. Once a drain returns,
+	// every write that began before it has finished and every later write is
+	// refused until the matching release runs.
+	inputMu      sync.Mutex
+	inputBlocked map[string]int
+	lastInputAt  map[string]time.Time
 }
 
 // sharedTerm tracks every client currently viewing one terminal id (one PTY) so
@@ -116,19 +123,54 @@ func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
-		src:         src,
-		events:      events,
-		log:         log,
-		heartbeat:   defaultHeartbeat,
-		ctx:         ctx,
-		cancel:      cancel,
-		attachments: map[*attachment]struct{}{},
-		shared:      map[string]*sharedTerm{},
+		src:          src,
+		events:       events,
+		log:          log,
+		heartbeat:    defaultHeartbeat,
+		ctx:          ctx,
+		cancel:       cancel,
+		attachments:  map[*attachment]struct{}{},
+		shared:       map[string]*sharedTerm{},
+		inputBlocked: map[string]int{},
+		lastInputAt:  map[string]time.Time{},
 	}
 	for _, opt := range opts {
 		opt(m)
 	}
 	return m
+}
+
+// BeginInputDrain blocks new user input for one terminal while Session Manager
+// hands its controller to another interface. The returned release is idempotent.
+func (m *Manager) BeginInputDrain(terminalID string) (lastInputAt time.Time, release func()) {
+	m.inputMu.Lock()
+	m.inputBlocked[terminalID]++
+	lastInputAt = m.lastInputAt[terminalID]
+	m.inputMu.Unlock()
+
+	var once sync.Once
+	return lastInputAt, func() {
+		once.Do(func() {
+			m.inputMu.Lock()
+			defer m.inputMu.Unlock()
+			if m.inputBlocked[terminalID] <= 1 {
+				delete(m.inputBlocked, terminalID)
+				return
+			}
+			m.inputBlocked[terminalID]--
+		})
+	}
+}
+
+func (m *Manager) writeInput(terminalID string, a *attachment, raw []byte, release func()) {
+	m.inputMu.Lock()
+	defer m.inputMu.Unlock()
+	if m.inputBlocked[terminalID] > 0 {
+		release()
+		return
+	}
+	m.lastInputAt[terminalID] = time.Now()
+	_ = a.writeLeased(raw, release)
 }
 
 // Close tears down every live attachment and stops re-attach loops. Safe to
@@ -357,7 +399,7 @@ func (c *connState) handleTerminal(msg clientMsg) {
 			return
 		}
 		if a := c.lookup(msg.ID); a != nil {
-			_ = a.writeLeased(raw, release)
+			c.mgr.writeInput(msg.ID, a, raw, release)
 		} else {
 			release()
 		}

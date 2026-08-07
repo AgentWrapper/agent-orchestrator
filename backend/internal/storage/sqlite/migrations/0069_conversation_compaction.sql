@@ -1,0 +1,39 @@
+-- +goose Up
+-- +goose StatementBegin
+-- When this conversation's history was last summarized to reclaim context.
+--
+-- Why compaction is durable at all: every turn re-sends the whole conversation,
+-- so context fills whether or not the user does anything unusual, and once it is
+-- full the thread cannot accept another turn. Compaction is the difference
+-- between a session that works for an hour and one that works for a day, so
+-- "has this been compacted, and when" has to survive a daemon restart.
+--
+-- The compaction EVENT is recorded as a 'system'-kind conversation_activities
+-- row, not in a table of its own. Three reasons that is the right home:
+--
+--   1. It is a timeline fact. A reader needs to see it in position, between the
+--      turns it separates, and conversation_activities is already the ordered
+--      timeline of everything that is not prose. A parallel table would need its
+--      own sequence allocation to merge back into that order.
+--   2. 'system' already passes the kind CHECK from 0041. SQLite cannot alter a
+--      CHECK in place, so adding a 'compaction' kind would mean rebuilding
+--      conversation_activities and re-declaring its four indexes and its CDC
+--      trigger - real risk bought for a label.
+--   3. The reclaimed-token figures are provider detail, which is exactly what
+--      detail_json is for. The provider reports no token figures on its own
+--      compaction event, so the driver brackets them from token-usage reports and
+--      omits what it does not know.
+--
+-- This column is the STATE that the timeline row cannot answer cheaply: whether
+-- a conversation has ever been compacted, without scanning an unbounded timeline
+-- on every render. NULL means never.
+ALTER TABLE conversations ADD COLUMN compacted_at TIMESTAMP;
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+-- SQLite cannot drop a column in the versions AO supports, and rebuilding
+-- conversations would mean re-declaring its two partial unique indexes. The
+-- column is nullable and unread by older code, so leaving it is safe.
+SELECT 1;
+-- +goose StatementEnd

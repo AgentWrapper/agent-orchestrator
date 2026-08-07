@@ -13,6 +13,15 @@ body {
 	user-select: none;
 }
 
+.landing-install-command {
+	display: none;
+}
+
+html[data-landing-platform="mac"] .landing-install-command {
+	display: flex;
+	justify-content: center;
+}
+
 input,
 textarea,
 [contenteditable="true"],
