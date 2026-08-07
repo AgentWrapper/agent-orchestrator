@@ -424,7 +424,7 @@ export function TaskComposer({
 					disabled={isSubmitting || !projectId}
 					className="h-(--size-settings-action-height) min-w-(--size-composer-start-button) px-3"
 				>
-					{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
+					{isSubmitting ? <Loader2 className="size-icon-base animate-spin" aria-hidden="true" /> : null}
 					{isSubmitting ? t("newTask.starting") : t("newTask.start")}
 					{!isSubmitting && (
 						<kbd className="composer-keycap" aria-hidden="true">
