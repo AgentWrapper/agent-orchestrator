@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { GitBranch, LayoutDashboard, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
+import { GitBranch, PanelRightClose, PanelRightOpen, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { animate, LayoutGroup, motion, useMotionValue, useReducedMotion } from "motion/react";
 import { NotificationCenter } from "./NotificationCenter";
@@ -26,6 +26,7 @@ import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { getAgentActivityView } from "../lib/session-presentation";
 import { isMacPlatform, usesBoardActionsInPanel } from "../lib/platform";
+import { cn } from "../lib/utils";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
 import { StatusPill } from "./StatusPill";
 import { TopbarButton, TopbarKillError, topbarHeaderClass, topbarProjectLabelClass } from "./TopbarButton";
@@ -42,10 +43,11 @@ const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperti
 // / inspector stay available. The variant is derived from the route, not props:
 // a sessionId in the URL swaps the lead to the session identity (orchestrator
 // crumb + mode badge, or worker branch + status pill) and the actions to
-// board/orchestrator + inspector controls (orchestrators open the Kanban board;
-// workers open their orchestrator); otherwise it's the dashboard crumb plus the
-// Orchestrator launcher when a project is in scope. Embedded mode contributes
-// only session actions to the terminal bar; other routes retain this full bar.
+// board/orchestrator + inspector controls (orchestrators open the board via the
+// project-name control; workers open their orchestrator); otherwise it's the
+// dashboard crumb plus the Orchestrator launcher when a project is in scope.
+// Embedded mode contributes session actions to the terminal bar — and for
+// orchestrators, the clickable project name that replaces the old Kanban button.
 // Pixel equivalents of the CSS custom properties used for titlebar clearance.
 // --size-titlebar-cluster-left (72) + --size-titlebar-cluster-width (3×28+2×4=92)
 // + --size-titlebar-content-gap (12) = 176; minus --size-center-panel-inset-mac (6) = 170.
@@ -180,14 +182,7 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 				{isSessionRoute && isOrchestrator ? (
 					<div className="inline-flex min-w-0 items-center gap-2">
 						<div className="inline-flex min-w-0 items-center gap-1.5">
-							<motion.span
-								layoutId="topbar-project-label"
-								layout="position"
-								className={topbarProjectLabelClass}
-								transition={{ type: "spring", stiffness: 400, damping: 40 }}
-							>
-								{projectLabel}
-							</motion.span>
+							<ProjectBoardLabelButton label={projectLabel} onOpen={openBoard} style={noDragStyle} />
 								<span aria-hidden="true" className="text-xs leading-none text-passive">
 									·
 								</span>
@@ -270,6 +265,16 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 					<>
 						{isOrchestrator ? (
 							<>
+								{/* Session routes mount this topbar embedded — the lead crumb
+								    above is hidden — so the project name must live here too. */}
+								{embedded ? (
+									<ProjectBoardLabelButton
+										className="mr-1"
+										label={projectLabel}
+										onOpen={openBoard}
+										style={noDragStyle}
+									/>
+								) : null}
 								<ProjectTerminationFeedback projectId={projectId} />
 								<TopbarButton
 									aria-label={t("shell.newTask")}
@@ -280,10 +285,6 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 								>
 									<Plus className="size-icon-lg" aria-hidden="true" />
 									{t("shell.newTask")}
-								</TopbarButton>
-								<TopbarButton aria-label={t("shell.openKanban")} onClick={openBoard} style={noDragStyle} variant="primary">
-									<LayoutDashboard className="size-icon-lg" aria-hidden="true" />
-									{t("shell.kanban")}
 								</TopbarButton>
 							</>
 						) : null}
@@ -346,6 +347,41 @@ export function ShellTopbar({ embedded = false }: { embedded?: boolean } = {}) {
 			</div>
 		</motion.header>
 	</LayoutGroup>
+	);
+}
+
+const projectBoardLabelTransition = { type: "spring" as const, stiffness: 400, damping: 40 };
+
+/** Project name → board. Outer `<button>` owns the click so Motion's shared-layout spring cannot swallow the first pointer event (#3682). */
+function ProjectBoardLabelButton({
+	label,
+	onOpen,
+	style,
+	className,
+}: {
+	label: string;
+	onOpen: () => void;
+	style?: React.CSSProperties;
+	className?: string;
+}) {
+	const { t } = useTranslation();
+	return (
+		<button
+			aria-label={t("shell.openKanban")}
+			className={cn("min-w-0 rounded-sm text-left hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring", className)}
+			onClick={onOpen}
+			style={style}
+			type="button"
+		>
+			<motion.span
+				layoutId="topbar-project-label"
+				layout="position"
+				className={topbarProjectLabelClass}
+				transition={projectBoardLabelTransition}
+			>
+				{label}
+			</motion.span>
+		</button>
 	);
 }
 
