@@ -47,6 +47,9 @@ func (p *Plugin) DetectTerminalActivity(output string) (domain.ActivityState, bo
 
 	for i := len(recent) - 1; i >= 0; i-- {
 		line := strings.ToLower(recent[i])
+		if strings.HasPrefix(line, "◆ request user input") {
+			return domain.ActivityWaitingInput, true
+		}
 		if strings.Contains(line, "· esc to interrupt") && !strings.Contains(line, "enter to select") {
 			return domain.ActivityActive, true
 		}

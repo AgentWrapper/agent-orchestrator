@@ -39,6 +39,7 @@ func TestDetectTerminalActivityCapturedMuseFrames(t *testing.T) {
 		wantOK  bool
 	}{
 		{"awaiting structured input", "awaiting_user_input.txt", domain.ActivityWaitingInput, true},
+		{"awaiting compact structured input", "awaiting_user_input_compact.txt", domain.ActivityWaitingInput, true},
 		{"resumed generation", "active_generation.txt", domain.ActivityActive, true},
 		{"plain idle composer", "idle_composer.txt", domain.ActivityIdle, true},
 	}
