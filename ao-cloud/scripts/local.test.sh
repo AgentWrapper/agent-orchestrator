@@ -15,54 +15,16 @@ trap cleanup_tests EXIT
 
 export AO_DATA_DIR="$temp_dir/data"
 mkdir -p "$AO_DATA_DIR/cloud-local" "$temp_dir/bin"
-openssl genpkey \
-  -algorithm RSA \
-  -pkeyopt rsa_keygen_bits:2048 \
-  -out "$AO_DATA_DIR/cloud-local/github-app.private-key.pem" \
-  >/dev/null 2>&1
-chmod 600 "$AO_DATA_DIR/cloud-local/github-app.private-key.pem"
-printf '#!/usr/bin/env sh\nexit 0\n' >"$temp_dir/bin/cloudflared"
-chmod +x "$temp_dir/bin/cloudflared"
 export PATH="$temp_dir/bin:$PATH"
 
 # shellcheck source=local.sh
 source "$script_dir/local.sh"
-
-export AO_GITHUB_APP_PRIVATE_KEY_PATH="$AO_DATA_DIR/cloud-local/github-app.private-key.pem"
-export AO_GITHUB_APP_CLIENT_SECRET="github-app-client-secret"
-export AO_GITHUB_APP_WEBHOOK_SECRET="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-export AO_GITHUB_APP_STATE_SECRET="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-export AO_LOCAL_GITHUB_TOKEN="must-be-cleared"
-unset AO_GITHUB_APP_ID AO_GITHUB_APP_CLIENT_ID AO_GITHUB_APP_SLUG
 
 gh_marker="$temp_dir/gh-called"
 gh() {
   : >"$gh_marker"
   printf 'local-test-token'
 }
-
-require_github_app_env
-[[ "$AO_GITHUB_APP_ID" == "4475070" ]]
-[[ "$AO_GITHUB_APP_CLIENT_ID" == "Iv23liLaAnXMSyGGzVl4" ]]
-[[ "$AO_GITHUB_APP_CLIENT_SECRET" == "github-app-client-secret" ]]
-[[ "$AO_GITHUB_APP_SLUG" == "ao-cloud-test" ]]
-[[ "$AO_GITHUB_AUTH_MODE" == "github-app" ]]
-[[ -z "$AO_LOCAL_GITHUB_TOKEN" ]]
-[[ ! -e "$gh_marker" ]]
-bash -c '[[ "$AO_GITHUB_APP_ID" == 4475070 && "$AO_GITHUB_APP_CLIENT_ID" == Iv23liLaAnXMSyGGzVl4 && "$AO_GITHUB_APP_SLUG" == ao-cloud-test ]]'
-
-for override in \
-  "AO_GITHUB_APP_ID=999" \
-  "AO_GITHUB_APP_CLIENT_ID=Iv_wrong" \
-  "AO_GITHUB_APP_SLUG=wrong"; do
-  if (
-    export "$override"
-    require_github_app_env >/dev/null 2>&1
-  ); then
-    echo "require_github_app_env accepted wrong local test identity: $override" >&2
-    exit 1
-  fi
-done
 
 AO_GITHUB_APP_ID="should-be-cleared"
 AO_GITHUB_APP_CLIENT_ID="should-be-cleared"
@@ -71,9 +33,10 @@ AO_GITHUB_APP_SLUG="should-be-cleared"
 AO_GITHUB_APP_PRIVATE_KEY_PATH="/should-be-cleared"
 AO_GITHUB_APP_WEBHOOK_SECRET="should-be-cleared"
 AO_GITHUB_APP_STATE_SECRET="should-be-cleared"
-configure_local_github >/dev/null
+configure_github_profile workos >/dev/null
 [[ "$AO_GITHUB_AUTH_MODE" == "local-gh" ]]
 [[ "$AO_LOCAL_GITHUB_TOKEN" == "local-test-token" ]]
+[[ -e "$gh_marker" ]]
 [[ -z "$AO_GITHUB_APP_ID" ]]
 [[ -z "$AO_GITHUB_APP_CLIENT_ID" ]]
 [[ -z "$AO_GITHUB_APP_CLIENT_SECRET" ]]
@@ -81,6 +44,13 @@ configure_local_github >/dev/null
 [[ -z "$AO_GITHUB_APP_PRIVATE_KEY_PATH" ]]
 [[ -z "$AO_GITHUB_APP_WEBHOOK_SECRET" ]]
 [[ -z "$AO_GITHUB_APP_STATE_SECRET" ]]
+
+gh() {
+  return 1
+}
+configure_github_profile workos >/dev/null
+[[ -z "$AO_GITHUB_AUTH_MODE" ]]
+[[ -z "$AO_LOCAL_GITHUB_TOKEN" ]]
 
 assert_process_stopped() {
   local pid="$1"
@@ -127,7 +97,6 @@ prepare_start_harness() {
     local url="${*: -1}"
     case "$test_scenario:$url" in
       cp:*) return 1 ;;
-      tunnel:*3010/readyz) return 0 ;;
       web:*3010/readyz) return 0 ;;
       web:*5174/) return 1 ;;
       success:*) return 0 ;;
@@ -162,9 +131,6 @@ assert_failed_start_cleaned_up() {
   local profile="local"
   local case_dir="$temp_dir/failure-$scenario"
   mkdir -p "$case_dir"
-  if [[ "$scenario" == "tunnel" ]]; then
-    profile="workos"
-  fi
 
   if (
     prepare_start_harness "$scenario" "$case_dir"
@@ -180,15 +146,9 @@ assert_failed_start_cleaned_up() {
     [[ ! -e "$case_dir/data/pids/$name.pid" ]]
   done <"$case_dir/started"
 
-  if awk '$1 == "cloudflared" { found=1 } END { exit !found }' "$case_dir/started"; then
-    local tunnel_pid
-    tunnel_pid="$(awk '$1 == "cloudflared" { print $2 }' "$case_dir/started")"
-    assert_process_stopped "$tunnel_pid"
-  fi
 }
 
 assert_failed_start_cleaned_up cp
-assert_failed_start_cleaned_up tunnel
 assert_failed_start_cleaned_up web
 
 success_dir="$temp_dir/success"

@@ -22,10 +22,8 @@ so it can create the dynamic session containers.
 - Docker Desktop running
 - Go and Node.js/npm installed
 - An authenticated `gh` CLI (`gh auth login`) with access to repositories you
-  will open
+  will open; this is optional for standalone-agent-only development
 - A coding-agent credential to add through the Cloud settings UI
-- For either WorkOS command, `cloudflared` and the test GitHub App private key
-  saved as `~/.ao/cloud-local/github-app.private-key.pem` with mode `0600`
 
 On macOS, Docker Desktop is enough for the Docker pieces. On Windows, use Docker
 Desktop with the WSL 2 backend enabled and run the local Cloud commands from a
@@ -52,19 +50,16 @@ npm run cloud:local
 It runs these steps in order:
 
 1. Creates `.env.cloud.local` from `ao-cloud/.env.example` if it is missing.
-2. Generates encryption/signing, WorkOS cookie, GitHub App state, and GitHub
-   App webhook secrets when they are blank.
+2. Generates encryption/signing and WorkOS browser-session values when they are
+   blank.
 3. Creates `frontend/src/landing/.env.local` with the local API URL if it is missing.
-4. In the default local-auth mode, reads `gh auth token` from the host and
-   injects it into the local control-plane container for GitHub repository
-   access. WorkOS mode uses the GitHub App instead.
+4. Reads `gh auth token` from the host when available and injects it into the
+   local control-plane container for optional GitHub repository access.
 5. Runs `npm install` for the root and cloud web app.
 6. Builds `ao-cloud-worker:local` and the local control-plane image.
 7. Starts Compose PostgreSQL and the control plane.
 8. Waits for the control plane's `/readyz`, then starts the web app.
-9. For either WorkOS command, starts a webhook-only Cloudflare Quick Tunnel and
-   prints its dynamic GitHub webhook URL.
-10. Streams control-plane, web-app, and Docker sandbox lifecycle logs in the
+9. Streams control-plane, web-app, and Docker sandbox lifecycle logs in the
     current terminal until Ctrl-C.
 
 The runner overrides stale environment values so this path always uses local
@@ -131,85 +126,12 @@ WORKOS_REDIRECT_URI=http://127.0.0.1:5174/callback
 NEXT_PUBLIC_WORKOS_REDIRECT_URI=http://127.0.0.1:5174/callback
 ```
 
-### Configure the test GitHub App
+### Optional local GitHub access
 
-The WorkOS commands use the hosted-style GitHub App flow, not the host `gh`
-credential. The local runner expects these test-app defaults:
-
-```text
-App ID:    4475070
-Client ID: Iv23liLaAnXMSyGGzVl4
-App slug:  ao-cloud-test
-```
-
-In the GitHub App settings, configure:
-
-```text
-Homepage URL: http://127.0.0.1:5174
-Callback URL: http://127.0.0.1:3010/api/cloud/v1/github/user/callback
-Setup URL:    http://127.0.0.1:3010/api/cloud/v1/github/install/callback
-```
-
-Enable **Expire user authorization tokens**. AO starts its explicit
-authorization-code + PKCE flow from Settings, so **Request user authorization
-(OAuth) during installation** may remain disabled. Generate a client secret in
-the App settings and add it to `.env.cloud.local`:
-
-```bash
-AO_GITHUB_APP_CLIENT_SECRET=<GitHub App client secret>
-```
-
-The secret is required only by the control plane and must never be added to the
-browser environment or committed.
-
-Enable the webhook and keep SSL verification on. The Webhook URL is not fixed:
-`npm run cloud:workos` and `npm run cloud:workos:gated` start a Cloudflare Quick
-Tunnel and print the full dynamic URL to use. It ends in
-`/api/cloud/v1/github/webhooks` and changes when the runner is restarted.
-
-Set these repository permissions:
-
-```text
-Administration:  Read and write
-Contents:        Read and write
-Issues:          Read-only
-Pull requests:   Read and write
-Checks:          Read-only
-Commit statuses: Read-only
-Workflows:       Read and write
-Metadata:        Read-only (implicit)
-```
-
-Subscribe to these events:
-
-```text
-github_app_authorization
-installation
-installation_repositories
-pull_request
-pull_request_review
-pull_request_review_thread
-check_run
-check_suite
-status
-```
-
-Generate a private key in the GitHub App settings, save the downloaded PEM at
-`~/.ao/cloud-local/github-app.private-key.pem`, and restrict it:
-
-```bash
-chmod 600 ~/.ao/cloud-local/github-app.private-key.pem
-```
-
-Install `cloudflared` if needed:
-
-```bash
-brew install cloudflared
-```
-
-On first run, the runner generates `AO_GITHUB_APP_STATE_SECRET` and
-`AO_GITHUB_APP_WEBHOOK_SECRET` in `.env.cloud.local`. It cannot generate the
-GitHub client secret; copy that value from the App settings first.
+WorkOS controls browser authentication only. It does not require GitHub. Both
+WorkOS commands use the host `gh auth token` when it is available, matching
+`npm run cloud:local`; otherwise GitHub repository creation, cloning, and SCM
+actions are disabled. Standalone agents continue to work without GitHub.
 
 Then run one of these:
 
@@ -223,50 +145,7 @@ commands force `AO_CLOUD_AUTH_MODE=workos` for the current run. The local runner
 generates `WORKOS_COOKIE_PASSWORD`, `WORKOS_REDIRECT_URI`, and
 `NEXT_PUBLIC_WORKOS_REDIRECT_URI` if they are blank; it cannot generate
 `WORKOS_CLIENT_ID` or `WORKOS_API_KEY` because those come from your WorkOS app.
-Both WorkOS commands also require the private key at the path above and
-`cloudflared`. The runner validates the key and its permissions, starts the
-webhook relay and Quick Tunnel, and prints only the dynamic Webhook URL; it does
-not print either generated GitHub secret.
-
-While the runner remains active, paste its printed Webhook URL into the GitHub
-App. Open `.env.cloud.local` in an editor and paste the
-`AO_GITHUB_APP_WEBHOOK_SECRET` value into GitHub's Webhook secret field. Do not
-print, echo, or paste the secret into a terminal. The state secret remains
-AO-only and must not be entered in GitHub.
-
-### Exercise the GitHub App flow
-
-1. Sign in to AO, open **Settings → GitHub**, and select **Connect GitHub**.
-   Authorize the App once. GitHub returns through the user Callback URL, and AO
-   shows the personal and organization installations visible to that user.
-2. If no installation is available, select **Install on another account**,
-   choose the account and repository access in GitHub, and complete the signed,
-   single-use Setup URL confirmation. Select **Sync** after returning.
-3. Create a scratch project. Verify the owner picker includes the authorized
-   personal account and organizations. Scratch creation requires an
-   all-repository installation; selected-repository installations show a
-   Configure action because GitHub cannot add the new repository automatically.
-4. Create an existing-repository project and verify its picker contains only an active
-   grant. Create the project and start a session to exercise clone/fetch and SCM
-   reads through the control-plane repository proxy.
-5. Select **Configure**, change the installation's selected repositories in
-   GitHub, return to AO, and select **Sync**. Verify newly selected repositories
-   appear and removed repositories can no longer be selected for projects.
-6. Select **Disconnect**, confirm the prompt, and verify that installation's
-   grants are no longer available to new or running project operations.
-
-AO stores the GitHub user access and rotating refresh tokens encrypted with
-`AO_ENCRYPTION_KEY`. OAuth state is random, hashed at rest, single-use, and
-short-lived; the PKCE verifier is encrypted. AO revalidates scratch owners
-against GitHub at request time. Installation tokens remain separate and scoped
-to repository operations.
-
-In GitHub App mode, workers receive only AO worker credentials. The control
-plane checks the active organization/repository grant and mints a short-lived
-installation token restricted to one repository and the immediate operation.
-That token stays in control-plane memory and is never returned in worker
-bootstrap data, persisted in the worker, or logged. The GitHub App private key
-also never enters a worker.
+No GitHub App client secret, private key, webhook secret, or tunnel is required.
 
 In this mode the CP no longer serves the local `/api/cloud/v1/auth/login` and
 `/signup` path. The UI uses WorkOS, and the CP accepts only signed WorkOS access
