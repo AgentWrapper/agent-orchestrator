@@ -31,8 +31,11 @@ describe("WindowTitlebar", () => {
 	});
 
 	it("tints the native Windows controls from the active CSS theme tokens", async () => {
-		document.documentElement.style.setProperty("--color-bg-sidebar", "rgb(12, 34, 56)");
-		document.documentElement.style.setProperty("--fg-muted", "rgb(201, 202, 203)");
+		document.documentElement.style.setProperty("--sidebar", "rgb(12, 34, 56)");
+		document.documentElement.style.setProperty("--color-bg-sidebar", "var(--sidebar)");
+		document.documentElement.style.setProperty("--muted-foreground", "rgb(201, 202, 203)");
+		document.documentElement.style.setProperty("--color-text-muted", "var(--muted-foreground)");
+		document.documentElement.style.setProperty("--fg-muted", "var(--color-text-muted)");
 		const { WindowTitlebar } = await loadWindowTitlebar();
 
 		render(<WindowTitlebar />);

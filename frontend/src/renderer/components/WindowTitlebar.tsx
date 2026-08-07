@@ -24,8 +24,14 @@ const isWindows =
 
 type MenuKey = "file" | "edit" | "view" | "window" | "help";
 
-function cssToken(styles: CSSStyleDeclaration, name: string, fallback: string): string {
-	return styles.getPropertyValue(name).trim() || fallback;
+function cssToken(styles: CSSStyleDeclaration, name: string, fallback: string, depth = 0): string {
+	const value = styles.getPropertyValue(name).trim();
+	if (!value) return fallback;
+
+	const match = /^var\(\s*(--[A-Za-z0-9_-]+)\s*\)$/.exec(value);
+	if (match && depth < 10) return cssToken(styles, match[1], fallback, depth + 1);
+
+	return value;
 }
 
 // Dispatch a native-menu action to the main process (see menu:action in main.ts).
