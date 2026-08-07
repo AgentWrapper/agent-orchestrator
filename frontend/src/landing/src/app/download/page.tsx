@@ -172,7 +172,7 @@ export default async function DownloadPage() {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
+            <article className="order-2 flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5 md:order-1">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
                   src="/optimized/feature3.webp"
@@ -200,7 +200,7 @@ export default async function DownloadPage() {
               </div>
             </article>
 
-            <article className="flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5">
+            <article className="order-1 flex h-full flex-col rounded-2xl bg-card p-4 sm:p-5 md:order-2">
               <div className="relative mb-5 h-80 overflow-hidden rounded-xl sm:h-[360px]">
                 <Image
                   src="/optimized/feature.webp"
