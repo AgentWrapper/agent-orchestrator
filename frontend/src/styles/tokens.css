@@ -67,12 +67,23 @@
 	--color-bg-tertiary: var(--muted);
 	--color-bg-elevated: var(--popover);
 	--color-bg-sidebar: var(--sidebar);
+	/* Token keeps the historical #101317e7 value; painted surfaces use the
+	   opaque plate so the p-2 gutter cannot composite into #111316. */
+	--color-bg-terminal-opaque: #101317;
 	--color-bg-terminal: #101317e7;
+	/* Opaque backing for terminal swaps/covers; prevents retained frames leaking through. */
+	--color-bg-terminal-opaque: #101317;
 
 	/* Text */
 	--color-text-primary: var(--foreground);
 	--color-text-muted: var(--muted-foreground);
 	--color-text-passive: var(--chart-3);
+	--color-brand-logo: #79b0dc;
+	--color-brand-logo-bright: #a5cde7;
+	--color-brand-logo-foreground: #0a0b0d;
+	--color-text-markdown-code: var(--color-brand-logo);
+	--color-text-markdown-link: var(--color-brand-logo); /* underline distinguishes links */
+	--color-text-markdown-link-hover: var(--color-brand-logo-bright);
 	--color-text-terminal: #d7d7d2;
 	--color-text-terminal-dim: #7c7c7c;
 
@@ -104,7 +115,7 @@
 	--color-status-needs-you: #fb923c;
 	--color-status-in-review: #facc15;
 	--color-status-ready: #4ade80;
-	--color-status-merged: var(--primary);
+	--color-status-merged: var(--color-status-ready);
 	--color-status-idle: var(--muted-foreground);
 	--color-status-exited: var(--destructive);
 	--color-status-terminated: var(--chart-3);
@@ -303,7 +314,9 @@
 
 	/* Clears the macOS traffic-light row used by the fixed titlebar controls. */
 	--size-traffic-light-clearance: 40px;
-	--size-traffic-light-clearance-fullscreen: var(--space-2);
+	/* Fullscreen has no traffic lights, but the left navigation still needs one
+	 * compact row before sidebar content begins. */
+	--size-traffic-light-clearance-fullscreen: calc(var(--size-control-md) + var(--space-1));
 	/* Resize handle straddles the sidebar-panel boundary: offset = half the width
 	 * so the hairline lands exactly at the junction and the drag zone covers 6px
 	 * on each side of it. */
@@ -314,9 +327,10 @@
 	--size-notification-width: 460px;
 	--size-notification-max-height: 420px;
 	--size-select-menu-max: 320px; /* agent/select dropdown scroll cap (was max-h-80) */
-	--size-settings-menu-width: 18rem; /* settings option menus — max width cap */
-	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — wider rows */
+	--size-settings-menu-width: 20rem; /* settings option menus — matches agent picker box width */
+	--size-settings-agent-menu-min-width: 20rem; /* agent harness picker — fixed width for status columns */
 	--size-notification-icon: 26px;
+	--size-session-topbar: calc(var(--size-inspector-tabs) + (2 * var(--space-1)));
 	/* DaemonFailureBanner floating toast (was w-[min(22rem,…)] / max-h-40). */
 	--size-daemon-failure-toast: 22rem;
 	--size-daemon-failure-details-max: 10rem;
@@ -335,6 +349,9 @@
 	--size-shell-tab-min: 64px;
 	/* Keeps added session tabs aligned with the owning tab in the secondary strip. */
 	--size-session-pane-tab-max: 112px;
+	/* Compact connected shell tab in a session's terminal strip. This includes
+	   the terminal glyph and close action, not only the truncated label. */
+	--size-shell-tab-connected: 148px;
 	/* Caps a standalone shell terminal's tab label so several open shells stay
 	   readable side by side instead of one long path crowding out the rest. */
 	--size-shell-tab-max: 140px;
@@ -367,7 +384,8 @@
 	--size-branch-chip: 13rem;
 	--size-inspector-min: 280px;
 	--size-textarea-min: 112px;
-	--size-sidebar-project-actions: 84px;
+	/* Three 20px actions + two 1px gaps + the 2px right inset. */
+	--size-sidebar-project-actions: 64px;
 
 	/* Shared inset-panel geometry (welcome board + settings page) */
 	--size-center-panel-inset: 24px;
@@ -386,17 +404,21 @@
 	--radius-welcome-panel: var(--radius-center-panel);
 
 	/* Import mode picker */
-	--color-bg-import-modal: var(--popover);
+	--color-bg-import-modal: var(--card);
 	--color-border-import-modal: var(--border);
 	--color-text-import-title: var(--foreground);
 	--color-text-import-muted: var(--muted-foreground);
-	--color-bg-import-card: var(--card);
+	--color-bg-import-card: var(--popover);
 	--color-bg-import-card-hover: var(--accent);
-	--color-bg-import-illustration: var(--color-bg-import-modal);
+	--color-bg-import-illustration: var(--color-bg-import-chip);
 	--color-bg-import-chip: var(--secondary);
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 	--size-import-modal-max: 896px;
 	--size-import-folder-dialog: 640px;
+	/* Shared equal edge inset for modal header/body/footer sections. */
+	--size-modal-padding: var(--space-6);
+	--size-import-modal-padding: var(--space-8);
+	--size-import-dialog-padding: var(--size-modal-padding);
 	--size-import-mode-card-min: 252px;
 	--size-import-mode-card-min-sm: 292px;
 	--size-import-mode-illustration: 178px;
@@ -426,7 +448,7 @@
 	--size-settings-section-inner-gap: 12px;
 	--size-settings-row-padding: 16px;
 	--size-settings-row-icon-gap: 12px;
-	--size-settings-menu-min-width: 11rem;
+	--size-settings-menu-min-width: 9rem;
 	--size-settings-inline-input-min: 3.5rem;
 	--size-settings-inline-input-max: 12rem;
 	--size-settings-inline-input-max-percent: 42%;
@@ -445,7 +467,7 @@
 	--color-border-settings-input: var(--color-border-settings-dialog);
 	--color-text-settings-input: var(--foreground);
 	--color-text-settings-placeholder: var(--muted-foreground);
-	--color-text-import-sep: var(--color-text-settings-placeholder);
+	--color-text-import-sep: var(--color-text-import-muted);
 	--color-settings-accent: var(--primary);
 	--color-settings-switch-on: var(--primary);
 
@@ -643,11 +665,19 @@
 	--color-bg-tertiary: var(--muted);
 	--color-bg-elevated: var(--popover);
 	--color-bg-sidebar: var(--sidebar);
+	--color-bg-terminal-opaque: #f5f5f4;
 	--color-bg-terminal: #f5f5f4;
+	--color-bg-terminal-opaque: #f5f5f4;
 
 	--color-text-primary: var(--foreground);
 	--color-text-muted: var(--muted-foreground);
 	--color-text-passive: var(--chart-3);
+	--color-brand-logo: #304c83;
+	--color-brand-logo-bright: #466daa;
+	--color-brand-logo-foreground: #ffffff;
+	--color-text-markdown-code: var(--color-brand-logo);
+	--color-text-markdown-link: var(--color-brand-logo);
+	--color-text-markdown-link-hover: var(--color-brand-logo-bright);
 	--color-text-terminal: #24292f;
 	--color-text-terminal-dim: #6b7280;
 
@@ -675,7 +705,7 @@
 	--color-status-needs-you: #ea580c;
 	--color-status-in-review: #ca8a04;
 	--color-status-ready: #16a34a;
-	--color-status-merged: var(--primary);
+	--color-status-merged: var(--color-status-ready);
 	--color-status-idle: var(--muted-foreground);
 	--color-status-exited: var(--destructive);
 	--color-status-terminated: var(--chart-3);
@@ -727,6 +757,7 @@
 	--color-text-import-muted: var(--muted-foreground);
 	--color-bg-import-card: var(--card);
 	--color-bg-import-card-hover: var(--accent);
+	--color-bg-import-illustration: var(--color-bg-import-chip);
 	--color-bg-import-chip: var(--secondary);
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 
@@ -1068,4 +1099,175 @@
 	--sidebar-accent:             #f1eceb;
 	--sidebar-accent-foreground:  #2b283c;
 	--sidebar-ring:               #907aa9;
+}
+
+/* ── Nord ── */
+:root[data-style-theme="nord"] {
+	/* Dark */
+	--background:                 #2e3440;
+	--foreground:                 #d8dee9;
+	--card:                       #3b4252;
+	--card-foreground:            #d8dee9;
+	--popover:                    #434c5e;
+	--popover-foreground:         #d8dee9;
+	--primary:                    #88c0d0;
+	--primary-foreground:         #2e3440;
+	--secondary:                  #3b4252;
+	--secondary-foreground:       #d8dee9;
+	--muted:                      #3b4252;
+	--muted-foreground:           #8894a3;
+	--accent:                     #3b4252;
+	--accent-foreground:          #d8dee9;
+	--border:                     oklch(1 0 0 / 8%);
+	--input:                      oklch(1 0 0 / 5%);
+	--ring:                       #88c0d0;
+	--sidebar:                    #252b37;
+	--sidebar-foreground:         #d8dee9;
+	--sidebar-primary:            #88c0d0;
+	--sidebar-primary-foreground: #2e3440;
+	--sidebar-accent:             #3b4252;
+	--sidebar-accent-foreground:  #d8dee9;
+	--sidebar-ring:               #88c0d0;
+}
+:root[data-style-theme="nord"][data-theme="light"] {
+	color-scheme: light;
+	/* Light */
+	--background:                 #eceff4;
+	--foreground:                 #2e3440;
+	--card:                       #e5e9f0;
+	--card-foreground:            #2e3440;
+	--popover:                    #eef0f4;
+	--popover-foreground:         #2e3440;
+	--primary:                    #5e81ac;
+	--primary-foreground:         #eceff4;
+	--secondary:                  #e0e5ee;
+	--secondary-foreground:       #2e3440;
+	--muted:                      #e0e5ee;
+	--muted-foreground:           #5a6474;
+	--accent:                     #e0e5ee;
+	--accent-foreground:          #2e3440;
+	--border:                     oklch(0 0 0 / 10%);
+	--input:                      oklch(0 0 0 / 6%);
+	--ring:                       #5e81ac;
+	--sidebar:                    #f2f5f9;
+	--sidebar-foreground:         #2e3440;
+	--sidebar-primary:            #5e81ac;
+	--sidebar-primary-foreground: #eceff4;
+	--sidebar-accent:             #e0e5ee;
+	--sidebar-accent-foreground:  #2e3440;
+	--sidebar-ring:               #5e81ac;
+}
+
+/* ── Gruvbox ── */
+:root[data-style-theme="gruvbox"] {
+	/* Dark */
+	--background:                 #282828;
+	--foreground:                 #ebdbb2;
+	--card:                       #3c3836;
+	--card-foreground:            #ebdbb2;
+	--popover:                    #45403d;
+	--popover-foreground:         #ebdbb2;
+	--primary:                    #fabd2f;
+	--primary-foreground:         #282828;
+	--secondary:                  #3c3836;
+	--secondary-foreground:       #ebdbb2;
+	--muted:                      #3c3836;
+	--muted-foreground:           #928374;
+	--accent:                     #3c3836;
+	--accent-foreground:          #ebdbb2;
+	--border:                     oklch(1 0 0 / 8%);
+	--input:                      oklch(1 0 0 / 5%);
+	--ring:                       #d79921;
+	--sidebar:                    #1d2021;
+	--sidebar-foreground:         #ebdbb2;
+	--sidebar-primary:            #d79921;
+	--sidebar-primary-foreground: #282828;
+	--sidebar-accent:             #3c3836;
+	--sidebar-accent-foreground:  #ebdbb2;
+	--sidebar-ring:               #d79921;
+}
+:root[data-style-theme="gruvbox"][data-theme="light"] {
+	color-scheme: light;
+	/* Light */
+	--background:                 #fbf1c7;
+	--foreground:                 #3c3836;
+	--card:                       #f2e5bc;
+	--card-foreground:            #3c3836;
+	--popover:                    #f5eacc;
+	--popover-foreground:         #3c3836;
+	--primary:                    #b57614;
+	--primary-foreground:         #fbf1c7;
+	--secondary:                  #ebdbb2;
+	--secondary-foreground:       #3c3836;
+	--muted:                      #ebdbb2;
+	--muted-foreground:           #7c6f64;
+	--accent:                     #ebdbb2;
+	--accent-foreground:          #3c3836;
+	--border:                     oklch(0 0 0 / 10%);
+	--input:                      oklch(0 0 0 / 6%);
+	--ring:                       #b57614;
+	--sidebar:                    #f9f0cb;
+	--sidebar-foreground:         #3c3836;
+	--sidebar-primary:            #b57614;
+	--sidebar-primary-foreground: #fbf1c7;
+	--sidebar-accent:             #ebdbb2;
+	--sidebar-accent-foreground:  #3c3836;
+	--sidebar-ring:               #b57614;
+}
+
+/* ── Solarized ── */
+:root[data-style-theme="solarized"] {
+	/* Dark */
+	--background:                 #002b36;
+	--foreground:                 #839496;
+	--card:                       #073642;
+	--card-foreground:            #93a1a1;
+	--popover:                    #0d404d;
+	--popover-foreground:         #93a1a1;
+	--primary:                    #268bd2;
+	--primary-foreground:         #002b36;
+	--secondary:                  #073642;
+	--secondary-foreground:       #93a1a1;
+	--muted:                      #073642;
+	--muted-foreground:           #657b83;
+	--accent:                     #073642;
+	--accent-foreground:          #93a1a1;
+	--border:                     oklch(1 0 0 / 8%);
+	--input:                      oklch(1 0 0 / 5%);
+	--ring:                       #268bd2;
+	--sidebar:                    #001f28;
+	--sidebar-foreground:         #93a1a1;
+	--sidebar-primary:            #268bd2;
+	--sidebar-primary-foreground: #002b36;
+	--sidebar-accent:             #073642;
+	--sidebar-accent-foreground:  #93a1a1;
+	--sidebar-ring:               #268bd2;
+}
+:root[data-style-theme="solarized"][data-theme="light"] {
+	color-scheme: light;
+	/* Light */
+	--background:                 #fdf6e3;
+	--foreground:                 #586e75;
+	--card:                       #f5edd8;
+	--card-foreground:            #657b83;
+	--popover:                    #f9f2e7;
+	--popover-foreground:         #657b83;
+	--primary:                    #268bd2;
+	--primary-foreground:         #fdf6e3;
+	--secondary:                  #eee8d5;
+	--secondary-foreground:       #657b83;
+	--muted:                      #eee8d5;
+	--muted-foreground:           #93a1a1;
+	--accent:                     #eee8d5;
+	--accent-foreground:          #657b83;
+	--border:                     oklch(0 0 0 / 10%);
+	--input:                      oklch(0 0 0 / 6%);
+	--ring:                       #268bd2;
+	--sidebar:                    #fef8ec;
+	--sidebar-foreground:         #657b83;
+	--sidebar-primary:            #268bd2;
+	--sidebar-primary-foreground: #fdf6e3;
+	--sidebar-accent:             #eee8d5;
+	--sidebar-accent-foreground:  #657b83;
+	--sidebar-ring:               #268bd2;
 }

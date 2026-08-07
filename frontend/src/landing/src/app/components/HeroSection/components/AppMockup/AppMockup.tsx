@@ -96,7 +96,7 @@ const previewAgents = {
 	codex: { agent: "Codex", icon: "/app-icons/agents/codex.svg" },
 	cursor: { agent: "Cursor", icon: "/app-icons/agents/cursor.svg" },
 	opencode: { agent: "OpenCode", icon: "/app-icons/agents/opencode.svg" },
-	copilot: { agent: "Copilot", icon: "/app-icons/agents/copilot.png" },
+	copilot: { agent: "Copilot", icon: "/app-icons/agents/copilot-color.svg" },
 	gemini: { agent: "Gemini", icon: "/app-icons/gemini.svg" },
 	aider: { agent: "Aider", icon: "/app-icons/agents/aider.png" },
 	grok: { agent: "Grok", icon: "/app-icons/agents/grok.png" },
@@ -751,6 +751,14 @@ const mockupShellStyle = {
 	...previewTokenStyle,
 	"--mockup-design-w": `${BASE_WIDTH}px`,
 	"--mockup-design-h": `${BASE_HEIGHT}px`,
+	"--mockup-shell-radius": "20px",
+	"--mockup-inner-radius": "17px",
+	left: "50%",
+	top: "50%",
+	width: `min(calc(100% - ${WINDOW_MARGIN * 2}px), ${BASE_WIDTH}px)`,
+	maxHeight: `calc(100% - ${WINDOW_MARGIN * 2}px)`,
+	aspectRatio: `${BASE_WIDTH} / ${BASE_HEIGHT}`,
+	transform: "translate(-50%, -50%)",
 } as CSSProperties;
 
 function useFloatingWindow(
@@ -762,10 +770,13 @@ function useFloatingWindow(
 		const outer = outerRef.current;
 		const state = stateRef.current;
 		if (!outer || !state) return;
+		const scale = state.width / BASE_WIDTH;
 		outer.style.left = `${state.x}px`;
 		outer.style.top = `${state.y}px`;
 		outer.style.width = `${state.width}px`;
 		outer.style.height = `${state.height}px`;
+		outer.style.setProperty("--mockup-shell-radius", `${20 * scale}px`);
+		outer.style.setProperty("--mockup-inner-radius", `${17 * scale}px`);
 		outer.style.transform = "none";
 	}, [outerRef]);
 
@@ -1298,15 +1309,15 @@ function SidebarSessionRow({
 
 function Sidebar({ cards }: { cards: PreviewCard[] }) {
 	const activeCards = cards.filter((card) => !card.merging);
+	// Pin is a shortcut: pinned sessions also stay under their project.
 	const pinnedCards = activeCards.filter(isPinnedSidebarCard);
-	const projectCards = activeCards.filter((card) => !isPinnedSidebarCard(card));
+	const projectCards = activeCards;
 	return (
 		<aside
 			aria-hidden="true"
 			className="pointer-events-none relative flex shrink-0 flex-col bg-[var(--preview-sidebar)] text-[var(--preview-muted-foreground)]"
 			style={{ width: SIDEBAR_DEFAULT_WIDTH }}
 		>
-			{/* Traffic lights + nav — decorative only; whole sidebar is pointer-events-none. */}
 			<div className="flex h-10 items-center gap-2 px-3">
 				<div className="flex h-6 items-center gap-1.5">
 					<span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#ff5f57]" />
@@ -1333,18 +1344,17 @@ function Sidebar({ cards }: { cards: PreviewCard[] }) {
 				</span>
 			</div>
 
-			{/* Brand left edge lines up with the red traffic light (same px-3). */}
 			<div className="flex shrink-0 items-center gap-1.5 px-3 pb-2 pt-0.5">
 				<img
 					src="/ao-logo.svg"
 					alt=""
-					width={20}
-					height={20}
+					width={22}
+					height={22}
 					aria-hidden="true"
-					className="h-5 w-5 shrink-0 rounded-md"
+					className="h-[22px] w-[22px] -translate-y-[1px] shrink-0 rounded-md"
 					draggable="false"
 				/>
-				<div className="min-w-0 flex-1 truncate text-[12px] font-bold leading-tight tracking-tight text-[var(--preview-sidebar-foreground)]">
+				<div className="min-w-0 flex-1 translate-y-px truncate text-[12px] font-bold leading-tight tracking-tight text-[var(--preview-sidebar-foreground)]">
 					Agent Orchestrator
 				</div>
 			</div>
@@ -1357,7 +1367,6 @@ function Sidebar({ cards }: { cards: PreviewCard[] }) {
 					</div>
 				</div>
 
-				{/* Pinned — In Review / Ready cards from the live kanban. */}
 				<div className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-[var(--preview-passive)]">
 					<PinIcon className="h-3.5 w-3.5 shrink-0" />
 					<span className="min-w-0 truncate">Pinned</span>
@@ -1373,7 +1382,6 @@ function Sidebar({ cards }: { cards: PreviewCard[] }) {
 					))}
 				</div>
 
-				{/* Projects — plus only; no disclosure chevron beside it. */}
 				<div className="mb-0.5 flex h-7 w-full items-center gap-1.5 rounded-md px-2 pr-1 text-[12px] font-medium text-[var(--preview-passive)]">
 					<FolderOpenIcon className="h-3.5 w-3.5 shrink-0" />
 					<span className="min-w-0 flex-1 truncate">Projects</span>
@@ -1388,9 +1396,8 @@ function Sidebar({ cards }: { cards: PreviewCard[] }) {
 
 			<div className="flex min-h-0 flex-1 flex-col overflow-hidden px-2">
 				<div className="relative z-20 mb-px shrink-0">
-					{/* Project row — h-9 + action cluster footprint matches real Sidebar. */}
-					<div className="relative flex h-9 w-full items-center gap-2 rounded-lg bg-[var(--preview-sidebar-accent)] px-2 pr-[84px] text-left text-[12px] font-medium text-[var(--preview-foreground)]">
-						<FolderOpenIcon className="h-4 w-4 shrink-0" />
+					<div className="relative flex h-8 w-full items-center gap-2 rounded-lg bg-[var(--preview-sidebar-accent)] px-2.5 pr-[84px] text-left text-[12px] font-medium text-[var(--preview-foreground)]">
+						<FolderOpenIcon className="h-3.5 w-3.5 shrink-0" />
 						<span className="min-w-0 flex-1 truncate">agent-orchestrator</span>
 					</div>
 					<div className="absolute inset-y-0 right-1.5 z-30 flex items-center gap-px">
@@ -1419,9 +1426,8 @@ function Sidebar({ cards }: { cards: PreviewCard[] }) {
 				</div>
 			</div>
 
-			{/* Settings — mb is panel inset (2px) + panel border (1px) so this hairline meets Archive's. */}
-			<div className="mt-auto mb-[3px] flex h-12 shrink-0 items-center border-t border-[var(--preview-border-strong)] px-2">
-				<div className="flex h-full w-full items-center gap-2 px-2 text-[12px] font-medium text-[var(--preview-muted-foreground)]">
+			<div className="mt-auto mb-[3px] flex shrink-0 items-center px-2 pb-2">
+				<div className="flex h-9 w-full items-center gap-2 rounded-lg px-2.5 text-[12px] font-medium text-[var(--preview-muted-foreground)]">
 					<SettingsIcon className="h-3.5 w-3.5 shrink-0" />
 					<span>Settings</span>
 				</div>
@@ -1462,8 +1468,7 @@ function BoardChrome({ viewMode }: { viewMode: ViewMode }) {
 				{viewMode === "orchestrator" ? "Orchestrator" : "agent-orchestrator"}
 			</div>
 			<div className="min-w-0 flex-1" />
-			{/* Static chrome — TopbarButton accent / primary / icon at control-lg (34px). */}
-			<span
+				<span
 				aria-hidden="true"
 				className="inline-flex h-[32px] items-center gap-1.5 rounded-md border border-[var(--preview-border)] bg-[var(--preview-raised)] px-3 text-[12px] font-semibold leading-none text-[var(--preview-muted-foreground)]"
 			>
@@ -2046,7 +2051,7 @@ export function AppMockup() {
 			ref={windowRef}
 			role="img"
 			aria-label="Preview of the Agent Orchestrator board: agent tasks move across Pending Work, Iterating, In Review, and Ready to merge."
-			className="absolute z-10 select-none overflow-hidden rounded-[20px] border border-[var(--preview-border)] bg-[var(--preview-sidebar)] font-sans tracking-tight text-[var(--preview-foreground)] antialiased shadow-[0_30px_80px_-24px_rgba(0,0,0,0.75)] [&_.font-mono]:tracking-normal"
+			className="absolute z-10 select-none overflow-hidden rounded-[var(--mockup-shell-radius)] border border-[var(--preview-border)] bg-[var(--preview-sidebar)] font-sans tracking-tight text-[var(--preview-foreground)] antialiased shadow-[0_30px_80px_-24px_rgba(0,0,0,0.75)] [&_.font-mono]:tracking-normal"
 			style={mockupShellStyle}
 		>
 			<style>{`
@@ -2069,7 +2074,7 @@ export function AppMockup() {
 					<div className="flex h-full min-h-0">
 						<Sidebar cards={cards} />
 						<div className="flex min-h-0 min-w-0 flex-1 flex-col p-[2px]">
-							<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[17px] border border-[var(--preview-border-strong)] bg-[var(--preview-background)]">
+							<div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--mockup-inner-radius)] border border-[var(--preview-border-strong)] bg-[var(--preview-background)]">
 								<BoardChrome viewMode={viewMode} />
 								<>
 									<div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">

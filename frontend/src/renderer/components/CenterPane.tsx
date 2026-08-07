@@ -37,6 +37,8 @@ type CenterPaneProps = {
 	onNewShellTerminal?: () => void;
 	/** Session actions consolidated into the terminal bar by SessionView. */
 	topbarActions?: ReactNode;
+	/** Stop forwarding the agent pane's keystrokes while its controller drains. */
+	agentInputDisabled?: boolean;
 };
 
 const terminalFontSizeStorageKey = "ao.terminal.fontSize";
@@ -71,6 +73,7 @@ export function CenterPane({
 	onRenameShellTerminal,
 	onNewShellTerminal,
 	topbarActions,
+	agentInputDisabled = false,
 }: CenterPaneProps) {
 	const { t } = useTranslation();
 	const paneRef = useRef<HTMLDivElement | null>(null);
@@ -94,6 +97,22 @@ export function CenterPane({
 			: target.kind === "reviewer"
 				? `${t("terminal.reviewer")} · ${target.harness}`
 				: sessionTabLabel;
+	const selectAdjacentTab = useCallback(
+		(direction: -1 | 1) => {
+			const activeIndex =
+				target.kind === "shell"
+					? shellTerminals.findIndex((shell) => shell.handleId === target.handleId) + 1
+					: 0;
+			const nextIndex = (activeIndex + direction + shellTerminals.length + 1) % (shellTerminals.length + 1);
+			if (nextIndex === 0) {
+				onSelectSessionTerminal?.();
+				return;
+			}
+			const nextShell = shellTerminals[nextIndex - 1];
+			if (nextShell) onSelectShellTerminal?.(nextShell.handleId);
+		},
+		[onSelectSessionTerminal, onSelectShellTerminal, shellTerminals, target],
+	);
 
 	useEffect(() => {
 		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === paneRef.current);
@@ -110,6 +129,15 @@ export function CenterPane({
 	);
 
 	useEffect(() => {
+		const disposePrevious = aoBridge.app.onPreviousTabShortcut(() => selectAdjacentTab(-1));
+		const disposeNext = aoBridge.app.onNextTabShortcut(() => selectAdjacentTab(1));
+		return () => {
+			disposePrevious();
+			disposeNext();
+		};
+	}, [selectAdjacentTab]);
+
+	useEffect(() => {
 		aoBridge.app.setCloseShellTerminalShortcutEnabled(
 			target.kind === "shell" && Boolean(onCloseShellTerminal),
 		);
@@ -122,6 +150,8 @@ export function CenterPane({
 		const workspaceSurface = pane.closest<HTMLElement>(".center-panel-surface");
 		const measure = () => {
 			const paneRect = pane.getBoundingClientRect();
+			// leftInset/rightInset are kept for the terminal region width calculation
+			// but no longer used for viewport-alignment padding (topbar is inside the surface).
 			const workspaceRect = workspaceSurface?.getBoundingClientRect() ?? paneRect;
 			const next = {
 				leftInset: workspaceRect.left,
@@ -186,13 +216,8 @@ export function CenterPane({
 	);
 
 	const terminalTopbar = (
-		<div
-			className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar"
-			style={{
-				paddingLeft: isFullscreen ? 0 : terminalBounds.leftInset,
-				paddingRight: isFullscreen ? 0 : terminalBounds.rightInset,
-			}}
-		>
+		<div className="flex h-inspector-tabs w-full shrink-0 items-stretch bg-sidebar">
+
 			<div className="session-topbar-surface flex min-w-0 flex-1" data-testid="session-workspace-topbar">
 				<div
 					className={cn(
@@ -318,7 +343,7 @@ export function CenterPane({
 				</div>
 				{isFullscreen ? null : (
 					<div
-						className="ml-auto flex shrink-0 items-center border-l border-border/70 px-3"
+						className="ml-auto flex shrink-0 items-center px-3"
 						data-testid="session-action-region"
 					>
 						{topbarActions}
@@ -361,6 +386,7 @@ export function CenterPane({
 				<TerminalPane
 					daemonReady={daemonReady}
 					fontSize={fontSize}
+					inputDisabled={agentInputDisabled && target.kind === "worker"}
 					session={session}
 					terminalTarget={target}
 					theme={theme}
@@ -389,7 +415,7 @@ function SessionPaneTab({ label, isActive, onSelect, session }: SessionPaneTabPr
 			className={cn(
 				"group relative inline-flex min-w-shell-tab-min self-stretch items-center gap-1.5 border-r border-border bg-surface px-3 text-foreground transition-colors",
 				isActive
-					? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-terminal"
+					? "bg-overlay text-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-foreground/80"
 					: "text-muted-foreground hover:bg-raised hover:text-foreground",
 			)}
 		>

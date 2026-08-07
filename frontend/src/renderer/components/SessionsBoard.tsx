@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { useQueryClient } from "@tanstack/react-query";
@@ -31,9 +31,12 @@ import {
 	isSessionIdle,
 	type AttentionZone,
 	type AttentionZoneView,
-	type SessionStatusView,
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import {
+	useSessionUsageSummaries,
+	type SessionUsageSummary,
+} from "../hooks/useSessionUsageSummaries";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import {
 	clearTerminateSessionState,
@@ -47,10 +50,11 @@ import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { AgentAvatar } from "./AgentAvatar";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
+import { formatTokenCount } from "../lib/format-token-count";
 import { aoBridge } from "../lib/bridge";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { cn } from "../lib/utils";
@@ -70,6 +74,8 @@ type SessionsBoardProps = {
 // Live merged sessions remain in-flow. A terminated runtime is archived even
 // when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
+type UsageBySession = ReadonlyMap<string, SessionUsageSummary>;
+const emptyUsageBySession: UsageBySession = new Map();
 
 function isArchivedSession(session: WorkspaceSession): boolean {
 	return session.isTerminated === true || session.status === "terminated";
@@ -87,6 +93,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
+	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -101,6 +108,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
+	const [canCreateAsTui, setCanCreateAsTui] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const orchestratorStartupError = useUiStore((state) =>
 		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
@@ -114,7 +122,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
 	// The board instance survives project-to-project navigation (same route,
 	// new param), so a spawn failure must not follow the user to another board.
-	useEffect(() => setSpawnError(null), [projectId]);
+	useEffect(() => {
+		setSpawnError(null);
+		setCanCreateAsTui(false);
+	}, [projectId]);
 	const previousProjectIdRef = useRef(projectId);
 	useEffect(() => {
 		const previousProjectId = previousProjectIdRef.current;
@@ -204,7 +215,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 	};
 
-	const openOrchestrator = async () => {
+	const openOrchestrator = async (mode?: "tui") => {
 		if (!projectId || isProjectRestarting) return;
 		if (orchestrator) {
 			void navigate({
@@ -220,10 +231,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			return;
 		}
 		setSpawnError(null);
+		setCanCreateAsTui(false);
 		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId, "board");
+			const sessionId = await spawnOrchestrator(projectId, "board", false, mode);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			setOrchestratorStartupError(projectId, null);
 			void navigate({
@@ -235,6 +247,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", err);
 			setSpawnError(err instanceof Error ? err.message : t("shell.couldNotSpawn"));
+			setCanCreateAsTui(isChatPreflightError(err));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -258,6 +271,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{visibleSpawnError}
 				</TopbarKillError>
 			)}
+			{visibleSpawnError && canCreateAsTui && !showProjectEmpty ? (
+				<TopbarButton disabled={isSpawning || isProjectRestarting} onClick={() => void openOrchestrator("tui")}>
+					{t("newTask.createAsTui")}
+				</TopbarButton>
+			) : null}
 			<TopbarButton
 				aria-label={t("shell.newTask")}
 				disabled={isProjectRestarting}
@@ -341,6 +359,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						isProjectRestarting={isProjectRestarting}
 						onNewTask={() => projectId && requestNewTask(projectId)}
 						onOpenOrchestrator={() => void openOrchestrator()}
+						onOpenOrchestratorAsTui={canCreateAsTui ? () => void openOrchestrator("tui") : undefined}
 						spawnError={visibleSpawnError}
 					/>
 				) : (
@@ -360,6 +379,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
 									onTerminate={(session) => terminateSession.mutate(session)}
+									usageBySession={usageBySession}
 								/>
 							))}
 						</div>
@@ -413,6 +433,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
 									isRestoreDisabled={restoringSessionId !== undefined}
+									usage={usageBySession.get(s.id)}
 								/>
 							))}
 						</div>
@@ -440,15 +461,43 @@ function BoardColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
-	if (col.zone === "working") return <WorkLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
-	if (col.zone === "merge") return <MergeLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
-	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
+	if (col.zone === "working") {
+		return (
+			<WorkLaneColumn
+				sessions={sessions}
+				onOpen={onOpen}
+				onTerminate={onTerminate}
+				usageBySession={usageBySession}
+			/>
+		);
+	}
+	if (col.zone === "merge") {
+		return (
+			<MergeLaneColumn
+				sessions={sessions}
+				onOpen={onOpen}
+				onTerminate={onTerminate}
+				usageBySession={usageBySession}
+			/>
+		);
+	}
+	return (
+		<ZoneColumn
+			col={col}
+			sessions={sessions}
+			onOpen={onOpen}
+			onTerminate={onTerminate}
+			usageBySession={usageBySession}
+		/>
+	);
 }
 
 function ZoneColumn({
@@ -456,11 +505,13 @@ function ZoneColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	return (
@@ -491,6 +542,7 @@ function ZoneColumn({
 							session={session}
 							onOpen={() => onOpen(session)}
 							onTerminate={() => onTerminate(session)}
+							usage={usageBySession.get(session.id)}
 						/>
 					))}
 				</div>
@@ -559,10 +611,12 @@ function WorkLaneColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	const tones = splitLaneTones(t);
@@ -579,6 +633,7 @@ function WorkLaneColumn({
 			secondaryTone={tones.working}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
+			usageBySession={usageBySession}
 		/>
 	);
 }
@@ -587,10 +642,12 @@ function MergeLaneColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	const tones = splitLaneTones(t);
@@ -611,6 +668,7 @@ function MergeLaneColumn({
 			secondaryTone={tones.merged}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
+			usageBySession={usageBySession}
 		/>
 	);
 }
@@ -624,6 +682,7 @@ function SplitLaneColumn({
 	secondaryTone,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	ariaLabel: string;
 	zone: Extract<AttentionZone, "working" | "merge">;
@@ -633,6 +692,7 @@ function SplitLaneColumn({
 	secondaryTone: SplitLaneTone;
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	const showPrimary = primarySessions.length > 0;
@@ -678,6 +738,7 @@ function SplitLaneColumn({
 										session={session}
 										onOpen={() => onOpen(session)}
 										onTerminate={() => onTerminate(session)}
+										usage={usageBySession.get(session.id)}
 									/>
 								))}
 							</div>
@@ -690,6 +751,7 @@ function SplitLaneColumn({
 							tone={secondaryTone}
 							onOpen={onOpen}
 							onTerminate={onTerminate}
+							usageBySession={usageBySession}
 						/>
 					) : null}
 				</div>
@@ -722,12 +784,14 @@ function SecondaryLaneSection({
 	onTerminate,
 	standalone,
 	tone,
+	usageBySession,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate?: (s: WorkspaceSession) => void;
 	standalone: boolean;
 	tone: SplitLaneTone;
+	usageBySession: UsageBySession;
 }) {
 	return (
 		<div
@@ -751,6 +815,7 @@ function SecondaryLaneSection({
 						session={session}
 						onOpen={() => onOpen(session)}
 						onTerminate={onTerminate ? () => onTerminate(session) : undefined}
+						usage={usageBySession.get(session.id)}
 					/>
 				))}
 			</div>
@@ -762,17 +827,27 @@ function SessionCard({
 	session,
 	onOpen,
 	onTerminate,
+	usage,
 	interactive = true,
+	action,
+	branchAction,
+	footer,
 }: {
 	session: WorkspaceSession;
 	onOpen?: () => void;
 	onTerminate?: () => void;
+	usage?: SessionUsageSummary;
 	interactive?: boolean;
+	action?: ReactNode;
+	branchAction?: ReactNode;
+	footer?: ReactNode;
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const badge = getSessionStatusView(session.status, t);
+	const activity = getAgentActivityView(session.activity, t);
+	const showLiveActivity = session.status === "working" && activity.state === "active";
 	const issueId = canonicalTrackerIssueId(session.issueId);
 	const branch = session.branch || "";
 	const showBranch = branch !== "" && !sameLabel(branch, session.title) && !sameLabel(branch, session.id);
@@ -794,7 +869,7 @@ function SessionCard({
 				role: "button",
 				tabIndex: 0,
 			}
-		: {};
+		: { role: "listitem" };
 	return (
 		<div
 			{...cardBodyProps}
@@ -845,13 +920,14 @@ function SessionCard({
 					}
 				/>
 			) : null}
+			{action ? <div className="absolute right-2 top-1.5 z-10">{action}</div> : null}
 			<div className="flex items-start gap-2.5 px-3.5 pb-2.5 pt-3">
 				<AgentAvatar className="mt-0.5" provider={session.provider} />
 				<div className="min-w-0 flex-1">
 					<div
 						className={cn(
 							"line-clamp-2 overflow-hidden text-sm-md font-semibold leading-tight tracking-tight text-foreground",
-							showTerminate && "pr-6",
+							(showTerminate || action) && "pr-6",
 						)}
 						title={session.title}
 					>
@@ -861,6 +937,7 @@ function SessionCard({
 						<div className="mt-1.5 flex min-w-0 items-center gap-1.5 font-mono text-2xs text-passive">
 							<GitBranch aria-hidden="true" className="size-icon-2xs shrink-0" />
 							<span className="truncate">{branch}</span>
+							{branchAction}
 						</div>
 					)}
 				</div>
@@ -868,21 +945,31 @@ function SessionCard({
 			<div aria-hidden="true" className="mx-3.5 my-px h-px bg-border" />
 			<div className="flex flex-col gap-1.5 px-3.5 py-2">
 				<div className="flex items-center justify-between gap-2">
-					<span className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}>
-						<span className="size-dot-sm shrink-0 rounded-full bg-current" />
+					<span
+						className={cn("inline-flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium", badge.className)}
+						style={showLiveActivity ? { color: activity.tone } : undefined}
+					>
+						<span
+							aria-hidden="true"
+							className={cn(
+								"size-dot-sm shrink-0 rounded-full",
+								showLiveActivity ? activity.indicatorClassName : "bg-current",
+							)}
+						/>
 						{badge.label}
 					</span>
-					<span
-						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"
-						title={t("shell.updatedAt", { time: session.updatedAt })}
-					>
-						{formatTimeCompact(session.updatedAt)}
-					</span>
+					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
+						<SessionUsageMetric usage={usage} />
+						{usage && usage.totalTokens > 0 ? <span aria-hidden="true">·</span> : null}
+						<span title={t("shell.updatedAt", { time: session.updatedAt })}>
+							{formatTimeCompact(session.updatedAt)}
+						</span>
+					</div>
 				</div>
 				{prSummaries.length > 0 && (
-					<div className="flex flex-col gap-1 font-mono text-2xs text-passive">
+					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-passive">
 						{groupPRsByLifecycle(prSummaries).map((group) => (
-							<BoardPRGroup group={group} key={group.status.label} linksInteractive={interactive} />
+							<BoardPRGroup group={group} key={group.status.label} />
 						))}
 					</div>
 				)}
@@ -900,6 +987,7 @@ function SessionCard({
 					{termination.error}
 				</div>
 			) : null}
+			{footer}
 		</div>
 	);
 }
@@ -910,28 +998,16 @@ function ArchiveSessionItem({
 	restoreError,
 	isRestoring,
 	isRestoreDisabled,
+	usage,
 }: {
 	session: WorkspaceSession;
 	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
 	restoreError?: string;
 	isRestoring: boolean;
 	isRestoreDisabled: boolean;
+	usage?: SessionUsageSummary;
 }) {
-	const { t } = useTranslation();
-	const badge = getSessionStatusView(session.status, t);
-	const issueId = canonicalTrackerIssueId(session.issueId);
-	const prSummaries = sessionPRDisplaySummaries(session, useSessionScmSummary(session.id).data);
 	const branch = session.branch || "";
-	const prMetadata =
-		prSummaries.length > 0 ? (
-			<div className="flex flex-col gap-1">
-				{groupPRsByLifecycle(prSummaries).map((group) => (
-					<BoardPRGroup group={group} key={group.status.label} linksInteractive={false} />
-				))}
-			</div>
-		) : (
-			<span>{t("pr.noPRYet")}</span>
-		);
 	const restoreButton = (
 		<ArchiveRestoreButton
 			isDisabled={isRestoreDisabled}
@@ -942,44 +1018,35 @@ function ArchiveSessionItem({
 	);
 
 	return (
-		<div className="flex min-h-28 flex-col overflow-hidden rounded-md border border-border bg-surface" role="listitem">
-			<div className="flex min-w-0 items-center gap-2 px-3 pt-2">
-				<ArchiveStatus badge={badge} />
-				<span className="ml-auto shrink-0 font-mono text-2xs text-passive">
-					{formatTimeCompact(session.updatedAt)}
-				</span>
-				{restoreButton}
-			</div>
-			<div className="min-h-0 flex-1 px-3 pb-2 pt-1.5 text-left">
-				<div className="line-clamp-2 text-control font-medium leading-snug text-foreground">{session.title}</div>
-				<div className="mt-1 flex min-w-0 items-center gap-2">
-					<AgentAvatar provider={session.provider} />
-					{issueId && (
-						<span className="max-w-branch-chip truncate rounded-sm bg-accent/12 px-1.5 py-0.5 font-mono text-micro text-accent">
-							{issueId}
-						</span>
-					)}
-				</div>
-				{branch && (
-					<div className="mt-2 flex min-w-0 items-center gap-1 font-mono text-2xs text-passive">
-						<span className="truncate">{branch}</span>
-						<CopyActionButton label={`branch ${branch}`} value={branch} />
-					</div>
-				)}
-			</div>
-			<div aria-hidden="true" className="mx-3 my-px h-px bg-border" />
-			<div className="px-3 py-1.5 font-mono text-2xs text-passive">{prMetadata}</div>
-			<ArchiveRestoreError message={restoreError} />
-		</div>
+		<SessionCard
+			action={restoreButton}
+			branchAction={branch ? <CopyActionButton label={`branch ${branch}`} value={branch} /> : undefined}
+			footer={<ArchiveRestoreError message={restoreError} />}
+			interactive={false}
+			session={session}
+			usage={usage}
+		/>
 	);
 }
 
-function ArchiveStatus({ badge }: { badge: SessionStatusView }) {
+function SessionUsageMetric({ usage }: { usage?: SessionUsageSummary }) {
+	const { t } = useTranslation();
+	if (!usage || usage.totalTokens <= 0) return null;
+	const tooltip = t("shell.usageTokens", {
+		count: usage.totalTokens.toLocaleString("en-US"),
+	});
 	return (
-		<span className={cn("inline-flex shrink-0 items-center gap-1.5 text-caption font-medium", badge.className)}>
-			<span className="size-dot-sm rounded-full bg-current" aria-hidden="true" />
-			{badge.label}
-		</span>
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<span
+					aria-label={tooltip}
+					className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-2xs text-muted-foreground"
+				>
+					{formatTokenCount(usage.totalTokens)}
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="top">{tooltip}</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -1024,7 +1091,7 @@ function ArchiveRestoreError({ message }: { message?: string }) {
 type BoardPRLifecycleStatus = { label: "closed" | "open" | "draft" | "merged"; className: string };
 type BoardPRGroup = { status: BoardPRLifecycleStatus; prs: SessionPRSummary[] };
 
-function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup; linksInteractive?: boolean }) {
+function BoardPRGroup({ group }: { group: BoardPRGroup }) {
 	const { t } = useTranslation();
 	const statusLabel = t(`pr.state.${group.status.label}`);
 	return (
@@ -1035,19 +1102,15 @@ function BoardPRGroup({ group, linksInteractive = true }: { group: BoardPRGroup;
 			<span>{t("pr.short")}</span>
 			{group.prs.map((pr, index) => (
 				<span className="inline-flex items-center" key={pr.url || pr.htmlUrl || pr.number}>
-					{linksInteractive ? (
-						<a
-							className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
-							href={prBrowserUrl(pr)}
-							onClick={(event) => event.stopPropagation()}
-							rel="noreferrer"
-							target="_blank"
-						>
-							#{pr.number}
-						</a>
-					) : (
-						<span>#{pr.number}</span>
-					)}
+					<a
+						className="text-passive underline-offset-2 transition-colors hover:text-foreground hover:underline"
+						href={prBrowserUrl(pr)}
+						onClick={(event) => event.stopPropagation()}
+						rel="noreferrer"
+						target="_blank"
+					>
+						#{pr.number}
+					</a>
 					{index < group.prs.length - 1 ? "," : null}
 				</span>
 			))}
@@ -1113,7 +1176,7 @@ function groupPRsByLifecycle(prs: SessionPRSummary[]): BoardPRGroup[] {
 
 function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
 	if (pr.state === "draft") return { label: "draft", className: "text-passive" };
-	if (pr.state === "merged") return { label: "merged", className: "text-accent" };
+	if (pr.state === "merged") return { label: "merged", className: "text-status-merged" };
 	if (pr.state === "closed") return { label: "closed", className: "text-error" };
 	return { label: "open", className: "text-success" };
 }

@@ -485,15 +485,26 @@ func TestGetPromptDeliveryStrategyIsInCommand(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecHasNoCustomFieldsYet(t *testing.T) {
+func TestGetConfigSpecReportsModel(t *testing.T) {
 	plugin := &Plugin{}
 
 	spec, err := plugin.GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(spec.Fields) != 0 {
+	if len(spec.Fields) != 1 || spec.Fields[0].Key != "model" {
 		t.Fatalf("unexpected config fields: %#v", spec.Fields)
+	}
+}
+
+func TestGetLaunchCommandForwardsModel(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "opencode"}
+	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{Config: ports.AgentConfig{Model: "  anthropic/claude-sonnet  "}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"opencode", "--model", "anthropic/claude-sonnet"}; !reflect.DeepEqual(cmd, want) {
+		t.Fatalf("cmd = %#v, want %#v", cmd, want)
 	}
 }
 

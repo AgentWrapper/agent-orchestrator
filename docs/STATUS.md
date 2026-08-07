@@ -35,6 +35,21 @@ surface (`npm run sqlc`, `npm run api`).
 - Full session lifecycle over HTTP: list, get, spawn, kill, restore, rename,
   rollback, cleanup, send, activity, PR claim/list. Orchestrator routes
   (list/spawn/get) are wired too.
+- One daemon-committed interface per session. TUI sessions retain the established
+  tmux/conpty agent runtime; Chat sessions use runtime-less native controllers,
+  persist provider conversation identity, and dispatch lifecycle reactions
+  through the same mode-aware session manager. A durable, capability-gated
+  drain/interrupt handoff can move the same Claude Code or Codex native
+  conversation between TUI and Chat without changing the AO session/worktree;
+  rollback, restart recovery, controller-generation fencing, and a transition
+  message outbox preserve the one-controller invariant.
+- Durable Chat conversations with project-scoped orchestrator continuity,
+  session-scoped worker history, bounded history pages, transactional raw-event
+  archive/projection, controller-generation fencing, turns, messages,
+  activities, approvals, structured input, usage, compaction, and rollback.
+- Chat drivers for the user's installed Codex (native app-server), Claude Code
+  (claude-agent-acp), OpenCode, and Droid. AO reuses each harness's existing
+  binary/auth resolution and does not bundle provider CLIs.
 - Project CRUD plus per-project config (`PUT /projects/{id}/config`).
 - PR action engine wired into the API: `POST /prs/{id}/merge` and
   `/prs/{id}/resolve-comments`.
@@ -54,7 +69,7 @@ surface (`npm run sqlc`, `npm run api`).
 - Terminal mux over WebSocket (`/mux`): per-client `tmux attach` PTY on
   Darwin/Linux; conpty loopback pty-host on Windows.
 - Lifecycle reducer plus reaper (`internal/observe/reaper`).
-- Agent adapter platform under `internal/adapters/agent/` (23 adapters) with a
+- Agent adapter platform under `internal/adapters/agent/` (24 adapters) with a
   registry and `ao hooks` activity dispatch.
 - OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
   drift-checked in CI.
@@ -86,6 +101,13 @@ surface (`npm run sqlc`, `npm run api`).
 - Shell: sidebar (projects + sessions, add/remove project), sessions board,
   session view + inspector, project settings, pull-requests page,
   spawn-orchestrator flow.
+- SessionView renders from the session's persisted mode: the existing terminal
+  surface for TUI, or the durable Chat timeline/composer for Chat. Chat retains
+  access to session-scoped worktree shells without creating an agent tmux pane.
+- Compatible Claude Code and Codex sessions expose an in-session “Open Chat” /
+  “Open Terminal UI” action. Idle sessions switch directly; busy sessions offer
+  an explicit finish-and-drain or stop-and-interrupt policy and show durable
+  progress/recovery state.
 - Desktop status and SCM summary V1: session status comes from
   `GET /api/v1/sessions`; visible/active PR context comes from
   `GET /api/v1/sessions/{sessionId}/pr`; `GET /api/v1/events` is kept open as
@@ -96,12 +118,44 @@ surface (`npm run sqlc`, `npm run api`).
   intentionally not part of the desktop V1 API/UI.
 - Terminal pane (xterm) over the mux WebSocket, with a live SSE events
   connection and port-rebind on daemon restart.
+- Chat history uses bounded pages and targeted CDC/SSE invalidation rather than
+  polling and transferring the full lifetime of a conversation.
 - In-app notification center with click access, Unread/All filters, paginated
   REST catch-up, live notification stream updates, separate PR/session target
   actions, persistent read history, mark-read controls, and Electron app toasts
   while the app is running.
 
+### Mobile (Expo + React Native)
+
+- Connect Mobile pairs with the daemon's opt-in authenticated LAN listener; the
+  loopback listener and its security model remain unchanged.
+- New mobile workers and orchestrators request Chat mode by default. Worker
+  creation filters to the daemon-advertised Chat harnesses, while Terminal UI
+  remains an explicit compatibility choice and typed Chat preflight failures
+  offer that fallback.
+- Session routing uses the same daemon-committed mode as desktop. TUI keeps
+  the existing authenticated mux/xterm surface; Chat uses the same durable,
+  paged conversation projection and CDC/SSE invalidation stream as desktop.
+- Mobile exposes the same capability-gated TUI↔Chat handoff, busy-turn policy,
+  cancellation window, progress overlay, and automatic renderer swap after the
+  daemon commits the new controller.
+- Native Chat includes prose/Markdown, provider activity, commands, plans,
+  changed files, approvals, structured input, model/effort/provider controls,
+  compaction, rollback, MCP recovery, skills and file references, staged/native
+  image delivery, embedded text resources, voice dictation, retryable delivery,
+  persisted drafts, and a session-scoped worktree shell through the existing
+  terminal mux.
+
 ## In flight / not yet a runtime feature
+
+- **Cross-interface visual history import**: provider-native context continues
+  across a compatible handoff, and Chat history already recorded by AO remains
+  durable. A first TUI→Chat switch does not reconstruct terminal screen output
+  as structured AO messages/tool cards; doing so requires a provider history
+  import contract with stable identities and deduplication.
+- **In-flight tool portability**: drain can finish accepted work and interrupt
+  can cancel it, but no common provider protocol serializes a currently executing
+  tool call or detached background process for adoption by another controller.
 
 - **Tracker lane**: GitHub tracker adapter exists, but there is no daemon
   observer loop or agent-lifecycle→issue mirroring yet, so the tracker does

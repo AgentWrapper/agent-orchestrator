@@ -7,6 +7,29 @@
 
 @source "../../packages/ui/src/**/*.{ts,tsx}";
 
+/* Match the desktop app: marketing chrome is not selectable. */
+body {
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.landing-install-command {
+	display: none;
+}
+
+html[data-landing-platform="mac"] .landing-install-command {
+	display: flex;
+	justify-content: center;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.prose {
+	-webkit-user-select: text;
+	user-select: text;
+}
+
 /*
  * Blog code blocks - force dark theme
  * Note: !important is required to override Shiki's inline styles

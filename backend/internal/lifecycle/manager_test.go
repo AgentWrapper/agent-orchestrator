@@ -1,8 +1,10 @@
 package lifecycle
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,29 @@ func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([
 func (f *fakeStore) UpdateSession(_ context.Context, rec domain.SessionRecord) error {
 	f.sessions[rec.ID] = rec
 	return nil
+}
+
+func (f *fakeStore) CommitSessionControllerEpoch(
+	_ context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	now time.Time,
+) (bool, error) {
+	rec, ok := f.sessions[id]
+	if !ok || rec.IsTerminated || domain.NormalizeSessionMode(rec.Mode) != source {
+		return false, nil
+	}
+	rec.Mode = target
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.AgentSessionID = nativeConversationID
+	rec.Metadata.ProviderConversationID = nativeConversationID
+	rec.Metadata.ControllerGeneration = ""
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}
+	rec.UpdatedAt = now
+	f.sessions[id] = rec
+	return true, nil
 }
 
 func (f *fakeStore) GetPRLastNudgeSignature(_ context.Context, prURL string) (string, error) {
@@ -126,6 +151,252 @@ func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
 	got := st.sessions["mer-1"]
 	if !got.IsTerminated || got.Activity.State != domain.ActivityExited {
 		t.Fatalf("want terminated/exited, got %+v", got)
+	}
+}
+
+func TestRuntimeObservation_CrashFinalizesUsageBeforeTermination(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.UpdatedAt = time.Date(2026, 8, 2, 11, 0, 0, 0, time.UTC)
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{
+		Runtime:  ports.ProbeDead,
+		Workload: ports.ProbeFailed,
+		LaunchID: "launch-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 || finalizer.sawTerminated {
+		t.Fatalf("finalizer calls=%d sawTerminated=%v, want 1/false", finalizer.calls, finalizer.sawTerminated)
+	}
+	if finalizer.launchID != "launch-1" {
+		t.Fatalf("finalizer launch id=%q, want launch-1", finalizer.launchID)
+	}
+	if !finalizer.sessionRevision.Equal(rec.UpdatedAt) {
+		t.Fatalf("finalizer session revision=%s, want %s", finalizer.sessionRevision, rec.UpdatedAt)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("crashed session was not terminated")
+	}
+}
+
+func TestRuntimeObservation_FinalizerErrorIsLoggedAndDoesNotBlockTermination(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st, err: errors.New("usage unavailable")}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{Runtime: ports.ProbeDead}); err != nil {
+		t.Fatal(err)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("finalizer error prevented crash termination")
+	}
+	if got := logs.String(); !strings.Contains(got, "lifecycle: finalize session usage before termination") || !strings.Contains(got, "usage unavailable") {
+		t.Fatalf("finalizer error log = %q", got)
+	}
+}
+
+func TestRuntimeObservation_DoesNotFinalizeRejectedObservations(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	oldActivity := domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-2 * time.Minute)}
+	tests := []struct {
+		name  string
+		rec   domain.SessionRecord
+		facts ports.RuntimeFacts
+	}{
+		{
+			name:  "probe failed",
+			rec:   domain.SessionRecord{ID: "mer-1", Activity: oldActivity},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeFailed, ObservedAt: now},
+		},
+		{
+			name: "stale launch",
+			rec: domain.SessionRecord{
+				ID:       "mer-1",
+				Activity: oldActivity,
+				Metadata: domain.SessionMetadata{RuntimeLaunchID: "launch-2"},
+			},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeDead, LaunchID: "launch-1", ObservedAt: now},
+		},
+		{
+			name: "workload dead while runtime alive",
+			rec: domain.SessionRecord{
+				ID:       "mer-1",
+				Activity: oldActivity,
+				Metadata: domain.SessionMetadata{RuntimeLaunchID: "launch-1"},
+			},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeAlive, Workload: ports.ProbeDead, LaunchID: "launch-1", ObservedAt: now},
+		},
+		{
+			name:  "already terminated",
+			rec:   domain.SessionRecord{ID: "mer-1", IsTerminated: true, Activity: domain.Activity{State: domain.ActivityExited}},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeDead, ObservedAt: now},
+		},
+		{
+			name:  "recent activity",
+			rec:   domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now}},
+			facts: ports.RuntimeFacts{Runtime: ports.ProbeDead, ObservedAt: now},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, st, _ := newManager()
+			m.clock = func() time.Time { return now }
+			st.sessions[tt.rec.ID] = tt.rec
+			finalizer := &fakeUsageFinalizer{store: st}
+			m.SetUsageFinalizer(finalizer)
+
+			if err := m.ApplyRuntimeObservation(ctx, tt.rec.ID, tt.facts); err != nil {
+				t.Fatal(err)
+			}
+			if finalizer.calls != 0 {
+				t.Fatalf("finalizer calls=%d, want 0", finalizer.calls)
+			}
+		})
+	}
+}
+
+func TestRuntimeObservation_DoesNotTerminateNewRuntimeGenerationAfterFinalization(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.LastActivityAt = time.Now().Add(-2 * time.Minute)
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, _ string, _ time.Time) error {
+		return m.MarkSpawned(ctx, id, domain.SessionMetadata{RuntimeLaunchID: "launch-new"})
+	}
+	m.SetUsageFinalizer(finalizer)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{
+			Runtime:  ports.ProbeDead,
+			LaunchID: "launch-old",
+		})
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ApplyRuntimeObservation deadlocked while finalizing usage")
+	}
+
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("stale runtime observation changed new generation: %+v", got)
+	}
+}
+
+func TestRuntimeObservation_DoesNotTerminateAfterActivityDuringFinalization(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	m, st, _ := newManager()
+	m.clock = func() time.Time { return now }
+	rec := domain.SessionRecord{
+		ID:       "mer-1",
+		Activity: domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-2 * time.Minute)},
+		Metadata: domain.SessionMetadata{RuntimeLaunchID: "launch-1"},
+	}
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, _ string, _ time.Time) error {
+		return m.ApplyActivitySignal(ctx, id, ports.ActivitySignal{
+			Valid:     true,
+			State:     domain.ActivityIdle,
+			Timestamp: now,
+			LaunchID:  "launch-1",
+		})
+	}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, ports.RuntimeFacts{
+		Runtime:    ports.ProbeDead,
+		LaunchID:   "launch-1",
+		ObservedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || !got.Activity.LastActivityAt.Equal(now) {
+		t.Fatalf("runtime observation overrode activity recorded during finalization: %+v", got)
+	}
+}
+
+func TestRuntimeObservation_RetriesAfterRevisionChangesDuringFinalization(t *testing.T) {
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.UTC)
+	m, st, _ := newManager()
+	m.clock = func() time.Time { return now }
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		Activity:  domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-2 * time.Minute)},
+		UpdatedAt: now.Add(-2 * time.Minute),
+		Metadata:  domain.SessionMetadata{RuntimeLaunchID: "launch-1"},
+	}
+	st.sessions[rec.ID] = rec
+	finalized := 0
+	var revisions []time.Time
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, launchID string, sessionRevision time.Time) error {
+		revisions = append(revisions, sessionRevision)
+		if finalizer.calls == 1 {
+			if err := m.ApplyActivitySignal(ctx, id, ports.ActivitySignal{
+				Valid:     true,
+				State:     domain.ActivityExited,
+				Timestamp: now,
+				Event:     "process-exited",
+				LaunchID:  launchID,
+			}); err != nil {
+				return err
+			}
+		}
+		current := st.sessions[id]
+		if !current.IsTerminated &&
+			current.Metadata.RuntimeLaunchID == launchID &&
+			current.UpdatedAt.Equal(sessionRevision) {
+			finalized++
+		}
+		return nil
+	}
+	m.SetUsageFinalizer(finalizer)
+	facts := ports.RuntimeFacts{
+		Runtime:    ports.ProbeDead,
+		LaunchID:   "launch-1",
+		ObservedAt: now,
+	}
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions[rec.ID]
+	if finalized != 0 || got.IsTerminated || got.Activity.State != domain.ActivityExited || !got.UpdatedAt.Equal(now) {
+		t.Fatalf("first pass finalized=%d session=%+v, want no finalization and live exited revision", finalized, got)
+	}
+
+	if err := m.ApplyRuntimeObservation(ctx, rec.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	got = st.sessions[rec.ID]
+	if finalizer.calls != 2 || finalized != 1 || !got.IsTerminated {
+		t.Fatalf("second pass finalizer calls=%d finalized=%d session=%+v", finalizer.calls, finalized, got)
+	}
+	if len(revisions) != 2 || !revisions[0].Equal(rec.UpdatedAt) || !revisions[1].Equal(now) {
+		t.Fatalf("finalizer revisions=%v, want [%s %s]", revisions, rec.UpdatedAt, now)
 	}
 }
 
@@ -529,6 +800,155 @@ func TestMarkTerminated(t *testing.T) {
 	}
 }
 
+type fakeUsageFinalizer struct {
+	store           *fakeStore
+	calls           int
+	sawTerminated   bool
+	launchID        string
+	sessionRevision time.Time
+	err             error
+	onFinalize      func(domain.SessionID, string, time.Time) error
+}
+
+func (f *fakeUsageFinalizer) FinalizeSession(
+	_ context.Context,
+	id domain.SessionID,
+	launchID string,
+	sessionRevision time.Time,
+) error {
+	f.calls++
+	f.sawTerminated = f.store.sessions[id].IsTerminated
+	f.launchID = launchID
+	f.sessionRevision = sessionRevision
+	if f.onFinalize != nil {
+		return f.onFinalize(id, launchID, sessionRevision)
+	}
+	return f.err
+}
+
+type fakeUsageLifecycle struct {
+	fakeUsageFinalizer
+	reactivateCalls  int
+	reactivateID     domain.SessionID
+	reactivateLaunch string
+	sawLive          bool
+}
+
+func (f *fakeUsageLifecycle) ReactivateSession(
+	_ context.Context,
+	id domain.SessionID,
+	launchID string,
+) error {
+	f.reactivateCalls++
+	f.reactivateID = id
+	f.reactivateLaunch = launchID
+	f.sawLive = !f.store.sessions[id].IsTerminated
+	return nil
+}
+
+func TestMarkSpawnedReactivatesUsageAfterLifecycleTransition(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:           "mer-1",
+		ProjectID:    "mer",
+		IsTerminated: true,
+		Activity:     domain.Activity{State: domain.ActivityExited},
+		Metadata:     domain.SessionMetadata{RuntimeLaunchID: "launch-old"},
+	}
+	usage := &fakeUsageLifecycle{fakeUsageFinalizer: fakeUsageFinalizer{store: st}}
+	m.SetUsageFinalizer(usage)
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{RuntimeLaunchID: "launch-new"}); err != nil {
+		t.Fatal(err)
+	}
+	if usage.reactivateCalls != 1 || usage.reactivateID != "mer-1" ||
+		usage.reactivateLaunch != "launch-new" || !usage.sawLive {
+		t.Fatalf("usage reactivation = calls:%d id:%q launch:%q live:%v",
+			usage.reactivateCalls, usage.reactivateID, usage.reactivateLaunch, usage.sawLive)
+	}
+}
+
+func TestMarkTerminatedFinalizesUsageBeforeLifecycleTransition(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.UpdatedAt = time.Date(2026, 8, 2, 11, 30, 0, 0, time.UTC)
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st, err: errors.New("best effort failure")}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 || finalizer.sawTerminated {
+		t.Fatalf("finalizer calls=%d sawTerminated=%v, want 1/false", finalizer.calls, finalizer.sawTerminated)
+	}
+	if !finalizer.sessionRevision.Equal(rec.UpdatedAt) {
+		t.Fatalf("finalizer session revision=%s, want %s", finalizer.sessionRevision, rec.UpdatedAt)
+	}
+	if !st.sessions["mer-1"].IsTerminated {
+		t.Fatal("finalizer failure prevented session termination")
+	}
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if finalizer.calls != 1 {
+		t.Fatalf("already terminated session finalized %d times, want once", finalizer.calls)
+	}
+}
+
+func TestMarkTerminatedDoesNotTerminateNewRuntimeGeneration(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions[rec.ID] = rec
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, _ string, _ time.Time) error {
+		return m.MarkSpawned(ctx, id, domain.SessionMetadata{RuntimeLaunchID: "launch-new"})
+	}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.MarkTerminated(ctx, rec.ID); err == nil || !strings.Contains(err.Error(), "runtime launch changed") {
+		t.Fatalf("MarkTerminated() error = %v, want runtime launch change", err)
+	}
+	if finalizer.launchID != "launch-old" {
+		t.Fatalf("finalizer launch id=%q, want launch-old", finalizer.launchID)
+	}
+	got := st.sessions[rec.ID]
+	if got.IsTerminated || got.Metadata.RuntimeLaunchID != "launch-new" {
+		t.Fatalf("stale termination changed new runtime generation: %+v", got)
+	}
+}
+
+func TestMarkTerminatedRetriesFinalizationAfterSameLaunchRevisionChange(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Metadata.RuntimeLaunchID = "launch-1"
+	rec.UpdatedAt = time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
+	st.sessions[rec.ID] = rec
+	var revisions []time.Time
+	finalizer := &fakeUsageFinalizer{store: st}
+	finalizer.onFinalize = func(id domain.SessionID, _ string, revision time.Time) error {
+		revisions = append(revisions, revision)
+		if len(revisions) == 1 {
+			current := st.sessions[id]
+			current.UpdatedAt = current.UpdatedAt.Add(time.Second)
+			st.sessions[id] = current
+		}
+		return nil
+	}
+	m.SetUsageFinalizer(finalizer)
+
+	if err := m.MarkTerminated(ctx, rec.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(revisions) != 2 || !revisions[0].Equal(rec.UpdatedAt) || !revisions[1].Equal(rec.UpdatedAt.Add(time.Second)) {
+		t.Fatalf("finalization revisions = %v", revisions)
+	}
+	if !st.sessions[rec.ID].IsTerminated {
+		t.Fatal("session was not terminated after revision-fenced retry")
+	}
+}
+
 func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	m, st, _ := newManager()
 	st.sessions["mer-1"] = working("mer-1")
@@ -550,6 +970,71 @@ func TestMarkSpawnedStoresRuntimeMetadata(t *testing.T) {
 	}
 	if got.Metadata.WorkspaceRepoPath != metadata.WorkspaceRepoPath {
 		t.Fatalf("workspace repo path = %q, want %q", got.Metadata.WorkspaceRepoPath, metadata.WorkspaceRepoPath)
+	}
+}
+
+func TestCommitControllerEpochOwnsModeAndActivityFacts(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: time.Unix(10, 0)},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "runtime-1", RuntimeLaunchID: "launch-1",
+			AgentSessionID: "native-1",
+		},
+	}
+
+	changed, err := m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "native-1", false,
+	)
+	if err != nil || !changed {
+		t.Fatalf("CommitControllerEpoch: changed=%v err=%v", changed, err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Mode != domain.SessionModeChat || got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("controller facts = mode:%q activity:%q", got.Mode, got.Activity.State)
+	}
+	if got.Metadata.RuntimeHandleID != "" || got.Metadata.RuntimeLaunchID != "" ||
+		got.Metadata.AgentSessionID != "native-1" ||
+		got.Metadata.ProviderConversationID != "native-1" ||
+		got.Metadata.ControllerGeneration != "" {
+		t.Fatalf("controller metadata = %+v", got.Metadata)
+	}
+	changed, err = m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "native-1", false,
+	)
+	if err != nil || changed {
+		t.Fatalf("stale controller epoch: changed=%v err=%v", changed, err)
+	}
+}
+
+func TestCommitControllerEpochAllowsExplicitFreshHandoff(t *testing.T) {
+	m, st, _ := newManager()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeTUI,
+		Activity: domain.Activity{State: domain.ActivityIdle},
+		Metadata: domain.SessionMetadata{
+			RuntimeHandleID: "runtime-1", RuntimeLaunchID: "launch-1",
+			AgentSessionID: "reserved-but-empty",
+		},
+	}
+
+	changed, err := m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeTUI, domain.SessionModeChat, "", true,
+	)
+	if err != nil || !changed {
+		t.Fatalf("CommitControllerEpoch fresh: changed=%v err=%v", changed, err)
+	}
+	got := st.sessions["mer-1"]
+	if got.Mode != domain.SessionModeChat || got.Metadata.AgentSessionID != "" ||
+		got.Metadata.ProviderConversationID != "" {
+		t.Fatalf("fresh controller facts = %+v", got)
+	}
+
+	if _, err := m.CommitControllerEpoch(
+		ctx, "mer-1", domain.SessionModeChat, domain.SessionModeTUI, "", false,
+	); err == nil {
+		t.Fatal("blank native id without explicit fresh handoff was accepted")
 	}
 }
 
@@ -1195,62 +1680,8 @@ func TestPRObservation_DedupPersistsAcrossPRs(t *testing.T) {
 	}
 }
 
-func TestApplyReviewResultSendsAndDedupsThroughPRSignature(t *testing.T) {
-	st := newFakeStore()
-	st.sessions["mer-1"] = working("mer-1")
-	msg := &fakeMessenger{}
-	m := New(st, msg)
-	result := ReviewResult{
-		RunID:          "run-1",
-		WorkerID:       "mer-1",
-		PRURL:          "https://github.com/o/r/pull/1",
-		TargetSHA:      "sha1",
-		Verdict:        domain.VerdictChangesRequested,
-		Body:           "fix the bug",
-		GithubReviewID: "98\x1b[2J765",
-	}
-
-	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
-		t.Fatalf("outcome/messages = %q/%v, want sent once", outcome, msg.msgs)
-	}
-	got := msg.msgs[0]
-	for _, want := range []string{"[AO reviewer]", "PR: " + result.PRURL, "Verdict: changes_requested", "Review body:\nfix the bug", "GitHub review: 98[2J765"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("AO review nudge missing %q: %q", want, got)
-		}
-	}
-	if strings.Contains(got, "\x1b") {
-		t.Fatalf("AO review nudge should sanitize control bytes: %q", got)
-	}
-	if st.signatures[result.PRURL] == "" {
-		t.Fatal("AO review nudge did not persist sendOnce signature")
-	}
-
-	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("repeat ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 1 {
-		t.Fatalf("repeat should report delivered outcome and suppress duplicate send, outcome=%q msgs=%v", outcome, msg.msgs)
-	}
-
-	result.RunID = "run-2"
-	result.TargetSHA = "sha2"
-	outcome, err = m.ApplyReviewResult(ctx, "mer-1", result)
-	if err != nil {
-		t.Fatalf("new pass ApplyReviewResult: %v", err)
-	}
-	if outcome != ReviewDeliverySent || len(msg.msgs) != 2 {
-		t.Fatalf("new review pass should send again, outcome=%q msgs=%v", outcome, msg.msgs)
-	}
-}
-
-func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
-	// The worker is working at ApplyReviewResult's entry guard (read #1) but a
+func TestApplyReviewBatchSuppressedByJITGuardIsNotDelivered(t *testing.T) {
+	// The worker is working at ApplyReviewBatch's entry guard (read #1) but a
 	// permission dialog stores blocked before sendOnce's just-in-time re-read
 	// (read #2). The nudge must be SUPPRESSED, and the outcome must be
 	// ReviewDeliveryNoop — NOT Sent — so the caller does not stamp the run
@@ -1261,13 +1692,13 @@ func TestApplyReviewResultSuppressedByJITGuardIsNotDelivered(t *testing.T) {
 	msg := &fakeMessenger{}
 	m := New(bst, msg)
 	result := ReviewResult{
-		RunID: "run-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
+		RunID: "run-1", BatchID: "batch-1", WorkerID: "mer-1", PRURL: "https://github.com/o/r/pull/1",
 		TargetSHA: "sha1", Verdict: domain.VerdictChangesRequested, Body: "fix the bug",
 	}
 
-	outcome, err := m.ApplyReviewResult(ctx, "mer-1", result)
+	outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", []ReviewResult{result})
 	if err != nil {
-		t.Fatalf("ApplyReviewResult: %v", err)
+		t.Fatalf("ApplyReviewBatch: %v", err)
 	}
 	if outcome != ReviewDeliveryNoop {
 		t.Fatalf("outcome = %q, want no_op (suppressed nudge must not be stamped delivered)", outcome)
@@ -1339,23 +1770,12 @@ func TestApplyReviewBatchNoopsWithoutDeliverableResults(t *testing.T) {
 	}
 }
 
-func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
-	deliveredAt := time.Unix(100, 0).UTC()
+func TestApplyReviewBatchNoopsWhenWorkerCannotBeNudged(t *testing.T) {
 	tests := []struct {
 		name   string
 		result ReviewResult
 		rec    domain.SessionRecord
 	}{
-		{
-			name:   "approved",
-			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictApproved},
-			rec:    working("mer-1"),
-		},
-		{
-			name:   "already delivered",
-			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested, DeliveredAt: &deliveredAt},
-			rec:    working("mer-1"),
-		},
 		{
 			name:   "terminated worker",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
@@ -1376,12 +1796,12 @@ func TestApplyReviewResultNoopsWhenIrrelevant(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m, st, msg := newManager()
 			st.sessions["mer-1"] = tt.rec
-			outcome, err := m.ApplyReviewResult(ctx, "mer-1", tt.result)
+			outcome, err := m.ApplyReviewBatch(ctx, "mer-1", "batch-1", []ReviewResult{tt.result})
 			if err != nil {
-				t.Fatalf("ApplyReviewResult: %v", err)
+				t.Fatalf("ApplyReviewBatch: %v", err)
 			}
 			if outcome != ReviewDeliveryNoop || len(msg.msgs) != 0 || st.signatureWrites != 0 {
-				t.Fatalf("irrelevant result should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
+				t.Fatalf("non-nudgeable worker should no-op, outcome=%q msgs=%v signatureWrites=%d", outcome, msg.msgs, st.signatureWrites)
 			}
 		})
 	}
@@ -2172,6 +2592,25 @@ func TestMarkTerminated_ReapsContainers(t *testing.T) {
 	}
 }
 
+func TestMarkTerminated_ReapsContainersAgainWhenAlreadyTerminated(t *testing.T) {
+	cr := &fakeLifecycleContainerReaper{}
+	pl := &fakeProjectConfigLoader{projects: map[string]domain.ProjectRecord{
+		"mer": {ID: "mer", Config: domain.ProjectConfig{}},
+	}}
+	m, st, _ := newManagerWithContainerReaper(cr, pl)
+	st.sessions["mer-1"] = working("mer-1")
+
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.MarkTerminated(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(cr.sessions) != 2 {
+		t.Fatalf("container reap calls = %v, want retry on repeated termination", cr.sessions)
+	}
+}
+
 // TestMarkTerminated_ContainerReapFailureDoesNotFailTermination asserts the
 // best-effort contract: a container reaper error must never fail
 // MarkTerminated, matching every other best-effort teardown step in AO.
@@ -2324,5 +2763,93 @@ func TestRuntimeObservation_WorkloadDeathAloneDoesNotReap(t *testing.T) {
 	}
 	if len(cr.sessions) != 0 {
 		t.Fatalf("expected no reap call for a non-terminal transition, got %v", cr.sessions)
+	}
+}
+
+// mergeMetadata is an explicit allowlist, so a field added to SessionMetadata
+// without a line here is silently dropped on every spawn and restore. That
+// happened to the chat resume handle: the provider still held the conversation,
+// but AO forgot its id, so no restart could ever resume it — and nothing failed
+// loudly, the column was just empty.
+func TestMarkSpawnedPersistsChatControllerFacts(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat}
+	m := New(st, nil)
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath:          "/ws",
+		ProviderConversationID: "thread-abc",
+		ControllerGeneration:   "gen-1",
+	}); err != nil {
+		t.Fatalf("MarkSpawned: %v", err)
+	}
+
+	got, _, err := st.GetSession(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got.Metadata.ProviderConversationID != "thread-abc" {
+		t.Fatalf("provider conversation id = %q; without it a restart cannot resume",
+			got.Metadata.ProviderConversationID)
+	}
+	if got.Metadata.ControllerGeneration != "gen-1" {
+		t.Fatalf("controller generation = %q", got.Metadata.ControllerGeneration)
+	}
+
+	// A relaunch rotates the generation: the new value must replace the old, or
+	// events from the superseded controller could not be told apart.
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		WorkspacePath:          "/ws",
+		ProviderConversationID: "thread-abc",
+		ControllerGeneration:   "gen-2",
+	}); err != nil {
+		t.Fatalf("second MarkSpawned: %v", err)
+	}
+	got, _, _ = st.GetSession(ctx, "mer-1")
+	if got.Metadata.ControllerGeneration != "gen-2" {
+		t.Fatalf("generation = %q after relaunch, want it rotated to gen-2", got.Metadata.ControllerGeneration)
+	}
+}
+
+func TestActivitySignalRejectsStaleChatControllerGenerationAcrossHandoff(t *testing.T) {
+	ctx := context.Background()
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID: "mer-1", ProjectID: "mer", Mode: domain.SessionModeChat,
+		Metadata: domain.SessionMetadata{ControllerGeneration: "chat-generation-2"},
+		Activity: domain.Activity{State: domain.ActivityIdle},
+	}
+	m := New(st, nil)
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, ControllerGeneration: "chat-generation-1",
+	}); err != nil {
+		t.Fatalf("stale signal: %v", err)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("stale generation changed activity to %q", got)
+	}
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, ControllerGeneration: "chat-generation-2",
+	}); err != nil {
+		t.Fatalf("current signal: %v", err)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityActive {
+		t.Fatalf("current generation left activity at %q", got)
+	}
+
+	rec := st.sessions["mer-1"]
+	rec.Mode = domain.SessionModeTUI
+	rec.Activity.State = domain.ActivityIdle
+	st.sessions["mer-1"] = rec
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityActive, ControllerGeneration: "chat-generation-2",
+	}); err != nil {
+		t.Fatalf("post-handoff stale signal: %v", err)
+	}
+	if got := st.sessions["mer-1"].Activity.State; got != domain.ActivityIdle {
+		t.Fatalf("old Chat controller changed TUI activity to %q", got)
 	}
 }

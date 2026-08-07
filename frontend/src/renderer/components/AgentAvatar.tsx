@@ -19,6 +19,7 @@ import grokLogo from "../assets/agents/grok.png";
 import kilocodeLogo from "../assets/agents/kilocode.svg";
 import kimiLogo from "../assets/agents/kimi.png";
 import kiroLogo from "../assets/agents/kiro.png";
+import museLogo from "../assets/agents/muse.png";
 import opencodeLogo from "../assets/agents/opencode.svg";
 import piLogo from "../assets/agents/pi.png";
 import qwenLogo from "../assets/agents/qwen.png";
@@ -42,6 +43,7 @@ const LOGOS: Record<string, string> = {
 	continue: continueLogo,
 	devin: devinLogo,
 	kimi: kimiLogo,
+	muse: museLogo,
 	kiro: kiroLogo,
 	kilocode: kilocodeLogo,
 	vibe: vibeLogo,

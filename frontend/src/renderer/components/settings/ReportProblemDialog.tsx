@@ -10,6 +10,8 @@ import {
 	type ReportProblemOutput,
 } from "../../lib/report-problem";
 import { aoBridge } from "../../lib/bridge";
+import { captureRendererEvent } from "../../lib/telemetry";
+import { Button } from "../ui/button";
 import {
 	Dialog,
 	DialogClose,
@@ -99,6 +101,9 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 			setCopyError(null);
 			return;
 		}
+		// Reported here rather than on the settings row so any future entry point
+		// into this dialog is counted too.
+		void captureRendererEvent("ao.renderer.support_opened");
 		let active = true;
 		void collectReportProblemDiagnostics().then((nextDiagnostics) => {
 			if (active) setDiagnostics(nextDiagnostics);
@@ -132,9 +137,14 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 			setSummary("");
 			setDetails("");
 			setSelectedOutput("github");
+			// Only which destination was chosen. The summary, details, and the
+			// diagnostics block are the user's own words and machine state, and
+			// none of them may be reported.
+			void captureRendererEvent("ao.renderer.support_submitted", { destination: output, outcome: "succeeded" });
 		} catch (err) {
 			setCopyError(err instanceof Error ? err.message : t("report.copyFailed"));
 			setCopiedOutput(null);
+			void captureRendererEvent("ao.renderer.support_submitted", { destination: output, outcome: "failed" });
 		}
 	};
 
@@ -237,21 +247,21 @@ export function ReportProblemDialog({ open, onOpenChange }: ReportProblemDialogP
 
 				<div className={settingsDialogFooterClass}>
 					<DialogClose asChild>
-						<button type="button" className="settings-footer-button">
+						<Button type="button" variant="footer">
 							{t("report.cancel")}
-						</button>
+						</Button>
 					</DialogClose>
-					<button
+					<Button
 						type="button"
-						className="settings-footer-button border-transparent bg-settings-accent text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+						variant="footer-primary"
 						disabled={!canSubmit}
 						onClick={() => {
 							if (!canSubmit) return;
-							void copyDraft()
+							void copyDraft();
 						}}
 					>
 						{destination.action}
-					</button>
+					</Button>
 				</div>
 			</DialogContent>
 		</Dialog>

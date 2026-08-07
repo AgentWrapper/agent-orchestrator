@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 
 interface UseResizableOptions {
 	/** CSS custom property to drive (set on :root), e.g. "--ao-sidebar-w". */
@@ -73,8 +73,9 @@ export function useResizable({
 		if (pending !== null) apply(pending);
 	}, [apply]);
 
-	// Restore persisted width on mount.
-	useEffect(() => {
+	// Restore persisted width before first paint so the sidebar does not appear
+	// at the default width on reload and then jump/animate to the stored width.
+	useLayoutEffect(() => {
 		const saved = Number(window.localStorage.getItem(storageKey));
 		apply(Number.isFinite(saved) && saved > 0 ? saved : defaultWidth);
 		return () => {

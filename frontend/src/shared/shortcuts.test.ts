@@ -4,11 +4,13 @@ import {
 	matchesAppShortcut,
 	matchesFocusTerminalShortcut,
 	matchesKeyboardShortcutsHelpShortcut,
+	matchesNextTabShortcut,
 	matchesNextSessionShortcut,
 	matchesNewSessionShortcut,
 	matchesNewShellTerminalShortcut,
 	matchesOpenSettingsShortcut,
 	matchesPreviousSessionShortcut,
+	matchesPreviousTabShortcut,
 	defaultShortcutBindings,
 	matchesShortcutBinding,
 	shortcutBindingValidationError,
@@ -91,6 +93,15 @@ describe("additional application shortcuts", () => {
 		expect(matchesNextSessionShortcut(chord({ key: "PageDown", ctrl: true }), false)).toBe(true);
 		expect(matchesNextSessionShortcut(chord({ key: "Down", ctrl: true, alt: true }), false)).toBe(false);
 		expect(matchesNextSessionShortcut(chord({ key: "Down", ctrl: true }), false)).toBe(false);
+	});
+
+	it("matches Ctrl+Tab and Ctrl+Shift+Tab on each platform", () => {
+		for (const isMac of [true, false]) {
+			expect(matchesNextTabShortcut(chord({ key: "Tab", ctrl: true }), isMac)).toBe(true);
+			expect(matchesPreviousTabShortcut(chord({ key: "Tab", ctrl: true, shift: true }), isMac)).toBe(true);
+			expect(matchesNextTabShortcut(chord({ key: "Tab", ctrl: true, shift: true }), isMac)).toBe(false);
+			expect(matchesPreviousTabShortcut(chord({ key: "Tab", ctrl: true }), isMac)).toBe(false);
+		}
 	});
 
 	it("matches focus terminal on each platform and rejects extra modifiers", () => {
