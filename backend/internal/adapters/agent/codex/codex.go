@@ -223,17 +223,25 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if probeCtx.Err() != nil {
 		return ports.AgentAuthStatusUnknown, probeCtx.Err()
 	}
+	if status, ok := codexAuthStatusFromOutput(out); ok {
+		return status, nil
+	}
+	// The probe is advisory. Version skew, transient startup failures, and
+	// unfamiliar output are not proof that credentials are invalid; the actual
+	// launch remains the authoritative check.
+	_ = err
+	return ports.AgentAuthStatusUnknown, nil
+}
+
+func codexAuthStatusFromOutput(out []byte) (ports.AgentAuthStatus, bool) {
 	text := strings.ToLower(string(out))
 	if strings.Contains(text, "not logged in") || strings.Contains(text, "logged out") {
-		return ports.AgentAuthStatusUnauthorized, nil
+		return ports.AgentAuthStatusUnauthorized, true
 	}
 	if strings.Contains(text, "logged in") {
-		return ports.AgentAuthStatusAuthorized, nil
+		return ports.AgentAuthStatusAuthorized, true
 	}
-	if err != nil {
-		return ports.AgentAuthStatusUnauthorized, nil
-	}
-	return ports.AgentAuthStatusUnknown, nil
+	return ports.AgentAuthStatusUnknown, false
 }
 
 // ResolveCodexBinary returns the path to the codex binary on this machine,

@@ -40,7 +40,12 @@ type Options struct {
 
 // Runtime is the conpty runtime adapter.
 type Runtime struct {
-	spawner hostSpawner
+	spawner       hostSpawner
+	killHost      func(string) error
+	pidIsAlive    func(int) bool
+	processFinder func(int) (processKiller, error)
+	destroyWait   time.Duration
+	destroyPoll   time.Duration
 
 	mu       sync.Mutex
 	sessions map[string]*hostSession // sessionID -> live session
@@ -53,8 +58,13 @@ func New(opts Options) *Runtime {
 		sp = defaultSpawnHost
 	}
 	return &Runtime{
-		spawner:  sp,
-		sessions: make(map[string]*hostSession),
+		spawner:       sp,
+		killHost:      clientKill,
+		pidIsAlive:    pidAlive,
+		processFinder: findProcess,
+		destroyWait:   500 * time.Millisecond,
+		destroyPoll:   25 * time.Millisecond,
+		sessions:      make(map[string]*hostSession),
 	}
 }
 
@@ -109,9 +119,10 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	return ports.RuntimeHandle{ID: id}, nil
 }
 
-// Destroy gracefully kills the pty-host, waits up to ~500ms for the pid to
-// exit, then force-kills it. Removes the session from the map and the registry.
-// Idempotent: unknown/already-gone session returns nil.
+// Destroy gracefully kills the pty-host, then force-kills it when necessary.
+// The session remains registered until its PID is confirmed gone so callers
+// never receive a false-success teardown while a provider may still be alive.
+// Unknown/already-gone sessions remain idempotent.
 func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
 	sess := r.resolve(handle.ID)
 	if sess == nil {
@@ -119,31 +130,67 @@ func (r *Runtime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error
 	}
 
 	// Ask host to shut down gracefully (triggers shutdown() in Serve).
-	_ = clientKill(sess.addr)
-
-	// Poll up to ~500ms (20 x 25ms) for the pty-host pid to exit.
-	// ponytail: signal-0 probe; upgrade to process-tree kill if orphan ConPTY
-	// helpers appear.
-	deadline := time.Now().Add(500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		if !pidAlive(sess.pid) {
-			break
-		}
-		time.Sleep(25 * time.Millisecond)
+	gracefulErr := r.killHost(sess.addr)
+	exited, waitErr := r.waitForPIDExit(ctx, sess.pid)
+	if waitErr != nil {
+		return errors.Join(gracefulErr, waitErr)
 	}
 
-	// Best-effort force-kill (the host's graceful shutdown already disposed
-	// the ConPTY child; killing the host process is sufficient).
-	if p, err := findProcess(sess.pid); err == nil {
-		_ = p.Kill()
+	var forceErr error
+	if !exited {
+		process, findErr := r.processFinder(sess.pid)
+		if findErr != nil {
+			forceErr = fmt.Errorf("find pty-host pid %d: %w", sess.pid, findErr)
+		} else if err := process.Kill(); err != nil {
+			forceErr = fmt.Errorf("force-kill pty-host pid %d: %w", sess.pid, err)
+		}
+		exited, waitErr = r.waitForPIDExit(ctx, sess.pid)
+		if waitErr != nil {
+			return errors.Join(gracefulErr, forceErr, waitErr)
+		}
+	}
+	if !exited {
+		return errors.Join(gracefulErr, forceErr, fmt.Errorf("conpty: pty-host pid %d is still alive after teardown", sess.pid))
 	}
 
 	r.mu.Lock()
 	delete(r.sessions, handle.ID)
 	r.mu.Unlock()
 
-	_ = ptyregistry.Unregister(handle.ID)
+	if err := ptyregistry.Unregister(handle.ID); err != nil {
+		return fmt.Errorf("conpty: unregister destroyed session %q: %w", handle.ID, err)
+	}
 	return nil
+}
+
+func (r *Runtime) waitForPIDExit(ctx context.Context, pid int) (bool, error) {
+	if !r.pidIsAlive(pid) {
+		return true, nil
+	}
+	wait := r.destroyWait
+	if wait <= 0 {
+		return false, nil
+	}
+	poll := r.destroyPoll
+	if poll <= 0 {
+		poll = 25 * time.Millisecond
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-timer.C:
+			return !r.pidIsAlive(pid), nil
+		case <-ticker.C:
+			if !r.pidIsAlive(pid) {
+				return true, nil
+			}
+		}
+	}
 }
 
 // IsAlive distinguishes three outcomes so the reaper never spuriously reaps a

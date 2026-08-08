@@ -418,9 +418,10 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	if status, ok := claudeAuthStatusFromOutput(out); ok {
 		return status, nil
 	}
-	if err != nil {
-		return ports.AgentAuthStatusUnauthorized, nil
-	}
+	// An unfamiliar non-zero result is not affirmative evidence of missing
+	// credentials. Keep this advisory probe unknown and let launch report the
+	// authoritative failure.
+	_ = err
 	return ports.AgentAuthStatusUnknown, nil
 }
 

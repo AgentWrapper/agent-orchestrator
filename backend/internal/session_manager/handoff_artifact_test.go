@@ -2,6 +2,7 @@ package sessionmanager
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 )
 
 func readNativeTranscriptTail(path, configDir string) (tail string, truncated, ok bool) {
-	return readNativeTranscriptTailWithOpen(path, configDir, os.Open)
+	return readNativeTranscriptTailWithOpen(context.Background(), path, configDir, os.Open)
 }
 
 func TestNormalizeTerminalTailStripsControlsAndBoundsNewestLines(t *testing.T) {
@@ -201,14 +202,14 @@ func TestWriteAgentHandoffFileIsPrivateAtomicAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidatePath, finalPath, err := m.prepareAgentHandoffPaths("demo-1", "switch-1")
+	candidatePath, finalPath, err := m.prepareAgentHandoffPaths(context.Background(), "demo-1", "switch-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(candidatePath, body, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	written, err := m.writeAgentHandoffFile("demo-1", "switch-1", body)
+	written, err := m.writeAgentHandoffFile(context.Background(), "demo-1", "switch-1", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,14 +240,14 @@ func TestWriteAgentHandoffFileIsPrivateAtomicAndImmutable(t *testing.T) {
 	if decoded.Goal != "fix the race" || decoded.ProgressSummary == "" {
 		t.Fatalf("decoded = %#v", decoded)
 	}
-	if _, err := m.writeAgentHandoffFile("demo-1", "switch-1", body); err != nil {
+	if _, err := m.writeAgentHandoffFile(context.Background(), "demo-1", "switch-1", body); err != nil {
 		t.Fatalf("idempotent identical write: %v", err)
 	}
 	changed := json.RawMessage(`{"schemaVersion":1,"goal":"different","progressSummary":"changed"}`)
-	if _, err := m.writeAgentHandoffFile("demo-1", "switch-1", changed); err == nil {
+	if _, err := m.writeAgentHandoffFile(context.Background(), "demo-1", "switch-1", changed); err == nil {
 		t.Fatal("different rewrite unexpectedly succeeded")
 	}
-	if err := removeTemporaryAgentHandoff(candidatePath); err != nil {
+	if err := removeTemporaryAgentHandoff(context.Background(), candidatePath); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(candidatePath); !errors.Is(err, os.ErrNotExist) {
@@ -258,6 +259,19 @@ func TestWriteAgentHandoffFileIsPrivateAtomicAndImmutable(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Name() != "agent-handoff.json" {
 		t.Fatalf("retained handoff files = %#v", entries)
+	}
+}
+
+func TestPrepareAgentHandoffPathsHonorsCancelledContext(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "ao-data")
+	m := &Manager{dataDir: dataDir}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, _, err := m.prepareAgentHandoffPaths(cancelled, "demo-1", "switch-cancelled"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("prepare error = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(dataDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancelled preparation touched data directory: %v", err)
 	}
 }
 
@@ -279,7 +293,7 @@ func TestWriteAgentHandoffFileConcurrentDifferentSubmissionsNeverReplaceWinner(t
 		go func() {
 			ready.Done()
 			<-start
-			written, err := m.writeAgentHandoffFile("demo-1", "switch-race", body)
+			written, err := m.writeAgentHandoffFile(context.Background(), "demo-1", "switch-race", body)
 			results <- result{written: written, err: err}
 		}()
 	}
@@ -316,17 +330,17 @@ func TestWriteFinalizedHandoffFilePersistsExactContinuation(t *testing.T) {
 		ID: "switch-final", SessionID: "demo-1",
 		FromHarness: domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
 	}
-	if _, _, err := m.prepareAgentHandoffPaths(sw.SessionID, string(sw.ID)); err != nil {
+	if _, _, err := m.prepareAgentHandoffPaths(context.Background(), sw.SessionID, string(sw.ID)); err != nil {
 		t.Fatal(err)
 	}
 	continuation := `<ao-continuation switch-id="switch-final">hidden context</ao-continuation>`
-	written, err := m.writeFinalizedHandoffFile(sw, continuation)
+	written, err := m.writeFinalizedHandoffFile(context.Background(), sw, continuation)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sw.FinalHandoffPath = written.Path
 	sw.FinalHandoffHash = written.Hash
-	artifact, ok := m.readVerifiedFinalizedHandoff(sw)
+	artifact, ok := m.readVerifiedFinalizedHandoff(context.Background(), sw)
 	if !ok {
 		t.Fatal("fresh finalized handoff did not verify")
 	}
@@ -338,7 +352,7 @@ func TestWriteFinalizedHandoffFilePersistsExactContinuation(t *testing.T) {
 func TestCleanupAgentHandoffArtifactsRetainsOnlyVerifiedFinal(t *testing.T) {
 	m := &Manager{dataDir: t.TempDir()}
 	body := json.RawMessage(`{"schemaVersion":1,"goal":"finish switching","progressSummary":"ready for delivery"}`)
-	written, err := m.writeAgentHandoffFile("demo-1", "switch-clean", body)
+	written, err := m.writeAgentHandoffFile(context.Background(), "demo-1", "switch-clean", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +372,7 @@ func TestCleanupAgentHandoffArtifactsRetainsOnlyVerifiedFinal(t *testing.T) {
 		AgentHandoffPath:   written.Path,
 		AgentHandoffHash:   written.Hash,
 	}
-	if err := m.cleanupAgentHandoffArtifacts(sw); err != nil {
+	if err := m.cleanupAgentHandoffArtifacts(context.Background(), sw); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := os.ReadDir(dir)
@@ -373,7 +387,7 @@ func TestCleanupAgentHandoffArtifactsRetainsOnlyVerifiedFinal(t *testing.T) {
 func TestReadVerifiedAgentHandoffForDeliveryRejectsChangedSemanticFile(t *testing.T) {
 	m := &Manager{dataDir: t.TempDir()}
 	body := json.RawMessage(`{"schemaVersion":1,"goal":"finish switching","progressSummary":"ready for delivery"}`)
-	written, err := m.writeAgentHandoffFile("demo-1", "switch-verify", body)
+	written, err := m.writeAgentHandoffFile(context.Background(), "demo-1", "switch-verify", body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -381,16 +395,16 @@ func TestReadVerifiedAgentHandoffForDeliveryRejectsChangedSemanticFile(t *testin
 		ID: "switch-verify", SessionID: "demo-1", AgentHandoffStatus: domain.AgentHandoffReceived,
 		AgentHandoffPath: written.Path, AgentHandoffHash: written.Hash,
 	}
-	if _, ok := m.readVerifiedAgentHandoffForDelivery(sw); !ok {
+	if _, ok := m.readVerifiedAgentHandoffForDelivery(context.Background(), sw); !ok {
 		t.Fatal("fresh AO-owned semantic handoff did not verify")
 	}
 	if err := os.WriteFile(written.Path, []byte(`{"schemaVersion":1,"goal":"replaced","progressSummary":"tampered"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := m.readVerifiedAgentHandoffForDelivery(sw); ok {
+	if _, ok := m.readVerifiedAgentHandoffForDelivery(context.Background(), sw); ok {
 		t.Fatal("changed semantic handoff still verified against the durable digest")
 	}
-	if err := m.cleanupAgentHandoffArtifacts(sw); err != nil {
+	if err := m.cleanupAgentHandoffArtifacts(context.Background(), sw); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(written.Path); !errors.Is(err, os.ErrNotExist) {
@@ -416,7 +430,7 @@ func TestCleanupAgentHandoffArtifactsRefusesSymlinkedSwitchDirectory(t *testing.
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	sw := domain.AgentSwitch{ID: "switch-link", SessionID: "demo-1", State: domain.AgentSwitchFailed}
-	if err := m.cleanupAgentHandoffArtifacts(sw); err == nil {
+	if err := m.cleanupAgentHandoffArtifacts(context.Background(), sw); err == nil {
 		t.Fatal("cleanup followed a symlinked switch directory")
 	}
 	if got, err := os.ReadFile(outsideCandidate); err != nil || string(got) != "must survive" {
@@ -427,7 +441,7 @@ func TestCleanupAgentHandoffArtifactsRefusesSymlinkedSwitchDirectory(t *testing.
 func TestCleanupAgentHandoffArtifactsRefusesReplacedDataDirectory(t *testing.T) {
 	dataDir := t.TempDir()
 	m := &Manager{dataDir: dataDir}
-	if _, _, err := m.prepareAgentHandoffPaths("demo-1", "switch-data-link"); err != nil {
+	if _, _, err := m.prepareAgentHandoffPaths(context.Background(), "demo-1", "switch-data-link"); err != nil {
 		t.Fatal(err)
 	}
 	realDataDir := dataDir + ".original"
@@ -449,7 +463,7 @@ func TestCleanupAgentHandoffArtifactsRefusesReplacedDataDirectory(t *testing.T) 
 	}
 
 	sw := domain.AgentSwitch{ID: "switch-data-link", SessionID: "demo-1", State: domain.AgentSwitchFailed}
-	if err := m.cleanupAgentHandoffArtifacts(sw); err == nil {
+	if err := m.cleanupAgentHandoffArtifacts(context.Background(), sw); err == nil {
 		t.Fatal("cleanup followed a replaced data-directory symlink")
 	}
 	if got, err := os.ReadFile(outsideCandidate); err != nil || string(got) != "must survive" {

@@ -1264,7 +1264,7 @@ func TestActivity_ReleaseLaunchUnblocksTargetHookAfterAtomicOwnershipTransfer(t 
 		t.Fatalf("pending target hook mutated source-owned session: %+v", stagedSource)
 	}
 
-	activated, err := store.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
+	activated, err := m.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
 		SwitchID: "switch-1", SessionID: rec.ID, SourceHarness: domain.HarnessClaudeCode,
 		SourceGenerationID: "source-generation", ExpectedSourceRuntimeLaunchID: "source-generation",
 		TargetHarness: domain.HarnessCodex, TargetGenerationID: "target-generation",

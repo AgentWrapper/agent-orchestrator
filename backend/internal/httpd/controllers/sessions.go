@@ -1555,7 +1555,7 @@ func agentSwitchView(s domain.AgentSwitch) AgentSwitchView {
 		TargetStartMode:    s.TargetStartMode,
 		State:              s.State,
 		AgentHandoffStatus: s.AgentHandoffStatus,
-		ErrorCode:          s.ErrorCode,
+		ErrorCode:          string(s.ErrorCode),
 		RequestedAt:        s.RequestedAt,
 		UpdatedAt:          s.UpdatedAt,
 	}

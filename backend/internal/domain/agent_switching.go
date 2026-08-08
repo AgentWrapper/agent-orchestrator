@@ -205,6 +205,46 @@ func (s AgentHandoffStatus) Valid() bool {
 	}
 }
 
+// AgentSwitchErrorCode is the stable, persisted reason a switch saga failed.
+// Keep this vocabulary typed so recovery and API presentation cannot silently
+// introduce incompatible spellings.
+type AgentSwitchErrorCode string
+
+const (
+	AgentSwitchErrorDaemonRestartPreStop             AgentSwitchErrorCode = "daemon_restart_pre_stop"
+	AgentSwitchErrorDaemonRestartPostStop            AgentSwitchErrorCode = "daemon_restart_post_stop"
+	AgentSwitchErrorDaemonRestartUnrecoverableTarget AgentSwitchErrorCode = "daemon_restart_unrecoverable_target"
+	AgentSwitchErrorDaemonRestartBeforeDelivery      AgentSwitchErrorCode = "daemon_restart_before_delivery"
+	AgentSwitchErrorDeliveryUnconfirmed              AgentSwitchErrorCode = "delivery_unconfirmed"
+	AgentSwitchErrorSourceSessionTerminated          AgentSwitchErrorCode = "source_session_terminated"
+	AgentSwitchErrorSourceStopUnconfirmed            AgentSwitchErrorCode = "source_stop_unconfirmed"
+	AgentSwitchErrorTargetBinaryMissing              AgentSwitchErrorCode = "target_binary_missing"
+	AgentSwitchErrorTargetAgentUnauthorized          AgentSwitchErrorCode = "target_agent_unauthorized"
+	AgentSwitchErrorRequestCancelled                 AgentSwitchErrorCode = "request_cancelled"
+	AgentSwitchErrorSourceBlocked                    AgentSwitchErrorCode = "source_blocked"
+	AgentSwitchErrorFailedPreStop                    AgentSwitchErrorCode = "failed_pre_stop"
+	AgentSwitchErrorFailedPostStop                   AgentSwitchErrorCode = "failed_post_stop"
+	AgentSwitchErrorTargetReadyFailed                AgentSwitchErrorCode = "target_ready_failed"
+	AgentSwitchErrorDeliveryFailed                   AgentSwitchErrorCode = "delivery_failed"
+	AgentSwitchErrorSwitchFailed                     AgentSwitchErrorCode = "switch_failed"
+)
+
+// Valid reports whether the code belongs to the persisted switch vocabulary.
+func (c AgentSwitchErrorCode) Valid() bool {
+	switch c {
+	case "", AgentSwitchErrorDaemonRestartPreStop, AgentSwitchErrorDaemonRestartPostStop,
+		AgentSwitchErrorDaemonRestartUnrecoverableTarget, AgentSwitchErrorDaemonRestartBeforeDelivery,
+		AgentSwitchErrorDeliveryUnconfirmed, AgentSwitchErrorSourceSessionTerminated,
+		AgentSwitchErrorSourceStopUnconfirmed, AgentSwitchErrorTargetBinaryMissing,
+		AgentSwitchErrorTargetAgentUnauthorized, AgentSwitchErrorRequestCancelled,
+		AgentSwitchErrorSourceBlocked, AgentSwitchErrorFailedPreStop, AgentSwitchErrorFailedPostStop,
+		AgentSwitchErrorTargetReadyFailed, AgentSwitchErrorDeliveryFailed, AgentSwitchErrorSwitchFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 // AgentSwitch is one durable switch saga. The optional source-authored handoff
 // is tracked independently from the AO-finalized handoff that was actually
 // delivered to the target. The finalized artifact also exists for fallback-
@@ -229,7 +269,7 @@ type AgentSwitch struct {
 	TargetGenerationID     AgentGenerationID             `json:"targetGenerationId,omitempty"`
 	TargetRuntimeHandleID  string                        `json:"-"`
 	TargetAcknowledgedAt   *time.Time                    `json:"targetAcknowledgedAt,omitempty"`
-	ErrorCode              string                        `json:"errorCode,omitempty"`
+	ErrorCode              AgentSwitchErrorCode          `json:"errorCode,omitempty"`
 	RequestedAt            time.Time                     `json:"requestedAt"`
 	UpdatedAt              time.Time                     `json:"updatedAt"`
 }

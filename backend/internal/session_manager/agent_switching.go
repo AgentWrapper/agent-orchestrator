@@ -148,7 +148,10 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 			cancel()
 		}
 		if sagaCreated && result.State.Terminal() && strings.TrimSpace(m.dataDir) != "" {
-			if cleanupErr := m.cleanupAgentHandoffArtifacts(result); cleanupErr != nil {
+			cleanupCtx, cancel := switchDurableContext(ctx)
+			cleanupErr := m.cleanupAgentHandoffArtifacts(cleanupCtx, result)
+			cancel()
+			if cleanupErr != nil {
 				m.logger.Warn("agent switch: handoff artifact cleanup failed", "sessionID", id, "switchID", result.ID, "error", cleanupErr)
 			}
 		}
@@ -267,7 +270,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: target preflight: %w", id, err)
 	}
-	candidatePath, _, candidateErr := m.prepareAgentHandoffPaths(id, string(result.ID))
+	candidatePath, _, candidateErr := m.prepareAgentHandoffPaths(ctx, id, string(result.ID))
 	if candidateErr != nil {
 		m.logger.Warn("agent switch: optional semantic handoff directory unavailable", "sessionID", id, "switchID", result.ID, "error", candidateErr)
 	}
@@ -322,13 +325,13 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 		return result, fmt.Errorf("switch agent %s: stop source runtime: %w", id, stopErr)
 	}
 	if candidatePath != "" {
-		if cleanupErr := m.removeTemporaryAgentHandoff(id, string(result.ID)); cleanupErr != nil {
+		if cleanupErr := m.removeTemporaryAgentHandoff(ctx, id, string(result.ID)); cleanupErr != nil {
 			m.logger.Warn("agent switch: temporary semantic handoff cleanup failed", "sessionID", id, "switchID", result.ID, "error", cleanupErr)
 		}
 	}
 	stoppedAt := m.clock()
 	boundaryCtx, cancelBoundary := switchDurableContext(ctx)
-	confirmed, err := store.ConfirmAgentSwitchSourceStopped(boundaryCtx, domain.AgentSwitchSourceStopConfirmation{
+	confirmed, err := m.lcm.ConfirmAgentSwitchSourceStopped(boundaryCtx, domain.AgentSwitchSourceStopConfirmation{
 		SwitchID:                      result.ID,
 		SessionID:                     id,
 		SourceHarness:                 rec.Harness,
@@ -404,7 +407,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	// Rebuild deterministic delivery context in memory only after the source is
 	// conclusively gone and before the target is allowed to mutate files.
 	deliverySwitch := result
-	semanticHandoff, semanticHandoffAvailable := m.readVerifiedAgentHandoffForDelivery(result)
+	semanticHandoff, semanticHandoffAvailable := m.readVerifiedAgentHandoffForDelivery(ctx, result)
 	if !semanticHandoffAvailable {
 		// Preserve the durable row as provenance, but never advertise or rely on
 		// an absent, replaced, or hash-mismatched file in this delivery.
@@ -432,7 +435,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 		finalContext.TerminalTail = ""
 	}
 	continuation := buildTargetContinuationMessageWithLimit(deliverySwitch, finalContext, observedTranscript, handoffContinuationMaxBytes)
-	writtenFinal, err := m.writeFinalizedHandoffFile(deliverySwitch, continuation)
+	writtenFinal, err := m.writeFinalizedHandoffFile(ctx, deliverySwitch, continuation)
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: retain finalized handoff: %w", id, err)
 	}
@@ -540,7 +543,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 		RuntimeHandleID:               handle.ID,
 		ActivatedAt:                   activatedAt,
 	}
-	activated, activationErr := store.ActivateAgentSwitchTarget(ctx, activation)
+	activated, activationErr := m.lcm.ActivateAgentSwitchTarget(ctx, activation)
 	if activationErr != nil || !activated {
 		activationCtx, cancelActivation := switchDurableContext(ctx)
 		current, committed, sourceStillOwns, resolutionErr := m.resolveTargetActivationOutcome(activationCtx, store, rec, activation)
@@ -669,10 +672,10 @@ func (m *Manager) preserveCurrentNativeSession(ctx context.Context, store ports.
 	}
 	nativeID := strings.TrimSpace(rec.Metadata.AgentSessionID)
 	ref := ports.NativeSessionRef{NativeSessionID: nativeID, ConfigDir: configDir}
-	transcript := safeNativeTranscriptPath(rec.Metadata.NativeTranscriptPath, configDir)
+	transcript := safeNativeTranscriptPath(ctx, rec.Metadata.NativeTranscriptPath, configDir)
 	if locator, ok := agent.(ports.AgentTranscriptLocator); ok && nativeID != "" {
 		if path, found, locateErr := locator.LocateTranscript(ctx, ref); locateErr == nil && found {
-			transcript = safeNativeTranscriptPath(path, configDir)
+			transcript = safeNativeTranscriptPath(ctx, path, configDir)
 		}
 	}
 	now := m.clock()
@@ -872,7 +875,7 @@ func (m *Manager) systemPromptForNativeRestore(ctx context.Context, rec domain.S
 		if sw.FinalHandoffPath == "" && sw.FinalHandoffHash == "" {
 			return base, nil
 		}
-		artifact, valid := m.readVerifiedFinalizedHandoff(sw)
+		artifact, valid := m.readVerifiedFinalizedHandoff(ctx, sw)
 		if !valid {
 			return "", errors.New("restore agent switch context: finalized handoff failed verification")
 		}
@@ -1019,7 +1022,7 @@ func (m *Manager) findTargetResumeCandidate(ctx context.Context, store ports.Age
 		}
 		if locator, ok := agent.(ports.AgentTranscriptLocator); ok {
 			if path, found, locateErr := locator.LocateTranscript(ctx, ref); locateErr == nil && found {
-				candidate.TranscriptPath = safeNativeTranscriptPath(path, configDir)
+				candidate.TranscriptPath = safeNativeTranscriptPath(ctx, path, configDir)
 			}
 		}
 		return candidate, true, nil
@@ -1043,7 +1046,10 @@ func nativeConfigDir(ctx context.Context, agent ports.Agent, env map[string]stri
 	return filepath.Clean(dir), nil
 }
 
-func safeNativeTranscriptPath(path, configDir string) string {
+func safeNativeTranscriptPath(ctx context.Context, path, configDir string) string {
+	if ctx.Err() != nil {
+		return ""
+	}
 	path = strings.TrimSpace(path)
 	if path == "" || !filepath.IsAbs(path) || configDir == "" {
 		return ""
@@ -1053,8 +1059,14 @@ func safeNativeTranscriptPath(path, configDir string) string {
 	if err != nil {
 		return ""
 	}
+	if ctx.Err() != nil {
+		return ""
+	}
 	realPath, err := filepath.EvalSymlinks(clean)
 	if err != nil {
+		return ""
+	}
+	if ctx.Err() != nil {
 		return ""
 	}
 	rel, err := filepath.Rel(realConfigDir, realPath)
@@ -1081,7 +1093,7 @@ func (m *Manager) captureSourceTranscriptFact(ctx context.Context, agent ports.A
 	if err != nil || !found {
 		return nil
 	}
-	path := safeNativeTranscriptPath(located, source.ConfigDir)
+	path := safeNativeTranscriptPath(ctx, located, source.ConfigDir)
 	if path == "" {
 		return nil
 	}
@@ -1092,7 +1104,7 @@ func (m *Manager) captureSourceTranscriptFact(ctx context.Context, agent ports.A
 	if openFile == nil {
 		openFile = os.Open
 	}
-	tail, truncated, readable := readNativeTranscriptTailWithOpen(path, source.ConfigDir, openFile)
+	tail, truncated, readable := readNativeTranscriptTailWithOpen(ctx, path, source.ConfigDir, openFile)
 	if !readable {
 		return nil
 	}
@@ -2035,7 +2047,7 @@ func (m *Manager) finalizeAgentSwitchHandoff(ctx context.Context, store ports.Ag
 		return sw, errors.Join(recordErr, ErrSwitchNotFound)
 	}
 	if current.FinalHandoffPath == written.Path && current.FinalHandoffHash == written.Hash {
-		if _, valid := m.readVerifiedFinalizedHandoff(current); !valid {
+		if _, valid := m.readVerifiedFinalizedHandoff(finalizeCtx, current); !valid {
 			return current, errors.New("agent switch: durable finalized handoff failed verification")
 		}
 		return current, nil
@@ -2083,7 +2095,7 @@ func (m *Manager) advanceAgentSwitch(ctx context.Context, store ports.AgentSwitc
 	return nil
 }
 
-func (m *Manager) failAgentSwitch(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, code string) (domain.AgentSwitch, error) {
+func (m *Manager) failAgentSwitch(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, code domain.AgentSwitchErrorCode) (domain.AgentSwitch, error) {
 	current, ok, err := store.GetAgentSwitch(ctx, sw.ID)
 	if err != nil {
 		return sw, err
@@ -2110,7 +2122,7 @@ func (m *Manager) failAgentSwitch(ctx context.Context, store ports.AgentSwitchSt
 		}
 		failed := current
 		failed.State = domain.AgentSwitchFailed
-		failed.ErrorCode = boundedString(code, 128)
+		failed.ErrorCode = code
 		failed.UpdatedAt = m.clock()
 		changed, err := store.FailAgentSwitchIfUnacknowledged(ctx, failed)
 		if err != nil {
@@ -2136,7 +2148,7 @@ func (m *Manager) failAgentSwitch(ctx context.Context, store ports.AgentSwitchSt
 		return latest, errors.New("agent switch delivery failure changed concurrently")
 	}
 	err = m.advanceAgentSwitch(ctx, store, &current, domain.AgentSwitchFailed, func(next *domain.AgentSwitch) {
-		next.ErrorCode = boundedString(code, 128)
+		next.ErrorCode = code
 	})
 	return current, err
 }
@@ -2217,7 +2229,7 @@ func (m *Manager) SubmitAgentHandoff(ctx context.Context, id domain.SessionID, s
 	if sw.AgentHandoffStatus != domain.AgentHandoffRequested || sw.State != domain.AgentSwitchPreparingHandoff {
 		return sw, ErrStaleHandoff
 	}
-	written, err := m.writeAgentHandoffFile(id, string(switchID), canonical)
+	written, err := m.writeAgentHandoffFile(ctx, id, string(switchID), canonical)
 	if err != nil {
 		return sw, fmt.Errorf("retain agent handoff: %w", err)
 	}
@@ -2284,7 +2296,7 @@ func (m *Manager) ReconcileAgentSwitches(ctx context.Context) error {
 		} else if strings.TrimSpace(m.dataDir) != "" {
 			for _, historical := range history {
 				if historical.State.Terminal() {
-					if cleanupErr := m.cleanupAgentHandoffArtifacts(historical); cleanupErr != nil {
+					if cleanupErr := m.cleanupAgentHandoffArtifacts(ctx, historical); cleanupErr != nil {
 						errs = append(errs, cleanupErr)
 					}
 				}
@@ -2309,7 +2321,7 @@ func (m *Manager) ReconcileAgentSwitches(ctx context.Context) error {
 			if current, found, reloadErr := store.GetAgentSwitch(ctx, sw.ID); reloadErr != nil {
 				errs = append(errs, reloadErr)
 			} else if found && current.State.Terminal() && strings.TrimSpace(m.dataDir) != "" {
-				if cleanupErr := m.cleanupAgentHandoffArtifacts(current); cleanupErr != nil {
+				if cleanupErr := m.cleanupAgentHandoffArtifacts(ctx, current); cleanupErr != nil {
 					errs = append(errs, cleanupErr)
 				}
 			}
@@ -2348,7 +2360,7 @@ func (m *Manager) reconcileRetainedAgentSwitchOnce(ctx context.Context, store po
 		if current, found, reloadErr := store.GetAgentSwitch(ctx, sw.ID); reloadErr != nil {
 			return false, reloadErr
 		} else if found && current.State.Terminal() && strings.TrimSpace(m.dataDir) != "" {
-			if cleanupErr := m.cleanupAgentHandoffArtifacts(current); cleanupErr != nil {
+			if cleanupErr := m.cleanupAgentHandoffArtifacts(ctx, current); cleanupErr != nil {
 				return false, cleanupErr
 			}
 		}
@@ -2359,20 +2371,20 @@ func (m *Manager) reconcileRetainedAgentSwitchOnce(ctx context.Context, store po
 }
 
 func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, sw domain.AgentSwitch) (bool, error) {
-	fail := func(code string) (bool, error) {
+	fail := func(code domain.AgentSwitchErrorCode) (bool, error) {
 		_, err := m.failAgentSwitch(ctx, store, sw, code)
 		return err == nil, err
 	}
 	switch sw.State {
 	case domain.AgentSwitchPreparingHandoff:
-		return fail("daemon_restart_pre_stop")
+		return fail(domain.AgentSwitchErrorDaemonRestartPreStop)
 	case domain.AgentSwitchStoppingSource:
 		return m.reconcileStoppingSource(ctx, store, rec, sw)
 	case domain.AgentSwitchSourceStopped:
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		return fail("daemon_restart_post_stop")
+		return fail(domain.AgentSwitchErrorDaemonRestartPostStop)
 	case domain.AgentSwitchStartingTarget:
 		return m.reconcileStartingTarget(ctx, store, rec, sw)
 	case domain.AgentSwitchTargetReady:
@@ -2381,19 +2393,9 @@ func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwi
 			return false, identityErr
 		}
 		if !recoverable {
-			handleID := strings.TrimSpace(sw.TargetRuntimeHandleID)
-			if handleID == "" {
-				return false, errors.New("target-ready agent switch lacks a durable target runtime handle")
-			}
-			if destroyErr := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); destroyErr != nil {
-				return false, destroyErr
-			}
-			if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
-				return false, cleanupErr
-			}
-			return fail("daemon_restart_unrecoverable_target")
+			return m.failUnrecoverableRecoveredTarget(ctx, store, rec, sw)
 		}
-		return fail("daemon_restart_before_delivery")
+		return fail(domain.AgentSwitchErrorDaemonRestartBeforeDelivery)
 	case domain.AgentSwitchDelivering:
 		recoverable, identityErr := m.targetNativeIdentityRecoverable(ctx, store, rec, sw)
 		if identityErr != nil {
@@ -2403,17 +2405,7 @@ func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwi
 			if sw.TargetAcknowledgedAt != nil {
 				return false, errors.New("acknowledged target has no recoverable provider-native session identity")
 			}
-			handleID := strings.TrimSpace(sw.TargetRuntimeHandleID)
-			if handleID == "" {
-				return false, errors.New("delivering agent switch lacks a durable target runtime handle")
-			}
-			if destroyErr := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); destroyErr != nil {
-				return false, destroyErr
-			}
-			if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
-				return false, cleanupErr
-			}
-			return fail("daemon_restart_unrecoverable_target")
+			return m.failUnrecoverableRecoveredTarget(ctx, store, rec, sw)
 		}
 		if sw.TargetAcknowledgedAt != nil {
 			if _, err := m.completeAcknowledgedAgentSwitch(ctx, store, sw); err != nil {
@@ -2421,13 +2413,33 @@ func (m *Manager) reconcileAgentSwitch(ctx context.Context, store ports.AgentSwi
 			}
 			return true, nil
 		}
-		return fail("delivery_unconfirmed")
+		return fail(domain.AgentSwitchErrorDeliveryUnconfirmed)
 	default:
 		if sw.State.Terminal() {
 			return true, nil
 		}
 		return false, fmt.Errorf("reconcile agent switch %s: unknown state %q", sw.ID, sw.State)
 	}
+}
+
+func (m *Manager) failUnrecoverableRecoveredTarget(
+	ctx context.Context,
+	store ports.AgentSwitchStore,
+	rec domain.SessionRecord,
+	sw domain.AgentSwitch,
+) (bool, error) {
+	handleID := strings.TrimSpace(sw.TargetRuntimeHandleID)
+	if handleID == "" {
+		return false, fmt.Errorf("%s agent switch lacks a durable target runtime handle", sw.State)
+	}
+	if err := m.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
+		return false, err
+	}
+	if err := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); err != nil {
+		return false, err
+	}
+	_, err := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartUnrecoverableTarget)
+	return err == nil, err
 }
 
 func (m *Manager) targetNativeIdentityRecoverable(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, sw domain.AgentSwitch) (bool, error) {
@@ -2449,7 +2461,7 @@ func (m *Manager) targetNativeIdentityRecoverable(ctx context.Context, store por
 		return false, nil
 	}
 	native.NativeSessionID = observedID
-	if transcript := safeNativeTranscriptPath(rec.Metadata.NativeTranscriptPath, native.ConfigDir); transcript != "" {
+	if transcript := safeNativeTranscriptPath(ctx, rec.Metadata.NativeTranscriptPath, native.ConfigDir); transcript != "" {
 		native.TranscriptPath = transcript
 	}
 	updated, err := store.UpdateAgentNativeSession(ctx, native, sw.TargetGenerationID)
@@ -2487,7 +2499,7 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 		// No target can exist before the source-stopped transaction. A reaper or
 		// explicit kill that won this race therefore makes the switch safely
 		// terminal instead of leaving its input gate retained forever.
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "source_session_terminated")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorSourceSessionTerminated)
 		return failErr == nil, failErr
 	}
 	handle := ports.RuntimeHandle{ID: rec.Metadata.RuntimeHandleID}
@@ -2496,7 +2508,7 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 		// No target can exist in stopping_source, so closing the saga cannot
 		// create dual ownership. Normal runtime reconciliation will retry the
 		// liveness probe independently.
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "source_stop_unconfirmed")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorSourceStopUnconfirmed)
 		return failErr == nil, failErr
 	}
 	if alive {
@@ -2504,12 +2516,12 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 		// transaction. Therefore any surviving handle in stopping_source still
 		// belongs to the source side (provider process or preserved shell). Keep
 		// it; process-level inspection is unavailable for hook-native sources.
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_pre_stop")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPreStop)
 		return failErr == nil, failErr
 	}
 
 	stoppedAt := m.clock()
-	confirmed, err := store.ConfirmAgentSwitchSourceStopped(ctx, domain.AgentSwitchSourceStopConfirmation{
+	confirmed, err := m.lcm.ConfirmAgentSwitchSourceStopped(ctx, domain.AgentSwitchSourceStopConfirmation{
 		SwitchID:                      sw.ID,
 		SessionID:                     rec.ID,
 		SourceHarness:                 sw.FromHarness,
@@ -2528,7 +2540,7 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 	if err != nil {
 		return false, err
 	}
-	_, err = m.failAgentSwitch(ctx, store, current, "daemon_restart_post_stop")
+	_, err = m.failAgentSwitch(ctx, store, current, domain.AgentSwitchErrorDaemonRestartPostStop)
 	return err == nil, err
 }
 
@@ -2549,14 +2561,14 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 		return failErr == nil, failErr
 	}
 	if !alive {
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 		return failErr == nil, failErr
 	}
 	inspector, ok := m.runtime.(ports.ExactSupervisedProcessInspector)
@@ -2574,7 +2586,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 		return failErr == nil, failErr
 	}
 	if !targetAlive {
@@ -2584,7 +2596,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 		return failErr == nil, failErr
 	}
 	if sw.TargetNativeSessionRef == nil {
@@ -2594,7 +2606,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 		return failErr == nil, failErr
 	}
 	targetNative, found, err := store.GetAgentNativeSession(ctx, *sw.TargetNativeSessionRef)
@@ -2609,10 +2621,10 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 		if cleanupErr := m.cleanupRecoveredTargetWorkspace(ctx, rec, sw); cleanupErr != nil {
 			return false, cleanupErr
 		}
-		_, failErr := m.failAgentSwitch(ctx, store, sw, "daemon_restart_post_stop")
+		_, failErr := m.failAgentSwitch(ctx, store, sw, domain.AgentSwitchErrorDaemonRestartPostStop)
 		return failErr == nil, failErr
 	}
-	activated, err := store.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
+	activated, err := m.lcm.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
 		SwitchID:                      sw.ID,
 		SessionID:                     rec.ID,
 		SourceHarness:                 sw.FromHarness,
@@ -2634,7 +2646,7 @@ func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.Agent
 	if err != nil {
 		return false, err
 	}
-	_, err = m.failAgentSwitch(ctx, store, current, "daemon_restart_before_delivery")
+	_, err = m.failAgentSwitch(ctx, store, current, domain.AgentSwitchErrorDaemonRestartBeforeDelivery)
 	return err == nil, err
 }
 
@@ -2662,32 +2674,32 @@ func boundedString(value string, maxBytes int) string {
 	return strings.ToValidUTF8(value[:maxBytes], "�")
 }
 
-func switchErrorCode(err error, state domain.AgentSwitchState) string {
+func switchErrorCode(err error, state domain.AgentSwitchState) domain.AgentSwitchErrorCode {
 	switch {
 	case errors.Is(err, ports.ErrAgentBinaryNotFound):
-		return "target_binary_missing"
+		return domain.AgentSwitchErrorTargetBinaryMissing
 	case errors.Is(err, ErrTargetAgentUnauthorized):
-		return "target_agent_unauthorized"
+		return domain.AgentSwitchErrorTargetAgentUnauthorized
 	case errors.Is(err, ErrSwitchSourceStopUnconfirmed):
-		return "source_stop_unconfirmed"
+		return domain.AgentSwitchErrorSourceStopUnconfirmed
 	case errors.Is(err, ErrSwitchDeliveryUnconfirmed):
-		return "delivery_unconfirmed"
+		return domain.AgentSwitchErrorDeliveryUnconfirmed
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return "request_cancelled"
+		return domain.AgentSwitchErrorRequestCancelled
 	case errors.Is(err, ErrAwaitingDecision):
-		return "source_blocked"
+		return domain.AgentSwitchErrorSourceBlocked
 	}
 	switch state {
 	case domain.AgentSwitchPreparingHandoff, domain.AgentSwitchStoppingSource:
-		return "failed_pre_stop"
+		return domain.AgentSwitchErrorFailedPreStop
 	case domain.AgentSwitchSourceStopped, domain.AgentSwitchStartingTarget:
-		return "failed_post_stop"
+		return domain.AgentSwitchErrorFailedPostStop
 	case domain.AgentSwitchTargetReady:
-		return "target_ready_failed"
+		return domain.AgentSwitchErrorTargetReadyFailed
 	case domain.AgentSwitchDelivering:
-		return "delivery_failed"
+		return domain.AgentSwitchErrorDeliveryFailed
 	default:
-		return "switch_failed"
+		return domain.AgentSwitchErrorSwitchFailed
 	}
 }
 

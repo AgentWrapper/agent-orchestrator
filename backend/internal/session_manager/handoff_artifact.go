@@ -2,6 +2,7 @@ package sessionmanager
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -130,8 +131,11 @@ func normalizeTerminalTail(output string) string {
 	return ""
 }
 
-func readNativeTranscriptTailWithOpen(path, configDir string, openFile func(string) (*os.File, error)) (tail string, truncated, ok bool) {
-	path = safeNativeTranscriptPath(path, configDir)
+func readNativeTranscriptTailWithOpen(ctx context.Context, path, configDir string, openFile func(string) (*os.File, error)) (tail string, truncated, ok bool) {
+	if ctx.Err() != nil {
+		return "", false, false
+	}
+	path = safeNativeTranscriptPath(ctx, path, configDir)
 	if path == "" || openFile == nil {
 		return "", false, false
 	}
@@ -147,7 +151,10 @@ func readNativeTranscriptTailWithOpen(path, configDir string, openFile func(stri
 	// Close the validation/open race as far as portable os APIs permit: resolve
 	// the path again and require that it still names the exact file descriptor
 	// AO already opened beneath the provider config directory.
-	revalidated := safeNativeTranscriptPath(path, configDir)
+	if ctx.Err() != nil {
+		return "", false, false
+	}
+	revalidated := safeNativeTranscriptPath(ctx, path, configDir)
 	if revalidated == "" || revalidated != path {
 		return "", false, false
 	}
@@ -167,6 +174,9 @@ func readNativeTranscriptTailWithOpen(path, configDir string, openFile func(stri
 	}
 	data, err := io.ReadAll(io.LimitReader(f, int64(readLimit)))
 	if err != nil {
+		return "", false, false
+	}
+	if ctx.Err() != nil {
 		return "", false, false
 	}
 	earlierOmitted := start > 0
@@ -278,7 +288,10 @@ func handoffPathComponent(value string) bool {
 // the source-writable candidate and AO-owned accepted semantic-handoff paths.
 // Both are temporary inputs to AO's finalized handoff; handoff.json is the sole
 // permanent artifact after a successful switch.
-func (m *Manager) prepareAgentHandoffPaths(sessionID domain.SessionID, switchID string) (candidatePath, finalPath string, err error) {
+func (m *Manager) prepareAgentHandoffPaths(ctx context.Context, sessionID domain.SessionID, switchID string) (candidatePath, finalPath string, err error) {
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
 	dir, err := m.handoffDirectory(sessionID, switchID)
 	if err != nil {
 		return "", "", err
@@ -286,11 +299,17 @@ func (m *Manager) prepareAgentHandoffPaths(sessionID domain.SessionID, switchID 
 	if err := os.MkdirAll(m.dataDir, 0o700); err != nil {
 		return "", "", fmt.Errorf("agent switch: create AO data directory: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
 	dataInfo, err := os.Lstat(m.dataDir)
 	if err != nil || !dataInfo.IsDir() || dataInfo.Mode()&os.ModeSymlink != 0 {
 		return "", "", fmt.Errorf("agent switch: AO data path is not a real directory")
 	}
 	for _, directory := range []string{filepath.Dir(filepath.Dir(dir)), filepath.Dir(dir), dir} {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
 		if err := ensurePrivateHandoffDirectory(directory); err != nil {
 			return "", "", err
 		}
@@ -351,12 +370,15 @@ func validateHandoffDirectoryChain(dir string) error {
 // writeAgentHandoffFile temporarily persists the validated source-authored
 // semantic report. After source stop AO embeds it in handoff.json and removes
 // this intermediate file.
-func (m *Manager) writeAgentHandoffFile(sessionID domain.SessionID, switchID string, body json.RawMessage) (writtenAgentHandoff, error) {
+func (m *Manager) writeAgentHandoffFile(ctx context.Context, sessionID domain.SessionID, switchID string, body json.RawMessage) (writtenAgentHandoff, error) {
+	if err := ctx.Err(); err != nil {
+		return writtenAgentHandoff{}, err
+	}
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 || !json.Valid(trimmed) || trimmed[0] != '{' {
 		return writtenAgentHandoff{}, errors.New("agent switch: semantic handoff must be one JSON object")
 	}
-	_, finalPath, err := m.prepareAgentHandoffPaths(sessionID, switchID)
+	_, finalPath, err := m.prepareAgentHandoffPaths(ctx, sessionID, switchID)
 	if err != nil {
 		return writtenAgentHandoff{}, err
 	}
@@ -364,13 +386,16 @@ func (m *Manager) writeAgentHandoffFile(sessionID domain.SessionID, switchID str
 		return writtenAgentHandoff{}, err
 	}
 	bodyWithNewline := append(append([]byte(nil), trimmed...), '\n')
-	if err := writeAtomicImmutableFile(finalPath, bodyWithNewline); err != nil {
+	if err := writeAtomicImmutableFile(ctx, finalPath, bodyWithNewline); err != nil {
 		return writtenAgentHandoff{}, err
 	}
 	return writtenAgentHandoff{Path: finalPath, Hash: agentHandoffContentHash(trimmed)}, nil
 }
 
-func (m *Manager) writeFinalizedHandoffFile(sw domain.AgentSwitch, continuation string) (writtenAgentHandoff, error) {
+func (m *Manager) writeFinalizedHandoffFile(ctx context.Context, sw domain.AgentSwitch, continuation string) (writtenAgentHandoff, error) {
+	if err := ctx.Err(); err != nil {
+		return writtenAgentHandoff{}, err
+	}
 	continuation = strings.TrimSpace(continuation)
 	if continuation == "" || len(continuation) > handoffContinuationMaxBytes {
 		return writtenAgentHandoff{}, errors.New("agent switch: finalized continuation is empty or exceeds its limit")
@@ -398,7 +423,7 @@ func (m *Manager) writeFinalizedHandoffFile(sw domain.AgentSwitch, continuation 
 	if err := validateHandoffDirectoryChain(filepath.Dir(path)); err != nil {
 		return writtenAgentHandoff{}, err
 	}
-	if err := writeAtomicImmutableFile(path, body); err != nil {
+	if err := writeAtomicImmutableFile(ctx, path, body); err != nil {
 		return writtenAgentHandoff{}, err
 	}
 	return writtenAgentHandoff{Path: path, Hash: contentHash(body)}, nil
@@ -422,7 +447,10 @@ func validContentHash(value string) bool {
 	return err == nil && len(decoded) == sha256.Size
 }
 
-func writeAtomicImmutableFile(path string, body []byte) error {
+func writeAtomicImmutableFile(ctx context.Context, path string, body []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 	dirInfo, err := os.Lstat(dir)
 	if err != nil {
@@ -431,11 +459,11 @@ func writeAtomicImmutableFile(path string, body []byte) error {
 	if !dirInfo.IsDir() || dirInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("agent switch: handoff directory is not a real directory")
 	}
-	if existing, found, err := readRegularFileWithoutSymlink(path, int64(len(body)+1)); err != nil {
+	if existing, found, err := readRegularFileWithoutSymlink(ctx, path, int64(len(body)+1)); err != nil {
 		return fmt.Errorf("agent switch: inspect existing handoff %s: %w", path, err)
 	} else if found {
 		if bytes.Equal(existing, body) {
-			return syncHandoffDirectory(filepath.Dir(path))
+			return syncHandoffDirectory(ctx, filepath.Dir(path))
 		}
 		return fmt.Errorf("agent switch: immutable handoff already exists with different contents: %s", path)
 	}
@@ -445,6 +473,10 @@ func writeAtomicImmutableFile(path string, body []byte) error {
 	}
 	temporaryPath := f.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
+	if err := ctx.Err(); err != nil {
+		_ = f.Close()
+		return err
+	}
 	if err := f.Chmod(0o600); err != nil {
 		_ = f.Close()
 		return fmt.Errorf("agent switch: secure temporary handoff: %w", err)
@@ -457,6 +489,10 @@ func writeAtomicImmutableFile(path string, body []byte) error {
 		_ = f.Close()
 		return fmt.Errorf("agent switch: sync temporary handoff: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		_ = f.Close()
+		return err
+	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("agent switch: close temporary handoff: %w", err)
 	}
@@ -464,16 +500,19 @@ func writeAtomicImmutableFile(path string, body []byte) error {
 	// atomic create-if-absent operation; Rename would replace an existing final
 	// file on Unix and let a racing different submission violate immutability.
 	if err := os.Link(temporaryPath, path); err != nil {
-		if existing, found, readErr := readRegularFileWithoutSymlink(path, int64(len(body)+1)); readErr == nil && found && bytes.Equal(existing, body) {
-			return syncHandoffDirectory(dir)
+		if existing, found, readErr := readRegularFileWithoutSymlink(ctx, path, int64(len(body)+1)); readErr == nil && found && bytes.Equal(existing, body) {
+			return syncHandoffDirectory(ctx, dir)
 		}
 		return fmt.Errorf("agent switch: publish handoff %s: %w", path, err)
 	}
 	_ = os.Remove(temporaryPath)
-	return syncHandoffDirectory(dir)
+	return syncHandoffDirectory(ctx, dir)
 }
 
-func syncHandoffDirectory(dir string) error {
+func syncHandoffDirectory(ctx context.Context, dir string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dirHandle, err := os.Open(dir) //nolint:gosec // validated AO-owned directory.
 	if err != nil {
 		return fmt.Errorf("agent switch: open handoff directory for sync: %w", err)
@@ -488,7 +527,10 @@ func syncHandoffDirectory(dir string) error {
 // readRegularFileWithoutSymlink reads only the exact regular file observed by
 // Lstat. It rejects symlinks and replacement races so an agent cannot make AO
 // follow a pre-created handoff path outside the private switch directory.
-func readRegularFileWithoutSymlink(path string, limit int64) ([]byte, bool, error) {
+func readRegularFileWithoutSymlink(ctx context.Context, path string, limit int64) ([]byte, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	pathInfo, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
@@ -518,6 +560,9 @@ func readRegularFileWithoutSymlink(path string, limit int64) ([]byte, bool, erro
 	if err != nil {
 		return nil, false, err
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	return body, true, nil
 }
 
@@ -525,7 +570,10 @@ func readRegularFileWithoutSymlink(path string, limit int64) ([]byte, bool, erro
 // source process has stopped and proves it still matches the durable digest.
 // Durable status remains provenance; callers use this result only to decide
 // whether semantic context is safe and available for this target delivery.
-func (m *Manager) readVerifiedAgentHandoffForDelivery(sw domain.AgentSwitch) (json.RawMessage, bool) {
+func (m *Manager) readVerifiedAgentHandoffForDelivery(ctx context.Context, sw domain.AgentSwitch) (json.RawMessage, bool) {
+	if ctx.Err() != nil {
+		return nil, false
+	}
 	if sw.AgentHandoffStatus != domain.AgentHandoffReceived || len(sw.AgentHandoffHash) != sha256.Size*2 {
 		return nil, false
 	}
@@ -544,7 +592,7 @@ func (m *Manager) readVerifiedAgentHandoffForDelivery(sw domain.AgentSwitch) (js
 	if err := validateHandoffDirectoryChain(dir); err != nil {
 		return nil, false
 	}
-	body, found, err := readRegularFileWithoutSymlink(expectedPath, sourceSemanticHandoffMaxBytes+2)
+	body, found, err := readRegularFileWithoutSymlink(ctx, expectedPath, sourceSemanticHandoffMaxBytes+2)
 	if err != nil || !found || len(body) == 0 || len(body) > sourceSemanticHandoffMaxBytes+1 {
 		return nil, false
 	}
@@ -559,7 +607,10 @@ func (m *Manager) readVerifiedAgentHandoffForDelivery(sw domain.AgentSwitch) (js
 	return append(json.RawMessage(nil), trimmed...), true
 }
 
-func (m *Manager) readVerifiedFinalizedHandoff(sw domain.AgentSwitch) (finalizedAgentHandoff, bool) {
+func (m *Manager) readVerifiedFinalizedHandoff(ctx context.Context, sw domain.AgentSwitch) (finalizedAgentHandoff, bool) {
+	if ctx.Err() != nil {
+		return finalizedAgentHandoff{}, false
+	}
 	if !validContentHash(sw.FinalHandoffHash) {
 		return finalizedAgentHandoff{}, false
 	}
@@ -570,7 +621,7 @@ func (m *Manager) readVerifiedFinalizedHandoff(sw domain.AgentSwitch) (finalized
 	if err := validateHandoffDirectoryChain(filepath.Dir(expectedPath)); err != nil {
 		return finalizedAgentHandoff{}, false
 	}
-	body, found, err := readRegularFileWithoutSymlink(expectedPath, finalizedHandoffMaxBytes+1)
+	body, found, err := readRegularFileWithoutSymlink(ctx, expectedPath, finalizedHandoffMaxBytes+1)
 	if err != nil || !found || len(body) == 0 || len(body) > finalizedHandoffMaxBytes {
 		return finalizedAgentHandoff{}, false
 	}
@@ -592,7 +643,10 @@ func (m *Manager) readVerifiedFinalizedHandoff(sw domain.AgentSwitch) (finalized
 // from one durable switch identity. A final file is retained only when the
 // durable row owns its exact canonical path and digest. This makes both the
 // live defer and restart reconciliation safe to repeat.
-func (m *Manager) cleanupAgentHandoffArtifacts(sw domain.AgentSwitch) error {
+func (m *Manager) cleanupAgentHandoffArtifacts(ctx context.Context, sw domain.AgentSwitch) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dir, err := m.handoffDirectory(sw.SessionID, string(sw.ID))
 	if err != nil {
 		return err
@@ -612,10 +666,14 @@ func (m *Manager) cleanupAgentHandoffArtifacts(sw domain.AgentSwitch) error {
 	if err != nil {
 		return err
 	}
-	_, keepFinal := m.readVerifiedFinalizedHandoff(sw)
-	_, keepSemantic := m.readVerifiedAgentHandoffForDelivery(sw)
+	_, keepFinal := m.readVerifiedFinalizedHandoff(ctx, sw)
+	_, keepSemantic := m.readVerifiedAgentHandoffForDelivery(ctx, sw)
 	var errs []error
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
 		name := entry.Name()
 		if name == "handoff.json" && keepFinal {
 			continue
@@ -639,7 +697,10 @@ func (m *Manager) cleanupAgentHandoffArtifacts(sw domain.AgentSwitch) error {
 	return errors.Join(errs...)
 }
 
-func removeTemporaryAgentHandoff(path string) error {
+func removeTemporaryAgentHandoff(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
@@ -650,7 +711,10 @@ func removeTemporaryAgentHandoff(path string) error {
 	return err
 }
 
-func (m *Manager) removeTemporaryAgentHandoff(sessionID domain.SessionID, switchID string) error {
+func (m *Manager) removeTemporaryAgentHandoff(ctx context.Context, sessionID domain.SessionID, switchID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dir, err := m.handoffDirectory(sessionID, switchID)
 	if err != nil {
 		return err
@@ -663,5 +727,5 @@ func (m *Manager) removeTemporaryAgentHandoff(sessionID domain.SessionID, switch
 	if err := validateHandoffDirectoryChain(dir); err != nil {
 		return fmt.Errorf("agent switch: refuse unsafe candidate cleanup: %w", err)
 	}
-	return removeTemporaryAgentHandoff(filepath.Join(dir, "agent-handoff-candidate.json"))
+	return removeTemporaryAgentHandoff(ctx, filepath.Join(dir, "agent-handoff-candidate.json"))
 }

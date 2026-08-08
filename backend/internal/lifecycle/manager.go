@@ -54,6 +54,18 @@ type controllerEpochStore interface {
 	) (bool, error)
 }
 
+// agentSwitchSourceStopStore and agentSwitchTargetActivationStore are the
+// atomic persistence primitives used at the two agent-switch ownership
+// boundaries. They remain optional so focused lifecycle reducer fakes do not
+// need to implement the agent-switch saga; production SQLite implements both.
+type agentSwitchSourceStopStore interface {
+	ConfirmAgentSwitchSourceStopped(context.Context, domain.AgentSwitchSourceStopConfirmation) (bool, error)
+}
+
+type agentSwitchTargetActivationStore interface {
+	ActivateAgentSwitchTarget(context.Context, domain.AgentSwitchTargetActivation) (bool, error)
+}
+
 // notificationSink is the optional lifecycle-to-notification-producer boundary.
 type notificationSink interface {
 	Notify(ctx context.Context, intent ports.NotificationIntent) error
@@ -1023,6 +1035,40 @@ func (m *Manager) CommitControllerEpoch(
 	}
 	m.resolveNotifications(ctx, resolutions...)
 	return true, nil
+}
+
+// ConfirmAgentSwitchSourceStopped records that the source process is gone and
+// moves the switch saga across the source-stop boundary in the same store
+// transaction. Session Manager coordinates the process; Lifecycle Manager owns
+// the durable activity-state write.
+func (m *Manager) ConfirmAgentSwitchSourceStopped(
+	ctx context.Context,
+	confirmation domain.AgentSwitchSourceStopConfirmation,
+) (bool, error) {
+	writer, ok := m.store.(agentSwitchSourceStopStore)
+	if !ok {
+		return false, fmt.Errorf("lifecycle: agent-switch source-stop persistence is unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return writer.ConfirmAgentSwitchSourceStopped(ctx, confirmation)
+}
+
+// ActivateAgentSwitchTarget atomically transfers the session owner to the
+// target process and advances the switch saga. Keeping this command on
+// Lifecycle Manager preserves the canonical write boundary without splitting
+// the store's all-or-nothing transaction.
+func (m *Manager) ActivateAgentSwitchTarget(
+	ctx context.Context,
+	activation domain.AgentSwitchTargetActivation,
+) (bool, error) {
+	writer, ok := m.store.(agentSwitchTargetActivationStore)
+	if !ok {
+		return false, fmt.Errorf("lifecycle: agent-switch target activation persistence is unavailable")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return writer.ActivateAgentSwitchTarget(ctx, activation)
 }
 
 // MarkTerminated marks a session terminated. Runtime/workspace teardown is the

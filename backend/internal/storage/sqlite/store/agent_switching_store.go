@@ -249,7 +249,7 @@ func (s *Store) UpdateAgentSwitch(ctx context.Context, rec domain.AgentSwitch, e
 		TargetStartMode:        rec.TargetStartMode, NextState: rec.State,
 		NextTargetGenerationID:    rec.TargetGenerationID,
 		NextTargetRuntimeHandleID: rec.TargetRuntimeHandleID,
-		ErrorCode:                 rec.ErrorCode,
+		ErrorCode:                 string(rec.ErrorCode),
 		UpdatedAt:                 rec.UpdatedAt,
 		ID:                        rec.ID, SessionID: rec.SessionID, ExpectedState: expectedState,
 		ExpectedSourceGenerationID: expectedSourceGenerationID,
@@ -279,7 +279,7 @@ func (s *Store) FailAgentSwitchIfUnacknowledged(ctx context.Context, rec domain.
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	n, err := s.qw.FailAgentSwitchIfUnacknowledged(ctx, gen.FailAgentSwitchIfUnacknowledgedParams{
-		ErrorCode: rec.ErrorCode, FailedAt: rec.UpdatedAt,
+		ErrorCode: string(rec.ErrorCode), FailedAt: rec.UpdatedAt,
 		ID: rec.ID, SessionID: rec.SessionID,
 		ExpectedSourceGenerationID: rec.SourceGenerationID,
 		ExpectedTargetGenerationID: rec.TargetGenerationID,
@@ -578,6 +578,9 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 	if !rec.State.Valid() || !rec.TargetStartMode.Valid() || !rec.AgentHandoffStatus.Valid() {
 		return fmt.Errorf("agent switch %s: invalid state, target start mode, or handoff status", rec.ID)
 	}
+	if !rec.ErrorCode.Valid() || (rec.State == domain.AgentSwitchFailed) != (rec.ErrorCode != "") {
+		return fmt.Errorf("agent switch %s: failure state and error code must be present together", rec.ID)
+	}
 	if rec.SourceGenerationID == "" {
 		return fmt.Errorf("agent switch %s: source generation is required", rec.ID)
 	}
@@ -726,7 +729,7 @@ func agentSwitchToInsert(rec domain.AgentSwitch) gen.InsertAgentSwitchParams {
 		TargetGenerationID:    rec.TargetGenerationID,
 		TargetRuntimeHandleID: rec.TargetRuntimeHandleID,
 		TargetAcknowledgedAt:  timePtrToNull(rec.TargetAcknowledgedAt),
-		ErrorCode:             rec.ErrorCode,
+		ErrorCode:             string(rec.ErrorCode),
 		RequestedAt:           rec.RequestedAt, UpdatedAt: rec.UpdatedAt,
 	}
 }
@@ -747,7 +750,7 @@ func agentSwitchFromGen(row gen.AgentSwitch) domain.AgentSwitch {
 		TargetGenerationID:    row.TargetGenerationID,
 		TargetRuntimeHandleID: row.TargetRuntimeHandleID,
 		TargetAcknowledgedAt:  nullTimeToPtr(row.TargetAcknowledgedAt),
-		ErrorCode:             row.ErrorCode,
+		ErrorCode:             domain.AgentSwitchErrorCode(row.ErrorCode),
 		RequestedAt:           row.RequestedAt, UpdatedAt: row.UpdatedAt,
 	}
 }

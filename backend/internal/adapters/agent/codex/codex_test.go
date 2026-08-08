@@ -35,6 +35,27 @@ func TestNativeConversationIDRequiresCapturedCodexThreadForTUI(t *testing.T) {
 	}
 }
 
+func TestCodexAuthStatusFromOutputRequiresAffirmativeEvidence(t *testing.T) {
+	tests := []struct {
+		name       string
+		output     string
+		wantStatus ports.AgentAuthStatus
+		wantKnown  bool
+	}{
+		{name: "authorized", output: "Logged in using ChatGPT", wantStatus: ports.AgentAuthStatusAuthorized, wantKnown: true},
+		{name: "unauthorized", output: "Not logged in", wantStatus: ports.AgentAuthStatusUnauthorized, wantKnown: true},
+		{name: "unknown error", output: "unsupported subcommand on this version", wantStatus: ports.AgentAuthStatusUnknown, wantKnown: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, known := codexAuthStatusFromOutput([]byte(tt.output))
+			if status != tt.wantStatus || known != tt.wantKnown {
+				t.Fatalf("auth output = (%q, %v), want (%q, %v)", status, known, tt.wantStatus, tt.wantKnown)
+			}
+		})
+	}
+}
+
 // canonicalTempDir returns a t.TempDir() with symlinks resolved so the
 // workspace trust flag collapses to a single predictable entry (macOS TempDir
 // lives under a /var -> /private/var symlink).

@@ -837,6 +837,13 @@ func TestClaudeAuthStatusFromOutputUnauthorized(t *testing.T) {
 	}
 }
 
+func TestClaudeAuthStatusFromOutputUnknownForUnrecognizedFailure(t *testing.T) {
+	status, ok := claudeAuthStatusFromOutput([]byte("unsupported subcommand on this version"))
+	if ok || status != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = (%q, %v), want (%q, false)", status, ok, ports.AgentAuthStatusUnknown)
+	}
+}
+
 func TestEnsureWorkspaceTrustedCreatesEntry(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, ".claude.json")

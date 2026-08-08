@@ -3,6 +3,7 @@ package conpty
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -533,6 +534,33 @@ func TestDestroy_KillsHostAndCleansUp(t *testing.T) {
 	// Second Destroy must be idempotent (returns nil).
 	if err := rt.Destroy(ctx, handle); err != nil {
 		t.Fatalf("second Destroy: expected nil, got %v", err)
+	}
+}
+
+type processKillerFunc func() error
+
+func (f processKillerFunc) Kill() error { return f() }
+
+func TestDestroyRetainsSessionWhenPIDCannotBeStopped(t *testing.T) {
+	isolateRegistry(t)
+	rt := New(Options{})
+	rt.sessions["sess-stuck"] = &hostSession{addr: "127.0.0.1:1", pid: 424242}
+	rt.killHost = func(string) error { return errors.New("graceful transport failed") }
+	rt.pidIsAlive = func(int) bool { return true }
+	rt.processFinder = func(int) (processKiller, error) {
+		return processKillerFunc(func() error { return errors.New("access denied") }), nil
+	}
+	rt.destroyWait = 0
+
+	err := rt.Destroy(context.Background(), ports.RuntimeHandle{ID: "sess-stuck"})
+	if err == nil || !strings.Contains(err.Error(), "still alive") || !strings.Contains(err.Error(), "access denied") {
+		t.Fatalf("Destroy error = %v, want force-kill and final-liveness evidence", err)
+	}
+	rt.mu.Lock()
+	_, retained := rt.sessions["sess-stuck"]
+	rt.mu.Unlock()
+	if !retained {
+		t.Fatal("Destroy removed a session whose PID may still be alive")
 	}
 }
 

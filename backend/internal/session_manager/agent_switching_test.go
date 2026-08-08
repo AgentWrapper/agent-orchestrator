@@ -515,6 +515,7 @@ func newSwitchTestManager(t *testing.T, runtime runtimeController) (*Manager, *s
 	target := &switchTestAgent{configDir: filepath.Join(root, "codex"), available: map[string]ports.NativeSessionAvailability{}}
 	messenger := &fakeMessenger{}
 	lcm := &fakeLCM{store: store.fakeStore}
+	store.fakeStore.agentSwitchStore = store
 	launches := []string{"target-generation"}
 	manager := New(Deps{
 		Runtime:   runtime,
@@ -1218,10 +1219,10 @@ func TestSystemPromptForNativeRestoreReappliesFinalizedInboundHandoff(t *testing
 		FromHarness: domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
 		TargetNativeSessionRef: &nativeRef, State: domain.AgentSwitchCompleted,
 	}
-	if _, _, err := manager.prepareAgentHandoffPaths(sw.SessionID, string(sw.ID)); err != nil {
+	if _, _, err := manager.prepareAgentHandoffPaths(ctx, sw.SessionID, string(sw.ID)); err != nil {
 		t.Fatal(err)
 	}
-	written, err := manager.writeFinalizedHandoffFile(sw, `<ao-continuation>persisted hidden context</ao-continuation>`)
+	written, err := manager.writeFinalizedHandoffFile(ctx, sw, `<ao-continuation>persisted hidden context</ao-continuation>`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2280,18 +2281,20 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 		name          string
 		state         domain.AgentSwitchState
 		runtimeAlive  bool
+		runtimeErr    error
 		acknowledged  bool
 		ackBeforeFail bool
 		targetHandle  string
 		wantState     domain.AgentSwitchState
 		wantHarness   domain.AgentHarness
 		wantHandle    string
-		wantErrorCode string
+		wantErrorCode domain.AgentSwitchErrorCode
 		wantError     string
 		wantGated     bool
 	}{
 		{name: "pre-stop keeps source", state: domain.AgentSwitchPreparingHandoff, runtimeAlive: true, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "daemon_restart_pre_stop"},
 		{name: "stopped source stays source-owned and exited", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "daemon_restart_post_stop"},
+		{name: "inconclusive source probe safely retains source ownership", state: domain.AgentSwitchStoppingSource, runtimeErr: errors.New("probe unavailable"), wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "source_stop_unconfirmed"},
 		{name: "exact starting target is adopted by opaque handle without delivery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, targetHandle: "opaque-target-handle", wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantHandle: "opaque-target-handle", wantErrorCode: "daemon_restart_before_delivery"},
 		{name: "starting target without a durable handle remains gated", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, wantState: domain.AgentSwitchStartingTarget, wantHarness: domain.HarnessClaudeCode, wantError: "lacks a durable target runtime handle", wantGated: true},
 		{name: "acknowledged delivery completes", state: domain.AgentSwitchDelivering, runtimeAlive: true, acknowledged: true, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex},
@@ -2302,6 +2305,7 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
 			manager, store, messenger := newSwitchTestManager(t, runtime)
+			runtime.aliveErr = tt.runtimeErr
 			store.ackBeforeDeliveryFailure = tt.ackBeforeFail
 			runtime.aliveByHandle["proj-1"] = tt.runtimeAlive
 			if tt.targetHandle != "" {
@@ -2561,7 +2565,7 @@ func TestSwitchAgentRefreshesLateSourceNativeIdentityAtStopBoundary(t *testing.T
 	if retained.ID == "" {
 		t.Fatalf("late source native session was not retained: %+v", retainedSessions)
 	}
-	expectedTranscriptPath := safeNativeTranscriptPath(transcriptPath, source.configDir)
+	expectedTranscriptPath := safeNativeTranscriptPath(ctx, transcriptPath, source.configDir)
 	if retained.NativeSessionID != "late-source-native" || retained.TranscriptPath != expectedTranscriptPath {
 		t.Fatalf("late source native metadata was not retained: %+v", retained)
 	}
@@ -2630,7 +2634,7 @@ func TestReconcileAgentSwitchesCleansTemporaryAndUnownedHandoffFiles(t *testing.
 				sw.TargetGenerationID = "target-generation"
 			}
 			store.switches[sw.ID] = sw
-			candidate, final, err := manager.prepareAgentHandoffPaths(sw.SessionID, string(sw.ID))
+			candidate, final, err := manager.prepareAgentHandoffPaths(ctx, sw.SessionID, string(sw.ID))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2670,7 +2674,7 @@ func TestSafeNativeTranscriptPathRejectsSymlinkEscape(t *testing.T) {
 	if err := os.Symlink(outside, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if got := safeNativeTranscriptPath(link, configDir); got != "" {
+	if got := safeNativeTranscriptPath(ctx, link, configDir); got != "" {
 		t.Fatalf("symlink escape accepted as %q", got)
 	}
 
@@ -2682,7 +2686,7 @@ func TestSafeNativeTranscriptPathRejectsSymlinkEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := safeNativeTranscriptPath(inside, configDir); got != wantInside {
+	if got := safeNativeTranscriptPath(ctx, inside, configDir); got != wantInside {
 		t.Fatalf("contained transcript = %q, want %q", got, wantInside)
 	}
 }

@@ -33,6 +33,9 @@ type fakeStore struct {
 	deleteErr     error
 	upsertWTErr   error
 	listAllErr    error
+	// agentSwitchStore is wired only by agent-switch tests so fakeLCM can model
+	// Lifecycle Manager's atomic ownership-boundary commands.
+	agentSwitchStore any
 	// worktrees maps session ID to its saved worktree rows (shutdown-saved marker).
 	worktrees map[domain.SessionID][]domain.SessionWorktreeRecord
 	// sharedLog, when non-nil, receives an ordered call entry for each
@@ -200,6 +203,24 @@ func (l *fakeLCM) CommitControllerEpoch(
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
 	l.store.sessions[id] = rec
 	return true, nil
+}
+func (l *fakeLCM) ConfirmAgentSwitchSourceStopped(ctx context.Context, confirmation domain.AgentSwitchSourceStopConfirmation) (bool, error) {
+	store, ok := l.store.agentSwitchStore.(interface {
+		ConfirmAgentSwitchSourceStopped(context.Context, domain.AgentSwitchSourceStopConfirmation) (bool, error)
+	})
+	if !ok {
+		return false, errors.New("fake lifecycle: agent-switch source-stop persistence unavailable")
+	}
+	return store.ConfirmAgentSwitchSourceStopped(ctx, confirmation)
+}
+func (l *fakeLCM) ActivateAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchTargetActivation) (bool, error) {
+	store, ok := l.store.agentSwitchStore.(interface {
+		ActivateAgentSwitchTarget(context.Context, domain.AgentSwitchTargetActivation) (bool, error)
+	})
+	if !ok {
+		return false, errors.New("fake lifecycle: agent-switch target activation persistence unavailable")
+	}
+	return store.ActivateAgentSwitchTarget(ctx, activation)
 }
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	if l.terminated == nil {
