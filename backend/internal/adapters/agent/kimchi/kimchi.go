@@ -93,6 +93,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		permissions = cfg.Config.Permissions
 	}
 	appendPermissionFlags(&cmd, permissions)
+	appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools)
 
 	if cfg.SystemPromptFile != "" {
 		data, err := os.ReadFile(cfg.SystemPromptFile) //nolint:gosec // path is AO-owned launch config
@@ -151,6 +152,24 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 		return ports.SessionInfo{}, false, nil
 	}
 	return info, true, nil
+}
+
+// appendToolFlags emits repeated --allow-tool / --deny-tool flags for a
+// tool-scoped launch. Each entry in allowed becomes its own --allow-tool <rule>
+// pair, and each entry in disallowed becomes its own --deny-tool <rule> pair.
+// Empty lists emit nothing, so an unrestricted launch is unchanged. Kimchi's
+// --allow-tool/--deny-tool flags accept the same rule syntax as Claude Code
+// (bash(git diff:*), edit, mcp__server__tool), and the rule parser is
+// case-insensitive on tool names, so lowercase tool names are used to match
+// Kimchi's internal names. These rules are honored under --auto and --plan;
+// only --dangerously-skip-permissions (not mapped by AO) would skip the denylist.
+func appendToolFlags(cmd *[]string, allowed, disallowed []string) {
+	for _, rule := range allowed {
+		*cmd = append(*cmd, "--allow-tool", rule)
+	}
+	for _, rule := range disallowed {
+		*cmd = append(*cmd, "--deny-tool", rule)
+	}
 }
 
 func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
