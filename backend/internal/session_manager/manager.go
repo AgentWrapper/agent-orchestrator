@@ -3088,22 +3088,50 @@ func HookPATH(executable func() (string, error), getenv func(string) string, pro
 	if err != nil {
 		return "", fmt.Errorf("resolve daemon executable: %w", err)
 	}
-	name := filepath.Base(exe)
-	if runtime.GOOS == "windows" {
-		name = strings.TrimSuffix(strings.ToLower(name), ".exe")
-	}
-	if name != hookBinaryName {
+	dir, ok := hookBinaryDir(exe)
+	if !ok {
 		return "", fmt.Errorf("daemon executable %s is not named %q", exe, hookBinaryName)
 	}
 	base := projectEnv["PATH"]
 	if base == "" {
 		base = getenv("PATH")
 	}
-	dir := filepath.Dir(exe)
 	if base == "" {
 		return dir, nil
 	}
 	return dir + string(os.PathListSeparator) + base, nil
+}
+
+// hookBinaryDir reports the directory to pin for exe, and whether exe is the
+// daemon's own `ao` at all. An executable under any other name cannot be
+// pinned: prepending its directory would not change what a bare `ao` resolves
+// to.
+func hookBinaryDir(exe string) (string, bool) {
+	if exe == "" {
+		return "", false
+	}
+	name := filepath.Base(exe)
+	if runtime.GOOS == "windows" {
+		name = strings.TrimSuffix(strings.ToLower(name), ".exe")
+	}
+	if name != hookBinaryName {
+		return "", false
+	}
+	return filepath.Dir(exe), true
+}
+
+// pinnedHookDir is the directory this daemon's PATH pin puts first, or "" when
+// no pin is possible (unresolvable executable, or one not named "ao").
+func (m *Manager) pinnedHookDir() string {
+	exe, err := m.executable()
+	if err != nil {
+		return ""
+	}
+	dir, ok := hookBinaryDir(exe)
+	if !ok {
+		return ""
+	}
+	return dir
 }
 
 // provisionWorkspace applies the project's per-workspace setup after the
@@ -3525,7 +3553,38 @@ func AugmentRuntimePATHForLaunchBinary(ctx context.Context, env map[string]strin
 			parts = append([]string{dirs[i]}, parts...)
 		}
 	}
+	// The launch-binary directories land in FRONT of the daemon-dir pin
+	// runtimeEnv applied, so a foreign `ao` sitting beside the agent binary
+	// (the legacy npm package installs `ao` into the same global bin as the
+	// agent CLIs) would win the lookup inside the session. Put the pin back at
+	// the head; the agent binary is invoked by absolute path anyway, so its
+	// directory does not need to be first.
+	parts = restorePinnedDir(parts, m.pinnedHookDir())
 	env["PATH"] = strings.Join(parts, string(os.PathListSeparator))
+}
+
+// restorePinnedDir moves dir back to the head of parts. It is a no-op when dir
+// is empty (nothing was pinned) or is not already present (the pin never
+// applied, and inventing one here would resolve `ao` to a directory this
+// session was never meant to see).
+func restorePinnedDir(parts []string, dir string) []string {
+	if dir == "" || len(parts) == 0 || parts[0] == dir {
+		return parts
+	}
+	idx := -1
+	for i, part := range parts {
+		if part == dir {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return parts
+	}
+	out := make([]string, 0, len(parts))
+	out = append(out, dir)
+	out = append(out, parts[:idx]...)
+	return append(out, parts[idx+1:]...)
 }
 
 func isNodeLaunchBinary(path string) bool {
