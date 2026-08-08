@@ -120,11 +120,12 @@ func TestSessionPersistsDiffBaseMetadata(t *testing.T) {
 	}
 }
 
-func TestSessionPersistsBrowserCapabilityVerifier(t *testing.T) {
+func TestSessionPersistsModelAndBrowserCapabilityVerifier(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedProject(t, s, "mer")
 	rec := sampleRecord("mer")
+	rec.Model = "claude-opus-4-5"
 	rec.Metadata.BrowserCapabilityVerifier = "one-way-verifier"
 
 	created, err := s.CreateSession(ctx, rec)
@@ -135,10 +136,14 @@ func TestSessionPersistsBrowserCapabilityVerifier(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("get session: ok=%v err=%v", ok, err)
 	}
+	if got.Model != "claude-opus-4-5" {
+		t.Fatalf("created model = %q, want claude-opus-4-5", got.Model)
+	}
 	if got.Metadata.BrowserCapabilityVerifier != "one-way-verifier" {
 		t.Fatalf("created verifier = %q", got.Metadata.BrowserCapabilityVerifier)
 	}
 
+	got.Model = "claude-haiku-4-5"
 	got.Metadata.BrowserCapabilityVerifier = "rotated-verifier"
 	if err := s.UpdateSession(ctx, got); err != nil {
 		t.Fatalf("update session: %v", err)
@@ -146,6 +151,9 @@ func TestSessionPersistsBrowserCapabilityVerifier(t *testing.T) {
 	updated, ok, err := s.GetSession(ctx, created.ID)
 	if err != nil || !ok {
 		t.Fatalf("get updated session: ok=%v err=%v", ok, err)
+	}
+	if updated.Model != "claude-haiku-4-5" {
+		t.Fatalf("updated model = %q, want claude-haiku-4-5", updated.Model)
 	}
 	if updated.Metadata.BrowserCapabilityVerifier != "rotated-verifier" {
 		t.Fatalf("updated verifier = %q", updated.Metadata.BrowserCapabilityVerifier)

@@ -320,10 +320,11 @@ type Session struct {
 	ReviewerHarness           domain.ReviewerHarness
 	IsPinned                  bool
 	PinnedAt                  sql.NullTime
-	BrowserCapabilityVerifier string
 	SessionMode               domain.SessionMode
 	ProviderConversationID    string
 	ControllerGeneration      string
+	BrowserCapabilityVerifier string
+	Model                     string
 }
 
 type SessionCleanupFact struct {
