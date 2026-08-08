@@ -510,7 +510,7 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 			)
 		}
 		for _, candidate := range candidates {
-			if hookutil.FileExists(candidate) {
+			if hookutil.IsExecutableFile(candidate) {
 				return candidate, nil
 			}
 		}
@@ -537,7 +537,7 @@ func ResolveOpenCodeBinary(ctx context.Context) (string, error) {
 	}
 
 	for _, candidate := range candidates {
-		if hookutil.FileExists(candidate) {
+		if hookutil.IsExecutableFile(candidate) {
 			return candidate, nil
 		}
 		if err := ctx.Err(); err != nil {

@@ -626,10 +626,12 @@ func reconcileSchema(db *sql.DB) error {
 }
 
 const (
-	sessionsHarnessCheckWithoutMuse   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
-	sessionsHarnessCheckWithMuse      = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
-	sessionsHarnessCheckWithoutMuseQM = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
-	sessionsHarnessCheckWithMuseQM    = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithoutMuse      = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuse         = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithoutMuseQM    = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseQM       = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'autohand', 'qm', 'fake'))`
+	sessionsHarnessCheckWithMuseKimchi   = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'autohand', 'fake'))`
+	sessionsHarnessCheckWithMuseQMKimchi = `CHECK (harness IN ('', 'claude-code', 'codex', 'aider', 'opencode', 'grok', 'droid', 'amp', 'agy', 'crush', 'cursor', 'qwen', 'copilot', 'goose', 'auggie', 'continue', 'devin', 'cline', 'kimi', 'muse', 'kiro', 'kilocode', 'vibe', 'pi', 'kimchi', 'autohand', 'qm', 'fake'))`
 )
 
 func reconcileHarnessConstraint(db *sql.DB) error {
@@ -639,27 +641,43 @@ func reconcileHarnessConstraint(db *sql.DB) error {
 	).Scan(&schema); err != nil {
 		return fmt.Errorf("schema verification: inspect sessions harness constraint: %w", err)
 	}
-	if strings.Contains(schema, "'muse'") {
+	needsMuse := !strings.Contains(schema, "'muse'")
+	needsKimchi := !strings.Contains(schema, "'kimchi'")
+	if !needsMuse && !needsKimchi {
 		return nil
 	}
 	if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
 		return fmt.Errorf("schema repair: enable writable_schema for sessions harness constraint: %w", err)
 	}
-	for _, replacement := range []struct {
+	type replacement struct {
 		old string
 		new string
-	}{
-		{sessionsHarnessCheckWithoutMuse, sessionsHarnessCheckWithMuse},
-		{sessionsHarnessCheckWithoutMuseQM, sessionsHarnessCheckWithMuseQM},
-	} {
+	}
+	var repairs []replacement
+	if needsMuse {
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithoutMuse, sessionsHarnessCheckWithMuse},
+			replacement{sessionsHarnessCheckWithoutMuseQM, sessionsHarnessCheckWithMuseQM},
+		)
+	}
+	if needsKimchi {
+		// After the Muse repair (if any), the constraint will be in one of
+		// these known states — each gets Kimchi inserted in the same
+		// position as migration 0054 does.
+		repairs = append(repairs,
+			replacement{sessionsHarnessCheckWithMuse, sessionsHarnessCheckWithMuseKimchi},
+			replacement{sessionsHarnessCheckWithMuseQM, sessionsHarnessCheckWithMuseQMKimchi},
+		)
+	}
+	for _, r := range repairs {
 		if _, err := db.Exec(
 			`UPDATE sqlite_master
 SET sql = replace(sql, ?, ?)
 WHERE type = 'table' AND name = 'sessions'`,
-			replacement.old,
-			replacement.new,
+			r.old,
+			r.new,
 		); err != nil {
-			return fmt.Errorf("schema repair: widen sessions harness constraint for Muse: %w", err)
+			return fmt.Errorf("schema repair: widen sessions harness constraint: %w", err)
 		}
 	}
 	if _, err := db.Exec(`PRAGMA writable_schema = RESET`); err != nil {
@@ -672,6 +690,9 @@ WHERE type = 'table' AND name = 'sessions'`,
 	}
 	if !strings.Contains(schema, "'muse'") {
 		return fmt.Errorf("schema repair: sessions harness constraint is missing Muse and did not match known pre-Muse schema")
+	}
+	if !strings.Contains(schema, "'kimchi'") {
+		return fmt.Errorf("schema repair: sessions harness constraint is missing Kimchi and did not match known pre-Kimchi schema")
 	}
 	return nil
 }

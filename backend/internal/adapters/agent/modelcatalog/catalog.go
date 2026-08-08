@@ -50,6 +50,7 @@ var commandSpecs = map[string]commandSpec{
 	"agy":      {args: []string{"models"}, parser: parseIDLines},
 	"kilocode": {args: []string{"models"}, parser: parseIDLines},
 	"pi":       {args: []string{"--list-models"}, parser: parsePiModels},
+	"kimchi":   {args: []string{"--list-models"}, parser: parsePiModels},
 	"kimi":     {args: []string{"provider", "list", "--json"}, parser: parseJSONModels},
 	"auggie":   {args: []string{"models", "list", "--json"}, parser: parseJSONModels},
 	"devin":    {args: []string{"models", "list", "--format", "json"}, parser: parseJSONModels},

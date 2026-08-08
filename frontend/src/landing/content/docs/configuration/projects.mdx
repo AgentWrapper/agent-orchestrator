@@ -167,14 +167,14 @@ reviewers:
   - harness: kilocode
 ```
 
-Built-in reviewer harnesses are `aider`, `agy`, `amp`, `auggie`, `autohand`, `claude-code`, `cline`, `codex`, `continue`, `copilot`, `crush`, `cursor`, `devin`, `droid`, `goose`, `grok`, `kilocode`, `kiro`, `kimi`, `opencode`, `pi`, `qwen`, and `vibe`. Kilo Code requires the
+Built-in reviewer harnesses are `aider`, `agy`, `amp`, `auggie`, `autohand`, `claude-code`, `cline`, `codex`, `continue`, `copilot`, `crush`, `cursor`, `devin`, `droid`, `goose`, `grok`, `kilocode`, `kimchi`, `kiro`, `kimi`, `opencode`, `pi`, `qwen`, and `vibe`. Kilo Code requires the
 [`@kilocode/cli`](https://kilo.ai/docs/code-with-ai/platforms/cli) package and a configured model provider (`/connect`,
 `kilo auth login`, or a supported provider environment variable). AO launches Kilo Code in the worker checkout with a
 read-only review policy and its own GitHub/AO reporting instructions. It does not invoke Kilo's local `/review` command
 or parse `kilo run --format json`; the reviewer posts through `gh api` and records its verdict through
 `ao review submit`, like the other AO reviewer harnesses.
 
-Agy, Continue, Devin, Droid, Goose, Kimi, Qwen, and Vibe reviewer support is experimental and host-trusted. Grok, Crush, Auggie, Cline, and Autohand are experimental user-approved reviewers: AO strengthens their reviewer system prompt and leaves native permission prompts enabled instead of passing broad unattended flags. Their readonly, plan, or
+Agy, Continue, Devin, Droid, Goose, Kimchi, Kimi, Qwen, and Vibe reviewer support is experimental and host-trusted. Grok, Crush, Auggie, Cline, and Autohand are experimental user-approved reviewers: AO strengthens their reviewer system prompt and leaves native permission prompts enabled instead of passing broad unattended flags. Their readonly, plan, or
 approval modes constrain ordinary model behavior but are not OS isolation; terminal users, project plugins, tools, and
 network access may retain host authority.
 

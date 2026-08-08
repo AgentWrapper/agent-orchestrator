@@ -86,6 +86,7 @@ func TestBaseClassifiesStaticTextAndModeAgents(t *testing.T) {
 		{agent: "muse", mode: ports.ModelSelectionCatalog, count: 3},
 		{agent: "aider", mode: ports.ModelSelectionCatalog},
 		{agent: "autohand", mode: ports.ModelSelectionCatalog},
+		{agent: "kimchi", mode: ports.ModelSelectionCatalog},
 		{agent: "qwen", mode: ports.ModelSelectionText},
 		{agent: "continue", mode: ports.ModelSelectionText},
 		{agent: "crush", mode: ports.ModelSelectionText},
@@ -158,6 +159,46 @@ Tip: use --model <id> to switch.
 	}
 	if got[1].ID != "gpt-5.6-sol-high" || got[1].Label != "GPT-5.6 Sol 1M High" {
 		t.Fatalf("models = %#v", got)
+	}
+}
+
+func TestKimchiDiscoveryUsesListModelsFlag(t *testing.T) {
+	spec := commandSpecs["kimchi"]
+	if len(spec.args) != 1 || spec.args[0] != "--list-models" {
+		t.Fatalf("kimchi discovery args = %q, want [--list-models]", spec.args)
+	}
+	if spec.parser == nil {
+		t.Fatalf("kimchi parser is nil")
+	}
+}
+
+func TestParseKimchiModelsBuildsProviderQualifiedIDs(t *testing.T) {
+	got, err := parsePiModels([]byte(`provider              model                 context  max-out  thinking  images
+kimchi-dev            deepseek-v4-flash     1.0M     1.0M     yes       no
+kimchi-dev            glm-5.2-fp8           1.0M     1.0M     yes       no
+kimchi-dev/anthropic  claude-sonnet-5       1M       128K     yes       yes
+kimchi-dev/anthropic  claude-opus-4-8       1M       128K     yes       yes
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("models = %#v, want 4", got)
+	}
+	want := map[string]bool{
+		"kimchi-dev/deepseek-v4-flash":         true,
+		"kimchi-dev/glm-5.2-fp8":               true,
+		"kimchi-dev/anthropic/claude-sonnet-5": true,
+		"kimchi-dev/anthropic/claude-opus-4-8": true,
+	}
+	for _, m := range got {
+		delete(want, m.ID)
+		if m.Provider == "" {
+			t.Fatalf("model %q has empty Provider", m.ID)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("models = %#v, missing %#v", got, want)
 	}
 }
 

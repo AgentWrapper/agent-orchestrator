@@ -35,6 +35,7 @@ func TestProjectConfigValidate(t *testing.T) {
 		{"good copilot reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCopilot}}}, false},
 		{"good cursor reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerCursor}}}, false},
 		{"good Kilo Code reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKiloCode}}}, false},
+		{"good kimchi reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKimchi}}}, false},
 		{"good opencode reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerOpenCode}}}, false},
 		{"good kiro reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerKiro}}}, false},
 		{"good pi reviewer", ProjectConfig{Reviewers: []ReviewerConfig{{Harness: ReviewerPi}}}, false},
@@ -138,6 +139,15 @@ func TestResolveReviewerHarness(t *testing.T) {
 	}
 	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessMuse); got != ReviewerMuse {
 		t.Fatalf("muse worker = %q, want reviewer muse", got)
+	}
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessKimchi); got != ReviewerKimchi {
+		t.Fatalf("kimchi worker = %q, want reviewer kimchi", got)
+	}
+
+	// A worker harness that is not itself a reviewer (e.g. crush, aider) falls
+	// back to claude-code.
+	if got := (ProjectConfig{}).ResolveReviewerHarness(HarnessCrush); got != FallbackReviewerHarness {
+		t.Fatalf("crush worker = %q, want %q", got, FallbackReviewerHarness)
 	}
 	for _, worker := range []AgentHarness{
 		HarnessCopilot, HarnessCursor, HarnessKilocode, HarnessKiro, HarnessPi,

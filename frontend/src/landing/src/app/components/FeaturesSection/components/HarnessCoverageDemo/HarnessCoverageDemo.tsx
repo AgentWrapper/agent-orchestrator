@@ -231,7 +231,7 @@ export function HarnessCoverageDemo() {
 		<FeaturePreviewShell
 			title="Agent Orchestrator"
 			trailing={
-				<span className="font-mono text-[9px] text-[var(--preview-muted-foreground)]">23 supported</span>
+				<span className="font-mono text-[9px] text-[var(--preview-muted-foreground)]">25 supported</span>
 			}
 		>
 			<div

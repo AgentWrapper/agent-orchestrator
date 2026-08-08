@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +47,24 @@ func blockOnDialog(t *testing.T, m *Manager, st *fakeStore, id domain.SessionID,
 	}
 }
 
+// blockOnNotificationCorrelation drives a session into blocked through the
+// notification correlation path: the blocking tool's pre-tool-use, then a
+// notification(permission_prompt) whose tool_use_id matches the inflight entry.
+// The notification's tool_name is lowercased to mirror adapters (e.g. Kimchi)
+// whose notification payloads carry the internal tool name while hooks carry
+// the external capitalized name.
+func blockOnNotificationCorrelation(t *testing.T, m *Manager, st *fakeStore, id domain.SessionID, toolName, toolUseID string) {
+	t.Helper()
+	mustApply(t, m, id, sig(domain.ActivityActive, "pre-tool-use", toolName, toolUseID))
+	mustApply(t, m, id, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityBlocked, Event: "notification",
+		ToolName: strings.ToLower(toolName), ToolUseID: toolUseID,
+	})
+	if got := stateOf(st, id); got != domain.ActivityBlocked {
+		t.Fatalf("setup: state = %q, want blocked", got)
+	}
+}
+
 func TestToolPrecedence_ApprovedToolPostClearsBlocked(t *testing.T) {
 	// Approving the dialog fires no hook; the approved tool's own post is the
 	// earliest observable resolution signal and must clear blocked -> active.
@@ -68,6 +87,19 @@ func TestToolPrecedence_ApprovedToolFailurePostAlsoClears(t *testing.T) {
 	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use-failure", "Bash", "toolu_1"))
 	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
 		t.Fatalf("state after approved tool's failure post = %q, want active", got)
+	}
+}
+
+func TestToolPrecedence_LegacyKimchiFailurePostAlsoClears(t *testing.T) {
+	// Old Kimchi hook files used this non-canonical subcommand. Keep accepting
+	// it so existing worktrees do not remain blocked after a failed tool call.
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+	blockOnDialog(t, m, st, "mer-1", "Bash", "toolu_1")
+
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use-fail", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("state after legacy failure post = %q, want active", got)
 	}
 }
 
@@ -136,6 +168,21 @@ func TestToolPrecedence_NotificationSubtypesDoNotClearBlocked(t *testing.T) {
 	mustApply(t, m, "mer-1", sig(domain.ActivityWaitingInput, "notification", "", ""))
 	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
 		t.Fatalf("state after notification waiting_input = %q, want blocked", got)
+	}
+}
+
+func TestToolPrecedence_IdentitylessBlockedDuplicatePreservesCandidate(t *testing.T) {
+	// Claude can report the same permission dialog twice: first with its tool
+	// identity, then as a bare Notification. The duplicate must not erase the
+	// candidate needed to correlate the approved tool's post.
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+	blockOnDialog(t, m, st, "mer-1", "Bash", "toolu_1")
+
+	mustApply(t, m, "mer-1", sig(domain.ActivityBlocked, "notification", "", ""))
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("state after duplicate notification and approved post = %q, want active", got)
 	}
 }
 
@@ -301,5 +348,64 @@ func TestToolPrecedence_SuppressedSignalEmitsNoNotification(t *testing.T) {
 	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use", "Read", "toolu_sub"))
 	if len(sink.intents) != entered {
 		t.Fatalf("suppressed signal emitted a notification: %d -> %d", entered, len(sink.intents))
+	}
+}
+
+func TestToolPrecedence_ToolUseIDMatchBridgesCasingMismatch(t *testing.T) {
+	// Kimchi's PreToolUse/PostToolUse payloads capitalize tool_name ("Bash")
+	// via externalToolName, but the permission_prompt notification carries the
+	// raw internal name ("bash"). The name-based candidate lookup fails, but
+	// the notification also carries tool_use_id — matching it directly against
+	// the inflight map bridges the casing gap and lets the block clear on the
+	// correlated post-tool-use.
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+	blockOnNotificationCorrelation(t, m, st, "mer-1", "Bash", "toolu_1")
+
+	// User accepts. post-tool-use: tool_name="Bash", tool_use_id="toolu_1".
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("after post-tool-use: state = %q, want active", got)
+	}
+}
+
+// TestToolPrecedence_NotificationCorrelationFailurePostClearsBlocked is the
+// moved Kimchi lifecycle integration test. Kimchi enters blocked via a
+// notification(permission_prompt) whose tool_use_id matches an inflight
+// pre-tool-use entry, bridging a tool_name casing mismatch. The approved
+// tool may run and fail — a post-tool-use-failure signal must still clear
+// the correlated blocked state, because the permission dialog was resolved
+// regardless of the tool's exit status.
+func TestToolPrecedence_NotificationCorrelationFailurePostClearsBlocked(t *testing.T) {
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+	blockOnNotificationCorrelation(t, m, st, "mer-1", "Bash", "toolu_1")
+
+	// post-tool-use-failure: the approved tool ran and failed — blocked must clear.
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use-failure", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("after post-tool-use-failure: state = %q, want active (blocked cleared)", got)
+	}
+}
+
+// TestToolPrecedence_NotificationCorrelationSiblingDoesNotClear verifies that a
+// different tool's post does not clear a blocked state entered via the
+// notification correlation path — only the approved tool's post (or failure
+// post) clears it.
+func TestToolPrecedence_NotificationCorrelationSiblingDoesNotClear(t *testing.T) {
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+	blockOnNotificationCorrelation(t, m, st, "mer-1", "Bash", "toolu_1")
+
+	// A sibling tool's post must NOT clear blocked.
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use", "Read", "toolu_sibling"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
+		t.Fatalf("after sibling post: state = %q, want blocked (sibling must not clear)", got)
+	}
+
+	// The approved tool's failure post still clears afterwards.
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use-failure", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("after approved failure post: state = %q, want active", got)
 	}
 }

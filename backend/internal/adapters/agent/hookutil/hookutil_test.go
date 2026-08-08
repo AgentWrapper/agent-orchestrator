@@ -3,6 +3,7 @@ package hookutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,46 @@ func TestEnsureWorkspaceGitignoreIsIdempotent(t *testing.T) {
 	}
 	if string(first) != string(second) {
 		t.Fatalf("rewrite changed content:\nfirst:  %q\nsecond: %q", first, second)
+	}
+}
+
+func TestFileExistsIgnoresExecBit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-binary")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// FileExists must return true for a non-executable regular file — Cline
+	// uses it as a do-not-clobber guard for existing user hook files.
+	if !FileExists(path) {
+		t.Fatalf("FileExists returned false for non-executable regular file")
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if !FileExists(path) {
+		t.Fatalf("FileExists returned false for executable regular file")
+	}
+}
+
+func TestIsExecutableFileChecksExecBit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("exec-bit check is skipped on Windows")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-binary")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// IsExecutableFile must return false for a non-executable regular file.
+	if IsExecutableFile(path) {
+		t.Fatalf("IsExecutableFile returned true for non-executable file")
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if !IsExecutableFile(path) {
+		t.Fatalf("IsExecutableFile returned false for executable file")
 	}
 }
 

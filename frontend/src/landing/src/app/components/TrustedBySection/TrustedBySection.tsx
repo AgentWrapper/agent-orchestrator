@@ -1,6 +1,6 @@
 type Agent = { name: string; src: string };
 
-// All 24 supported agents, each with its brand logo. Most come from the app's
+// All 25 supported agents, each with its brand logo. Most come from the app's
 // agent assets; goose uses a whitened mark and agy (Antigravity) / auggie
 // (Augment) / autohand use their own brand favicons so every mark reads on
 // the dark background. Copilot and Codex marks come from the LobeHub icon
@@ -25,6 +25,7 @@ const AGENTS: Agent[] = [
   { name: "Kilo Code", src: "/app-icons/agents/kilocode.png" },
   { name: "Mistral Vibe", src: "/app-icons/agents/vibe.png" },
   { name: "Pi", src: "/app-icons/agents/pi.png" },
+  { name: "Kimchi", src: "/docs/logos/kimchi.svg" },
   { name: "Amp", src: "/app-icons/agents/amp.svg" },
   { name: "Cline", src: "/app-icons/agents/cline.svg" },
   { name: "Antigravity", src: "/app-icons/agents/agy.png" },

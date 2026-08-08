@@ -39,14 +39,14 @@ func New() *Plugin {
 }
 
 // EmitsSubmitActivity signals Codex fires a user-prompt-submit hook under AO's
-// launch. See ports.ActivitySignaler.
+// launch. See ports.SubmitActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }
 
 // EmitsBlockedActivity is false: codex reports permission prompts as
 // waiting_input — it installs no post-tool-use hook, so a blocked state could
 // never be cleared mid-turn. confirmActive must not nudge it (an Enter could
 // answer a pending decision it cannot report as blocked). See
-// ports.ActivitySignaler.
+// ports.BlockedActivitySignaler.
 func (p *Plugin) EmitsBlockedActivity() bool { return false }
 
 // ExitDetectionMode opts Codex into AO's process supervisor. Codex hooks

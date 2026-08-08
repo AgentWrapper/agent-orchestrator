@@ -4551,6 +4551,7 @@ components:
           - devin
           - droid
           - kimi
+          - kimchi
           - muse
           - amp
           - aider
@@ -5225,6 +5226,7 @@ components:
           - kilocode
           - vibe
           - pi
+          - kimchi
           - autohand
           - fake
           type: string
@@ -6802,6 +6804,7 @@ components:
           - devin
           - droid
           - kimi
+          - kimchi
           - muse
           - amp
           - aider
@@ -6912,6 +6915,7 @@ components:
           - kilocode
           - vibe
           - pi
+          - kimchi
           - autohand
           type: string
         issueId:
@@ -7093,6 +7097,7 @@ components:
           - devin
           - droid
           - kimi
+          - kimchi
           - muse
           - amp
           - aider

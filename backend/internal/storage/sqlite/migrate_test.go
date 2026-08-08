@@ -189,32 +189,7 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 		t.Fatalf("read sessions schema: %v", err)
 	}
 
-	harnesses := []domain.AgentHarness{
-		domain.HarnessClaudeCode,
-		domain.HarnessCodex,
-		domain.HarnessAider,
-		domain.HarnessOpenCode,
-		domain.HarnessGrok,
-		domain.HarnessDroid,
-		domain.HarnessAmp,
-		domain.HarnessAgy,
-		domain.HarnessCrush,
-		domain.HarnessCursor,
-		domain.HarnessQwen,
-		domain.HarnessCopilot,
-		domain.HarnessGoose,
-		domain.HarnessAuggie,
-		domain.HarnessContinue,
-		domain.HarnessDevin,
-		domain.HarnessCline,
-		domain.HarnessKimi,
-		domain.HarnessMuse,
-		domain.HarnessKiro,
-		domain.HarnessKilocode,
-		domain.HarnessVibe,
-		domain.HarnessPi,
-		domain.HarnessAutohand,
-	}
+	harnesses := domain.AllHarnesses
 
 	for _, h := range harnesses {
 		if !strings.Contains(schema, "'"+string(h)+"'") {
@@ -303,9 +278,57 @@ WHERE type = 'table' AND name = 'sessions'`,
 	).Scan(&schema); err != nil {
 		t.Fatalf("read sessions schema: %v", err)
 	}
-	for _, harness := range []string{"'muse'", "'qm'"} {
+	for _, harness := range []string{"'muse'", "'qm'", "'kimchi'"} {
 		if !strings.Contains(schema, harness) {
 			t.Fatalf("sessions.harness CHECK is missing %s after repair:\n%s", harness, schema)
+		}
+	}
+}
+
+// TestMigration0054AddsKimchiToLegacyQMConstraint seeds a QM-variant constraint
+// (the legacy constraint that includes 'qm' alongside 'muse') and runs only
+// migration 0054, asserting that the QM replace pair inserted 'kimchi' into
+// the constraint. Without the QM pair, the replace() source string omits 'qm'
+// and no-ops, leaving Kimchi inserts to fail with a CHECK violation.
+func TestMigration0054AddsKimchiToLegacyQMConstraint(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	t.Cleanup(func() { _ = db.Close() })
+	upTo(t, db, 53)
+
+	// Simulate a legacy QM-variant database: swap the constraint from the
+	// post-0053 state (muse, no qm) to the QM variant (muse, qm, no kimchi).
+	if _, err := db.Exec(`PRAGMA writable_schema = ON`); err != nil {
+		t.Fatalf("enable writable_schema: %v", err)
+	}
+	if _, err := db.Exec(
+		`UPDATE sqlite_master
+SET sql = replace(sql, ?, ?)
+WHERE type = 'table' AND name = 'sessions'`,
+		sessionsHarnessCheckWithMuse,
+		sessionsHarnessCheckWithMuseQM,
+	); err != nil {
+		t.Fatalf("seed legacy qm harness constraint: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA writable_schema = RESET`); err != nil {
+		t.Fatalf("reparse legacy qm harness constraint: %v", err)
+	}
+
+	// Run only migration 0054 (versions 1–53 are already applied).
+	upTo(t, db, 54)
+
+	var schema string
+	if err := db.QueryRow(
+		"SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions'",
+	).Scan(&schema); err != nil {
+		t.Fatalf("read sessions schema: %v", err)
+	}
+	for _, harness := range []string{"'muse'", "'qm'", "'kimchi'"} {
+		if !strings.Contains(schema, harness) {
+			t.Fatalf("sessions.harness CHECK is missing %s after migration 0054:\n%s", harness, schema)
 		}
 	}
 }
