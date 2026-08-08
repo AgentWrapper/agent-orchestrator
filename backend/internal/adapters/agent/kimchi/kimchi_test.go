@@ -608,7 +608,7 @@ func TestGetAgentHooksWritesSettingsFile(t *testing.T) {
 		"ao hooks kimchi session-end",
 		"ao hooks kimchi pre-tool-use",
 		"ao hooks kimchi post-tool-use",
-		"ao hooks kimchi post-tool-use-fail",
+		"ao hooks kimchi post-tool-use-failure",
 	} {
 		if !contains(content, cmd) {
 			t.Errorf("settings missing hook command %q", cmd)
