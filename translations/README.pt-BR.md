@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/ao-logo.svg" alt="Agent Orchestrator" width="160" height="160" />
+  <img src="../assets/ao-logo.svg" alt="Agent Orchestrator" width="160" height="160" />
 
 # Agent Orchestrator
 
@@ -9,14 +9,14 @@
 [![Contributors](https://img.shields.io/github/contributors/Untrivial-ai/agent-orchestrator)](https://github.com/Untrivial-ai/agent-orchestrator/graphs/contributors)
 [![Twitter](https://img.shields.io/badge/Twitter-1DA1F2?logo=twitter&logoColor=white)](https://x.com/aoagents)
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/UZv7JjxbwG)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](../LICENSE)
+
+[English](../README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · **Português (Brasil)**
 
 Um IDE agentico que supervisiona agentes de codificação com IA em paralelo em workspaces isolados, com controle total e loops de feedback automáticos a partir de falhas de CI, comentários de review e conflitos de merge.
 
-<img src="docs/assets/readme/dashboard.png" alt="Painel do Agent Orchestrator mostrando sessões paralelas de agentes de codificação" width="100%" />
+<img src="../docs/assets/readme/dashboard.png" alt="Painel do Agent Orchestrator mostrando sessões paralelas de agentes de codificação" width="100%" />
 </div>
-
-**Languages:** [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · **Português (Brasil)**
 
 ---
 
@@ -62,7 +62,7 @@ O app desktop é a superfície de controle principal: projetos à esquerda, sess
       <p>Inicie vários agentes de codificação a partir do mesmo projeto sem misturar arquivos, branches, terminais ou o estado dos pull requests.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/dashboard.png" alt="Quadro do Agent Orchestrator com várias sessões em paralelo" />
+      <img src="../docs/assets/readme/dashboard.png" alt="Quadro do Agent Orchestrator com várias sessões em paralelo" />
     </td>
   </tr>
   <tr>
@@ -71,7 +71,7 @@ O app desktop é a superfície de controle principal: projetos à esquerda, sess
       <p>Abra qualquer sessão e conecte-se ao terminal do worker mantendo o resumo da sessão, o estado do PR e as ações de acompanhamento à vista.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/session-terminal.png" alt="Terminal de sessão dentro do Agent Orchestrator" />
+      <img src="../docs/assets/readme/session-terminal.png" alt="Terminal de sessão dentro do Agent Orchestrator" />
     </td>
   </tr>
   <tr>
@@ -80,7 +80,7 @@ O app desktop é a superfície de controle principal: projetos à esquerda, sess
       <p>Execute agentes revisores, inspecione o status da review e encaminhe as alterações solicitadas de volta à sessão de worker correta.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/reviews-tab.png" alt="Aba Reviews mostrando execuções de revisores e ações" />
+      <img src="../docs/assets/readme/reviews-tab.png" alt="Aba Reviews mostrando execuções de revisores e ações" />
     </td>
   </tr>
   <tr>
@@ -89,7 +89,7 @@ O app desktop é a superfície de controle principal: projetos à esquerda, sess
       <p>Pré-visualize o app local de uma sessão ao lado do terminal para manter juntos o trabalho de UI, o estado do navegador e a saída do agente.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/browser-preview.png" alt="Aba de prévia do navegador mostrando um app local" />
+      <img src="../docs/assets/readme/browser-preview.png" alt="Aba de prévia do navegador mostrando um app local" />
     </td>
   </tr>
 </table>
@@ -99,37 +99,37 @@ O app desktop é a superfície de controle principal: projetos à esquerda, sess
 O AO inclui adaptadores para 23 harnesses de agentes worker:
 
 <p>
-  <a href="https://aoagents.dev/docs/plugins/agents/claude-code"><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/codex"><img src="frontend/src/renderer/assets/agents/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/aider"><img src="frontend/src/renderer/assets/agents/aider.png" alt="" width="16" height="16" valign="middle" /> <code>aider</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/grok.png" alt="" width="16" height="16" valign="middle" /> <code>grok</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/droid.png" alt="" width="16" height="16" valign="middle" /> <code>droid</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/amp.svg" alt="" width="16" height="16" valign="middle" /> <code>amp</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/agy.png" alt="" width="16" height="16" valign="middle" /> <code>agy</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/crush.png" alt="" width="16" height="16" valign="middle" /> <code>crush</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/cursor"><img src="frontend/src/renderer/assets/agents/cursor.svg" alt="" width="16" height="16" valign="middle" /> <code>cursor</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/qwen.png" alt="" width="16" height="16" valign="middle" /> <code>qwen</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/copilot.svg" alt="" width="16" height="16" valign="middle" /> <code>copilot</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/goose.svg" alt="" width="16" height="16" valign="middle" /> <code>goose</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/auggie.svg" alt="" width="16" height="16" valign="middle" /> <code>auggie</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/continue.png" alt="" width="16" height="16" valign="middle" /> <code>continue</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/devin.png" alt="" width="16" height="16" valign="middle" /> <code>devin</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/cline.svg" alt="" width="16" height="16" valign="middle" /> <code>cline</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kimi.png" alt="" width="16" height="16" valign="middle" /> <code>kimi</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kiro.png" alt="" width="16" height="16" valign="middle" /> <code>kiro</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kilocode.svg" alt="" width="16" height="16" valign="middle" /> <code>kilocode</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/vibe.png" alt="" width="16" height="16" valign="middle" /> <code>vibe</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/pi.png" alt="" width="16" height="16" valign="middle" /> <code>pi</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/autohand.svg" alt="" width="16" height="16" valign="middle" /> <code>autohand</code></a>
+  <a href="https://aoagents.dev/docs/plugins/agents/claude-code"><img src="../frontend/src/renderer/assets/agents/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/codex"><img src="../frontend/src/renderer/assets/agents/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/aider"><img src="../frontend/src/renderer/assets/agents/aider.png" alt="" width="16" height="16" valign="middle" /> <code>aider</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="../frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/grok.png" alt="" width="16" height="16" valign="middle" /> <code>grok</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/droid.png" alt="" width="16" height="16" valign="middle" /> <code>droid</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/amp.svg" alt="" width="16" height="16" valign="middle" /> <code>amp</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/agy.png" alt="" width="16" height="16" valign="middle" /> <code>agy</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/crush.png" alt="" width="16" height="16" valign="middle" /> <code>crush</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/cursor"><img src="../frontend/src/renderer/assets/agents/cursor.svg" alt="" width="16" height="16" valign="middle" /> <code>cursor</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/qwen.png" alt="" width="16" height="16" valign="middle" /> <code>qwen</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/copilot.svg" alt="" width="16" height="16" valign="middle" /> <code>copilot</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/goose.svg" alt="" width="16" height="16" valign="middle" /> <code>goose</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/auggie.svg" alt="" width="16" height="16" valign="middle" /> <code>auggie</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/continue.png" alt="" width="16" height="16" valign="middle" /> <code>continue</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/devin.png" alt="" width="16" height="16" valign="middle" /> <code>devin</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/cline.svg" alt="" width="16" height="16" valign="middle" /> <code>cline</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/kimi.png" alt="" width="16" height="16" valign="middle" /> <code>kimi</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/kiro.png" alt="" width="16" height="16" valign="middle" /> <code>kiro</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/kilocode.svg" alt="" width="16" height="16" valign="middle" /> <code>kilocode</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/vibe.png" alt="" width="16" height="16" valign="middle" /> <code>vibe</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/pi.png" alt="" width="16" height="16" valign="middle" /> <code>pi</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/autohand.svg" alt="" width="16" height="16" valign="middle" /> <code>autohand</code></a>
 </p>
 
 Agentes revisores são configurados separadamente. Os harnesses de revisor atuais são:
 
 <p>
-  <a href="https://aoagents.dev/docs/plugins/agents/claude-code"><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/codex"><img src="frontend/src/renderer/assets/agents/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a>
+  <a href="https://aoagents.dev/docs/plugins/agents/claude-code"><img src="../frontend/src/renderer/assets/agents/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/codex"><img src="../frontend/src/renderer/assets/agents/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="../frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a>
 </p>
 
 **Se roda em um terminal, roda no Agent Orchestrator.**
@@ -167,12 +167,12 @@ ao start
   <tr>
     <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2026329204405723180">
-        <img src="assets/tweet2.png" height="330" alt="Captura um da jornada do Agent Orchestrator" />
+        <img src="../assets/tweet2.png" height="330" alt="Captura um da jornada do Agent Orchestrator" />
       </a>
     </td>
     <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2025986105485733945">
-        <img src="assets/tweet1.png" height="330" alt="Captura dois da jornada do Agent Orchestrator" />
+        <img src="../assets/tweet1.png" height="330" alt="Captura dois da jornada do Agent Orchestrator" />
       </a>
     </td>
   </tr>
@@ -182,17 +182,17 @@ ao start
 
 | Documento                                                        | Comece aqui quando precisar de                                                               |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)                     | Modelo mental do backend, ciclo de vida, persistência, CDC, derivação de status e limites do daemon. |
-| [docs/backend-code-structure.md](docs/backend-code-structure.md) | Propriedade de pacotes e onde cada preocupação de backend deve ficar.                        |
-| [docs/cli/README.md](docs/cli/README.md)                         | Comportamento da CLI e mapeamento de rotas do daemon.                                        |
-| [docs/development.md](docs/development.md)                       | Pré-requisitos, etapas de build, execução de testes e solução de problemas para desenvolvimento local. |
-| [docs/STATUS.md](docs/STATUS.md)                                 | O que atualmente é entregue em `main` e o que ainda está em andamento.                       |
-| [docs/stack.md](docs/stack.md)                                   | Decisões de bibliotecas, runtime e dependências.                                             |
+| [docs/architecture.md](../docs/architecture.md)                     | Modelo mental do backend, ciclo de vida, persistência, CDC, derivação de status e limites do daemon. |
+| [docs/backend-code-structure.md](../docs/backend-code-structure.md) | Propriedade de pacotes e onde cada preocupação de backend deve ficar.                        |
+| [docs/cli/README.md](../docs/cli/README.md)                         | Comportamento da CLI e mapeamento de rotas do daemon.                                        |
+| [docs/development.md](../docs/development.md)                       | Pré-requisitos, etapas de build, execução de testes e solução de problemas para desenvolvimento local. |
+| [docs/STATUS.md](../docs/STATUS.md)                                 | O que atualmente é entregue em `main` e o que ainda está em andamento.                       |
+| [docs/stack.md](../docs/stack.md)                                   | Decisões de bibliotecas, runtime e dependências.                                             |
 
 ## Telemetria
 
-O renderer Electron do Agent Orchestrator envia eventos de uso anônimos ao PostHog para confiabilidade e compreensão do produto. A gravação de sessão do PostHog fica desativada por padrão; se uma investigação com prazo limitado a ativar, caminhos locais e URLs locais são redigidos antes da transmissão. Defina `VITE_AO_POSTHOG_KEY` como string vazia antes do build para desativar a transmissão. Veja [docs/telemetry.md](docs/telemetry.md).
+O renderer Electron do Agent Orchestrator envia eventos de uso anônimos ao PostHog para confiabilidade e compreensão do produto. A gravação de sessão do PostHog fica desativada por padrão; se uma investigação com prazo limitado a ativar, caminhos locais e URLs locais são redigidos antes da transmissão. Defina `VITE_AO_POSTHOG_KEY` como string vazia antes do build para desativar a transmissão. Veja [docs/telemetry.md](../docs/telemetry.md).
 
 ## Licença
 
-Apache License 2.0. Veja [LICENSE](LICENSE).
+Apache License 2.0. Veja [LICENSE](../LICENSE).
