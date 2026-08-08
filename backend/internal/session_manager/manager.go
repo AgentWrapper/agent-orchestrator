@@ -599,7 +599,11 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, promptBytes, systemPromptBytes, fmt.Errorf("spawn: create: %w", err)
 	}
 	id := rec.ID
-	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt)
+	// The staged file is mandatory only for terminal launches, where the system
+	// prompt rides on the agent's command line and inlining it can break the
+	// launch. Chat controllers receive the prompt inline through the provider
+	// protocol, so a staging failure there safely falls back to inline.
+	systemPromptFile, err := m.prepareSystemPromptFile(id, cfg.Harness, systemPrompt, mode == domain.SessionModeTUI)
 	if err != nil {
 		m.rollbackSpawnSeedRow(ctx, id)
 		return domain.SessionRecord{}, promptBytes, systemPromptBytes, fmt.Errorf("spawn %s: system prompt file: %w", id, err)
@@ -1534,7 +1538,7 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
 	}
-	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, rec.Harness, systemPrompt)
+	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, rec.Harness, systemPrompt, true)
 	if err != nil {
 		m.cleanupSystemPromptDir(rec.ID)
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt file: %w", operation, rec.ID, err)
@@ -2986,12 +2990,15 @@ func (m *Manager) writeSystemPromptFile(id domain.SessionID, systemPrompt string
 	return path, nil
 }
 
-func (m *Manager) prepareSystemPromptFile(id domain.SessionID, harness domain.AgentHarness, systemPrompt string) (string, error) {
+// terminalLaunch reports whether the prompt will ride on an agent command line
+// (TUI spawn/restore); chat launches pass the system prompt to the provider
+// inline, so for them a staging failure may always fall back to inline.
+func (m *Manager) prepareSystemPromptFile(id domain.SessionID, harness domain.AgentHarness, systemPrompt string, terminalLaunch bool) (string, error) {
 	path, err := m.writeSystemPromptFile(id, systemPrompt)
 	if err == nil || path != "" {
 		return path, err
 	}
-	if systemPromptFileRequired(harness) {
+	if terminalLaunch && systemPromptFileRequired(harness) {
 		return "", err
 	}
 	m.logger.Warn("system prompt file unavailable; falling back to inline system prompt", "session", id, "harness", harness, "err", err)
