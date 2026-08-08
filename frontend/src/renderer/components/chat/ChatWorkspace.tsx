@@ -19,6 +19,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	useSyncExternalStore,
 	type CSSProperties,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type PointerEvent as ReactPointerEvent,
@@ -40,7 +41,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
-import { aoBridge } from "../../lib/bridge";
+import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
 import type { SessionKind } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
@@ -295,12 +296,8 @@ export function ChatWorkspace({
 		return () => observer.disconnect();
 	}, []);
 
-	const triggerChatZoom = useCallback((direction: "in" | "out") => {
-		const action = direction === "in" ? "view.zoomIn" : "view.zoomOut";
-		setChatFontSize((current) => clampChatFontSize(current + (direction === "in" ? 1 : -1)));
-		void aoBridge.menu.action(action).catch((error) => {
-			console.warn("Unable to change chat zoom", error);
-		});
+	const updateChatFontSize = useCallback((delta: number) => {
+		setChatFontSize((current) => clampChatFontSize(current + delta));
 	}, []);
 
 	const toggleFullscreen = useCallback(async () => {
@@ -341,8 +338,8 @@ export function ChatWorkspace({
 				openingShell={openingShell}
 				shellError={shellError}
 				fontSize={chatFontSize}
-				onDecreaseFontSize={() => triggerChatZoom("out")}
-				onIncreaseFontSize={() => triggerChatZoom("in")}
+				onDecreaseFontSize={() => updateChatFontSize(-1)}
+				onIncreaseFontSize={() => updateChatFontSize(1)}
 				isFullscreen={isFullscreen}
 				onToggleFullscreen={() => void toggleFullscreen()}
 				topbarBounds={topbarBounds}
@@ -922,6 +919,7 @@ function Timeline({
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
 	const rollback = useStableCallback(onRollback);
+	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 
 	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
 	const items = useStableList(readable, itemKey, sameContent);
@@ -1136,6 +1134,8 @@ function Timeline({
 						<div key={group.key} data-chat-scroll-anchor="">
 							<TurnGroup
 								group={group}
+								sessionId={snapshot.sessionId}
+								apiBaseUrl={apiBaseUrl}
 								onDecide={decide}
 								onResolveInput={resolveInput}
 								onRollback={rollback}
@@ -1252,6 +1252,8 @@ function Timeline({
  */
 const TurnGroup = memo(function TurnGroup({
 	group,
+	sessionId,
+	apiBaseUrl,
 	onDecide,
 	onResolveInput,
 	onRollback,
@@ -1260,6 +1262,8 @@ const TurnGroup = memo(function TurnGroup({
 	queued,
 }: {
 	group: TimelineGroup;
+	sessionId: string;
+	apiBaseUrl: string;
 	onDecide: (requestId: string, decisionId: string) => void;
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
@@ -1290,6 +1294,8 @@ const TurnGroup = memo(function TurnGroup({
 					<TimelineItem
 						key={run.key}
 						item={run.items[0]!}
+						sessionId={sessionId}
+						apiBaseUrl={apiBaseUrl}
 						onDecide={onDecide}
 						onResolveInput={onResolveInput}
 						busy={busy}
@@ -1321,6 +1327,8 @@ const TurnGroup = memo(function TurnGroup({
 
 function TimelineItem({
 	item,
+	sessionId,
+	apiBaseUrl,
 	onDecide,
 	onResolveInput,
 	busy,
@@ -1329,6 +1337,8 @@ function TimelineItem({
 	showStreamingIndicator,
 }: {
 	item: ConversationItem;
+	sessionId: string;
+	apiBaseUrl: string;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
@@ -1355,7 +1365,9 @@ function TimelineItem({
 		}
 		// A user-role message that did not come from this human is an automation or
 		// worker relay, and is attributed differently.
-		if (item.origin === "human") return <HumanMessage message={item} queued={queued} />;
+		if (item.origin === "human") {
+			return <HumanMessage message={item} sessionId={sessionId} apiBaseUrl={apiBaseUrl} queued={queued} />;
+		}
 		return <OriginMessage message={item} />;
 	}
 	if (item.activityKind === "approval") {

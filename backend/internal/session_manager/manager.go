@@ -275,7 +275,10 @@ type Manager struct {
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
-	logger      *slog.Logger
+	// interfaceTransition bounds only contradictory stale-idle proof. Turns and
+	// user-paced waits reported through the activity boundary remain unbounded.
+	interfaceTransition interfaceTransitionConfig
+	logger              *slog.Logger
 
 	// shellTerminalsMu guards shellTerminals: it is late-bound (see
 	// ShellTerminalCloser) after Manager already exists, so a setter mutates it
@@ -416,6 +419,15 @@ type sendConfirmConfig struct {
 	maxAttempts int
 }
 
+// interfaceTransitionConfig keeps reported human-paced work unbounded while
+// making the contradictory stale-idle proof window short and testable. Only an
+// idle row older than accepted PTY input consumes staleIdleLimit.
+type interfaceTransitionConfig struct {
+	pollInterval   time.Duration
+	idleSettle     time.Duration
+	staleIdleLimit time.Duration
+}
+
 // Production sendConfirm bounds: 3 Enters total (1 from Send + 2 re-sends),
 // each given 2s to flip the session active, polled every 300ms.
 const (
@@ -487,6 +499,11 @@ func New(d Deps) *Manager {
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
 			maxAttempts:     sendConfirmMaxAttempts,
+		},
+		interfaceTransition: interfaceTransitionConfig{
+			pollInterval:   interfaceTransitionPoll,
+			idleSettle:     interfaceTransitionIdleSettle,
+			staleIdleLimit: interfaceTransitionStaleIdleLimit,
 		},
 		logger: d.Logger,
 	}
