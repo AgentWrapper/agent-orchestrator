@@ -167,6 +167,12 @@ type Controller struct {
 	stopped  chan struct{}
 	once     sync.Once
 	closeErr error
+	// activated gates live projection until Session Manager has durably committed
+	// this generation. It is Chat's equivalent of TUI lifecycle's pending-launch
+	// gate: the provider may exist first, but its signals cannot race MarkSpawned.
+	activated           chan struct{}
+	activateOnce        sync.Once
+	activationCommitted bool
 }
 
 // ErrNoActiveTurn reports an interrupt with nothing to cancel.
@@ -198,10 +204,11 @@ func newController(
 		log:          log,
 		newID:        newID,
 		now:          now,
-		state:        ports.ChatControllerReady,
+		state:        ports.ChatControllerConnecting,
 		settings:     conversation.Settings,
 		mcpServers:   map[string]domain.ConversationMCPServer{},
 		stopped:      make(chan struct{}),
+		activated:    make(chan struct{}),
 	}
 	// Seeded from the durable row so a reconnect merges onto what is already known
 	// rather than starting from blank and reporting a conversation as having no
@@ -227,9 +234,62 @@ func newController(
 // start begins live provider consumption after any durable native history has
 // been imported. Keeping construction and consumption separate prevents a resume
 // notification from racing ahead of the older turns it follows.
-func (c *Controller) start() {
-	go c.project()
-	go c.readRateLimits()
+func (c *Controller) start(ctx context.Context) {
+	go func() {
+		<-c.activated
+		if c.committedAfterActivation() {
+			c.project()
+			return
+		}
+		c.discardUncommittedEvents(ctx)
+	}()
+	go func() {
+		<-c.activated
+		if c.committedAfterActivation() {
+			c.readRateLimits()
+		}
+	}()
+}
+
+// releaseStart releases the projector after Session Manager either committed or
+// rejected this controller generation. Rejected generations drain provider
+// transport only; they never project transcript or lifecycle facts.
+func (c *Controller) releaseStart(committed bool) {
+	c.activateOnce.Do(func() {
+		c.mu.Lock()
+		c.activationCommitted = committed
+		if committed && c.state == ports.ChatControllerConnecting {
+			c.state = ports.ChatControllerReady
+		}
+		c.mu.Unlock()
+		close(c.activated)
+	})
+}
+
+func (c *Controller) committedAfterActivation() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.activationCommitted
+}
+
+func (c *Controller) discardUncommittedEvents(ctx context.Context) {
+	defer func() {
+		c.mu.Lock()
+		c.state = ports.ChatControllerStopped
+		c.mu.Unlock()
+		close(c.stopped)
+	}()
+	events := c.conv.Events()
+	for {
+		select {
+		case _, ok := <-events:
+			if !ok {
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // importNativeHistory projects the settled provider thread before live event
@@ -1155,6 +1215,10 @@ func (c *Controller) Close(ctx context.Context) error {
 	c.once.Do(func() {
 		c.closeErr = c.conv.Close()
 	})
+	// A launch can fail before activation. Closing the provider first and then
+	// releasing projection lets the goroutine observe the closed stream and
+	// finish cleanup without projecting pre-commit provider traffic.
+	c.releaseStart(false)
 	select {
 	case <-c.stopped:
 		return c.closeErr

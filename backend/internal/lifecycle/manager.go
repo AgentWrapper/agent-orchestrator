@@ -546,12 +546,12 @@ func isToolUseEvent(event string) bool {
 	return event == "pre-tool-use" || event == "post-tool-use" || event == "post-tool-use-failure"
 }
 
-// isTurnBoundaryEvent reports the events that reliably mean the pending
-// dialog is gone: a prompt cannot be submitted while a dialog holds the
-// composer, and a turn cannot end (or the session exit) with one on screen.
-func isTurnBoundaryEvent(event string) bool {
-	return event == "user-prompt-submit" || event == "stop" || event == "session-end" ||
-		event == "process-exited" || event == "chat.controller.stopped"
+// isTurnBoundarySignal reports signals that reliably mean the pending dialog is
+// gone. Exited is authoritative regardless of whether TUI's process supervisor,
+// Chat's controller stream, or another controller reported it.
+func isTurnBoundarySignal(s ports.ActivitySignal) bool {
+	return s.State == domain.ActivityExited || s.Event == "user-prompt-submit" ||
+		s.Event == "stop" || s.Event == "session-end" || s.Event == "process-exited"
 }
 
 // applyToolPrecedenceLocked folds an event-tagged activity signal through the
@@ -632,7 +632,7 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		// Paused on a decision: only a turn boundary or the correlated post
 		// may change the state.
 		switch {
-		case isTurnBoundaryEvent(s.Event):
+		case isTurnBoundarySignal(s):
 			delete(m.flights, id)
 			return s
 		case (s.Event == "post-tool-use" || s.Event == "post-tool-use-failure") &&
@@ -656,7 +656,7 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		return suppressed
 
 	default:
-		if isTurnBoundaryEvent(s.Event) {
+		if isTurnBoundarySignal(s) {
 			delete(m.flights, id)
 		}
 		return s

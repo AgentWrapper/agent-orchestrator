@@ -40,6 +40,7 @@ type recordingLauncher struct {
 	preflightErr error
 	startErr     error
 	turnErr      error
+	stopErr      error
 	live         bool
 	afterReady   func()
 
@@ -57,7 +58,7 @@ func (l *recordingLauncher) PreflightChat(_ context.Context, harness domain.Agen
 	return l.preflightErr
 }
 
-func (l *recordingLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+func (l *recordingLauncher) StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error) {
 	l.started = append(l.started, cfg)
 	if l.startErr != nil {
 		return ChatStarted{}, l.startErr
@@ -67,7 +68,7 @@ func (l *recordingLauncher) StartChat(_ context.Context, cfg ChatStart) (ChatSta
 		ControllerGeneration:   "gen-1",
 	}
 	if cfg.ControllerReady != nil {
-		if err := cfg.ControllerReady(started); err != nil {
+		if err := cfg.ControllerReady(ctx, started); err != nil {
 			return ChatStarted{}, err
 		}
 	}
@@ -95,10 +96,14 @@ func (l *recordingLauncher) RelayChatTurnWithID(_ context.Context, _ domain.Sess
 func (l *recordingLauncher) StopChat(_ context.Context, id domain.SessionID) error { //nolint:unparam
 
 	l.stopped = append(l.stopped, id)
-	return nil
+	return l.stopErr
 }
 
 func (l *recordingLauncher) HasLiveChatController(domain.SessionID) bool {
+	return l.live
+}
+
+func (l *recordingLauncher) OwnsChatController(domain.SessionID) bool {
 	return l.live
 }
 
@@ -138,6 +143,37 @@ func TestResumeExitedChatSessionDoesNotRequireTerminalRuntimeHandle(t *testing.T
 	}
 	if result.Session.Activity.State != domain.ActivityIdle {
 		t.Fatalf("resumed activity = %q, want idle", result.Session.Activity.State)
+	}
+}
+
+func TestResumeChatStartFailureLeavesSessionExitedLikeTUI(t *testing.T) {
+	launcher := &recordingLauncher{startErr: errors.New("app-server exited")}
+	mgr, store, runtime := newChatManager(launcher)
+	seedChatResumeSession(store, domain.ActivityExited)
+	before := store.sessions["mer-1"]
+
+	if _, err := mgr.ResumeAgentWithMode(context.Background(), "mer-1"); err == nil {
+		t.Fatal("expected failed controller start to fail resume")
+	}
+	if got := store.sessions["mer-1"]; got != before {
+		t.Fatalf("failed Chat resume changed durable session: got %+v, want %+v", got, before)
+	}
+	if runtime.created != 0 || runtime.destroyed != 0 {
+		t.Fatalf("failed Chat resume touched terminal runtime: created=%d destroyed=%d",
+			runtime.created, runtime.destroyed)
+	}
+}
+
+func TestSendRejectsExitedChatWhileReplacementIsStarting(t *testing.T) {
+	launcher := &recordingLauncher{live: true}
+	mgr, store, _ := newChatManager(launcher)
+	seedChatResumeSession(store, domain.ActivityExited)
+
+	if err := mgr.Send(context.Background(), "mer-1", "do not deliver yet"); !errors.Is(err, ErrAgentExited) {
+		t.Fatalf("Send error = %v, want ErrAgentExited", err)
+	}
+	if len(launcher.relayed) != 0 {
+		t.Fatalf("exited Chat session relayed messages before commit: %v", launcher.relayed)
 	}
 }
 
@@ -244,6 +280,22 @@ func TestRestoreChatSessionRequiresProviderConversation(t *testing.T) {
 	}
 	if len(launcher.started) != 0 {
 		t.Fatalf("missing provider handle started %d controllers", len(launcher.started))
+	}
+}
+
+func TestRestoreChatSessionRejectsLiveControllerLikeTUI(t *testing.T) {
+	launcher := &recordingLauncher{live: true}
+	mgr, store, _ := newChatManager(launcher)
+	seedChatResumeSession(store, domain.ActivityExited)
+	rec := store.sessions["mer-1"]
+	rec.IsTerminated = true
+	store.sessions["mer-1"] = rec
+
+	if _, err := mgr.RestoreWithMode(context.Background(), "mer-1"); !errors.Is(err, ErrNotRestorable) {
+		t.Fatalf("RestoreWithMode error = %v, want ErrNotRestorable", err)
+	}
+	if len(launcher.started) != 0 {
+		t.Fatalf("live controller restore started %d replacement controllers", len(launcher.started))
 	}
 }
 
@@ -418,6 +470,67 @@ func TestChatSpawnRollsBackWhenControllerFailsToStart(t *testing.T) {
 	}
 }
 
+func TestChatSpawnPreservesWorkspaceWhenControllerCannotStop(t *testing.T) {
+	launcher := &recordingLauncher{
+		turnErr: errors.New("initial turn failed"),
+		stopErr: errors.New("controller close timed out"),
+		live:    true,
+	}
+	mgr, store, _ := newChatManager(launcher)
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		Prompt:        "do the thing",
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err == nil || !errors.Is(err, launcher.stopErr) {
+		t.Fatalf("Spawn error = %v, want controller close failure", err)
+	}
+	workspace := mgr.workspace.(*fakeWorkspace)
+	if workspace.destroyed != 0 {
+		t.Fatalf("live controller's workspace was destroyed %d times", workspace.destroyed)
+	}
+	sessions, listErr := store.ListAllSessions(context.Background())
+	if listErr != nil || len(sessions) != 1 {
+		t.Fatalf("sessions after failed spawn = %+v, err=%v", sessions, listErr)
+	}
+	if !sessions[0].IsTerminated || sessions[0].Metadata.WorkspacePath == "" {
+		t.Fatalf("failed spawn did not preserve recoverable workspace facts: %+v", sessions[0])
+	}
+}
+
+func TestChatSpawnPreservesWorkspaceWhenPreCommitControllerCannotStop(t *testing.T) {
+	launcher := &recordingLauncher{
+		startErr: errors.New("generation claim failed"),
+		stopErr:  errors.New("controller close timed out"),
+		live:     true,
+	}
+	mgr, store, _ := newChatManager(launcher)
+
+	_, _, _, err := mgr.Spawn(context.Background(), ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err == nil || !errors.Is(err, launcher.startErr) || !errors.Is(err, launcher.stopErr) {
+		t.Fatalf("Spawn error = %v, want start and controller close failures", err)
+	}
+	workspace := mgr.workspace.(*fakeWorkspace)
+	if workspace.destroyed != 0 {
+		t.Fatalf("pre-commit controller's workspace was destroyed %d times", workspace.destroyed)
+	}
+	sessions, listErr := store.ListAllSessions(context.Background())
+	if listErr != nil || len(sessions) != 1 {
+		t.Fatalf("sessions after failed spawn = %+v, err=%v", sessions, listErr)
+	}
+	if !sessions[0].IsTerminated || sessions[0].Metadata.WorkspacePath == "" {
+		t.Fatalf("failed pre-commit spawn did not preserve workspace facts: %+v", sessions[0])
+	}
+}
+
 // Kill must close the controller, not tear down a runtime the session never had.
 // A chat controller owns an app-server child process, so skipping this leaks it.
 func TestKillClosesTheChatControllerAndTouchesNoRuntime(t *testing.T) {
@@ -443,6 +556,35 @@ func TestKillClosesTheChatControllerAndTouchesNoRuntime(t *testing.T) {
 	}
 	if runtime.destroyed != 0 {
 		t.Errorf("kill destroyed %d runtimes for a session that never had one", runtime.destroyed)
+	}
+}
+
+func TestKillChatCloseFailureLeavesSessionAndWorkspaceLiveLikeTUI(t *testing.T) {
+	launcher := &recordingLauncher{
+		stopErr: errors.New("controller close timed out"),
+		live:    true,
+	}
+	mgr, store, _ := newChatManager(launcher)
+	ctx := context.Background()
+
+	rec, _, _, err := mgr.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:     chatTestProject,
+		Kind:          domain.KindWorker,
+		Harness:       domain.HarnessCodex,
+		RequestedMode: domain.SessionModeChat,
+	})
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if _, err := mgr.Kill(ctx, rec.ID); !errors.Is(err, launcher.stopErr) {
+		t.Fatalf("Kill error = %v, want controller close failure", err)
+	}
+	if got := store.sessions[rec.ID]; got.IsTerminated {
+		t.Fatalf("failed controller close terminated session: %+v", got)
+	}
+	workspace := mgr.workspace.(*fakeWorkspace)
+	if workspace.destroyed != 0 {
+		t.Fatalf("failed controller close destroyed workspace %d times", workspace.destroyed)
 	}
 }
 
