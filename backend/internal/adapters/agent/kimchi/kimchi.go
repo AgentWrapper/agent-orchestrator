@@ -120,6 +120,17 @@ func (p *Plugin) GetPromptDeliveryStrategy(ctx context.Context, cfg ports.Launch
 
 // GetRestoreCommand rebuilds the argv to resume an existing Kimchi session
 // when a native session id is available in metadata.
+//
+// Final argv shape: kimchi [--auto|--yolo] [--append-system-prompt <text>] --session <id>.
+// Re-applying the permission mode is a behavioral fix, not just a contract gap:
+// Kimchi's default mode fails closed (cannot auto-approve anything) in headless
+// contexts, so dropping the mode would regress a resumed orchestrator. The
+// system prompt is re-applied because Kimchi rebuilds the prompt from the
+// current flags on resume (it is not stored in the transcript), so standing
+// instructions must be re-appended or a restored orchestrator loses its role.
+// --session <id> is appended last. RestoreConfig does not carry
+// AllowedTools/DisallowedTools, so allow/deny re-application on resume is out
+// of scope.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -133,7 +144,18 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	if err != nil {
 		return nil, false, err
 	}
-	cmd = []string{binary, "--session", agentSessionID}
+	cmd = []string{binary}
+	appendPermissionFlags(&cmd, cfg.Permissions)
+
+	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
+	if err != nil {
+		return nil, false, err
+	}
+	if systemPrompt != "" {
+		cmd = append(cmd, "--append-system-prompt", systemPrompt)
+	}
+
+	cmd = append(cmd, "--session", agentSessionID)
 	return cmd, true, nil
 }
 
@@ -183,6 +205,23 @@ func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--yolo")
 	}
+}
+
+// resolveRestoreSystemPrompt returns the system prompt text to re-append on
+// resume. It mirrors the launch-side precedence of GetLaunchCommand: a
+// cfg.SystemPromptFile is read from disk and inlined when set, else
+// cfg.SystemPrompt is used inline. A file-read error is returned rather than
+// silently dropping the prompt, so a resumed orchestrator cannot lose its
+// standing instructions without the caller knowing.
+func resolveRestoreSystemPrompt(cfg ports.RestoreConfig) (string, error) {
+	if cfg.SystemPromptFile != "" {
+		data, err := os.ReadFile(cfg.SystemPromptFile) //nolint:gosec // path is AO-owned restore config
+		if err != nil {
+			return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
+		}
+		return strings.TrimRight(string(data), "\n"), nil
+	}
+	return cfg.SystemPrompt, nil
 }
 
 // ResolveKimchiBinary locates the kimchi executable on the system.
