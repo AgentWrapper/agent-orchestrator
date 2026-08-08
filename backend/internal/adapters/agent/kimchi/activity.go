@@ -17,6 +17,8 @@ func DeriveActivityState(event string, payload []byte) (domain.ActivityState, bo
 	switch event {
 	case "user-prompt-submit":
 		return domain.ActivityActive, true
+	case "pre-tool-use", "post-tool-use", "post-tool-use-fail":
+		return domain.ActivityActive, true
 	case "stop":
 		return domain.ActivityIdle, true
 	case "notification":
