@@ -158,26 +158,29 @@ describe("ChatWorkspace timeline", () => {
 		expect(screen.getByTestId("session-action-region")).toBeInTheDocument();
 	});
 
-	it("routes chat zoom buttons through the native zoom actions", () => {
+	it("keeps chat font controls scoped to the chat instead of native page zoom", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
 
 		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
 		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
 
-		expect(menuAction).toHaveBeenNthCalledWith(1, "view.zoomOut");
-		expect(menuAction).toHaveBeenNthCalledWith(2, "view.zoomIn");
+		expect(menuAction).not.toHaveBeenCalled();
 	});
 
-	it("starts chat zoom at 12px and updates the displayed size with the zoom buttons", () => {
+	it("starts chat text at 12px and updates its scoped font size with the controls", () => {
 		render(<ChatWorkspace snapshot={chatFixture} />);
+		const chat = screen.getByLabelText("Chat");
 
 		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
+		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
 
 		fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
 		expect(screen.getByLabelText("Chat font size: 13 pixels")).toHaveTextContent("13px");
+		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("13px");
 
 		fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
 		expect(screen.getByLabelText("Chat font size: 12 pixels")).toHaveTextContent("12px");
+		expect(chat.style.getPropertyValue("--chat-font-size")).toBe("12px");
 	});
 
 	it("keeps the composer aligned to the readable conversation width", () => {
