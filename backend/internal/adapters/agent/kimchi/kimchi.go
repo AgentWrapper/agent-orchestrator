@@ -20,6 +20,15 @@
 // Hooks: Kimchi has a native hook adapter that reads .kimchi/hooks.local.json.
 // AO installs hooks in that file using `ao hooks kimchi <event>` commands.
 // The adapter is always-on; no user configuration is needed for hooks to fire.
+//
+// PreLaunch: Kimchi does NOT have a first-run trust/onboarding dialog (unlike
+// Claude Code's "Do you trust this folder?" prompt). This was verified by
+// running `kimchi -p "hi" --yolo` in a fresh empty temporary directory — the
+// command returned immediately with a response and no blocking prompt.
+// `kimchi --help` output contains no trust, onboarding, or workspace-trust
+// flags or subcommands. The `kimchi setup` subcommand is an interactive API
+// key wizard, not a per-directory trust gate. Therefore no PreLaunch
+// implementation is needed; AO worktree spawns will not hang on a trust dialog.
 package kimchi
 
 import (
