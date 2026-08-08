@@ -27,13 +27,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -301,64 +299,22 @@ func resolveRestoreSystemPrompt(cfg ports.RestoreConfig) (string, error) {
 	return cfg.SystemPrompt, nil
 }
 
+var kimchiBinarySpec = binaryutil.BinarySpec{
+	Label:         "kimchi",
+	Names:         []string{"kimchi"},
+	WinNames:      []string{"kimchi.cmd", "kimchi.exe", "kimchi"},
+	UnixPaths:     []string{"/usr/local/bin/kimchi", "/opt/homebrew/bin/kimchi"},
+	UnixHomePaths: binaryutil.NodeManagedUnixHomePaths("kimchi"),
+	NodeManaged:   true,
+	WinPaths: []binaryutil.WinPath{
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimchi.cmd"}},
+		{Base: binaryutil.WinAppData, Parts: []string{"npm", "kimchi.exe"}},
+	},
+}
+
 // ResolveKimchiBinary locates the kimchi executable on the system.
 func ResolveKimchiBinary(ctx context.Context) (string, error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-
-	if runtime.GOOS == "windows" {
-		for _, name := range []string{"kimchi.cmd", "kimchi.exe", "kimchi"} {
-			if path, err := exec.LookPath(name); err == nil && path != "" {
-				return path, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		candidates := []string{}
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			candidates = append(candidates,
-				filepath.Join(appData, "npm", "kimchi.cmd"),
-				filepath.Join(appData, "npm", "kimchi.exe"),
-			)
-		}
-		for _, candidate := range candidates {
-			if fileExists(candidate) {
-				return candidate, nil
-			}
-			if err := ctx.Err(); err != nil {
-				return "", err
-			}
-		}
-		return "", fmt.Errorf("kimchi: %w", ports.ErrAgentBinaryNotFound)
-	}
-
-	if path, err := exec.LookPath("kimchi"); err == nil && path != "" {
-		return path, nil
-	}
-
-	candidates := []string{
-		"/usr/local/bin/kimchi",
-		"/opt/homebrew/bin/kimchi",
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "bin", "kimchi"),
-			filepath.Join(home, ".npm-global", "bin", "kimchi"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if fileExists(candidate) {
-			return candidate, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-
-	return "", fmt.Errorf("kimchi: %w", ports.ErrAgentBinaryNotFound)
+	return binaryutil.ResolveBinary(ctx, kimchiBinarySpec)
 }
 
 func (p *Plugin) kimchiBinary(ctx context.Context) (string, error) {
@@ -375,9 +331,4 @@ func (p *Plugin) kimchiBinary(ctx context.Context) (string, error) {
 	}
 	p.resolvedBinary = binary
 	return binary, nil
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }
