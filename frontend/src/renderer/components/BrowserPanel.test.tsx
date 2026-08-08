@@ -472,6 +472,41 @@ describe("BrowserPanel", () => {
 		expect(body.message.length).toBeLessThanOrEqual(4096);
 	});
 
+	it("forwards the captured snapshot as the /send body's attachment field", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={{ ...session, status: "idle" }} />,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) =>
+				listener({
+					...annotationPayload("Make this button blue."),
+					snapshot: { mimeType: "image/png", data: "cG5nLWJ5dGVz" },
+				}),
+			);
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		const body = postMock.mock.calls[0][1].body as { attachment?: { mimeType: string; data: string } };
+		expect(body.attachment).toEqual({ mimeType: "image/png", data: "cG5nLWJ5dGVz" });
+	});
+
+	it("omits the attachment field when the payload has no snapshot", async () => {
+		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
+		render(
+			<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={{ ...session, status: "idle" }} />,
+		);
+
+		act(() => {
+			annotationSubmitListeners.forEach((listener) => listener(annotationPayload("Make this button blue.")));
+		});
+
+		expect(await screen.findByText("Sent")).toBeInTheDocument();
+		const body = postMock.mock.calls[0][1].body as { attachment?: unknown };
+		expect(body.attachment).toBeUndefined();
+	});
+
 	it("sends a follow-up annotation without waiting for an activity-state cycle", async () => {
 		hookState.navState = { ...hookState.navState, url: "http://localhost:5173/" };
 		render(<BrowserPanel active onTogglePopOut={() => undefined} poppedOut={false} session={session} />);

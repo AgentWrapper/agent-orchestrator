@@ -2227,34 +2227,15 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // the send: it only decides whether to nudge again.
 func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
 	if attachment != nil {
-		// Unlike the best-effort lookup below, this one is load-bearing: without
-		// the workspace path there is nowhere to write the attachment, and
-		// silently dropping an image the caller explicitly attached would be a
-		// worse outcome than failing the send.
-		rec, haveRec, err := m.store.GetSession(ctx, id)
-		if err != nil {
-			return fmt.Errorf("send %s: attachment: session lookup: %w", id, err)
-		}
-		if !haveRec {
-			return fmt.Errorf("send %s: %w", id, ErrNotFound)
-		}
-		ref, err := writeSendAttachment(rec.Metadata.WorkspacePath, *attachment)
+		// Reuses StageAttachments rather than a bespoke writer: it already owns the
+		// empty-workspace guard (refusing beats writing under the daemon's cwd),
+		// randomized naming safe for a session sent to repeatedly, directory
+		// creation, and the git-exclude step.
+		refs, err := m.StageAttachments(ctx, id, []ports.SpawnAttachment{*attachment})
 		if err != nil {
 			return fmt.Errorf("send %s: attachment: %w", id, err)
 		}
-		info := ports.WorkspaceInfo{
-			Path:      rec.Metadata.WorkspacePath,
-			Branch:    rec.Metadata.Branch,
-			SessionID: rec.ID,
-			ProjectID: rec.ProjectID,
-			RepoPath:  rec.Metadata.WorkspaceRepoPath,
-		}
-		// Keep the attachments dir out of git status. Best-effort: the image is
-		// already written and usable, so an exclude failure must not fail the send.
-		if err := m.workspace.AddExclude(ctx, info, "/"+attachmentsDir+"/"); err != nil {
-			m.logger.Warn("send: exclude attachments dir", "sessionID", id, "error", err)
-		}
-		message = appendAttachmentReferences(message, []string{ref})
+		message = appendAttachmentReferences(message, refs)
 	}
 	return m.send(ctx, id, message, "")
 }
@@ -2730,27 +2711,6 @@ func writeSpawnAttachments(workspacePath string, attachments []ports.SpawnAttach
 		refs = append(refs, attachmentsDir+"/"+name)
 	}
 	return refs, nil
-}
-
-// writeSendAttachment writes a single attachment delivered via Send (e.g. a
-// browser-annotation snapshot) into the worktree under attachmentsDir and
-// returns its worktree-relative path. Unlike writeSpawnAttachments' sequential
-// image-N naming (safe for a one-shot spawn call), Send can fire many times
-// over a session's life, so the name carries a uuid to stay collision-safe.
-func writeSendAttachment(workspacePath string, attachment ports.SpawnAttachment) (string, error) {
-	dir := filepath.Join(workspacePath, filepath.FromSlash(attachmentsDir))
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", fmt.Errorf("create attachments dir: %w", err)
-	}
-	ext := attachment.Ext
-	if ext == "" {
-		ext = ".bin"
-	}
-	name := fmt.Sprintf("annotate-%s%s", uuid.NewString(), ext)
-	if err := os.WriteFile(filepath.Join(dir, name), attachment.Data, 0o600); err != nil {
-		return "", fmt.Errorf("write attachment: %w", err)
-	}
-	return attachmentsDir + "/" + name, nil
 }
 
 // appendAttachmentReferences appends a block listing the attached file paths so

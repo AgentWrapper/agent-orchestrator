@@ -48,6 +48,11 @@ const (
 	// decoded total by ~4/3) would allocate in full first. Derived from the
 	// decoded total plus headroom for the prompt and JSON envelope.
 	maxSpawnBodyBytes = maxAttachmentsBytes*4/3 + (2 << 20)
+	// maxSendBodyBytes is the /send equivalent of maxSpawnBodyBytes, sized off
+	// maxAttachmentBytes (one attachment) rather than maxAttachmentsBytes
+	// (spawn's up-to-eight): unlike spawn, a send carries at most one inline
+	// attachment.
+	maxSendBodyBytes = maxAttachmentBytes*4/3 + (2 << 20)
 )
 
 // blockedAttachmentMimes contains MIME types that are explicitly rejected for
@@ -1031,6 +1036,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/send")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxSendBodyBytes)
 	var in SendSessionMessageRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)

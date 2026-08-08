@@ -38,6 +38,7 @@ function setupHost() {
 			toJPEG: () => Buffer.from("snapshot"),
 			toPNG: () => Buffer.from("png-snapshot"),
 			getSize: () => ({ width: 640, height: 480 }),
+			resize: vi.fn(() => ({ toPNG: () => Buffer.from("resized-png") })),
 		})),
 		debugger: {
 			attach: vi.fn(() => {
@@ -1349,8 +1350,75 @@ describe("browser annotation IPC", () => {
 					kind: "element",
 					context: expect.objectContaining({ selector: "button" }),
 				}),
+				snapshot: {
+					mimeType: "image/png",
+					data: Buffer.from("png-snapshot").toString("base64"),
+				},
 			}),
 		});
+	});
+
+	it("resizes a captured snapshot that exceeds the longest-edge cap", async () => {
+		const { invoke, invokeFromTab, sent, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		const resize = vi.fn(() => ({ toPNG: () => Buffer.from("resized-png") }));
+		webContents.capturePage.mockResolvedValueOnce({
+			isEmpty: () => false,
+			toJPEG: () => Buffer.from("snapshot"),
+			toPNG: () => Buffer.from("full-size-png"),
+			getSize: () => ({ width: 2000, height: 1000 }),
+			resize,
+		});
+
+		await invokeFromTab("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					size: { width: 80, height: 30 },
+					computedStyle: {},
+				},
+			},
+		});
+
+		expect(resize).toHaveBeenCalledWith({ width: 1568 });
+		expect(sent).toContainEqual({
+			channel: "browser:annotation:submitted",
+			payload: expect.objectContaining({
+				snapshot: { mimeType: "image/png", data: Buffer.from("resized-png").toString("base64") },
+			}),
+		});
+	});
+
+	it("forwards without a snapshot when capture exceeds the timeout budget", async () => {
+		const { invoke, invokeFromTab, sent, webContents } = setupHost();
+		await invoke("browser:ensure", "sess-1");
+		// Never resolves: forces the capture-vs-timeout race to resolve via the
+		// timeout branch, proving a hung capturePage() cannot block the send.
+		webContents.capturePage.mockReturnValueOnce(new Promise(() => undefined));
+
+		await invokeFromTab("browser:annotation:submit", 99, {
+			instruction: "Make this button blue.",
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "button",
+					classes: [],
+					selector: "button",
+					size: { width: 80, height: 30 },
+					computedStyle: {},
+				},
+			},
+		});
+
+		const forwarded = sent.find((entry) => entry.channel === "browser:annotation:submitted");
+		expect(forwarded).toBeDefined();
+		expect((forwarded?.payload as { snapshot?: unknown }).snapshot).toBeUndefined();
 	});
 
 	it("forwards a multi-element preview annotation submission to the renderer-owned view", async () => {

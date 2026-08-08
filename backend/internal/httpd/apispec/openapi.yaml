@@ -4150,6 +4150,15 @@ components:
       - fetchedAt
       - stale
       type: object
+    AttachmentInput:
+      properties:
+        data:
+          type: string
+        mimeType:
+          type: string
+      required:
+      - data
+      type: object
     BrowserCommandRequest:
       properties:
         action:
@@ -4306,15 +4315,6 @@ components:
       properties:
         disabled:
           type: boolean
-      type: object
-    ControllersAttachmentInput:
-      properties:
-        data:
-          type: string
-        mimeType:
-          type: string
-      required:
-      - data
       type: object
     ControllersSessionView:
       properties:
@@ -5027,7 +5027,7 @@ components:
           type: string
         attachments:
           items:
-            $ref: '#/components/schemas/ControllersAttachmentInput'
+            $ref: '#/components/schemas/AttachmentInput'
           type: array
         brief:
           maxLength: 4096
@@ -5989,7 +5989,7 @@ components:
     SendSessionMessageRequest:
       properties:
         attachment:
-          $ref: '#/components/schemas/ControllersAttachmentInput'
+          $ref: '#/components/schemas/AttachmentInput'
         message:
           maxLength: 4096
           minLength: 1
@@ -6586,7 +6586,7 @@ components:
       properties:
         attachments:
           items:
-            $ref: '#/components/schemas/ControllersAttachmentInput'
+            $ref: '#/components/schemas/AttachmentInput'
           type: array
         branch:
           type: string
@@ -6657,7 +6657,7 @@ components:
       properties:
         attachments:
           items:
-            $ref: '#/components/schemas/ControllersAttachmentInput'
+            $ref: '#/components/schemas/AttachmentInput'
           type: array
       required:
       - attachments

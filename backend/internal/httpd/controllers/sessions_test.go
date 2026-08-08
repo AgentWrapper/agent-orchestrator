@@ -1848,6 +1848,22 @@ func TestSessionsAPI_SendRejectsUnsupportedAttachmentType(t *testing.T) {
 	assertErrorCode(t, body, status, http.StatusBadRequest, "UNSUPPORTED_ATTACHMENT_TYPE")
 }
 
+func TestSessionsAPI_SendRejectsOversizedBody(t *testing.T) {
+	svc := newFakeSessionService()
+	srv := newSessionTestServer(t, svc)
+
+	// A body past the send attachment cap is rejected while decoding
+	// (MaxBytesReader), before attachment size validation and without
+	// materializing the whole body.
+	oversized := `{"message":"Make the button blue.","attachment":{"mimeType":"image/png","data":"` +
+		strings.Repeat("A", 20<<20) + `"}}`
+	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/send", oversized)
+	assertErrorCode(t, body, status, http.StatusBadRequest, "INVALID_JSON")
+	if svc.sent != "" {
+		t.Fatalf("send service called with oversized body: %q", svc.sent)
+	}
+}
+
 func TestSessionsAPI_CleanupWithProjectFilter(t *testing.T) {
 	svc := newFakeSessionService()
 	svc.cleanupResult = []domain.SessionID{"ao-1"}

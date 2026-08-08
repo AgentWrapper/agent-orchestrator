@@ -824,7 +824,7 @@ func TestSend_WritesAttachmentAndAppendsReference(t *testing.T) {
 	// written to disk, not just well-formed text.
 	refLine := ""
 	for _, line := range strings.Split(got, "\n") {
-		if strings.HasPrefix(line, "- .ao/attachments/annotate-") {
+		if strings.HasPrefix(line, "- .ao/attachments/attachment-") {
 			refLine = strings.TrimPrefix(line, "- ")
 		}
 	}
@@ -860,6 +860,28 @@ func TestSend_WithoutAttachmentSkipsWorkspaceWrite(t *testing.T) {
 	}
 	if len(ws.calls) != 0 {
 		t.Errorf("workspace calls = %v, want none when no attachment is sent", ws.calls)
+	}
+}
+
+// A session with no WorkspacePath has nowhere safe to write an attachment:
+// StageAttachments' filepath.Join would otherwise produce a relative
+// ".ao/attachments" path, writing beneath the daemon's own working directory
+// instead of the session's worktree and handing the agent a reference it
+// cannot reach. Send must refuse rather than silently mis-deliver.
+func TestSend_RejectsAttachmentWithEmptyWorkspace(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker}
+	msg := &fakeMessenger{}
+	ws := &fakeWorkspace{}
+	m := New(Deps{Store: st, Messenger: msg, Workspace: ws})
+
+	attachment := &ports.SpawnAttachment{Ext: ".png", Data: []byte("snapshot-bytes")}
+	err := m.Send(ctx, "mer-1", "Make the button blue.", attachment)
+	if err == nil {
+		t.Fatal("want an error for a session with no workspace, got nil")
+	}
+	if len(msg.msgs) != 0 {
+		t.Errorf("messenger calls = %v, want none: the send must not proceed after the attachment write fails", msg.msgs)
 	}
 }
 
