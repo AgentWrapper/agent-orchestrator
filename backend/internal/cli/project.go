@@ -12,6 +12,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 type projectAddOptions struct {
@@ -136,6 +137,7 @@ type projectSetConfigOptions struct {
 	trackerAssignee   string
 	configJSON        string
 	clear             bool
+	replace           bool
 	json              bool
 }
 
@@ -276,12 +278,14 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	var opts projectSetConfigOptions
 	cmd := &cobra.Command{
 		Use:   "set-config <id>",
-		Short: "Set the per-project config",
-		Long: "Replace a project's per-project config (branch, session prefix, env, " +
-			"symlinks, post-create, rules, agent model/permissions, role overrides, tracker intake). The config " +
-			"is resolved when a session spawns.\n\n" +
-			"Set fields via flags, pass the whole object with --config-json, or --clear " +
-			"to remove all config.",
+		Short: "Update the per-project config",
+		Long: "Update a project's per-project config (branch, session prefix, env, " +
+			"symlinks, post-create, rules, agent model/permissions, role overrides, tracker intake). " +
+			"By default, unspecified fields keep their current values (merge). " +
+			"Use --replace to overwrite the entire config (old behavior). " +
+			"The config is resolved when a session spawns.\n\n" +
+			"Set fields via flags, pass a partial or whole object with --config-json, " +
+			"or --clear to remove all config.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.ExactArgs(1)(cmd, args); err != nil {
 				return usageError{err}
@@ -293,7 +297,18 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id := strings.TrimSpace(args[0])
-			config, err := buildProjectConfig(opts)
+
+			var current projectConfig
+			if !opts.replace && !opts.clear {
+				var existing projectGetResult
+				if err := ctx.getJSON(cmd.Context(), "projects/"+url.PathEscape(id), &existing); err != nil {
+					current = projectConfig{}
+				} else if existing.Project.Config != nil {
+					current = *existing.Project.Config
+				}
+			}
+
+			config, err := buildProjectConfig(opts, current, cmd.Flags())
 			if err != nil {
 				return err
 			}
@@ -327,19 +342,23 @@ func newProjectSetConfigCommand(ctx *commandContext) *cobra.Command {
 	f.StringVar(&opts.trackerAssignee, "tracker-assignee", "", "GitHub issue assignee required for intake eligibility")
 	f.StringVar(&opts.configJSON, "config-json", "", "Full config as a JSON object (overrides field flags)")
 	f.BoolVar(&opts.clear, "clear", false, "Clear all config")
+	f.BoolVar(&opts.replace, "replace", false, "Replace the entire config instead of merging (old behavior)")
 	f.BoolVar(&opts.json, "json", false, "Output the updated project as JSON")
 	return cmd
 }
 
 // buildProjectConfig turns the set-config flags into the typed config sent to
-// the daemon. --clear empties the config; --config-json supplies the whole
-// object; otherwise the field flags form the config. The daemon validates the
-// values.
-func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
+// the daemon. --clear empties the config; --replace with --config-json supplies
+// the whole object; --config-json alone deep-merges into current; otherwise the
+// field flags merge into current (only changed flags overwrite). The daemon
+// validates the values.
+func buildProjectConfig(opts projectSetConfigOptions, current projectConfig, flags *pflag.FlagSet) (projectConfig, error) {
 	if opts.clear {
 		return projectConfig{}, nil
 	}
-	if opts.configJSON != "" {
+
+	// --replace + --config-json: full replace, no merge.
+	if opts.replace && opts.configJSON != "" {
 		var cfg projectConfig
 		if err := json.Unmarshal([]byte(opts.configJSON), &cfg); err != nil {
 			return projectConfig{}, usageError{fmt.Errorf("--config-json is not a valid JSON object: %w", err)}
@@ -347,33 +366,137 @@ func buildProjectConfig(opts projectSetConfigOptions) (projectConfig, error) {
 		return cfg, nil
 	}
 
-	env, err := parseEnvPairs(opts.env)
-	if err != nil {
-		return projectConfig{}, err
+	// --config-json without --replace: deep-merge into current.
+	if opts.configJSON != "" {
+		var cfg projectConfig
+		if err := json.Unmarshal([]byte(opts.configJSON), &cfg); err != nil {
+			return projectConfig{}, usageError{fmt.Errorf("--config-json is not a valid JSON object: %w", err)}
+		}
+		return mergeProjectConfig(current, cfg), nil
 	}
-	cfg := projectConfig{
-		DefaultBranch:     opts.defaultBranch,
-		SessionPrefix:     opts.sessionPrefix,
-		Env:               env,
-		Symlinks:          opts.symlink,
-		PostCreate:        opts.postCreate,
-		AgentRules:        opts.agentRules,
-		AgentRulesFile:    opts.agentRulesFile,
-		OrchestratorRules: opts.orchestratorRules,
-		AgentConfig:       agentConfig{Model: opts.model, Permissions: opts.permission},
-		Worker:            roleOverride{Agent: opts.workerAgent},
-		Orchestrator:      roleOverride{Agent: opts.orchestratorAgent},
-		TrackerIntake: trackerIntakeConfig{
+
+	// Field-flag merge: start from current, overlay only changed flags.
+	cfg := current
+	if flags.Changed("default-branch") {
+		cfg.DefaultBranch = opts.defaultBranch
+	}
+	if flags.Changed("session-prefix") {
+		cfg.SessionPrefix = opts.sessionPrefix
+	}
+	if flags.Changed("env") {
+		env, err := parseEnvPairs(opts.env)
+		if err != nil {
+			return projectConfig{}, err
+		}
+		cfg.Env = env
+	}
+	if flags.Changed("symlink") {
+		cfg.Symlinks = opts.symlink
+	}
+	if flags.Changed("post-create") {
+		cfg.PostCreate = opts.postCreate
+	}
+	if flags.Changed("agent-rules") {
+		cfg.AgentRules = opts.agentRules
+	}
+	if flags.Changed("agent-rules-file") {
+		cfg.AgentRulesFile = opts.agentRulesFile
+	}
+	if flags.Changed("orchestrator-rules") {
+		cfg.OrchestratorRules = opts.orchestratorRules
+	}
+	if flags.Changed("model") {
+		cfg.AgentConfig.Model = opts.model
+	}
+	if flags.Changed("permission") {
+		cfg.AgentConfig.Permissions = opts.permission
+	}
+	if flags.Changed("worker-agent") {
+		cfg.Worker.Agent = opts.workerAgent
+	}
+	if flags.Changed("orchestrator-agent") {
+		cfg.Orchestrator.Agent = opts.orchestratorAgent
+	}
+	if flags.Changed("tracker-intake") || flags.Changed("tracker-repo") || flags.Changed("tracker-assignee") {
+		cfg.TrackerIntake = trackerIntakeConfig{
 			Enabled:  opts.trackerIntake,
 			Provider: trackerProviderForFlags(opts),
 			Repo:     opts.trackerRepo,
 			Assignee: opts.trackerAssignee,
-		},
+		}
 	}
+
 	if reflect.DeepEqual(cfg, projectConfig{}) {
 		return projectConfig{}, usageError{errors.New("usage: provide at least one config flag, --config-json, or --clear")}
 	}
 	return cfg, nil
+}
+
+// mergeProjectConfig deep-merges overlay into current. Non-zero fields in
+// overlay win; zero-value fields preserve the existing value.
+func mergeProjectConfig(current, overlay projectConfig) projectConfig {
+	out := current
+	if overlay.DefaultBranch != "" {
+		out.DefaultBranch = overlay.DefaultBranch
+	}
+	if overlay.SessionPrefix != "" {
+		out.SessionPrefix = overlay.SessionPrefix
+	}
+	if len(overlay.Env) > 0 {
+		out.Env = overlay.Env
+	}
+	if len(overlay.Symlinks) > 0 {
+		out.Symlinks = overlay.Symlinks
+	}
+	if len(overlay.PostCreate) > 0 {
+		out.PostCreate = overlay.PostCreate
+	}
+	if overlay.AgentRules != "" {
+		out.AgentRules = overlay.AgentRules
+	}
+	if overlay.AgentRulesFile != "" {
+		out.AgentRulesFile = overlay.AgentRulesFile
+	}
+	if overlay.OrchestratorRules != "" {
+		out.OrchestratorRules = overlay.OrchestratorRules
+	}
+	if overlay.AgentConfig.Model != "" {
+		out.AgentConfig.Model = overlay.AgentConfig.Model
+	}
+	if overlay.AgentConfig.Mode != "" {
+		out.AgentConfig.Mode = overlay.AgentConfig.Mode
+	}
+	if overlay.AgentConfig.Permissions != "" {
+		out.AgentConfig.Permissions = overlay.AgentConfig.Permissions
+	}
+	if overlay.Worker.Agent != "" {
+		out.Worker.Agent = overlay.Worker.Agent
+	}
+	if overlay.Worker.AgentConfig.Model != "" {
+		out.Worker.AgentConfig.Model = overlay.Worker.AgentConfig.Model
+	}
+	if overlay.Worker.AgentConfig.Mode != "" {
+		out.Worker.AgentConfig.Mode = overlay.Worker.AgentConfig.Mode
+	}
+	if overlay.Worker.AgentConfig.Permissions != "" {
+		out.Worker.AgentConfig.Permissions = overlay.Worker.AgentConfig.Permissions
+	}
+	if overlay.Orchestrator.Agent != "" {
+		out.Orchestrator.Agent = overlay.Orchestrator.Agent
+	}
+	if overlay.Orchestrator.AgentConfig.Model != "" {
+		out.Orchestrator.AgentConfig.Model = overlay.Orchestrator.AgentConfig.Model
+	}
+	if overlay.Orchestrator.AgentConfig.Mode != "" {
+		out.Orchestrator.AgentConfig.Mode = overlay.Orchestrator.AgentConfig.Mode
+	}
+	if overlay.Orchestrator.AgentConfig.Permissions != "" {
+		out.Orchestrator.AgentConfig.Permissions = overlay.Orchestrator.AgentConfig.Permissions
+	}
+	if overlay.TrackerIntake.Enabled || overlay.TrackerIntake.Repo != "" || overlay.TrackerIntake.Assignee != "" {
+		out.TrackerIntake = overlay.TrackerIntake
+	}
+	return out
 }
 
 func trackerProviderForFlags(opts projectSetConfigOptions) string {
