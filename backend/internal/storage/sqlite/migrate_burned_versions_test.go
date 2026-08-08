@@ -85,6 +85,7 @@ var shippedMigrations = map[int64]string{
 	80: "0080_review_per_harness.sql",
 	81: "0081_browser_capability_verifier.sql",
 	82: "0082_allow_prime_agent_harness.sql",
+	83: "0083_agent_switching.sql",
 }
 
 // burnedVersion reports version numbers that must never be (re)used: they
@@ -93,6 +94,8 @@ var shippedMigrations = map[int64]string{
 // new file claiming one would be skipped silently there.
 //
 //   - 22 shipped in a nightly (#2412) and was deleted by the revert.
+//   - 84 was used by pre-merge agent-switching builds before its schema was
+//     consolidated into 0083. Keep it reserved for those development DBs.
 //
 // Beware of the adjacent hazard this cannot catch: at least one field profile
 // has versions 40 through 51 recorded as applied by a foreign build
@@ -100,7 +103,7 @@ var shippedMigrations = map[int64]string{
 // Any such migration whose schema the generated queries depend on must add a
 // schemaRepairs entry in db.go.
 func burnedVersion(v int64) bool {
-	return v == 22
+	return v == 22 || v == 84
 }
 
 // TestMigrationVersionLedger enforces the append-only migration ledger: every

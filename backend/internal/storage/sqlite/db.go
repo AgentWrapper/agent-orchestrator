@@ -134,6 +134,9 @@ func migrate(db *sql.DB) error {
 	if err := repairRenumberedChatMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered chat migration history: %w", err)
 	}
+	if err := repairRenumberedAgentSwitchMigrationHistory(db); err != nil {
+		return fmt.Errorf("repair renumbered agent-switch migration history: %w", err)
+	}
 	if err := prepareBurnedSchemaRepairs(db); err != nil {
 		return fmt.Errorf("prepare burned schema repairs: %w", err)
 	}
@@ -525,6 +528,111 @@ SELECT COALESCE((
 	}
 	if modelUsageTable == 0 {
 		if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = 52`); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// repairRenumberedAgentSwitchMigrationHistory preserves databases opened by
+// earlier revisions of this feature branch. Agent switching first occupied
+// 0080/0081 and later 0081/0082; main now owns 0080 through 0082. Remap the
+// physically present switching schema to the consolidated 0083 and release
+// only the main migration numbers whose schema effects are still absent.
+func repairRenumberedAgentSwitchMigrationHistory(db *sql.DB) error {
+	var gooseTable, agentSwitchTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_switches'`,
+	).Scan(&agentSwitchTable); err != nil {
+		return err
+	}
+	if agentSwitchTable == 0 {
+		return nil
+	}
+
+	reviewUpgraded, err := reviewHasSessionHarnessUnique(db)
+	if err != nil {
+		return err
+	}
+
+	var browserVerifierColumn, primeHarnessShape int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
+	).Scan(&browserVerifierColumn); err != nil {
+		return err
+	}
+	if err := db.QueryRow(`
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'table'
+  AND name = 'sessions'
+  AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&primeHarnessShape); err != nil {
+		return err
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Earlier feature builds split finalized-handoff storage into 0084, while
+	// still earlier builds only had the base switching table. Repair either
+	// shape before recording the now-consolidated 0083 as applied. The status is
+	// deliberately not inferred from retained paths: old rows remain unknown.
+	for _, column := range []struct {
+		name string
+		ddl  string
+	}{
+		{name: "final_handoff_path", ddl: `ALTER TABLE agent_switches ADD COLUMN final_handoff_path TEXT NOT NULL DEFAULT ''`},
+		{name: "final_handoff_hash", ddl: `ALTER TABLE agent_switches ADD COLUMN final_handoff_hash TEXT NOT NULL DEFAULT ''`},
+		{name: "source_transcript_status", ddl: `ALTER TABLE agent_switches ADD COLUMN source_transcript_status TEXT NOT NULL DEFAULT 'not_attempted' CHECK (source_transcript_status IN ('not_attempted', 'available', 'unavailable'))`},
+		{name: "semantic_handoff_included", ddl: `ALTER TABLE agent_switches ADD COLUMN semantic_handoff_included INTEGER NOT NULL DEFAULT 0 CHECK (semantic_handoff_included IN (0, 1))`},
+	} {
+		var present int
+		if err := tx.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('agent_switches') WHERE name = ?`, column.name,
+		).Scan(&present); err != nil {
+			return err
+		}
+		if present == 0 {
+			if _, err := tx.Exec(column.ddl); err != nil {
+				return err
+			}
+		}
+	}
+
+	var applied83 int
+	if err := tx.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+	WHERE version_id = 83 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied83); err != nil {
+		return err
+	}
+	if applied83 == 0 {
+		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (83, 1)`); err != nil {
+			return err
+		}
+	}
+
+	for version, mainEffectPresent := range map[int64]bool{
+		80: reviewUpgraded,
+		81: browserVerifierColumn != 0,
+		82: primeHarnessShape != 0,
+	} {
+		if mainEffectPresent {
+			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = ?`, version); err != nil {
 			return err
 		}
 	}
