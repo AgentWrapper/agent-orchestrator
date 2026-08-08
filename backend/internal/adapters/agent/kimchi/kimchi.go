@@ -25,6 +25,7 @@ package kimchi
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +38,31 @@ import (
 )
 
 const adapterID = "kimchi"
+
+// systemPromptMaxBytes caps how many bytes readBoundedSystemPrompt will read
+// from a system-prompt file. This prevents unbounded reads that could cause
+// "argument list too long" errors or hang on FIFOs/slow mounts.
+const systemPromptMaxBytes = 128 * 1024
+
+// readBoundedSystemPrompt reads a system-prompt file capped at
+// systemPromptMaxBytes. The file contents are returned raw (no trimming) so
+// a resumed session's system prompt is byte-identical to a fresh launch.
+func readBoundedSystemPrompt(path string) (string, error) {
+	f, err := os.Open(path) //nolint:gosec // path is AO-owned config
+	if err != nil {
+		return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, systemPromptMaxBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
+	}
+	if len(data) > systemPromptMaxBytes {
+		return "", fmt.Errorf("kimchi: system prompt file %s exceeds %d byte limit", path, systemPromptMaxBytes)
+	}
+	return string(data), nil
+}
 
 // Plugin implements the Kimchi agent adapter.
 type Plugin struct {
@@ -96,11 +122,11 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools)
 
 	if cfg.SystemPromptFile != "" {
-		data, err := os.ReadFile(cfg.SystemPromptFile) //nolint:gosec // path is AO-owned launch config
+		data, err := readBoundedSystemPrompt(cfg.SystemPromptFile)
 		if err != nil {
 			return nil, err
 		}
-		cmd = append(cmd, "--append-system-prompt", string(data))
+		cmd = append(cmd, "--append-system-prompt", data)
 	} else if cfg.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
 	}
@@ -257,11 +283,7 @@ func sanitizePrompt(prompt string) string {
 // standing instructions without the caller knowing.
 func resolveRestoreSystemPrompt(cfg ports.RestoreConfig) (string, error) {
 	if cfg.SystemPromptFile != "" {
-		data, err := os.ReadFile(cfg.SystemPromptFile) //nolint:gosec // path is AO-owned restore config
-		if err != nil {
-			return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
-		}
-		return strings.TrimRight(string(data), "\n"), nil
+		return readBoundedSystemPrompt(cfg.SystemPromptFile)
 	}
 	return cfg.SystemPrompt, nil
 }
