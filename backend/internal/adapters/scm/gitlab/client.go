@@ -238,7 +238,7 @@ func (c *Client) doGETRaw(ctx context.Context, path string, q url.Values) ([]byt
 // doGETPaginated performs a GET and follows GitLab's Link: <...>; rel="next"
 // header to fetch all pages, calling handler for each page's body. It caps at
 // maxPaginationPages to prevent runaway pagination on pathological repos
-//. The handler is invoked once per page and receives the
+// . The handler is invoked once per page and receives the
 // raw JSON body of that page.
 const maxPaginationPages = 10
 
@@ -286,7 +286,8 @@ func (c *Client) doGETPaginated(ctx context.Context, path string, q url.Values, 
 }
 
 // parseNextLink extracts the next-page URL from a GitLab Link header like:
-//   <https://gitlab.com/api/v4/...?page=2>; rel="next", <...>; rel="first"
+//
+//	<https://gitlab.com/api/v4/...?page=2>; rel="next", <...>; rel="first"
 func parseNextLink(linkHeader string) string {
 	if linkHeader == "" {
 		return ""
