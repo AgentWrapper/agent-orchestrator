@@ -137,6 +137,14 @@ func (m *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 					PR:       ports.SCMPRObservation{Number: ir.ref.Number, URL: ir.ref.URL},
 				}
 			}
+			// Attach the failed provider's error as transient per-observation
+			// metadata so the observer can route rate-limit errors to
+			// per-provider cooldown and non-rate-limit errors to
+			// refresh-incomplete, without discarding the classification
+			// (review Item 7). The observer nils this out before persistence.
+			if err != nil {
+				results[ir.idx].Error = err
+			}
 		}
 	}
 
@@ -174,17 +182,27 @@ type credentialChecker interface {
 }
 
 // SCMCredentialsAvailable returns true if ANY sub-provider has usable credentials.
+// When no provider reports usable credentials, the first real error (if any)
+// is returned so CheckCredentialsOnce retries on the next poll rather than
+// definitively disabling SCM observation until daemon restart (review Item 8).
+// A healthy provider's success always wins and suppresses transient errors
+// from other providers.
 func (m *Provider) SCMCredentialsAvailable(ctx context.Context) (bool, error) {
+	var firstErr error
 	for _, np := range m.ordered {
-		if cc, ok := np.Provider.(credentialChecker); ok {
-			avail, err := cc.SCMCredentialsAvailable(ctx)
-			if avail {
-				return true, nil
-			}
-			_ = err
+		cc, ok := np.Provider.(credentialChecker)
+		if !ok {
+			continue
+		}
+		avail, err := cc.SCMCredentialsAvailable(ctx)
+		if avail {
+			return true, nil
+		}
+		if err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return false, nil
+	return false, firstErr
 }
 
 type indexedRef struct {
