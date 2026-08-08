@@ -60,6 +60,7 @@ type TerminalReviewRequestReader interface {
 	ReadTerminalRequest(path string) (TerminalReviewRequest, error)
 }
 
+// TerminalReviewRequest is the durable input for a terminal-backed one-shot review.
 type TerminalReviewRequest struct {
 	Version    int
 	WorkerID   domain.SessionID
@@ -71,12 +72,14 @@ type TerminalReviewRequest struct {
 	Tasks      []ReviewTask
 }
 
+// ReviewResult is the structured output produced by a one-shot reviewer.
 type ReviewResult struct {
 	Verdict  domain.ReviewVerdict
 	Body     string
 	Comments []ReviewComment
 }
 
+// ReviewComment describes an inline finding produced by a reviewer.
 type ReviewComment struct {
 	Path          string
 	StartLine     int
@@ -88,11 +91,13 @@ type ReviewComment struct {
 	SecurityIssue bool
 }
 
+// TerminalReviewResult is the durable result of a terminal-backed one-shot review.
 type TerminalReviewResult struct {
 	Complete bool
 	Results  []TerminalReviewItem
 }
 
+// TerminalReviewItem associates one structured result with its review run.
 type TerminalReviewItem struct {
 	RunID     string
 	PRURL     string

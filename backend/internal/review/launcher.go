@@ -93,8 +93,13 @@ type ReviewCompletion struct {
 	Err       error
 }
 
+// CompletionHandler receives asynchronously completed one-shot reviews.
 type CompletionHandler func(ctx context.Context, workerID domain.SessionID, completions []ReviewCompletion)
+
+// TerminalReviewConsumedChecker reports whether durable terminal results were already consumed.
 type TerminalReviewConsumedChecker func(ctx context.Context, workerID domain.SessionID, runIDs []string) bool
+
+// TerminalReviewActiveChecker reports whether recovered terminal review runs remain active.
 type TerminalReviewActiveChecker func(ctx context.Context, workerID domain.SessionID, runIDs []string) (bool, error)
 
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
@@ -162,6 +167,7 @@ func WithAgentAuth(auth agentAuthResolver) LauncherOption {
 	}
 }
 
+// WithLauncherContext sets the root context used by asynchronous one-shot reviews.
 func WithLauncherContext(ctx context.Context) LauncherOption {
 	return func(l *agentLauncher) {
 		if ctx != nil {
@@ -170,14 +176,17 @@ func WithLauncherContext(ctx context.Context) LauncherOption {
 	}
 }
 
+// WithCompletionHandler configures delivery of asynchronously completed reviews.
 func WithCompletionHandler(handler CompletionHandler) LauncherOption {
 	return func(l *agentLauncher) { l.onComplete = handler }
 }
 
+// WithTerminalReviewConsumed configures the durable-result consumption check.
 func WithTerminalReviewConsumed(checker TerminalReviewConsumedChecker) LauncherOption {
 	return func(l *agentLauncher) { l.consumed = checker }
 }
 
+// WithTerminalReviewActive configures the recovered-run activity check.
 func WithTerminalReviewActive(checker TerminalReviewActiveChecker) LauncherOption {
 	return func(l *agentLauncher) { l.active = checker }
 }
