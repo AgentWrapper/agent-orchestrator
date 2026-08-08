@@ -100,145 +100,21 @@ export function sessionPRDisplaySummaries(
 	session: WorkspaceSession,
 	summaries: SessionPRSummary[] = [],
 ): SessionPRSummary[] {
-	const dedupedSummaries = deduplicateSummaries(summaries);
-	const summariesByIdentity = new Map<string, SessionPRSummary>();
-	const summaryNumberCounts = countPRNumbers(dedupedSummaries);
-	const summariesByUniqueNumber = new Map<number, SessionPRSummary>();
-	for (const summary of dedupedSummaries) {
-		for (const key of prDisplayIdentities(summary)) {
-			if (!summariesByIdentity.has(key)) {
-				summariesByIdentity.set(key, summary);
-			}
-		}
-		if (summaryNumberCounts.get(summary.number) === 1) {
-			summariesByUniqueNumber.set(summary.number, summary);
-		}
-	}
-	const facts = sortedPRs(session);
-	const factNumberCounts = countPRNumbers(facts);
+	// Key by canonical web URL so a GitHub PR #7 and a GitLab MR #7 (or any
+	// same-numbered PRs across providers/repos) both appear instead of one
+	// hiding the other. Summaries with an empty url fall back to a degraded
+	// `number:${number}` key — better than dropping the summary, though two
+	// providers with the same number and no url would still collide. The url is
+	// populated in the normal flow, so this is an edge case.
+	const displayKey = (url: string, number: number): string => url || `number:${number}`;
+	const summariesByUrl = new Map(summaries.map((summary) => [displayKey(summary.url, summary.number), summary]));
 	const seen = new Set<string>();
-	const consumedSummaries = new Set<SessionPRSummary>();
-	const fromFacts: SessionPRSummary[] = [];
-	for (const pr of facts) {
-		const key = prDisplayIdentity(pr);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		const summary = summariesByIdentity.get(key) ?? uniqueNumberSummary(pr, factNumberCounts, summariesByUniqueNumber);
-		if (summary) {
-			for (const summaryKey of prDisplayIdentities(summary)) {
-				seen.add(summaryKey);
-			}
-			consumedSummaries.add(summary);
-		}
-		fromFacts.push(summary ?? sessionPRFactToSummary(session, pr));
-	}
-	const summaryOnly: SessionPRSummary[] = [];
-	for (const summary of dedupedSummaries) {
-		const keys = prDisplayIdentities(summary);
-		if (keys.some((key) => seen.has(key))) continue;
-		if (consumedSummaries.has(summary)) continue;
-		for (const key of keys) {
-			seen.add(key);
-		}
-		summaryOnly.push(summary);
-	}
+	const fromFacts = sortedPRs(session).map((pr) => {
+		seen.add(displayKey(pr.url, pr.number));
+		return summariesByUrl.get(displayKey(pr.url, pr.number)) ?? sessionPRFactToSummary(session, pr);
+	});
+	const summaryOnly = summaries.filter((summary) => !seen.has(displayKey(summary.url, summary.number)));
 	return [...fromFacts, ...summaryOnly].sort(comparePRDisplaySummaries);
-}
-
-function deduplicateSummaries(summaries: SessionPRSummary[]): SessionPRSummary[] {
-	const seen = new Set<string>();
-	const out: SessionPRSummary[] = [];
-	for (const summary of summaries) {
-		const keys = prDisplayIdentities(summary);
-		if (keys.some((key) => seen.has(key))) continue;
-		for (const key of keys) {
-			seen.add(key);
-		}
-		out.push(summary);
-	}
-	return out;
-}
-
-function countPRNumbers(prs: Array<Pick<SessionPRSummary, "number"> | PullRequestFacts>): Map<number, number> {
-	const counts = new Map<number, number>();
-	for (const pr of prs) {
-		counts.set(pr.number, (counts.get(pr.number) ?? 0) + 1);
-	}
-	return counts;
-}
-
-function uniqueNumberSummary(
-	pr: PullRequestFacts,
-	factNumberCounts: Map<number, number>,
-	summariesByUniqueNumber: Map<number, SessionPRSummary>,
-): SessionPRSummary | undefined {
-	if (factNumberCounts.get(pr.number) !== 1) return undefined;
-	return summariesByUniqueNumber.get(pr.number);
-}
-
-function prDisplayIdentity(pr: Pick<SessionPRSummary, "number" | "url" | "htmlUrl" | "repo"> | PullRequestFacts): string {
-	const url = "htmlUrl" in pr ? pr.htmlUrl || pr.url : pr.url;
-	const github = githubPRIdentity(url, pr.number);
-	if (github) return github;
-	const repo = "repo" in pr ? pr.repo.trim().toLowerCase() : "";
-	if (repo) return `repo:${repo}#${pr.number}`;
-	return `number:${pr.number}`;
-}
-
-function prDisplayIdentities(pr: SessionPRSummary): string[] {
-	const keys = [prDisplayIdentity(pr)];
-	const alias = prTransferAliasIdentity(pr);
-	if (alias) keys.push(alias);
-	return keys;
-}
-
-function githubPRIdentity(rawURL: string, expectedNumber: number): string | undefined {
-	try {
-		const url = new URL(rawURL);
-		const host = url.hostname.toLowerCase();
-		if (host !== "github.com" && !host.endsWith(".github.com")) return undefined;
-		const [, owner, repoName, kind, number] = url.pathname.split("/");
-		if ((kind !== "pull" && kind !== "issues") || !owner || !repoName || !number) return undefined;
-		if (Number(number) !== expectedNumber) return undefined;
-		return `github:${host}/${owner.toLowerCase()}/${repoName.toLowerCase()}#${number}`;
-	} catch {
-		return undefined;
-	}
-}
-
-function prTransferAliasIdentity(pr: SessionPRSummary): string | undefined {
-	const github = githubPRAliasParts(pr.htmlUrl || pr.url, pr.number);
-	if (!github) return undefined;
-	const sourceBranch = normalizedAliasPart(pr.sourceBranch);
-	const headSha = normalizedAliasPart(pr.headSha);
-	if (!sourceBranch || !headSha) return undefined;
-	return [
-		"github-transfer",
-		github.host,
-		github.repoName,
-		String(pr.number),
-		sourceBranch,
-		normalizedAliasPart(pr.targetBranch),
-		headSha,
-	].join("|");
-}
-
-function githubPRAliasParts(rawURL: string, expectedNumber: number): { host: string; repoName: string } | undefined {
-	try {
-		const url = new URL(rawURL);
-		const host = url.hostname.toLowerCase();
-		if (host !== "github.com" && !host.endsWith(".github.com")) return undefined;
-		const [, owner, repoName, kind, number] = url.pathname.split("/");
-		if ((kind !== "pull" && kind !== "issues") || !owner || !repoName || !number) return undefined;
-		if (Number(number) !== expectedNumber) return undefined;
-		return { host, repoName: repoName.toLowerCase() };
-	} catch {
-		return undefined;
-	}
-}
-
-function normalizedAliasPart(value: string): string {
-	return value.trim().toLowerCase();
 }
 
 function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts): SessionPRSummary {
