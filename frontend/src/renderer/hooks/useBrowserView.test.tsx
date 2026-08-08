@@ -1,11 +1,13 @@
 import { resetConsumedPreviewTriggersForTest, useBrowserView, type BrowserNavState } from "./useBrowserView";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BrowserMirrorFrame } from "../../main/browser-view-host";
 
 type Listener = (state: BrowserNavState) => void;
 type TabsListener = (state: import("../../main/browser-view-host").BrowserTabsState) => void;
 type DevToolsListener = (state: import("../../main/browser-view-host").BrowserDevToolsState) => void;
+type ActivityListener = (state: import("../../main/browser-view-host").BrowserAgentActivityState) => void;
 
 function createSlot(rect: Partial<DOMRect> = {}) {
 	const slot = document.createElement("div");
@@ -29,6 +31,7 @@ function setupBridge() {
 	const listeners = new Set<Listener>();
 	const tabsListeners = new Set<TabsListener>();
 	const devtoolsListeners = new Set<DevToolsListener>();
+	const activityListeners = new Set<ActivityListener>();
 	const bridge = {
 		stateFor(viewId: string): BrowserNavState {
 			return {
@@ -105,6 +108,10 @@ function setupBridge() {
 			devtoolsListeners.add(listener);
 			return () => devtoolsListeners.delete(listener);
 		}),
+		onAgentActivity: vi.fn((listener: ActivityListener) => {
+			activityListeners.add(listener);
+			return () => activityListeners.delete(listener);
+		}),
 		onAnnotationSubmit: vi.fn(() => () => undefined),
 		onAnnotationCancel: vi.fn(() => () => undefined),
 		emit(state: BrowserNavState) {
@@ -115,6 +122,9 @@ function setupBridge() {
 		},
 		emitDevTools(state: Parameters<DevToolsListener>[0]) {
 			devtoolsListeners.forEach((listener) => listener(state));
+		},
+		emitActivity(state: Parameters<ActivityListener>[0]) {
+			activityListeners.forEach((listener) => listener(state));
 		},
 	};
 	window.ao = { ...window.ao!, browser: bridge };
@@ -875,6 +885,48 @@ describe("useBrowserView", () => {
 		);
 		expect(result.current.navState.url).toBe("http://localhost:5173/");
 		expect(result.current.navState.title).toBe("Local app");
+	});
+
+	it("never exposes a departed session's leftover navState, even transiently, once sessionId changes", async () => {
+		// `navState` is component state, not derived from `sessionId` — without a
+		// synchronous ownership guard, the hook returns the PREVIOUS session's
+		// stale url for one render before its own reset effect lands. A
+		// consumer that decides whether to auto-open a browser tab from
+		// `navState.url` (e.g. SessionView) could read that stale render and
+		// wrongly treat a departed session's leftover URL as this session's own
+		// content. An effect that observes every committed render, not just the
+		// final settled one, is the only way to catch a transient wrong value —
+		// checking `result.current` after `rerender` proves nothing here, since
+		// testing-library's `act` flushes any reset effect before returning.
+		const bridge = setupBridge();
+		const observedUrls: string[] = [];
+		function useProbe(sid: string) {
+			const view = useBrowserView({ sessionId: sid, active: true, poppedOut: false });
+			useEffect(() => {
+				observedUrls.push(view.navState.url);
+			});
+			return view;
+		}
+		const { rerender } = renderHook(({ sessionId }) => useProbe(sessionId), {
+			initialProps: { sessionId: "sess-1" },
+		});
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+
+		observedUrls.length = 0;
+		rerender({ sessionId: "sess-2" });
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-2"));
+
+		expect(observedUrls).not.toContain("http://localhost:3000/");
 	});
 
 	it("navigates on each preview revision, including a same-URL re-run, and ignores replays", async () => {

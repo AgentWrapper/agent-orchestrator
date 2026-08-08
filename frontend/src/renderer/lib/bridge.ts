@@ -133,6 +133,7 @@ export const aoBridge: AoBridge =
 			setAnnotationMode: async () => undefined,
 			onNavState: () => () => undefined,
 			onTabsState: () => () => undefined,
+			onAgentActivity: () => () => undefined,
 			onDevToolsState: () => () => undefined,
 			onAnnotationSubmit: () => () => undefined,
 			onAnnotationCancel: () => () => undefined,

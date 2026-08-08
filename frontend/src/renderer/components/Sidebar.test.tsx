@@ -249,6 +249,21 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("suppresses focus chrome without removing keyboard focusability", () => {
+		renderSidebar();
+
+		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveClass("sidebar-focusless");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveAttribute("tabindex", "0");
+	});
+
+	it("aligns the Settings footer hairline and row height with the board Archive bar", () => {
+		renderSidebar();
+
+		const footer = document.querySelector('[data-sidebar="footer"]');
+		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
+	});
+
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
 		renderSidebar();
 
@@ -1047,10 +1062,41 @@ describe("Sidebar", () => {
 		renderSidebar();
 
 		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		const actionCluster = screen.getByLabelText("Project actions for Project One").parentElement;
 
 		if (!projectRow) throw new Error("Project row button not found");
-		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
+		expect(actionCluster).toHaveAttribute("data-project-actions");
+		expect(actionCluster).toHaveClass("right-0.5", "gap-px");
+		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(2);
+		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
+	});
+
+	it("scales project actions with the row without scaling for action-button presses", () => {
+		renderSidebar();
+
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		const pressSurface = projectRow?.closest<HTMLElement>("[data-project-press]");
+		const projectActions = screen.getByLabelText("Project actions for Project One");
+
+		if (!projectRow || !pressSurface) throw new Error("Project press surface not found");
+		expect(pressSurface).toContainElement(projectActions);
+
+		fireEvent.pointerDown(projectRow);
+		expect(pressSurface).toHaveClass("scale-[0.98]");
+		fireEvent.pointerUp(projectRow);
+		expect(pressSurface).not.toHaveClass("scale-[0.98]");
+
+		fireEvent.pointerDown(projectActions);
+		expect(pressSurface).not.toHaveClass("scale-[0.98]");
+	});
+
+	it("optically aligns the project folder and label with its action icons", () => {
+		renderSidebar();
+
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		expect(projectRow?.querySelector("[data-project-folder-visual]")).toHaveClass("translate-y-px");
+		expect(projectRow?.querySelector("[data-project-label]")).toHaveClass("translate-y-px");
 	});
 
 	it("clamps width at minimum when dragged past the resize floor (no auto-collapse)", async () => {
@@ -1100,7 +1146,7 @@ describe("Sidebar", () => {
 		}
 	});
 
-	it("animates active sidebar dots using their PR context color", async () => {
+	it("renders active activity as pulsing blue regardless of PR context", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1160,10 +1206,8 @@ describe("Sidebar", () => {
 				},
 			],
 		});
-
-
 		const sessionDot = (title: string) =>
-			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("span.rounded-full");
+			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("[data-session-status]");
 
 		expect(sessionDot("idle task")).toHaveClass("bg-status-idle");
 		expect(sessionDot("idle task")).not.toHaveClass("animate-status-pulse");
@@ -1173,12 +1217,12 @@ describe("Sidebar", () => {
 		expect(workingDot).toHaveClass("animate-status-pulse");
 
 		const ciFailedDot = sessionDot("ci failed task");
-		expect(ciFailedDot).toHaveClass("bg-status-needs-you");
+		expect(ciFailedDot).toHaveClass("bg-status-working");
 		expect(ciFailedDot).toHaveClass("animate-status-pulse");
 
-		expect(sessionDot("review task")).toHaveClass("bg-status-in-review", "animate-status-pulse");
-		expect(sessionDot("ready task")).toHaveClass("bg-status-ready", "animate-status-pulse");
-		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
+		expect(sessionDot("review task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("ready task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("merged task")).toHaveClass("bg-status-working", "animate-status-pulse");
 	});
 
 	it("renders a static gray dot for idle activity across session statuses", async () => {

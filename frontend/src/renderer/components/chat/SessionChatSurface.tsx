@@ -19,6 +19,7 @@ import {
 	useStageAttachments,
 	useWorkspaceFilePaths,
 } from "../../hooks/useConversation";
+import { useSessionBrowserLink } from "../../hooks/useSessionBrowserLink";
 import { can } from "../../types/conversation";
 import type { WorkspaceSession } from "../../types/workspace";
 
@@ -62,6 +63,7 @@ export function SessionChatSurface({
 	const { skills } = useConversationSkills(session.id, Boolean(snapshot));
 	const { paths, truncated } = useWorkspaceFilePaths(session.id, Boolean(snapshot));
 	const stageAttachments = useStageAttachments(session.id);
+	const openLinkInBrowser = useSessionBrowserLink(session);
 
 	if (isLoading) {
 		return (
@@ -105,6 +107,7 @@ export function SessionChatSurface({
 	return (
 		<ChatWorkspace
 			snapshot={snapshot}
+			onLinkOpen={openLinkInBrowser}
 			sessionTitle={session.title}
 			sessionRole={session.kind}
 			headerActions={headerActions}

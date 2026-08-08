@@ -278,7 +278,10 @@ type Manager struct {
 	// actually became active (the agent accepted the prompt). New fills in the
 	// sendConfirm* defaults; tests in this package shrink the timings directly.
 	sendConfirm sendConfirmConfig
-	logger      *slog.Logger
+	// interfaceTransition bounds only contradictory stale-idle proof. Turns and
+	// user-paced waits reported through the activity boundary remain unbounded.
+	interfaceTransition interfaceTransitionConfig
+	logger              *slog.Logger
 
 	// shellTerminalsMu guards shellTerminals: it is late-bound (see
 	// ShellTerminalCloser) after Manager already exists, so a setter mutates it
@@ -420,6 +423,15 @@ type sendConfirmConfig struct {
 	maxAttempts int
 }
 
+// interfaceTransitionConfig keeps reported human-paced work unbounded while
+// making the contradictory stale-idle proof window short and testable. Only an
+// idle row older than accepted PTY input consumes staleIdleLimit.
+type interfaceTransitionConfig struct {
+	pollInterval   time.Duration
+	idleSettle     time.Duration
+	staleIdleLimit time.Duration
+}
+
 // Production sendConfirm bounds: 3 Enters total (1 from Send + 2 re-sends),
 // each given 2s to flip the session active, polled every 300ms.
 const (
@@ -491,6 +503,11 @@ func New(d Deps) *Manager {
 			pollInterval:    sendConfirmPollInterval,
 			attemptDeadline: sendConfirmAttemptDeadline,
 			maxAttempts:     sendConfirmMaxAttempts,
+		},
+		interfaceTransition: interfaceTransitionConfig{
+			pollInterval:   interfaceTransitionPoll,
+			idleSettle:     interfaceTransitionIdleSettle,
+			staleIdleLimit: interfaceTransitionStaleIdleLimit,
 		},
 		logger: d.Logger,
 	}
@@ -1428,23 +1445,38 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	if rec.IsTerminated {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrTerminated)
 	}
-	if rec.Activity.State != domain.ActivityExited {
+	mode := domain.NormalizeSessionMode(rec.Mode)
+	if mode == domain.SessionModeChat && m.chat != nil && m.chat.HasLiveChatController(id) {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
 	}
-	meta := rec.Metadata
-	if meta.WorkspacePath == "" || meta.Branch == "" || meta.RuntimeHandleID == "" {
-		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrIncompleteHandle)
+	if rec.Activity.State != domain.ActivityExited {
+		// Builds before the controller-stop lifecycle fix can leave a Chat row
+		// idle, active, or blocked even though no controller survived. The live
+		// registry is authoritative for whether a duplicate Chat controller could
+		// be created, so recover only when it confirms there is none. TUI keeps its
+		// existing durable-exited precondition.
+		if mode != domain.SessionModeChat || m.chat == nil {
+			return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
+		}
 	}
-
 	project, err := m.loadProject(ctx, rec.ProjectID)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, err)
+	}
+	meta := rec.Metadata
+	if meta.WorkspacePath == "" ||
+		(meta.Branch == "" && project.Kind.WithDefault() != domain.ProjectKindScratch) ||
+		(mode != domain.SessionModeChat && meta.RuntimeHandleID == "") {
+		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrIncompleteHandle)
 	}
 	ws := ports.WorkspaceInfo{
 		Path:      meta.WorkspacePath,
 		Branch:    meta.Branch,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
+	}
+	if mode == domain.SessionModeChat {
+		return m.relaunchSession(ctx, "resume agent", rec, project, ws, nil)
 	}
 	handle := ports.RuntimeHandle{ID: meta.RuntimeHandleID}
 	return m.relaunchSession(ctx, "resume agent", rec, project, ws, &handle)
@@ -1485,6 +1517,8 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
 		if forceFresh {
 			rec.Metadata.ProviderConversationID = ""
+		} else if strings.TrimSpace(rec.Metadata.ProviderConversationID) == "" {
+			return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, ErrIncompleteHandle)
 		}
 		return m.resumeChatController(ctx, operation, rec, project, ws)
 	}

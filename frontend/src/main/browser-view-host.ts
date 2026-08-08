@@ -115,6 +115,14 @@ export type BrowserTabsState = {
 	};
 };
 
+export type BrowserAgentActivityState = {
+	viewId: string;
+	active: boolean;
+	action: string;
+	phase?: "started" | "finished";
+	commandId?: string;
+};
+
 export type BrowserDevToolsState = {
 	viewId: string;
 	open: boolean;
@@ -259,6 +267,7 @@ type BrowserSessionEntry = {
 	visible: boolean;
 	parked: boolean;
 	networkTabId?: string;
+	agentBrowserCommands: number;
 	nativeActiveTabId?: string;
 	nativeOperationQueue: Promise<void>;
 	devtools?: {
@@ -400,6 +409,22 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	let lastFocusedViewId: string | null = null;
 	const forgetIfFocused = (viewId: string): void => {
 		if (lastFocusedViewId === viewId) lastFocusedViewId = null;
+	};
+	const setAgentBrowserActivity = (
+		session: BrowserSessionEntry,
+		action: string,
+		active: boolean,
+		commandId?: string,
+		phase?: BrowserAgentActivityState["phase"],
+	): void => {
+		session.agentBrowserCommands = Math.max(0, session.agentBrowserCommands + (active ? 1 : -1));
+		options.mainWindow.webContents.send("browser:agentActivity", {
+			viewId: session.viewId,
+			active: session.agentBrowserCommands > 0,
+			action,
+			...(phase ? { phase } : {}),
+			...(commandId ? { commandId } : {}),
+		} satisfies BrowserAgentActivityState);
 	};
 	const applyBrowserViewBounds = (view: BrowserViewLike, bounds: BrowserRect, visible?: boolean): void => {
 		view.setBounds(bounds);
@@ -575,6 +600,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				zoomFactor: 1,
 				visible: false,
 				parked: false,
+				agentBrowserCommands: 0,
 				nativeOperationQueue: Promise.resolve(),
 			};
 			entries.set(viewId, session);
@@ -1186,7 +1212,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				return { destroyed: Boolean(viewId) };
 			}
 			const session = ensureSession(sessionId);
-			const entry = activeEntry(session);
+			const commandId = randomUUID();
+			setAgentBrowserActivity(session, action, true, commandId, "started");
+			try {
+				const entry = activeEntry(session);
 			const runNative = async (nativeAction: string, nativeArgs: Record<string, unknown> = {}) => {
 				if (!options.agentBrowserRuntime) {
 					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
@@ -1325,6 +1354,9 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 					return normalizeNativeMessages(await runNative(action), action);
 				default:
 					throw browserError("INVALID_ARGUMENT", `Unsupported browser action: ${action}`);
+			}
+			} finally {
+				setAgentBrowserActivity(session, action, false, commandId, "finished");
 			}
 		},
 		dispose: () => {

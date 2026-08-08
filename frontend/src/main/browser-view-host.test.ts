@@ -608,6 +608,29 @@ describe("browser:capture", () => {
 });
 
 describe("agent browser runtime", () => {
+	it("emits started and finished activity with one command id", async () => {
+		const { host, sent } = setupHost();
+
+		await host.execute("sess-1", "tabs");
+
+		const activity = sent.filter((event) => event.channel === "browser:agentActivity");
+		expect(activity).toHaveLength(2);
+		expect(activity[0]?.payload).toMatchObject({
+			viewId: "0:sess-1",
+			active: true,
+			action: "tabs",
+			phase: "started",
+			commandId: expect.any(String),
+		});
+		expect(activity[1]?.payload).toMatchObject({
+			viewId: "0:sess-1",
+			active: false,
+			action: "tabs",
+			phase: "finished",
+			commandId: (activity[0]?.payload as { commandId: string }).commandId,
+		});
+	});
+
 	it("waits for a new blank target before native automation starts", async () => {
 		let releaseBlank: (() => void) | undefined;
 		const blankReady = new Promise<void>((resolve) => {

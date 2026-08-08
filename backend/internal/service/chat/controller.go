@@ -1207,6 +1207,12 @@ func (c *Controller) project() {
 	// was blocking is gone. Both are closed out honestly rather than left looking
 	// live forever.
 	now := c.now()
+	// The provider stream ending is the one universal stop signal. Some drivers
+	// emit an explicit controller-state event first, but a process crash or lost
+	// transport cannot. Report the same lifecycle boundary here so the session
+	// does not remain durably active, idle, or blocked after its controller died.
+	// ControllerGeneration fences this write from a replacement controller.
+	c.reportActivity(ctx, domain.ActivityExited, "chat.controller.stopped", now)
 	if err := c.store.SettleOrphanedTurns(ctx, c.sessionID, now); err != nil {
 		c.log.Error("failed to settle orphaned turns", "session", c.sessionID, "error", err)
 	}

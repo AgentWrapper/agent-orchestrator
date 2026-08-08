@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
+	BrowserAgentActivityState,
 	BrowserDevToolsState,
 	BrowserMirrorFrame,
 	BrowserNavState,
@@ -62,6 +63,8 @@ export type BrowserViewModel = {
 	prepareForOverlay: () => Promise<void>;
 	finishOverlay: () => void;
 	visualTransition: BrowserVisualTransition | null;
+	agentBrowserActive: boolean;
+	agentBrowserActivity: BrowserAgentActivityState | null;
 	destroy: () => void;
 	annotationMode: boolean;
 	setAnnotationMode: (enabled: boolean) => Promise<void>;
@@ -169,6 +172,9 @@ export function useBrowserView({
 	const [devtoolsState, setDevtoolsState] = useState<BrowserDevToolsState>(EMPTY_DEVTOOLS_STATE);
 	const [tabNotice, setTabNotice] = useState("");
 	const [visualTransition, setVisualTransition] = useState<BrowserVisualTransition | null>(null);
+	const [agentBrowserActive, setAgentBrowserActive] = useState(false);
+	const [agentBrowserActivity, setAgentBrowserActivity] = useState<BrowserAgentActivityState | null>(null);
+	const [stateSessionId, setStateSessionId] = useState(sessionId);
 	const slotNodeRef = useRef<HTMLDivElement | null>(null);
 	const viewIdRef = useRef("");
 	const annotationModeRef = useRef(false);
@@ -344,10 +350,15 @@ export function useBrowserView({
 		// switches, so seed from the per-session consumed trigger to avoid
 		// reasserting previewUrl over manual navigation on switch-back.
 		previewTriggerRef.current = hasNativeBrowser ? (consumedPreviewTriggers.get(sessionId) ?? null) : null;
+		setStateSessionId(sessionId);
+		setViewId("");
+		setNavState(EMPTY_NAV_STATE);
 		setTabsState(EMPTY_TABS_STATE);
 		setDevtoolsState(EMPTY_DEVTOOLS_STATE);
 		setTabNotice("");
 		setVisualTransition(null);
+		setAgentBrowserActive(false);
+		setAgentBrowserActivity(null);
 		clearVisualTransitionTimer();
 		if (tabNoticeTimerRef.current !== null) {
 			window.clearTimeout(tabNoticeTimerRef.current);
@@ -436,6 +447,14 @@ export function useBrowserView({
 		return window.ao?.browser.onDevToolsState((state) => {
 			if (state.viewId !== viewIdRef.current) return;
 			setDevtoolsState(state);
+		});
+	}, []);
+
+	useEffect(() => {
+		return window.ao?.browser.onAgentActivity((state) => {
+			if (state.viewId !== viewIdRef.current) return;
+			setAgentBrowserActive(state.active);
+			setAgentBrowserActivity(state);
 		});
 	}, []);
 
@@ -745,27 +764,35 @@ export function useBrowserView({
 		destroy();
 	}, [destroy, sessionId, terminated, viewId]);
 
+	// Hook state survives a `sessionId` prop change until the reset effect above
+	// commits. Keep navigation, tab, and activity state hidden during that
+	// intervening render so consumers can never interpret the departed session's
+	// state as belonging to the destination session.
+	const stateBelongsToSession = stateSessionId === sessionId;
+
 	return {
-		viewId,
-		navState,
-		mirrorFrame,
+		viewId: stateBelongsToSession ? viewId : "",
+		navState: stateBelongsToSession ? navState : EMPTY_NAV_STATE,
+		mirrorFrame: stateBelongsToSession ? mirrorFrame : null,
 		slotRef,
 		navigate,
 		goBack: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goBack(id)) : Promise.resolve()),
 		goForward: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.goForward(id)) : Promise.resolve()),
 		reload: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.reload(id)) : Promise.resolve()),
 		stop: () => (hasNativeBrowser ? withView((id) => window.ao!.browser.stop(id)) : Promise.resolve()),
-		tabs: tabsState.tabs,
-		activeTabId: tabsState.activeTabId,
-		tabNotice,
+		tabs: stateBelongsToSession ? tabsState.tabs : [],
+		activeTabId: stateBelongsToSession ? tabsState.activeTabId : "",
+		tabNotice: stateBelongsToSession ? tabNotice : "",
 		selectTab,
 		closeTab,
-		devtoolsState,
+		devtoolsState: stateBelongsToSession ? devtoolsState : EMPTY_DEVTOOLS_STATE,
 		openDevTools: () => runDevtools("open"),
 		closeDevTools: () => runDevtools("close"),
 		prepareForOverlay,
 		finishOverlay,
-		visualTransition,
+		visualTransition: stateBelongsToSession ? visualTransition : null,
+		agentBrowserActive: stateBelongsToSession && agentBrowserActive,
+		agentBrowserActivity: stateBelongsToSession ? agentBrowserActivity : null,
 		destroy,
 		annotationMode,
 		setAnnotationMode,

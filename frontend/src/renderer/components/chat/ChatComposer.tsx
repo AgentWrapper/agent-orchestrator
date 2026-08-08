@@ -153,6 +153,23 @@ export function ChatComposer({
 	const pendingCaret = useRef<number | null>(null);
 	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
 	const menuId = useId();
+	/** Match the field to its content until CSS's seven-line cap takes over. */
+	const resizeTextarea = useCallback(() => {
+		const node = textarea.current;
+		if (!node) return;
+		// Reset first so deleting a draft shrinks the field as well as growing it.
+		node.style.height = "0px";
+		node.style.overflowY = "hidden";
+
+		const contentHeight = node.scrollHeight;
+		const maxHeight = Number.parseFloat(window.getComputedStyle(node).maxHeight);
+		const cappedHeight = Number.isFinite(maxHeight)
+			? Math.min(contentHeight, maxHeight)
+			: contentHeight;
+
+		node.style.height = `${cappedHeight}px`;
+		node.style.overflowY = contentHeight > cappedHeight ? "auto" : "hidden";
+	}, []);
 
 	const fileAttachments = useFileAttachments();
 	const canAttach = Boolean(onStageAttachments);
@@ -197,6 +214,25 @@ export function ChatComposer({
 		setText(next);
 		setCaret(nextCaret);
 	}, []);
+
+	useLayoutEffect(() => {
+		resizeTextarea();
+	}, [resizeTextarea, text]);
+
+	useEffect(() => {
+		const node = textarea.current;
+		if (!node || typeof ResizeObserver === "undefined") return;
+
+		let width = node.clientWidth;
+		const observer = new ResizeObserver(([entry]) => {
+			const nextWidth = entry?.contentRect.width ?? width;
+			if (nextWidth === width) return;
+			width = nextWidth;
+			resizeTextarea();
+		});
+		observer.observe(node);
+		return () => observer.disconnect();
+	}, [resizeTextarea]);
 
 	useLayoutEffect(() => {
 		const target = pendingCaret.current;
@@ -459,7 +495,7 @@ export function ChatComposer({
 									? "Ask the agent…  /  for skills, @ for files"
 									: "Ask the agent…  @ for files"
 				}
-				className="max-h-48 min-h-[3.25rem] w-full resize-none bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
+				className="chat-composer-scrollbar max-h-40 min-h-[3.25rem] w-full resize-none overflow-y-hidden overscroll-contain bg-transparent px-1.5 py-1.5 text-sm leading-relaxed text-foreground outline-none placeholder:text-passive disabled:opacity-50"
 			/>
 
 			{attachmentError ? (
