@@ -6912,6 +6912,7 @@ components:
           - kilocode
           - vibe
           - pi
+          - kimchi
           - autohand
           type: string
         issueId:
