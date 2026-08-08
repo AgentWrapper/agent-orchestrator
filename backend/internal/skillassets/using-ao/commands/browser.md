@@ -17,18 +17,18 @@ This is the automation interface for AO's visible desktop Browser panel. Do not 
 
 If the task first requires choosing, starting, or opening a preview target,
 read [preview.md](preview.md) and follow its static-file/project-runtime
-decision. Once the relevant page is known:
+decision.
+
+Use the ordinary AO commands below. AO binds its browser engine to the current
+worker's visible Browser panel automatically; there is no separate native
+command, connection flag, profile, or setup step:
 
 ```bash
-ao browser status
 ao browser open http://localhost:5173
-ao browser snapshot
-ao browser click e1
+ao browser snapshot --interactive
 ao browser fill e2 "hello"
-ao browser press Enter
-ao browser hover e3
+ao browser click e3
 ao browser wait --text "Saved"
-ao browser snapshot
 ao browser errors
 ```
 
@@ -41,16 +41,23 @@ ao browser status [--json]
 ao browser open <url> [--json]
 ao browser snapshot [--interactive] [--json]
 ao browser click <ref> [--json]
+ao browser dblclick <ref> [--json]
+ao browser focus <ref> [--json]
 ao browser fill <ref> <text> [--json]
 ao browser type <ref> <text> [--json]
 ao browser press <key> [--json]
 ao browser hover <ref> [--json]
+ao browser scrollintoview <ref> [--json]
+ao browser drag <source-ref> <target-ref> [--json]
 ao browser highlight <ref> [--json]
 ao browser unhighlight [--json]
 ao browser tabs [--json]
 ao browser tab new [url] [--json]
 ao browser tab select <tab-id> [--json]
 ao browser tab close [tab-id] [--json]
+ao browser devtools [--json]
+ao browser devtools open [--json]
+ao browser devtools close [--json]
 ao browser scroll <up|down|left|right> [--amount <pixels>] [--json]
 ao browser select <ref> <value> [--json]
 ao browser check <ref> [--json]
@@ -65,6 +72,10 @@ ao browser network stop [--json]
 ao browser network clear [--json]
 ao browser console [--json]
 ao browser errors [--json]
+ao browser frame <ref|main> [--json]
+ao browser dialog accept [text] [--json]
+ao browser dialog dismiss [--json]
+ao browser dialog status [--json]
 ```
 
 `fill` replaces the current value, while `type` inserts text at the current
@@ -81,6 +92,17 @@ OS browser. Take a new snapshot after switching tabs because element refs are
 invalidated at the tab boundary. The user can select or close these same tabs
 from the compact tab control in the Browser toolbar; the next agent command
 uses whichever tab the user selected.
+`devtools` opens Chromium's official DevTools frontend for the active AO tab in
+a separate, normal desktop window. The user can use Elements, Console, Network,
+Sources, and the other normal DevTools panels while the agent continues using
+the same worker-scoped browser target. The Browser toolbar button, the titlebar
+View menu, and Ctrl+Shift+I (Cmd+Option+I on macOS) expose the same surface.
+Close the detached window with its normal window close control; the Browser
+toolbar button is also available to reopen it. DevTools is a user-facing
+debugging surface, not a second browser; never copy its private CDP endpoint
+into agent output. Agent commands should open or close it only when the user
+explicitly asks; use the structured console, errors, and network commands for
+agent-side diagnosis without stealing window focus.
 Use `wait --load` after navigation, `--text-gone` or `--selector-gone` for
 transient UI, and `--dom-stable <ms>` after HMR or a dynamic render. Conditional
 waits retry through brief execution-context replacement during navigation and

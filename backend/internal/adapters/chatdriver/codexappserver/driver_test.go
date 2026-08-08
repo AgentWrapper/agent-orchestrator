@@ -791,14 +791,15 @@ func TestNoTurnSettingsSendsNoSettingsFields(t *testing.T) {
 	}
 }
 
-// The catalog is the provider's. Hidden models are dropped because the provider
-// marks them hidden when the account should not be offered them, and offering one
-// anyway is a choice that then fails.
-func TestListModelsDropsHiddenAndKeepsProviderOrder(t *testing.T) {
+// The catalog is the provider's. Hidden models are dropped because offering one
+// would fail, while the opened thread's effort is more specific than the generic
+// model default returned by model/list.
+func TestListModelsKeepsCatalogAndUsesThreadEffort(t *testing.T) {
 	d, srv := newTestDriver(t)
 	// Scripted before Start: the server goroutine reads this map, so writing it
 	// afterwards would race the connection it is already serving.
-	srv.reply("model/list", `{"data":[{"id":"a","displayName":"Model A","description":"first","isDefault":true,"hidden":false,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"high"}]},{"id":"secret","displayName":"Hidden","isDefault":false,"hidden":true,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]},{"id":"b","displayName":"Model B","isDefault":false,"hidden":false,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]}]}`)
+	srv.reply("thread/start", `{"thread":{"id":"thread-1"},"model":"a","reasoningEffort":"xhigh","cwd":"/tmp/ws"}`)
+	srv.reply("model/list", `{"data":[{"id":"a","displayName":"Model A","description":"first","isDefault":true,"hidden":false,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"xhigh"}]},{"id":"secret","displayName":"Hidden","isDefault":false,"hidden":true,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]},{"id":"b","displayName":"Model B","isDefault":false,"hidden":false,"defaultReasoningEffort":"low","supportedReasoningEfforts":[]}]}`)
 
 	conv, err := d.Start(context.Background(), ports.ChatStartConfig{WorkspacePath: "/tmp/ws"})
 	if err != nil {
@@ -824,11 +825,11 @@ func TestListModelsDropsHiddenAndKeepsProviderOrder(t *testing.T) {
 	if !models[0].Default {
 		t.Error("the provider's default was not carried through")
 	}
-	if got := models[0].Efforts; len(got) != 2 || got[0] != "low" || got[1] != "high" {
-		t.Errorf("efforts = %v, want [low high]", got)
+	if got := models[0].Efforts; len(got) != 2 || got[0] != "low" || got[1] != "xhigh" {
+		t.Errorf("efforts = %v, want [low xhigh]", got)
 	}
-	if models[0].DefaultEffort != "medium" {
-		t.Errorf("default effort = %q, want medium", models[0].DefaultEffort)
+	if models[0].DefaultEffort != "xhigh" {
+		t.Errorf("default effort = %q, want the thread's xhigh", models[0].DefaultEffort)
 	}
 }
 

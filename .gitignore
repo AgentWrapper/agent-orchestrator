@@ -77,6 +77,9 @@ frontend/test-results/
 frontend/daemon/
 frontend/resources/acp-runtime/
 
+# pinned native browser automation binary copied during package preparation
+frontend/agent-browser/
+
 # Locally-added agent skills (not for the team), except curated project skills
 .agents/
 !.agents/

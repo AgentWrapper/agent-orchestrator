@@ -769,4 +769,153 @@ describe("SessionFilesView", () => {
 			expect(body.message).not.toContain("const value = 1;");
 		});
 	});
+
+	describe("large diff virtualization", () => {
+		// jsdom has no real layout engine — getBoundingClientRect/clientHeight
+		// are 0 for every element by default, which would make the virtualizer
+		// see a zero-height viewport and render nothing. Mock a realistic
+		// viewport so its visible-range math has something real to work with;
+		// scrollTop is a plain settable property in jsdom, so simulating scroll
+		// (set scrollTop, fire "scroll") drives the virtualizer for real.
+		const VIEWPORT_HEIGHT = 600;
+
+		beforeEach(() => {
+			vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+				top: 0,
+				left: 0,
+				right: 800,
+				bottom: VIEWPORT_HEIGHT,
+				width: 800,
+				height: VIEWPORT_HEIGHT,
+				x: 0,
+				y: 0,
+				toJSON() {
+					return this;
+				},
+			});
+			vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(VIEWPORT_HEIGHT);
+			vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(VIEWPORT_HEIGHT);
+			vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(800);
+		});
+
+		afterEach(() => {
+			vi.restoreAllMocks();
+		});
+
+		function bigModifiedDiff(lineCount: number) {
+			const hunkLines: string[] = [`@@ -1,${lineCount} +1,${lineCount} @@`];
+			for (let i = 0; i < lineCount; i += 1) {
+				hunkLines.push(`-old line ${i} with some content to diff against`);
+				hunkLines.push(`+new line ${i} with some different content entirely`);
+			}
+			return "diff --git a/big.txt b/big.txt\nindex 111..222 100644\n--- a/big.txt\n+++ b/big.txt\n" + hunkLines.join("\n") + "\n";
+		}
+
+		function mockBigFile(diff: string, lineCount: number) {
+			getMock.mockImplementation(async (path: string, options?: unknown) => {
+				if (path === "/api/v1/sessions/{sessionId}/workspace/files") {
+					return {
+						data: {
+							sessionId: "sess-1",
+							truncated: false,
+							files: [
+								{ path: "big.txt", status: "modified", additions: lineCount, deletions: lineCount, size: 20000, binary: false },
+							],
+						},
+					};
+				}
+				if (path === "/api/v1/sessions/{sessionId}/workspace/file") {
+					const query = options as { params?: { query?: { path?: string } } };
+					return {
+						data: {
+							sessionId: "sess-1",
+							path: query.params?.query?.path ?? "big.txt",
+							status: "modified",
+							additions: lineCount,
+							deletions: lineCount,
+							size: 20000,
+							binary: false,
+							deleted: false,
+							content: "irrelevant",
+							contentTruncated: false,
+							diff,
+							diffTruncated: false,
+							compareBaseSha: "base-sha",
+							compareBaseRef: "main",
+							compareMode: "base",
+						},
+					};
+				}
+				return { data: undefined };
+			});
+		}
+
+		it("opens a large diff without hanging, mounting far fewer DOM rows than the diff has", async () => {
+			const lineCount = 400;
+			mockBigFile(bigModifiedDiff(lineCount), lineCount);
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand big.txt" }));
+
+			await waitFor(() =>
+				expect(screen.getByText(diffLine("new line 0 with some different content entirely"))).toBeInTheDocument(),
+			);
+
+			const mountedRows = document.querySelectorAll("[data-diff-row]").length;
+			// lineCount*2 (del+add) + 1 hunk row is the fully-unvirtualized count;
+			// a real viewport-sized window plus overscan should be a small
+			// fraction of that.
+			expect(mountedRows).toBeGreaterThan(0);
+			expect(mountedRows).toBeLessThan(lineCount);
+
+			// Never reaches the last line without scrolling — proves it's actually
+			// windowed, not just slow to reveal everything.
+			expect(screen.queryByText(diffLine(`new line ${lineCount - 1} with some different content entirely`))).not.toBeInTheDocument();
+		});
+
+		it("loads more rows as the shared scroll container scrolls", async () => {
+			const lineCount = 400;
+			mockBigFile(bigModifiedDiff(lineCount), lineCount);
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand big.txt" }));
+			await waitFor(() =>
+				expect(screen.getByText(diffLine("new line 0 with some different content entirely"))).toBeInTheDocument(),
+			);
+
+			const scrollRoot = document.querySelector<HTMLElement>("[data-files-scroll-root]");
+			expect(scrollRoot).not.toBeNull();
+			// jsdom doesn't clamp scrollTop against a real scrollHeight, so an
+			// oversized value reliably lands on the last rows regardless of the
+			// virtualizer's exact estimated-vs-measured row height math.
+			scrollRoot!.scrollTop = 999_999;
+			fireEvent.scroll(scrollRoot!);
+
+			await waitFor(() =>
+				expect(
+					screen.queryByText(diffLine(`new line ${lineCount - 1} with some different content entirely`)),
+				).toBeInTheDocument(),
+			);
+		});
+
+		// jsdom has no real Worker implementation, so this exercises
+		// useParsedDiff's exact "worker unavailable" fallback path — the same
+		// path a CSP-blocked or otherwise-broken worker would take in a real
+		// browser. A diff this size (well over the 50,000-char worker
+		// threshold) would otherwise never resolve if that fallback were
+		// broken.
+		it("still renders a diff large enough to route through the parser worker path", async () => {
+			const lineCount = 700;
+			const diff = bigModifiedDiff(lineCount);
+			expect(diff.length).toBeGreaterThan(50_000);
+			mockBigFile(diff, lineCount);
+
+			renderWithQuery(<SessionFilesView sessionId="sess-1" />);
+			await userEvent.click(await screen.findByRole("button", { name: "Expand big.txt" }));
+
+			await waitFor(() =>
+				expect(screen.getByText(diffLine("new line 0 with some different content entirely"))).toBeInTheDocument(),
+			);
+		});
+	});
 });

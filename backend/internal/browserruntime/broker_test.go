@@ -7,9 +7,38 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestReadRuntimeToken(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   string
+		failed bool
+	}{
+		{name: "newline-delimited", input: "secret-token\n", want: "secret-token"},
+		{name: "eof-delimited", input: "secret-token", want: "secret-token"},
+		{name: "empty", input: "\n", failed: true},
+		{name: "too-long", input: strings.Repeat("x", 257), failed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ReadRuntimeToken(strings.NewReader(tt.input))
+			if tt.failed {
+				if err == nil {
+					t.Fatalf("ReadRuntimeToken(%q) succeeded", tt.input)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("ReadRuntimeToken(%q) = %q, %v; want %q", tt.input, got, err, tt.want)
+			}
+		})
+	}
+}
 
 func TestBrokerExecuteRoundTrip(t *testing.T) {
 	broker := New(slog.New(slog.NewTextHandler(io.Discard, nil)))

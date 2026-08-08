@@ -18,7 +18,7 @@ export const SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL =
 	"app:set-close-shell-terminal-shortcut-enabled";
 
 export type AppShortcutId =
-	"new-session" | "new-shell-terminal" | "close-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "previous-tab" | "next-tab" | "focus-terminal";
+	"new-session" | "new-shell-terminal" | "close-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "previous-tab" | "next-tab" | "focus-terminal" | "toggle-browser-devtools";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -117,6 +117,11 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		label: "Focus terminal",
 		category: "Session",
 	},
+	{
+		id: "toggle-browser-devtools",
+		label: "Toggle browser DevTools",
+		category: "Session",
+	},
 ];
 
 const binding = (
@@ -161,6 +166,8 @@ export function defaultShortcutBindings(id: AppShortcutId, isMac: boolean): read
 			return [binding("Tab", { ctrl: true })];
 		case "focus-terminal":
 			return [isMac ? binding("t", { meta: true, shift: true }) : binding("t", { ctrl: true, shift: true })];
+		case "toggle-browser-devtools":
+			return [isMac ? binding("i", { meta: true, alt: true }) : binding("i", { ctrl: true, shift: true })];
 	}
 }
 

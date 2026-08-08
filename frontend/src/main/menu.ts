@@ -1,6 +1,13 @@
 import type { MenuItemConstructorOptions } from "electron";
 
-export function buildWindowsAppMenuTemplate(): MenuItemConstructorOptions[] {
+export function buildWindowsAppMenuTemplate(onToggleDevTools?: () => void): MenuItemConstructorOptions[] {
+	const devtoolsItem: MenuItemConstructorOptions = onToggleDevTools
+		? {
+			label: "Toggle DevTools",
+			accelerator: "Ctrl+Shift+I",
+			click: onToggleDevTools,
+		}
+		: { role: "toggleDevTools" };
 	return [
 		{
 			label: "Edit",
@@ -18,7 +25,7 @@ export function buildWindowsAppMenuTemplate(): MenuItemConstructorOptions[] {
 			label: "View",
 			submenu: [
 				{ role: "reload" },
-				{ role: "toggleDevTools" },
+				devtoolsItem,
 				{ type: "separator" },
 				{ role: "resetZoom" },
 				{ accelerator: "Ctrl+=", role: "zoomIn" },

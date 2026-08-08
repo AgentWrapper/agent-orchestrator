@@ -18,6 +18,7 @@ import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
 import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFileAttachments";
+import { useSettings } from "../hooks/useSettings";
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
@@ -142,6 +143,7 @@ export function TaskComposer({
 		},
 	});
 	const agentsQuery = useQuery(agentsQueryOptions);
+	const { settings } = useSettings();
 	// Freshen the inventory on open so a just-installed or just-authenticated agent
 	// is present without the user asking for it.
 	useEffect(() => {
@@ -174,6 +176,10 @@ export function TaskComposer({
 
 	const selectedAgentLabel =
 		agentCatalog?.supported?.find((item) => item.id === selectedAgent)?.label || selectedAgent;
+	const requiresTuiFallback =
+		selectedAgent !== "" &&
+		settings?.defaultSessionMode === "chat" &&
+		!settings.chatHarnesses.includes(selectedAgent);
 
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
@@ -237,7 +243,7 @@ export function TaskComposer({
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		void submitTask();
+		void submitTask(requiresTuiFallback ? "tui" : undefined);
 	};
 
 	const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {

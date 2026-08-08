@@ -31,11 +31,13 @@ type Info struct {
 	// alive across app quit and is never re-linked; empty = headless `ao start`
 	// daemon, stays persistent across app quit.
 	Owner string `json:"owner,omitempty"`
-	// BrowserRuntimeToken authenticates the desktop-owned browser bridge. It is
-	// regenerated for every daemon launch.
-	BrowserRuntimeToken string `json:"browserRuntimeToken,omitempty"`
+	// AppRunID identifies the desktop launch that supplied the private browser
+	// runtime token. A later desktop launch replaces the daemon instead of
+	// attaching with a token the daemon cannot know.
+	AppRunID string `json:"appRunId,omitempty"`
 	// BrowserRuntimeAddress is the exact Unix socket or Windows named-pipe
-	// address selected by the backend for this daemon launch.
+	// address selected by the backend for this daemon launch. It is a locator,
+	// not an authentication secret; the runtime token stays out of this file.
 	BrowserRuntimeAddress string `json:"browserRuntimeAddress,omitempty"`
 }
 
