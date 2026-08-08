@@ -34,7 +34,7 @@ import type {
 } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
-import { openLinkInSystemBrowser } from "../lib/external-link-policy";
+import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
 import { applyDocumentTheme } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
 import type { Theme } from "../stores/ui-store";
@@ -206,15 +206,6 @@ type TerminalContextMenuState = {
 	// "Open in system browser" item (left-click opens it in the AO Browser).
 	link: string | null;
 };
-
-function isWebLink(uri: string): boolean {
-	try {
-		const { protocol } = new URL(uri);
-		return protocol === "http:" || protocol === "https:";
-	} catch {
-		return false;
-	}
-}
 
 type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear";
 

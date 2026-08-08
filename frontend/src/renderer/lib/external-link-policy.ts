@@ -1,5 +1,14 @@
 import { aoBridge } from "./bridge";
 
+export function isWebLink(url: string): boolean {
+	try {
+		const { protocol } = new URL(url);
+		return protocol === "http:" || protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
 export async function openLinkInSystemBrowser(url: string): Promise<void> {
 	try {
 		await aoBridge.app.openExternal(url);

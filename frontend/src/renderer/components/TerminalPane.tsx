@@ -22,7 +22,8 @@ import {
 	type AttachableTerminal,
 	type TerminalSessionState,
 } from "../hooks/useTerminalSession";
-import { apiClient, getApiBaseUrl } from "../lib/api-client";
+import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
+import { getApiBaseUrl } from "../lib/api-client";
 import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import {
 	createTerminalMux,
@@ -966,40 +967,7 @@ function AttachedTerminal({
 			return;
 		}
 	}, [initFailed, onFatal]);
-	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
-	const setInspectorOpenForSession = useUiStore((state) => state.setInspectorOpen);
-	const handleLinkOpen = useCallback(
-		(uri: string) => {
-			if (!session?.id || session.kind !== "worker" || !isSessionActive) return;
-			try {
-				const url = new URL(uri);
-				if (url.protocol !== "http:" && url.protocol !== "https:") return;
-			} catch {
-				return;
-			}
-			const linkSessionId = session.id;
-			// A left-click is an explicit request to view the link, so open the
-			// Browser tab now (unlike a passive `ao preview`, which only badges it).
-			setInspectorViewForSession(linkSessionId, "browser");
-			setInspectorOpenForSession(linkSessionId, true);
-			void (async () => {
-				try {
-					const { error: previewError } = await apiClient.POST("/api/v1/sessions/{sessionId}/preview", {
-						params: { path: { sessionId: linkSessionId } },
-						body: { url: uri },
-					});
-					if (previewError) {
-						console.warn("Unable to open terminal link in Browser preview", previewError);
-						return;
-					}
-					await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
-				} catch (error) {
-					console.warn("Unable to open terminal link in Browser preview", error);
-				}
-			})();
-		},
-		[isSessionActive, queryClient, session?.id, session?.kind, setInspectorOpenForSession, setInspectorViewForSession],
-	);
+	const handleLinkOpen = useSessionBrowserLink(session);
 	const restoreSession = useCallback(async () => {
 		if (!session?.id || !canRestoreSession || isRestoring) return;
 		setIsRestoring(true);
