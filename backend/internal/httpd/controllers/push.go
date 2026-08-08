@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apispec"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/envelope"
@@ -16,7 +17,7 @@ import (
 // by *mobilebridge.DeviceRegistry.
 type PushRegistry interface {
 	Upsert(dev mobilebridge.PushDevice) error
-	Delete(token string) error
+	DeleteByToken(token string) error
 }
 
 // PushController owns the /push/devices routes: a paired phone registers (and
@@ -52,13 +53,26 @@ func (c *PushController) register(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
 		return
 	}
-	if !mobilebridge.ValidPushToken(req.Token) {
+	// Token is optional: a row represents a paired phone, not a push
+	// registration. An empty token means "no notifications yet" (permission not
+	// granted, or a build that can't mint one); a non-empty one must still be a
+	// well-formed Expo push token.
+	if req.Token != "" && !mobilebridge.ValidPushToken(req.Token) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_PUSH_TOKEN",
 			"token must be a well-formed Expo push token", nil)
 		return
 	}
+	installID := req.InstallID
+	if installID == "" {
+		// Phone builds installed before install IDs existed don't send one. Synthesize
+		// a legacy id rather than rejecting the registration; Upsert's token-adoption
+		// path merges this row into the real one once that phone updates and sends a
+		// genuine install ID. Mirrors LoadRegistry's migration of pre-existing rows.
+		installID = "legacy-" + uuid.NewString()
+	}
 	now := c.now()
 	dev := mobilebridge.PushDevice{
+		InstallID:  installID,
 		Token:      req.Token,
 		Platform:   req.Platform,
 		DeviceName: req.DeviceName,
@@ -86,7 +100,7 @@ func (c *PushController) unregister(w http.ResponseWriter, r *http.Request) {
 	// chi decodes the percent-encoded token (the Expo token's [ ] brackets are
 	// URL-encoded by the client). Deleting an unknown token is a clean no-op.
 	token := chi.URLParam(r, "token")
-	if err := c.Registry.Delete(token); err != nil {
+	if err := c.Registry.DeleteByToken(token); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "PUSH_UNREGISTER", err.Error(), nil)
 		return
 	}

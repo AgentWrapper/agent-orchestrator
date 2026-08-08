@@ -1,5 +1,10 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+// Aliased: this file already declares its own `AppState` type for the
+// provider's context value, so the React Native app-lifecycle API imports
+// under a different name to avoid colliding with it.
+import { AppState as RNAppState } from "react-native";
+import { shouldPoll } from "./appStatePoll";
 import {
 	ApiError,
 	getNotifications,
@@ -19,6 +24,7 @@ import {
 } from "./api";
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
 import { shouldKeepPolling } from "./connectionError";
+import { primeInstallId } from "./installId";
 import { collectPRs } from "./prView";
 
 const ACTIVE_PROJECT_KEY = "ao.activeProject";
@@ -110,6 +116,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
 	const cfgRef = useRef<ServerConfig | null>(null);
 
+	// The poll is the daemon's liveness signal (see shouldPoll), so it must stop
+	// while backgrounded rather than rely on the OS suspending the JS timer
+	// whenever it feels like it.
+	const [appActive, setAppActive] = useState(() => shouldPoll(RNAppState.currentState));
+
+	useEffect(() => {
+		const sub = RNAppState.addEventListener("change", (s) => setAppActive(shouldPoll(s)));
+		return () => sub.remove();
+	}, []);
+
+	// Warm the install id cache as early as possible so the first REST poll tick
+	// (fired from the config effect below) can send X-AO-Install-Id synchronously
+	// via cachedInstallId() in api.ts's req(). A module-load side effect would run
+	// this before React Native's AsyncStorage native module is guaranteed ready;
+	// a mount-time effect matches this file's existing pattern (see the active
+	// project load just below) and keeps the async I/O inside the component
+	// lifecycle instead of hidden at import time.
+	useEffect(() => {
+		void primeInstallId();
+	}, []);
+
 	// Load persisted active project once.
 	useEffect(() => {
 		AsyncStorage.getItem(ACTIVE_PROJECT_KEY).then((v) => {
@@ -190,6 +217,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			setLoading(false);
 			return;
 		}
+		if (!appActive) return; // backgrounded: stop polling, stop heartbeating
 		setLoading(true);
 		setConnection("connecting");
 		let stopped = false;
@@ -201,7 +229,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		void tick();
 		const poll = setInterval(() => void tick(), POLL_INTERVAL_MS);
 		return () => clearInterval(poll);
-	}, [config, fetchAll]);
+	}, [config, fetchAll, appActive]);
 
 	const setActiveProject = useCallback((id: string) => {
 		setActiveProjectId(id);

@@ -8,6 +8,7 @@ import { captureRendererEvent } from "../lib/telemetry";
 import { cn } from "../lib/utils";
 import { ConnectMobileGetApp } from "./settings/ConnectMobileGetApp";
 import { ConnectMobileSetup } from "./settings/ConnectMobileSetup";
+import { MobileDevicesSection } from "./settings/MobileDevicesSection";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Switch } from "./ui/switch";
@@ -307,6 +308,12 @@ export function ConnectMobileModal({ open, onOpenChange }: ConnectMobileModalPro
 											{regenerate.isPending && <Loader2 className="mr-2 size-4 animate-spin" aria-hidden="true" />}
 											{t("mobile.regenerate")}
 										</Button>
+
+										{/* Not just visually hidden with the rest of this wrapper: the roster's
+										    Switch/remove controls issue real PATCH/DELETE calls, so they must be
+										    absent from the DOM (not merely aria-hidden) while the bridge is off —
+										    otherwise they stay keyboard-focusable behind the collapse animation. */}
+										{enabled && <MobileDevicesSection />}
 									</div>
 								</div>
 							</div>
