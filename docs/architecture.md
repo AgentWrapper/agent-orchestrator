@@ -37,6 +37,7 @@ flowchart LR
 The only persistent session state is:
 
 - `activity_state` — What the agent last reported (`active`, `idle`, `waiting_input`, `blocked`, `exited`). `waiting_input` is an agent at an empty prompt awaiting its next instruction; `blocked` is an agent stopped on a pending permission/approval decision — automation must never inject input into a blocked session.
+- `first_signal_at` — Receipt time for the first hook callback in the current spawn or restore. A metadata-only `session-start` can establish this receipt without asserting or changing activity.
 - `is_terminated` — Whether the session should be treated as over
 - `session_mode` plus its runtime/provider handle and generation — The currently committed controller epoch
 - `session_interface_transitions` — Durable checkpoints for an in-progress or completed TUI↔Chat handoff

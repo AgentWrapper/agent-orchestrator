@@ -362,8 +362,8 @@ func (m *Manager) ApplyRuntimeObservation(ctx context.Context, id domain.Session
 }
 
 // ApplyActivitySignal records an authoritative agent activity signal and any
-// native agent session id carried alongside it. Metadata-only hooks leave the
-// existing activity and first-signal facts untouched.
+// native agent session id carried alongside it. A metadata-only session-start
+// is also a receipt for the current spawn, but it does not assert activity.
 func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, s ports.ActivitySignal) error {
 	s.AgentSessionID = strings.TrimSpace(s.AgentSessionID)
 	s.LaunchID = strings.TrimSpace(s.LaunchID)
@@ -431,15 +431,21 @@ func (m *Manager) ApplyActivitySignal(ctx context.Context, id domain.SessionID, 
 	// (old CLIs, adapters without tool identity) pass through untouched —
 	// last-writer-wins, exactly as before.
 	metadataChanged := s.AgentSessionID != "" && rec.Metadata.AgentSessionID != s.AgentSessionID
+	receiptChanged := !s.Valid && s.Event == "session-start" && rec.FirstSignalAt.IsZero()
 	if s.Valid {
 		s = m.applyToolPrecedenceLocked(id, rec.Activity.State, s)
 	}
-	if !s.Valid && !metadataChanged {
+	if !s.Valid && !metadataChanged && !receiptChanged {
 		m.mu.Unlock()
 		return nil
 	}
 	if !s.Valid {
-		rec.Metadata.AgentSessionID = s.AgentSessionID
+		if metadataChanged {
+			rec.Metadata.AgentSessionID = s.AgentSessionID
+		}
+		if receiptChanged {
+			rec.FirstSignalAt = timeOr(s.Timestamp, now)
+		}
 		rec.UpdatedAt = now
 		err := m.store.UpdateSession(ctx, rec)
 		m.mu.Unlock()

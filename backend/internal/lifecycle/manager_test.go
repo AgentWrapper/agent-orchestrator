@@ -759,6 +759,55 @@ func TestActivity_NewLaunchSignalWaitsForMarkSpawned(t *testing.T) {
 	}
 }
 
+func TestActivity_NewLaunchSessionStartReceiptWaitsForMarkSpawned(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	rec.Activity.State = domain.ActivityExited
+	rec.Metadata.RuntimeLaunchID = "launch-old"
+	st.sessions["mer-1"] = rec
+
+	if err := m.PrepareLaunch("mer-1", "launch-new"); err != nil {
+		t.Fatal(err)
+	}
+	signalAt := time.Unix(123, 0).UTC()
+	signalDone := make(chan error, 1)
+	go func() {
+		signalDone <- m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+			Event:          "session-start",
+			AgentSessionID: "native-new",
+			Timestamp:      signalAt,
+			LaunchID:       "launch-new",
+		})
+	}()
+
+	select {
+	case err := <-signalDone:
+		t.Fatalf("new-generation receipt completed before MarkSpawned: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	if err := m.MarkSpawned(ctx, "mer-1", domain.SessionMetadata{
+		RuntimeHandleID: "tmux-mer-1",
+		RuntimeLaunchID: "launch-new",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-signalDone; err != nil {
+		t.Fatal(err)
+	}
+
+	got := st.sessions["mer-1"]
+	if !got.FirstSignalAt.Equal(signalAt) {
+		t.Fatalf("first signal at = %v, want %v", got.FirstSignalAt, signalAt)
+	}
+	if got.Metadata.AgentSessionID != "native-new" {
+		t.Fatalf("agent session id = %q, want native-new", got.Metadata.AgentSessionID)
+	}
+	if got.Activity.State != domain.ActivityIdle {
+		t.Fatalf("receipt asserted activity: %+v", got.Activity)
+	}
+}
+
 func TestActivity_CancelledLaunchReleasesAndRejectsEarlySignal(t *testing.T) {
 	m, st, _ := newManager()
 	rec := working("mer-1")
@@ -2024,6 +2073,79 @@ func TestActivity_FirstSignalStampsReceipt(t *testing.T) {
 	}
 	if got := st.sessions["mer-1"]; !got.FirstSignalAt.Equal(stamped) {
 		t.Fatalf("first signal moved: %v -> %v", stamped, got.FirstSignalAt)
+	}
+}
+
+func TestActivity_MetadataOnlySessionStartStampsReceiptWithoutActivity(t *testing.T) {
+	m, st, _ := newManager()
+	signalAt := time.Unix(123, 0).UTC()
+	rec := domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Activity: domain.Activity{
+			State:          domain.ActivityIdle,
+			LastActivityAt: time.Unix(100, 0).UTC(),
+		},
+	}
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Event:          "session-start",
+		AgentSessionID: "native-1",
+		Timestamp:      signalAt,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := st.sessions["mer-1"]
+	if !got.FirstSignalAt.Equal(signalAt) {
+		t.Fatalf("first signal at = %v, want %v", got.FirstSignalAt, signalAt)
+	}
+	if got.Activity != rec.Activity {
+		t.Fatalf("metadata-only start changed activity: %+v -> %+v", rec.Activity, got.Activity)
+	}
+	if got.Metadata.AgentSessionID != "native-1" {
+		t.Fatalf("agent session id = %q, want native-1", got.Metadata.AgentSessionID)
+	}
+}
+
+func TestActivity_RepeatedMetadataOnlySessionStartDoesNotMoveReceipt(t *testing.T) {
+	m, st, _ := newManager()
+	stamped := time.Unix(123, 0).UTC()
+	rec := working("mer-1")
+	rec.FirstSignalAt = stamped
+	rec.Metadata.AgentSessionID = "native-1"
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Event:          "session-start",
+		AgentSessionID: "native-1",
+		Timestamp:      stamped.Add(time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.sessions["mer-1"]; got != rec {
+		t.Fatalf("repeated receipt rewrote session: %+v", got)
+	}
+}
+
+func TestActivity_OtherMetadataOnlyEventDoesNotStampReceipt(t *testing.T) {
+	m, st, _ := newManager()
+	rec := working("mer-1")
+	st.sessions["mer-1"] = rec
+
+	if err := m.ApplyActivitySignal(ctx, "mer-1", ports.ActivitySignal{
+		Event:          "metadata",
+		AgentSessionID: "native-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := st.sessions["mer-1"]
+	if !got.FirstSignalAt.IsZero() {
+		t.Fatalf("non-start metadata stamped receipt: %+v", got)
+	}
+	if got.Metadata.AgentSessionID != "native-1" {
+		t.Fatalf("agent session id = %q, want native-1", got.Metadata.AgentSessionID)
 	}
 }
 
