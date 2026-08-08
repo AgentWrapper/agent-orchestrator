@@ -95,26 +95,36 @@ func (q *Queries) ListSessionWorktrees(ctx context.Context, sessionID domain.Ses
 }
 
 const listWorkspaceRepos = `-- name: ListWorkspaceRepos :many
-SELECT project_id, name, relative_path, repo_origin_url, registered_at
+SELECT project_id, name, relative_path, repo_origin_url, default_branch, registered_at
 FROM workspace_repos
 WHERE project_id = ?
 ORDER BY name
 `
 
-func (q *Queries) ListWorkspaceRepos(ctx context.Context, projectID domain.ProjectID) ([]WorkspaceRepo, error) {
+type ListWorkspaceReposRow struct {
+	ProjectID     domain.ProjectID
+	Name          string
+	RelativePath  string
+	RepoOriginURL string
+	DefaultBranch string
+	RegisteredAt  time.Time
+}
+
+func (q *Queries) ListWorkspaceRepos(ctx context.Context, projectID domain.ProjectID) ([]ListWorkspaceReposRow, error) {
 	rows, err := q.db.QueryContext(ctx, listWorkspaceRepos, projectID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []WorkspaceRepo{}
+	items := []ListWorkspaceReposRow{}
 	for rows.Next() {
-		var i WorkspaceRepo
+		var i ListWorkspaceReposRow
 		if err := rows.Scan(
 			&i.ProjectID,
 			&i.Name,
 			&i.RelativePath,
 			&i.RepoOriginURL,
+			&i.DefaultBranch,
 			&i.RegisteredAt,
 		); err != nil {
 			return nil, err
@@ -165,11 +175,12 @@ func (q *Queries) UpsertSessionWorktree(ctx context.Context, arg UpsertSessionWo
 }
 
 const upsertWorkspaceRepo = `-- name: UpsertWorkspaceRepo :exec
-INSERT INTO workspace_repos (project_id, name, relative_path, repo_origin_url, registered_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO workspace_repos (project_id, name, relative_path, repo_origin_url, default_branch, registered_at)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT (project_id, name) DO UPDATE SET
     relative_path = excluded.relative_path,
     repo_origin_url = excluded.repo_origin_url,
+    default_branch = excluded.default_branch,
     registered_at = excluded.registered_at
 `
 
@@ -178,6 +189,7 @@ type UpsertWorkspaceRepoParams struct {
 	Name          string
 	RelativePath  string
 	RepoOriginURL string
+	DefaultBranch string
 	RegisteredAt  time.Time
 }
 
@@ -187,6 +199,7 @@ func (q *Queries) UpsertWorkspaceRepo(ctx context.Context, arg UpsertWorkspaceRe
 		arg.Name,
 		arg.RelativePath,
 		arg.RepoOriginURL,
+		arg.DefaultBranch,
 		arg.RegisteredAt,
 	)
 	return err

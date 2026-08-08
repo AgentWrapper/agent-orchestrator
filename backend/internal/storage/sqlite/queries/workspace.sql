@@ -2,15 +2,16 @@
 DELETE FROM workspace_repos WHERE project_id = ?;
 
 -- name: UpsertWorkspaceRepo :exec
-INSERT INTO workspace_repos (project_id, name, relative_path, repo_origin_url, registered_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO workspace_repos (project_id, name, relative_path, repo_origin_url, default_branch, registered_at)
+VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT (project_id, name) DO UPDATE SET
     relative_path = excluded.relative_path,
     repo_origin_url = excluded.repo_origin_url,
+    default_branch = excluded.default_branch,
     registered_at = excluded.registered_at;
 
 -- name: ListWorkspaceRepos :many
-SELECT project_id, name, relative_path, repo_origin_url, registered_at
+SELECT project_id, name, relative_path, repo_origin_url, default_branch, registered_at
 FROM workspace_repos
 WHERE project_id = ?
 ORDER BY name;
