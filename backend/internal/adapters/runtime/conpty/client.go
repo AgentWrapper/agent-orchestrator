@@ -268,3 +268,65 @@ func clientKill(addr string) error {
 	_, _ = conn.Write(killFrame)
 	return nil
 }
+
+// clientRestart sends MsgRestartReq to the host, waits for MsgRestartRes, and
+// returns the new process PID.
+func clientRestart(addr string, payload RestartPayload) (int, error) {
+	conn, err := dialHost(addr, dialTimeout)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	_ = conn.SetDeadline(time.Now().Add(dialTimeout))
+
+	reqBody, err := json.Marshal(payload)
+	if err != nil {
+		return 0, err
+	}
+	reqFrame, err := EncodeMessage(MsgRestartReq, reqBody)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := conn.Write(reqFrame); err != nil {
+		return 0, err
+	}
+
+	type restartResult struct {
+		resp RestartResponse
+		err  error
+	}
+	resC := make(chan restartResult, 1)
+	parser := NewMessageParser(func(msgType byte, payload []byte) {
+		if msgType == MsgRestartRes {
+			var resp RestartResponse
+			decodeErr := json.Unmarshal(payload, &resp)
+			select {
+			case resC <- restartResult{resp: resp, err: decodeErr}:
+			default:
+			}
+		}
+	})
+
+	buf := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buf)
+		if n > 0 {
+			parser.Feed(buf[:n])
+		}
+		select {
+		case result := <-resC:
+			if result.err != nil {
+				return 0, result.err
+			}
+			if !result.resp.Success {
+				return 0, errors.New(result.resp.Error)
+			}
+			return result.resp.PID, nil
+		default:
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+}

@@ -708,3 +708,91 @@ func TestShutdownViaCtxCancel(t *testing.T) {
 		t.Fatal("expected pty.Close() on ctx cancel")
 	}
 }
+
+// TestRestart: MsgRestartReq replaces the running PTY with a new one and
+// broadcasts status updates to clients.
+func TestRestart(t *testing.T) {
+	oldNewConPTY := newConPTYFunc
+	defer func() { newConPTYFunc = oldNewConPTY }()
+
+	newPTYInstance := newFakePTY(999)
+	newConPTYFunc = func(cwd, shellCmd string, shellArgs []string, env map[string]string) (ptyConn, error) {
+		if shellCmd != "new-cmd" {
+			t.Errorf("expected shellCmd 'new-cmd', got %q", shellCmd)
+		}
+		if len(shellArgs) != 1 || shellArgs[0] != "arg1" {
+			t.Errorf("expected shellArgs ['arg1'], got %v", shellArgs)
+		}
+		if env["FOO"] != "BAR" {
+			t.Errorf("expected env FOO=BAR, got %v", env)
+		}
+		return newPTYInstance, nil
+	}
+
+	f := startServe(t, 100)
+	defer f.cancel()
+
+	c := newTestClient(t, f.addr)
+	defer c.close()
+
+	// Send restart request.
+	payload := RestartPayload{
+		WorkspacePath: "/new/workspace",
+		Argv:          []string{"new-cmd", "arg1"},
+		Env:           map[string]string{"FOO": "BAR"},
+	}
+
+	pid, err := clientRestart(f.ln.Addr().String(), payload)
+	if err != nil {
+		t.Fatalf("clientRestart failed: %v", err)
+	}
+	if pid != 999 {
+		t.Fatalf("expected restarted PID 999, got %d", pid)
+	}
+
+	// Verify we received the status broadcast indicating the new process is alive.
+	typ, payloadBytes := c.readFrame(t)
+	if typ != MsgStatusRes {
+		t.Fatalf("expected MsgStatusRes, got 0x%02x", typ)
+	}
+	var sp StatusPayload
+	if err := json.Unmarshal(payloadBytes, &sp); err != nil {
+		t.Fatalf("unmarshal status broadcast: %v", err)
+	}
+	if !sp.Alive || sp.PID != 999 {
+		t.Fatalf("expected status broadcast alive=true, pid=999, got %+v", sp)
+	}
+
+	// Verify the old PTY was closed.
+	f.pty.closeMu.Lock()
+	oldClosed := f.pty.closed
+	f.pty.closeMu.Unlock()
+	if !oldClosed {
+		t.Fatal("expected old PTY to be closed on restart")
+	}
+
+	// Verify that MsgTerminalInput now targets the new PTY.
+	keystrokes := []byte("new input\n")
+	if err := c.send(MsgTerminalInput, keystrokes); err != nil {
+		t.Fatalf("send input: %v", err)
+	}
+
+	// Collect PTY input in background from the new PTY.
+	inputC := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		n, _ := newPTYInstance.inR.Read(buf)
+		if n > 0 {
+			inputC <- buf[:n]
+		}
+	}()
+
+	select {
+	case got := <-inputC:
+		if string(got) != string(keystrokes) {
+			t.Fatalf("expected new PTY to receive %q, got %q", keystrokes, got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for new PTY to receive input")
+	}
+}
