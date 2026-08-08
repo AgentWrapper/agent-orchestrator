@@ -175,26 +175,26 @@ func TestBlockedNotClearedBySiblingToolPost(t *testing.T) {
 	ctx := context.Background()
 
 	// Blocked tool: pre-tool-use + notification(permission_prompt).
-	mustApplyKimchi(t, mgr, ctx, "kimchi-2", "pre-tool-use", `{"tool_name":"Bash","tool_use_id":"toolu_1"}`)
-	mustApplyKimchi(t, mgr, ctx, "kimchi-2", "notification", `{"notification_type":"permission_prompt","tool_name":"bash","tool_use_id":"toolu_1"}`)
+	mustApplyKimchi(ctx, t, mgr, "kimchi-2", "pre-tool-use", `{"tool_name":"Bash","tool_use_id":"toolu_1"}`)
+	mustApplyKimchi(ctx, t, mgr, "kimchi-2", "notification", `{"notification_type":"permission_prompt","tool_name":"bash","tool_use_id":"toolu_1"}`)
 	if got := store.sessions["kimchi-2"].Activity.State; got != domain.ActivityBlocked {
 		t.Fatalf("after notification: state = %q, want blocked", got)
 	}
 
 	// A sibling tool's post must NOT clear blocked.
-	mustApplyKimchi(t, mgr, ctx, "kimchi-2", "post-tool-use", `{"tool_name":"Read","tool_use_id":"toolu_sibling"}`)
+	mustApplyKimchi(ctx, t, mgr, "kimchi-2", "post-tool-use", `{"tool_name":"Read","tool_use_id":"toolu_sibling"}`)
 	if got := store.sessions["kimchi-2"].Activity.State; got != domain.ActivityBlocked {
 		t.Fatalf("after sibling post: state = %q, want blocked (sibling must not clear)", got)
 	}
 
 	// The approved tool's post still clears afterwards.
-	mustApplyKimchi(t, mgr, ctx, "kimchi-2", "post-tool-use", `{"tool_name":"Bash","tool_use_id":"toolu_1"}`)
+	mustApplyKimchi(ctx, t, mgr, "kimchi-2", "post-tool-use", `{"tool_name":"Bash","tool_use_id":"toolu_1"}`)
 	if got := store.sessions["kimchi-2"].Activity.State; got != domain.ActivityActive {
 		t.Fatalf("after approved post: state = %q, want active", got)
 	}
 }
 
-func mustApplyKimchi(t *testing.T, mgr *lifecycle.Manager, ctx context.Context, id domain.SessionID, event, payload string) {
+func mustApplyKimchi(ctx context.Context, t *testing.T, mgr *lifecycle.Manager, id domain.SessionID, event, payload string) {
 	t.Helper()
 	state, ok := DeriveActivityState(event, []byte(payload))
 	if !ok {
