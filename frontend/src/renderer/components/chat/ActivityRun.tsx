@@ -85,7 +85,7 @@ type ActivityNode = { activity: ConversationActivity; children: ActivityNode[] }
 
 function ActivityTree({ node }: { node: ActivityNode }) {
 	return (
-		<div className="flex flex-col">
+		<div className="flex flex-col [&>div>button]:px-[11px]">
 			<ActivityRow activity={node.activity} />
 			{node.children.length > 0 ? <NestedAgentRun nodes={node.children} /> : null}
 		</div>

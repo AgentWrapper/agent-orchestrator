@@ -143,6 +143,9 @@ func migrate(db *sql.DB) error {
 	if err := prepareReviewPerHarnessMigration(db); err != nil {
 		return fmt.Errorf("prepare review per-harness migration: %w", err)
 	}
+	if err := prepareBrowserVerifierMigration(db); err != nil {
+		return fmt.Errorf("prepare browser verifier migration: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -151,6 +154,45 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// prepareBrowserVerifierMigration preserves development databases that ran an
+// earlier version of this branch where the verifier was mistakenly added to
+// shipped migration 0048. The restored 0048 no longer owns the column, so mark
+// the new 0081 migration applied when its exact schema effect already exists;
+// otherwise goose applies 0081 normally.
+func prepareBrowserVerifierMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+	var applied int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 81 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied); err != nil {
+		return err
+	}
+	if applied != 0 {
+		return nil
+	}
+	var verifierColumn int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
+	).Scan(&verifierColumn); err != nil {
+		return err
+	}
+	if verifierColumn == 0 {
+		return nil
+	}
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (81, 1)`)
+	return err
 }
 
 func prepareBurnedSchemaRepairs(db *sql.DB) error {
@@ -493,10 +535,10 @@ SELECT COALESCE((
 }
 
 // repairRenumberedAgentSwitchMigrationHistory preserves databases opened by
-// this feature branch before main claimed 0080 for the review-per-harness
-// migration. The old 0080/0081 pair is physically identical to the current
-// 0081/0082 pair, so remap its ledger entries and release 0080 for main rather
-// than replaying ALTER statements over an already-upgraded database.
+// earlier revisions of this feature branch. Agent switching first occupied
+// 0080/0081 and later 0081/0082; main now owns 0080 through 0082. Remap the
+// physically present switching schema to 0083/0084 and release only the main
+// migration numbers whose schema effects are still absent.
 func repairRenumberedAgentSwitchMigrationHistory(db *sql.DB) error {
 	var gooseTable, agentSwitchTable int
 	if err := db.QueryRow(
@@ -516,35 +558,28 @@ func repairRenumberedAgentSwitchMigrationHistory(db *sql.DB) error {
 		return nil
 	}
 
-	var applied80, applied82 int
-	for version, applied := range map[int64]*int{80: &applied80, 82: &applied82} {
-		if err := db.QueryRow(`
-SELECT COALESCE((
-    SELECT is_applied FROM goose_db_version
-    WHERE version_id = ? ORDER BY id DESC LIMIT 1
-), 0)`, version).Scan(applied); err != nil {
-			return err
-		}
-	}
-	if applied80 == 0 || applied82 != 0 {
-		return nil
-	}
-
-	// A database that already has main's physical review shape is a current
-	// migration sequence interrupted between 0081 and 0082, not the old branch
-	// numbering. Leave its ledger untouched so goose can finish normally.
 	reviewUpgraded, err := reviewHasSessionHarnessUnique(db)
 	if err != nil {
 		return err
 	}
-	if reviewUpgraded {
-		return nil
-	}
 
-	var finalHandoffColumn int
+	var browserVerifierColumn, finalHandoffColumn, primeHarnessShape int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
+	).Scan(&browserVerifierColumn); err != nil {
+		return err
+	}
 	if err := db.QueryRow(
 		`SELECT COUNT(*) FROM pragma_table_info('agent_switches') WHERE name = 'final_handoff_path'`,
 	).Scan(&finalHandoffColumn); err != nil {
+		return err
+	}
+	if err := db.QueryRow(`
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'table'
+  AND name = 'sessions'
+  AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&primeHarnessShape); err != nil {
 		return err
 	}
 
@@ -553,26 +588,39 @@ SELECT COALESCE((
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var applied81 int
-	if err := tx.QueryRow(`
+	for version, physicallyApplied := range map[int64]bool{
+		83: true,
+		84: finalHandoffColumn != 0,
+	} {
+		if !physicallyApplied {
+			continue
+		}
+		var applied int
+		if err := tx.QueryRow(`
 SELECT COALESCE((
     SELECT is_applied FROM goose_db_version
-    WHERE version_id = 81 ORDER BY id DESC LIMIT 1
-), 0)`).Scan(&applied81); err != nil {
-		return err
-	}
-	if applied81 == 0 {
-		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (81, 1)`); err != nil {
+    WHERE version_id = ? ORDER BY id DESC LIMIT 1
+), 0)`, version).Scan(&applied); err != nil {
 			return err
 		}
-	}
-	if finalHandoffColumn != 0 {
-		if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (82, 1)`); err != nil {
-			return err
+		if applied == 0 {
+			if _, err := tx.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (?, 1)`, version); err != nil {
+				return err
+			}
 		}
 	}
-	if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = 80`); err != nil {
-		return err
+
+	for version, mainEffectPresent := range map[int64]bool{
+		80: reviewUpgraded,
+		81: browserVerifierColumn != 0,
+		82: primeHarnessShape != 0,
+	} {
+		if mainEffectPresent {
+			continue
+		}
+		if _, err := tx.Exec(`DELETE FROM goose_db_version WHERE version_id = ?`, version); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -591,9 +639,9 @@ SELECT COALESCE((
 // column was just added, so healthy databases — where those statements would
 // clobber live data — are never touched.
 //
-// Any new migration numbered up to 0046 whose schema the generated queries
-// depend on MUST add an entry here, or the burned field profiles skip it and
-// regress to the 500s this exists to prevent.
+// Any migration whose schema the generated queries depend on MUST add an entry
+// here when a burned field profile can skip it, or the session list can regress
+// to the 500s this exists to prevent.
 var schemaRepairs = []struct {
 	version int64
 	table   string
@@ -664,8 +712,12 @@ BEGIN
             'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
         ),
         NEW.updated_at);
-END`,
+			END`,
 		}},
+	// 0081_browser_capability_verifier.sql. Keep the generated session queries
+	// healthy even if a field database has already burned this migration number.
+	{version: 81, table: "sessions", column: "browser_capability_verifier",
+		addDDL: `ALTER TABLE sessions ADD COLUMN browser_capability_verifier TEXT NOT NULL DEFAULT ''`},
 	// A pre-renumbered chat-mode branch created conversations before the
 	// current_session_id controller binding existed, then later builds recorded
 	// 0052 as applied. Generated chat queries require the column on startup.

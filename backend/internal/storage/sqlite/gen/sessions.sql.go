@@ -88,7 +88,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
-    session_mode, provider_conversation_id, controller_generation,
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
     latest_user_prompt, latest_assistant_update, native_transcript_path
 FROM sessions WHERE id = ?
 `
@@ -129,6 +129,7 @@ func (q *Queries) GetSession(ctx context.Context, id domain.SessionID) (Session,
 		&i.SessionMode,
 		&i.ProviderConversationID,
 		&i.ControllerGeneration,
+		&i.BrowserCapabilityVerifier,
 		&i.LatestUserPrompt,
 		&i.LatestAssistantUpdate,
 		&i.NativeTranscriptPath,
@@ -143,48 +144,54 @@ INSERT INTO sessions (
     branch, workspace_path, workspace_repo_path, diff_base_sha, diff_base_ref, runtime_handle_id,
     runtime_launch_id, agent_session_id, prompt,
     latest_user_prompt, latest_assistant_update, native_transcript_path,
-    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation,
+    preview_url, preview_revision, terminate_on_pr_merge, cleanup_generation, browser_capability_verifier,
     session_mode, provider_conversation_id, controller_generation,
     created_at, updated_at, is_pinned, pinned_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ?, ?, ?, ?, ?, ?
+)
 `
 
 type InsertSessionParams struct {
-	ID                     domain.SessionID
-	ProjectID              domain.ProjectID
-	Num                    int64
-	IssueID                domain.IssueID
-	Kind                   domain.SessionKind
-	Harness                domain.AgentHarness
-	ReviewerHarness        domain.ReviewerHarness
-	DisplayName            string
-	ActivityState          domain.ActivityState
-	ActivityLastAt         time.Time
-	FirstSignalAt          sql.NullTime
-	IsTerminated           bool
-	Branch                 string
-	WorkspacePath          string
-	WorkspaceRepoPath      string
-	DiffBaseSha            string
-	DiffBaseRef            string
-	RuntimeHandleID        string
-	RuntimeLaunchID        string
-	AgentSessionID         string
-	Prompt                 string
-	LatestUserPrompt       string
-	LatestAssistantUpdate  string
-	NativeTranscriptPath   string
-	PreviewURL             string
-	PreviewRevision        int64
-	TerminateOnPRMerge     bool
-	CleanupGeneration      int64
-	SessionMode            domain.SessionMode
-	ProviderConversationID string
-	ControllerGeneration   string
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-	IsPinned               bool
-	PinnedAt               sql.NullTime
+	ID                        domain.SessionID
+	ProjectID                 domain.ProjectID
+	Num                       int64
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ReviewerHarness           domain.ReviewerHarness
+	DisplayName               string
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	FirstSignalAt             sql.NullTime
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	WorkspaceRepoPath         string
+	DiffBaseSha               string
+	DiffBaseRef               string
+	RuntimeHandleID           string
+	RuntimeLaunchID           string
+	AgentSessionID            string
+	Prompt                    string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	PreviewURL                string
+	PreviewRevision           int64
+	TerminateOnPRMerge        bool
+	CleanupGeneration         int64
+	BrowserCapabilityVerifier string
+	SessionMode               domain.SessionMode
+	ProviderConversationID    string
+	ControllerGeneration      string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
 }
 
 func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) error {
@@ -217,6 +224,7 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
+		arg.BrowserCapabilityVerifier,
 		arg.SessionMode,
 		arg.ProviderConversationID,
 		arg.ControllerGeneration,
@@ -236,7 +244,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
-    session_mode, provider_conversation_id, controller_generation,
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
     latest_user_prompt, latest_assistant_update, native_transcript_path
 FROM sessions ORDER BY project_id, num
 `
@@ -283,6 +291,7 @@ func (q *Queries) ListAllSessions(ctx context.Context) ([]Session, error) {
 			&i.SessionMode,
 			&i.ProviderConversationID,
 			&i.ControllerGeneration,
+			&i.BrowserCapabilityVerifier,
 			&i.LatestUserPrompt,
 			&i.LatestAssistantUpdate,
 			&i.NativeTranscriptPath,
@@ -308,7 +317,7 @@ SELECT id, project_id, num, issue_id, kind, harness,
     preview_revision, cleanup_generation, runtime_launch_id,
     workspace_repo_path, terminate_on_pr_merge, diff_base_sha, diff_base_ref,
     reviewer_harness, is_pinned, pinned_at,
-    session_mode, provider_conversation_id, controller_generation,
+    session_mode, provider_conversation_id, controller_generation, browser_capability_verifier,
     latest_user_prompt, latest_assistant_update, native_transcript_path
 FROM sessions WHERE project_id = ? ORDER BY num
 `
@@ -355,6 +364,7 @@ func (q *Queries) ListSessionsByProject(ctx context.Context, projectID domain.Pr
 			&i.SessionMode,
 			&i.ProviderConversationID,
 			&i.ControllerGeneration,
+			&i.BrowserCapabilityVerifier,
 			&i.LatestUserPrompt,
 			&i.LatestAssistantUpdate,
 			&i.NativeTranscriptPath,
@@ -540,44 +550,45 @@ UPDATE sessions SET
     runtime_launch_id = ?, agent_session_id = ?, prompt = ?,
     latest_user_prompt = ?, latest_assistant_update = ?, native_transcript_path = ?,
     preview_url = ?, preview_revision = ?, terminate_on_pr_merge = ?,
-    cleanup_generation = ?,
+    cleanup_generation = ?, browser_capability_verifier = ?,
     provider_conversation_id = ?, controller_generation = ?, updated_at = ?,
     is_pinned = ?, pinned_at = ?
 WHERE id = ?
 `
 
 type UpdateSessionParams struct {
-	IssueID                domain.IssueID
-	Kind                   domain.SessionKind
-	Harness                domain.AgentHarness
-	ReviewerHarness        domain.ReviewerHarness
-	DisplayName            string
-	ActivityState          domain.ActivityState
-	ActivityLastAt         time.Time
-	FirstSignalAt          sql.NullTime
-	IsTerminated           bool
-	Branch                 string
-	WorkspacePath          string
-	WorkspaceRepoPath      string
-	DiffBaseSha            string
-	DiffBaseRef            string
-	RuntimeHandleID        string
-	RuntimeLaunchID        string
-	AgentSessionID         string
-	Prompt                 string
-	LatestUserPrompt       string
-	LatestAssistantUpdate  string
-	NativeTranscriptPath   string
-	PreviewURL             string
-	PreviewRevision        int64
-	TerminateOnPRMerge     bool
-	CleanupGeneration      int64
-	ProviderConversationID string
-	ControllerGeneration   string
-	UpdatedAt              time.Time
-	IsPinned               bool
-	PinnedAt               sql.NullTime
-	ID                     domain.SessionID
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ReviewerHarness           domain.ReviewerHarness
+	DisplayName               string
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	FirstSignalAt             sql.NullTime
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	WorkspaceRepoPath         string
+	DiffBaseSha               string
+	DiffBaseRef               string
+	RuntimeHandleID           string
+	RuntimeLaunchID           string
+	AgentSessionID            string
+	Prompt                    string
+	LatestUserPrompt          string
+	LatestAssistantUpdate     string
+	NativeTranscriptPath      string
+	PreviewURL                string
+	PreviewRevision           int64
+	TerminateOnPRMerge        bool
+	CleanupGeneration         int64
+	BrowserCapabilityVerifier string
+	ProviderConversationID    string
+	ControllerGeneration      string
+	UpdatedAt                 time.Time
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
+	ID                        domain.SessionID
 }
 
 func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) error {
@@ -607,6 +618,7 @@ func (q *Queries) UpdateSession(ctx context.Context, arg UpdateSessionParams) er
 		arg.PreviewRevision,
 		arg.TerminateOnPRMerge,
 		arg.CleanupGeneration,
+		arg.BrowserCapabilityVerifier,
 		arg.ProviderConversationID,
 		arg.ControllerGeneration,
 		arg.UpdatedAt,

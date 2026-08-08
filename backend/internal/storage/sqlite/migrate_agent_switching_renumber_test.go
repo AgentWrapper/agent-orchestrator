@@ -9,38 +9,59 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-func TestMigrateRecognizesPreRenumberedAgentSwitchSchema(t *testing.T) {
+func TestMigrateRecognizesAgentSwitchSchemaFromVersions0080And0081(t *testing.T) {
+	db := openAgentSwitchMigrationTestDB(t)
+	upTo(t, db, 79)
+	applyLegacyAgentSwitchMigrations(t, db, "migrations/0080_agent_switching.sql", "migrations/0081_finalized_agent_handoff.sql")
+	assertAgentSwitchMigrationHistoryRepaired(t, db)
+}
+
+func TestMigrateRecognizesAgentSwitchSchemaFromVersions0081And0082(t *testing.T) {
+	db := openAgentSwitchMigrationTestDB(t)
+	upTo(t, db, 80)
+	applyLegacyAgentSwitchMigrations(t, db, "migrations/0081_agent_switching.sql", "migrations/0082_finalized_agent_handoff.sql")
+	assertAgentSwitchMigrationHistoryRepaired(t, db)
+}
+
+func openAgentSwitchMigrationTestDB(t *testing.T) *sql.DB {
+	t.Helper()
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	upTo(t, db, 79)
+	return db
+}
 
-	agentSwitchMigration, err := migrationsFS.ReadFile("migrations/0081_agent_switching.sql")
+func applyLegacyAgentSwitchMigrations(t *testing.T, db *sql.DB, switchPath, handoffPath string) {
+	t.Helper()
+	agentSwitchMigration, err := migrationsFS.ReadFile("migrations/0083_agent_switching.sql")
 	if err != nil {
 		t.Fatalf("read agent-switch migration: %v", err)
 	}
-	finalHandoffMigration, err := migrationsFS.ReadFile("migrations/0082_finalized_agent_handoff.sql")
+	finalHandoffMigration, err := migrationsFS.ReadFile("migrations/0084_finalized_agent_handoff.sql")
 	if err != nil {
 		t.Fatalf("read finalized-handoff migration: %v", err)
 	}
 	goose.SetBaseFS(fstest.MapFS{
-		"migrations/0080_agent_switching.sql":         {Data: agentSwitchMigration},
-		"migrations/0081_finalized_agent_handoff.sql": {Data: finalHandoffMigration},
+		switchPath:  {Data: agentSwitchMigration},
+		handoffPath: {Data: finalHandoffMigration},
 	})
 	goose.SetLogger(goose.NopLogger())
 	if err := goose.SetDialect("sqlite3"); err != nil {
 		t.Fatalf("set goose dialect: %v", err)
 	}
 	if err := goose.Up(db, "migrations"); err != nil {
-		t.Fatalf("apply pre-renumbered agent-switch migrations: %v", err)
+		t.Fatalf("apply legacy agent-switch migrations: %v", err)
 	}
+}
 
+func assertAgentSwitchMigrationHistoryRepaired(t *testing.T, db *sql.DB) {
+	t.Helper()
 	if err := migrate(db); err != nil {
-		t.Fatalf("migrate pre-renumbered agent-switch database: %v", err)
+		t.Fatalf("migrate legacy agent-switch database: %v", err)
 	}
-	for _, version := range []int64{80, 81, 82} {
+	for _, version := range []int64{80, 81, 82, 83, 84} {
 		var applied int
 		if err := db.QueryRow(`
 SELECT COALESCE((
@@ -56,16 +77,31 @@ SELECT COALESCE((
 	if got, err := reviewHasSessionHarnessUnique(db); err != nil || !got {
 		t.Fatalf("review per-harness shape = %v, err = %v", got, err)
 	}
-	for _, column := range []string{"final_handoff_path", "final_handoff_hash"} {
+	for table, column := range map[string]string{
+		"sessions":       "browser_capability_verifier",
+		"agent_switches": "final_handoff_path",
+	} {
 		var count int
 		if err := db.QueryRow(
-			`SELECT COUNT(*) FROM pragma_table_info('agent_switches') WHERE name = ?`, column,
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column,
 		).Scan(&count); err != nil {
-			t.Fatalf("read agent_switches.%s: %v", column, err)
+			t.Fatalf("read %s.%s: %v", table, column, err)
 		}
 		if count != 1 {
-			t.Fatalf("agent_switches.%s count = %d, want 1", column, count)
+			t.Fatalf("%s.%s count = %d, want 1", table, column, count)
 		}
+	}
+	var primeHarnessShape int
+	if err := db.QueryRow(`
+SELECT COUNT(*)
+FROM sqlite_master
+WHERE type = 'table'
+  AND name = 'sessions'
+  AND instr(COALESCE(sql, ''), '''prime-agent''') > 0`).Scan(&primeHarnessShape); err != nil {
+		t.Fatalf("read Prime Agent session shape: %v", err)
+	}
+	if primeHarnessShape != 1 {
+		t.Fatalf("Prime Agent session shape = %d, want 1", primeHarnessShape)
 	}
 
 	if err := migrate(db); err != nil {

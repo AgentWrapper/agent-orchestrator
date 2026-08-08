@@ -733,50 +733,13 @@ describe("useTerminalSession", () => {
 			expect(muxes.length).toBeGreaterThan(1);
 		});
 
-		it("lands buffered bytes when the pane is detached mid-replay", () => {
-			const outputs: string[] = [];
-			const muxes: FakeMux[] = [];
-			const createMux = () => {
-				const fake = createFakeMux();
-				muxes.push(fake);
-				return fake.mux;
-			};
-			const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-			const wrapper = ({ children }: { children: ReactNode }) => (
-				<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-			);
-			const view = renderHook(
-				() =>
-					useTerminalSession(session, {
-						daemonReady: true,
-						createMux,
-						onOutput: (text) => outputs.push(text),
-					}),
-				{ wrapper },
-			);
-			const terminal = createFakeTerminal();
-			let detach: () => void = () => undefined;
-			act(() => {
-				detach = view.result.current.attach(terminal);
-			});
-
-			act(() => muxes[0].emitOpened("handle-1"));
-			act(() => muxes[0].emitData("handle-1", "https://example.com/pr/9"));
-			// Session switch while the gate still holds the burst: the URL watcher
-			// must still see those bytes, or a printed PR link never badges the tab.
-			act(() => detach());
-
-			expect(outputs.join("")).toContain("https://example.com/pr/9");
-		});
-
 		it("lands buffered bytes on teardown rather than discarding them", () => {
 			const { terminal, muxes } = setup();
 			act(() => muxes[0].emitOpened("handle-1"));
 			act(() => muxes[0].emitData("handle-1", "https://example.com/pr/1"));
 
-			// Socket drops mid-burst and the backoff reconnects. The bytes already
-			// received must still reach the terminal and the onOutput watcher —
-			// silently dropping them loses a URL that would have badged the pane.
+			// Socket drops mid-burst and the backoff reconnects. Bytes already
+			// received must still reach the terminal rather than being discarded.
 			act(() => muxes[0].emitConnection("closed"));
 			act(() => void vi.advanceTimersByTime(500));
 

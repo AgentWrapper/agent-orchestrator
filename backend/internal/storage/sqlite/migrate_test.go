@@ -213,6 +213,7 @@ func TestMigrateAllowsEveryShippedHarness(t *testing.T) {
 		domain.HarnessKilocode,
 		domain.HarnessVibe,
 		domain.HarnessPi,
+		domain.HarnessPrimeAgent,
 		domain.HarnessAutohand,
 	}
 

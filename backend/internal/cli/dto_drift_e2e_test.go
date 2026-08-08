@@ -161,6 +161,8 @@ func (f *fakeSessionService) StageAttachments(context.Context, domain.SessionID,
 	return nil, nil
 }
 
+func (f *fakeSessionService) InvalidateWorkspaceCache(domain.SessionID) {}
+
 type fakeAgentCatalog struct{}
 
 var _ controllers.AgentCatalog = (*fakeAgentCatalog)(nil)

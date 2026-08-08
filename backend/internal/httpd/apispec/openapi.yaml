@@ -5446,6 +5446,7 @@ components:
           - kilocode
           - vibe
           - pi
+          - prime-agent
           - autohand
           - fake
           type: string
@@ -7154,6 +7155,7 @@ components:
           - kilocode
           - vibe
           - pi
+          - prime-agent
           - autohand
           type: string
         issueId:

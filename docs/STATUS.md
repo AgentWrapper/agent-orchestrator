@@ -82,7 +82,7 @@ surface (`npm run sqlc`, `npm run api`).
 - Terminal mux over WebSocket (`/mux`): per-client `tmux attach` PTY on
   Darwin/Linux; conpty loopback pty-host on Windows.
 - Lifecycle reducer plus reaper (`internal/observe/reaper`).
-- Agent adapter platform under `internal/adapters/agent/` (24 adapters) with a
+- Agent adapter platform under `internal/adapters/agent/` (25 adapters) with a
   registry and `ao hooks` activity dispatch.
 - OpenAPI spec generated from Go DTOs; frontend TS types generated from it and
   drift-checked in CI.
@@ -102,9 +102,18 @@ surface (`npm run sqlc`, `npm run api`).
   the Browser panel is hidden. Network capture is off by default, tab-scoped,
   bounded, automatically expires, and omits bodies and sensitive values. Tabs
   within one worker share an ephemeral Electron profile; different workers
-  have isolated cookies and web storage. The toolbar activity signal is scoped
-  to actual agent browser commands; annotation progress is separate and its
+  have isolated cookies and web storage. The browser tab menu is only a tab
+  navigation control: it does not render a global activity pill or a
+  tab-specific agent marker. Annotation progress is separate and its
   successful-delivery confirmation clears automatically.
+- Chromium's official DevTools frontend is available from the direct Browser
+  toolbar button, `Ctrl+Shift+I` (Cmd+Option+I on macOS), the titlebar View menu,
+  and `ao browser devtools`. It opens in a detached desktop window with normal
+  OS close controls and is attached through the same worker-scoped CDP
+  multiplexer as the agent, so Elements, Console, Network, Sources, and other
+  DevTools panels can remain open while agent automation continues. The
+  user-facing DevTools connection is unrestricted; agent CDP commands remain
+  policy-limited.
 - Preview targets are explicit: `ao preview`, `ao preview <target>`, or
   `ao preview start` selects what the panel shows. The desktop poller no longer
   auto-discovers a static entry point merely because a fresh worker exists.
@@ -161,6 +170,16 @@ surface (`npm run sqlc`, `npm run api`).
 
 ## In flight / not yet a runtime feature
 
+- **Browser automation acceptance**: the runtime implementation is complete.
+  AO packages one
+  checksum-pinned Vercel `agent-browser` Rust binary and routes a deliberately
+  limited semantic command set through an authenticated, worker-scoped CDP
+  bridge to the existing AO Preview. The binary is prepared automatically for
+  desktop development and releases and is the single engine behind ordinary
+  `ao browser` inspection and interaction commands. AO retains only its
+  sanitized network observer and temporary highlight cleanup as safety/UI
+  plumbing. Focused checks and a fresh Windows x64 package pass; macOS/Linux
+  packaging and manual lifecycle acceptance remain release verification work.
 - **Cross-interface visual history import**: provider-native context continues
   across a compatible handoff, and Chat history already recorded by AO remains
   durable. A first TUI→Chat switch does not reconstruct terminal screen output

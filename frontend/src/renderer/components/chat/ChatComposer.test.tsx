@@ -29,6 +29,33 @@ const textFile = (name = "notes.txt") => new File(["hello"], name, { type: "text
 /* ---- the keyboard contract the composer already had ---------------------- */
 
 describe("send keys", () => {
+	it("grows with the draft, then scrolls after the seven-line cap", () => {
+		const { field } = renderComposer();
+		let scrollHeight = 112;
+		Object.defineProperty(field, "scrollHeight", {
+			configurable: true,
+			get: () => scrollHeight,
+		});
+		// JSDOM does not resolve Tailwind's generated max-height, so mirror the
+		// max-h-40 value inline while exercising the browser measurement path.
+		field.style.maxHeight = "160px";
+
+		fireEvent.change(field, { target: { value: "A prompt that wraps to a few lines" } });
+		expect(field.style.height).toBe("112px");
+		expect(field.style.overflowY).toBe("hidden");
+
+		scrollHeight = 240;
+		fireEvent.change(field, { target: { value: "A much longer prompt that exceeds seven lines" } });
+		expect(field.style.height).toBe("160px");
+		expect(field.style.overflowY).toBe("auto");
+
+		scrollHeight = 72;
+		fireEvent.change(field, { target: { value: "Short again" } });
+		expect(field.style.height).toBe("72px");
+		expect(field.style.overflowY).toBe("hidden");
+		expect(field).toHaveClass("chat-composer-scrollbar", "max-h-40");
+	});
+
 	it("separates secondary message tools from the primary send action", () => {
 		render(
 			<ChatComposer

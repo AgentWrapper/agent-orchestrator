@@ -61,7 +61,8 @@ func TestGetAgentHooksFootprintIsGitignored(t *testing.T) {
 
 func TestEveryHarnessReportsAuthStatus(t *testing.T) {
 	authCheckerExempt := map[string]string{
-		"continue": "Continue auth probes require sending a model prompt, so catalog refresh must not run them",
+		"continue":    "Continue auth probes require sending a model prompt, so catalog refresh must not run them",
+		"prime-agent": "Prime Agent has no documented non-interactive local auth probe; spawn remains authoritative",
 	}
 	for _, ha := range Harnessed() {
 		if reason, exempt := authCheckerExempt[string(ha.Harness)]; exempt {
@@ -74,6 +75,28 @@ func TestEveryHarnessReportsAuthStatus(t *testing.T) {
 			t.Errorf("%s does not implement ports.AgentAuthChecker", ha.Harness)
 		}
 	}
+}
+
+func TestRegistryIncludesPrimeAgent(t *testing.T) {
+	reg, err := Build()
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, ok := reg.Get("prime-agent")
+	if !ok {
+		t.Fatal("registry does not contain prime-agent")
+	}
+	manifest := adapter.Manifest()
+	if manifest.Name != "Prime Agent" {
+		t.Fatalf("prime-agent manifest name = %q, want Prime Agent", manifest.Name)
+	}
+
+	for _, item := range Harnessed() {
+		if item.Harness == "prime-agent" {
+			return
+		}
+	}
+	t.Fatal("Harnessed does not contain prime-agent")
 }
 
 func TestHarnessedExcludesFakeHarness(t *testing.T) {

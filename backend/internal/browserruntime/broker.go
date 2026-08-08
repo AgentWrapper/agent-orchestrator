@@ -14,6 +14,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,15 +26,34 @@ import (
 const (
 	// ProtocolVersion identifies the daemon-to-Electron browser bridge contract.
 	ProtocolVersion = 2
-	// RuntimeTokenEnv is deliberately removed from worker and preview-process
-	// environments. Only the daemon and desktop supervisor need it.
-	RuntimeTokenEnv = "AO_BROWSER_RUNTIME_TOKEN" //nolint:gosec // Environment variable name, not a credential.
+	// RuntimeTokenStdinEnv tells an app-spawned daemon to read its token once
+	// from the inherited private stdin pipe instead of an environment variable.
+	RuntimeTokenStdinEnv = "AO_BROWSER_RUNTIME_TOKEN_STDIN" //nolint:gosec // Environment variable name, not a credential.
 	// RuntimeAddressEnv carries the exact listener address into running.json so
 	// Electron never has to duplicate the backend's platform-specific naming.
 	RuntimeAddressEnv    = "AO_BROWSER_RUNTIME_ADDRESS"
 	helloTimeout         = 5 * time.Second
 	maxRuntimeFrameBytes = 8 << 20
 )
+
+// ReadRuntimeToken reads the one-line token handoff used by the desktop app.
+// The token is never placed in a file, command line, or daemon environment, and
+// the daemon does not pass the consumed stdin handle to worker processes.
+func ReadRuntimeToken(r io.Reader) (string, error) {
+	const maxTokenBytes = 256
+	line, err := bufio.NewReader(io.LimitReader(r, maxTokenBytes+1)).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read browser runtime token: %w", err)
+	}
+	token := strings.TrimSpace(line)
+	if token == "" {
+		return "", errors.New("browser runtime token handoff was empty")
+	}
+	if len(token) > maxTokenBytes {
+		return "", errors.New("browser runtime token handoff was too long")
+	}
+	return token, nil
+}
 
 // ErrUnavailable indicates that no Electron browser runtime can accept a command.
 var ErrUnavailable = errors.New("browser runtime is unavailable")
@@ -270,8 +290,10 @@ func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) erro
 	if err := conn.SetWriteDeadline(deadline); err != nil {
 		return err
 	}
+	interruptDone := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() {
 		_ = conn.SetWriteDeadline(time.Now())
+		close(interruptDone)
 	})
 	frame, err := json.Marshal(msg)
 	if err == nil && len(frame)+1 > maxRuntimeFrameBytes {
@@ -289,8 +311,17 @@ func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) erro
 			frame = frame[written:]
 		}
 	}
-	stop()
+	writeComplete := err == nil && len(frame) == 0
+	if !stop() {
+		<-interruptDone
+	}
 	_ = conn.SetWriteDeadline(time.Time{})
+	// Once the complete frame reached the runtime, let Execute observe a
+	// simultaneous cancellation and send the matching cancel frame. Returning
+	// ctx.Err here would make the delivered command impossible to cancel.
+	if writeComplete {
+		return nil
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

@@ -22,6 +22,7 @@ export const AGENT_OPTIONS = [
 	"kilocode",
 	"vibe",
 	"pi",
+	"prime-agent",
 	"autohand",
 ] as const;
 
@@ -51,6 +52,7 @@ export const AGENT_LABELS: Record<AgentOption, string> = {
 	kilocode: "Kilo Code",
 	vibe: "Vibe",
 	pi: "Pi",
+	"prime-agent": "Prime Agent",
 	autohand: "Autohand",
 };
 
