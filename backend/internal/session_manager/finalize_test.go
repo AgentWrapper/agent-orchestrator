@@ -113,6 +113,34 @@ func TestFinalize_RuntimeFailLeavesWorkspaceAndSchedulesRetry(t *testing.T) {
 	}
 }
 
+// TestFinalize_UnresolvedRuntimeHandleFailsClosed pins review gap #1 on #2931:
+// a terminal session with an empty/unrouted RuntimeHandleID (a legacy/backlog
+// row, e.g. #1458) must not let releaseTerminalResources proceed to destroy
+// its workspace — an unrouted runtime could still be live, and deleting its
+// cwd out from under it can't be undone. The release must fail closed
+// (pending/retryable) instead of false-succeeding.
+func TestFinalize_UnresolvedRuntimeHandleFailsClosed(t *testing.T) {
+	m, st, _, ws := finalizeManager(nil)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1"}) // no RuntimeHandleID
+
+	if err := m.FinalizeTerminalSession(ctx, "mer-1"); err != nil {
+		t.Fatalf("finalize should not surface a terminated session's teardown error: %v", err)
+	}
+	if ws.destroyed != 0 {
+		t.Fatal("an unresolved runtime handle must block workspace release, not just skip the runtime step")
+	}
+	facts := st.cleanup["mer-1"]
+	if facts.WorkspaceDisposition != domain.DispositionPending {
+		t.Fatalf("disposition = %q, want pending (retry scheduled)", facts.WorkspaceDisposition)
+	}
+	if facts.FailureCode != failRuntimeUnresolved {
+		t.Fatalf("failure code = %q, want %q", facts.FailureCode, failRuntimeUnresolved)
+	}
+	if !facts.RuntimeReleasedAt.IsZero() {
+		t.Fatal("runtime must NOT be recorded released when its handle was never resolved")
+	}
+}
+
 func TestFinalize_RetryExhaustionMarksFailed(t *testing.T) {
 	m, st, rt, _ := finalizeManager(nil)
 	rt.destroyErr = errors.New("permanently wedged")
@@ -294,6 +322,57 @@ func TestFinalize_WorkspaceProjectMixedCleanDirty(t *testing.T) {
 	}
 	if st.cleanup["mer-1"].WorkspaceDisposition != domain.DispositionPreservedDirty {
 		t.Fatalf("rollup = %q, want preserved_dirty", st.cleanup["mer-1"].WorkspaceDisposition)
+	}
+}
+
+// TestFinalize_WorkspaceProjectDirtyPlusFailedSiblingStaysRetryable pins review
+// gap #2 on #2931: when one child is dirty (preserved) and another, non-dirty
+// child's teardown *fails*, the session must not roll up to the terminal
+// preserved_dirty disposition — that would silently swallow the failed
+// child's error and stop it from ever being retried. The failed child's
+// retry_remove marker must get another attempt on a later sweep.
+func TestFinalize_WorkspaceProjectDirtyPlusFailedSiblingStaysRetryable(t *testing.T) {
+	m, st, _, ws := finalizeManager(nil)
+	ws.destroyErrByRepo = map[string]error{
+		"web":    fmt.Errorf("dirty: %w", ports.ErrWorkspaceDirty),
+		"broken": errors.New("locked"),
+	}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Path: "/repo/mer", Kind: domain.ProjectKindWorkspace, Config: testRoleAgents()}
+	st.workspaceRepo["mer"] = []domain.WorkspaceRepoRecord{
+		{Name: "api", RelativePath: "api"},
+		{Name: "web", RelativePath: "web"},
+		{Name: "broken", RelativePath: "broken"},
+	}
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1", RuntimeHandleID: "h1"})
+	st.worktrees["mer-1"] = []domain.SessionWorktreeRecord{
+		{SessionID: "mer-1", RepoName: domain.RootWorkspaceRepoName, Branch: "ao/mer-1", WorktreePath: "/ws/mer-1", State: "active"},
+		{SessionID: "mer-1", RepoName: "api", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/api", State: "active"},
+		{SessionID: "mer-1", RepoName: "web", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/web", State: "active"},
+		{SessionID: "mer-1", RepoName: "broken", Branch: "ao/mer-1", WorktreePath: "/ws/mer-1/broken", State: "active"},
+	}
+
+	if err := m.FinalizeTerminalSession(ctx, "mer-1"); err != nil {
+		t.Fatalf("finalize: %v", err)
+	}
+	states := map[string]string{}
+	for _, row := range st.worktrees["mer-1"] {
+		states[row.RepoName] = row.State
+	}
+	if states["api"] != "unavailable" || states[domain.RootWorkspaceRepoName] != "unavailable" {
+		t.Fatalf("clean children not reclaimed: states = %v", states)
+	}
+	if states["web"] != "active" {
+		t.Fatalf("dirty child web state = %q, want preserved (unchanged)", states["web"])
+	}
+	if states["broken"] != "retry_remove" {
+		t.Fatalf("failed child broken state = %q, want retry_remove", states["broken"])
+	}
+	facts := st.cleanup["mer-1"]
+	if facts.WorkspaceDisposition != domain.DispositionPending {
+		t.Fatalf("rollup = %q, want pending so the failed child is retried (a dirty sibling must not mask it as terminal preserved_dirty)", facts.WorkspaceDisposition)
+	}
+	if facts.NextAttemptAt.IsZero() {
+		t.Fatal("a pending mixed dirty+failed rollup must schedule a retry")
 	}
 }
 

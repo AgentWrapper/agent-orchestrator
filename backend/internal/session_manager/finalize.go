@@ -24,6 +24,7 @@ const (
 // Machine failure codes recorded on session_cleanup_facts.failure_code.
 const (
 	failRuntimeDestroy      = "runtime_destroy"
+	failRuntimeUnresolved   = "runtime_unresolved"
 	failWorkspaceRows       = "workspace_rows"
 	failWorkspaceDestroy    = "workspace_destroy"
 	failReviewerTerminator  = "reviewer_terminator"
@@ -59,6 +60,7 @@ type cleanupResult struct {
 // that (Kill) or fold it into a retry fact (the finalizer / Cleanup).
 func (m *Manager) releaseTerminalResources(ctx context.Context, rec domain.SessionRecord) (cleanupResult, error) {
 	var res cleanupResult
+	var runtimeUnresolved bool
 
 	m.stopPreviewBestEffort(ctx, rec.ID)
 	m.destroyBrowserBestEffort(ctx, rec.ID)
@@ -76,13 +78,16 @@ func (m *Manager) releaseTerminalResources(ctx context.Context, rec domain.Sessi
 			return res, fmt.Errorf("runtime: %w", err)
 		}
 		res.runtimeReleased = true
+	} else {
+		// handle.ID == "": an unrouted / legacy-backlog row. Destroy returns nil
+		// for an empty handle too, so treating that as proof of release would
+		// silently leave a live-but-unrouted runtime leaked (#1458). Reconstructing
+		// the adapter's deterministic session name to probe such a runtime is a
+		// cross-adapter seam left as follow-up; until then, fail closed instead of
+		// false-succeeding — checked below, once we know there is a workspace to
+		// protect (a workspace-less terminal session has nothing to leak into).
+		runtimeUnresolved = true
 	}
-	// handle.ID == "": an unrouted / legacy-backlog row. Destroy returns nil for
-	// an empty handle too, so treating that as proof of release would silently
-	// leave a live-but-unrouted runtime leaked. We do NOT claim release
-	// (runtimeReleased stays false) and still proceed to workspace cleanup;
-	// actively reconstructing the adapter's deterministic session name to probe
-	// such a runtime is a cross-adapter seam left as follow-up (ties to #1458).
 
 	if err := m.terminateReviewer(ctx, rec.ID, "cancelled by worker session termination"); err != nil {
 		res.failureCode = failReviewerTerminator
@@ -110,6 +115,15 @@ func (m *Manager) releaseTerminalResources(ctx context.Context, rec domain.Sessi
 		return res, nil
 	}
 
+	// A resolvable-but-unconfirmed runtime must not let the workspace go: an
+	// unrouted runtime could still be live, and deleting its cwd out from under
+	// it can't be undone. Fail closed here (pending/retryable) rather than
+	// proceeding on the unproven assumption that "no handle" means "no process".
+	if runtimeUnresolved {
+		res.failureCode = failRuntimeUnresolved
+		return res, fmt.Errorf("runtime handle unresolved for %s; refusing to release its workspace", rec.ID)
+	}
+
 	// Gate shut any shell terminal scoped to this session BEFORE the worktree
 	// goes away: an open shell whose cwd is that directory can otherwise survive
 	// the removal (and on Windows can even block it — an open handle on a
@@ -132,10 +146,13 @@ func (m *Manager) releaseTerminalResources(ctx context.Context, rec domain.Sessi
 
 	if workspaceProject {
 		out := m.releaseWorkspaceProjectRows(ctx, rows)
-		if out.dirty == 0 && out.firstErr != nil {
-			// Purely non-dirty failure(s): surface so Kill fails closed and the
-			// finalizer/Cleanup schedule a retry. The failed rows are already
-			// marked retry_remove.
+		if out.firstErr != nil {
+			// A failed non-dirty child must stay retryable even alongside a dirty
+			// sibling: surfacing the error (rather than rolling straight to the
+			// terminal preserved_dirty disposition) is what lets the caller
+			// schedule a retry. The failed row is already marked retry_remove and
+			// the dirty row is left untouched either way, so a later retry that
+			// only needs to revisit the failed child converges correctly.
 			res.failureCode = workspaceFailureCode(out.firstErr)
 			return res, fmt.Errorf("workspace: %w", out.firstErr)
 		}

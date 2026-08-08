@@ -1866,6 +1866,30 @@ func (m *Manager) restoreSavedSession(ctx context.Context, rec domain.SessionRec
 		return
 	}
 
+	// Release any runtime that survived a prior shutdown before relaunching.
+	// SaveAndTeardownAll's own runtime.Destroy is best-effort (a failure there
+	// only logs a warning); if it didn't actually land, or the daemon crashed
+	// before running it, the old deterministic pane can still be alive here,
+	// and Step 3 creating a new one under the same name would collide with it.
+	// Probe first (rather than an unconditional Destroy) so a handle that is
+	// already gone — the common case, and also true of a session captured and
+	// relaunched within this same boot pass — is left alone rather than
+	// recorded as an extra teardown. reconcileReap used to cover this as a
+	// pre-restore pass; it was removed once the finalizer subsumed runtime
+	// reclaim for every OTHER terminal path, but restore-pending rows are the
+	// one class the finalizer deliberately skips — RestoreAll owns those.
+	if handle := runtimeHandle(rec.Metadata); handle.ID != "" {
+		if alive, err := m.runtime.IsAlive(ctx, handle); err != nil {
+			if !errors.Is(err, ports.ErrRuntimeUnavailable) {
+				m.logger.Warn("restore-all: pre-restore runtime probe failed", "sessionID", rec.ID, "error", err)
+			}
+		} else if alive {
+			if err := m.runtime.Destroy(ctx, handle); err != nil {
+				m.logger.Warn("restore-all: pre-restore runtime release failed", "sessionID", rec.ID, "error", err)
+			}
+		}
+	}
+
 	// Step 1: ensure the worktree exists. workspace.Restore re-creates it
 	// if it was removed by SaveAndTeardownAll.
 	project, err := m.loadProject(ctx, rec.ProjectID)
@@ -2510,6 +2534,24 @@ func (m *Manager) Cleanup(ctx context.Context, project domain.ProjectID) (Cleanu
 func (m *Manager) finalizeOne(ctx context.Context, rec domain.SessionRecord) domain.SessionCleanupRecord {
 	unlock := m.sessionLocks.lock(rec.ID)
 	defer unlock()
+
+	// Re-read under the lock: cleanupRecords took its snapshot before any lock
+	// was held, so a concurrent Restore can finish between that read and this
+	// lock acquisition. Without this, Cleanup would release the runtime/workspace
+	// of a session that has already been relaunched, using the stale terminated
+	// record instead of the current live one.
+	if cur, ok, err := m.store.GetSession(ctx, rec.ID); err != nil {
+		m.logger.Warn("cleanup: re-read session failed; proceeding on stale record", "sessionID", rec.ID, "error", err)
+	} else if !ok || !cur.IsTerminated {
+		// Gone, or restored since the caller's snapshot: nothing to clean now.
+		return domain.SessionCleanupRecord{
+			SessionID:            rec.ID,
+			SessionGeneration:    rec.CleanupGeneration,
+			WorkspaceDisposition: domain.DispositionNotApplicable,
+		}
+	} else {
+		rec = cur
+	}
 
 	generation := rec.CleanupGeneration
 	if facts, ok, err := m.store.GetSessionCleanupFacts(ctx, rec.ID); err == nil && ok &&
