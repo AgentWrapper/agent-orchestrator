@@ -37,6 +37,7 @@ import remarkGfm from "remark-gfm";
 import { WrapText } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { canonicalLanguage } from "../../lib/code-highlight";
+import { openLinkInSystemBrowser } from "../../lib/external-link-policy";
 import { HighlightedCode } from "./HighlightedCode";
 import { CopyButton } from "./CopyButton";
 import "./code-theme.css";
@@ -293,6 +294,11 @@ const COMPONENTS: Components = {
 			href={href}
 			target="_blank"
 			rel="noreferrer noopener"
+			onClick={(event) => {
+				if (!href) return;
+				event.preventDefault();
+				void openLinkInSystemBrowser(href);
+			}}
 			className="text-markdown-link underline decoration-markdown-link/45 underline-offset-2 transition-colors hover:text-markdown-link-hover hover:decoration-markdown-link-hover/75"
 		>
 			{children}

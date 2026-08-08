@@ -88,6 +88,12 @@ describe("ChatWorkspace timeline", () => {
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
 	});
 
+	it("lets readers select conversation text", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByRole("log", { name: "Conversation" })).toHaveClass("select-text");
+	});
+
 	it("offers real recovery actions when the controller stops", async () => {
 		const user = userEvent.setup();
 		const resume = vi.fn();

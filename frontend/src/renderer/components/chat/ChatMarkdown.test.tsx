@@ -1,6 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { aoBridge } from "../../lib/bridge";
 import { ChatMarkdown } from "./ChatMarkdown";
 
 // The point of these is that the SYNTAX stops being visible. Every case here is a
@@ -105,6 +106,17 @@ describe("ChatMarkdown", () => {
 		expect(link).toHaveClass("text-markdown-link", "hover:text-markdown-link-hover");
 		// Without noreferrer the opened page gets a handle on the renderer.
 		expect(link.getAttribute("rel")).toContain("noreferrer");
+	});
+
+	it("opens external links in the system browser on a plain click", async () => {
+		const user = userEvent.setup();
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		render(<ChatMarkdown text={"see [the issue](https://example.com/i/1)"} />);
+
+		await user.click(screen.getByRole("link", { name: "the issue" }));
+
+		expect(openExternal).toHaveBeenCalledWith("https://example.com/i/1");
+		openExternal.mockRestore();
 	});
 
 	it("renders bold, strikethrough and blockquotes", () => {
