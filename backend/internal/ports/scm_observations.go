@@ -43,7 +43,8 @@ type SCMPRRef struct {
 // SCMGuardResult is an ETag-style cache guard result. NotModified maps to HTTP
 // 304 for providers that support it.
 type SCMGuardResult struct {
-	// ETag is the latest provider cache validator for this guard endpoint.
+	// ETag is the latest opaque provider cache validator for this guard. A
+	// provider may combine validators when the guarded representation is paged.
 	ETag string
 	// NotModified is true when the provider reported no change since the ETag.
 	NotModified bool

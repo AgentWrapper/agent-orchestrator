@@ -96,7 +96,8 @@ type Config struct {
 type ObserverCache struct {
 	// RepoPRListETag maps repository keys to the last open-PR-list ETag.
 	RepoPRListETag map[string]string
-	// CommitChecksETag maps repo+commit keys to the last check-runs ETag.
+	// CommitChecksETag maps repo+commit keys to the provider's opaque check-runs
+	// validator. GitHub combines one ETag per page in this token.
 	CommitChecksETag map[string]string
 	// LastReviewPollAt maps PR keys to the last review-thread fetch timestamp.
 	LastReviewPollAt map[string]time.Time

@@ -1609,11 +1609,10 @@ func TestCommitChecksGuard_OtherRunTransitionInvalidatesGuard(t *testing.T) {
 	}
 }
 
-// TestCommitChecksGuard_PaginatedFingerprintInvalidatesLaterPageRun verifies the
-// paginated path: when a commit carries more than one page of check runs, the
-// guard fingerprints the complete set so a transition on a LATER page (invisible
-// to the first page's ETag) still invalidates the guard.
-func TestCommitChecksGuard_PaginatedFingerprintInvalidatesLaterPageRun(t *testing.T) {
+// TestCommitChecksGuard_PaginatedETagsInvalidateLaterPageRun verifies the
+// paginated path: every page is conditionally checked, so a transition on a
+// later page invalidates the composite guard while unchanged pages return 304.
+func TestCommitChecksGuard_PaginatedETagsInvalidateLaterPageRun(t *testing.T) {
 	f := newFakeGH(t)
 	const owner, repo, sha = "octocat", "hello", "abc123"
 	path := repoPath(owner, repo, "commits", sha, "check-runs")
@@ -1656,8 +1655,13 @@ func TestCommitChecksGuard_PaginatedFingerprintInvalidatesLaterPageRun(t *testin
 			shown = state.page2
 		}
 		body, _ := json.Marshal(map[string]any{"total_count": 150, "check_runs": shown})
+		etag := fmt.Sprintf(`W/"%x"`, sha256.Sum256(body))
+		w.Header().Set("ETag", etag)
+		if r.Header.Get("If-None-Match") == etag {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("ETag", fmt.Sprintf(`W/"%x"`, sha256.Sum256(body)))
 		_, _ = w.Write(body)
 	})
 	p := newProviderForTest(t, f)
@@ -1670,10 +1674,10 @@ func TestCommitChecksGuard_PaginatedFingerprintInvalidatesLaterPageRun(t *testin
 	if res.NotModified {
 		t.Fatal("first paginated poll reported NotModified")
 	}
-	firstFingerprint := res.ETag
+	firstGuard := res.ETag
 
 	// Unchanged set -> NotModified=true.
-	res, err = p.CommitChecksGuard(ctx(), repoRef, sha, firstFingerprint)
+	res, err = p.CommitChecksGuard(ctx(), repoRef, sha, firstGuard)
 	if err != nil {
 		t.Fatalf("unchanged paginated guard: %v", err)
 	}
@@ -1682,15 +1686,15 @@ func TestCommitChecksGuard_PaginatedFingerprintInvalidatesLaterPageRun(t *testin
 	}
 
 	// Only a page-2 run transitions; page 1 (whose ETag page-1 callers would see)
-	// is untouched. The fingerprint over the whole set must change.
+	// is untouched. The second page's validator must change.
 	mu.Lock()
 	state.page2[49] = map[string]any{"id": 150, "name": "job-150", "status": "completed", "conclusion": "success"}
 	mu.Unlock()
-	res, err = p.CommitChecksGuard(ctx(), repoRef, sha, firstFingerprint)
+	res, err = p.CommitChecksGuard(ctx(), repoRef, sha, firstGuard)
 	if err != nil {
 		t.Fatalf("transitioned paginated guard: %v", err)
 	}
 	if res.NotModified {
-		t.Fatal("guard stayed NotModified after a page-2 run transitioned (fingerprint bug)")
+		t.Fatal("guard stayed NotModified after a page-2 run transitioned")
 	}
 }
