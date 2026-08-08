@@ -5828,6 +5828,10 @@ components:
           type: string
         repo:
           type: string
+        skippedWorkspaceRepos:
+          items:
+            $ref: '#/components/schemas/WorkspaceRepo'
+          type: array
         workspaceRepos:
           items:
             $ref: '#/components/schemas/WorkspaceRepo'
@@ -7338,6 +7342,8 @@ components:
         relativePath:
           type: string
         repo:
+          type: string
+        skipReason:
           type: string
       required:
       - name

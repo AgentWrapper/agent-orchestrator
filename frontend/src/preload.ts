@@ -50,6 +50,7 @@ export type ImportRepoScan = {
 	hasRemote: boolean;
 	status?: "ok" | "error";
 	reason?: string;
+	warning?: string;
 };
 
 export type ImportFolderScan = {

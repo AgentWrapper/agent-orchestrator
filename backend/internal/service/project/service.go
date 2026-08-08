@@ -220,7 +220,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		Config:       projectConfig,
 	}
 	if in.AsWorkspace {
-		repos, err := prepareWorkspaceProject(ctx, path, domain.ProjectID(row.ID), registeredAt)
+		repos, skipped, err := prepareWorkspaceProject(ctx, path, domain.ProjectID(row.ID), registeredAt)
 		if err != nil {
 			return Project{}, err
 		}
@@ -232,6 +232,7 @@ func (m *Service) Add(ctx context.Context, in AddInput) (Project, error) {
 		m.emitProjectAdded(row, projectCountBefore == 0)
 		p := m.projectFromRow(row)
 		p.WorkspaceRepos = workspaceReposFromRecords(repos)
+		p.SkippedWorkspaceRepos = skipped
 		return p, nil
 	}
 	if !isGitRepo(path) {
