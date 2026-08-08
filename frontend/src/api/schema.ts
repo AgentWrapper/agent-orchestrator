@@ -589,6 +589,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sessions/{sessionId}/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reclaim a single terminated session's runtime + workspace resources */
+        post: operations["cleanupSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions/{sessionId}/conversation": {
         parameters: {
             query?: never;
@@ -1475,6 +1492,12 @@ export interface components {
             sessionId: string;
             takenOverFrom: string[];
         };
+        CleanupSessionResponse: {
+            cleanup?: components["schemas"]["SessionCleanupView"];
+            isTerminated: boolean;
+            ok: boolean;
+            sessionId: string;
+        };
         CleanupSessionsResponse: {
             cleaned: string[];
             ok: boolean;
@@ -1502,6 +1525,7 @@ export interface components {
         ControllersSessionView: {
             activity: components["schemas"]["DomainActivity"];
             branch?: string;
+            cleanup?: components["schemas"]["SessionCleanupView"];
             /** Format: date-time */
             createdAt: string;
             displayName?: string;
@@ -2158,6 +2182,17 @@ export interface components {
             message: string;
             ok: boolean;
             sessionId: string;
+        };
+        SessionCleanupView: {
+            /** Format: int64 */
+            attemptCount?: number;
+            failureCode?: string;
+            /** Format: date-time */
+            nextAttemptAt?: null | string;
+            /** Format: date-time */
+            runtimeReleasedAt?: null | string;
+            /** @enum {string} */
+            workspaceDisposition: "pending" | "removed" | "preserved_dirty" | "failed" | "not_applicable";
         };
         SessionInterfaceTransition: {
             /** Format: date-time */
@@ -4659,6 +4694,56 @@ export interface operations {
             };
             /** @description Not Implemented */
             501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    cleanupSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CleanupSessionResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
