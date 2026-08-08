@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentSwitch } from "../hooks/useAgentSwitches";
+import { AGENT_OPTIONS } from "../lib/agent-options";
 import type { WorkspaceSession } from "../types/workspace";
 import { TerminalSwitchAgentButton } from "./TerminalSwitchAgentButton";
 import { TooltipProvider } from "./ui/tooltip";
@@ -111,7 +112,7 @@ describe("TerminalSwitchAgentButton", () => {
 		const targetAgent = within(dialog).getByRole("combobox", { name: "Target agent" });
 		expect(targetAgent).toHaveTextContent("Codex");
 		await userEvent.click(targetAgent);
-		expect(screen.getAllByRole("option")).toHaveLength(24);
+		expect(screen.getAllByRole("option")).toHaveLength(AGENT_OPTIONS.length);
 		expect(screen.getByRole("option", { name: /Cursor,\s*Coming soon/ })).toHaveAttribute("data-disabled");
 		await userEvent.keyboard("{Escape}");
 		await userEvent.type(within(dialog).getByLabelText("Note (optional)"), "  Check tests first.  ");
