@@ -14,7 +14,6 @@ import {
 	GitMerge,
 	Info,
 	Play,
-	Terminal,
 	Trash2,
 	Loader2,
 	X,
@@ -1255,29 +1254,28 @@ function ReviewsSection({
 		<div>
 			{/* Running a review is an action; reading them is a list. The action stays
 			    on top, then one list carrying both sources keyed by PR. */}
-				<ReviewPanel
-					config={projectConfigQuery.data}
-					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? killReview.error ?? saveReviewer.error}
+			<ReviewPanel
+				config={projectConfigQuery.data}
+				error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? killReview.error ?? saveReviewer.error}
 				isLoading={reviewsQuery.isLoading}
 				isCancelling={cancelReview.isPending}
 				isKilling={killReview.isPending}
 				isSwitchingReviewer={saveReviewer.isPending}
 				isTriggering={triggerReview.isPending}
-				onOpenTerminal={onOpenReviewerTerminal}
 				onCancel={() => cancelReview.mutate()}
 				onKill={() => killReview.mutate()}
 				onTrigger={() => triggerReview.mutate()}
 				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 				reviewStates={reviewStates}
-					notice={reviewNotice}
-					agentCatalog={agentsQuery.data}
-					reviewerOverride={reviewerOverride}
-					onReviewerOverrideChange={(next) => {
-						setReviewerOverride(next);
-						saveReviewer.mutate(next);
-					}}
-					session={session}
-				/>
+				notice={reviewNotice}
+				agentCatalog={agentsQuery.data}
+				reviewerOverride={reviewerOverride}
+				onReviewerOverrideChange={(next) => {
+					setReviewerOverride(next);
+					saveReviewer.mutate(next);
+				}}
+				session={session}
+			/>
 			<MergedReviewsSection
 				githubPRs={githubReviews}
 				isLoading={scmSummary.isLoading}
@@ -1637,7 +1635,6 @@ function ReviewPanel({
 	onTrigger,
 	onCancel,
 	onKill,
-	onOpenTerminal,
 }: {
 	session: WorkspaceSession;
 	config?: ProjectConfig;
@@ -1656,7 +1653,6 @@ function ReviewPanel({
 	onTrigger: () => void;
 	onCancel: () => void;
 	onKill: () => void;
-	onOpenTerminal?: OpenReviewerTerminal;
 }) {
 	const { t } = useTranslation();
 	if (sortedPRs(session).length === 0) {
@@ -1679,15 +1675,10 @@ function ReviewPanel({
 	const latest = runningRun ?? newestRun;
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const projectDefaultLabel = t("newTask.projectDefault");
-	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
-	const openReviewerTerminal = () => {
-		if (!terminalEnabled) return;
-		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
-	};
 	const runDisabled =
 		isTriggering ||
 		isKilling ||
@@ -1780,27 +1771,12 @@ function ReviewPanel({
 									<Trash2 aria-hidden="true" />
 								</Button>
 							) : null}
-							{reviewHasRun ? (
-								<Button
-									aria-label={t("inspector.openTerminal")}
-									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
-									disabled={!terminalEnabled}
-									onClick={openReviewerTerminal}
-									size="sm"
-									title={t("inspector.openTerminal")}
-									type="button"
-									variant="ghost"
-								>
-									<Terminal aria-hidden="true" />
-									<span className="review-run-action-label">{t("inspector.openTerminal")}</span>
-								</Button>
-							) : null}
 						</div>
 					</div>
-					</div>
+				</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
-							<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
+						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
 						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
 							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
 						</span>
@@ -2057,13 +2033,24 @@ function runsByPRFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[])
 	return byPR;
 }
 
-/** The PRs AO has actually reviewed, or been asked to. */
+function reviewRunHasOutcome(run: ReviewRunFacts | undefined): boolean {
+	return Boolean(
+		run &&
+			(run.verdict?.trim() ||
+				run.status === "complete" ||
+				run.status === "delivered" ||
+				run.status === "failed" ||
+				run.status === "cancelled"),
+	);
+}
+
+/** The PRs AO has an agent review outcome for. */
 function triggeredReviewStatesFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[]): PRReviewState[] {
 	return openReviewStates.filter(
 		(reviewState) =>
-			Boolean(reviewState.latestRun) ||
-			Boolean(reviewState.previousRun) ||
-			runs.some((run) => run.prUrl === reviewState.prUrl) ||
+			reviewRunHasOutcome(reviewState.latestRun) ||
+			reviewRunHasOutcome(reviewState.previousRun) ||
+			runs.some((run) => run.prUrl === reviewState.prUrl && reviewRunHasOutcome(run)) ||
 			reviewState.status === "up_to_date" ||
 			reviewState.status === "changes_requested",
 	);

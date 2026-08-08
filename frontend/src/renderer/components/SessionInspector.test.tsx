@@ -1282,6 +1282,20 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getByText("Changes requested")).toBeInTheDocument();
 	});
 
+	it("hides agent review PR rows while a triggered review is still running without a verdict", async () => {
+		const running = {
+			...reviewState(3, "running", "sha-1"),
+			latestRun: { ...approvedReview, id: "run-live", harness: "codex", status: "running", verdict: "" },
+		};
+		mockCommonGets([], "reviewer-pane", [running]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await screen.findByText("Review in progress · codex");
+
+		expect(screen.queryByText("Reviewable change 3")).not.toBeInTheDocument();
+		expect(screen.queryByText("Reviews")).not.toBeInTheDocument();
+	});
+
 	it("shows eligible and up-to-date open PR review rows", async () => {
 		mockCommonGets([approvedReview], "reviewer-pane", [
 			reviewState(3, "needs_review", "abc123"),
@@ -1303,6 +1317,7 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.queryByText("Reviewable change 5")).not.toBeInTheDocument();
 		expect(screen.getAllByText("Approved")).not.toHaveLength(0);
 		expect(screen.getByRole("button", { name: "Re-run review" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Run" })).not.toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Re-run" })).not.toBeInTheDocument();
 	});
