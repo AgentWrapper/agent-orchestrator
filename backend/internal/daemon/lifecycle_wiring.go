@@ -181,18 +181,12 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Logger:              log,
 	})
 	scmProvider := newMultiSCMProvider(cfg.GitLab, log)
-	// Build the GitHub tracker, but keep a true nil ports.Tracker interface on
-	// failure. newGitHubTracker returns (*github.Tracker)(nil) on ErrNoToken,
-	// which Go wraps as a non-nil typed-nil interface — that slips past the
-	// `s.tracker == nil` guard in withIssueContext and dereferences nil on the
-	// first issue lookup (issue #2685). Assigning the concrete value only on
-	// success leaves tracker as a real interface-nil otherwise.
-	var tracker ports.Tracker
-	if t, err := newGitHubTracker(); err != nil {
-		logTrackerDisabled(log, err)
-	} else {
-		tracker = t
-	}
+	// Build the multi-tracker dispatching to both GitHub and GitLab. The
+	// multi-tracker returns a true nil ports.Tracker when no provider has
+	// usable credentials, preserving the `s.tracker == nil` guard in
+	// withIssueContext (issue #2685). When one provider's token is missing,
+	// the other still serves issue lookups.
+	tracker := newMultiTracker(cfg.GitLab, log)
 	sessionSvc := sessionsvc.NewWithDeps(sessionsvc.Deps{
 		Manager:           mgr,
 		Store:             store,
