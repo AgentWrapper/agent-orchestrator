@@ -32,14 +32,17 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestGetConfigSpecEmpty(t *testing.T) {
+func TestGetConfigSpecAdvertisesModelField(t *testing.T) {
 	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if len(spec.Fields) != 0 {
-		t.Fatalf("expected no fields, got %d", len(spec.Fields))
+	for _, f := range spec.Fields {
+		if f.Key == "model" {
+			return
+		}
 	}
+	t.Fatalf("GetConfigSpec does not advertise a model field: %#v", spec.Fields)
 }
 
 func TestGetPromptDeliveryStrategy(t *testing.T) {

@@ -89,18 +89,26 @@ func (p *Plugin) Manifest() adapters.Manifest {
 	}
 }
 
-// GetConfigSpec returns the adapter's configuration spec (currently empty).
+// GetConfigSpec returns the adapter's configuration spec.
 func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 	if err := ctx.Err(); err != nil {
 		return ports.ConfigSpec{}, err
 	}
-	return ports.ConfigSpec{}, nil
+	return ports.ConfigSpec{
+		Fields: []ports.ConfigField{
+			{
+				Key:         "model",
+				Type:        ports.ConfigFieldString,
+				Description: "Model override passed to `kimchi --model`.",
+			},
+		},
+	}, nil
 }
 
 // GetLaunchCommand builds the argv to start an interactive Kimchi session
 // inside a tmux pane:
 //
-//	kimchi [--auto|--yolo] [--append-system-prompt <text>] [<prompt>]
+//	kimchi [--model <id>] [--auto|--yolo] [--append-system-prompt <text>] [<prompt>]
 //
 // Kimchi runs interactively (no --print): its TUI requires a TTY, which
 // tmux provides. The prompt is a trailing positional argument.
@@ -111,6 +119,10 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	cmd = []string{binary}
+
+	if model := strings.TrimSpace(cfg.Config.Model); model != "" {
+		cmd = append(cmd, "--model", model)
+	}
 
 	permissions := cfg.Permissions
 	if permissions == "" {
