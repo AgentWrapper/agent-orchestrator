@@ -1916,6 +1916,7 @@ export interface components {
             name: string;
             path: string;
             repo: string;
+            skippedWorkspaceRepos?: components["schemas"]["WorkspaceRepo"][];
             workspaceRepos?: components["schemas"]["WorkspaceRepo"][];
         };
         ProjectConfig: {
@@ -2464,6 +2465,7 @@ export interface components {
             name: string;
             relativePath: string;
             repo: string;
+            skipReason?: string;
         };
     };
     responses: never;
