@@ -1417,7 +1417,7 @@ func TestPoll_ReviewObservedAtZeroTriggersReviewRefresh(t *testing.T) {
 	store := testStoreWithSession()
 	local := knownPR(1)
 	local.Review = domain.ReviewApproved
-	local.ReviewHash = "some-hash"  // non-empty but review_observed_at is zero
+	local.ReviewHash = "some-hash"       // non-empty but review_observed_at is zero
 	local.ReviewObservedAt = time.Time{} // review threads were never fetched
 	store.prs["p-1"] = []domain.PullRequest{local}
 	review := ports.SCMReviewObservation{
