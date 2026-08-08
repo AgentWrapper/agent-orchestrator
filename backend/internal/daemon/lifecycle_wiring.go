@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -441,17 +442,20 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		SystemPrompt:           cfg.SystemPrompt,
 		AdditionalDirectories:  cfg.AdditionalDirectories,
 		ProviderConversationID: cfg.ProviderConversationID,
-		ControllerReady: func(out chatsvc.StartResult) error {
+		ControllerReady: func(readyCtx context.Context, out chatsvc.StartResult) error {
 			if cfg.ControllerReady == nil {
 				return nil
 			}
-			return cfg.ControllerReady(sessionmanager.ChatStarted{
+			return cfg.ControllerReady(readyCtx, sessionmanager.ChatStarted{
 				ProviderConversationID: out.ProviderConversationID,
 				ControllerGeneration:   out.ControllerGeneration,
 			})
 		},
 	})
 	if err != nil {
+		if errors.Is(err, chatsvc.ErrControllerAlreadyLive) {
+			return sessionmanager.ChatStarted{}, sessionmanager.ErrAgentNotExited
+		}
 		return sessionmanager.ChatStarted{}, err
 	}
 	return sessionmanager.ChatStarted{
@@ -478,6 +482,10 @@ func (c chatLauncher) RelayChatTurnWithID(
 
 func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {
 	return c.svc.HasLiveChatController(id)
+}
+
+func (c chatLauncher) OwnsChatController(id domain.SessionID) bool {
+	return c.svc.OwnsChatController(id)
 }
 
 // PrepareChatHandoff closes Chat intake and waits for the controller to become

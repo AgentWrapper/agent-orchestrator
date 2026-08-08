@@ -18,6 +18,16 @@ import (
 // or its controller may have stopped, and the client needs to tell those apart.
 var ErrNoController = errors.New("no live chat controller for session")
 
+// ErrControllerAlreadyLive reports a second launch request while this daemon
+// still owns the session's controller. Recovery must never turn that into a
+// successful no-op because Session Manager needs to preserve one-writer errors.
+var ErrControllerAlreadyLive = errors.New("chat controller is already live")
+
+// ErrControllerStarting reports a command that arrived before Session Manager
+// committed the controller generation. It retains ErrNoController's API mapping
+// while allowing lifecycle coordination to distinguish a launch in progress.
+var ErrControllerStarting = fmt.Errorf("%w: controller is starting", ErrNoController)
+
 // ErrNotChatMode reports a Chat command against a session whose committed
 // controller is currently TUI. An explicit interface transition may change that
 // fact later, but callers must route from the persisted mode they read now.
@@ -41,6 +51,9 @@ type Service struct {
 	log        *slog.Logger
 	newID      IDFactory
 	now        Clock
+	// backgroundContext is canceled with the daemon, not with the HTTP request
+	// that happened to launch a controller.
+	backgroundContext context.Context
 
 	mu          sync.RWMutex
 	controllers map[domain.SessionID]*Controller
@@ -77,6 +90,9 @@ type Options struct {
 	Log      *slog.Logger
 	NewID    IDFactory
 	Now      Clock
+	// BackgroundContext owns controller cleanup that must outlive the launch
+	// request. It defaults to context.Background for focused tests.
+	BackgroundContext context.Context
 }
 
 // New builds a Chat service.
@@ -89,18 +105,23 @@ func New(opts Options) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	backgroundContext := opts.BackgroundContext
+	if backgroundContext == nil {
+		backgroundContext = context.Background()
+	}
 	return &Service{
-		store:       opts.Store,
-		reader:      opts.Reader,
-		pageReader:  opts.PageReader,
-		sessions:    opts.Sessions,
-		drivers:     opts.Drivers,
-		activity:    opts.Activity,
-		log:         log,
-		newID:       opts.NewID,
-		now:         now,
-		controllers: make(map[domain.SessionID]*Controller),
-		gates:       make(map[domain.SessionID]controllerGate),
+		store:             opts.Store,
+		reader:            opts.Reader,
+		pageReader:        opts.PageReader,
+		sessions:          opts.Sessions,
+		drivers:           opts.Drivers,
+		activity:          opts.Activity,
+		log:               log,
+		newID:             opts.NewID,
+		now:               now,
+		backgroundContext: backgroundContext,
+		controllers:       make(map[domain.SessionID]*Controller),
+		gates:             make(map[domain.SessionID]controllerGate),
 	}
 }
 
@@ -135,7 +156,7 @@ type StartConfig struct {
 	// consumption starts. A controller that exits immediately must report after
 	// the launch has been marked live, so its exited signal cannot be overwritten
 	// by a later launch-completion write.
-	ControllerReady func(StartResult) error
+	ControllerReady func(context.Context, StartResult) error
 }
 
 func controllerStartResult(controller *Controller) StartResult {
@@ -143,16 +164,6 @@ func controllerStartResult(controller *Controller) StartResult {
 		ProviderConversationID: controller.ProviderConversationID(),
 		ControllerGeneration:   controller.Generation(),
 	}
-}
-
-func notifyControllerReady(cfg StartConfig, controller *Controller) error {
-	if cfg.ControllerReady == nil {
-		return nil
-	}
-	if err := cfg.ControllerReady(controllerStartResult(controller)); err != nil {
-		return fmt.Errorf("commit chat controller: %w", err)
-	}
-	return nil
 }
 
 // settleOrphanedWork closes out anything a previous controller left behind.
@@ -192,7 +203,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	s.mu.RUnlock()
 	if existing != nil {
 		if existing.State() != ports.ChatControllerStopped {
-			return existing, nil
+			return nil, ErrControllerAlreadyLive
 		}
 		// A stopped event can reach the UI before the projector finishes its final
 		// durable cleanup and the registry goroutine releases the entry. Never hand
@@ -263,13 +274,39 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		return nil, err
 	}
 
+	// Publish ownership immediately after the provider exists. Every later step
+	// is fallible; retaining this connecting controller is how a failed close
+	// prevents retry or workspace teardown from creating a second writer.
+	generation := s.newID()
+	controller := newController(
+		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
+	s.mu.Lock()
+	s.controllers[cfg.SessionID] = controller
+	controller.start(s.backgroundContext)
+	s.mu.Unlock()
+
+	// Drop the registry entry only when the provider stream really ends.
+	go func() {
+		controller.Wait()
+		s.mu.Lock()
+		if current, ok := s.controllers[cfg.SessionID]; ok && current == controller {
+			delete(s.controllers, cfg.SessionID)
+		}
+		s.mu.Unlock()
+	}()
+	abortUncommitted := func(startErr error) error {
+		if closeErr := controller.Close(ctx); closeErr != nil {
+			return errors.Join(startErr,
+				fmt.Errorf("close uncommitted chat controller: %w", closeErr))
+		}
+		return startErr
+	}
+
 	// Claim the durable fence before the controller starts consuming events. An
 	// older controller's projection transaction compares its generation with this
 	// session row and becomes a no-op after this point.
-	generation := s.newID()
 	if err := s.store.ClaimChatControllerGeneration(ctx, cfg.SessionID, generation, s.now()); err != nil {
-		_ = conv.Close()
-		return nil, fmt.Errorf("claim chat controller: %w", err)
+		return nil, abortUncommitted(fmt.Errorf("claim chat controller: %w", err))
 	}
 
 	// Whatever the previous controller left in flight is not this controller's, and
@@ -289,8 +326,7 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			"reason": "native conversation was unavailable",
 		})
 		if marshalErr != nil {
-			_ = conv.Close()
-			return nil, fmt.Errorf("encode fresh context boundary: %w", marshalErr)
+			return nil, abortUncommitted(fmt.Errorf("encode fresh context boundary: %w", marshalErr))
 		}
 		if boundaryErr := s.store.UpsertActivity(ctx, conversation.ID, "", domain.ConversationActivity{
 			ID:             s.newID(),
@@ -300,15 +336,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			Detail:         detail,
 			ProviderItemID: "ao-context-reset:" + string(cfg.SessionID),
 		}, s.now()); boundaryErr != nil {
-			_ = conv.Close()
-			return nil, fmt.Errorf("record fresh context boundary: %w", boundaryErr)
+			return nil, abortUncommitted(fmt.Errorf("record fresh context boundary: %w", boundaryErr))
 		}
 	}
 
-	// A fresh generation per launch, so events from the controller this one
-	// replaced can be told apart from the current one's.
-	controller := newController(
-		cfg.SessionID, conversation, generation, conv, s.store, s.activity, s.log, s.newID, s.now)
 	if cfg.ProviderConversationID != "" {
 		// The provider's native thread is the continuity authority across TUI and
 		// Chat. Import it before the live projector starts so the first notification
@@ -323,60 +354,63 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 		if s.reader != nil {
 			existing, err = s.reader.LoadConversationSnapshot(ctx, conversation.ID)
 			if err != nil {
-				_ = conv.Close()
-				return nil, fmt.Errorf("load conversation before native history import: %w", err)
+				return nil, abortUncommitted(fmt.Errorf("load conversation before native history import: %w", err))
 			}
 		}
 		if err := controller.importNativeHistory(
 			ctx, existing.Turns, existing.Messages, existing.Activities,
 		); err != nil {
-			_ = conv.Close()
-			return nil, err
+			return nil, abortUncommitted(err)
 		}
 	}
-	if err := notifyControllerReady(cfg, controller); err != nil {
-		_ = conv.Close()
-		return nil, err
-	}
-	s.mu.Lock()
-	s.controllers[cfg.SessionID] = controller
-	controller.start()
-	s.mu.Unlock()
 
-	// Drop the registry entry when the provider stream ends, so a later command
-	// reports ErrNoController instead of writing into a dead controller.
-	go func() {
-		controller.Wait()
-		s.mu.Lock()
-		if current, ok := s.controllers[cfg.SessionID]; ok && current == controller {
-			delete(s.controllers, cfg.SessionID)
+	if cfg.ControllerReady != nil {
+		if err := cfg.ControllerReady(ctx, controllerStartResult(controller)); err != nil {
+			commitErr := fmt.Errorf("commit chat controller: %w", err)
+			return nil, abortUncommitted(commitErr)
 		}
-		s.mu.Unlock()
-	}()
+	}
+	controller.releaseStart(true)
 
 	return controller, nil
 }
 
 // Controller returns a session's live controller.
 func (s *Service) Controller(sessionID domain.SessionID) (*Controller, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	controller, ok := s.controllers[sessionID]
-	if !ok {
+	controller := s.ownedController(sessionID)
+	if controller == nil {
 		return nil, ErrNoController
+	}
+	state := controller.State()
+	if state == ports.ChatControllerStopped {
+		return nil, ErrNoController
+	}
+	if state == ports.ChatControllerConnecting {
+		return nil, ErrControllerStarting
 	}
 	return controller, nil
 }
 
-// HasLiveChatController reports whether the service owns a controller that can
-// still process provider events. A stopped controller can remain in the registry
-// briefly while its final cleanup lands; Start waits for that cleanup before
-// replacing it rather than treating the dead entry as a successful resume.
-func (s *Service) HasLiveChatController(sessionID domain.SessionID) bool {
+func (s *Service) ownedController(sessionID domain.SessionID) *Controller {
 	s.mu.RLock()
-	controller := s.controllers[sessionID]
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
+	return s.controllers[sessionID]
+}
+
+// HasLiveChatController reports whether the service owns a starting or active
+// controller whose state has not reached stopped. A stopped controller can
+// remain in the registry briefly while final cleanup lands; Start waits for that
+// cleanup before replacing it rather than returning the dead entry.
+func (s *Service) HasLiveChatController(sessionID domain.SessionID) bool {
+	controller := s.ownedController(sessionID)
 	return controller != nil && controller.State() != ports.ChatControllerStopped
+}
+
+// OwnsChatController reports registry ownership, including a stopped controller
+// whose provider stream or final cleanup has not completed. Workspace teardown
+// requires this stronger fact; reported state alone is not proof the owner left.
+func (s *Service) OwnsChatController(sessionID domain.SessionID) bool {
+	return s.ownedController(sessionID) != nil
 }
 
 // requireChatSession reads the persisted mode and refuses anything that is not a
@@ -468,6 +502,9 @@ func (s *Service) PrepareChatHandoff(
 	policy domain.SessionInterfaceTransitionPolicy,
 ) error {
 	controller, err := s.Controller(id)
+	if errors.Is(err, ErrControllerStarting) {
+		return err
+	}
 	if errors.Is(err, ErrNoController) {
 		// A dead/missing source controller is already quiescent. Session Manager
 		// can safely stop (a no-op) and resume the native conversation in TUI,
@@ -626,7 +663,7 @@ func (s *Service) Snapshot(ctx context.Context, id domain.SessionID) (Snapshot, 
 
 	state := ports.ChatControllerStopped
 	var caps ports.ChatCapabilities
-	if controller, err := s.Controller(id); err == nil {
+	if controller := s.ownedController(id); controller != nil {
 		state = controller.State()
 		caps = controller.Capabilities()
 	}
@@ -676,7 +713,7 @@ func (s *Service) SnapshotPage(ctx context.Context, id domain.SessionID, beforeS
 	}
 	state := ports.ChatControllerStopped
 	var caps ports.ChatCapabilities
-	if controller, err := s.Controller(id); err == nil {
+	if controller := s.ownedController(id); controller != nil {
 		state = controller.State()
 		caps = controller.Capabilities()
 	}
@@ -776,7 +813,7 @@ type StartRequest struct {
 	ProviderConversationID string
 	// ControllerReady runs after the provider and generation exist but before
 	// live event projection starts.
-	ControllerReady func(StartResult) error
+	ControllerReady func(context.Context, StartResult) error
 }
 
 // StartResult is the durable outcome of a launch.
