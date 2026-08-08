@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -104,6 +105,20 @@ type stuckConversation struct {
 }
 
 func (s *stuckConversation) Close() error { return s.closeErr }
+
+type claimFailStore struct {
+	chatsvc.Store
+	err error
+}
+
+func (s claimFailStore) ClaimChatControllerGeneration(
+	context.Context,
+	domain.SessionID,
+	string,
+	time.Time,
+) error {
+	return s.err
+}
 
 func (f *deferredConversation) StartDeferredTurn(providerTurnID string) error {
 	return f.start(providerTurnID)
@@ -996,9 +1011,20 @@ func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 	controller, err := svc.Start(context.Background(), chatsvc.StartConfig{
 		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
 		WorkspacePath: t.TempDir(),
-		ControllerReady: func(started chatsvc.StartResult) error {
+		ControllerReady: func(_ context.Context, started chatsvc.StartResult) error {
 			if signals := activity.snapshot(); len(signals) != 0 {
 				t.Fatalf("provider events projected before controller-ready commit: %+v", signals)
+			}
+			if !svc.HasLiveChatController(testSession) {
+				t.Fatal("controller ownership was not published before lifecycle commit")
+			}
+			if _, controllerErr := svc.Controller(testSession); !errors.Is(controllerErr, chatsvc.ErrControllerStarting) {
+				t.Fatalf("pre-commit controller error = %v, want ErrControllerStarting", controllerErr)
+			}
+			if _, sendErr := svc.Send(context.Background(), testSession, ports.ChatUserMessage{
+				Text: "must wait for commit",
+			}); !errors.Is(sendErr, chatsvc.ErrControllerStarting) {
+				t.Fatalf("pre-commit Send error = %v, want ErrControllerStarting", sendErr)
 			}
 			if started.ProviderConversationID == "" || started.ControllerGeneration == "" {
 				t.Fatalf("controller-ready result = %+v", started)
@@ -1020,6 +1046,119 @@ func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
 		}
 	}
 	t.Fatalf("stream closure was not projected after controller-ready: %+v", activity.snapshot())
+}
+
+func TestStartRejectsAnAlreadyLiveController(t *testing.T) {
+	st := openStore(t)
+	first := newFakeConversation()
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers: fakeRegistry{driver: fakeDriver{conv: first}},
+		Log:     slog.New(slog.DiscardHandler),
+		NewID:   func() string { return "already-live-id" },
+	})
+	t.Cleanup(func() { _ = svc.Stop(context.Background(), testSession) })
+	cfg := chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	}
+	if _, err := svc.Start(context.Background(), cfg); err != nil {
+		t.Fatalf("first Start: %v", err)
+	}
+	if _, err := svc.Start(context.Background(), cfg); !errors.Is(err, chatsvc.ErrControllerAlreadyLive) {
+		t.Fatalf("second Start error = %v, want ErrControllerAlreadyLive", err)
+	}
+}
+
+func TestControllerCommitFailureKeepsUnstoppedOwnershipVisible(t *testing.T) {
+	st := openStore(t)
+	base := newFakeConversation()
+	base.emit(ports.ChatEvent{
+		Kind: ports.ChatEventTurnStarted, ProviderTurnID: "uncommitted-provider-turn",
+	})
+	stuck := &stuckConversation{fakeConversation: base, closeErr: errors.New("close failed")}
+	activity := &recordingActivity{}
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers:  fakeRegistry{driver: fakeDriver{conv: stuck}},
+		Activity: activity,
+		Log:      slog.New(slog.DiscardHandler),
+		NewID:    func() string { return "failed-commit-id" },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+
+	_, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+		ControllerReady: func(context.Context, chatsvc.StartResult) error {
+			return errors.New("mark spawned failed")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "mark spawned failed") ||
+		!strings.Contains(err.Error(), "close failed") {
+		t.Fatalf("Start error = %v, want commit and close failures", err)
+	}
+	if !svc.HasLiveChatController(testSession) {
+		t.Fatal("failed close hid controller ownership and made workspace teardown unsafe")
+	}
+	if !svc.OwnsChatController(testSession) {
+		t.Fatal("failed close released registry ownership before the stream ended")
+	}
+
+	base.closeOnce.Do(func() { close(base.events) })
+	deadline := time.Now().Add(time.Second)
+	for svc.OwnsChatController(testSession) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if svc.OwnsChatController(testSession) {
+		t.Fatal("controller ownership remained after its stream finally closed")
+	}
+	if signals := activity.snapshot(); len(signals) != 0 {
+		t.Fatalf("uncommitted provider events reached lifecycle projection: %+v", signals)
+	}
+}
+
+func TestGenerationClaimFailureKeepsUnstoppedOwnershipVisible(t *testing.T) {
+	st := openStore(t)
+	base := newFakeConversation()
+	stuck := &stuckConversation{fakeConversation: base, closeErr: errors.New("close failed")}
+	claimErr := errors.New("claim generation failed")
+	svc := chatsvc.New(chatsvc.Options{
+		Store:    claimFailStore{Store: st, err: claimErr},
+		Sessions: st,
+		Drivers:  fakeRegistry{driver: fakeDriver{conv: stuck}},
+		Log:      slog.New(slog.DiscardHandler),
+		NewID:    func() string { return "failed-claim-id" },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+
+	_, err := svc.Start(ctx, chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	})
+	if !errors.Is(err, claimErr) || !strings.Contains(err.Error(), "close failed") {
+		t.Fatalf("Start error = %v, want claim and close failures", err)
+	}
+	if !svc.OwnsChatController(testSession) {
+		t.Fatal("post-provider claim failure hid controller ownership")
+	}
+	if _, secondErr := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+	}); !errors.Is(secondErr, chatsvc.ErrControllerAlreadyLive) {
+		t.Fatalf("retry error = %v, want ErrControllerAlreadyLive", secondErr)
+	}
+
+	base.closeOnce.Do(func() { close(base.events) })
+	deadline := time.Now().Add(time.Second)
+	for svc.OwnsChatController(testSession) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if svc.OwnsChatController(testSession) {
+		t.Fatal("failed-claim controller ownership remained after stream closure")
+	}
 }
 
 // Dispatch reads the persisted mode. A TUI session must be refused even if a
@@ -1333,6 +1472,9 @@ func TestStartWaitsForStoppedControllerCleanupBeforeRelaunch(t *testing.T) {
 	}
 	if svc.HasLiveChatController(testSession) {
 		t.Fatal("stopped controller reported live")
+	}
+	if !svc.OwnsChatController(testSession) {
+		t.Fatal("stopped state released ownership before the provider stream ended")
 	}
 
 	replacementWorkspace := t.TempDir()

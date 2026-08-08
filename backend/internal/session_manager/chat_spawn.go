@@ -2,6 +2,7 @@ package sessionmanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -47,6 +48,9 @@ type ChatLauncher interface {
 	// for the session. Resume uses this to distinguish a stale durable activity
 	// state left by an older daemon from a genuinely live controller.
 	HasLiveChatController(id domain.SessionID) bool
+	// OwnsChatController includes a stopped controller whose event stream has not
+	// finished. Rollback must preserve its workspace until ownership is released.
+	OwnsChatController(id domain.SessionID) bool
 	// StopChat releases a session's controller.
 	StopChat(ctx context.Context, id domain.SessionID) error
 }
@@ -74,7 +78,7 @@ type ChatStart struct {
 	// ControllerReady commits the durable controller facts before the provider
 	// event stream is consumed. This prevents an immediate exit from racing a
 	// later MarkSpawned write back to idle.
-	ControllerReady func(ChatStarted) error
+	ControllerReady func(context.Context, ChatStarted) error
 }
 
 // ChatStarted is the durable result of a launch.
@@ -118,7 +122,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 
 	var (
 		controllerCommitted bool
-		completionErr       error
+		markSpawnedErr      error
 	)
 	_, err := m.chat.StartChat(ctx, ChatStart{
 		SessionID:             id,
@@ -132,7 +136,7 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 		Permissions:           agentConfig.Permissions,
 		SystemPrompt:          in.systemPrompt,
 		AdditionalDirectories: workspaceProjectDirectories(in.workspace.Path, in.workspaceProject),
-		ControllerReady: func(started ChatStarted) error {
+		ControllerReady: func(readyCtx context.Context, started ChatStarted) error {
 			metadata := domain.SessionMetadata{
 				Branch:            in.workspace.Branch,
 				WorkspacePath:     in.workspace.Path,
@@ -146,20 +150,26 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 				ProviderConversationID: started.ProviderConversationID,
 				ControllerGeneration:   started.ControllerGeneration,
 			}
-			completionErr = m.lcm.MarkSpawned(ctx, id, metadata)
-			controllerCommitted = completionErr == nil
-			return completionErr
+			markSpawnedErr = m.lcm.MarkSpawned(readyCtx, id, metadata)
+			controllerCommitted = markSpawnedErr == nil
+			return markSpawnedErr
 		},
 	})
 	if err != nil {
-		if completionErr != nil || controllerCommitted {
-			m.stopChatBestEffort(ctx, id)
-			m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
+		// Provider startup has fallible work before ControllerReady (generation
+		// claim, context-boundary persistence, native-history import). Consult
+		// actual ownership as well as callback state: a close timeout in any of
+		// those steps must preserve the workspace for the remaining controller.
+		if markSpawnedErr != nil || controllerCommitted || m.chat.OwnsChatController(id) {
+			controllerStopped, stopErr := m.stopChatAndConfirm(ctx, id)
+			m.rollbackChatSpawnWorkspace(ctx, in, controllerStopped)
 			m.markSpawnFailedTerminated(ctx, id)
-			if completionErr != nil {
-				return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id, completionErr)
+			if markSpawnedErr != nil {
+				return domain.SessionRecord{}, fmt.Errorf("spawn %s: completed: %w", id,
+					errors.Join(markSpawnedErr, stopErr))
 			}
-			return domain.SessionRecord{}, fmt.Errorf("spawn %s: chat controller: %w", id, err)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: chat controller: %w", id,
+				errors.Join(err, stopErr))
 		}
 		// No controller exists, so nothing provider-side needs closing. The
 		// runtime was never touched, hence runtimeDestroyed=false.
@@ -172,26 +182,41 @@ func (m *Manager) launchChatController(ctx context.Context, in chatSpawn) (domai
 	// provider either accepts the turn or reports why.
 	if in.prompt != "" {
 		if _, err := m.chat.StartChatTurn(ctx, id, in.prompt); err != nil {
-			m.stopChatBestEffort(ctx, id)
-			m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
+			controllerStopped, stopErr := m.stopChatAndConfirm(ctx, id)
+			m.rollbackChatSpawnWorkspace(ctx, in, controllerStopped)
 			m.markSpawnFailedTerminated(ctx, id)
-			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id, err)
+			return domain.SessionRecord{}, fmt.Errorf("spawn %s: deliver prompt: %w", id,
+				errors.Join(err, stopErr))
 		}
 	}
 
 	return m.getRecord(ctx, id)
 }
 
-// stopChatBestEffort closes a controller during rollback. A failure here is
-// logged rather than returned: the spawn is already failing, and the caller's
-// error is the one worth surfacing.
-func (m *Manager) stopChatBestEffort(ctx context.Context, id domain.SessionID) {
+// stopChatAndConfirm reports whether the controller released registry ownership.
+// Reported stopped state alone is insufficient: its stream may still be holding
+// the workspace while final cleanup runs.
+func (m *Manager) stopChatAndConfirm(ctx context.Context, id domain.SessionID) (bool, error) {
 	if m.chat == nil {
+		return true, nil
+	}
+	err := m.chat.StopChat(ctx, id)
+	stopped := !m.chat.OwnsChatController(id)
+	if !stopped && err == nil {
+		err = errors.New("chat controller remained live after close")
+	}
+	if err != nil {
+		m.logger.Warn("close chat controller", "sessionID", id, "error", err)
+	}
+	return stopped, err
+}
+
+func (m *Manager) rollbackChatSpawnWorkspace(ctx context.Context, in chatSpawn, controllerStopped bool) {
+	if !controllerStopped {
+		m.preserveFailedSpawnWorkspace(ctx, in.record.ID, in.workspace, false)
 		return
 	}
-	if err := m.chat.StopChat(ctx, id); err != nil {
-		m.logger.Warn("spawn rollback: close chat controller", "sessionID", id, "error", err)
-	}
+	m.rollbackPreparedSpawnWorkspace(ctx, in.record, in.workspace, in.workspaceProject, true)
 }
 
 // sendChat routes an outbound message into a chat session's conversation.
@@ -218,6 +243,9 @@ func (m *Manager) sendChat(ctx context.Context, id domain.SessionID, message, cl
 	}
 	if rec.IsTerminated {
 		return true, fmt.Errorf("send %s: %w", id, ErrTerminated)
+	}
+	if rec.Activity.State == domain.ActivityExited {
+		return true, fmt.Errorf("send %s: %w", id, ErrAgentExited)
 	}
 	var relayErr error
 	if clientMessageID != "" {
@@ -286,7 +314,7 @@ func (m *Manager) resumeChatController(
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: workspace roots: %w", operation, rec.ID, err)
 	}
-	var completionErr error
+	var markSpawnedErr error
 	_, err = m.chat.StartChat(ctx, ChatStart{
 		SessionID:             rec.ID,
 		ProjectID:             rec.ProjectID,
@@ -301,7 +329,7 @@ func (m *Manager) resumeChatController(
 		AdditionalDirectories: additionalDirectories,
 		// The handle that makes this a resume rather than a new conversation.
 		ProviderConversationID: rec.Metadata.ProviderConversationID,
-		ControllerReady: func(started ChatStarted) error {
+		ControllerReady: func(readyCtx context.Context, started ChatStarted) error {
 			metadata := rec.Metadata
 			metadata.WorkspacePath = ws.Path
 			metadata.WorkspaceRepoPath = ws.RepoPath
@@ -313,14 +341,15 @@ func (m *Manager) resumeChatController(
 			// controller this one replaced carry the old one and are rejected.
 			metadata.ControllerGeneration = started.ControllerGeneration
 
-			completionErr = m.lcm.MarkSpawned(ctx, rec.ID, metadata)
-			return completionErr
+			markSpawnedErr = m.lcm.MarkSpawned(readyCtx, rec.ID, metadata)
+			return markSpawnedErr
 		},
 	})
 	if err != nil {
-		if completionErr != nil {
-			m.stopChatBestEffort(ctx, rec.ID)
-			return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID, completionErr)
+		if markSpawnedErr != nil {
+			_, stopErr := m.stopChatAndConfirm(ctx, rec.ID)
+			return RestoreResult{}, fmt.Errorf("%s %s: completed: %w", operation, rec.ID,
+				errors.Join(markSpawnedErr, stopErr))
 		}
 		return RestoreResult{}, fmt.Errorf("%s %s: resume chat: %w", operation, rec.ID, err)
 	}

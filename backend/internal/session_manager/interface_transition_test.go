@@ -241,12 +241,12 @@ func (c *transitionChat) PreflightChat(ctx context.Context, _ domain.AgentHarnes
 	}
 	return c.preflightErr
 }
-func (c *transitionChat) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
+func (c *transitionChat) StartChat(ctx context.Context, cfg ChatStart) (ChatStarted, error) {
 	c.start = cfg
 	*c.log = append(*c.log, "start:chat")
 	started := ChatStarted{ProviderConversationID: cfg.ProviderConversationID, ControllerGeneration: "chat-generation"}
 	if cfg.ControllerReady != nil {
-		if err := cfg.ControllerReady(started); err != nil {
+		if err := cfg.ControllerReady(ctx, started); err != nil {
 			return ChatStarted{}, err
 		}
 	}
@@ -266,6 +266,7 @@ func (c *transitionChat) RelayChatTurnWithID(_ context.Context, _ domain.Session
 	return "", nil
 }
 func (*transitionChat) HasLiveChatController(domain.SessionID) bool { return false }
+func (*transitionChat) OwnsChatController(domain.SessionID) bool    { return false }
 func (c *transitionChat) StopChat(_ context.Context, _ domain.SessionID) error {
 	*c.log = append(*c.log, "stop:chat")
 	return nil

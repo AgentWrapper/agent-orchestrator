@@ -1109,7 +1109,9 @@ func (m *Manager) Kill(ctx context.Context, id domain.SessionID) (bool, error) {
 	// process, and closing it also settles any turn left in flight so a later
 	// read does not show work that is no longer running.
 	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat {
-		m.stopChatBestEffort(ctx, id)
+		if _, err := m.stopChatAndConfirm(ctx, id); err != nil {
+			return false, fmt.Errorf("kill %s: chat controller: %w", id, err)
+		}
 	} else if handle.ID != "" {
 		if err := m.runtime.Destroy(ctx, handle); err != nil {
 			return false, fmt.Errorf("kill %s: runtime: %w", id, err)
@@ -1349,6 +1351,13 @@ func (m *Manager) RestoreWithMode(ctx context.Context, id domain.SessionID) (Res
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotFound)
 	}
 	if !rec.IsTerminated {
+		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
+	}
+	if domain.NormalizeSessionMode(rec.Mode) == domain.SessionModeChat &&
+		m.chat != nil && m.chat.OwnsChatController(id) {
+		// Match TUI restore's one-controller invariant. A terminated durable row
+		// is not enough to prove a Chat controller is gone while this daemon still
+		// owns one, so never turn restore into a second writer.
 		return RestoreResult{}, fmt.Errorf("restore %s: %w", id, ErrNotRestorable)
 	}
 	meta := rec.Metadata
