@@ -1505,6 +1505,66 @@ func TestSpawnIssueContextSkipsUnresolvableIssueRef(t *testing.T) {
 	}
 }
 
+func TestSpawnRejectsTerminalIssueState(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	fc := &fakeCommander{}
+
+	for _, tc := range []struct {
+		name  string
+		state domain.NormalizedIssueState
+	}{
+		{name: "done", state: domain.IssueDone},
+		{name: "cancelled", state: domain.IssueCancelled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tracker := &fakeTracker{issue: domain.Issue{
+				ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/repo#123"},
+				Title: "Closed work item",
+				State: tc.state,
+			}}
+			svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
+
+			_, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "123"})
+			if err == nil {
+				t.Fatalf("Spawn: expected error for %s issue, got nil", tc.state)
+			}
+			apiErr := &apierr.Error{}
+			if !errors.As(err, &apiErr) || apiErr.Code != "ISSUE_CLOSED" {
+				t.Fatalf("error = %v, want apierr ISSUE_CLOSED", err)
+			}
+			if !strings.Contains(err.Error(), "closed/cancelled issue") {
+				t.Fatalf("error message = %q, want closed/cancelled issue hint", err.Error())
+			}
+			if fc.spawned {
+				t.Fatalf("manager.Spawn called for %s issue; no session should be created", tc.state)
+			}
+			if len(tracker.ids) != 1 || tracker.ids[0].Native != "acme/repo#123" {
+				t.Fatalf("tracker ids = %+v, want exactly acme/repo#123", tracker.ids)
+			}
+		})
+	}
+}
+
+func TestSpawnAllowsInProgressIssueState(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/repo#42"},
+		Title: "Work in progress",
+		State: domain.IssueInProgress,
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if !fc.spawned {
+		t.Fatalf("manager.Spawn not called for in_progress issue")
+	}
+}
+
 func TestSpawnFailedEmitsDuration(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer"}

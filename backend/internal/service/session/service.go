@@ -237,7 +237,10 @@ func (s *Service) spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	if err != nil {
 		return domain.Session{}, 0, 0, fmt.Errorf("count sessions: %w", err)
 	}
-	cfg = s.withIssueContext(ctx, cfg, project)
+	cfg, err = s.withIssueContext(ctx, cfg, project)
+	if err != nil {
+		return domain.Session{}, 0, 0, err
+	}
 	rec, promptBytes, systemPromptBytes, err := s.manager.Spawn(ctx, cfg)
 	if err != nil {
 		s.emitSpawnFailed(cfg, err, s.now().Sub(start).Milliseconds())

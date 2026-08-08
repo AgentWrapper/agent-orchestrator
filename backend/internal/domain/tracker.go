@@ -32,6 +32,12 @@ const (
 	IssueCancelled  NormalizedIssueState = "cancelled"
 )
 
+// IsTerminal reports whether the issue's work is finished (done or cancelled)
+// and no further session should be spawned against it.
+func (s NormalizedIssueState) IsTerminal() bool {
+	return s == IssueDone || s == IssueCancelled
+}
+
 // Issue is the minimum projection every tracker can produce. Provider-specific
 // metadata stays inside provider-specific code paths.
 type Issue struct {
