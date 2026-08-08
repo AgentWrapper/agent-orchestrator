@@ -228,7 +228,7 @@
 	"inspector.review.restoringSession": "Restaurando sesión de revisión...",
 	"inspector.review.reviewing": "Revisando...",
 	"inspector.review.run": "Ejecutar revisión",
-	"inspector.review.nonInteractiveOneShot": "No interactivo · una sola ejecución",
+	"inspector.review.nonInteractiveOneShot": "No interactivo",
 	"inspector.reviewRequestFailed": "Falló la solicitud de revisión",
 	"inspector.reviewAlreadyRanForCommit": "Este commit ya fue revisado. Sube un nuevo commit para ejecutar otra revisión.",
 	"inspector.reviewAlreadyRanShort": "Este commit ya fue revisado",

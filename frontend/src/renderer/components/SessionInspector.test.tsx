@@ -1852,7 +1852,7 @@ describe("SessionInspector summary reviews", () => {
 		await openReviewsSection();
 
 		expect(await screen.findByText("Greptile CLI")).toBeInTheDocument();
-		expect(screen.getByText("Non-interactive · one-shot")).toBeInTheDocument();
+		expect(screen.getByText("Non-interactive")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "View output" })).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
 	});

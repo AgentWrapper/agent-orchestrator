@@ -62,6 +62,12 @@ const shellMocks = vi.hoisted(() => {
 			state.focusTerminalListener = listener;
 			return vi.fn();
 		}),
+		refreshAgents: vi.fn(async () => ({
+			supported: [],
+			installed: [],
+			authorized: [],
+			reviewerInstalled: [] as Array<{ id: string; label: string; authStatus?: string }>,
+		})),
 		getKeybindings: vi.fn(async () => ({})),
 		setKeybindings: vi.fn(async (overrides: KeybindingOverrides) => overrides),
 		setKeybindingRecording: vi.fn(async () => undefined),
@@ -138,7 +144,7 @@ vi.mock("../hooks/useShellTerminals", () => ({
 vi.mock("../hooks/useAgentsQuery", () => ({
 	agentsQueryKey: ["agents"],
 	agentsQueryOptions: {},
-	refreshAgents: vi.fn(),
+	refreshAgents: shellMocks.refreshAgents,
 	// The shell reports the install's agent inventory once per launch, so the
 	// mock has to answer this too. Undefined data means the hook reports nothing,
 	// which keeps these shortcut tests free of telemetry side effects.
@@ -286,6 +292,13 @@ beforeEach(() => {
 	shellMocks.state.daemonStatus = { state: "error", code: "not_ready" };
 	shellMocks.state.shellValue = undefined;
 	shellMocks.queryClient.fetchQuery.mockReset();
+	shellMocks.queryClient.setQueryData.mockReset();
+	shellMocks.refreshAgents.mockReset().mockResolvedValue({
+		supported: [],
+		installed: [],
+		authorized: [],
+		reviewerInstalled: [],
+	});
 	shellMocks.queryClient.getQueryState.mockReset().mockReturnValue({ dataUpdatedAt: 0 });
 	useUiStore.setState({
 		createProjectNonce: 0,
@@ -297,6 +310,24 @@ beforeEach(() => {
 });
 
 describe("shell workspace startup", () => {
+	it("stores a fresh agent inventory when the daemon becomes ready", async () => {
+		const inventory = {
+			supported: [],
+			installed: [],
+			authorized: [],
+			reviewerInstalled: [{ id: "greptile", label: "Greptile CLI", authStatus: "authorized" }],
+		};
+		shellMocks.state.daemonStatus = { state: "ready", port: 4777 };
+		shellMocks.queryClient.fetchQuery.mockResolvedValue(workspaces);
+		shellMocks.refreshAgents.mockResolvedValue(inventory);
+
+		const view = await renderShell();
+
+		await waitFor(() => expect(shellMocks.refreshAgents).toHaveBeenCalledTimes(1));
+		expect(shellMocks.queryClient.setQueryData).toHaveBeenCalledWith(["agents"], inventory);
+		view.unmount();
+	});
+
 	it("places the topbar host inside the center panel surface on session routes", async () => {
 		shellMocks.state.routeParams = { sessionId: "sess-1" };
 		await renderShell();

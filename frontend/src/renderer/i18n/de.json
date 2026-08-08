@@ -226,7 +226,7 @@
 	"inspector.review.restoringSession": "Review-Sitzung wird wiederhergestellt...",
 	"inspector.review.reviewing": "Review läuft...",
 	"inspector.review.run": "Review ausführen",
-	"inspector.review.nonInteractiveOneShot": "Nicht interaktiv · einmalig",
+	"inspector.review.nonInteractiveOneShot": "Nicht interaktiv",
 	"inspector.reviewRequestFailed": "Review-Anfrage fehlgeschlagen",
 	"inspector.reviewAlreadyRanForCommit": "Dieser Commit wurde bereits reviewt. Pushen Sie einen neuen Commit, um ein weiteres Review auszuführen.",
 	"inspector.reviewAlreadyRanShort": "Dieser Commit wurde bereits reviewt",
