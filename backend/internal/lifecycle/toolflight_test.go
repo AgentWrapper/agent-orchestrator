@@ -303,3 +303,33 @@ func TestToolPrecedence_SuppressedSignalEmitsNoNotification(t *testing.T) {
 		t.Fatalf("suppressed signal emitted a notification: %d -> %d", entered, len(sink.intents))
 	}
 }
+
+func TestToolPrecedence_ToolUseIDMatchBridgesCasingMismatch(t *testing.T) {
+	// Kimchi's PreToolUse/PostToolUse payloads capitalize tool_name ("Bash")
+	// via externalToolName, but the permission_prompt notification carries the
+	// raw internal name ("bash"). The name-based candidate lookup fails, but
+	// the notification also carries tool_use_id — matching it directly against
+	// the inflight map bridges the casing gap and lets the block clear on the
+	// correlated post-tool-use.
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+
+	// pre-tool-use: tool_name="Bash", tool_use_id="toolu_1"
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "pre-tool-use", "Bash", "toolu_1"))
+
+	// notification(permission_prompt): tool_name="bash" (lowercase!),
+	// tool_use_id="toolu_1" (same id, present in inflight map).
+	mustApply(t, m, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityBlocked, Event: "notification",
+		ToolName: "bash", ToolUseID: "toolu_1",
+	})
+	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
+		t.Fatalf("after notification: state = %q, want blocked", got)
+	}
+
+	// User accepts. post-tool-use: tool_name="Bash", tool_use_id="toolu_1".
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("after post-tool-use: state = %q, want active", got)
+	}
+}

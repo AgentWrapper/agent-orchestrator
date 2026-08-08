@@ -608,10 +608,20 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		// candidate is recorded and the block clears only at a turn boundary
 		// (fail-closed).
 		f := ensure()
-		if s.ToolName != "" {
-			// Recompute from scratch: this is a fresh dialog, so any candidate
-			// carried from a prior one must not leak in.
-			f.blockedCandidate = ""
+		// Recompute from scratch: this is a fresh dialog, so any candidate
+		// carried from a prior one must not leak in.
+		f.blockedCandidate = ""
+		if s.ToolUseID != "" {
+			// If the blocking signal carries a tool_use_id that is in the
+			// inflight map, use it directly — this is more precise than a
+			// name match and handles adapters whose notification payloads
+			// use a different tool_name casing than their PreToolUse/PostToolUse
+			// payloads (e.g. Kimchi: "bash" in notification vs "Bash" in hooks).
+			if _, ok := f.inflight[s.ToolUseID]; ok {
+				f.blockedCandidate = s.ToolUseID
+			}
+		}
+		if f.blockedCandidate == "" && s.ToolName != "" {
 			for useID, name := range f.inflight {
 				if name != s.ToolName {
 					continue
