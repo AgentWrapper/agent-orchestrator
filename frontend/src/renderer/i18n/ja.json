@@ -590,6 +590,7 @@
 	"settings.updates.latest": "最新バージョンを利用中です。",
 	"settings.updates.needInstalledApp": "アップデートにはインストール済みのアプリが必要です。",
 	"settings.updates.noFeatureReleases": "公開中の機能リリースはありません。",
+	"settings.updates.networkStale": "しばらくアップデートを確認できていません。アプリを再起動すると通常は解決します。",
 	"settings.updates.nightlyWarning": "Nightly ビルドは毎日作成され、不安定だったりデータが失われることがあります。そのリスクを理解している場合のみ使用してください。",
 	"settings.updates.onFeatureBuild": "PR #{{pr}} のビルドを利用中です。",
 	"settings.updates.returnToNightly": "Nightly に戻る",

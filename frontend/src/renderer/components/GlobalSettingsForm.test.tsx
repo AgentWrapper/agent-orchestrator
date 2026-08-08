@@ -310,6 +310,17 @@ describe("GlobalSettingsForm", () => {
 		expect(updInstall).toHaveBeenCalled();
 	});
 
+	it("shows a non-error restart nudge when automatic checks keep failing on the network", async () => {
+		updGetStatus.mockResolvedValue({ state: "not-available", staleCheckNudge: true });
+		renderForm();
+		const nudge = await screen.findByText(
+			"Updates haven't been able to check for a while — restarting the app usually fixes this.",
+		);
+		expect(nudge).toBeInTheDocument();
+		// The nudge is a warning, not an error, and the normal status still shows.
+		expect(screen.getByText("You're on the latest version.")).toBeInTheDocument();
+	});
+
 	it("opens feedback from settings and copies redacted report drafts", async () => {
 		const user = userEvent.setup();
 		const open = vi.spyOn(window, "open").mockReturnValue(null);
