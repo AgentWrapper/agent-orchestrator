@@ -189,6 +189,28 @@ describe("ChatWorkspace timeline", () => {
 		expect(composer?.parentElement).toHaveClass("mx-auto", "w-full", "max-w-3xl");
 	});
 
+	it("lets readers select conversation text", () => {
+		render(<ChatWorkspace snapshot={chatFixture} />);
+
+		expect(screen.getByRole("log", { name: "Conversation" })).toHaveClass("select-text");
+	});
+
+	it("routes rendered message links through the session link handler", async () => {
+		const user = userEvent.setup();
+		const snapshot = structuredClone(chatFixtureSettled);
+		const message = snapshot.items.find(
+			(item): item is ConversationMessage => item.kind === "message" && item.role === "assistant",
+		);
+		if (!message) throw new Error("fixture has no assistant message");
+		message.text = "Open the [local preview](http://localhost:5173).";
+		const onLinkOpen = vi.fn();
+
+		render(<ChatWorkspace snapshot={snapshot} onLinkOpen={onLinkOpen} />);
+		await user.click(screen.getByRole("link", { name: "local preview" }));
+
+		expect(onLinkOpen).toHaveBeenCalledWith("http://localhost:5173");
+	});
+
 	it("offers real recovery actions when the controller stops", async () => {
 		const user = userEvent.setup();
 		const resume = vi.fn();
