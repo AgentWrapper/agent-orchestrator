@@ -260,13 +260,20 @@ function DeliveryNote({ state }: { state: DeliveryState }) {
  * kind this build does not recognize still renders as a generic row — dropping it
  * would hide work the agent really did.
  */
-export function ActivityRow({ activity }: { activity: ConversationActivity }) {
+export function ActivityRow({
+	activity,
+	contained = false,
+}: {
+	activity: ConversationActivity;
+	/** The row sits inside bordered run chrome rather than directly in the timeline. */
+	contained?: boolean;
+}) {
 	if (activity.activityKind === "mcp_tool") return <McpToolRow activity={activity} />;
 	if (activity.activityKind === "auto_review") return <AutoReviewRow activity={activity} />;
 	if (activity.activityKind === "reasoning") return <ReasoningBlock activity={activity} />;
 	if (activity.detail?.event === "model.rerouted") return <RerouteRow activity={activity} />;
 	if (activity.detail?.event === "auth.reauth_required") return <ReauthRow activity={activity} />;
-	return <GenericActivityRow activity={activity} />;
+	return <GenericActivityRow activity={activity} contained={contained} />;
 }
 
 /**
@@ -275,7 +282,13 @@ export function ActivityRow({ activity }: { activity: ConversationActivity }) {
  * A `running` activity with no completion is a real terminal state here, not a
  * spinner that hangs forever — a provider can start a command and supersede it.
  */
-function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
+function GenericActivityRow({
+	activity,
+	contained,
+}: {
+	activity: ConversationActivity;
+	contained: boolean;
+}) {
 	// null means "nobody has decided", which is what lets a running command open
 	// itself and then close again once it settles. Once the user clicks, their
 	// choice sticks: auto-collapsing a log someone is reading is worse than leaving
@@ -304,7 +317,7 @@ function GenericActivityRow({ activity }: { activity: ConversationActivity }) {
 				aria-expanded={hasBody ? open : undefined}
 				className={cn(
 					compactCommand
-						? ACTIVITY_SUMMARY_BUTTON_CLASS
+						? cn(ACTIVITY_SUMMARY_BUTTON_CLASS, contained && "px-[11px]")
 						: "flex min-h-[35px] w-full items-center gap-[9px] px-[11px] py-2 text-left text-[11px] transition-colors",
 					hasBody && !compactCommand && "hover:bg-interactive-hover",
 					!hasBody && "cursor-default",
