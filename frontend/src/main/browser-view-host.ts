@@ -288,6 +288,49 @@ const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
 // The human-facing address bar may open local preview files. Agent commands use
 // normalizeAgentBrowserURL below, which permits only explicit HTTP(S) targets.
 const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
+const BARE_FILE_EXTENSIONS = new Set([
+	"html",
+	"htm",
+	"pdf",
+	"png",
+	"json",
+	"jpg",
+	"jpeg",
+	"gif",
+	"webp",
+	"bmp",
+	"svg",
+	"md",
+	"markdown",
+	"txt",
+	"csv",
+	"xml",
+	"yml",
+	"yaml",
+	"css",
+	"js",
+	"ts",
+	"jsx",
+	"tsx",
+	"map",
+	"ico",
+]);
+
+async function resolveLocalPreviewTarget(sessionId: string, input: string): Promise<string | undefined> {
+	if (!sessionId || !looksLikeLocalPreviewPath(input)) return undefined;
+	const daemonBase = process.env.AO_DAEMON_URL || "http://127.0.0.1:3001";
+	const response = await fetch(`${daemonBase}/api/v1/sessions/${encodeURIComponent(sessionId)}/preview`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ url: input.trim() }),
+	});
+	if (!response.ok) {
+		const payload = (await response.json().catch(() => null)) as { message?: string; code?: string } | null;
+		throw new Error(payload?.message || payload?.code || "Unable to resolve preview file");
+	}
+	const payload = (await response.json().catch(() => null)) as { session?: { previewUrl?: string } } | null;
+	return payload?.session?.previewUrl?.trim() || undefined;
+}
 
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
@@ -628,7 +671,19 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 
 	const navigateEntry = async (entry: BrowserEntry, url: string): Promise<BrowserNavState> => {
 		cancelAnnotation(options, entry, "navigation");
-		const normalized = normalizeBrowserURL(url);
+		let target = url.trim();
+		let resolved = target;
+		if (looksLikeLocalPreviewPath(target)) {
+			try {
+				resolved = (await resolveLocalPreviewTarget(entry.sessionId, target)) ?? target;
+			} catch (err) {
+				entry.view.setVisible?.(false);
+				entry.state = { ...readNavState(entry), error: String((err as Error)?.message || "Unable to resolve preview file") };
+				options.mainWindow.webContents.send("browser:navState", entry.state);
+				return entry.state;
+			}
+		}
+		const normalized = normalizeBrowserURL(resolved);
 		if (!isAllowedBrowserURL(normalized.href, options.rendererOrigin)) {
 			throw new Error("Unsupported browser URL");
 		}
@@ -1000,7 +1055,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	};
 }
 
-function withDefaultScheme(raw: string): string {
+export function withDefaultScheme(raw: string): string {
 	if (isWindowsAbsolutePath(raw) || isPosixAbsolutePath(raw)) return localPathToFileURL(raw);
 	if (/^https?:\/\//i.test(raw)) return raw;
 	if (isLocalhostLike(raw)) return `http://${raw}`;
@@ -1017,17 +1072,37 @@ function withDefaultScheme(raw: string): string {
 
 // Treat input as a navigable host when the authority (the part before any
 // path/query/fragment) is an IPv6 literal, carries an explicit :port, or has a
-// dot (a domain). Bare words like "hi" fail this and become a search instead.
-function looksLikeHost(raw: string): boolean {
+// dot (a domain). Bare words like "hi" and bare filenames with common
+// extensions fail this and become a search instead.
+export function looksLikeHost(raw: string): boolean {
 	const host = raw.split(/[/?#]/, 1)[0];
 	if (host === "") return false;
+	if (host.includes("\\")) return false;
 	if (host.startsWith("[") && host.includes("]")) return true;
 	if (/:\d+$/.test(host)) return true;
-	return host.includes(".");
+	if (!host.includes(".")) return false;
+	const dot = host.lastIndexOf(".");
+	if (dot > 0 && dot < host.length-1) {
+		const ext = host.slice(dot + 1).toLowerCase();
+		if (BARE_FILE_EXTENSIONS.has(ext)) return false;
+	}
+	return true;
 }
 
 function searchURL(query: string): string {
 	return `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+}
+
+function looksLikeLocalPreviewPath(raw: string): boolean {
+	const trimmed = raw.trim();
+	if (!trimmed || /^https?:\/\//i.test(trimmed) || /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(trimmed)) return false;
+	const parsed = trimmed.match(/^([^?#]+)(?:[?#].*)?$/);
+	const pathPart = parsed?.[1] ?? trimmed;
+	const hostCandidate = pathPart.split("/")[0];
+	if (pathPart.includes("/") && looksLikeHost(hostCandidate)) return false;
+	if (pathPart.includes("\\") || pathPart.startsWith(".") || pathPart.startsWith("/")) return true;
+	const ext = pathPart.split(".").pop()?.toLowerCase();
+	return ext ? BARE_FILE_EXTENSIONS.has(ext) : false;
 }
 
 function isWindowsAbsolutePath(raw: string): boolean {
