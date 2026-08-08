@@ -1505,36 +1505,101 @@ func TestSpawnIssueContextSkipsUnresolvableIssueRef(t *testing.T) {
 	}
 }
 
-// TestSpawnIssueContextSkipsGitHubFallbackForGitLabProvider covers review Item 9:
-// when the project's SCM origin resolves to a non-GitHub provider (GitLab),
-// the GitHub issue-tracker fallback must not be applied. No GitHub API call is
-// made and no unrelated GitHub issue content is injected into the worker's
-// prompt. fakeSCM.ParseRepository routes gitlab.com to provider "gitlab" via
-// providerKey, so wiring SCM: fakeSCM{} exercises the non-GitHub path.
-func TestSpawnIssueContextSkipsGitHubFallbackForGitLabProvider(t *testing.T) {
+// TestSpawnIssueContextRoutesGitLabProviderToGitLabTracker covers the
+// GitLab SCM-origin routing: when the project's SCM origin resolves to
+// GitLab, trackerIDForIssue constructs a GitLab TrackerID (not a GitHub one)
+// and the multi-tracker dispatches it to the GitLab adapter. The tracker IS
+// called — the old behavior (skip, no GitHub fallback) is replaced by
+// correct GitLab routing. fakeSCM.ParseRepository routes gitlab.com to
+// provider "gitlab" via providerKey.
+func TestSpawnIssueContextRoutesGitLabProviderToGitLabTracker(t *testing.T) {
 	st := newFakeStore()
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.com/acme/repo.git"}
 	fc := &fakeCommander{}
-	// tracker is configured to return issue content; if the GitHub fallback
-	// fires, tracker.ids will be non-empty and IssueContext populated.
 	tracker := &fakeTracker{issue: domain.Issue{
-		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: "acme/repo#42"},
-		Title: "Unrelated GitHub issue",
-		Body:  "This should not appear in a GitLab project's prompt.",
-		URL:   "https://github.com/acme/repo/issues/42",
+		ID:    domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "acme/repo#42"},
+		Title: "GitLab issue",
+		Body:  "This should appear in a GitLab project's prompt.",
+		State: domain.IssueOpen,
+		URL:   "https://gitlab.com/acme/repo/-/issues/42",
 	}}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
 
 	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	// No GitHub API call: the tracker must never be queried.
-	if len(tracker.ids) != 0 {
-		t.Fatalf("tracker calls = %d, want 0 (GitLab project must not use GitHub fallback)", len(tracker.ids))
+	// The tracker must be called with a GitLab TrackerID — not skipped.
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1 (GitLab project must route to GitLab tracker)", len(tracker.ids))
 	}
-	// No unrelated GitHub issue content injected into the prompt.
-	if fc.spawnedCfg.IssueContext != "" {
-		t.Fatalf("IssueContext = %q, want empty (no GitHub fallback for GitLab provider)", fc.spawnedCfg.IssueContext)
+	if tracker.ids[0].Provider != domain.TrackerProviderGitLab {
+		t.Fatalf("tracker id provider = %q, want %q", tracker.ids[0].Provider, domain.TrackerProviderGitLab)
+	}
+	if tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
+	}
+	// Issue context must be enriched with GitLab issue content.
+	if fc.spawnedCfg.IssueContext == "" {
+		t.Fatal("IssueContext empty, want GitLab issue enrichment")
+	}
+	for _, want := range []string{
+		"Issue: acme/repo#42",
+		"Title: GitLab issue",
+		"State: open",
+		"URL: https://gitlab.com/acme/repo/-/issues/42",
+		"Body:",
+	} {
+		if !strings.Contains(fc.spawnedCfg.IssueContext, want) {
+			t.Fatalf("IssueContext missing %q:\n%s", want, fc.spawnedCfg.IssueContext)
+		}
+	}
+}
+
+// TestSpawnIssueContextFromGitLabTracker verifies end-to-end enrichment when
+// the issue ID is a full GitLab issue URL
+// (https://gitlab.com/owner/repo/-/issues/N). The URL is parsed to the native
+// "owner/repo#N" form and dispatched to the GitLab tracker adapter.
+func TestSpawnIssueContextFromGitLabTracker(t *testing.T) {
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://gitlab.com/acme/repo.git"}
+	fc := &fakeCommander{}
+	tracker := &fakeTracker{issue: domain.Issue{
+		ID:        domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: "acme/repo#42"},
+		Title:     "Fix GitLab CI",
+		Body:      "Pipeline is broken.",
+		State:     domain.IssueInProgress,
+		URL:       "https://gitlab.com/acme/repo/-/issues/42",
+		Labels:    []string{"bug", "ci"},
+		Assignees: []string{"dev"},
+	}}
+	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
+
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "https://gitlab.com/acme/repo/-/issues/42"}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	if len(tracker.ids) != 1 {
+		t.Fatalf("tracker calls = %d, want 1", len(tracker.ids))
+	}
+	if tracker.ids[0].Provider != domain.TrackerProviderGitLab {
+		t.Fatalf("tracker id provider = %q, want %q", tracker.ids[0].Provider, domain.TrackerProviderGitLab)
+	}
+	if tracker.ids[0].Native != "acme/repo#42" {
+		t.Fatalf("tracker id native = %q, want %q", tracker.ids[0].Native, "acme/repo#42")
+	}
+	issueContext := fc.spawnedCfg.IssueContext
+	for _, want := range []string{
+		"Issue: acme/repo#42",
+		"Title: Fix GitLab CI",
+		"State: in_progress",
+		"URL: https://gitlab.com/acme/repo/-/issues/42",
+		"Labels: bug, ci",
+		"Assignees: dev",
+		"Body:",
+		"Pipeline is broken.",
+	} {
+		if !strings.Contains(issueContext, want) {
+			t.Fatalf("IssueContext missing %q:\n%s", want, issueContext)
+		}
 	}
 }
 

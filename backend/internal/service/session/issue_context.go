@@ -20,7 +20,7 @@ func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, p
 	if cfg.Kind != "" && cfg.Kind != domain.KindWorker {
 		return cfg
 	}
-	id, ok := s.trackerIDForIssue(project, cfg.IssueID)
+	id, ok := s.trackerIDForIssue(cfg, project)
 	if !ok {
 		return cfg
 	}
@@ -34,46 +34,56 @@ func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, p
 	return cfg
 }
 
-func (s *Service) trackerIDForIssue(project domain.ProjectRecord, issueID domain.IssueID) (domain.TrackerID, bool) {
-	issue := strings.TrimPrefix(strings.TrimSpace(string(issueID)), "#")
+func (s *Service) trackerIDForIssue(cfg ports.SpawnConfig, project domain.ProjectRecord) (domain.TrackerID, bool) {
+	issue := strings.TrimPrefix(strings.TrimSpace(string(cfg.IssueID)), "#")
 	if issue == "" {
 		return domain.TrackerID{}, false
 	}
+	// 1. Try GitHub URL or owner/repo#N native form.
 	if native, ok := canonicalGitHubIssueNative(issue); ok {
 		return domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: native}, true
 	}
+	// 2. Try GitLab issue URL (/-/issues/<iid> pattern).
+	if native, ok := canonicalGitLabIssueURL(issue); ok {
+		return domain.TrackerID{Provider: domain.TrackerProviderGitLab, Native: native}, true
+	}
+	// 3. Plain issue number — resolve repo from SCM origin or tracker-provider hint.
 	n, err := strconv.Atoi(issue)
 	if err != nil || n <= 0 {
 		return domain.TrackerID{}, false
 	}
-	repo, ok := s.githubRepoForTracker(project)
+	provider, repo, ok := s.repoForTracker(project, cfg.TrackerProvider)
 	if !ok {
 		return domain.TrackerID{}, false
 	}
-	return domain.TrackerID{Provider: domain.TrackerProviderGitHub, Native: fmt.Sprintf("%s#%d", repo, n)}, true
+	return domain.TrackerID{Provider: provider, Native: fmt.Sprintf("%s#%d", repo, n)}, true
 }
 
-func (s *Service) githubRepoForTracker(project domain.ProjectRecord) (string, bool) {
+func (s *Service) repoForTracker(project domain.ProjectRecord, fallbackProvider domain.TrackerProvider) (domain.TrackerProvider, string, bool) {
 	if s.scm != nil {
 		repo, ok := s.scm.ParseRepository(project.RepoOriginURL)
-		if ok && repo.Provider != "github" {
-			// The origin belongs to a non-GitHub provider (e.g. GitLab). The
-			// GitHub issue-tracker fallback must not apply: returning a
-			// GitHub-style "owner/repo#N" tracker ID would fetch an unrelated
-			// GitHub issue and inject its content into the worker's prompt.
-			return "", false
-		} else if ok && repo.Repo != "" {
-			return repo.Repo, true
+		if ok && repo.Provider != "" && repo.Repo != "" {
+			// SCM classified the origin (e.g. "github" or "gitlab"). Use the
+			// resolved provider so the multi-tracker dispatches to the
+			// correct adapter. The previous implementation returned false for
+			// non-GitHub providers; now we return the provider so GitLab
+			// projects construct a GitLab tracker ID.
+			return domain.TrackerProvider(repo.Provider), repo.Repo, true
 		}
 		// SCM could not classify the origin (ok == false), or classified it
-		// as GitHub but with an empty repo; fall through to the URL-based
-		// GitHub heuristic below.
+		// with an empty repo; fall through to the URL-based heuristic below.
 	}
+	// SCM not available or couldn't resolve — use the tracker-provider hint
+	// from the CLI flag (defaults to "github" for backward compat).
 	_, owner, repo, err := repoFromURL(project.RepoOriginURL)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
-	return owner + "/" + repo, true
+	provider := fallbackProvider
+	if provider == "" {
+		provider = domain.TrackerProviderGitHub
+	}
+	return provider, owner + "/" + repo, true
 }
 
 func canonicalGitHubIssueNative(raw string) (string, bool) {
@@ -120,6 +130,50 @@ func canonicalGitHubIssueURL(raw string) (string, bool) {
 		return "", false
 	}
 	return fmt.Sprintf("%s/%s#%d", parts[0], strings.TrimSuffix(parts[1], ".git"), n), true
+}
+
+// canonicalGitLabIssueURL parses a GitLab issue URL into the native
+// "project-path#iid" form. GitLab issue URLs use the /-/issues/ separator:
+//
+//   - https://gitlab.com/owner/repo/-/issues/123
+//   - https://gitlab.com/group/subgroup/repo/-/issues/123
+//   - https://gitlab.internal/owner/repo/-/issues/123  (self-managed)
+//
+// Any host is accepted because self-managed GitLab instances use arbitrary
+// hostnames; the /-/issues/ path pattern is distinctive to GitLab.
+func canonicalGitLabIssueURL(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Hostname() == "" {
+		return "", false
+	}
+	path := strings.Trim(u.Path, "/")
+	if path == "" {
+		return "", false
+	}
+	idx := strings.Index(path, "/-/issues/")
+	if idx <= 0 {
+		return "", false
+	}
+	projectPath := path[:idx] // "owner/repo" or "group/subgroup/repo"
+	rest := path[idx+len("/-/issues/"):]
+	if rest == "" {
+		return "", false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n <= 0 {
+		return "", false
+	}
+	parts := strings.Split(projectPath, "/")
+	for _, p := range parts {
+		if p == "" {
+			return "", false
+		}
+	}
+	if len(parts) < 2 {
+		return "", false
+	}
+	parts[len(parts)-1] = strings.TrimSuffix(parts[len(parts)-1], ".git")
+	return fmt.Sprintf("%s#%d", strings.Join(parts, "/"), n), true
 }
 
 func formatIssueContext(issue domain.Issue) string {
