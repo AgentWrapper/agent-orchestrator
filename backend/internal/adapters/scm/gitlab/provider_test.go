@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
@@ -743,6 +744,81 @@ func TestFetchApprovalDecision_NotApproved(t *testing.T) {
 	}
 	if decision != "review_required" {
 		t.Errorf("decision = %q, want %q", decision, "review_required")
+	}
+}
+
+// TestApprovalDecision is a table test covering every combination of
+// approved / approvals_required / approved_by that approvalDecision must
+// handle, including the vacuous-approval case (approved=true,
+// approvals_required=0, approved_by empty) which must report ReviewNone.
+func TestApprovalDecision(t *testing.T) {
+	tests := []struct {
+		name              string
+		approved          bool
+		approvalsRequired int
+		approvedByCount   int
+		want              domain.ReviewDecision
+	}{
+		{
+			name:              "vacuous approval: approved, no rules, no approvers",
+			approved:          true,
+			approvalsRequired: 0,
+			approvedByCount:   0,
+			want:              domain.ReviewNone,
+		},
+		{
+			name:              "approved with approvals_required > 0",
+			approved:          true,
+			approvalsRequired: 2,
+			approvedByCount:   0,
+			want:              domain.ReviewApproved,
+		},
+		{
+			name:              "approved with approvers present",
+			approved:          true,
+			approvalsRequired: 0,
+			approvedByCount:   1,
+			want:              domain.ReviewApproved,
+		},
+		{
+			name:              "not approved, approvals_required > 0",
+			approved:          false,
+			approvalsRequired: 2,
+			approvedByCount:   0,
+			want:              domain.ReviewRequired,
+		},
+		{
+			name:              "not approved, no rules, no approvers",
+			approved:          false,
+			approvalsRequired: 0,
+			approvedByCount:   0,
+			want:              domain.ReviewNone,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := restApprovals{
+				Approved:          tt.approved,
+				ApprovalsRequired: tt.approvalsRequired,
+			}
+			for i := 0; i < tt.approvedByCount; i++ {
+				a.ApprovedBy = append(a.ApprovedBy, struct {
+					User struct {
+						Username string `json:"username"`
+					} `json:"user"`
+				}{
+					User: struct {
+						Username string `json:"username"`
+					}{
+						Username: "reviewer1",
+					},
+				})
+			}
+			got := approvalDecision(a)
+			if got != tt.want {
+				t.Errorf("approvalDecision(%+v) = %q, want %q", a, got, tt.want)
+			}
+		})
 	}
 }
 

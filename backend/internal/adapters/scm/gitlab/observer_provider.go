@@ -711,7 +711,14 @@ func (p *Provider) fetchApprovalsCached(ctx context.Context, repo ports.SCMRepo,
 // satisfy the applicable rules.
 func approvalDecision(a restApprovals) domain.ReviewDecision {
 	if a.Approved {
-		return domain.ReviewApproved
+		// GitLab reports approved=true even when approvals_required=0 and
+		// nobody has actually approved. Treat that as no review signal,
+		// matching GitHub's behavior where APPROVED only fires when a real
+		// approval review is submitted.
+		if a.ApprovalsRequired > 0 || len(a.ApprovedBy) > 0 {
+			return domain.ReviewApproved
+		}
+		return domain.ReviewNone
 	}
 	if a.ApprovalsRequired > 0 {
 		return domain.ReviewRequired
