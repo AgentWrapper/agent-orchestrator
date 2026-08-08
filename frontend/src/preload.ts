@@ -150,8 +150,6 @@ const api = {
 			ipcRenderer.invoke("terminal:saveDroppedFile", input) as Promise<string>,
 	},
 	window: {
-		setOverlay: (overlay: { color: string; symbolColor: string }) =>
-			ipcRenderer.invoke("window:setOverlay", overlay) as Promise<void>,
 		isFullScreen: () => ipcRenderer.invoke("window:isFullScreen") as Promise<boolean>,
 		onFullScreen: (listener: (fullScreen: boolean) => void) => {
 			const wrapped = (_event: Electron.IpcRendererEvent, fullScreen: boolean) => listener(fullScreen);

@@ -29,7 +29,6 @@ export const aoBridge: AoBridge =
 			saveDroppedFile: async () => "",
 		},
 		window: {
-			setOverlay: async () => undefined,
 			isFullScreen: async () => false,
 			onFullScreen: () => () => undefined,
 		},

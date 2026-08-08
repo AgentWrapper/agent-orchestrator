@@ -78,7 +78,6 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 				},
 				terminal: { saveDroppedFile: async () => "" },
 				window: {
-					setOverlay: async () => undefined,
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
@@ -493,7 +492,6 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				},
 				terminal: { saveDroppedFile: async () => "" },
 				window: {
-					setOverlay: async () => undefined,
 					isFullScreen: async () => false,
 					onFullScreen: () => () => undefined,
 				},
