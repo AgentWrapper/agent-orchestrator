@@ -96,6 +96,25 @@ func newMultiSCMProvider(gitlabCfg config.GitLabConfig, logger *slog.Logger) *sc
 	return scmmulti.New(named...)
 }
 
+// newMultiSCMMerger builds a multi-merger for PR merge actions, registering
+// both GitHub and GitLab providers. When one provider is unavailable (missing
+// token), the multi-merger still routes to the healthy one — same
+// degrade-gracefully pattern as newMultiSCMProvider. Returns nil when no
+// provider has usable credentials.
+func newMultiSCMMerger(gitlabCfg config.GitLabConfig, logger *slog.Logger) *scmmulti.Merger {
+	var named []scmmulti.NamedMerger
+	if gh, err := newGitHubSCMProvider(logger); err == nil {
+		named = append(named, scmmulti.NamedMerger{Key: "github", Merger: gh})
+	}
+	if gl, err := newGitLabSCMProvider(gitlabCfg, logger); err == nil {
+		named = append(named, scmmulti.NamedMerger{Key: "gitlab", Merger: gl})
+	}
+	if len(named) == 0 {
+		return nil
+	}
+	return scmmulti.NewMerger(named...)
+}
+
 func closedDone() <-chan struct{} {
 	done := make(chan struct{})
 	close(done)
