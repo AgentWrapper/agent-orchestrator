@@ -39,8 +39,8 @@ surface (`npm run sqlc`, `npm run api`).
   tmux/conpty agent runtime; Chat sessions use runtime-less native controllers,
   persist provider conversation identity, and dispatch lifecycle reactions
   through the same mode-aware session manager. A durable, capability-gated
-  drain/interrupt handoff can move the same Claude Code or Codex native
-  conversation between TUI and Chat without changing the AO session/worktree;
+  drain/interrupt handoff can move the same Claude Code, Codex, or OpenCode
+  native conversation between TUI and Chat without changing the AO session/worktree;
   rollback, restart recovery, controller-generation fencing, and a transition
   message outbox preserve the one-controller invariant.
 - Durable Chat conversations with project-scoped orchestrator continuity,

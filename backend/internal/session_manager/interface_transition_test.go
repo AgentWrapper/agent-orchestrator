@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -178,6 +180,22 @@ func (transitionAgent) NativeConversationID(_ context.Context, session ports.Ses
 	}
 	id := session.Metadata[ports.MetadataKeyAgentSessionID]
 	return id, id != "", nil
+}
+
+type promptFileTransitionAgent struct {
+	transitionAgent
+	restore ports.RestoreConfig
+}
+
+func (a *promptFileTransitionAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	a.restore = cfg
+	if cfg.SystemPromptFile == "" {
+		return nil, false, errors.New("system prompt file required")
+	}
+	if _, err := os.Stat(cfg.SystemPromptFile); err != nil {
+		return nil, false, err
+	}
+	return []string{"/bin/true"}, true, nil
 }
 
 type emptyTransitionAgent struct{ transitionAgent }
@@ -682,6 +700,25 @@ func TestInterfaceTransitionRequiresExplicitAdapterCapability(t *testing.T) {
 	}
 	if len(store.transitions) != 0 || runtime.destroyed != 0 || chat.start.ProviderConversationID != "" {
 		t.Fatal("unsupported handoff mutated session or controllers")
+	}
+}
+
+func TestInterfaceTransitionChatToTUIPreflightSuppliesSystemPromptFile(t *testing.T) {
+	manager, store, _, _, _ := newTransitionManager(t, domain.SessionModeChat)
+	manager.dataDir = t.TempDir()
+	agent := &promptFileTransitionAgent{}
+	manager.agents = singleAgent{agent: agent}
+	rec := store.sessions["session-1"]
+
+	err := manager.preflightInterfaceTarget(context.Background(), rec, domain.SessionInterfaceTransition{
+		SessionID: rec.ID, TargetMode: domain.SessionModeTUI, NativeConversationID: "native-1",
+	})
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	want := filepath.Join(manager.dataDir, "prompts", string(rec.ID), "system.md")
+	if agent.restore.SystemPromptFile != want {
+		t.Fatalf("system prompt file = %q, want %q", agent.restore.SystemPromptFile, want)
 	}
 }
 

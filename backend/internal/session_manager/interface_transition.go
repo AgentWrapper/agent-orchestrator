@@ -433,11 +433,15 @@ func (m *Manager) preflightInterfaceTarget(
 	if err != nil {
 		return err
 	}
+	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, rec.Harness, systemPrompt)
+	if err != nil {
+		return fmt.Errorf("system prompt file: %w", err)
+	}
 	config := effectiveAgentConfig(rec.Kind, project.Config)
 	var cmd []string
 	if transition.NativeConversationID == "" {
 		cmd, _, _, err = freshLaunchArgv(ctx, agent, rec.ID, rec.Metadata.WorkspacePath,
-			rec.Metadata, systemPrompt, "", config, rec.Kind, m.dataDir, true)
+			rec.Metadata, systemPrompt, systemPromptFile, config, rec.Kind, m.dataDir, true)
 	} else {
 		var resumable bool
 		cmd, resumable, err = agent.GetRestoreCommand(ctx, ports.RestoreConfig{
@@ -445,7 +449,7 @@ func (m *Manager) preflightInterfaceTarget(
 				ID: string(rec.ID), WorkspacePath: rec.Metadata.WorkspacePath,
 				Metadata: map[string]string{ports.MetadataKeyAgentSessionID: transition.NativeConversationID},
 			},
-			Kind: rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt,
+			Kind: rec.Kind, DataDir: m.dataDir, SystemPrompt: systemPrompt, SystemPromptFile: systemPromptFile,
 			Config: config, Permissions: config.Permissions,
 		})
 		if err == nil && !resumable {
