@@ -246,6 +246,13 @@ type restMR struct {
 	BlockingDiscussionsResolved bool `json:"blocking_discussions_resolved"`
 }
 
+// restProject is the subset of the GitLab "GET /projects/:id" response that
+// the provider needs: path_with_namespace is used to resolve a fork MR's head
+// repository (review Item 4).
+type restProject struct {
+	PathWithNamespace string `json:"path_with_namespace"`
+}
+
 type restDiffRefs struct {
 	BaseSHA string `json:"base_sha"`
 }
@@ -391,6 +398,7 @@ func (p *Provider) FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef)
 					Host:     r.Repo.Host,
 					Repo:     r.Repo.Repo,
 					PR:       ports.SCMPRObservation{Number: r.Number, URL: r.URL},
+					Error:    err,
 				}
 				return
 			}
@@ -435,6 +443,32 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 	prObs := mrToSCMPRObservation(repo, &mr)
 	prObs.BaseSHA = mr.BaseSHA
 	prObs.MergeCommitSHA = mr.MergeCommitSHA
+
+	// Fork MR: resolve the head repository to the source project's
+	// path_with_namespace so the head-repository ownership guard validates
+	// fork MRs against the correct project (review Item 4). When
+	// source_project_id differs from target_project_id, the MR head branch
+	// lives in a different project; without resolution, HeadRepo would be the
+	// target project and a fork MR with a matching branch name could pass the
+	// guard against the wrong project. No new cache field — the source-project
+	// path is fetched per fork MR per poll. On failure (404, 5xx, timeout) the
+	// error propagates so FetchPullRequests leaves a Fetched=false
+	// placeholder with the error attached (fail closed, do not falsify
+	// HeadRepo).
+	if mr.SourceProjectID != 0 && mr.SourceProjectID != mr.TargetProjectID {
+		srcPath := fmt.Sprintf("/projects/%d", mr.SourceProjectID)
+		projResp, err := hc.doGET(ctx, srcPath, nil)
+		if err != nil {
+			return ports.SCMObservation{}, fmt.Errorf("gitlab scm: fetch source project %d: %w", mr.SourceProjectID, err)
+		}
+		var srcProj restProject
+		if err := json.Unmarshal(projResp.Body, &srcProj); err != nil {
+			return ports.SCMObservation{}, fmt.Errorf("gitlab scm: unmarshal source project %d: %w", mr.SourceProjectID, err)
+		}
+		if srcProj.PathWithNamespace != "" {
+			prObs.HeadRepo = srcProj.PathWithNamespace
+		}
+	}
 
 	// 2. Fetch CI (pipelines + jobs). A transient failure here must propagate
 	// as an error so the observer preserves the last durable CI state rather

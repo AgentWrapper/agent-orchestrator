@@ -1313,3 +1313,208 @@ func TestListPRsByRepo_FirstPollFullListing(t *testing.T) {
 		t.Errorf("updated_after = %q, want empty (first poll = full listing)", seenUpdatedAfter)
 	}
 }
+
+// TestFetchPullRequests_ForkMR_ResolvesSourceProjectHeadRepo verifies that a
+// fork merge request (source_project_id != target_project_id) resolves its
+// head repository to the source project's path_with_namespace rather than the
+// target project (review Item 4). Without this resolution, a fork MR with a
+// matching branch name can pass AO's head-repository ownership guard against
+// the wrong project.
+func TestFetchPullRequests_ForkMR_ResolvesSourceProjectHeadRepo(t *testing.T) {
+	var sourceProjectHits int
+	mux := http.NewServeMux()
+	// MR detail: source_project_id (99) differs from target_project_id (10)
+	// — this is the signal that the MR comes from a fork.
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid":                1,
+			"title":              "Fork contribution",
+			"state":              "opened",
+			"draft":              false,
+			"web_url":            "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch":      "fix-bug",
+			"target_branch":      "main",
+			"sha":                "abc123",
+			"merge_status":       "can_be_merged",
+			"author":             map[string]any{"username": "alice"},
+			"source_project_id":  99,
+			"target_project_id":  10,
+			"diff_refs":          map[string]any{"base_sha": "base123"},
+		})
+	})
+	// Source project lookup: projects/:id returns path_with_namespace of the
+	// fork the MR head branch lives in.
+	mux.HandleFunc("/api/v4/projects/99", func(w http.ResponseWriter, r *http.Request) {
+		sourceProjectHits++
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":                  99,
+			"path_with_namespace": "contributor/myrepo-fork",
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 100, "status": "success", "sha": "abc123"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: unexpected error: %v", err)
+	}
+	if len(obs) != 1 {
+		t.Fatalf("got %d observations, want 1", len(obs))
+	}
+	o := obs[0]
+	if !o.Fetched {
+		t.Fatal("expected Fetched=true for a fork MR with a resolvable source project")
+	}
+	// HeadRepo MUST be the source project's path_with_namespace, NOT the
+	// target project repo (myorg/myrepo). This is the core of review Item 4:
+	// without resolution, a fork MR with a matching branch name passes the
+	// head-repository ownership guard against the wrong project.
+	if got, want := o.PR.HeadRepo, "contributor/myrepo-fork"; got != want {
+		t.Errorf("PR.HeadRepo = %q, want %q (source project path_with_namespace)", got, want)
+	}
+	// The source-project endpoint must actually have been queried once.
+	if sourceProjectHits != 1 {
+		t.Errorf("source project endpoint hits = %d, want 1", sourceProjectHits)
+	}
+}
+
+// TestFetchPullRequests_NonForkMR_DoesNotFetchSourceProject verifies that a
+// same-project MR (source_project_id == target_project_id) does NOT trigger a
+// source-project fetch. The source-project resolution is exclusively for fork
+// MRs; issuing it for same-repo MRs would be wasted work per poll (review
+// Item 4 — no-cache, per-poll fetch is rare because fork MRs are a minority).
+func TestFetchPullRequests_NonForkMR_DoesNotFetchSourceProject(t *testing.T) {
+	var sourceProjectHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid":                1,
+			"title":              "Same-repo MR",
+			"state":              "opened",
+			"draft":              false,
+			"web_url":            "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch":      "fix-bug",
+			"target_branch":      "main",
+			"sha":                "abc123",
+			"merge_status":       "can_be_merged",
+			"author":             map[string]any{"username": "alice"},
+			"source_project_id":  10,
+			"target_project_id":  10,
+			"diff_refs":          map[string]any{"base_sha": "base123"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 100, "status": "success", "sha": "abc123"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	// Catch-all that fails the test if the source-project endpoint is hit at
+	// all — the non-fork path must not issue this request.
+	mux.HandleFunc("/api/v4/projects/10", func(w http.ResponseWriter, r *http.Request) {
+		sourceProjectHits++
+		t.Errorf("source project endpoint hit for non-fork MR; should not be fetched")
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: unexpected error: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("expected one fetched observation, got %+v", obs)
+	}
+	// For a same-repo MR, HeadRepo stays the target repo (no fork resolution).
+	if got, want := obs[0].PR.HeadRepo, "myorg/myrepo"; got != want {
+		t.Errorf("PR.HeadRepo = %q, want %q (target repo for non-fork MR)", got, want)
+	}
+	if sourceProjectHits != 0 {
+		t.Errorf("source project endpoint hits = %d, want 0 (non-fork MR must not trigger a fetch)", sourceProjectHits)
+	}
+}
+
+// TestFetchPullRequests_ForkMR_SourceProjectFetchFails_FailClosed verifies
+// that when a fork MR's source-project fetch fails (404 here, but the same
+// applies to 5xx/timeout), the observation is marked Fetched=false with the
+// error attached (ticket 03's obs.Error mechanism) and the head repository is
+// NOT fabricated to the target project (review Item 4 — fail closed, do not
+// falsify the head repository). This preserves the cross-cutting rule: a
+// failed retrieval must not advance durable state.
+func TestFetchPullRequests_ForkMR_SourceProjectFetchFails_FailClosed(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid":                1,
+			"title":              "Fork with unresolvable source",
+			"state":              "opened",
+			"draft":              false,
+			"web_url":            "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch":      "fix-bug",
+			"target_branch":      "main",
+			"sha":                "abc123",
+			"merge_status":       "can_be_merged",
+			"author":             map[string]any{"username": "alice"},
+			"source_project_id":  99,
+			"target_project_id":  10,
+			"diff_refs":          map[string]any{"base_sha": "base123"},
+		})
+	})
+	// Source project lookup 404s — e.g. the fork was deleted or made private.
+	mux.HandleFunc("/api/v4/projects/99", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"message":"404 Project Not Found"}`)
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	// A transient fetch failure must propagate as a non-nil error so the
+	// observer preserves the last durable state rather than persisting a
+	// falsified observation.
+	if err == nil {
+		t.Fatal("FetchPullRequests: error = nil, want non-nil for failed fork-MR source-project fetch")
+	}
+	if len(obs) != 1 {
+		t.Fatalf("got %d observations, want 1", len(obs))
+	}
+	o := obs[0]
+	if o.Fetched {
+		t.Error("expected Fetched=false (fail closed) when source-project fetch fails")
+	}
+	// The error classification must be attached as transient per-observation
+	// metadata (ticket 03 mechanism) so the observer can route it to
+	// refresh-incomplete without discarding the classification.
+	if o.Error == nil {
+		t.Error("expected obs.Error set on failed fork-MR observation")
+	}
+	// HeadRepo must NOT be the target project repo — failing closed means we
+	// do not fabricate the head repository for a fork whose source is
+	// unresolvable. It should be empty (zero value), not "myorg/myrepo".
+	if o.PR.HeadRepo != "" {
+		t.Errorf("PR.HeadRepo = %q, want empty (must not fabricate head repo on fetch failure)", o.PR.HeadRepo)
+	}
+}
