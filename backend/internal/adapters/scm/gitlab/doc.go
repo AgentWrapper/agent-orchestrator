@@ -75,6 +75,6 @@
 // ListPRsByRepo accepts an updatedAfter cursor and sends state=all +
 // updated_after so only MRs updated since the last successful cursor are
 // returned. The observer advances the cursor only after successful persistence,
-// and subtracts an overlap window to absorb clock skew. First poll and
-// periodic reconciliation request a full listing (updatedAfter = zero).
+// and subtracts an overlap window to absorb clock skew. First poll requests
+// a full listing (updatedAfter = zero).
 package gitlab
