@@ -296,6 +296,14 @@ func resolveWorkspaceCompare(ctx context.Context, root, recordedSHA, recordedRef
 	if pr, ok := selectWorkspaceComparePR(prs, defaultBranch); ok {
 		baseSHA := strings.TrimSpace(pr.BaseSHA)
 		if gitCommitExists(ctx, root, baseSHA) {
+			// pr.BaseSHA is the target branch's current tip, not the commit the
+			// session forked from. If the target branch has advanced since, diff
+			// straight against it would also surface every base-only change
+			// (reversed) as if the session had touched it. Compare against the
+			// merge base instead so only the session's own changes show up.
+			if merged, ok := gitMergeBase(ctx, root, baseSHA); ok {
+				baseSHA = merged
+			}
 			return workspaceCompareTarget{BaseSHA: baseSHA, BaseRef: strings.TrimSpace(pr.TargetBranch), Mode: WorkspaceCompareBase}
 		}
 	}

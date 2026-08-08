@@ -584,6 +584,51 @@ func TestWorkspaceFilesPRFallbackPrefersDefaultTargetPR(t *testing.T) {
 	}
 }
 
+func TestWorkspaceFilesPRFallbackUsesMergeBaseWhenTargetBranchAdvances(t *testing.T) {
+	repo := newWorkspaceRepo(t)
+	runGit(t, repo, "branch", "-M", "main")
+	forkBase := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "-c", "ao/work")
+	writeWorkspaceFile(t, repo, "worker.go", "package main\n")
+	runGit(t, repo, "add", "worker.go")
+	runGit(t, repo, "commit", "-m", "worker change")
+	runGit(t, repo, "switch", "main")
+	writeWorkspaceFile(t, repo, "mainonly.go", "package main\n")
+	runGit(t, repo, "add", "mainonly.go")
+	runGit(t, repo, "commit", "-m", "main advanced independently")
+	prBaseSHA := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	runGit(t, repo, "switch", "ao/work")
+
+	st := newFakeStore()
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: domain.ProjectConfig{DefaultBranch: "main"}}
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:        "ao-1",
+		ProjectID: "mer",
+		Metadata:  domain.SessionMetadata{WorkspacePath: repo},
+	}
+	st.prs["ao-1"] = []domain.PullRequest{
+		{URL: "pr", SessionID: "ao-1", Number: 1, TargetBranch: "main", BaseSHA: prBaseSHA, UpdatedAt: time.Unix(100, 0)},
+	}
+
+	files, err := (&Service{store: st}).ListWorkspaceFiles(context.Background(), "ao-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.CompareBaseSHA != forkBase || files.CompareBaseRef != "main" {
+		t.Fatalf("compare base = sha:%q ref:%q, want merge base %s main", files.CompareBaseSHA, files.CompareBaseRef, forkBase)
+	}
+	byPath := map[string]WorkspaceFileSummary{}
+	for _, file := range files.Files {
+		byPath[file.Path] = file
+	}
+	if byPath["worker.go"].Status != WorkspaceFileAdded {
+		t.Fatalf("worker.go = %#v, want added", byPath["worker.go"])
+	}
+	if got, ok := byPath["mainonly.go"]; ok {
+		t.Fatalf("mainonly.go = %#v, want excluded once compare resolves to the merge base instead of the advanced target tip", got)
+	}
+}
+
 func TestWorkspaceFilesReportCommittedDeletionsAgainstRecordedBase(t *testing.T) {
 	repo := newWorkspaceRepo(t)
 	base := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
