@@ -220,7 +220,7 @@ func TestGetAgentHooksWritesSettingsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	settingsFile := filepath.Join(workspace, ".claude", "settings.local.json")
+	settingsFile := filepath.Join(workspace, ".kimchi", "hooks.local.json")
 	data, err := os.ReadFile(settingsFile)
 	if err != nil {
 		t.Fatalf("settings file not created: %v", err)
@@ -239,7 +239,7 @@ func TestGetAgentHooksWritesSettingsFile(t *testing.T) {
 		}
 	}
 
-	gitignore := filepath.Join(workspace, ".claude", ".gitignore")
+	gitignore := filepath.Join(workspace, ".kimchi", ".gitignore")
 	if _, err := os.Stat(gitignore); err != nil {
 		t.Fatalf("gitignore not created: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestGetAgentHooksIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	settingsFile := filepath.Join(workspace, ".claude", "settings.local.json")
+	settingsFile := filepath.Join(workspace, ".kimchi", "hooks.local.json")
 	data, err := os.ReadFile(settingsFile)
 	if err != nil {
 		t.Fatal(err)
@@ -282,7 +282,7 @@ func TestUninstallHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	settingsFile := filepath.Join(workspace, ".claude", "settings.local.json")
+	settingsFile := filepath.Join(workspace, ".kimchi", "hooks.local.json")
 	data, err := os.ReadFile(settingsFile)
 	if err != nil {
 		t.Fatal(err)

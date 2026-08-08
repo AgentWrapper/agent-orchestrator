@@ -67,7 +67,7 @@ func kimchiConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) {
 
 	var config map[string]json.RawMessage
 	if err := json.Unmarshal(data, &config); err != nil {
-		return ports.AgentAuthStatusUnknown, nil // malformed config → can't determine
+		return ports.AgentAuthStatusUnknown, nil //nolint:nilerr // malformed config → can't determine auth status
 	}
 
 	if key := kimchiExtractAPIKey(config); key != "" {
