@@ -35,6 +35,67 @@ func TestNativeConversationIDRequiresCapturedCodexThreadForTUI(t *testing.T) {
 	}
 }
 
+func TestNativeConversationExistsRequiresActivePersistedCodexRollout(t *testing.T) {
+	p := &Plugin{}
+	id := "019fc430-1234-7abc-8def-0123456789ab"
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", t.TempDir())
+	env := map[string]string{"CODEX_HOME": codexHome}
+
+	exists, err := p.NativeConversationExists(context.Background(), ports.SessionRef{}, id, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("reserved Codex thread without a rollout reported as persisted")
+	}
+
+	activeDir := filepath.Join(codexHome, "sessions", "2026", "08", "08")
+	if err := os.MkdirAll(activeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rollout := filepath.Join(activeDir, "rollout-2026-08-08T10-00-00-"+id+".jsonl")
+	if err := os.WriteFile(rollout, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = p.NativeConversationExists(context.Background(), ports.SessionRef{}, id, env)
+	if err != nil || exists {
+		t.Fatalf("empty rollout: exists=%v err=%v", exists, err)
+	}
+	if err := os.WriteFile(rollout, []byte("{\"type\":\"session_meta\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = p.NativeConversationExists(context.Background(), ports.SessionRef{}, id, env)
+	if err != nil || !exists {
+		t.Fatalf("active rollout: exists=%v err=%v", exists, err)
+	}
+
+	if err := os.Remove(rollout); err != nil {
+		t.Fatal(err)
+	}
+	archivedDir := filepath.Join(codexHome, "archived_sessions")
+	if err := os.MkdirAll(archivedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	archived := filepath.Join(archivedDir, "rollout-2026-08-08T10-00-00-"+id+".jsonl")
+	if err := os.WriteFile(archived, []byte("{\"type\":\"session_meta\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = p.NativeConversationExists(context.Background(), ports.SessionRef{}, id, env)
+	if err != nil || exists {
+		t.Fatalf("archived rollout: exists=%v err=%v", exists, err)
+	}
+
+	compressed := rollout + ".zst"
+	if err := os.WriteFile(compressed, []byte("compressed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = p.NativeConversationExists(context.Background(), ports.SessionRef{}, id, env)
+	if err != nil || !exists {
+		t.Fatalf("compressed active rollout: exists=%v err=%v", exists, err)
+	}
+}
+
 // canonicalTempDir returns a t.TempDir() with symlinks resolved so the
 // workspace trust flag collapses to a single predictable entry (macOS TempDir
 // lives under a /var -> /private/var symlink).
@@ -53,13 +114,31 @@ func canonicalTempDir(t *testing.T) string {
 
 // sessionHookFlags mirrors the `-c` hook config appendSessionHookFlags emits,
 // asserted literally so accidental format drift fails loudly: Codex parses
-// these values as TOML.
-func sessionHookFlags() []string {
+// these values as TOML. The absolute AO executable is load-bearing because
+// Codex invokes hooks through a login shell, which may replace PATH.
+func sessionHookFlags(t *testing.T) []string {
+	t.Helper()
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(executable) {
+		executable, err = filepath.Abs(executable)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		executable = `"` + executable + `"`
+	} else {
+		executable = `'` + strings.ReplaceAll(executable, `'`, `'"'"'`) + `'`
+	}
+	prefix := executable + " hooks codex "
 	return []string{
-		"-c", `hooks.SessionStart=[{hooks=[{type="command",command="ao hooks codex session-start",timeout=5}]}]`,
-		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command="ao hooks codex user-prompt-submit",timeout=5}]}]`,
-		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command="ao hooks codex permission-request",timeout=5}]}]`,
-		"-c", `hooks.Stop=[{hooks=[{type="command",command="ao hooks codex stop",timeout=5}]}]`,
+		"-c", `hooks.SessionStart=[{hooks=[{type="command",command=` + codexTOMLBasicString(prefix+"session-start") + `,timeout=5}]}]`,
+		"-c", `hooks.UserPromptSubmit=[{hooks=[{type="command",command=` + codexTOMLBasicString(prefix+"user-prompt-submit") + `,timeout=5}]}]`,
+		"-c", `hooks.PermissionRequest=[{hooks=[{type="command",command=` + codexTOMLBasicString(prefix+"permission-request") + `,timeout=5}]}]`,
+		"-c", `hooks.Stop=[{hooks=[{type="command",command=` + codexTOMLBasicString(prefix+"stop") + `,timeout=5}]}]`,
 	}
 }
 
@@ -92,7 +171,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 		"--dangerously-bypass-hook-trust",
 		"--dangerously-bypass-approvals-and-sandbox",
 	}
-	want = append(want, sessionHookFlags()...)
+	want = append(want, sessionHookFlags(t)...)
 	if runtime.GOOS == "windows" {
 		want = append(want, "--no-alt-screen")
 	}
@@ -118,7 +197,7 @@ func TestGetLaunchCommandWithoutWorkspaceOmitsTrustFlag(t *testing.T) {
 			t.Fatalf("command %#v contains a projects trust flag without a workspace", cmd)
 		}
 	}
-	if !containsSubsequence(cmd, sessionHookFlags()) {
+	if !containsSubsequence(cmd, sessionHookFlags(t)) {
 		t.Fatalf("command %#v missing session hook flags", cmd)
 	}
 }
@@ -563,7 +642,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 		"--ask-for-approval", "on-request",
 		"-c", `approvals_reviewer="auto_review"`,
 	}
-	want = append(want, sessionHookFlags()...)
+	want = append(want, sessionHookFlags(t)...)
 	if runtime.GOOS == "windows" {
 		want = append(want, "--no-alt-screen")
 	}

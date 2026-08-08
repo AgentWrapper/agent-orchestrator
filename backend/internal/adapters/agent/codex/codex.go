@@ -9,6 +9,7 @@ package codex
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
@@ -66,6 +69,7 @@ var _ ports.Agent = (*Plugin)(nil)
 var _ ports.ActiveTurnSteerer = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
 var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
 var _ ports.TerminalActivityDetector = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
@@ -113,7 +117,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	if err := appendSessionHookFlags(&cmd); err != nil {
+		return nil, err
+	}
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
@@ -155,7 +161,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	if err := appendSessionHookFlags(&cmd); err != nil {
+		return nil, false, err
+	}
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
@@ -196,6 +204,87 @@ func (p *Plugin) NativeConversationID(
 	}
 	id := strings.TrimSpace(session.Metadata[ports.MetadataKeyAgentSessionID])
 	return id, id != "", nil
+}
+
+// NativeConversationExists distinguishes a Codex thread UUID from a thread
+// that app-server can actually resume. Codex returns the UUID from thread/start
+// before the first user message materializes a rollout; thread/resume rejects
+// that reserved-only UUID with "no rollout found for thread id".
+//
+// Active rollouts live below CODEX_HOME/sessions. Archived rollouts are
+// deliberately excluded because Codex also rejects them from thread/resume.
+// We only establish that a non-empty rollout exists; Codex remains responsible
+// for parsing its own provider state.
+func (p *Plugin) NativeConversationExists(
+	ctx context.Context,
+	_ ports.SessionRef,
+	nativeConversationID string,
+	env map[string]string,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	id, valid := canonicalCodexThreadID(nativeConversationID)
+	if !valid {
+		return false, nil
+	}
+	codexHome := strings.TrimSpace(env["CODEX_HOME"])
+	if codexHome == "" {
+		codexHome = strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	}
+	if codexHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false, fmt.Errorf("codex: resolve rollout root: %w", err)
+		}
+		codexHome = filepath.Join(home, ".codex")
+	}
+
+	found := false
+	sessionsDir := filepath.Join(codexHome, "sessions")
+	err := filepath.WalkDir(sessionsDir, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() || !codexRolloutNameMatches(entry.Name(), id) {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() && info.Size() > 0 {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("codex: inspect rollout root %s: %w", sessionsDir, err)
+	}
+	return found, nil
+}
+
+func canonicalCodexThreadID(value string) (string, bool) {
+	parsed, err := uuid.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return "", false
+	}
+	return parsed.String(), true
+}
+
+func codexRolloutNameMatches(name, nativeConversationID string) bool {
+	if !strings.HasPrefix(name, "rollout-") {
+		return false
+	}
+	suffix := "-" + nativeConversationID + ".jsonl"
+	return strings.HasSuffix(name, suffix) || strings.HasSuffix(name, suffix+".zst")
 }
 
 // AuthStatus checks Codex's local login state without making a model call.
@@ -365,7 +454,12 @@ func DoctorLaunchProbes() [][]string {
 	overrideProbe := []string{"features", "list"}
 	appendNoUpdateCheckFlag(&overrideProbe)
 	appendHideRateLimitNudgeFlag(&overrideProbe)
-	appendSessionHookFlags(&overrideProbe)
+	if err := appendSessionHookFlags(&overrideProbe); err != nil {
+		// The probe only asks Codex to parse the hook config; a bare fallback
+		// keeps that diagnostic available if the current executable cannot be
+		// resolved, while real session launches fail closed above.
+		appendSessionHookFlagsForExecutable(&overrideProbe, "ao")
+	}
 	appendWorkspaceTrustFlag(&overrideProbe, os.TempDir())
 	return [][]string{flagProbe, overrideProbe}
 }

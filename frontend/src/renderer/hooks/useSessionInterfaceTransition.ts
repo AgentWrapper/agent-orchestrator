@@ -27,6 +27,8 @@ const cancellablePhases = new Set<SessionInterfaceTransition["phase"]>([
 	"draining",
 ]);
 
+const nativeSessionReadinessPoll = 1_000;
+
 export function interfaceTransitionIsActive(transition?: SessionInterfaceTransition): boolean {
 	return Boolean(transition && activePhases.has(transition.phase));
 }
@@ -60,8 +62,18 @@ export function useSessionInterfaceTransition(sessionId: string | undefined) {
 			if (error) throw error;
 			return data as SessionInterfaceTransitionStatus;
 		},
-		refetchInterval: (state) =>
-			interfaceTransitionIsActive(state.state.data?.transition) ? 250 : false,
+		refetchInterval: (state) => {
+			const status = state.state.data;
+			if (interfaceTransitionIsActive(status?.transition)) return 250;
+			// Codex reports its native thread id from an asynchronous SessionStart
+			// hook. The first status request can therefore race that hook and return
+			// NATIVE_SESSION_MISSING. Recheck only this transient readiness state so
+			// a supported switch enables without polling permanently unsupported
+			// harnesses or ordinary idle sessions.
+			return status?.reasonCode === "NATIVE_SESSION_MISSING"
+				? nativeSessionReadinessPoll
+				: false;
+		},
 		retry: 1,
 	});
 

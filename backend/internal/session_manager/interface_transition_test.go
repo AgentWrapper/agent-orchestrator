@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	codexagent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -770,6 +773,70 @@ func TestInterfaceTransitionTUIToChatStartsFreshWhenReservedIDHasNoHistory(t *te
 	}
 	if got := fmt.Sprint(*log); got != "[stop:tui:runtime-1 start:chat]" {
 		t.Fatalf("controller order = %s", got)
+	}
+}
+
+func TestInterfaceTransitionTUIToChatStartsFreshWhenCodexRolloutIsMissing(t *testing.T) {
+	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	t.Setenv("CODEX_HOME", t.TempDir())
+	manager.agents = singleAgent{agent: codexagent.New()}
+	rec := store.sessions["session-1"]
+	rec.Harness = domain.HarnessCodex
+	rec.Metadata.AgentSessionID = "019fc430-1234-7abc-8def-0123456789ab"
+	store.sessions["session-1"] = rec
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
+	}
+	if settled.NativeConversationID != "" {
+		t.Fatalf("native conversation = %q, want fresh sentinel", settled.NativeConversationID)
+	}
+	if chat.start.ProviderConversationID != "" {
+		t.Fatalf("Chat resumed missing Codex rollout %q, want a fresh conversation",
+			chat.start.ProviderConversationID)
+	}
+}
+
+func TestInterfaceTransitionTUIToChatReusesPersistedCodexRollout(t *testing.T) {
+	manager, store, _, chat, _ := newTransitionManager(t, domain.SessionModeTUI)
+	codexHome := t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	manager.agents = singleAgent{agent: codexagent.New()}
+	id := "019fc430-1234-7abc-8def-0123456789ab"
+	rec := store.sessions["session-1"]
+	rec.Harness = domain.HarnessCodex
+	rec.Metadata.AgentSessionID = id
+	store.sessions["session-1"] = rec
+	rolloutDir := filepath.Join(codexHome, "sessions", "2026", "08", "08")
+	if err := os.MkdirAll(rolloutDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rollout := filepath.Join(rolloutDir, "rollout-2026-08-08T10-00-00-"+id+".jsonl")
+	if err := os.WriteFile(rollout, []byte("{\"type\":\"session_meta\"}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	transition, err := manager.StartInterfaceTransition(context.Background(), "session-1",
+		domain.SessionModeChat, domain.SessionInterfaceTransitionDrain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settled := awaitTransition(t, store, transition.ID)
+	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
+		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
+	}
+	if settled.NativeConversationID != id {
+		t.Fatalf("native conversation = %q, want %q", settled.NativeConversationID, id)
+	}
+	if chat.start.ProviderConversationID != id {
+		t.Fatalf("Chat resumed %q, want persisted Codex rollout %q",
+			chat.start.ProviderConversationID, id)
 	}
 }
 
