@@ -1148,9 +1148,16 @@ func (o *Observer) selectRefreshCandidates(ctx context.Context, subjects map[str
 			// fetches/hour per tracked open PR, and it scales linearly with the
 			// number of tracked PRs. It also fires for every stale PR in the same
 			// tick, so watch secondary-rate-limit burstiness as fleets grow.
-			last := o.Cache.LastPRFetchAt[key]
-			if last.IsZero() || now.Sub(last) > DefaultPRMaxAge {
-				candidate = true
+			//
+			// When incremental discovery is active (hasCursor), PRs not in the
+			// updated set are left to the terminal-reconciliation pass — do not
+			// promote them here or reconciliation will skip them (it checks
+			// candidateKeys to avoid double-fetching).
+			if !hasCursor || listedPRs == nil || listedPRs[key] {
+				last := o.Cache.LastPRFetchAt[key]
+				if last.IsZero() || now.Sub(last) > DefaultPRMaxAge {
+					candidate = true
+				}
 			}
 		}
 		if candidate {

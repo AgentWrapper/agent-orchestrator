@@ -1525,7 +1525,7 @@ func TestSpawnIssueContextSkipsGitHubFallbackForGitLabProvider(t *testing.T) {
 	}}
 	svc := NewWithDeps(Deps{Manager: fc, Store: st, Tracker: tracker, SCM: fakeSCM{}})
 
-	if _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
+	if _, _, _, err := svc.Spawn(context.Background(), ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, IssueID: "42"}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
 	// No GitHub API call: the tracker must never be queried.
