@@ -54,6 +54,12 @@ type SessionMetadata struct {
 	// even when PreviewURL is unchanged. The desktop browser panel keys
 	// navigation on it so a repeated `ao preview <same-url>` still refreshes.
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// BrowserCapabilityVerifier is a one-way verifier for the random browser
+	// capability held by this session's worker process. The bearer token itself
+	// is never persisted, so reading the database cannot grant access to another
+	// session. Keeping the verifier durable lets a surviving worker authenticate
+	// after the desktop app or daemon restarts.
+	BrowserCapabilityVerifier string `json:"-"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable
@@ -67,7 +73,7 @@ type SessionRecord struct {
 	Harness   AgentHarness `json:"harness,omitempty"`
 	// ReviewerHarness is this session's preferred reviewer. Empty delegates to
 	// the project configuration.
-	ReviewerHarness ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,opencode"`
+	ReviewerHarness ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 	DisplayName     string          `json:"displayName,omitempty"`
 	// Mode is the session's currently committed conversation controller. Every
 	// send, restore, kill, and reaper decision dispatches from it. Only the

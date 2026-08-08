@@ -19,6 +19,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	useSyncExternalStore,
 	type CSSProperties,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type PointerEvent as ReactPointerEvent,
@@ -40,7 +41,7 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
-import { aoBridge } from "../../lib/bridge";
+import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
 import type { SessionKind } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
 import { Button } from "../ui/button";
@@ -57,6 +58,7 @@ import {
 	TurnChangedFiles,
 	TurnOutcome,
 } from "./ChatTimelineItems";
+import { ChatLinkProvider } from "./ChatMarkdown";
 import { ChatComposer } from "./ChatComposer";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
@@ -135,6 +137,8 @@ export interface ChatWorkspaceProps {
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
+	/** Open an HTTP(S) link in this session's AO Browser panel. */
+	onLinkOpen?: (url: string) => void;
 	/** A send or decision is in flight. */
 	busy?: boolean;
 	/** The provider's model catalog. Empty hides the model control. */
@@ -211,6 +215,7 @@ export function ChatWorkspace({
 	onOpenShell,
 	openingShell,
 	shellError,
+	onLinkOpen,
 	busy,
 	models,
 	onChooseSettings,
@@ -291,12 +296,8 @@ export function ChatWorkspace({
 		return () => observer.disconnect();
 	}, []);
 
-	const triggerChatZoom = useCallback((direction: "in" | "out") => {
-		const action = direction === "in" ? "view.zoomIn" : "view.zoomOut";
-		setChatFontSize((current) => clampChatFontSize(current + (direction === "in" ? 1 : -1)));
-		void aoBridge.menu.action(action).catch((error) => {
-			console.warn("Unable to change chat zoom", error);
-		});
+	const updateChatFontSize = useCallback((delta: number) => {
+		setChatFontSize((current) => clampChatFontSize(current + delta));
 	}, []);
 
 	const toggleFullscreen = useCallback(async () => {
@@ -337,8 +338,8 @@ export function ChatWorkspace({
 				openingShell={openingShell}
 				shellError={shellError}
 				fontSize={chatFontSize}
-				onDecreaseFontSize={() => triggerChatZoom("out")}
-				onIncreaseFontSize={() => triggerChatZoom("in")}
+				onDecreaseFontSize={() => updateChatFontSize(-1)}
+				onIncreaseFontSize={() => updateChatFontSize(1)}
 				isFullscreen={isFullscreen}
 				onToggleFullscreen={() => void toggleFullscreen()}
 				topbarBounds={topbarBounds}
@@ -367,16 +368,18 @@ export function ChatWorkspace({
 				turnInFlight={Boolean(turn)}
 				error={mcpReloadError}
 			/>
-			<Timeline
-				snapshot={snapshot}
-				hasOlder={hasOlder}
-				loadingOlder={loadingOlder}
-				onLoadOlder={onLoadOlder}
-				onDecide={onDecide}
-				onResolveInput={onResolveInput}
-				busy={busy}
-				onRollback={rollbackTarget}
-			/>
+			<ChatLinkProvider onLinkOpen={onLinkOpen}>
+				<Timeline
+					snapshot={snapshot}
+					hasOlder={hasOlder}
+					loadingOlder={loadingOlder}
+					onLoadOlder={onLoadOlder}
+					onDecide={onDecide}
+					onResolveInput={onResolveInput}
+					busy={busy}
+					onRollback={rollbackTarget}
+				/>
+			</ChatLinkProvider>
 
 			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
 				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
@@ -916,6 +919,7 @@ function Timeline({
 	const decide = useStableCallback(onDecide);
 	const resolveInput = useStableCallback(onResolveInput);
 	const rollback = useStableCallback(onRollback);
+	const apiBaseUrl = useSyncExternalStore(subscribeApiBaseUrl, getApiBaseUrl, getApiBaseUrl);
 
 	const readable = useMemo(() => readableItems(snapshot), [snapshot]);
 	const items = useStableList(readable, itemKey, sameContent);
@@ -1105,7 +1109,7 @@ function Timeline({
 			<div
 				ref={scroller}
 				onScroll={onScroll}
-				className="chat-scroll-viewport cursor-chat-timeline h-full overflow-y-auto px-4 py-5"
+				className="chat-scroll-viewport cursor-chat-timeline h-full select-text overflow-y-auto px-4 py-5"
 				role="log"
 				aria-live="polite"
 				aria-label="Conversation"
@@ -1130,6 +1134,8 @@ function Timeline({
 						<div key={group.key} data-chat-scroll-anchor="">
 							<TurnGroup
 								group={group}
+								sessionId={snapshot.sessionId}
+								apiBaseUrl={apiBaseUrl}
 								onDecide={decide}
 								onResolveInput={resolveInput}
 								onRollback={rollback}
@@ -1229,7 +1235,7 @@ function Timeline({
 					size="sm"
 					variant="outline"
 					onClick={() => setPinned(true)}
-					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 bg-raised shadow-sm"
+					className="absolute bottom-3 left-1/2 -translate-x-1/2 gap-1.5 bg-raised shadow-sm hover:bg-surface dark:bg-raised dark:hover:bg-surface"
 				>
 					<ArrowDown aria-hidden="true" className="size-3.5" />
 					Jump to latest
@@ -1246,6 +1252,8 @@ function Timeline({
  */
 const TurnGroup = memo(function TurnGroup({
 	group,
+	sessionId,
+	apiBaseUrl,
 	onDecide,
 	onResolveInput,
 	onRollback,
@@ -1254,6 +1262,8 @@ const TurnGroup = memo(function TurnGroup({
 	queued,
 }: {
 	group: TimelineGroup;
+	sessionId: string;
+	apiBaseUrl: string;
 	onDecide: (requestId: string, decisionId: string) => void;
 	onResolveInput: NonNullable<ChatWorkspaceProps["onResolveInput"]>;
 	onRollback: (turnId: string) => void;
@@ -1284,6 +1294,8 @@ const TurnGroup = memo(function TurnGroup({
 					<TimelineItem
 						key={run.key}
 						item={run.items[0]!}
+						sessionId={sessionId}
+						apiBaseUrl={apiBaseUrl}
 						onDecide={onDecide}
 						onResolveInput={onResolveInput}
 						busy={busy}
@@ -1315,6 +1327,8 @@ const TurnGroup = memo(function TurnGroup({
 
 function TimelineItem({
 	item,
+	sessionId,
+	apiBaseUrl,
 	onDecide,
 	onResolveInput,
 	busy,
@@ -1323,6 +1337,8 @@ function TimelineItem({
 	showStreamingIndicator,
 }: {
 	item: ConversationItem;
+	sessionId: string;
+	apiBaseUrl: string;
 	onDecide?: (requestId: string, decisionId: string) => void;
 	onResolveInput?: ChatWorkspaceProps["onResolveInput"];
 	busy?: boolean;
@@ -1349,7 +1365,9 @@ function TimelineItem({
 		}
 		// A user-role message that did not come from this human is an automation or
 		// worker relay, and is attributed differently.
-		if (item.origin === "human") return <HumanMessage message={item} queued={queued} />;
+		if (item.origin === "human") {
+			return <HumanMessage message={item} sessionId={sessionId} apiBaseUrl={apiBaseUrl} queued={queued} />;
+		}
 		return <OriginMessage message={item} />;
 	}
 	if (item.activityKind === "approval") {

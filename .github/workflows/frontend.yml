@@ -34,6 +34,9 @@ jobs:
 
       - run: npm ci
 
+      - name: Prepare pinned agent-browser runtime
+        run: npm run browser-runtime:prepare -- --quiet
+
       - name: Install landing dependencies
         run: npm ci --prefix src/landing
 
@@ -44,6 +47,8 @@ jobs:
         run: npm run typecheck:e2e
 
       - name: Run vitest suite
+        env:
+          AO_AGENT_BROWSER_TEST_BINARY: ${{ github.workspace }}/frontend/agent-browser/agent-browser
         run: npx vitest run
 
   renderer-smoke:

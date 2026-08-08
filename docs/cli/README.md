@@ -101,10 +101,12 @@ directly. Supporting assets must not replace an active application preview.
 `ao browser` also resolves its target from `AO_SESSION_ID`, but controls the
 session-owned live Electron browser rather than only setting its preview URL.
 The target-isolated command set includes `status`, `open`, `snapshot`, `click`,
-`fill`, `type`, `press`, `hover`, `scroll`, `select`, `check`, `uncheck`, `get`,
-`highlight`, `unhighlight`, `tabs`, `tab new`, `tab select`, `tab close`,
+`dblclick`, `focus`, `fill`, `type`, `press`, `hover`, `scroll`,
+`scrollintoview`, `drag`, `select`, `check`, `uncheck`, `get`, `highlight`,
+`unhighlight`, `tabs`, `tab new`, `tab select`, `tab close`, `frame`, `dialog`,
 `wait`, `screenshot`, `network start/status/list/stop/clear`, `console`, and
-`errors`. Logical tab IDs remain stable for the session, and allowed popups
+`errors`. The native engine is bound internally; there is no second command or
+connection setup. Logical tab IDs remain stable for the session, and allowed popups
 become AO browser tabs rather than separate OS-browser windows. The AO desktop
 app must be open because Electron owns the `WebContentsView`.
 References from a snapshot are invalidated after navigation or DOM replacement;

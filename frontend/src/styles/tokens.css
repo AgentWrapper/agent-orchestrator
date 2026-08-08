@@ -384,8 +384,8 @@
 	--size-branch-chip: 13rem;
 	--size-inspector-min: 280px;
 	--size-textarea-min: 112px;
-	/* Three 20px actions + two 1px gaps + the 2px right inset. */
-	--size-sidebar-project-actions: 64px;
+	/* Two 20px actions + one 1px gap + the 2px right inset. */
+	--size-sidebar-project-actions: 43px;
 
 	/* Shared inset-panel geometry (welcome board + settings page) */
 	--size-center-panel-inset: 24px;
@@ -415,6 +415,12 @@
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 	--size-import-modal-max: 896px;
 	--size-import-folder-dialog: 640px;
+	--size-composer-prompt-min: 112px;
+	--size-composer-start-button: 7.25rem;
+	/* Task composer — inline toolbar values. Quieter than a filled control at rest
+	 * so the task field stays the only thing with visual weight. */
+	--color-bg-composer-chip: color-mix(in oklab, var(--input) 55%, transparent);
+	--color-bg-composer-chip-hover: var(--secondary);
 	/* Shared equal edge inset for modal header/body/footer sections. */
 	--size-modal-padding: var(--space-6);
 	--size-import-modal-padding: var(--space-8);
@@ -815,6 +821,17 @@
    Body text lands at ~12.5:1 (dark) / ~13.0:1 (light); muted at ~5.6 / ~5.0.
    Text chroma is capped so re-lighting cannot oversaturate a hue.
    ═══════════════════════════════════════════════════════════════ */
+
+/* A named palette owns the terminal's default plate and text as well as the
+   surrounding app chrome. ANSI slots stay independent because agent TUIs use
+   them semantically, but the formerly near-black terminal canvas now follows
+   each palette in both dark and light modes. */
+:root[data-style-theme] {
+	--color-bg-terminal-opaque: var(--background);
+	--color-bg-terminal: var(--background);
+	--color-text-terminal: var(--foreground);
+	--color-text-terminal-dim: var(--muted-foreground);
+}
 
 /* ── GitHub (Primer) ── */
 :root[data-style-theme="github"] {

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -65,20 +64,20 @@ func Run() error {
 	ignoreBrokenPipeSignal()
 
 	log := newLogger()
-	browserRuntimeToken := strings.TrimSpace(os.Getenv(browserruntime.RuntimeTokenEnv))
+	var browserRuntimeToken string
+	if os.Getenv(browserruntime.RuntimeTokenStdinEnv) == "1" {
+		browserRuntimeToken, err = browserruntime.ReadRuntimeToken(os.Stdin)
+		if err != nil {
+			return err
+		}
+	}
 	if browserRuntimeToken == "" {
 		browserRuntimeToken, err = browserruntime.NewToken()
 		if err != nil {
 			return err
 		}
-		if err := os.Setenv(browserruntime.RuntimeTokenEnv, browserRuntimeToken); err != nil {
-			return fmt.Errorf("set browser runtime token: %w", err)
-		}
 	}
-	browserAuthority, err := browsersvc.LoadAuthority(cfg.DataDir)
-	if err != nil {
-		return fmt.Errorf("load browser capability authority: %w", err)
-	}
+	browserAuthority := browsersvc.NewAuthority()
 	browserBroker := browserruntime.New(log, browserRuntimeToken)
 
 	// Fail fast only if a daemon is genuinely still serving the recorded port.
@@ -236,7 +235,7 @@ func Run() error {
 		NewID:    uuid.NewString,
 	})
 
-	sessionSvc, reviewSvc, sessMgr, err := startSession(cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
+	sessionSvc, reviewSvc, sessMgr, err := startSession(ctx, cfg, runtimeAdapter, store, lcStack.LCM, messenger, telemetrySink, agents, managedPreview, browserBroker, browserAuthority, chatLauncher{svc: chatSvc}, settingsSvc, log)
 	if err != nil {
 		stop()
 		lcStack.Stop()

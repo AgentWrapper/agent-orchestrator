@@ -1310,6 +1310,59 @@ paths:
       summary: Unregister a phone's Expo push token
       tags:
       - push
+  /api/v1/reviews/{reviewSessionID}/activity:
+    post:
+      operationId: setReviewActivity
+      parameters:
+      - description: Reviewer session identifier, currently the per-harness review
+          row id.
+        in: path
+        name: reviewSessionID
+        required: true
+        schema:
+          description: Reviewer session identifier, currently the per-harness review
+            row id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetReviewActivityRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetReviewActivityResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Report a reviewer-owned hook signal
+      tags:
+      - reviews
   /api/v1/sessions:
     get:
       operationId: listSessions
@@ -3383,6 +3436,84 @@ paths:
       summary: Cancel a running code review
       tags:
       - reviews
+  /api/v1/sessions/{sessionId}/reviews/kill:
+    post:
+      operationId: killReviewSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KillReviewResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Kill a worker's reviewer terminal session
+      tags:
+      - reviews
+  /api/v1/sessions/{sessionId}/reviews/restore:
+    post:
+      operationId: restoreReviewSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreReviewResponse'
+          description: OK
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Restore a worker's reviewer terminal session
+      tags:
+      - reviews
   /api/v1/sessions/{sessionId}/reviews/submit:
     post:
       operationId: submitReview
@@ -3432,6 +3563,57 @@ paths:
                 $ref: '#/components/schemas/APIError'
           description: Not Implemented
       summary: Record a reviewer's result for a worker's PR
+      tags:
+      - reviews
+  /api/v1/sessions/{sessionId}/reviews/switch:
+    post:
+      operationId: switchReviewSession
+      parameters:
+      - description: Session identifier, e.g. project-1.
+        in: path
+        name: sessionId
+        required: true
+        schema:
+          description: Session identifier, e.g. project-1.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSessionReviewerRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListReviewsResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Found
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Unprocessable Entity
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Switch a worker's reviewer harness
       tags:
       - reviews
   /api/v1/sessions/{sessionId}/reviews/trigger:
@@ -4355,7 +4537,28 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
+          - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
         scmStatus:
           enum:
@@ -5022,9 +5225,14 @@ components:
           - kilocode
           - vibe
           - pi
+          - prime-agent
           - autohand
           - fake
           type: string
+        attachments:
+          items:
+            $ref: '#/components/schemas/ControllersSpawnAttachmentInput'
+          type: array
         brief:
           maxLength: 4096
           type: string
@@ -5181,6 +5389,25 @@ components:
       required:
       - path
       type: object
+    KillReviewResponse:
+      properties:
+        reviewerHandleId:
+          type: string
+        reviewerHarness:
+          type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/PRReviewState'
+          type: array
+        runs:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
+      required:
+      - reviewerHandleId
+      - reviews
+      - runs
+      type: object
     KillSessionResponse:
       properties:
         freed:
@@ -5256,6 +5483,8 @@ components:
     ListReviewsResponse:
       properties:
         reviewerHandleId:
+          type: string
+        reviewerHarness:
           type: string
         reviews:
           items:
@@ -5816,6 +6045,25 @@ components:
           type: object
       required:
       - action
+      type: object
+    RestoreReviewResponse:
+      properties:
+        reviewerHandleId:
+          type: string
+        reviewerHarness:
+          type: string
+        reviews:
+          items:
+            $ref: '#/components/schemas/PRReviewState'
+          type: array
+        runs:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
+      required:
+      - reviewerHandleId
+      - reviews
+      - runs
       type: object
     RestoreSessionResponse:
       properties:
@@ -6473,6 +6721,38 @@ components:
       required:
       - config
       type: object
+    SetReviewActivityRequest:
+      properties:
+        agentSessionId:
+          description: Native reviewer session identifier used to resume its transcript.
+          type: string
+        event:
+          description: AO hook sub-command that produced this signal.
+          type: string
+        launchId:
+          description: AO process generation that produced the signal.
+          type: string
+        state:
+          description: Reviewer activity state reported by a hook. Accepted for forward
+            compatibility, not used for session display state.
+          enum:
+          - active
+          - idle
+          - waiting_input
+          - blocked
+          - exited
+          type: string
+      type: object
+    SetReviewActivityResponse:
+      properties:
+        ok:
+          type: boolean
+        reviewSessionId:
+          type: string
+      required:
+      - ok
+      - reviewSessionId
+      type: object
     SetSessionMergePolicyRequest:
       properties:
         terminateOnPrMerge:
@@ -6509,7 +6789,28 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
+          - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
       type: object
     SettingsResponse:
@@ -6612,6 +6913,7 @@ components:
           - kilocode
           - vibe
           - pi
+          - prime-agent
           - autohand
           type: string
         issueId:
@@ -6779,7 +7081,28 @@ components:
           enum:
           - claude-code
           - codex
+          - copilot
+          - cursor
+          - kilocode
           - opencode
+          - kiro
+          - pi
+          - qwen
+          - agy
+          - continue
+          - goose
+          - vibe
+          - devin
+          - droid
+          - kimi
+          - muse
+          - amp
+          - aider
+          - grok
+          - crush
+          - auggie
+          - cline
+          - autohand
           type: string
       type: object
     TriggerReviewResponse:
@@ -6794,9 +7117,14 @@ components:
           items:
             $ref: '#/components/schemas/PRReviewState'
           type: array
+        runs:
+          items:
+            $ref: '#/components/schemas/ReviewRun'
+          type: array
       required:
       - reviewerHandleId
       - reviews
+      - runs
       - created
       type: object
     UnregisterPushDeviceResponse:

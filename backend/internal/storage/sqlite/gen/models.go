@@ -269,6 +269,7 @@ type Review struct {
 	Harness          domain.ReviewerHarness
 	PRURL            string
 	ReviewerHandleID string
+	AgentSessionID   string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -290,38 +291,39 @@ type ReviewRun struct {
 }
 
 type Session struct {
-	ID                     domain.SessionID
-	ProjectID              domain.ProjectID
-	Num                    int64
-	IssueID                domain.IssueID
-	Kind                   domain.SessionKind
-	Harness                domain.AgentHarness
-	ActivityState          domain.ActivityState
-	ActivityLastAt         time.Time
-	IsTerminated           bool
-	Branch                 string
-	WorkspacePath          string
-	RuntimeHandleID        string
-	AgentSessionID         string
-	Prompt                 string
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-	DisplayName            string
-	FirstSignalAt          sql.NullTime
-	PreviewURL             string
-	PreviewRevision        int64
-	CleanupGeneration      int64
-	RuntimeLaunchID        string
-	WorkspaceRepoPath      string
-	TerminateOnPRMerge     bool
-	DiffBaseSha            string
-	DiffBaseRef            string
-	ReviewerHarness        domain.ReviewerHarness
-	IsPinned               bool
-	PinnedAt               sql.NullTime
-	SessionMode            domain.SessionMode
-	ProviderConversationID string
-	ControllerGeneration   string
+	ID                        domain.SessionID
+	ProjectID                 domain.ProjectID
+	Num                       int64
+	IssueID                   domain.IssueID
+	Kind                      domain.SessionKind
+	Harness                   domain.AgentHarness
+	ActivityState             domain.ActivityState
+	ActivityLastAt            time.Time
+	IsTerminated              bool
+	Branch                    string
+	WorkspacePath             string
+	RuntimeHandleID           string
+	AgentSessionID            string
+	Prompt                    string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
+	DisplayName               string
+	FirstSignalAt             sql.NullTime
+	PreviewURL                string
+	PreviewRevision           int64
+	CleanupGeneration         int64
+	RuntimeLaunchID           string
+	WorkspaceRepoPath         string
+	TerminateOnPRMerge        bool
+	DiffBaseSha               string
+	DiffBaseRef               string
+	ReviewerHarness           domain.ReviewerHarness
+	IsPinned                  bool
+	PinnedAt                  sql.NullTime
+	BrowserCapabilityVerifier string
+	SessionMode               domain.SessionMode
+	ProviderConversationID    string
+	ControllerGeneration      string
 }
 
 type SessionCleanupFact struct {

@@ -1,14 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useId, useState } from "react";
+import { FileText, Loader2, Paperclip, X } from "lucide-react";
+import {
+	type ClipboardEvent,
+	type DragEvent,
+	type FormEvent,
+	useCallback,
+	useEffect,
+	useId,
+	useRef,
+	useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
-import { Label } from "./ui/label";
 import { RequiredAgentField } from "./CreateProjectAgentSheet";
 import type { components } from "../../api/schema";
 import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
-import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
+import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
+import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFileAttachments";
+import { useSettings } from "../hooks/useSettings";
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
@@ -28,6 +38,7 @@ type CreateTaskInput = {
 	agent?: DelegateAgent;
 	model?: string;
 	mode?: "tui";
+	attachments?: FileAttachmentPayload[];
 };
 
 const CHAT_PREFLIGHT_CODES = new Set([
@@ -47,13 +58,9 @@ class TaskCreateError extends Error {
 	}
 }
 
-const newTaskSelectSurfaceClass =
-	"h-control-form w-full flex-1 justify-between rounded-md border border-transparent bg-input/50 px-3 py-2 text-control text-foreground transition-[color,box-shadow,background-color,border-color] hover:text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30";
-
 export type TaskComposerProps = {
 	projectId?: string;
 	onCreated: (sessionId: string) => void;
-	onCancel?: () => void;
 	onDirtyChange?: (dirty: boolean) => void;
 	onSubmittingChange?: (submitting: boolean) => void;
 	autoFocusTitle?: boolean;
@@ -62,7 +69,6 @@ export type TaskComposerProps = {
 export function TaskComposer({
 	projectId,
 	onCreated,
-	onCancel,
 	onDirtyChange,
 	onSubmittingChange,
 	autoFocusTitle,
@@ -72,6 +78,7 @@ export function TaskComposer({
 	const promptId = useId();
 	const modelId = useId();
 	const agentId = useId();
+	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [prompt, setPrompt] = useState("");
 	const [model, setModel] = useState("");
 	const [mode, setMode] = useState("");
@@ -80,7 +87,17 @@ export function TaskComposer({
 	const [modelTouched, setModelTouched] = useState(false);
 	const [isSubmitting, setIsSubmitting] = useState(false);
 	const [error, setError] = useState<string | undefined>();
+	const [modelWarning, setModelWarning] = useState<string | undefined>();
 	const [canCreateAsTUI, setCanCreateAsTUI] = useState(false);
+	const [isDragging, setIsDragging] = useState(false);
+	const {
+		attachments,
+		error: attachmentError,
+		addFiles,
+		remove: removeAttachment,
+		clear: clearAttachments,
+		toSettledPayload,
+	} = useFileAttachments();
 	const createTask = useCallback(
 		async (input: CreateTaskInput): Promise<string> => {
 			void captureRendererEvent("ao.renderer.task_create_requested", { project_id: input.projectId });
@@ -92,6 +109,7 @@ export function TaskComposer({
 						agent: input.agent,
 						model: input.model,
 						...(input.mode ? { mode: input.mode } : {}),
+						...(input.attachments && input.attachments.length > 0 ? { attachments: input.attachments } : {}),
 					},
 				});
 				if (error) {
@@ -125,19 +143,43 @@ export function TaskComposer({
 		},
 	});
 	const agentsQuery = useQuery(agentsQueryOptions);
-	const refreshAgentsMutation = useMutation({
-		mutationFn: refreshAgents,
-		onSuccess: (next) => queryClient.setQueryData(agentsQueryKey, next),
-	});
-	const defaultWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
+	const { settings } = useSettings();
+	// Freshen the inventory on open so a just-installed or just-authenticated agent
+	// is present without the user asking for it.
+	useEffect(() => {
+		void refreshAgentsIfStale().then((next) => {
+			if (next) queryClient.setQueryData(agentsQueryKey, next);
+		});
+	}, [queryClient]);
+	// The composer preselects the agent and model a spawn would actually use
+	// instead of parking the controls on a "default" label the user has to
+	// remember. Both resolved values remain directly editable.
+	const projectWorkerAgent = projectQuery.data?.config?.worker?.agent ?? "";
+	const globalDefaultAgent = projectQuery.data?.agent ?? "";
+	const defaultWorkerAgent = projectWorkerAgent || globalDefaultAgent;
 	const selectedAgent = agent || defaultWorkerAgent;
 	const defaultWorkerModel =
 		projectQuery.data?.config?.worker?.agentConfig?.model ?? projectQuery.data?.config?.agentConfig?.model ?? "";
 	const defaultWorkerMode =
 		projectQuery.data?.config?.worker?.agentConfig?.mode ?? projectQuery.data?.config?.agentConfig?.mode ?? "";
-	const defaultModelForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerModel : "";
-	const defaultModeForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerMode : "";
+	const projectModelForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerModel : "";
+	const projectModeForSelectedAgent = selectedAgent === defaultWorkerAgent ? defaultWorkerMode : "";
 	const agentCatalog = agentsQuery.data;
+
+	// Shares the picker's query key, so this is the same fetch, not a second one.
+	const modelCatalogQuery = useQuery(agentModelsQueryOptions(selectedAgent, projectId ?? ""));
+	const catalogDefaultOption = modelCatalogQuery.data?.models?.find((item) => item.isDefault)?.id ?? "";
+	const catalogUsesModes = modelCatalogQuery.data?.selectionMode === "mode";
+	const defaultModelForSelectedAgent =
+		projectModelForSelectedAgent || (catalogUsesModes ? "" : catalogDefaultOption);
+	const defaultModeForSelectedAgent = projectModeForSelectedAgent || (catalogUsesModes ? catalogDefaultOption : "");
+
+	const selectedAgentLabel =
+		agentCatalog?.supported?.find((item) => item.id === selectedAgent)?.label || selectedAgent;
+	const requiresTuiFallback =
+		selectedAgent !== "" &&
+		settings?.defaultSessionMode === "chat" &&
+		!settings.chatHarnesses.includes(selectedAgent);
 
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
@@ -149,7 +191,7 @@ export function TaskComposer({
 		}
 	}, [defaultModelForSelectedAgent, defaultModeForSelectedAgent, modelTouched]);
 
-	const isDirty = prompt.trim() !== "" || modelTouched;
+	const isDirty = prompt.trim() !== "" || modelTouched || attachments.length > 0;
 	useEffect(() => {
 		onDirtyChange?.(isDirty);
 	}, [isDirty, onDirtyChange]);
@@ -159,32 +201,32 @@ export function TaskComposer({
 		onSubmittingChange?.(isSubmitting);
 	}, [isSubmitting, onSubmittingChange]);
 	useEffect(() => () => onSubmittingChange?.(false), [onSubmittingChange]);
+	useEffect(() => () => clearAttachments(), [clearAttachments]);
 
 	const submitTask = async (interfaceMode?: "tui") => {
 		if (!projectId || isSubmitting) return;
 
-		const cleanPrompt = prompt.trim();
 		const cleanModel = model.trim();
 		const cleanMode = mode.trim();
 		const requestedModel =
 			modelTouched && (cleanModel !== defaultModelForSelectedAgent || cleanMode !== defaultModeForSelectedAgent)
 				? cleanModel || cleanMode || undefined
 				: undefined;
-		if (!cleanPrompt) {
-			setError(t("newTask.taskRequired"));
-			return;
-		}
 
 		setIsSubmitting(true);
 		setError(undefined);
 		setCanCreateAsTUI(false);
 		try {
+			const attachmentPayloads = await toSettledPayload();
 			const sessionId = await createTask({
 				projectId,
 				brief: prompt,
-				agent: agentTouched && agent ? (agent as CreateTaskInput["agent"]) : undefined,
+				// The visible selection is authoritative: it is either the user's pick
+				// or the resolved default, so spawning names it explicitly.
+				agent: selectedAgent ? (selectedAgent as CreateTaskInput["agent"]) : undefined,
 				model: requestedModel,
 				mode: interfaceMode,
+				attachments: attachmentPayloads.length > 0 ? attachmentPayloads : undefined,
 			});
 			onCreated(sessionId);
 		} catch (err) {
@@ -201,121 +243,200 @@ export function TaskComposer({
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		void submitTask();
+		void submitTask(requiresTuiFallback ? "tui" : undefined);
+	};
+
+	const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+		const files = Array.from(event.clipboardData?.files ?? []);
+		if (files.length === 0) return;
+		event.preventDefault();
+		void addFiles(files);
+	};
+
+	const handleDrop = (event: DragEvent<HTMLFormElement>) => {
+		event.preventDefault();
+		setIsDragging(false);
+		const files = Array.from(event.dataTransfer?.files ?? []);
+		if (files.length > 0) void addFiles(files);
+	};
+
+	const handleDragOver = (event: DragEvent<HTMLFormElement>) => {
+		if (Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === "file")) {
+			event.preventDefault();
+			setIsDragging(true);
+		}
 	};
 
 	return (
-		<form onSubmit={submit} className="space-y-4 p-(--size-modal-padding)">
-			<div className="space-y-1.5">
-				<div className="flex items-center justify-between">
-					<label className="text-xs font-medium text-muted-foreground" htmlFor={promptId}>
-						{t("newTask.task")}
-					</label>
-				</div>
-				<div className="rounded-md border border-border transition">
-					<textarea
-						id={promptId}
-						autoFocus={autoFocusTitle}
-						className="min-h-textarea-min w-full resize-y rounded-md bg-transparent px-3 py-2 text-control leading-relaxed text-foreground outline-none transition placeholder:text-passive focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent-weak"
-						placeholder={t("newTask.taskPlaceholder")}
-						value={prompt}
-						onChange={(event) => setPrompt(event.target.value)}
-						onKeyDown={(event) => {
-							if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
-								event.preventDefault();
-								event.currentTarget.form?.requestSubmit();
-							}
-						}}
-					/>
-				</div>
-				<p className="text-caption text-muted-foreground">{t("newTask.enterHint")}</p>
-			</div>
+		<form
+			onSubmit={submit}
+			className="composer-prompt-surface flex flex-col transition-[background-color,box-shadow]"
+			data-dragging={isDragging || undefined}
+			onDrop={handleDrop}
+			onDragOver={handleDragOver}
+			onDragLeave={(event) => {
+				const nextTarget = event.relatedTarget;
+				if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setIsDragging(false);
+			}}
+		>
+			{/* The whole card is one composer: the prompt carries the hierarchy and the
+			    launch controls sit in its own bottom padding, without a dialog footer. */}
+			<label className="sr-only" htmlFor={promptId}>
+				{t("newTask.task")}
+			</label>
+			<textarea
+				id={promptId}
+				autoFocus={autoFocusTitle}
+				className="min-h-(--size-composer-prompt-min) w-full resize-none bg-transparent px-4 pb-3 pt-4 text-md leading-relaxed text-foreground outline-none placeholder:text-passive"
+				placeholder={t("newTask.taskPlaceholder")}
+				value={prompt}
+				onChange={(event) => setPrompt(event.target.value)}
+				onPaste={handlePaste}
+				onKeyDown={(event) => {
+					if (event.key === "Enter" && !event.shiftKey && !event.altKey && !event.nativeEvent.isComposing) {
+						event.preventDefault();
+						event.currentTarget.form?.requestSubmit();
+					}
+				}}
+			/>
 
-			<div className="grid gap-3 sm:grid-cols-[1fr_1fr]">
-				<div className="space-y-1.5">
-					<RequiredAgentField
-						id={agentId}
-						label={t("newTask.agent")}
-						placeholder={t("newTask.projectDefault")}
-						value={agent}
-						authorized={agentCatalog?.authorized}
-						installed={agentCatalog?.installed}
-						supported={agentCatalog?.supported}
-						disabled={agentsQuery.isFetching && agentCatalog === undefined}
-						onChange={(value) => {
-							setAgent(value);
-							setAgentTouched(true);
-							setModelTouched(false);
-						}}
-					/>
-					<button
-						type="button"
-						className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
-						disabled={refreshAgentsMutation.isPending}
-						onClick={() => refreshAgentsMutation.mutate()}
-					>
-						{refreshAgentsMutation.isPending ? t("newTask.refreshingAgents") : t("newTask.refreshAgents")}
-					</button>
-				</div>
-				<div className="space-y-1.5">
-					<Label className="text-xs font-medium text-muted-foreground" htmlFor={modelId}>
-						{t("newTask.model")}
-					</Label>
-					<TaskModelPicker
-						id={modelId}
-						agentId={selectedAgent}
-						projectId={projectId ?? ""}
-						value={model}
-						mode={mode}
-						onModelChange={(value) => {
-							setModel(value);
-							setMode("");
-							setModelTouched(true);
-						}}
-						onModeChange={(value) => {
-							setMode(value);
-							setModel("");
-							setModelTouched(true);
-						}}
-					/>
-				</div>
-			</div>
-
-			{error && (
-				<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-					<span>{error}</span>
-					{canCreateAsTUI ? (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							disabled={isSubmitting}
-							onClick={() => void submitTask("tui")}
-							className="shrink-0"
+			{attachments.length > 0 && (
+				<ul className="scrollbar-none flex max-h-24 flex-wrap gap-2 overflow-y-auto px-3 pb-2">
+					{attachments.map((attachment) => (
+						<li
+							key={attachment.id}
+							className="flex min-w-0 max-w-48 items-center gap-2 rounded-md bg-surface px-1.5 py-1 text-xs text-foreground"
 						>
-							{t("newTask.createAsTui")}
-						</Button>
-					) : null}
+							{attachment.dataUrl ? (
+								<img src={attachment.dataUrl} alt="" className="size-7 shrink-0 rounded object-cover" />
+							) : (
+								<FileText
+									className="size-7 shrink-0 rounded bg-input/60 p-1.5 text-muted-foreground"
+									aria-hidden="true"
+								/>
+							)}
+							<span className="min-w-0 flex-1 truncate font-medium">{attachment.name}</span>
+							<button
+								type="button"
+								className="grid size-5 shrink-0 place-items-center rounded text-muted-foreground transition-colors hover:bg-border hover:text-foreground"
+								aria-label={t("newTask.removeFile", { name: attachment.name })}
+								onClick={() => removeAttachment(attachment.id)}
+							>
+								<X className="size-icon-sm" aria-hidden="true" />
+							</button>
+						</li>
+					))}
+				</ul>
+			)}
+			<input
+				ref={fileInputRef}
+				type="file"
+				multiple
+				className="hidden"
+				onChange={(event) => {
+					if (event.target.files) void addFiles(event.target.files);
+					event.target.value = "";
+				}}
+			/>
+			{attachmentError && (
+				<p className="px-4 pb-2 text-caption text-destructive">{attachmentError}</p>
+			)}
+
+			{(error || modelWarning) && (
+				<div className="px-3 pb-2">
+					{error && (
+						<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+							<span>{error}</span>
+							{/* Chat preflight failed for this agent: offer the terminal interface
+							    rather than making the user rediscover the task. */}
+							{canCreateAsTUI ? (
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									disabled={isSubmitting}
+									onClick={() => void submitTask("tui")}
+									className="shrink-0"
+								>
+									{t("newTask.createAsTui")}
+								</Button>
+							) : null}
+						</div>
+					)}
+					{!error && modelWarning && <p className="text-caption text-warning">{modelWarning}</p>}
 				</div>
 			)}
 
-			{refreshAgentsMutation.isError && (
-				<div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-					{refreshAgentsMutation.error instanceof Error
-						? refreshAgentsMutation.error.message
-						: t("newTask.refreshFailed")}
+			<div className="composer-toolbar">
+				<div className="composer-run-controls" role="group" aria-label={t("newTask.runsWith")}>
+					<div className="composer-toolbar-slot">
+						<RequiredAgentField
+							id={agentId}
+							variant="chip"
+							label={t("newTask.agent")}
+							placeholder={t("newTask.selectAgent")}
+							value={selectedAgent}
+							authorized={agentCatalog?.authorized}
+							installed={agentCatalog?.installed}
+							supported={agentCatalog?.supported}
+							disabled={agentsQuery.isFetching && agentCatalog === undefined}
+							triggerClassName="composer-toolbar-option w-full justify-between bg-transparent!"
+							onChange={(value) => {
+								setAgent(value);
+								setAgentTouched(true);
+								// Never pair a newly selected agent with the previous agent's model.
+								// The new catalog will resolve its own default into this cleared slot.
+								setModel("");
+								setMode("");
+								setModelTouched(false);
+							}}
+						/>
+					</div>
+					<span className="composer-toolbar-divider" aria-hidden="true" />
+					<div className="composer-toolbar-slot">
+						<TaskModelPicker
+							id={modelId}
+							agentId={selectedAgent}
+							agentLabel={selectedAgentLabel}
+							projectId={projectId ?? ""}
+							value={model}
+							mode={mode}
+							onWarningChange={setModelWarning}
+							onModelChange={(value) => {
+								setModel(value);
+								setMode("");
+								setModelTouched(true);
+							}}
+							onModeChange={(value) => {
+								setMode(value);
+								setModel("");
+								setModelTouched(true);
+							}}
+						/>
+					</div>
 				</div>
-			)}
-
-			<div className="flex items-center justify-end gap-3 pt-1">
-				{onCancel && (
-					<Button type="button" variant="footer" disabled={isSubmitting} onClick={onCancel}>
-						{t("newTask.cancel")}
-					</Button>
-				)}
-				<Button type="submit" variant="footer-primary" disabled={isSubmitting || !projectId}>
+				<button
+					type="button"
+					className="grid size-control-md place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+					aria-label={t("newTask.addFile")}
+					onClick={() => fileInputRef.current?.click()}
+				>
+					<Paperclip className="size-icon-base" aria-hidden="true" />
+				</button>
+				<Button
+					type="submit"
+					variant="primary"
+					size="sm"
+					disabled={isSubmitting || !projectId}
+					className="min-w-(--size-composer-start-button)"
+				>
 					{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
 					{isSubmitting ? t("newTask.starting") : t("newTask.start")}
+					{!isSubmitting && (
+						<kbd className="composer-keycap" aria-hidden="true">
+							↵
+						</kbd>
+					)}
 				</Button>
 			</div>
 		</form>
@@ -325,19 +446,23 @@ export function TaskComposer({
 function TaskModelPicker({
 	id,
 	agentId,
+	agentLabel,
 	projectId,
 	value,
 	mode,
 	onModelChange,
 	onModeChange,
+	onWarningChange,
 }: {
 	id: string;
 	agentId: string;
+	agentLabel: string;
 	projectId: string;
 	value: string;
 	mode: string;
 	onModelChange: (value: string) => void;
 	onModeChange: (value: string) => void;
+	onWarningChange: (warning: string | undefined) => void;
 }) {
 	const { t } = useTranslation();
 	const queryClient = useQueryClient();
@@ -373,30 +498,58 @@ function TaskModelPicker({
 			: undefined) ??
 		catalog?.warning ??
 		(query.isError ? (query.error instanceof Error ? query.error.message : t("settings.models.loadFailed")) : undefined);
+	// The composer owns the one place warnings appear, so a picker never grows a
+	// second line and shifts the launch controls while you are typing.
+	useEffect(() => {
+		onWarningChange(warning);
+	}, [onWarningChange, warning]);
+	useEffect(() => () => onWarningChange(undefined), [onWarningChange]);
+
+	// Says what happens with no override, rather than labelling it "Agent default".
+	const noOverrideLabel = agentLabel
+		? t("newTask.letAgentChoose", { agent: agentLabel })
+		: t("settings.models.agentDefault");
+	const catalogLoading = agentId !== "" && query.isFetching && catalog === undefined;
+
+	if (catalogLoading) {
+		return (
+			<span
+				className="composer-chip composer-toolbar-option w-full bg-transparent!"
+				role="status"
+				aria-label={t("settings.models.loading")}
+				aria-busy="true"
+			>
+				<span className="composer-model-skeleton" aria-hidden="true" />
+			</span>
+		);
+	}
 
 	if (catalog?.selectionMode === "mode") {
 		const options = [
-			{ value: "__default__", label: t("settings.models.agentDefault") },
+			{ value: "__default__", label: noOverrideLabel },
 			...(catalog.models ?? []).map((item) => ({ value: item.id, label: item.label })),
 		];
+		const visibleModeLabel = mode
+			? (options.find((option) => option.value === mode)?.label ?? mode)
+			: t("newTask.autoModel");
 		return (
-			<>
-				<div className="flex min-w-0 items-center gap-2">
-					<SettingsOptionMenu
-						aria-label={t("newTask.model")}
-						value={mode || "__default__"}
-						options={options}
-						triggerClassName={newTaskSelectSurfaceClass}
-						onChange={(nextMode) => onModeChange(nextMode === "__default__" ? "" : nextMode)}
-					/>
-				</div>
-				<TaskModelRefreshButton
-					pending={refreshMutation.isPending}
-					disabled={agentId === ""}
-					onClick={() => refreshMutation.mutate()}
-				/>
-				{warning && <p className="text-xs text-warning">{warning}</p>}
-			</>
+			<SettingsOptionMenu
+				aria-label={t("newTask.model")}
+				value={mode || "__default__"}
+				options={options}
+				triggerClassName="composer-chip composer-toolbar-option w-full justify-between bg-transparent!"
+				menuAlign="start"
+				renderTrigger={() => (
+					<span
+						key={`${agentId}:${mode || "__default__"}`}
+						className="composer-value-swap min-w-0 truncate font-mono text-xs text-foreground"
+						title={visibleModeLabel}
+					>
+						{visibleModeLabel}
+					</span>
+				)}
+				onChange={(nextMode) => onModeChange(nextMode === "__default__" ? "" : nextMode)}
+			/>
 		);
 	}
 
@@ -412,72 +565,67 @@ function TaskModelPicker({
 		onModelChange(nextModel);
 	};
 
-	return (
-		<>
-			<div className="flex min-w-0 items-center gap-2">
-				{hasCatalog && !showCustomInput ? (
-					<AgentModelCombobox
-						aria-label={t("newTask.model")}
-						value={value}
-						models={catalog.models ?? []}
-						allowCustom={catalog.allowCustom}
-						onChange={selectCatalogModel}
-						onCustom={selectCustomModel}
-						triggerClassName={newTaskSelectSurfaceClass}
-					/>
-				) : (
-					<>
-						<input
-							id={id}
-							className="h-control-form flex min-w-0 flex-1 rounded-md border border-transparent bg-input/50 px-3 py-2 text-control text-foreground outline-none transition-[color,box-shadow,background-color,border-color] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50"
-							value={value}
-							disabled={agentId === ""}
-							onChange={(event) => onModelChange(event.target.value)}
-							placeholder={query.isFetching ? t("settings.models.loading") : t("newTask.projectDefault")}
-						/>
-						{hasCatalog && (
-							<AgentModelCombobox
-								aria-label={t("settings.models.optionsAria", { label: t("newTask.model") })}
-								value={value}
-								models={catalog.models ?? []}
-								allowCustom={catalog.allowCustom}
-								onChange={selectCatalogModel}
-								onCustom={selectCustomModel}
-								triggerLabel={t("settings.models.browse")}
-								triggerClassName="shrink-0"
-							/>
-						)}
-					</>
-				)}
-			</div>
-			<TaskModelRefreshButton
-				pending={refreshMutation.isPending}
-				disabled={agentId === ""}
-				onClick={() => refreshMutation.mutate()}
+	if (hasCatalog && !showCustomInput) {
+		return (
+			<AgentModelCombobox
+				key={agentId}
+				aria-label={t("newTask.model")}
+				value={value}
+				models={catalog.models ?? []}
+				allowCustom={catalog.allowCustom}
+				emptyLabel={noOverrideLabel}
+				onChange={selectCatalogModel}
+				onCustom={selectCustomModel}
+				onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
+				refreshing={refreshMutation.isPending}
+				recentScope={agentId}
+				triggerClassName="composer-chip composer-toolbar-option w-full justify-between bg-transparent!"
+				menuAlign="start"
+				renderTrigger={(label) => {
+					const visibleLabel = value ? label : t("newTask.autoModel");
+					return (
+						<span
+							key={`${agentId}:${value || "__default__"}`}
+							className="composer-value-swap min-w-0 truncate font-mono text-xs text-foreground"
+							title={visibleLabel}
+						>
+							{visibleLabel}
+						</span>
+					);
+				}}
 			/>
-			{warning && <p className="text-xs text-warning">{warning}</p>}
-		</>
-	);
-}
+		);
+	}
 
-function TaskModelRefreshButton({
-	pending,
-	disabled,
-	onClick,
-}: {
-	pending: boolean;
-	disabled: boolean;
-	onClick: () => void;
-}) {
-	const { t } = useTranslation();
+	// Free-text agents keep an input inside the same stable model track.
 	return (
-		<button
-			type="button"
-			className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
-			disabled={disabled || pending}
-			onClick={onClick}
-		>
-			{pending ? t("newTask.refreshingModels") : t("newTask.refreshModels")}
-		</button>
+		<span className="inline-flex w-full min-w-0 items-center gap-1.5">
+			<input
+				id={id}
+				aria-label={t("newTask.model")}
+				className="composer-chip composer-toolbar-option min-w-0 flex-1 bg-transparent! font-mono text-xs placeholder:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+				value={value}
+				disabled={agentId === ""}
+				onChange={(event) => onModelChange(event.target.value)}
+				placeholder={query.isFetching ? t("settings.models.loading") : t("newTask.autoModel")}
+			/>
+			{hasCatalog && (
+				<AgentModelCombobox
+					key={agentId}
+					aria-label={t("settings.models.optionsAria", { label: t("newTask.model") })}
+					value={value}
+					models={catalog.models ?? []}
+					allowCustom={catalog.allowCustom}
+					emptyLabel={noOverrideLabel}
+					onChange={selectCatalogModel}
+					onCustom={selectCustomModel}
+					onRefresh={agentId === "" ? undefined : () => refreshMutation.mutate()}
+					refreshing={refreshMutation.isPending}
+					recentScope={agentId}
+					triggerLabel={t("settings.models.browse")}
+					triggerClassName="shrink-0"
+				/>
+			)}
+		</span>
 	);
 }

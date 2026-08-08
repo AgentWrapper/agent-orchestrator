@@ -116,6 +116,7 @@ beforeEach(() => {
 		orchestratorReplacementErrors: {},
 		orchestratorStartupErrors: {},
 		restartingProjectIds: new Set(),
+		settingsModal: null,
 	});
 });
 
@@ -271,10 +272,8 @@ describe("project board with no sessions", () => {
 		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
 		await userEvent.click(spawnButton);
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnOrchestratorMock).not.toHaveBeenCalled();
 	});
 

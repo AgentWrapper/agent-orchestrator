@@ -122,6 +122,8 @@ type SidebarProps = {
 // route params, and clicks navigate rather than mutate a store.
 function useSelection() {
 	const navigate = useNavigate();
+	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
+	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	return {
@@ -129,38 +131,24 @@ function useSelection() {
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
-		goGlobalSettings: () => void navigate({ to: "/settings" }),
-		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
+		// Settings is a modal — open it in place so the current page (session
+		// terminal, board, etc.) stays underneath.
+		goGlobalSettings: () => openGlobalSettings(),
+		goSettings: (projectId: string) => openProjectSettings(projectId),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
 		goSession: (projectId: string, sessionId: string) =>
 			void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } }),
 	};
 }
 
-// Activity controls motion; live PR context controls an active session's
-// color. Idle activity remains visible as a static gray dot.
-const ACTIVE_SCM_DOT: Partial<Record<WorkspaceSession["scmStatus"] & string, string>> = {
-	working: "bg-status-working",
-	ci_failed: "bg-status-needs-you",
-	changes_requested: "bg-status-needs-you",
-	draft: "bg-status-in-review",
-	review_pending: "bg-status-in-review",
-	pr_open: "bg-status-in-review",
-	approved: "bg-status-ready",
-	mergeable: "bg-status-ready",
-	merged: "bg-status-merged",
-};
-
+// Agent activity is the shared source for both color and motion. PR and CI
+// state is presented on cards and board lanes instead of repainting this dot.
 function SessionStatusDot({ session }: { session: WorkspaceSession }) {
 	const activity = getAgentActivityView(session.activity);
-	const dotClass =
-		activity.state === "active"
-			? `${ACTIVE_SCM_DOT[session.scmStatus ?? "working"] ?? "bg-status-working"} animate-status-pulse`
-			: activity.indicatorClassName;
 	return (
 		<span
 			aria-hidden="true"
-			className={cn("size-2 shrink-0 rounded-full", dotClass)}
+			className={cn("size-2 shrink-0 rounded-full", activity.indicatorClassName)}
 			data-session-status=""
 		/>
 	);
@@ -183,7 +171,6 @@ export function Sidebar({
 	onRemoveProject,
 }: SidebarProps) {
 	const { t } = useTranslation();
-	const prefersReducedMotion = useReducedMotion();
 	const selection = useSelection();
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
@@ -213,9 +200,8 @@ export function Sidebar({
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
-	// Section disclosure: Pinned / Projects headers collapse their bodies.
+	// Section disclosure: Pinned header collapses its body. Projects stays open.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
-	const [projectsOpen, setProjectsOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
 	// identity: derived from the version string, not the update-channel setting
 	// (the setting can be changed mid-session; the binary cannot).
@@ -265,6 +251,7 @@ export function Sidebar({
 			onPointerLeave={onPreviewLeave}
 			overlay={isOverlay}
 			className={cn(
+				"sidebar-focusless",
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
 				isOverlay && "z-sidebar-preview shadow-2xl",
 				isOverlay || !underTopbar
@@ -359,19 +346,12 @@ export function Sidebar({
 					</div>
 				)}
 
-				{/* Projects — collapsible section; + sits inside the same hover pill. */}
+				{/* Projects — always open; + sits inside the same hover pill. */}
 				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
 					<SectionDisclosure
-						icon={
-							projectsOpen ? (
-								<FolderOpen strokeWidth={1.75} aria-hidden="true" />
-							) : (
-								<Folder strokeWidth={1.75} aria-hidden="true" />
-							)
-						}
+						icon={<FolderOpen strokeWidth={1.75} aria-hidden="true" />}
 						label={t("shell.projects")}
-						open={projectsOpen}
-						onToggle={() => setProjectsOpen((v) => !v)}
+						collapsible={false}
 						trailing={
 							<CreateProjectButton
 								hideTrigger={workspaces.length === 0}
@@ -384,60 +364,39 @@ export function Sidebar({
 			</div>
 
 			<SidebarContent className="gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				{/* Expanded sidebar animates the project tree in/out when toggled.
-				    isCollapsed is intentionally excluded — in offcanvas mode the panel
-				    slides off-screen entirely, so forcing height:"auto" on collapse
-				    would make the section expand before the panel hides. */}
-				<motion.div
-					animate={{ height: projectsOpen ? "auto" : 0, overflow: projectsOpen ? "visible" : "hidden" }}
-					initial={false}
-					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					className="w-full"
-				>
-					{/* Inner animator: slides up + fades out on collapse. */}
-					<motion.div
-						animate={{
-							y: projectsOpen ? 0 : -20,
-							opacity: projectsOpen ? 1 : 0,
-						}}
-						initial={false}
-						transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					>
-						<SidebarGroup className="p-0">
-							{/* Tree (project-sidebar__tree) */}
-							<SidebarGroupContent>
-								{workspaceError ? (
-									<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
-										<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
-										<p className="mt-1 text-caption text-passive">{workspaceError}</p>
-									</div>
-								) : workspaces.length === 0 ? null : (
-									<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
-										{workspaces.map((workspace) => (
-											<ProjectItem
-												key={workspace.id}
-												workspace={workspace}
-												expanded={!collapsedIds.has(workspace.id)}
-												selection={selection}
-												onToggle={() => toggleCollapsed(workspace.id)}
-												onRemoveProject={onRemoveProject}
-											/>
-										))}
-										{isCollapsed && <CreateProjectListItem />}
-									</SidebarMenu>
-								)}
-							</SidebarGroupContent>
-						</SidebarGroup>
-					</motion.div>
-				</motion.div>
+				<SidebarGroup className="p-0">
+					{/* Tree (project-sidebar__tree) */}
+					<SidebarGroupContent>
+						{workspaceError ? (
+							<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
+								<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
+								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
+							</div>
+						) : workspaces.length === 0 ? null : (
+							<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
+								{workspaces.map((workspace) => (
+									<ProjectItem
+										key={workspace.id}
+										workspace={workspace}
+										expanded={!collapsedIds.has(workspace.id)}
+										selection={selection}
+										onToggle={() => toggleCollapsed(workspace.id)}
+										onRemoveProject={onRemoveProject}
+									/>
+								))}
+								{isCollapsed && <CreateProjectListItem />}
+							</SidebarMenu>
+						)}
+					</SidebarGroupContent>
+				</SidebarGroup>
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.
-			    Row height matches Archive (`h-row-md`). On macOS the sidebar is
-			    already height-clamped beside the inset center surface. */}
+			    Its hairline and row height match the board Archive bar. On macOS
+			    the sidebar is already height-clamped beside the inset center surface. */}
 			<SidebarFooter
 				className={cn(
-					"relative mt-auto gap-0 overflow-hidden px-2 !pt-1 !pb-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
+					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
 					isMac ? "mb-px" : "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
 				)}
 			>
@@ -457,7 +416,7 @@ export function Sidebar({
 						aria-label={t("shell.settings")}
 						className={cn(
 							NAV_ROW_CLASS,
-							"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+							"flex h-[42px] w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
 						)}
 						onClick={() => selection.goGlobalSettings()}
 						tabIndex={isCollapsed ? -1 : 0}
@@ -536,6 +495,7 @@ function ProjectItem({
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [projectPressed, setProjectPressed] = useState(false);
 	const [rowHovered, setRowHovered] = useState(false);
 	// Skip enter animation on first mount — sessions arrive async and we don't
 	// want them to slide in on every sidebar load. Only animate on subsequent
@@ -558,8 +518,11 @@ function ProjectItem({
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
+	// Expand a collapsed project so opening the orchestrator also reveals its
+	// session list — otherwise the tree stays shut while you're inside it.
 	const openOrchestrator = async () => {
 		if (isProjectRestarting) return;
+		if (!expanded) onToggle();
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
@@ -580,11 +543,15 @@ function ProjectItem({
 		}
 	};
 
+	// Expanded + already on the project board → collapse. Expanded + on a
+	// session (orchestrator or worker) → board. Collapsed → expand + board.
+	// Do not treat orchestratorActive like the board: the project row is the
+	// one-click path back from the orchestrator button.
 	const onProjectClick = () => {
 		if (!expanded) {
 			onToggle();
 			selection.goProject(workspace.id);
-		} else if (projectActive) {
+		} else if (dashboardActive) {
 			onToggle();
 		} else {
 			selection.goProject(workspace.id);
@@ -635,10 +602,20 @@ function ProjectItem({
 			onMouseEnter={() => setRowHovered(true)}
 			onMouseLeave={() => setRowHovered(false)}
 		>
-		{/* Outer relative context for action cluster absolute positioning */}
-		<div className="relative">
-		{/* Scale wrapper — main button only; action cluster sits outside so clicking it doesn't trigger scale */}
-		<div className="transition-[transform] duration-[100ms] ease-out active:scale-[0.98]">
+		{/* The whole visual row scales when its navigation surface is pressed.
+		    Action-button presses stop before reaching this boundary. */}
+		<div
+			className={cn(
+				"relative transition-[transform] duration-[100ms] ease-out",
+				projectPressed && "scale-[0.98]",
+			)}
+			data-project-press=""
+			onPointerCancel={() => setProjectPressed(false)}
+			onPointerDown={() => setProjectPressed(true)}
+			onPointerLeave={() => setProjectPressed(false)}
+			onPointerUp={() => setProjectPressed(false)}
+		>
+		<div>
 		{/* project-sidebar__proj-row */}
 	<SidebarMenuButton
 		aria-current={dashboardActive ? "page" : undefined}
@@ -649,32 +626,33 @@ function ProjectItem({
 		onKeyDown={onProjectKeyDown}
 		className={cn(
 			NAV_ROW_CLASS,
-			"pr-sidebar-project-actions [&_svg]:size-icon-md",
+			// gap-2 matches SectionDisclosure so project icons/labels share the
+			// Projects header's left edge (NAV_ROW defaults to gap-2.5).
+			"gap-2 pr-sidebar-project-actions [&_svg]:size-icon-md",
 			"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
 		)}
 	>
-		{/* Expanded sidebar: visual folder/chevron icon (decorative — toggle button is a sibling) */}
+		{/* Expanded sidebar: visual folder/chevron icon (decorative — toggle button is a sibling).
+		    size-icon-md matches the Projects section row; an 18px centered box was
+		    optically indenting these icons relative to the header. */}
 		<span
 			aria-hidden="true"
-			className="relative shrink-0 group-data-[collapsible=icon]:hidden inline-flex size-[18px] items-center justify-center text-muted-foreground"
+			className="relative inline-flex size-icon-md shrink-0 translate-y-px items-center justify-center text-muted-foreground group-data-[collapsible=icon]:hidden"
+			data-project-folder-visual=""
 		>
 			{rowHovered ? (
 				<motion.span
 					animate={{ rotate: expanded ? 90 : 0 }}
 					initial={false}
 					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
-					className="inline-flex size-[18px] items-center justify-center translate-y-px"
+					className="inline-flex size-icon-md items-center justify-center"
 				>
-					<ChevronRight className="size-3.5!" strokeWidth={1.75} />
+					<ChevronRight strokeWidth={1.75} />
 				</motion.span>
+			) : expanded ? (
+				<FolderOpen strokeWidth={1.75} />
 			) : (
-				<span className="inline-flex size-[18px] items-center justify-center">
-					{expanded ? (
-						<FolderOpen className="size-4" strokeWidth={1.75} />
-					) : (
-						<Folder className="size-4" strokeWidth={1.75} />
-					)}
-				</span>
+				<Folder strokeWidth={1.75} />
 			)}
 		</span>
 		{/* Collapsed icon rail: folder icon */}
@@ -688,7 +666,10 @@ function ProjectItem({
 				<Folder className="size-5" strokeWidth={1.75} />
 			)}
 		</span>
-		<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
+		<span
+			className="sidebar-expanded-chrome min-w-0 flex-1 translate-y-px truncate group-data-[collapsible=icon]:hidden"
+			data-project-label=""
+		>
 			{workspace.name}
 		</span>
 	</SidebarMenuButton>
@@ -702,16 +683,18 @@ function ProjectItem({
 		onClick={onFolderClick}
 		type="button"
 	/>
-		</div>{/* end scale wrapper */}
-		{/* Per-project actions: orchestrator and kebab menu. Outside scale wrapper
-		so clicking them doesn't trigger the press animation. Always visible
-		(not hover-gated) to avoid CSS :hover group propagation in Chromium. */}
+		</div>
+		{/* Per-project actions: orchestrator and kebab menu. Inside the scaled visual
+		row, but outside its navigation surface so their own presses stay independent.
+		Always visible (not hover-gated) to avoid CSS :hover group propagation in Chromium. */}
 		<div
 			className={cn(
 				"sidebar-expanded-chrome absolute top-0 right-0.5 z-chrome flex h-control-form items-center gap-px",
 				"group-data-[collapsible=icon]:hidden",
 			)}
 			data-project-actions=""
+			onClick={(event) => event.stopPropagation()}
+			onPointerDown={(event) => event.stopPropagation()}
 		>
 			<Tooltip>
 				<TooltipTrigger asChild>
@@ -1101,30 +1084,46 @@ function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus;
 function SectionDisclosure({
 	icon,
 	label,
-	open,
+	open = true,
 	onToggle,
 	className,
 	trailing,
+	collapsible = true,
 }: {
 	icon: ReactNode;
 	label: string;
-	open: boolean;
-	onToggle: () => void;
+	open?: boolean;
+	onToggle?: () => void;
 	className?: string;
 	/** Optional trailing control (e.g. Projects "+") — stays inside the hover pill. */
 	trailing?: ReactNode;
+	/** When false, render a static label row with no chevron or toggle. */
+	collapsible?: boolean;
 }) {
 	const labelRow = (
 		<>
 			{icon}
 			<span className="truncate">{label}</span>
-			<ChevronRight
-				aria-hidden="true"
-				className={cn("size-3.5! shrink-0 transition-transform duration-150", open && "rotate-90")}
-				strokeWidth={2}
-			/>
+			{collapsible ? (
+				<ChevronRight
+					aria-hidden="true"
+					className={cn("size-3.5! shrink-0 transition-transform duration-150", open && "rotate-90")}
+					strokeWidth={2}
+				/>
+			) : null}
 		</>
 	);
+
+	if (!collapsible) {
+		return (
+			<div className={cn(SECTION_ROW_CLASS, trailing && "pr-1", className)}>
+				<div className="flex min-w-0 flex-1 items-center gap-2">
+					{labelRow}
+				</div>
+				{trailing}
+			</div>
+		);
+	}
 
 	if (trailing) {
 		return (

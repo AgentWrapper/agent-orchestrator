@@ -29,6 +29,33 @@ const textFile = (name = "notes.txt") => new File(["hello"], name, { type: "text
 /* ---- the keyboard contract the composer already had ---------------------- */
 
 describe("send keys", () => {
+	it("grows with the draft, then scrolls after the seven-line cap", () => {
+		const { field } = renderComposer();
+		let scrollHeight = 112;
+		Object.defineProperty(field, "scrollHeight", {
+			configurable: true,
+			get: () => scrollHeight,
+		});
+		// JSDOM does not resolve Tailwind's generated max-height, so mirror the
+		// max-h-40 value inline while exercising the browser measurement path.
+		field.style.maxHeight = "160px";
+
+		fireEvent.change(field, { target: { value: "A prompt that wraps to a few lines" } });
+		expect(field.style.height).toBe("112px");
+		expect(field.style.overflowY).toBe("hidden");
+
+		scrollHeight = 240;
+		fireEvent.change(field, { target: { value: "A much longer prompt that exceeds seven lines" } });
+		expect(field.style.height).toBe("160px");
+		expect(field.style.overflowY).toBe("auto");
+
+		scrollHeight = 72;
+		fireEvent.change(field, { target: { value: "Short again" } });
+		expect(field.style.height).toBe("72px");
+		expect(field.style.overflowY).toBe("hidden");
+		expect(field).toHaveClass("chat-composer-scrollbar", "max-h-40");
+	});
+
 	it("separates secondary message tools from the primary send action", () => {
 		render(
 			<ChatComposer
@@ -281,7 +308,7 @@ describe("attachments", () => {
 	// The chip has to mean something: the bytes get written and the message names
 	// the path the agent can open.
 	it("stages the image and names the returned path in the message", async () => {
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-ab12cd34ef.png"]);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-ab12cd34ef.png"]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage });
 
 		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
@@ -296,7 +323,7 @@ describe("attachments", () => {
 		]);
 		await waitFor(() =>
 			expect(onSend).toHaveBeenCalledWith(
-				"what is wrong here\n\nAttached files (read these files in the workspace):\n- .ao/attachments/image-ab12cd34ef.png",
+				"what is wrong here\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12cd34ef.png",
 			),
 		);
 		// Consumed, so the next message does not silently resend them.
@@ -304,7 +331,7 @@ describe("attachments", () => {
 	});
 
 	it("sends an image with no words, since the reference block carries the request", async () => {
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-1.png"]);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-1.png"]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage });
 
 		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
@@ -314,12 +341,12 @@ describe("attachments", () => {
 
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
 		expect(onSend.mock.calls[0]?.[0]).toBe(
-			"Attached files (read these files in the workspace):\n- .ao/attachments/image-1.png",
+			"Attached files (read these files in the workspace):\n- .ao/attachments/attachment-1.png",
 		);
 	});
 
 	it("also sends native image bytes when the provider negotiated image prompts", async () => {
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-native.png"]);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-native.png"]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage, nativeImages: true });
 
 		fireEvent.paste(field, { clipboardData: { files: [png()], items: [] } });
@@ -327,7 +354,7 @@ describe("attachments", () => {
 		await userEvent.type(field, "inspect this{Enter}");
 
 		await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
-		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/image-native.png");
+		expect(onSend.mock.calls[0]?.[0]).toContain(".ao/attachments/attachment-native.png");
 		expect(onSend.mock.calls[0]?.[1]).toEqual([
 			{ mimeType: "image/png", data: expect.any(String) },
 		]);
@@ -335,7 +362,7 @@ describe("attachments", () => {
 
 	it("stages non-images by path without sending them as native image blocks", async () => {
 		const stage = vi.fn().mockResolvedValue([
-			".ao/attachments/image-native.png",
+			".ao/attachments/attachment-native.png",
 			".ao/attachments/notes.txt",
 		]);
 		const { onSend, field } = renderComposer({ onStageAttachments: stage, nativeImages: true });
@@ -371,7 +398,7 @@ describe("attachments", () => {
 	});
 
 	it("keeps attachments after a failed send and reuses their staged paths on retry", async () => {
-		const stage = vi.fn().mockResolvedValue([".ao/attachments/image-retry.png"]);
+		const stage = vi.fn().mockResolvedValue([".ao/attachments/attachment-retry.png"]);
 		const onSend = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(undefined);
 		render(<ChatComposer onSend={onSend} onStageAttachments={stage} />);
 		const field = screen.getByLabelText("Message the agent") as HTMLTextAreaElement;

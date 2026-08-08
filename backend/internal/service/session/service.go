@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -52,6 +55,7 @@ type commander interface {
 	ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
+	WaitForMessageDeliveryReady(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
@@ -140,8 +144,17 @@ type Service struct {
 	clock               func() time.Time
 	dataDir             string
 	telemetry           ports.EventSink
+	logger              *slog.Logger
+	backgroundContext   context.Context
+	runBackground       func(func())
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
+	workspaceCache      *workspaceCache
+	// workspaceGroup coalesces concurrent cache-miss compare/status lookups
+	// for the same (session, root): "Expand All" on many files fires that
+	// many GetWorkspaceFile calls at once, and without this each one would
+	// independently spawn its own git subprocesses for identical work.
+	workspaceGroup singleflight.Group
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -166,6 +179,11 @@ type Deps struct {
 	Clock     func() time.Time
 	DataDir   string
 	Telemetry ports.EventSink
+	Logger    *slog.Logger
+	// BackgroundContext owns best-effort work that must survive an HTTP request
+	// returning but stop with the daemon. It defaults to context.Background for
+	// focused service tests and non-daemon callers.
+	BackgroundContext context.Context
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
@@ -174,7 +192,11 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	backgroundContext := d.BackgroundContext
+	if backgroundContext == nil {
+		backgroundContext = context.Background()
+	}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -183,6 +205,7 @@ func NewWithDeps(d Deps) *Service {
 	if s.clock == nil {
 		s.clock = time.Now
 	}
+	s.workspaceCache = newWorkspaceCache(workspaceCacheTTL, s.clock)
 	return s
 }
 

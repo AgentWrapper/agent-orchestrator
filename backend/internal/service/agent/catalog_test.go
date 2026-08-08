@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -66,11 +67,13 @@ type fakeProjectLookup struct {
 }
 
 type fakeModelDiscoverer struct {
-	version       string
-	catalog       ports.AgentModelCatalog
-	err           error
-	discoverCalls atomic.Int32
-	lastRequest   ports.AgentModelDiscoveryRequest
+	version                string
+	catalog                ports.AgentModelCatalog
+	err                    error
+	discoverCalls          atomic.Int32
+	lastRequest            ports.AgentModelDiscoveryRequest
+	fingerprintRequests    atomic.Int32
+	lastFingerprintRequest atomic.Pointer[ports.AgentModelDiscoveryRequest]
 }
 
 func (f *fakeModelDiscoverer) Discover(_ context.Context, request ports.AgentModelDiscoveryRequest) (ports.AgentModelCatalog, error) {
@@ -89,7 +92,11 @@ func (f *fakeModelDiscoverer) Discover(_ context.Context, request ports.AgentMod
 	return catalog, f.err
 }
 
-func (f *fakeModelDiscoverer) BinaryVersion(context.Context, string) string { return f.version }
+func (f *fakeModelDiscoverer) CatalogFingerprint(_ context.Context, request ports.AgentModelDiscoveryRequest) string {
+	f.fingerprintRequests.Add(1)
+	f.lastFingerprintRequest.Store(&request)
+	return f.version
+}
 
 func (f *fakeModelDiscoverer) Manual(agentID string) ports.AgentModelCatalog {
 	return ports.AgentModelCatalog{
@@ -257,6 +264,22 @@ func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	if got.Authorized == nil {
 		t.Fatal("Authorized = nil, want empty slice")
 	}
+}
+
+func TestDefaultCatalogDisplaysPrimeAgent(t *testing.T) {
+	got, err := New().List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range got.Supported {
+		if info.ID == "prime-agent" {
+			if info.Label != "Prime Agent" {
+				t.Fatalf("prime-agent label = %q, want Prime Agent", info.Label)
+			}
+			return
+		}
+	}
+	t.Fatal("default catalog does not contain prime-agent")
 }
 
 func TestRefreshReportsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
@@ -806,5 +829,87 @@ func harnessAuthAgent(id, label string, status ports.AgentAuthStatus, err error)
 			Name: label,
 		},
 		Agent: fakeAuthAgent{fakeAgent: fakeAgent{}, status: status, authErr: err},
+	}
+}
+
+func TestModelsFingerprintsTheSameInputsDiscoveryReads(t *testing.T) {
+	projects := &fakeProjectLookup{records: map[string]domain.ProjectRecord{
+		"proj-1": {
+			ID:     "proj-1",
+			Path:   "/work/project",
+			Config: domain.ProjectConfig{Env: map[string]string{"ANTHROPIC_MODEL": "opus"}},
+		},
+	}}
+	discoverer := &fakeModelDiscoverer{version: "v1", catalog: ports.AgentModelCatalog{
+		SelectionMode: ports.ModelSelectionCatalog,
+		Models:        []ports.AgentModelInfo{{ID: "opus"}},
+		Source:        "official-aliases",
+	}}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("claude-code", "Claude Code", nil),
+	}, &fakeModelCache{}, projects, discoverer)
+
+	if _, err := svc.Models(context.Background(), "claude-code", "proj-1", false); err != nil {
+		t.Fatal(err)
+	}
+	// The cache decision runs before discovery, so it must be able to see the
+	// configuration discovery would read. Fingerprinting a narrower input than
+	// Discover consumes is what let a settings edit go unnoticed.
+	fingerprinted := discoverer.lastFingerprintRequest.Load()
+	if fingerprinted == nil {
+		t.Fatal("catalog fingerprint was never requested")
+	}
+	if !reflect.DeepEqual(*fingerprinted, discoverer.lastRequest) {
+		t.Fatalf("fingerprint request = %#v, want the discovery request %#v", *fingerprinted, discoverer.lastRequest)
+	}
+	if fingerprinted.WorkingDir != "/work/project" || fingerprinted.Env["ANTHROPIC_MODEL"] != "opus" {
+		t.Fatalf("fingerprint request = %#v, want the project working dir and env", *fingerprinted)
+	}
+}
+
+func TestModelsAsksClientsToRevalidateAnAgedCatalog(t *testing.T) {
+	cache := &fakeModelCache{}
+	discoverer := &fakeModelDiscoverer{version: "v1", catalog: ports.AgentModelCatalog{
+		SelectionMode: ports.ModelSelectionCatalog,
+		Models:        []ports.AgentModelInfo{{ID: "model-one"}},
+		Source:        "cli",
+	}}
+	svc := newService([]agentregistry.HarnessAgent{
+		harnessAgent("opencode", "OpenCode", nil),
+	}, cache, nil, discoverer)
+
+	fresh, err := svc.Models(context.Background(), "opencode", "proj-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Just discovered: nothing to revalidate, so the client must not be nudged.
+	if fresh.RefreshRecommended {
+		t.Fatal("a freshly discovered catalog asked for revalidation")
+	}
+
+	record := cache.records["opencode\x00proj-1"]
+	var aged ports.AgentModelCatalog
+	if err := json.Unmarshal([]byte(record.CatalogJSON), &aged); err != nil {
+		t.Fatal(err)
+	}
+	aged.ValidatedAt = time.Now().Add(-modelCatalogTrustWindow - time.Hour)
+	data, err := json.Marshal(aged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.CatalogJSON = string(data)
+	cache.records["opencode\x00proj-1"] = record
+
+	// A CLI-backed catalog can drift with no change to the binary or its config,
+	// so an aged cache hit is what replaces the manual "Refresh models" button.
+	stale, err := svc.Models(context.Background(), "opencode", "proj-1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stale.RefreshRecommended {
+		t.Fatalf("catalog validated %s ago did not ask for revalidation", time.Since(aged.ValidatedAt))
+	}
+	if discoverer.discoverCalls.Load() != 1 {
+		t.Fatalf("discovery calls = %d, want the cached catalog served immediately", discoverer.discoverCalls.Load())
 	}
 }
