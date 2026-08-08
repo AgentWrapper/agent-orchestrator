@@ -320,7 +320,7 @@ func Run() error {
 		})
 		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, log)
 	var prActions prsvc.ActionManager
 	if mergeProvider, mergeErr := newGitHubSCMProvider(log); mergeErr != nil {
 		logSCMProviderDisabled(log, "github", mergeErr)

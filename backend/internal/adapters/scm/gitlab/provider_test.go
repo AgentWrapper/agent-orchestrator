@@ -32,6 +32,16 @@ func testServer(t *testing.T, handler http.Handler) (*httptest.Server, *Provider
 }
 
 func TestParseRepository(t *testing.T) {
+	// Provider with gitlab.mycompany.com allowlisted so the self-managed test
+	// cases exercise the allowlist path.
+	p, err := NewProvider(ProviderOptions{
+		Token:              StaticTokenSource("tok"),
+		SkipTokenPreflight: true,
+		AllowedHosts:       []string{"gitlab.mycompany.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		name   string
 		remote string
@@ -96,10 +106,16 @@ func TestParseRepository(t *testing.T) {
 			want:   ports.SCMRepo{Provider: "gitlab", Host: "gitlab.mycompany.com", Owner: "eng/team", Name: "widget", Repo: "eng/team/widget"},
 			ok:     true,
 		},
+		// Non-allowlisted self-managed host is rejected (review Item 5).
+		{
+			name:   "non-allowlisted self-managed host rejected",
+			remote: "git@gitlab.attacker.example:team/project.git",
+			ok:     false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo, ok := parseGitLabRepo(tt.remote)
+			repo, ok := p.ParseRepository(tt.remote)
 			if ok != tt.ok {
 				t.Fatalf("ok = %v, want %v", ok, tt.ok)
 			}
@@ -113,7 +129,15 @@ func TestParseRepository(t *testing.T) {
 	}
 }
 
-func TestIsGitLabHost(t *testing.T) {
+func TestIsHostAllowed(t *testing.T) {
+	p, err := NewProvider(ProviderOptions{
+		Token:              StaticTokenSource("tok"),
+		SkipTokenPreflight: true,
+		AllowedHosts:       []string{"gitlab.mycompany.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	tests := []struct {
 		host string
 		want bool
@@ -121,16 +145,19 @@ func TestIsGitLabHost(t *testing.T) {
 		{"gitlab.com", true},
 		{"www.gitlab.com", true},
 		{"gitlab.mycompany.com", true},
+		// Non-allowlisted hosts are rejected, even if they contain "gitlab".
+		{"gitlab.attacker.example", false},
 		{"github.com", false},
 		{"api.github.com", false},
 		{"something.ghe.io", false},
 		{"example.com", false},
+		{"", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.host, func(t *testing.T) {
-			got := isGitLabHost(tt.host)
+			got := p.isHostAllowed(tt.host)
 			if got != tt.want {
-				t.Errorf("isGitLabHost(%q) = %v, want %v", tt.host, got, tt.want)
+				t.Errorf("isHostAllowed(%q) = %v, want %v", tt.host, got, tt.want)
 			}
 		})
 	}
@@ -920,6 +947,7 @@ func TestFetchPullRequests_SelfManagedRESTBase(t *testing.T) {
 	p, err := NewProvider(ProviderOptions{
 		Token:              StaticTokenSource("test-token"),
 		SkipTokenPreflight: true,
+		AllowedHosts:       []string{"gitlab.mycompany.com"},
 	})
 	if err != nil {
 		t.Fatal(err)
