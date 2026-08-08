@@ -17,12 +17,13 @@ import (
 func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 	registered := map[domain.ReviewerHarness]bool{}
 	oneShotReviewers := map[domain.ReviewerHarness]bool{
-		domain.ReviewerAider:  true,
-		domain.ReviewerAuggie: true,
-		domain.ReviewerDroid:  true,
-		domain.ReviewerGoose:  true,
-		domain.ReviewerQwen:   true,
-		domain.ReviewerVibe:   true,
+		domain.ReviewerAider:    true,
+		domain.ReviewerAuggie:   true,
+		domain.ReviewerDroid:    true,
+		domain.ReviewerGoose:    true,
+		domain.ReviewerQwen:     true,
+		domain.ReviewerVibe:     true,
+		domain.ReviewerGreptile: true,
 	}
 	for _, a := range Constructors() {
 		h := a.Harness()
@@ -32,7 +33,8 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 		if registered[h] {
 			t.Errorf("reviewer harness %q registered twice", h)
 		}
-		if _, ok := a.(ports.ReviewerRestorer); !ok {
+		_, machineOneShot := a.(ports.OneShotReviewer)
+		if _, ok := a.(ports.ReviewerRestorer); !ok && !machineOneShot {
 			t.Errorf("reviewer harness %q does not implement restore", h)
 		}
 		canceller, ok := a.(ports.ReviewerCanceller)
@@ -56,7 +58,7 @@ func TestRegistryMatchesDomainVocabulary(t *testing.T) {
 				if len(spec.Inputs) != 2 || spec.Inputs[0] != "\x1b" || spec.Inputs[1] != "\x1b" {
 					t.Errorf("reviewer harness %q cancel inputs = %#v, want double escape", h, spec.Inputs)
 				}
-			case domain.ReviewerAgy, domain.ReviewerGoose, domain.ReviewerDevin, domain.ReviewerDroid, domain.ReviewerKimi:
+			case domain.ReviewerAgy, domain.ReviewerGoose, domain.ReviewerDevin, domain.ReviewerDroid, domain.ReviewerKimi, domain.ReviewerGreptile:
 				if spec.Mode != ports.ReviewCancelInterrupt {
 					t.Errorf("reviewer harness %q cancel mode = %q, want %q", h, spec.Mode, ports.ReviewCancelInterrupt)
 				}

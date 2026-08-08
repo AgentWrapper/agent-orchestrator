@@ -773,6 +773,18 @@ describe("XtermTerminal", () => {
 		expect(onInput).not.toHaveBeenCalled();
 	});
 
+	it("scrolls output-only panes locally and never emits wheel input", () => {
+		const onInput = vi.fn();
+		render(<XtermTerminal theme="dark" inputPolicy="output-only" onReady={(terminal) => terminal.onUserInput(onInput)} />);
+		state.lastTerminal!.modes.mouseTrackingMode = "any";
+		state.lastTerminal!.buffer.active.type = "alternate";
+
+		expect(state.lastTerminal!.options.cursorBlink).toBe(false);
+		expect(state.lastTerminal!.wheelHandler!({ deltaY: -50 } as WheelEvent)).toBe(false);
+		expect(state.lastTerminal!.scrollLines).toHaveBeenLastCalledWith(-3);
+		expect(onInput).not.toHaveBeenCalled();
+	});
+
 	it("falls back to PageUp/PageDown for alt-buffer panes with mouse tracking off", () => {
 		const onInput = vi.fn();
 		render(<XtermTerminal theme="dark" onReady={(terminal) => terminal.onUserInput(onInput)} />);

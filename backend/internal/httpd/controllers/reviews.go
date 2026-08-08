@@ -16,8 +16,8 @@ import (
 )
 
 // ListReviewsResponse is the body of GET /api/v1/sessions/{sessionId}/reviews.
-// reviewerHandleId is the live reviewer pane's runtime handle, for the UI to
-// attach its terminal over /mux (empty when no reviewer has run).
+// reviewerHandleId is the stable reviewer execution handle. Interactive and
+// display-only one-shot reviewers expose it over /mux.
 type ListReviewsResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
 	ReviewerHarness  domain.ReviewerHarness     `json:"reviewerHarness,omitempty"`
@@ -30,7 +30,7 @@ type ListReviewsResponse struct {
 }
 
 // ReviewRunResponse is the body of submit (200). It carries the run plus the
-// reviewer pane handle so the UI can attach a terminal.
+// stable reviewer execution handle.
 type ReviewRunResponse struct {
 	Review           domain.ReviewRun   `json:"review"`
 	Reviews          []domain.ReviewRun `json:"reviews"`
@@ -357,6 +357,8 @@ func writeReviewError(w http.ResponseWriter, r *http.Request, err error) {
 		envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "REVIEW_NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, reviewsvc.ErrAgentBinaryNotFound):
 		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "REVIEWER_BINARY_NOT_FOUND", err.Error(), nil)
+	case errors.Is(err, reviewsvc.ErrReviewerNotAuthenticated):
+		envelope.WriteAPIError(w, r, http.StatusUnprocessableEntity, "unprocessable", "REVIEWER_NOT_AUTHENTICATED", err.Error(), nil)
 	default:
 		envelope.WriteAPIError(w, r, http.StatusInternalServerError, "internal", "REVIEW_OPERATION_FAILED", "Review operation failed", nil)
 	}

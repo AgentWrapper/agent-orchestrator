@@ -421,6 +421,7 @@ function SettingsBody({ project, projectId, onSaved, section = "general" }: { pr
 										defaultOptionLabel={t("settings.project.default")}
 										defaultTriggerLabel={t("settings.project.default")}
 										installed={agentCatalog?.installed}
+										reviewerInstalled={agentCatalog?.reviewerInstalled}
 										supported={agentCatalog?.supported}
 										disabled={agentsQuery.isFetching && agentCatalog === undefined}
 									/>

@@ -183,6 +183,8 @@ type fakeReviewerForPreflight struct {
 	CommandErr error
 	Argv       []string
 	Preflight  func(context.Context, string) error
+	Auth       ports.AgentAuthStatus
+	AuthErr    error
 }
 
 type fakeReviewerWithLaunchSpec struct {
@@ -216,6 +218,10 @@ func (f *fakeReviewerForPreflight) ReviewPreflight(ctx context.Context, workspac
 		return nil
 	}
 	return f.Preflight(ctx, workspacePath)
+}
+
+func (f *fakeReviewerForPreflight) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
+	return f.Auth, f.AuthErr
 }
 
 type fakeReviewerResolver struct {
@@ -811,6 +817,34 @@ func TestLauncherPreflightBinaryNotFound(t *testing.T) {
 	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
 	if err := l.Preflight(context.Background(), domain.ReviewerClaudeCode, "/ws/mer-1"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("err = %v, want 'not found'", err)
+	}
+}
+
+func TestLauncherPreflightGreptileMissingIsActionable(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{Argv: []string{"greptile-binary-does-not-exist-12345"}}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	err := l.Preflight(context.Background(), domain.ReviewerGreptile, "/ws/mer-1")
+	if err == nil || !errors.Is(err, ports.ErrAgentBinaryNotFound) {
+		t.Fatalf("err = %v, want missing-binary sentinel", err)
+	}
+	for _, want := range []string{"greptile CLI is not installed", "greptile login", "retry"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want %q", err, want)
+		}
+	}
+}
+
+func TestLauncherPreflightGreptileUnauthenticatedIsActionable(t *testing.T) {
+	reviewer := &fakeReviewerForPreflight{Argv: []string{"go"}, Auth: ports.AgentAuthStatusUnauthorized}
+	l := NewLauncher(fakeReviewerResolver{reviewer: reviewer, ok: true}, &fakeRuntime{}, "")
+	err := l.Preflight(context.Background(), domain.ReviewerGreptile, "/ws/mer-1")
+	if err == nil || !errors.Is(err, ports.ErrReviewerNotAuthenticated) {
+		t.Fatalf("err = %v, want reviewer auth sentinel", err)
+	}
+	for _, want := range []string{"greptile CLI is not authenticated", "greptile login", "retry"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, want %q", err, want)
+		}
 	}
 }
 

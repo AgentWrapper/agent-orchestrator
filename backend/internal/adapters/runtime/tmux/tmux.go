@@ -283,8 +283,11 @@ func New(opts Options) *Runtime {
 	}
 }
 
-// Create starts a new tmux session in the workspace, running the agent's
-// launch command with a keep-alive shell, and returns a handle to it.
+// Create starts a new tmux session in the workspace and returns a handle to it.
+// Interactive commands retain AO's historical keep-alive shell. Output-only
+// commands use a live placeholder while remain-on-exit is enabled, then
+// respawn the real command so a fast failure cannot destroy the pane before
+// its output is attachable.
 func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.RuntimeHandle, error) {
 	id, err := tmuxSessionName(cfg.SessionID)
 	if err != nil {
@@ -301,9 +304,27 @@ func (r *Runtime) Create(ctx context.Context, cfg ports.RuntimeConfig) (ports.Ru
 	}
 
 	launchCmd := buildLaunchCommand(cfg)
-	args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
-	if _, err := r.run(ctx, args...); err != nil {
-		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
+	if cfg.TerminalBehavior == ports.TerminalOutputOnly {
+		// Keep a foreground shell process alive only for the short setup window;
+		// it is replaced before Create returns and is never left behind as the
+		// output-only terminal's post-exit process.
+		placeholder := "while :; do sleep 3600; done"
+		if _, err := r.run(ctx, newSessionArgs(id, cfg.WorkspacePath, r.shell, placeholder)...); err != nil {
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
+		}
+		if _, err := r.run(ctx, setRemainOnExitArgs(id)...); err != nil {
+			_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set remain-on-exit %s: %w", id, err)
+		}
+		if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
+			_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: launch output-only session %s: %w", id, err)
+		}
+	} else {
+		args := newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd)
+		if _, err := r.run(ctx, args...); err != nil {
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: create session %s: %w", id, err)
+		}
 	}
 	if err := r.verifyPaneWorkingDirectory(ctx, id, cfg.WorkspacePath); err != nil {
 		_ = r.Destroy(context.Background(), ports.RuntimeHandle{ID: id})
@@ -371,6 +392,11 @@ func (r *Runtime) Restart(ctx context.Context, handle ports.RuntimeHandle, cfg p
 	}
 
 	launchCmd := buildLaunchCommand(cfg)
+	if cfg.TerminalBehavior == ports.TerminalOutputOnly {
+		if _, err := r.run(ctx, setRemainOnExitArgs(id)...); err != nil {
+			return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: set remain-on-exit %s: %w", id, err)
+		}
+	}
 	if _, err := r.run(ctx, respawnPaneArgs(id, cfg.WorkspacePath, r.shell, launchCmd)...); err != nil {
 		return ports.RuntimeHandle{}, fmt.Errorf("tmux runtime: restart session %s: %w", id, err)
 	}
@@ -517,6 +543,29 @@ func (r *Runtime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool
 		return false, fmt.Errorf("tmux runtime: probe session %s: %w", id, err)
 	}
 	return true, nil
+}
+
+// IsProcessAlive reports whether the foreground process in the pane is still
+// running. Unlike IsAlive, it treats a tmux remain-on-exit session as not
+// running, which lets output-only review recovery fail promptly after a CLI
+// crash instead of waiting for the full result deadline.
+func (r *Runtime) IsProcessAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
+	id, err := handleID(handle)
+	if err != nil {
+		return false, err
+	}
+	out, err := r.run(ctx, paneDeadArgs(id)...)
+	if err != nil {
+		return false, fmt.Errorf("tmux runtime: probe pane process %s: %w", id, err)
+	}
+	switch strings.TrimSpace(string(out)) {
+	case "0":
+		return true, nil
+	case "1":
+		return false, nil
+	default:
+		return false, fmt.Errorf("tmux runtime: invalid pane_dead response %q", strings.TrimSpace(string(out)))
+	}
 }
 
 // IsSupervisedProcessAlive reports whether the managed workload for ref is
@@ -1023,8 +1072,9 @@ func shellQuote(s string) string {
 }
 
 // buildLaunchCommand builds the shell command string passed to `sh -c`. It
-// exports env vars, then runs argv, then execs a keep-alive interactive shell
-// so the tmux session survives the agent exiting.
+// exports env vars and runs argv. Interactive commands then exec a keep-alive
+// shell so the tmux session survives; output-only commands deliberately omit
+// that shell and rely on remain-on-exit to retain the dead pane.
 //
 // PATH from cfg.Env is exported last, after all other keys, so an explicit
 // override takes effect.
@@ -1070,10 +1120,12 @@ func buildLaunchCommand(cfg ports.RuntimeConfig) string {
 		parts[i] = shellQuote(a)
 	}
 	b.WriteString(strings.Join(parts, " "))
-	// Keep the tmux session alive after the agent exits so the operator can
-	// inspect the terminal. The shell variable expansion picks up $SHELL from
-	// the process env if set, otherwise falls back to /bin/sh.
-	b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
+	if cfg.TerminalBehavior != ports.TerminalOutputOnly {
+		// Keep the tmux session alive after the agent exits so the operator can
+		// inspect the terminal. The shell variable expansion picks up $SHELL from
+		// the process env if set, otherwise falls back to /bin/sh.
+		b.WriteString(`; exec "${SHELL:-/bin/sh}" -i`)
+	}
 	return b.String()
 }
 

@@ -1,9 +1,16 @@
+export type ReviewerTerminalInteraction = "interactive" | "output-only";
+
+export function reviewerTerminalInteraction(harness: string): ReviewerTerminalInteraction {
+	return harness === "greptile" ? "output-only" : "interactive";
+}
+
 export type TerminalTarget =
 	| { kind: "worker" }
 	| {
 			kind: "reviewer";
 			handleId: string;
 			harness: string;
+			interaction?: ReviewerTerminalInteraction;
 			sessionId: string;
 	  }
 	// A standalone shell the user opened by hand — no agent session behind it,

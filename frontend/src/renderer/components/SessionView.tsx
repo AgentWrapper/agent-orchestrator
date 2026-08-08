@@ -35,7 +35,7 @@ import { hidesShellTopbar } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
 import { isOrchestratorSession, sessionIsActive } from "../types/workspace";
-import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
+import { reviewerTerminalInteraction, terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { matchesRendererShortcut } from "../stores/keybindings-store";
 import { useResolvedTheme, useUiStore, type InspectorView } from "../stores/ui-store";
 
@@ -241,7 +241,13 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [setActiveShellTerminal]);
 	const selectReviewerTerminal = useCallback((target: ReviewerTerminalTarget) => {
 		setActiveShellTerminal(null);
-		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, sessionId });
+		setTerminalTarget({
+			kind: "reviewer",
+			handleId: target.handleId,
+			harness: target.harness,
+			interaction: reviewerTerminalInteraction(target.harness),
+			sessionId,
+		});
 	}, [sessionId, setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button

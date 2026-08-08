@@ -890,6 +890,7 @@ function AttachedTerminal({
 		createMux,
 		daemonReady,
 		inputDisabled,
+		inputPolicy: terminalTarget?.kind === "reviewer" ? terminalTarget.interaction : "interactive",
 		isVisible,
 		shellTerminalHandleId,
 	});
@@ -1031,6 +1032,7 @@ function AttachedTerminal({
 				<XtermTerminal
 					ariaLabel={terminalTarget?.kind === "shell" ? t("terminal.shellAria") : t("terminal.sessionAria")}
 					fontSize={fontSize}
+					inputPolicy={terminalTarget?.kind === "reviewer" ? terminalTarget.interaction : "interactive"}
 					isVisible={isVisible}
 					onError={handleInitError}
 					onLinkOpen={handleLinkOpen}

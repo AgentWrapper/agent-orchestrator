@@ -11,6 +11,7 @@ import (
 	"time"
 
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	reviewerregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -54,6 +55,11 @@ type probeResult struct {
 	authorized bool
 }
 
+type reviewerProbeResult struct {
+	info      Info
+	installed bool
+}
+
 // ProbeResult describes a fresh readiness probe for one supported agent.
 type ProbeResult struct {
 	Agent     Info `json:"agent"`
@@ -73,15 +79,17 @@ type Info struct {
 // session spawn is the authoritative validation point for binary availability,
 // runtime prerequisites, and model-call readiness.
 type Inventory struct {
-	Supported  []Info `json:"supported" description:"Agents supported by this daemon build."`
-	Installed  []Info `json:"installed" description:"Agents whose binary resolved during the latest best-effort local catalog probe."`
-	Authorized []Info `json:"authorized" description:"Compatibility list of installed agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail."`
+	Supported         []Info `json:"supported" description:"Agents supported by this daemon build."`
+	Installed         []Info `json:"installed" description:"Agents whose binary resolved during the latest best-effort local catalog probe."`
+	Authorized        []Info `json:"authorized" description:"Compatibility list of installed agents whose local auth probe recently returned authorized. Advisory and stale-prone; spawn may still fail."`
+	ReviewerInstalled []Info `json:"reviewerInstalled" description:"Reviewer-only CLIs whose binary resolved during the latest best-effort local catalog probe."`
 }
 
 // Service reports supported agent adapters and best-effort local readiness
 // probes. Catalog readiness is advisory UI metadata, not a spawn precheck.
 type Service struct {
 	agents      []agentregistry.HarnessAgent
+	reviewers   []reviewerregistry.Adapter
 	cache       ports.AgentModelCatalogCache
 	discoverer  ports.AgentModelDiscoverer
 	projects    ProjectLookup
@@ -116,7 +124,9 @@ func New() *Service {
 
 // NewWithDeps returns the production service with durable model-catalog cache.
 func NewWithDeps(deps Deps) *Service {
-	return newService(agentregistry.Harnessed(), deps.Cache, deps.Projects, deps.Discoverer)
+	svc := newService(agentregistry.Harnessed(), deps.Cache, deps.Projects, deps.Discoverer)
+	svc.reviewers = reviewerOnlyAdapters(svc.agents, reviewerregistry.Constructors())
+	return svc
 }
 
 // NewWithAgents returns an inventory service over a caller-provided adapter
@@ -125,15 +135,35 @@ func NewWithAgents(agents []agentregistry.HarnessAgent) *Service {
 	return newService(agents, nil, nil, nil)
 }
 
+// NewWithAgentsAndReviewers builds a focused inventory service for tests that
+// need reviewer-only CLI discovery as well as worker-agent discovery.
+func NewWithAgentsAndReviewers(agents []agentregistry.HarnessAgent, reviewers []reviewerregistry.Adapter) *Service {
+	svc := newService(agents, nil, nil, nil)
+	svc.reviewers = reviewerOnlyAdapters(agents, reviewers)
+	return svc
+}
+
+func reviewerOnlyAdapters(agents []agentregistry.HarnessAgent, reviewers []reviewerregistry.Adapter) []reviewerregistry.Adapter {
+	workerIDs := make(map[string]struct{}, len(agents))
+	for _, item := range agents {
+		workerIDs[string(item.Harness)] = struct{}{}
+	}
+	out := make([]reviewerregistry.Adapter, 0, len(reviewers))
+	for _, item := range reviewers {
+		if _, isWorker := workerIDs[string(item.Harness())]; !isWorker {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 func newService(agents []agentregistry.HarnessAgent, cache ports.AgentModelCatalogCache, projects ProjectLookup, discoverer ports.AgentModelDiscoverer) *Service {
 	resolverMu := make(map[string]*sync.Mutex, len(agents))
 	for _, item := range agents {
 		resolverMu[string(item.Harness)] = &sync.Mutex{}
 	}
 	return &Service{agents: agents, cache: cache, discoverer: discoverer, projects: projects, resolverMu: resolverMu, modelCalls: map[string]*modelCatalogCall{}, inventory: Inventory{
-		Supported:  supportedInfos(agents),
-		Installed:  []Info{},
-		Authorized: []Info{},
+		Supported: supportedInfos(agents), Installed: []Info{}, Authorized: []Info{}, ReviewerInstalled: []Info{},
 	}}
 }
 
@@ -169,6 +199,7 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 	s.mu.RUnlock()
 
 	results := make(chan probeResult, len(s.agents))
+	reviewerResults := make(chan reviewerProbeResult, len(s.reviewers))
 	var wg sync.WaitGroup
 	for _, item := range s.agents {
 		if err := ctx.Err(); err != nil {
@@ -180,12 +211,24 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 			results <- s.probeAgent(ctx, item)
 		}(item)
 	}
+	for _, item := range s.reviewers {
+		if err := ctx.Err(); err != nil {
+			return Inventory{}, err
+		}
+		wg.Add(1)
+		go func(item reviewerregistry.Adapter) {
+			defer wg.Done()
+			reviewerResults <- probeReviewer(ctx, item)
+		}(item)
+	}
 	wg.Wait()
 	close(results)
+	close(reviewerResults)
 
 	supported := make([]Info, 0, len(s.agents))
 	installed := make([]Info, 0, len(s.agents))
 	authorized := make([]Info, 0, len(s.agents))
+	reviewerInstalled := make([]Info, 0, len(s.reviewers))
 	for res := range results {
 		supported = append(supported, res.info)
 		if res.installed {
@@ -195,13 +238,17 @@ func (s *Service) Refresh(ctx context.Context) (Inventory, error) {
 			authorized = append(authorized, res.info)
 		}
 	}
+	for res := range reviewerResults {
+		if res.installed {
+			reviewerInstalled = append(reviewerInstalled, res.info)
+		}
+	}
 	sortInfos(supported)
 	sortInfos(installed)
 	sortInfos(authorized)
+	sortInfos(reviewerInstalled)
 	next := Inventory{
-		Supported:  supported,
-		Installed:  installed,
-		Authorized: authorized,
+		Supported: supported, Installed: installed, Authorized: authorized, ReviewerInstalled: reviewerInstalled,
 	}
 	s.mu.Lock()
 	s.inventory = cloneInventory(next)
@@ -473,9 +520,7 @@ func supportedInfos(agents []agentregistry.HarnessAgent) []Info {
 
 func cloneInventory(in Inventory) Inventory {
 	return Inventory{
-		Supported:  cloneInfos(in.Supported),
-		Installed:  cloneInfos(in.Installed),
-		Authorized: cloneInfos(in.Authorized),
+		Supported: cloneInfos(in.Supported), Installed: cloneInfos(in.Installed), Authorized: cloneInfos(in.Authorized), ReviewerInstalled: cloneInfos(in.ReviewerInstalled),
 	}
 }
 
@@ -508,6 +553,32 @@ func (s *Service) probeAgent(ctx context.Context, item agentregistry.HarnessAgen
 	return probeResult{info: info, installed: true, authorized: info.AuthStatus == ports.AgentAuthStatusAuthorized}
 }
 
+func probeReviewer(ctx context.Context, item reviewerregistry.Adapter) reviewerProbeResult {
+	info := reviewerInfo(item)
+	probeCtx, cancel := context.WithTimeout(ctx, agentInstallProbeTimeout)
+	defer cancel()
+	resolver, ok := item.(ports.ReviewerBinaryResolver)
+	if !ok {
+		return reviewerProbeResult{info: info}
+	}
+	if _, err := resolver.ResolveBinary(probeCtx); err != nil {
+		return reviewerProbeResult{info: info}
+	}
+	authCtx, authCancel := context.WithTimeout(ctx, agentAuthProbeTimeout)
+	defer authCancel()
+	info.AuthStatus = reviewerAuthStatus(authCtx, item)
+	return reviewerProbeResult{info: info, installed: true}
+}
+
+func reviewerInfo(item reviewerregistry.Adapter) Info {
+	id := string(item.Harness())
+	label := id
+	if id == "greptile" {
+		label = "Greptile CLI"
+	}
+	return Info{ID: id, Label: label}
+}
+
 func authStatus(ctx context.Context, a ports.Agent) ports.AgentAuthStatus {
 	checker, ok := a.(ports.AgentAuthChecker)
 	if !ok {
@@ -526,6 +597,21 @@ func authStatus(ctx context.Context, a ports.Agent) ports.AgentAuthStatus {
 	default:
 		return ports.AgentAuthStatusUnknown
 	}
+}
+
+func reviewerAuthStatus(ctx context.Context, reviewer reviewerregistry.Adapter) ports.AgentAuthStatus {
+	checker, ok := reviewer.(ports.ReviewerAuthChecker)
+	if !ok {
+		return ports.AgentAuthStatusUnknown
+	}
+	status, err := checker.AuthStatus(ctx)
+	if err != nil {
+		return ports.AgentAuthStatusUnknown
+	}
+	if status == ports.AgentAuthStatusAuthorized || status == ports.AgentAuthStatusUnauthorized {
+		return status
+	}
+	return ports.AgentAuthStatusUnknown
 }
 
 func sortInfos(infos []Info) {

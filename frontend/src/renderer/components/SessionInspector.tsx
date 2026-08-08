@@ -1115,7 +1115,12 @@ function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
 /** Reviewer harness the daemon accepts, typed from the generated schema. */
 type ReviewerHarness = NonNullable<components["schemas"]["TriggerReviewRequest"]["harness"]>;
 type AgentInfo = components["schemas"]["AgentInfo"];
-type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[] };
+type AgentCatalog = {
+	supported?: AgentInfo[];
+	installed?: AgentInfo[];
+	authorized?: AgentInfo[];
+	reviewerInstalled?: AgentInfo[];
+};
 
 function ReviewsSection({
 	session,
@@ -1212,6 +1217,11 @@ function ReviewsSection({
 				const harness = started.latestRun.harness || "reviewer";
 				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
+		},
+		onError: () => {
+			// Trigger persists failed preflight runs before returning an API error.
+			// Refresh so the row reflects that durable failure immediately.
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 		},
 	});
 	const cancelReview = useMutation({
@@ -1680,6 +1690,7 @@ function ReviewPanel({
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const projectDefaultLabel = t("newTask.projectDefault");
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
+	const openTerminalLabel = harness === "greptile" ? t("inspector.viewOutput") : t("inspector.openTerminal");
 	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
@@ -1743,15 +1754,21 @@ function ReviewPanel({
 							ariaLabel={t("inspector.selectReviewerAgent")}
 							authorized={agentCatalog?.authorized}
 							defaultHarness={harness}
-							defaultOptionLabel={harness ? `${projectDefaultLabel} (${harness})` : projectDefaultLabel}
-							defaultTriggerLabel={harness || projectDefaultLabel}
+							defaultOptionLabel={harness ? `${projectDefaultLabel} (${reviewerDisplayName(harness)})` : projectDefaultLabel}
+							defaultTriggerLabel={reviewerDisplayName(harness) || projectDefaultLabel}
 							disabled={reviewRunning || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
+							reviewerInstalled={agentCatalog?.reviewerInstalled}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
 							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink text-xs"
 							value={reviewerOverride}
 						/>
+						{(reviewerOverride || harness) === "greptile" ? (
+							<span className="shrink-0 rounded-full border border-border px-1.5 py-0.5 text-[10px] font-medium normal-case tracking-normal text-settings-muted">
+								{t("inspector.review.nonInteractiveOneShot")}
+							</span>
+						) : null}
 						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
 							<Button
 								aria-label={primaryReviewActionLabel}
@@ -1782,17 +1799,19 @@ function ReviewPanel({
 							) : null}
 							{reviewHasRun ? (
 								<Button
-									aria-label={t("inspector.openTerminal")}
+									aria-label={openTerminalLabel}
 									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
 									disabled={!terminalEnabled}
 									onClick={openReviewerTerminal}
 									size="sm"
-									title={t("inspector.openTerminal")}
+									title={openTerminalLabel}
 									type="button"
 									variant="ghost"
 								>
 									<Terminal aria-hidden="true" />
-									<span className="review-run-action-label">{t("inspector.openTerminal")}</span>
+									<span className="review-run-action-label">
+										{openTerminalLabel}
+									</span>
 								</Button>
 							) : null}
 						</div>
@@ -1812,6 +1831,10 @@ function ReviewPanel({
 }
 
 type GithubReviewEntry = NonNullable<NonNullable<SessionPRSummary["review"]>["reviews"]>[number];
+
+function reviewerDisplayName(harness: string): string {
+	return harness === "greptile" ? "Greptile CLI" : harness;
+}
 
 function ReviewMarkdownBody({ body, clamped, testId }: { body: string; clamped: boolean; testId: string }) {
 	return (

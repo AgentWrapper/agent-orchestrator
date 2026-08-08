@@ -29,6 +29,7 @@ var routineInternalCLICommands = []string{
 	"ao orchestrator ls",
 	"ao hooks",
 	"ao pty-host",
+	"ao review-terminal",
 }
 
 // CLIActorType infers the actor for legacy loopback CLI telemetry requests that
@@ -63,6 +64,7 @@ var legacyActorlessSystemCLICommands = map[string]struct{}{
 	"ao daemon":                  {},
 	"ao help":                    {},
 	"ao pty-host":                {},
+	"ao review-terminal":         {},
 	"ao start":                   {},
 }
 

@@ -1216,7 +1216,84 @@ describe("SessionInspector summary reviews", () => {
 				params: { path: { sessionId: "sess-1" } },
 			}),
 		);
-		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({ handleId: "reviewer-pane", harness: "codex" });
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
+			handleId: "reviewer-pane",
+			harness: "codex",
+		});
+	});
+
+	it("opens the display-only terminal for the Greptile reviewer", async () => {
+		mockCommonGets([], "", [reviewState(3, "needs_review")]);
+		postMock.mockResolvedValue({
+			response: { status: 201 },
+			data: {
+				reviewerHandleId: "reviewer-job",
+				reviews: [
+					{
+						...reviewState(3, "running"),
+						latestRun: {
+							...approvedReview,
+							harness: "greptile",
+							status: "running",
+							verdict: "",
+							body: "",
+						},
+					},
+				],
+			},
+		});
+		const onOpenReviewerTerminal = vi.fn();
+
+		renderWithQuery(
+			<SessionInspector onOpenReviewerTerminal={onOpenReviewerTerminal} session={session([pr(3, "open")])} />,
+		);
+		await openReviewsSection();
+		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
+		await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+
+		expect(onOpenReviewerTerminal).toHaveBeenCalledWith({
+			handleId: "reviewer-job",
+			harness: "greptile",
+		});
+	});
+
+	it("refreshes the persisted failed row when Greptile preflight returns an error", async () => {
+		let reviewCalls = 0;
+		getMock.mockImplementation(async (path: string) => {
+			if (path === "/api/v1/agents") {
+				return { data: { supported: [], installed: [], authorized: [], reviewerInstalled: [] } };
+			}
+			if (path === "/api/v1/sessions/{sessionId}/reviews") {
+				reviewCalls += 1;
+				return {
+					data: {
+						reviewerHandleId: "",
+						reviews:
+							reviewCalls > 1
+								? [{ ...reviewState(3, "needs_review"), latestRun: { ...failedReview, harness: "greptile" } }]
+								: [reviewState(3, "needs_review")],
+					},
+				};
+			}
+			if (path === "/api/v1/projects/{id}") {
+				return {
+					data: {
+						status: "ok",
+						project: { id: "ws-1", kind: "git", name: "my-app", path: "/repo", repo: "my-app", defaultBranch: "main", config: { reviewers: [{ harness: "greptile" }] } },
+					},
+				};
+			}
+			return { data: undefined };
+		});
+		postMock.mockResolvedValueOnce({ error: new Error("Greptile CLI is not installed"), response: { status: 422 } });
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+		await userEvent.click(await screen.findByRole("button", { name: /run review/i }));
+
+		await waitFor(() => expect(reviewCalls).toBeGreaterThan(1));
+		expect(await screen.findByText("Greptile CLI is not installed")).toBeInTheDocument();
+		expect(await screen.findAllByText("Failed")).not.toHaveLength(0);
 	});
 
 	it("shows claude-code as the default reviewer before a run exists", async () => {
@@ -1763,6 +1840,22 @@ describe("SessionInspector summary reviews", () => {
 		expect(screen.getAllByText("Changes requested")).not.toHaveLength(0);
 	});
 
+	it("labels Greptile as a non-interactive one-shot reviewer and offers output", async () => {
+		mockCommonGets([], "reviewer-job", [
+			{
+				...reviewState(3, "running"),
+				latestRun: { ...approvedReview, harness: "greptile", status: "running", verdict: "", body: "" },
+			},
+		]);
+
+		renderWithQuery(<SessionInspector session={session([pr(3, "open")])} />);
+		await openReviewsSection();
+
+		expect(await screen.findByText("Greptile CLI")).toBeInTheDocument();
+		expect(screen.getByText("Non-interactive")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "View output" })).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Open terminal" })).not.toBeInTheDocument();
+	});
 	it("shows failed latest runs as failed and still allows rerun", async () => {
 		mockCommonGets([failedReview], "reviewer-pane", [
 			{ ...reviewState(3, "needs_review", "abc123"), latestRun: failedReview },

@@ -27,6 +27,14 @@ func respawnPaneArgs(id, cwd, shellPath, launchCmd string) []string {
 	}
 }
 
+// setRemainOnExitArgs keeps a pane (and its captured output) after its
+// foreground command exits. Callers set this before replacing a live
+// placeholder pane with an output-only command so even an immediately-failing
+// command cannot race the option into a destroyed session.
+func setRemainOnExitArgs(id string) []string {
+	return []string{"set-window-option", "-t", id, "remain-on-exit", "on"}
+}
+
 // setStatusOffArgs hides the tmux status bar for the given session.
 // set-option uses pane-targeting syntax which does not accept the `=` prefix,
 // so we pass the session name directly.
@@ -66,6 +74,13 @@ func panePIDArgs(id string) []string {
 // loudly instead of silently starting the agent in the wrong directory.
 func paneCurrentPathArgs(id string) []string {
 	return []string{"display-message", "-p", "-t", id, "#{pane_current_path}"}
+}
+
+// paneDeadArgs reports whether the pane's foreground process has exited. A
+// retained output-only pane still has a live tmux session, so callers that
+// need command liveness must query this flag rather than has-session alone.
+func paneDeadArgs(id string) []string {
+	return []string{"display-message", "-p", "-t", id + ":0.0", "#{pane_dead}"}
 }
 
 // killSessionArgs builds args for `tmux kill-session -t =<id>`. The `=` prefix

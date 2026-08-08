@@ -20,9 +20,10 @@ import (
 // ErrInvalid and ErrNotFound re-export the engine sentinels so the HTTP
 // controller maps service failures to 422/404 without importing the core.
 var (
-	ErrInvalid             = reviewcore.ErrInvalid
-	ErrNotFound            = reviewcore.ErrNotFound
-	ErrAgentBinaryNotFound = ports.ErrAgentBinaryNotFound
+	ErrInvalid                  = reviewcore.ErrInvalid
+	ErrNotFound                 = reviewcore.ErrNotFound
+	ErrAgentBinaryNotFound      = ports.ErrAgentBinaryNotFound
+	ErrReviewerNotAuthenticated = ports.ErrReviewerNotAuthenticated
 )
 
 // reviewErrorKind reduces a trigger failure to a safe category. Raw error text

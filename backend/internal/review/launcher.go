@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -50,6 +51,12 @@ type Launcher interface {
 	Destroy(ctx context.Context, handleID string) error
 }
 
+// TerminalReviewRecoverer restores durable output-only reviewer watchers after
+// a daemon restart without widening the core Launcher contract.
+type TerminalReviewRecoverer interface {
+	RecoverTerminalReviews(ctx context.Context) error
+}
+
 // LaunchSpec is the engine's request to (re)launch a reviewer for one pass.
 type LaunchSpec struct {
 	RunID           string
@@ -73,6 +80,28 @@ type LaunchResult struct {
 	AgentSessionID string
 }
 
+// ReviewCompletion is one asynchronously completed one-shot review.
+//
+//nolint:revive // the explicit completion type name is part of the launcher API.
+type ReviewCompletion struct {
+	RunID     string
+	PRURL     string
+	TargetSHA string
+	Verdict   domain.ReviewVerdict
+	Body      string
+	Comments  []ports.ReviewComment
+	Err       error
+}
+
+// CompletionHandler receives asynchronously completed one-shot reviews.
+type CompletionHandler func(ctx context.Context, workerID domain.SessionID, completions []ReviewCompletion)
+
+// TerminalReviewConsumedChecker reports whether durable terminal results were already consumed.
+type TerminalReviewConsumedChecker func(ctx context.Context, workerID domain.SessionID, runIDs []string) bool
+
+// TerminalReviewActiveChecker reports whether recovered terminal review runs remain active.
+type TerminalReviewActiveChecker func(ctx context.Context, workerID domain.SessionID, runIDs []string) (bool, error)
+
 // reviewerRuntime is the runtime surface the launcher needs: create a pane,
 // inject a message into a running pane, and probe liveness. The tmux runtime
 // satisfies it.
@@ -86,14 +115,32 @@ type reviewerRuntime interface {
 	GetOutput(ctx context.Context, handle ports.RuntimeHandle, lines int) (string, error)
 }
 
+type reviewerTerminalRuntime interface {
+	reviewerRuntime
+}
+
+type reviewerTerminalProcessRuntime interface {
+	IsProcessAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error)
+}
+
 // agentLauncher resolves a reviewer adapter from the registry and drives the
 // runtime. The reviewer reuses the worker's worktree (a fresh session worktree
 // would branch off the default branch and so would not contain the PR changes).
 type agentLauncher struct {
-	reviewers ports.ReviewerResolver
-	runtime   reviewerRuntime
-	dataDir   string
-	auth      agentAuthResolver
+	reviewers  ports.ReviewerResolver
+	runtime    reviewerRuntime
+	dataDir    string
+	auth       agentAuthResolver
+	rootCtx    context.Context
+	onComplete CompletionHandler
+	consumed   TerminalReviewConsumedChecker
+	active     TerminalReviewActiveChecker
+	execute    oneShotExecutor
+
+	jobsMu    sync.Mutex
+	jobs      map[string]oneShotJob
+	nextJob   uint64
+	recovered map[string]struct{}
 }
 
 type preLaunchReviewer interface {
@@ -120,9 +167,41 @@ func WithAgentAuth(auth agentAuthResolver) LauncherOption {
 	}
 }
 
+// WithLauncherContext sets the root context used by asynchronous one-shot reviews.
+func WithLauncherContext(ctx context.Context) LauncherOption {
+	return func(l *agentLauncher) {
+		if ctx != nil {
+			l.rootCtx = ctx
+		}
+	}
+}
+
+// WithCompletionHandler configures delivery of asynchronously completed reviews.
+func WithCompletionHandler(handler CompletionHandler) LauncherOption {
+	return func(l *agentLauncher) { l.onComplete = handler }
+}
+
+// WithTerminalReviewConsumed configures the durable-result consumption check.
+func WithTerminalReviewConsumed(checker TerminalReviewConsumedChecker) LauncherOption {
+	return func(l *agentLauncher) { l.consumed = checker }
+}
+
+// WithTerminalReviewActive configures the recovered-run activity check.
+func WithTerminalReviewActive(checker TerminalReviewActiveChecker) LauncherOption {
+	return func(l *agentLauncher) { l.active = checker }
+}
+
 // NewLauncher builds the production reviewer launcher.
 func NewLauncher(reviewers ports.ReviewerResolver, runtime reviewerRuntime, dataDir string, opts ...LauncherOption) Launcher {
-	l := &agentLauncher{reviewers: reviewers, runtime: runtime, dataDir: dataDir}
+	l := &agentLauncher{
+		reviewers: reviewers,
+		runtime:   runtime,
+		dataDir:   dataDir,
+		rootCtx:   context.Background(),
+		jobs:      make(map[string]oneShotJob),
+		recovered: make(map[string]struct{}),
+		execute:   executeOneShot,
+	}
 	for _, opt := range opts {
 		opt(l)
 	}
@@ -146,20 +225,22 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 	if len(cmd.Argv) == 0 {
 		return fmt.Errorf("reviewer produced empty command")
 	}
+	if harness == domain.ReviewerGreptile {
+		if resolved, resolveErr := resolveReviewerCommand(ctx, reviewer, cmd); resolveErr == nil {
+			cmd = resolved
+		} else if ctx.Err() != nil {
+			return resolveErr
+		}
+	}
 	// Unwrap any leading env KEY=value ... prefix so the real binary is
 	// validated. Mirrors launchBinary in the session manager, which already
 	// skips the same prefix to validate the worker agent binary.
-	bin := cmd.Argv[0]
-	if filepath.Base(bin) == "env" {
-		for _, arg := range cmd.Argv[1:] {
-			if !strings.Contains(arg, "=") {
-				bin = arg
-				break
-			}
-		}
-	}
+	bin := cmd.Argv[reviewerCommandBinaryIndex(cmd.Argv)]
 	if _, err := exec.LookPath(bin); err != nil {
-		return fmt.Errorf("reviewer binary %q not found: %w", bin, err)
+		if harness == domain.ReviewerGreptile {
+			return fmt.Errorf("greptile CLI is not installed (binary not found). Install it, then run greptile login and retry: %w", ports.ErrAgentBinaryNotFound)
+		}
+		return fmt.Errorf("reviewer binary %q not found: %w: %w", bin, err, ports.ErrAgentBinaryNotFound)
 	}
 	authStatus, authKnown, err := l.agentAuthStatus(ctx, harness)
 	if err != nil {
@@ -167,6 +248,15 @@ func (l *agentLauncher) Preflight(ctx context.Context, harness domain.ReviewerHa
 	}
 	if authKnown && authStatus == ports.AgentAuthStatusUnauthorized {
 		return fmt.Errorf("agent auth catalog reports reviewer harness %q is unauthorized", harness)
+	}
+	if checker, ok := reviewer.(ports.ReviewerAuthChecker); ok {
+		status, _ := checker.AuthStatus(ctx)
+		if status == ports.AgentAuthStatusUnauthorized {
+			if harness == domain.ReviewerGreptile {
+				return fmt.Errorf("greptile CLI is not authenticated. Run greptile login and retry: %w", ports.ErrReviewerNotAuthenticated)
+			}
+			return fmt.Errorf("reviewer %q is not authenticated: %w", harness, ports.ErrReviewerNotAuthenticated)
+		}
 	}
 	if pf, ok := reviewer.(preflightReviewer); ok {
 		if err := pf.ReviewPreflight(ctx, workspacePath); err != nil {
@@ -340,6 +430,13 @@ func truncateReviewHistoryBody(body string) string {
 }
 
 func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (LaunchResult, error) {
+	reviewer, ok := l.reviewers.Reviewer(spec.Harness)
+	if !ok {
+		return LaunchResult{}, fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
+	}
+	if oneShot, ok := reviewer.(ports.OneShotReviewer); ok {
+		return l.startOneShot(spec, oneShot)
+	}
 	inv, err := l.prepareInvocation(ctx, spec)
 	if err != nil {
 		return LaunchResult{}, err
@@ -348,6 +445,11 @@ func (l *agentLauncher) Spawn(ctx context.Context, spec LaunchSpec) (LaunchResul
 }
 
 func (l *agentLauncher) RestoreTerminal(ctx context.Context, spec LaunchSpec) (LaunchResult, error) {
+	if reviewer, ok := l.reviewers.Reviewer(spec.Harness); ok {
+		if _, oneShot := reviewer.(ports.OneShotReviewer); oneShot {
+			return LaunchResult{}, nil
+		}
+	}
 	inv, err := l.prepareIdleInvocation(spec)
 	if err != nil {
 		return LaunchResult{}, err
@@ -386,6 +488,13 @@ func (l *agentLauncher) launchReviewerTerminalWithMode(ctx context.Context, spec
 		cmd, err = reviewer.ReviewCommand(ctx, inv)
 		if err != nil {
 			return LaunchResult{}, fmt.Errorf("reviewer command: %w", err)
+		}
+	}
+	if spec.Harness == domain.ReviewerGreptile {
+		if resolved, resolveErr := resolveReviewerCommand(ctx, reviewer, cmd); resolveErr == nil {
+			cmd = resolved
+		} else if ctx.Err() != nil {
+			return LaunchResult{}, resolveErr
 		}
 	}
 	handleID := reviewerHandleID(spec.WorkerID)
@@ -510,6 +619,13 @@ func (l *agentLauncher) Notify(ctx context.Context, handleID string, spec Launch
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", spec.Harness)
 	}
+	if oneShot, ok := reviewer.(ports.OneShotReviewer); ok {
+		if err := l.Preflight(ctx, spec.Harness, spec.WorkspacePath); err != nil {
+			return err
+		}
+		_, err := l.startOneShot(spec, oneShot)
+		return err
+	}
 	inv, err := l.prepareInvocation(ctx, spec)
 	if err != nil {
 		return err
@@ -528,6 +644,9 @@ func (l *agentLauncher) Alive(ctx context.Context, handleID string) (bool, error
 	if handleID == "" {
 		return false, nil
 	}
+	if alive, handled := l.oneShotAlive(handleID); handled {
+		return alive, nil
+	}
 	return l.runtime.IsAlive(ctx, ports.RuntimeHandle{ID: handleID})
 }
 
@@ -544,9 +663,15 @@ func (l *agentLauncher) Cancel(ctx context.Context, handleID string, harness dom
 	if handleID == "" {
 		return nil
 	}
+	if handled, err := l.cancelOneShot(ctx, handleID); handled {
+		return err
+	}
 	reviewer, ok := l.reviewers.Reviewer(harness)
 	if !ok {
 		return fmt.Errorf("no reviewer adapter for harness %q", harness)
+	}
+	if _, terminal := reviewer.(ports.TerminalOneShotReviewer); terminal {
+		return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
 	}
 	canceller, ok := reviewer.(ports.ReviewerCanceller)
 	if !ok {
@@ -618,5 +743,38 @@ func (l *agentLauncher) Destroy(ctx context.Context, handleID string) error {
 	if handleID == "" {
 		return nil
 	}
+	if handled, err := l.cancelOneShot(ctx, handleID); handled {
+		return err
+	}
 	return l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID})
+}
+
+func resolveReviewerCommand(ctx context.Context, reviewer ports.Reviewer, command ports.ReviewCommandSpec) (ports.ReviewCommandSpec, error) {
+	if len(command.Argv) == 0 {
+		return command, nil
+	}
+	resolver, ok := reviewer.(ports.ReviewerBinaryResolver)
+	if !ok {
+		return command, nil
+	}
+	path, err := resolver.ResolveBinary(ctx)
+	if err != nil {
+		return command, err
+	}
+	index := reviewerCommandBinaryIndex(command.Argv)
+	argv := append([]string(nil), command.Argv...)
+	argv[index] = path
+	command.Argv = argv
+	return command, nil
+}
+
+func reviewerCommandBinaryIndex(argv []string) int {
+	if len(argv) > 0 && filepath.Base(argv[0]) == "env" {
+		for index, arg := range argv[1:] {
+			if !strings.Contains(arg, "=") {
+				return index + 1
+			}
+		}
+	}
+	return 0
 }

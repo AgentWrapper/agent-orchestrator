@@ -130,6 +130,27 @@ PR actions are available through `ao pr merge` and
 `ao review trigger` (also `execute` and `restart`), `ao review cancel` (also
 `stop`), and `ao review submit`.
 
+Projects can also select `greptile` as their reviewer harness. Install and
+authenticate the Greptile CLI first (`greptile login`), then choose
+**Greptile CLI** in project settings. AO runs `greptile review --json` as a
+one-shot review for each PR, using that PR's base branch and repo worktree. The
+review panel labels it **Greptile CLI · Non-interactive · one-shot** and opens a
+**View output** terminal. That terminal is output-only: it remains scrollable,
+selectable, and copyable, but keyboard, paste, composition, drag/drop, and
+mouse input are not sent to the CLI, and Unix/tmux does not open a shell after
+the command exits. Findings are recorded in AO and posted back to GitHub as
+inline review comments, then routed to the worker like other changes-requested
+reviews. Greptile is reviewer-only: it cannot be selected as a worker or
+orchestrator agent. If the CLI is missing, AO reports an actionable install and
+`greptile login` message before opening a terminal. If the CLI is installed but
+not authenticated, the output terminal records the failed run and prints the
+same login instruction. `ao review cancel` stops the local CLI process; a remote
+Greptile run that has already started may continue on Greptile's service. AO
+stores terminal requests by durable review/run ids and resumes or resolves them
+after a daemon restart. Consumed request/result pairs are retained for seven
+days before safe cleanup; incomplete or unconsumed pairs are retained for
+recovery.
+
 ## Configuration
 
 The CLI and daemon share the same environment-driven config:

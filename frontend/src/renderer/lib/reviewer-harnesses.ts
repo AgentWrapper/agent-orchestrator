@@ -27,6 +27,7 @@ const REVIEWER_HARNESS_IDS = [
 	"droid",
 	"goose",
 	"grok",
+	"greptile",
 	"kilocode",
 	"kiro",
 	"kimi",

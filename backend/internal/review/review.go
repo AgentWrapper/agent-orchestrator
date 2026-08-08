@@ -12,6 +12,7 @@ import (
 	stdctx "context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -65,13 +66,20 @@ type Projects interface {
 	GetProject(ctx stdctx.Context, id string) (domain.ProjectRecord, bool, error)
 }
 
+// Workspaces resolves the repo-to-worktree mapping for workspace projects.
+type Workspaces interface {
+	ListWorkspaceRepos(ctx stdctx.Context, projectID string) ([]domain.WorkspaceRepoRecord, error)
+	ListSessionWorktrees(ctx stdctx.Context, id domain.SessionID) ([]domain.SessionWorktreeRecord, error)
+}
+
 // Deps wires the engine.
 type Deps struct {
-	Store    Store
-	Sessions Sessions
-	PRs      PRs
-	Projects Projects
-	Launcher Launcher
+	Store      Store
+	Sessions   Sessions
+	PRs        PRs
+	Projects   Projects
+	Workspaces Workspaces
+	Launcher   Launcher
 
 	// Clock and NewID are injectable for deterministic tests.
 	Clock func() time.Time
@@ -80,13 +88,14 @@ type Deps struct {
 
 // Engine is the core code-review engine.
 type Engine struct {
-	store    Store
-	sessions Sessions
-	prs      PRs
-	projects Projects
-	launcher Launcher
-	clock    func() time.Time
-	newID    func() string
+	store      Store
+	sessions   Sessions
+	prs        PRs
+	projects   Projects
+	workspaces Workspaces
+	launcher   Launcher
+	clock      func() time.Time
+	newID      func() string
 
 	// triggerMu guards triggerLocks; triggerLocks holds one mutex per worker
 	// session so concurrent Trigger calls for the same worker serialise (see
@@ -110,6 +119,7 @@ func New(d Deps) *Engine {
 		sessions:     d.Sessions,
 		prs:          d.PRs,
 		projects:     d.Projects,
+		workspaces:   d.Workspaces,
 		launcher:     d.Launcher,
 		clock:        clock,
 		newID:        newID,
@@ -320,7 +330,10 @@ func (e *Engine) Trigger(ctx stdctx.Context, workerID domain.SessionID, override
 		return err
 	}
 
-	queue := reviewQueue(created)
+	queue, err := e.reviewQueue(ctx, worker, prs, created)
+	if err != nil {
+		return TriggerResult{}, failRuns(0, err)
+	}
 	handleID := ""
 	if reviewRow.ReviewerHandleID != "" && reviewerPaneReusable(reviewRow, hadRunningReviewer) {
 		alive, err := e.launcher.Alive(ctx, reviewRow.ReviewerHandleID)
@@ -515,6 +528,12 @@ func (e *Engine) restoreReviewerLocked(ctx stdctx.Context, workerID domain.Sessi
 	if err != nil {
 		return RestoreReviewerResult{}, fmt.Errorf("restore reviewer: %w", err)
 	}
+	if launch.HandleID == "" {
+		if _, err := e.upsertReview(ctx, worker, harness, "", agentSessionID, e.clock()); err != nil {
+			return RestoreReviewerResult{}, err
+		}
+		return RestoreReviewerResult{}, nil
+	}
 	if launch.AgentSessionID != "" {
 		agentSessionID = launch.AgentSessionID
 	}
@@ -612,16 +631,106 @@ func reviewLaunchSpec(worker domain.SessionRecord, harness domain.ReviewerHarnes
 	}
 }
 
-func reviewQueue(runs []domain.ReviewRun) []ports.ReviewTask {
+func (e *Engine) reviewQueue(ctx stdctx.Context, worker domain.SessionRecord, prs []domain.PullRequest, runs []domain.ReviewRun) ([]ports.ReviewTask, error) {
+	prByURL := make(map[string]domain.PullRequest, len(prs))
+	for _, pr := range prs {
+		prByURL[pr.URL] = pr
+	}
+
+	workspacePaths := map[string]string{}
+	workspaceProject := false
+	if e.projects != nil {
+		project, ok, err := e.projects.GetProject(ctx, string(worker.ProjectID))
+		if err != nil {
+			return nil, err
+		}
+		if ok && project.Kind.WithDefault() == domain.ProjectKindWorkspace {
+			workspaceProject = true
+			if e.workspaces == nil {
+				return nil, fmt.Errorf("review: workspace resolver is not configured")
+			}
+			workspacePaths, err = e.workspaceReviewPaths(ctx, worker, project)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	queue := make([]ports.ReviewTask, 0, len(runs))
 	for _, run := range runs {
+		pr, ok := prByURL[run.PRURL]
+		if !ok {
+			return nil, fmt.Errorf("review: PR %q is no longer tracked by worker session %q", run.PRURL, worker.ID)
+		}
+		workspacePath := worker.Metadata.WorkspacePath
+		if workspaceProject {
+			repo := normalizedRepository(pr.Repo)
+			workspacePath, ok = workspacePaths[repo]
+			if !ok || workspacePath == "" {
+				return nil, fmt.Errorf("review: PR repository %q has no worktree in worker session %q", pr.Repo, worker.ID)
+			}
+		}
 		queue = append(queue, ports.ReviewTask{
-			RunID:     run.ID,
-			PRURL:     run.PRURL,
-			TargetSHA: run.TargetSHA,
+			RunID:         run.ID,
+			PRURL:         run.PRURL,
+			TargetSHA:     run.TargetSHA,
+			TargetBranch:  pr.TargetBranch,
+			WorkspacePath: workspacePath,
 		})
 	}
-	return queue
+	return queue, nil
+}
+
+func (e *Engine) workspaceReviewPaths(ctx stdctx.Context, worker domain.SessionRecord, project domain.ProjectRecord) (map[string]string, error) {
+	repos, err := e.workspaces.ListWorkspaceRepos(ctx, project.ID)
+	if err != nil {
+		return nil, err
+	}
+	worktrees, err := e.workspaces.ListSessionWorktrees(ctx, worker.ID)
+	if err != nil {
+		return nil, err
+	}
+	worktreeByName := make(map[string]string, len(worktrees))
+	for _, worktree := range worktrees {
+		worktreeByName[worktree.RepoName] = worktree.WorktreePath
+	}
+
+	paths := make(map[string]string, len(repos)+1)
+	if repo := normalizedRepository(project.RepoOriginURL); repo != "" {
+		rootPath := worktreeByName[domain.RootWorkspaceRepoName]
+		if rootPath == "" {
+			rootPath = worker.Metadata.WorkspacePath
+		}
+		paths[repo] = rootPath
+	}
+	for _, repo := range repos {
+		identity := normalizedRepository(repo.RepoOriginURL)
+		if identity == "" {
+			continue
+		}
+		if path := worktreeByName[repo.Name]; path != "" {
+			paths[identity] = path
+		}
+	}
+	return paths, nil
+}
+
+func normalizedRepository(remote string) string {
+	value := strings.TrimSpace(strings.ReplaceAll(remote, `\`, "/"))
+	if value == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		value = parsed.Path
+	} else if colon := strings.Index(value, ":"); colon >= 0 && !strings.Contains(value[:colon], "/") {
+		value = value[colon+1:]
+	}
+	value = strings.Trim(strings.TrimSuffix(value, ".git"), "/")
+	parts := strings.Split(value, "/")
+	if len(parts) < 2 {
+		return strings.ToLower(value)
+	}
+	return strings.ToLower(strings.Join(parts[len(parts)-2:], "/"))
 }
 
 // secondOpinionWanted reports whether an explicitly requested harness differs

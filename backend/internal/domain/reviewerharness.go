@@ -30,6 +30,7 @@ const (
 	ReviewerAmp        ReviewerHarness = "amp"
 	ReviewerAider      ReviewerHarness = "aider"
 	ReviewerGrok       ReviewerHarness = "grok"
+	ReviewerGreptile   ReviewerHarness = "greptile"
 	ReviewerCrush      ReviewerHarness = "crush"
 	ReviewerAuggie     ReviewerHarness = "auggie"
 	ReviewerCline      ReviewerHarness = "cline"
@@ -59,6 +60,7 @@ var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerAmp,
 	ReviewerAider,
 	ReviewerGrok,
+	ReviewerGreptile,
 	ReviewerCrush,
 	ReviewerAuggie,
 	ReviewerCline,

@@ -14,6 +14,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/modelcatalog"
 	agentregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/registry"
+	reviewerregistry "github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -22,6 +23,35 @@ type fakeAgent struct {
 	err   error
 	delay time.Duration
 }
+
+type fakeReviewer struct {
+	harness    domain.ReviewerHarness
+	err        error
+	authStatus ports.AgentAuthStatus
+}
+
+func (f fakeReviewer) Harness() domain.ReviewerHarness { return f.harness }
+
+func (f fakeReviewer) ReviewCommand(context.Context, ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
+	return ports.ReviewCommandSpec{}, nil
+}
+
+func (f fakeReviewer) ReviewMessage(context.Context, ports.ReviewInvocation) (string, error) {
+	return "", nil
+}
+
+func (f fakeReviewer) ResolveBinary(context.Context) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	return "greptile", nil
+}
+
+func (f fakeReviewer) AuthStatus(context.Context) (ports.AgentAuthStatus, error) {
+	return f.authStatus, nil
+}
+
+var _ reviewerregistry.Adapter = fakeReviewer{}
 
 type fakeAuthAgent struct {
 	fakeAgent
@@ -319,6 +349,33 @@ func TestRefreshReportsAuthorizedInstalledAgents(t *testing.T) {
 	}
 	if byID["broken-auth"].AuthStatus != ports.AgentAuthStatusUnknown {
 		t.Fatalf("broken-auth authStatus = %q", byID["broken-auth"].AuthStatus)
+	}
+}
+
+func TestRefreshReportsInstalledReviewerOnlyCLIsSeparately(t *testing.T) {
+	svc := NewWithAgentsAndReviewers(
+		[]agentregistry.HarnessAgent{harnessAgent("codex", "Codex", ports.ErrAgentBinaryNotFound)},
+		[]reviewerregistry.Adapter{
+			fakeReviewer{harness: domain.ReviewerGreptile, authStatus: ports.AgentAuthStatusAuthorized},
+			fakeReviewer{harness: domain.ReviewerCodex},
+		},
+	)
+
+	got, err := svc.Refresh(context.Background())
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if len(got.Installed) != 0 {
+		t.Fatalf("worker installed = %#v, want no worker entries", got.Installed)
+	}
+	if len(got.ReviewerInstalled) != 1 || got.ReviewerInstalled[0].ID != "greptile" {
+		t.Fatalf("reviewer installed = %#v, want only reviewer-only greptile", got.ReviewerInstalled)
+	}
+	if got.ReviewerInstalled[0].Label != "Greptile CLI" {
+		t.Fatalf("reviewer label = %q, want Greptile CLI", got.ReviewerInstalled[0].Label)
+	}
+	if got.ReviewerInstalled[0].AuthStatus != ports.AgentAuthStatusAuthorized {
+		t.Fatalf("reviewer auth status = %q, want authorized", got.ReviewerInstalled[0].AuthStatus)
 	}
 }
 

@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
@@ -20,6 +21,91 @@ type Reviewer interface {
 	// pane to ask it to review a new commit. It must be self-contained (carry
 	// the ids the reviewer needs to submit) since AO passes no environment.
 	ReviewMessage(ctx context.Context, inv ReviewInvocation) (string, error)
+}
+
+// ReviewerBinaryResolver is the optional capability a reviewer adapter exposes
+// when its CLI binary can be checked without launching a review.
+type ReviewerBinaryResolver interface {
+	ResolveBinary(ctx context.Context) (path string, err error)
+}
+
+// ErrReviewerNotAuthenticated marks a conclusive reviewer authentication
+// failure. Indeterminate probe failures must not use this sentinel.
+var ErrReviewerNotAuthenticated = errors.New("reviewer: not authenticated")
+
+// ReviewerAuthChecker is the optional capability a reviewer adapter exposes
+// when its CLI has a cheap, non-interactive authentication probe.
+type ReviewerAuthChecker interface {
+	AuthStatus(ctx context.Context) (AgentAuthStatus, error)
+}
+
+// OneShotReviewer exits after emitting one machine-readable review result.
+type OneShotReviewer interface {
+	Reviewer
+	ParseReviewResult(output []byte) (ReviewResult, error)
+}
+
+// TerminalOneShotReviewer displays a one-shot review in an AO terminal while
+// returning its structured result through an AO-owned sidecar.
+type TerminalOneShotReviewer interface {
+	OneShotReviewer
+	PrepareTerminalRequest(path string, tasks []ReviewTask) (ReviewCommandSpec, error)
+	TerminalResultPath(requestPath string) string
+	ParseTerminalResult(output []byte) (TerminalReviewResult, error)
+}
+
+// TerminalReviewRequestReader normalizes a durable reviewer request so the
+// launcher can recover it after a daemon restart.
+type TerminalReviewRequestReader interface {
+	ReadTerminalRequest(path string) (TerminalReviewRequest, error)
+}
+
+// TerminalReviewRequest is the durable input for a terminal-backed one-shot review.
+type TerminalReviewRequest struct {
+	Version    int
+	WorkerID   domain.SessionID
+	BatchID    string
+	Harness    domain.ReviewerHarness
+	ResultPath string
+	CreatedAt  time.Time
+	DeadlineAt time.Time
+	Tasks      []ReviewTask
+}
+
+// ReviewResult is the structured output produced by a one-shot reviewer.
+type ReviewResult struct {
+	Verdict  domain.ReviewVerdict
+	Body     string
+	Comments []ReviewComment
+}
+
+// ReviewComment describes an inline finding produced by a reviewer.
+type ReviewComment struct {
+	Path          string
+	StartLine     int
+	EndLine       int
+	Side          string
+	Body          string
+	Suggestion    string
+	Severity      string
+	SecurityIssue bool
+}
+
+// TerminalReviewResult is the durable result of a terminal-backed one-shot review.
+type TerminalReviewResult struct {
+	Complete bool
+	Results  []TerminalReviewItem
+}
+
+// TerminalReviewItem associates one structured result with its review run.
+type TerminalReviewItem struct {
+	RunID     string
+	PRURL     string
+	TargetSHA string
+	Verdict   domain.ReviewVerdict
+	Body      string
+	Comments  []ReviewComment
+	Error     string
 }
 
 // ReviewCancelMode names how AO should stop a running reviewer.
@@ -128,9 +214,11 @@ type ReviewInvocation struct {
 
 // ReviewTask is one PR/run in a multi-PR review trigger queue.
 type ReviewTask struct {
-	RunID     string
-	PRURL     string
-	TargetSHA string
+	RunID         string
+	PRURL         string
+	TargetSHA     string
+	TargetBranch  string
+	WorkspacePath string
 }
 
 // ReviewCommandSpec is how to launch a reviewer: the argv, any extra env, and

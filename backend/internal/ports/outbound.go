@@ -102,7 +102,26 @@ type RuntimeConfig struct {
 	WorkspacePath string
 	Argv          []string
 	Env           map[string]string
+	// TerminalBehavior controls what remains in a terminal after Argv exits.
+	// The zero value is intentionally interactive to preserve every existing
+	// worker, reviewer, and shell terminal. Output-only runtimes retain their
+	// pane for inspection without handing the user an interactive shell.
+	TerminalBehavior TerminalBehavior
 }
+
+// TerminalBehavior describes the post-exit interaction contract for a
+// runtime terminal. It is a runtime capability rather than a harness check so
+// adapters can enforce it consistently across tmux, ConPTY, and future
+// implementations.
+type TerminalBehavior string
+
+const (
+	// TerminalInteractive is the zero-value behavior used by existing callers.
+	TerminalInteractive TerminalBehavior = ""
+	// TerminalOutputOnly retains command output but never exposes a follow-up
+	// interactive shell after the command exits.
+	TerminalOutputOnly TerminalBehavior = "output-only"
+)
 
 // RuntimeHandle identifies a live runtime instance. Its ID is opaque outside
 // the concrete runtime adapter.
