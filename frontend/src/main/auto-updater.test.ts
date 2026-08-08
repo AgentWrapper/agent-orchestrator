@@ -1,5 +1,8 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import nodePath from "node:path";
 
 type UpdateSettings = {
   enabled: boolean;
@@ -1229,5 +1232,226 @@ describe("returnToHome", () => {
 
     expect(updateUpdateSettings).not.toHaveBeenCalled();
     expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+});
+
+// stubProcess swaps process.platform/execPath for one test. The install
+// preflight reads both at call time, so no module re-import is needed after
+// the swap, but the restore MUST run even when the assertion throws.
+function stubProcess(platform: NodeJS.Platform, execPath: string): () => void {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const originalExecPath = Object.getOwnPropertyDescriptor(process, "execPath")!;
+  Object.defineProperty(process, "platform", { value: platform });
+  Object.defineProperty(process, "execPath", { value: execPath });
+  return () => {
+    Object.defineProperty(process, "platform", originalPlatform);
+    Object.defineProperty(process, "execPath", originalExecPath);
+  };
+}
+
+// Builds a real bundle-shaped tree so the writability checks run against the
+// filesystem rather than a stub. Returns the exec path inside it.
+function makeBundle(): { root: string; bundle: string; execPath: string } {
+  const root = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-perm-"));
+  const bundle = nodePath.join(root, "Agent Orchestrator.app");
+  mkdirSync(nodePath.join(bundle, "Contents", "MacOS"), { recursive: true });
+  return {
+    root,
+    bundle,
+    execPath: nodePath.join(bundle, "Contents", "MacOS", "agent-orchestrator"),
+  };
+}
+
+const TRANSLOCATED_EXEC_PATH =
+  "/private/var/folders/hg/vkmz93d1T/T/AppTranslocation/0AC4-11EE/d/Agent Orchestrator.app/Contents/MacOS/agent-orchestrator";
+
+describe("quitAndInstallUpdate", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("shows an actionable dialog instead of installing when running translocated on macOS", async () => {
+    const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+      const box = dialog.showMessageBox.mock.calls[0][0] as {
+        message: string;
+        detail: string;
+      };
+      expect(box.detail).toContain("/Applications");
+    } finally {
+      restore();
+    }
+  });
+
+  it("shows the dialog when the app bundle is not writable", async () => {
+    const { root, bundle, execPath } = makeBundle();
+    chmodSync(bundle, 0o555);
+    const restore = stubProcess("darwin", execPath);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    } finally {
+      restore();
+      chmodSync(bundle, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // The correction to #3529's check: ShipIt swaps by moving the bundle aside
+  // and moving the new one in, so a writable bundle inside an unwritable
+  // PARENT still fails, silently, exactly like the case above.
+  it("shows the dialog when the enclosing directory is not writable", async () => {
+    const { root, bundle, execPath } = makeBundle();
+    chmodSync(root, 0o555);
+    const restore = stubProcess("darwin", execPath);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+      const box = dialog.showMessageBox.mock.calls[0][0] as { detail: string };
+      expect(box.detail).toContain(root);
+      // Must NOT tell a user already sitting in /Applications to move there.
+      expect(box.detail).not.toContain("move Agent Orchestrator.app into /Applications");
+    } finally {
+      restore();
+      chmodSync(root, 0o755);
+      chmodSync(bundle, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("installs when both the bundle and its parent are writable", async () => {
+    const { root, execPath } = makeBundle();
+    const restore = stubProcess("darwin", execPath);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails open and installs when the derived bundle path does not exist", async () => {
+    const restore = stubProcess(
+      "darwin",
+      "/nonexistent-ao-test/Agent Orchestrator.app/Contents/MacOS/agent-orchestrator",
+    );
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
+  // Under `npm start` and in tests execPath is a bare node/electron binary, so
+  // the derived path is an unrelated ancestor dir. Its permissions must not
+  // decide anything.
+  it("fails open when execPath is not inside a .app bundle", async () => {
+    const restore = stubProcess("darwin", "/usr/bin/node");
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("never blocks off macOS, even for translocation-looking paths", async () => {
+    const restore = stubProcess("win32", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does nothing when the app is not packaged", async () => {
+    const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater({
+        enabled: true,
+        channel: "latest",
+        nightlyAck: false,
+        feature: null,
+      }, { isPackaged: false });
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+});
+
+// The other half of #3527: the button was guarded but install-on-quit was not,
+// so quitting stayed a silent dead end. Every check path must reflect the same
+// verdict the button does.
+describe("install-on-quit policy", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("disables install-on-quit when the location cannot be installed to", async () => {
+    const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater } = await importAutoUpdater();
+
+      await module.startAutoUpdates("/tmp/ao-state");
+
+      expect(autoUpdater.autoInstallOnAppQuit).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  it("leaves install-on-quit on for an installable location", async () => {
+    const { root, execPath } = makeBundle();
+    const restore = stubProcess("darwin", execPath);
+    try {
+      const { module, autoUpdater } = await importAutoUpdater();
+
+      await module.startAutoUpdates("/tmp/ao-state");
+
+      expect(autoUpdater.autoInstallOnAppQuit).toBe(true);
+    } finally {
+      restore();
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

@@ -1,6 +1,6 @@
 import { autoUpdater } from "electron-updater";
 import { app, BrowserWindow, dialog } from "electron";
-import { existsSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -536,7 +536,7 @@ async function runAutomaticUpdateCheck(stateDir: string): Promise<boolean> {
       wireUpdaterEvents();
       configureFeed(settings);
       autoUpdater.autoDownload = true;
-      autoUpdater.autoInstallOnAppQuit = true;
+      applyInstallOnQuitPolicy();
       const result = await autoUpdater.checkForUpdates();
       if (result?.downloadPromise) await result.downloadPromise;
     });
@@ -652,7 +652,7 @@ export async function checkForUpdatesNow(
         reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
-        autoUpdater.autoInstallOnAppQuit = true;
+        applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         await autoUpdater.checkForUpdates();
       },
@@ -715,7 +715,7 @@ export async function returnToHome(
         reconcileAutomaticUpdateSchedule(stateDir, settings.enabled);
         configureFeed(settings);
         autoUpdater.autoDownload = false;
-        autoUpdater.autoInstallOnAppQuit = true;
+        applyInstallOnQuitPolicy();
         broadcastUpdaterStatus({ state: "checking" });
         await autoUpdater.checkForUpdates();
       },
@@ -774,10 +774,94 @@ export async function downloadUpdateNow(requestId?: string): Promise<void> {
   }
 }
 
+// getMacInstallBlocker is the macOS install preflight. An app launched straight
+// from where it was downloaded runs under App Translocation: a randomized
+// READ-ONLY mount beneath /private/var/folders/.../AppTranslocation. Squirrel
+// cannot replace that bundle, so quitAndInstall() silently does nothing: no
+// restart, no error, a dead button (#3527). The same dead end applies to any
+// bundle the user cannot write to, and to a writable bundle in a directory the
+// user cannot write to: ShipIt swaps by moving the bundle aside and moving the
+// new one in, so the PARENT is what has to be writable, not just the bundle.
+// Returns the user-facing explanation when installing cannot work from here,
+// undefined when the install may proceed. Fails open: only a positively
+// identified blocker suppresses the attempt.
+//
+// This is a backstop, not the primary fix. main.ts now hands off to an
+// equal-or-newer install rather than running from a stale location at all
+// (see main/relocation.ts); this catches what is left, such as a first launch
+// with nothing yet installed in /Applications.
+export function getMacInstallBlocker(): string | undefined {
+  if (process.platform !== "darwin") return undefined;
+  // .../Agent Orchestrator.app/Contents/MacOS/<binary> -> the .app bundle root
+  const bundle = path.resolve(process.execPath, "..", "..", "..");
+  // Everything below assumes that shape. Under `npm start`, and in tests,
+  // execPath is a bare node/electron binary and this resolves to some unrelated
+  // ancestor directory whose permissions say nothing about installability, so
+  // fail open rather than guess from it.
+  if (!bundle.endsWith(".app")) return undefined;
+  if (bundle.includes("/AppTranslocation/")) {
+    return (
+      "macOS is running Agent Orchestrator from a temporary read-only location " +
+      "because it was opened straight from where it was downloaded. Quit the app, " +
+      "move Agent Orchestrator.app into /Applications, reopen it from there, and " +
+      "then restart to update."
+    );
+  }
+  if (!existsSync(bundle)) return undefined;
+  try {
+    accessSync(bundle, fsConstants.W_OK);
+    // ShipIt writes into the enclosing directory, not just the bundle.
+    accessSync(path.dirname(bundle), fsConstants.W_OK);
+  } catch {
+    // Deliberately does NOT say "move it to /Applications": the app may already
+    // be there, and telling someone to do what they have done reads as a bug.
+    return (
+      "The update can't be installed because Agent Orchestrator's location isn't " +
+      `writable: ${path.dirname(bundle)}. Fix that folder's permissions, or move ` +
+      "Agent Orchestrator.app somewhere you can write to, reopen it, and then " +
+      "restart to update."
+    );
+  }
+  return undefined;
+}
+
+// applyInstallOnQuitPolicy keeps autoInstallOnAppQuit honest. Every check path
+// sets it to true, and the "downloaded" status row tells the user the build
+// installs on quit. When the install cannot work from this location that is a
+// lie in both directions: the quit-time install fails as silently as the button
+// did, and #3527's dialog only ever covered the button. Turning it off makes
+// the staged build wait for a location it can actually install from.
+function applyInstallOnQuitPolicy(): void {
+  const blocker = getMacInstallBlocker();
+  autoUpdater.autoInstallOnAppQuit = blocker === undefined;
+  if (blocker !== undefined) {
+    console.warn(
+      "install-on-quit disabled; the update cannot be installed from here:",
+      blocker,
+    );
+  }
+}
+
 // quitAndInstallUpdate installs a downloaded update and relaunches. isSilent
 // false keeps the installer UI on Windows; isForceRunAfter relaunches the app.
 export function quitAndInstallUpdate(): void {
   if (!app.isPackaged) return;
+  const blocker = getMacInstallBlocker();
+  if (blocker !== undefined) {
+    console.warn("update install blocked:", blocker);
+    // A dialog, not a status broadcast: the click came from the sidebar row,
+    // and replacing the "downloaded" status would hide that row (losing the
+    // retry affordance) without guaranteeing the user ever sees the message.
+    // The staged build stays staged; after the user moves the app the same
+    // row installs it.
+    void dialog.showMessageBox({
+      type: "warning",
+      message: "The update can't be installed from this location",
+      detail: blocker,
+      buttons: ["OK"],
+    });
+    return;
+  }
   autoUpdater.quitAndInstall(false, true);
 }
 

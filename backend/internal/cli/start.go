@@ -22,7 +22,12 @@ import (
 //	go build -ldflags "-X github.com/aoagents/agent-orchestrator/backend/internal/cli.releaseRepo=harshitsinghbhandari/agent-orchestrator" ./cmd/ao
 //
 // Mirrors how version.go's Version var is stamped by release tooling.
-var releaseRepo = "AgentWrapper/agent-orchestrator"
+//
+// Untrivial-ai is the org the repo was transferred to in July 2026. The old
+// AgentWrapper URLs still resolve only through GitHub's rename redirect, which
+// is not a contract: the same staleness that stranded the baked update feed
+// (#3523) would strand every `ao start` download the day that redirect stops.
+var releaseRepo = "Untrivial-ai/agent-orchestrator"
 
 // appBundleName is the macOS bundle directory name produced by electron-forge
 // (spaced, per frontend/forge.config.ts).
@@ -115,9 +120,20 @@ func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command, opts 
 }
 
 // resolveApp returns the path to a usable desktop bundle, or "" when none is
-// found (spec §6.2). Resolution order is fixed: marker path -> stat -> known
-// location scan. It never compares versions (invariant 5).
+// found (spec §6.2). Resolution order is marker path -> stat -> known location
+// scan, with one exception: on macOS a real bundle in /Applications outranks
+// the marker. It still never compares versions (invariant 5).
+//
+// The exception exists because the marker is not authoritative about which copy
+// the user wants. The app rewrites it on every launch, so a stale copy (the
+// original download, one on a dmg) that got launched leaves the marker pointing
+// at itself, and `ao start` would then keep reopening that copy instead of the
+// install. /Applications is the one location the updater maintains, so prefer
+// it and let the marker cover the rest (~/Applications, unusual layouts).
 func (c *commandContext) resolveApp() string {
+	if p := preferredAppPath(); p != "" && isUsableBundle(p) {
+		return p
+	}
 	if p := c.markerAppPath(); p != "" && isUsableBundle(p) {
 		return p
 	}
@@ -127,6 +143,24 @@ func (c *commandContext) resolveApp() string {
 		}
 	}
 	return ""
+}
+
+// preferredAppPath is the location that outranks the marker, or "" when the
+// platform has none. A package var for the same reason as appScanLocations:
+// tests point it at a temp bundle instead of the real system path.
+var preferredAppPath = darwinApplicationsBundle
+
+// darwinApplicationsBundle is /Applications/<bundle> on macOS, "" elsewhere.
+// That is where Squirrel installs updates, so it is the copy actually kept
+// current. Windows and Linux have no equivalent single maintained location, so
+// they keep the original marker-first order.
+func darwinApplicationsBundle() string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	// Concatenated, not filepath.Join'd, to match knownAppLocations (and to keep
+	// gocritic's filepathJoin check happy about the leading separator).
+	return "/Applications/" + appBundleName
 }
 
 // appScanLocations is the known-location scan source. It is a package var so

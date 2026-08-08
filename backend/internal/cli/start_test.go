@@ -58,6 +58,44 @@ func TestResolveApp_MarkerHit(t *testing.T) {
 	writeMarker(t, cfg, bundle)
 	// No scan locations: a hit must come from the marker.
 	t.Cleanup(swapScanLocations(func() []string { return nil }))
+	// Point the preferred location at nothing so this exercises the marker,
+	// not the real /Applications on a macOS dev box.
+	t.Cleanup(swapPreferredAppPath(func() string { return "" }))
+
+	c := &commandContext{deps: Deps{}.withDefaults()}
+	got := c.resolveApp()
+	if got != bundle {
+		t.Fatalf("resolveApp = %q, want marker path %q", got, bundle)
+	}
+}
+
+// The downgrade the marker used to re-propagate: a stale copy that got
+// launched leaves the marker pointing at itself, and `ao start` would reopen
+// that copy forever instead of the install the updater maintains.
+func TestResolveApp_PreferredOutranksMarker(t *testing.T) {
+	cfg := setConfigEnv(t)
+	stale := makeBundle(t, appBundleName)
+	writeMarker(t, cfg, stale)
+	installed := makeBundle(t, appBundleName)
+	t.Cleanup(swapPreferredAppPath(func() string { return installed }))
+	t.Cleanup(swapScanLocations(func() []string { return nil }))
+
+	c := &commandContext{deps: Deps{}.withDefaults()}
+	got := c.resolveApp()
+	if got != installed {
+		t.Fatalf("resolveApp = %q, want installed path %q", got, installed)
+	}
+}
+
+// An absent preferred location must not shadow a good marker.
+func TestResolveApp_PreferredMissingFallsBackToMarker(t *testing.T) {
+	cfg := setConfigEnv(t)
+	bundle := makeBundle(t, appBundleName)
+	writeMarker(t, cfg, bundle)
+	t.Cleanup(swapPreferredAppPath(func() string {
+		return filepath.Join(t.TempDir(), "gone", appBundleName)
+	}))
+	t.Cleanup(swapScanLocations(func() []string { return nil }))
 
 	c := &commandContext{deps: Deps{}.withDefaults()}
 	got := c.resolveApp()
@@ -72,6 +110,7 @@ func TestResolveApp_MarkerMissThenScanHit(t *testing.T) {
 	writeMarker(t, cfg, filepath.Join(t.TempDir(), "gone", appBundleName))
 	scanBundle := makeBundle(t, appBundleName)
 	t.Cleanup(swapScanLocations(func() []string { return []string{scanBundle} }))
+	t.Cleanup(swapPreferredAppPath(func() string { return "" }))
 
 	c := &commandContext{deps: Deps{}.withDefaults()}
 	got := c.resolveApp()
@@ -85,6 +124,7 @@ func TestResolveApp_ScanMissReturnsEmpty(t *testing.T) {
 	t.Cleanup(swapScanLocations(func() []string {
 		return []string{filepath.Join(t.TempDir(), "nope", appBundleName)}
 	}))
+	t.Cleanup(swapPreferredAppPath(func() string { return "" }))
 
 	c := &commandContext{deps: Deps{}.withDefaults()}
 	got := c.resolveApp()
@@ -428,6 +468,14 @@ func TestHumanBytes(t *testing.T) {
 			t.Errorf("humanBytes(%d) = %q, want %q", n, got, want)
 		}
 	}
+}
+
+// swapPreferredAppPath replaces the preferred-location seam and returns a
+// restore func.
+func swapPreferredAppPath(fn func() string) func() {
+	orig := preferredAppPath
+	preferredAppPath = fn
+	return func() { preferredAppPath = orig }
 }
 
 // swapScanLocations replaces the scan-location seam and returns a restore func.
