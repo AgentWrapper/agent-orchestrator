@@ -323,7 +323,7 @@ func Run() error {
 	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
 	var prActions prsvc.ActionManager
 	if mergeProvider, mergeErr := newGitHubSCMProvider(log); mergeErr != nil {
-		logSCMProviderDisabled(log, mergeErr)
+		logSCMProviderDisabled(log, "github", mergeErr)
 	} else {
 		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: mergeProvider, Reader: mergeProvider})
 	}
