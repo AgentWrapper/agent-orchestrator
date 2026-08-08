@@ -342,7 +342,7 @@ export function TaskComposer({
 				<p className="px-4 pb-2 text-caption text-destructive">{attachmentError}</p>
 			)}
 
-			{(error || requiresTuiFallback || modelWarning) && (
+			{(error || modelWarning) && (
 				<div className="px-3 pb-2">
 					{error && (
 						<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -363,14 +363,7 @@ export function TaskComposer({
 							) : null}
 						</div>
 					)}
-					{!error && requiresTuiFallback && (
-						<p className="text-caption text-warning" role="status">
-							{t("newTask.tuiOnlyAgent", { agent: selectedAgentLabel })}
-						</p>
-					)}
-					{!error && !requiresTuiFallback && modelWarning && (
-						<p className="text-caption text-warning">{modelWarning}</p>
-					)}
+					{!error && modelWarning && <p className="text-caption text-warning">{modelWarning}</p>}
 				</div>
 			)}
 
@@ -391,8 +384,6 @@ export function TaskComposer({
 							onChange={(value) => {
 								setAgent(value);
 								setAgentTouched(true);
-								setError(undefined);
-								setCanCreateAsTUI(false);
 								// Never pair a newly selected agent with the previous agent's model.
 								// The new catalog will resolve its own default into this cleared slot.
 								setModel("");
@@ -440,11 +431,7 @@ export function TaskComposer({
 					className="min-w-(--size-composer-start-button)"
 				>
 					{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
-					{isSubmitting
-						? t("newTask.starting")
-						: requiresTuiFallback
-							? t("newTask.createAsTui")
-							: t("newTask.start")}
+					{isSubmitting ? t("newTask.starting") : t("newTask.start")}
 					{!isSubmitting && (
 						<kbd className="composer-keycap" aria-hidden="true">
 							↵

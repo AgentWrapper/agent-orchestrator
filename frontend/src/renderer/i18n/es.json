@@ -338,7 +338,6 @@
 	"newTask.start": "Iniciar tarea",
 	"newTask.starting": "Iniciando...",
 	"newTask.title": "Nueva tarea",
-	"newTask.tuiOnlyAgent": "{{agent}} solo está disponible en la interfaz de terminal.",
 	"newTask.titleLabel": "Título",
 	"newTask.titlePlaceholder": "Corregir el renderizador de respaldo de WebGL",
 	"newTask.titleRequired": "El título y la descripción son obligatorios.",

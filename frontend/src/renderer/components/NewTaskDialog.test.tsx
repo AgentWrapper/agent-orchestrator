@@ -174,7 +174,7 @@ describe("NewTaskDialog", () => {
 		expect(onCreated).toHaveBeenCalledWith("worker-tui");
 	});
 
-	it("offers Terminal UI before submitting an agent that cannot use Chat", async () => {
+	it("silently submits TUI mode for an agent that cannot use Chat", async () => {
 		renderDialog();
 		const user = userEvent.setup();
 		await waitForAgentCatalog();
@@ -183,11 +183,12 @@ describe("NewTaskDialog", () => {
 		await user.click(screen.getByRole("combobox", { name: "Agent" }));
 		await user.click(await screen.findByRole("option", { name: "Cursor" }));
 
-		expect(await screen.findByText("Cursor is available in Terminal UI only.")).toBeInTheDocument();
-		const fallback = screen.getByRole("button", { name: "Create as Terminal UI" });
+		expect(screen.queryByText("Cursor is available in Terminal UI only.")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Create as Terminal UI" })).not.toBeInTheDocument();
+		const startTask = screen.getByRole("button", { name: "Start task" });
 		expect(postMock.mock.calls.filter(([path]) => path === "/api/v1/orchestrators/delegate")).toHaveLength(0);
 
-		await user.click(fallback);
+		await user.click(startTask);
 
 		await waitFor(() =>
 			expect(postMock.mock.calls.filter(([path]) => path === "/api/v1/orchestrators/delegate")).toHaveLength(1),
@@ -210,7 +211,7 @@ describe("NewTaskDialog", () => {
 		await user.click(screen.getByRole("combobox", { name: "Agent" }));
 		await user.click(await screen.findByRole("option", { name: "Cursor" }));
 
-		await user.click(screen.getByRole("button", { name: "Create as Terminal UI" }));
+		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(requestBody).not.toThrow());
 		expect(requestBody().agent).toBe("cursor");
@@ -229,7 +230,7 @@ describe("NewTaskDialog", () => {
 		await user.click(options[2]);
 
 		await user.type(screen.getByLabelText("Task"), "B");
-		await user.click(screen.getByRole("button", { name: "Create as Terminal UI" }));
+		await user.click(screen.getByRole("button", { name: "Start task" }));
 
 		await waitFor(() => expect(requestBody).not.toThrow());
 		expect(requestBody().agent).toBe("kiro");

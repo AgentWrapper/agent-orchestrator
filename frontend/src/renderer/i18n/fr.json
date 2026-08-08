@@ -338,7 +338,6 @@
 	"newTask.start": "Démarrer la tâche",
 	"newTask.starting": "Démarrage...",
 	"newTask.title": "Nouvelle tâche",
-	"newTask.tuiOnlyAgent": "{{agent}} est disponible uniquement en mode terminal.",
 	"newTask.titleLabel": "Titre",
 	"newTask.titlePlaceholder": "Corriger le moteur de rendu de secours WebGL",
 	"newTask.titleRequired": "Le titre et le brief sont obligatoires.",

@@ -336,7 +336,6 @@
 	"newTask.start": "Aufgabe starten",
 	"newTask.starting": "Wird gestartet...",
 	"newTask.title": "Neue Aufgabe",
-	"newTask.tuiOnlyAgent": "{{agent}} ist nur in der Terminal-UI verfügbar.",
 	"newTask.titleLabel": "Titel",
 	"newTask.titlePlaceholder": "WebGL-Fallback-Renderer reparieren",
 	"newTask.titleRequired": "Titel und Briefing sind erforderlich.",
