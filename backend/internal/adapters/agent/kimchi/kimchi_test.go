@@ -542,6 +542,22 @@ func TestGetRestoreCommandWithSystemPromptFile(t *testing.T) {
 	}
 }
 
+func TestReadBoundedSystemPromptReadsRegularFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "system.md")
+	if err := os.WriteFile(file, []byte("hello system prompt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := readBoundedSystemPrompt(file)
+	if err != nil {
+		t.Fatalf("readBoundedSystemPrompt: %v", err)
+	}
+	if got != "hello system prompt" {
+		t.Fatalf("got %q, want %q", got, "hello system prompt")
+	}
+}
+
 func TestGetLaunchCommandRejectsOversizedSystemPromptFile(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "system.md")

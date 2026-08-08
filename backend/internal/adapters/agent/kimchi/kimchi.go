@@ -64,7 +64,19 @@ const systemPromptMaxBytes = 128 * 1024
 // readBoundedSystemPrompt reads a system-prompt file capped at
 // systemPromptMaxBytes. The file contents are returned raw (no trimming) so
 // a resumed session's system prompt is byte-identical to a fresh launch.
+//
+// A regular-file check (os.Stat + Mode().IsRegular) is performed before
+// opening: FIFOs, sockets, and device files can cause io.ReadAll to block
+// indefinitely, and a system-prompt file should always be a regular file.
 func readBoundedSystemPrompt(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("kimchi: system prompt file %s is not a regular file (mode %s)", path, info.Mode())
+	}
+
 	f, err := os.Open(path) //nolint:gosec // path is AO-owned config
 	if err != nil {
 		return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
