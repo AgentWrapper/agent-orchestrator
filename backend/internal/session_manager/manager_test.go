@@ -2723,7 +2723,7 @@ func TestSpawn_DefaultsBranchFromSessionID(t *testing.T) {
 
 func TestSpawn_DefaultsBranchUnderDevNamespaceForDevDataDir(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHomeEnv(t, home)
 	m, st, _, _ := newManager()
 	m.dataDir = filepath.Join(home, ".ao", "dev", "data")
 
@@ -2746,7 +2746,7 @@ func TestSpawn_DefaultsBranchUnderDevNamespaceForDevDataDir(t *testing.T) {
 
 func TestSpawn_ExplicitBranchBypassesDevNamespace(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setHomeEnv(t, home)
 	m, st, _, _ := newManager()
 	m.dataDir = filepath.Join(home, ".ao", "dev", "data")
 
@@ -4243,6 +4243,11 @@ func pathPinManager(executable func() (string, error)) (*Manager, *fakeStore, *f
 	return m, st, rt, logBuf
 }
 
+func setHomeEnv(t *testing.T, home string) {
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 // TestSpawnAndRestore_PinHookPATHToDaemonBinary covers the activity-tracking
 // fix: the spawned session's PATH must put the daemon executable's directory
 // first, so the bare `ao` in the workspace hook commands resolves to the
@@ -4251,7 +4256,8 @@ func pathPinManager(executable func() (string, error)) (*Manager, *fakeStore, *f
 // kills activity tracking).
 func TestSpawnAndRestore_PinHookPATHToDaemonBinary(t *testing.T) {
 	daemonExe := filepath.Join(t.TempDir(), "ao")
-	want := filepath.Dir(daemonExe) + string(os.PathListSeparator) + "/usr/bin"
+	usrBin := filepath.Join(t.TempDir(), "usr", "bin")
+	want := filepath.Dir(daemonExe) + string(os.PathListSeparator) + usrBin
 	executable := func() (string, error) { return daemonExe, nil }
 
 	cases := []struct {
@@ -4276,7 +4282,7 @@ func TestSpawnAndRestore_PinHookPATHToDaemonBinary(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("PATH", "/usr/bin")
+			t.Setenv("PATH", usrBin)
 			m, st, rt, _ := pathPinManager(executable)
 			if err := tc.launch(m, st); err != nil {
 				t.Fatal(err)
@@ -4301,6 +4307,7 @@ func TestSpawn_HookPATHPinUnavailable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PATH", filepath.Join(t.TempDir(), "usr", "bin"))
 			m, _, rt, logBuf := pathPinManager(tc.executable)
 			if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 				t.Fatal(err)
@@ -4357,12 +4364,16 @@ func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testi
 			t.Fatal(err)
 		}
 	}
-	want := strings.Join([]string{binDir, nodeDir, filepath.Dir(daemonExe), "/usr/bin"}, string(os.PathListSeparator))
+	usrBin := filepath.Join(t.TempDir(), "usr", "bin")
+	want := strings.Join([]string{binDir, nodeDir, filepath.Dir(daemonExe), usrBin}, string(os.PathListSeparator))
+	if runtime.GOOS == "windows" {
+		want = strings.Join([]string{binDir, filepath.Dir(daemonExe), usrBin}, string(os.PathListSeparator))
+	}
 
 	for _, operation := range []string{"spawn", "restore"} {
 		t.Run(operation, func(t *testing.T) {
-			t.Setenv("HOME", home)
-			t.Setenv("PATH", "/usr/bin")
+			setHomeEnv(t, home)
+			t.Setenv("PATH", usrBin)
 			t.Setenv("VOLTA_HOME", filepath.Join(home, ".volta"))
 			t.Setenv("FNM_DIR", filepath.Join(home, ".fnm"))
 			st := newFakeStore()
@@ -4399,7 +4410,8 @@ func TestSpawnAndRestore_PrependsResolvedBinaryAndNodeDirsToRuntimePATH(t *testi
 }
 
 func TestSpawn_DoesNotAddNodeRuntimeForNativeBinary(t *testing.T) {
-	t.Setenv("PATH", "/usr/bin")
+	usrBin := filepath.Join(t.TempDir(), "usr", "bin")
+	t.Setenv("PATH", usrBin)
 	home := t.TempDir()
 	binDir := filepath.Join(home, "native", "bin")
 	agentBin := filepath.Join(binDir, "agent")
@@ -4413,6 +4425,7 @@ func TestSpawn_DoesNotAddNodeRuntimeForNativeBinary(t *testing.T) {
 	st.projects["mer"] = domain.ProjectRecord{ID: "mer", Config: testRoleAgents()}
 	rt := &fakeRuntime{}
 	nodeLookups := 0
+	aoBin := filepath.Join(t.TempDir(), "ao", "bin")
 	m := New(Deps{
 		Runtime: rt, Agents: singleAgent{agent: launchArgvAgent{argv: []string{agentBin}}}, Workspace: &fakeWorkspace{},
 		Store: st, Messenger: &fakeMessenger{}, Lifecycle: &fakeLCM{store: st},
@@ -4422,7 +4435,7 @@ func TestSpawn_DoesNotAddNodeRuntimeForNativeBinary(t *testing.T) {
 			}
 			return agentBin, nil
 		},
-		Executable: func() (string, error) { return "/ao/bin/ao", nil },
+		Executable: func() (string, error) { return filepath.Join(aoBin, "ao"), nil },
 	})
 	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker}); err != nil {
 		t.Fatalf("Spawn: %v", err)
@@ -4430,7 +4443,7 @@ func TestSpawn_DoesNotAddNodeRuntimeForNativeBinary(t *testing.T) {
 	if nodeLookups != 0 {
 		t.Fatalf("node LookPath calls = %d, want 0 for native binary", nodeLookups)
 	}
-	want := strings.Join([]string{binDir, "/ao/bin", "/usr/bin"}, string(os.PathListSeparator))
+	want := strings.Join([]string{binDir, aoBin, usrBin}, string(os.PathListSeparator))
 	if got := rt.lastCfg.Env["PATH"]; got != want {
 		t.Fatalf("runtime env PATH = %q, want %q", got, want)
 	}

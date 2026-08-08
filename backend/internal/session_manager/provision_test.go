@@ -38,7 +38,7 @@ func TestRuntimeEnvInjectsBrowserCapability(t *testing.T) {
 	manager := &Manager{
 		dataDir:             "/data",
 		browserCapabilities: fixedBrowserCapability("capability-1"),
-		executable:          func() (string, error) { return filepath.Join("/opt", "aod", "ao"), nil },
+		executable:          func() (string, error) { return filepath.Join(t.TempDir(), "aod", "ao"), nil },
 		logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	env := manager.runtimeEnv("mer-1", "mer", "", nil)
@@ -49,9 +49,13 @@ func TestRuntimeEnvInjectsBrowserCapability(t *testing.T) {
 
 func TestHookPATH(t *testing.T) {
 	sep := string(os.PathListSeparator)
-	daemonExe := filepath.Join("/opt", "aod", "ao")
+	daemonExe := filepath.Join(t.TempDir(), "ao")
 	daemonDir := filepath.Dir(daemonExe)
 	exeOK := func() (string, error) { return daemonExe, nil }
+
+	usrBin := filepath.Join(t.TempDir(), "usr", "bin")
+	binDir := filepath.Join(t.TempDir(), "bin")
+	projBin := filepath.Join(t.TempDir(), "proj", "bin")
 
 	cases := []struct {
 		name       string
@@ -64,15 +68,15 @@ func TestHookPATH(t *testing.T) {
 		{
 			name:       "prepends daemon dir to inherited PATH",
 			executable: exeOK,
-			daemonPATH: "/usr/bin" + sep + "/bin",
-			want:       daemonDir + sep + "/usr/bin" + sep + "/bin",
+			daemonPATH: usrBin + sep + binDir,
+			want:       daemonDir + sep + usrBin + sep + binDir,
 		},
 		{
 			name:       "project PATH override is the base",
 			executable: exeOK,
-			daemonPATH: "/usr/bin",
-			projectEnv: map[string]string{"PATH": "/proj/bin"},
-			want:       daemonDir + sep + "/proj/bin",
+			daemonPATH: usrBin,
+			projectEnv: map[string]string{"PATH": projBin},
+			want:       daemonDir + sep + projBin,
 		},
 		{
 			name:       "empty base PATH yields the daemon dir alone",
@@ -82,15 +86,15 @@ func TestHookPATH(t *testing.T) {
 		{
 			name:       "unresolvable executable fails",
 			executable: func() (string, error) { return "", errors.New("no exe") },
-			daemonPATH: "/usr/bin",
+			daemonPATH: usrBin,
 			wantErr:    true,
 		},
 		{
 			// A daemon binary not named "ao" cannot anchor `ao` resolution by
 			// having its directory prepended, so the pin must be refused.
 			name:       "executable not named ao fails",
-			executable: func() (string, error) { return filepath.Join("/opt", "aod", "ao-daemon"), nil },
-			daemonPATH: "/usr/bin",
+			executable: func() (string, error) { return filepath.Join(t.TempDir(), "ao-daemon"), nil },
+			daemonPATH: usrBin,
 			wantErr:    true,
 		},
 	}
