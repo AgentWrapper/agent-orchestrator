@@ -369,6 +369,12 @@ There is no provider-neutral way to migrate a currently executing tool call or a
 detached background process, and AO does not synthesize terminal screen output
 into structured Chat history.
 
+For TUI drains, AO gates new terminal input before checking quiescence. It accepts
+either an idle fact newer than the last accepted input or an adapter-confirmed
+idle terminal held across the settle window. A contradictory stale-idle fact has
+a bounded proof window and fails without stopping the source; activity reported
+as active work or a user-paced decision remains unbounded.
+
 ### Observation Flow
 
 ```mermaid
