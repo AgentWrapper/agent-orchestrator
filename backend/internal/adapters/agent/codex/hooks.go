@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/hookutil"
@@ -74,13 +75,39 @@ var codexManagedHooks = []codexHookSpec{
 }
 
 // appendSessionHookFlags adds AO's activity hooks to the argv as `-c`
-// session-flag config, one flag per managed event.
-func appendSessionHookFlags(cmd *[]string) {
+// session-flag config, one flag per managed event. Codex executes command
+// hooks through a login shell, which may replace PATH, so every hook invokes
+// this exact AO executable instead of relying on a bare `ao` lookup.
+func appendSessionHookFlags(cmd *[]string) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve AO hook executable: %w", err)
+	}
+	if !filepath.IsAbs(executable) {
+		executable, err = filepath.Abs(executable)
+		if err != nil {
+			return fmt.Errorf("make AO hook executable absolute: %w", err)
+		}
+	}
+	appendSessionHookFlagsForExecutable(cmd, executable)
+	return nil
+}
+
+func appendSessionHookFlagsForExecutable(cmd *[]string, executable string) {
+	prefix := shellQuoteHookExecutable(executable) + " hooks codex "
 	for _, spec := range codexManagedHooks {
+		action := strings.TrimPrefix(spec.Command, codexHookCommandPrefix)
 		flag := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s,timeout=%d}]}]`,
-			spec.Event, codexTOMLBasicString(spec.Command), codexHookTimeout)
+			spec.Event, codexTOMLBasicString(prefix+action), codexHookTimeout)
 		*cmd = append(*cmd, "-c", flag)
 	}
+}
+
+func shellQuoteHookExecutable(executable string) string {
+	if runtime.GOOS == "windows" {
+		return `"` + executable + `"`
+	}
+	return `'` + strings.ReplaceAll(executable, `'`, `'"'"'`) + `'`
 }
 
 // appendWorkspaceTrustFlag marks the session's worktree as a trusted Codex

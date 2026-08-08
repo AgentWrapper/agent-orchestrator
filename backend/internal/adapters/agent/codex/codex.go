@@ -117,7 +117,9 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	if err := appendSessionHookFlags(&cmd); err != nil {
+		return nil, err
+	}
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
@@ -159,7 +161,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	appendHideRateLimitNudgeFlag(&cmd)
 	appendHookTrustBypassFlag(&cmd)
 	appendApprovalFlags(&cmd, cfg.Permissions)
-	appendSessionHookFlags(&cmd)
+	if err := appendSessionHookFlags(&cmd); err != nil {
+		return nil, false, err
+	}
 	appendTerminalCompatibilityFlags(&cmd)
 	appendWorkspaceTrustFlag(&cmd, cfg.Session.WorkspacePath)
 	appendModelFlag(&cmd, cfg.Config)
@@ -450,7 +454,12 @@ func DoctorLaunchProbes() [][]string {
 	overrideProbe := []string{"features", "list"}
 	appendNoUpdateCheckFlag(&overrideProbe)
 	appendHideRateLimitNudgeFlag(&overrideProbe)
-	appendSessionHookFlags(&overrideProbe)
+	if err := appendSessionHookFlags(&overrideProbe); err != nil {
+		// The probe only asks Codex to parse the hook config; a bare fallback
+		// keeps that diagnostic available if the current executable cannot be
+		// resolved, while real session launches fail closed above.
+		appendSessionHookFlagsForExecutable(&overrideProbe, "ao")
+	}
 	appendWorkspaceTrustFlag(&overrideProbe, os.TempDir())
 	return [][]string{flagProbe, overrideProbe}
 }
