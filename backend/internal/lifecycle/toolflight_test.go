@@ -333,3 +333,65 @@ func TestToolPrecedence_ToolUseIDMatchBridgesCasingMismatch(t *testing.T) {
 		t.Fatalf("after post-tool-use: state = %q, want active", got)
 	}
 }
+
+// TestToolPrecedence_NotificationCorrelationFailurePostClearsBlocked is the
+// moved Kimchi lifecycle integration test. Kimchi enters blocked via a
+// notification(permission_prompt) whose tool_use_id matches an inflight
+// pre-tool-use entry, bridging a tool_name casing mismatch. The approved
+// tool may run and fail — a post-tool-use-failure signal must still clear
+// the correlated blocked state, because the permission dialog was resolved
+// regardless of the tool's exit status.
+func TestToolPrecedence_NotificationCorrelationFailurePostClearsBlocked(t *testing.T) {
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+
+	// pre-tool-use: tool_name="Bash", tool_use_id="toolu_1"
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "pre-tool-use", "Bash", "toolu_1"))
+
+	// notification(permission_prompt): tool_name="bash" (lowercase),
+	// tool_use_id="toolu_1" (matches inflight entry).
+	mustApply(t, m, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityBlocked, Event: "notification",
+		ToolName: "bash", ToolUseID: "toolu_1",
+	})
+	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
+		t.Fatalf("after notification: state = %q, want blocked", got)
+	}
+
+	// post-tool-use-failure: the approved tool ran and failed — blocked must clear.
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use-failure", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("after post-tool-use-failure: state = %q, want active (blocked cleared)", got)
+	}
+}
+
+// TestToolPrecedence_NotificationCorrelationSiblingDoesNotClear verifies that a
+// different tool's post does not clear a blocked state entered via the
+// notification correlation path — only the approved tool's post (or failure
+// post) clears it.
+func TestToolPrecedence_NotificationCorrelationSiblingDoesNotClear(t *testing.T) {
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+
+	// Enter blocked via the notification correlation path.
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "pre-tool-use", "Bash", "toolu_1"))
+	mustApply(t, m, "mer-1", ports.ActivitySignal{
+		Valid: true, State: domain.ActivityBlocked, Event: "notification",
+		ToolName: "bash", ToolUseID: "toolu_1",
+	})
+	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
+		t.Fatalf("after notification: state = %q, want blocked", got)
+	}
+
+	// A sibling tool's post must NOT clear blocked.
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use", "Read", "toolu_sibling"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
+		t.Fatalf("after sibling post: state = %q, want blocked (sibling must not clear)", got)
+	}
+
+	// The approved tool's failure post still clears afterwards.
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use-failure", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("after approved failure post: state = %q, want active", got)
+	}
+}
