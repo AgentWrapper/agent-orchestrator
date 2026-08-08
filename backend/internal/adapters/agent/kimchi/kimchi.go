@@ -105,7 +105,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 		cmd = append(cmd, "--append-system-prompt", cfg.SystemPrompt)
 	}
 	if cfg.Prompt != "" {
-		cmd = append(cmd, cfg.Prompt)
+		cmd = append(cmd, sanitizePrompt(cfg.Prompt))
 	}
 	return cmd, nil
 }
@@ -211,6 +211,42 @@ func appendPermissionFlags(cmd *[]string, permissions ports.PermissionMode) {
 	case ports.PermissionModeBypassPermissions:
 		*cmd = append(*cmd, "--yolo")
 	}
+}
+
+// kimchiSubcommands is the set of Kimchi CLI subcommand names. A worker
+// prompt that exactly matches one of these would be interpreted as
+// subcommand dispatch rather than task text, so sanitizePrompt neutralizes
+// it with a leading newline.
+var kimchiSubcommands = map[string]bool{
+	"setup":       true,
+	"login":       true,
+	"setup-tools": true,
+	"claude":      true,
+	"opencode":    true,
+	"cursor":      true,
+	"openclaw":    true,
+	"gsd2":        true,
+	"update":      true,
+	"config":      true,
+	"resources":   true,
+	"version":     true,
+}
+
+// sanitizePrompt prevents a worker prompt from being parsed as a Kimchi flag
+// (leading '-'), file reference (leading '@'), or subcommand dispatch (exact
+// match against a known subcommand name). When any of those conditions hold,
+// a leading '\n' is prepended. The newline is invisible to the model and
+// ensures the argument is treated as positional task text, not a flag, file
+// reference, or subcommand. Normal prompts are passed through unchanged,
+// preserving the existing PromptDeliveryInCommand strategy.
+func sanitizePrompt(prompt string) string {
+	if prompt == "" {
+		return prompt
+	}
+	if strings.HasPrefix(prompt, "-") || strings.HasPrefix(prompt, "@") || kimchiSubcommands[prompt] {
+		return "\n" + prompt
+	}
+	return prompt
 }
 
 // resolveRestoreSystemPrompt returns the system prompt text to re-append on
