@@ -18,6 +18,7 @@ import { apiClient, apiErrorCode, apiErrorMessage } from "../lib/api-client";
 import { captureRendererEvent } from "../lib/telemetry";
 import { agentsQueryKey, agentsQueryOptions, refreshAgentsIfStale } from "../hooks/useAgentsQuery";
 import { type FileAttachmentPayload, useFileAttachments } from "../hooks/useFileAttachments";
+import { useSettings } from "../hooks/useSettings";
 import {
 	agentModelsQueryKey,
 	agentModelsQueryOptions,
@@ -142,6 +143,7 @@ export function TaskComposer({
 		},
 	});
 	const agentsQuery = useQuery(agentsQueryOptions);
+	const { settings } = useSettings();
 	// Freshen the inventory on open so a just-installed or just-authenticated agent
 	// is present without the user asking for it.
 	useEffect(() => {
@@ -174,6 +176,10 @@ export function TaskComposer({
 
 	const selectedAgentLabel =
 		agentCatalog?.supported?.find((item) => item.id === selectedAgent)?.label || selectedAgent;
+	const requiresTuiFallback =
+		selectedAgent !== "" &&
+		settings?.defaultSessionMode === "chat" &&
+		!settings.chatHarnesses.includes(selectedAgent);
 
 	useEffect(() => {
 		if (!agentTouched) setAgent(defaultWorkerAgent);
@@ -237,7 +243,7 @@ export function TaskComposer({
 
 	const submit = (event: FormEvent<HTMLFormElement>) => {
 		event.preventDefault();
-		void submitTask();
+		void submitTask(requiresTuiFallback ? "tui" : undefined);
 	};
 
 	const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -336,7 +342,7 @@ export function TaskComposer({
 				<p className="px-4 pb-2 text-caption text-destructive">{attachmentError}</p>
 			)}
 
-			{(error || modelWarning) && (
+			{(error || requiresTuiFallback || modelWarning) && (
 				<div className="px-3 pb-2">
 					{error && (
 						<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -357,7 +363,14 @@ export function TaskComposer({
 							) : null}
 						</div>
 					)}
-					{!error && modelWarning && <p className="text-caption text-warning">{modelWarning}</p>}
+					{!error && requiresTuiFallback && (
+						<p className="text-caption text-warning" role="status">
+							{t("newTask.tuiOnlyAgent", { agent: selectedAgentLabel })}
+						</p>
+					)}
+					{!error && !requiresTuiFallback && modelWarning && (
+						<p className="text-caption text-warning">{modelWarning}</p>
+					)}
 				</div>
 			)}
 
@@ -378,6 +391,8 @@ export function TaskComposer({
 							onChange={(value) => {
 								setAgent(value);
 								setAgentTouched(true);
+								setError(undefined);
+								setCanCreateAsTUI(false);
 								// Never pair a newly selected agent with the previous agent's model.
 								// The new catalog will resolve its own default into this cleared slot.
 								setModel("");
@@ -425,7 +440,11 @@ export function TaskComposer({
 					className="min-w-(--size-composer-start-button)"
 				>
 					{isSubmitting ? <Loader2 className="size-3.5 animate-spin" aria-hidden="true" /> : null}
-					{isSubmitting ? t("newTask.starting") : t("newTask.start")}
+					{isSubmitting
+						? t("newTask.starting")
+						: requiresTuiFallback
+							? t("newTask.createAsTui")
+							: t("newTask.start")}
 					{!isSubmitting && (
 						<kbd className="composer-keycap" aria-hidden="true">
 							↵

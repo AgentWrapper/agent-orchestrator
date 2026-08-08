@@ -336,6 +336,7 @@
 	"newTask.start": "タスクを開始",
 	"newTask.starting": "開始中...",
 	"newTask.title": "新しいタスク",
+	"newTask.tuiOnlyAgent": "{{agent}} はターミナル UI でのみ利用できます。",
 	"newTask.titleLabel": "タイトル",
 	"newTask.titlePlaceholder": "WebGL フォールバックレンダラーを修正",
 	"newTask.titleRequired": "タイトルとブリーフは必須です。",

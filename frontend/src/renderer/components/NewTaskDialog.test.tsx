@@ -71,6 +71,15 @@ beforeEach(() => {
 		if (path === "/api/v1/agents") {
 			return { data: agentInventory, error: undefined };
 		}
+		if (path === "/api/v1/settings") {
+			return {
+				data: {
+					defaultSessionMode: "chat",
+					chatHarnesses: ["claude-code", "codex", "opencode", "droid"],
+				},
+				error: undefined,
+			};
+		}
 		return {
 			data: { status: "ok", project: { id: "proj-1", config: { worker: { agent: "claude-code" } } } },
 			error: undefined,
@@ -165,6 +174,32 @@ describe("NewTaskDialog", () => {
 		expect(onCreated).toHaveBeenCalledWith("worker-tui");
 	});
 
+	it("offers Terminal UI before submitting an agent that cannot use Chat", async () => {
+		renderDialog();
+		const user = userEvent.setup();
+		await waitForAgentCatalog();
+
+		await user.type(screen.getByLabelText("Task"), "Fix it with Cursor");
+		await user.click(screen.getByRole("combobox", { name: "Agent" }));
+		await user.click(await screen.findByRole("option", { name: "Cursor" }));
+
+		expect(await screen.findByText("Cursor is available in Terminal UI only.")).toBeInTheDocument();
+		const fallback = screen.getByRole("button", { name: "Create as Terminal UI" });
+		expect(postMock.mock.calls.filter(([path]) => path === "/api/v1/orchestrators/delegate")).toHaveLength(0);
+
+		await user.click(fallback);
+
+		await waitFor(() =>
+			expect(postMock.mock.calls.filter(([path]) => path === "/api/v1/orchestrators/delegate")).toHaveLength(1),
+		);
+		expect(requestBody()).toEqual(
+			expect.objectContaining({
+				agent: "cursor",
+				mode: "tui",
+			}),
+		);
+	});
+
 	it("sends the chosen agent when the user overrides the default", async () => {
 		renderDialog();
 		const user = userEvent.setup();
@@ -175,10 +210,11 @@ describe("NewTaskDialog", () => {
 		await user.click(screen.getByRole("combobox", { name: "Agent" }));
 		await user.click(await screen.findByRole("option", { name: "Cursor" }));
 
-		await user.click(screen.getByRole("button", { name: "Start task" }));
+		await user.click(screen.getByRole("button", { name: "Create as Terminal UI" }));
 
 		await waitFor(() => expect(requestBody).not.toThrow());
 		expect(requestBody().agent).toBe("cursor");
+		expect(requestBody().mode).toBe("tui");
 	});
 
 	it("allows selecting an installed agent with unknown auth", async () => {
@@ -193,10 +229,11 @@ describe("NewTaskDialog", () => {
 		await user.click(options[2]);
 
 		await user.type(screen.getByLabelText("Task"), "B");
-		await user.click(screen.getByRole("button", { name: "Start task" }));
+		await user.click(screen.getByRole("button", { name: "Create as Terminal UI" }));
 
 		await waitFor(() => expect(requestBody).not.toThrow());
 		expect(requestBody().agent).toBe("kiro");
+		expect(requestBody().mode).toBe("tui");
 	});
 
 	it("starts an untitled task without an initial prompt", async () => {

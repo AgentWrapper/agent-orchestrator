@@ -338,6 +338,7 @@
 	"newTask.start": "Iniciar tarefa",
 	"newTask.starting": "Iniciando...",
 	"newTask.title": "Nova tarefa",
+	"newTask.tuiOnlyAgent": "{{agent}} está disponível apenas na interface de terminal.",
 	"newTask.titleLabel": "Título",
 	"newTask.titlePlaceholder": "Corrigir renderer de fallback WebGL",
 	"newTask.titleRequired": "Título e briefing são obrigatórios.",
