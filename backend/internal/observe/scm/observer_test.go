@@ -1593,6 +1593,8 @@ func TestPoll_RefreshReviewsDoesNotDowngradeChangesRequested(t *testing.T) {
 	obsValue.Review.Decision = string(domain.ReviewChangesRequest)
 	review := ports.SCMReviewObservation{
 		Decision: string(domain.ReviewApproved),
+		Partial:  true,
+		Reviews:  []ports.SCMReviewSummaryObservation{{ID: "review-1", Author: "ann", State: string(domain.ReviewApproved), URL: "https://github.com/o/r/pull/1#pullrequestreview-1", SubmittedAt: time.Unix(199, 0).UTC()}},
 		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "fix"}}}},
 	}
 	provider := &fakeProvider{
@@ -1614,9 +1616,16 @@ func TestPoll_RefreshReviewsDoesNotDowngradeChangesRequested(t *testing.T) {
 	if write.pr.Review != domain.ReviewChangesRequest {
 		t.Fatalf("Review = %q, want %q (should not downgrade ChangesRequested to lower-priority decision)", write.pr.Review, domain.ReviewChangesRequest)
 	}
-	// Threads and summaries from FetchReviewThreads must still be adopted.
+	// Threads, summaries, and partial flag from FetchReviewThreads must still
+	// be adopted regardless of the decision guard.
 	if len(write.threads) != 1 || write.threads[0].ThreadID != "t1" {
 		t.Fatalf("expected review thread t1 persisted, got %#v", write.threads)
+	}
+	if len(write.reviews) != 1 || write.reviews[0].ID != "review-1" {
+		t.Fatalf("expected review summary review-1 persisted, got %#v", write.reviews)
+	}
+	if write.reviewMode != ports.ReviewWriteMerge {
+		t.Fatalf("expected ReviewWriteMerge mode when Partial is true, got %v", write.reviewMode)
 	}
 }
 
@@ -1690,6 +1699,43 @@ func TestPoll_RefreshReviewsDowngradeToNoneBlocked(t *testing.T) {
 	write := store.writes[len(store.writes)-1]
 	if write.pr.Review != domain.ReviewChangesRequest {
 		t.Fatalf("Review = %q, want %q (should not downgrade to none)", write.pr.Review, domain.ReviewChangesRequest)
+	}
+	if len(write.threads) != 1 || write.threads[0].ThreadID != "t1" {
+		t.Fatalf("expected review thread t1 persisted, got %#v", write.threads)
+	}
+}
+
+func TestPoll_RefreshReviewsDowngradeToReviewRequiredBlocked(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.Review = domain.ReviewChangesRequest
+	local.ReviewHash = "old-review"
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	// FetchReviewThreads returns Decision="review_required" (priority 2),
+	// which is lower than ReviewChangesRequest (priority 3). The guard must
+	// keep the existing ChangesRequested decision but still adopt the threads.
+	obsValue := testObs(1)
+	obsValue.Review.Decision = string(domain.ReviewChangesRequest)
+	review := ports.SCMReviewObservation{
+		Decision: string(domain.ReviewRequired),
+		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "fix"}}}},
+	}
+	provider := &fakeProvider{
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): obsValue},
+		reviews:      map[string]ports.SCMReviewObservation{prKey(testRepo, 1): review},
+	}
+	obs := newTestObserver(store, provider, nil, time.Unix(500, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("expected a write after review refresh")
+	}
+	write := store.writes[len(store.writes)-1]
+	if write.pr.Review != domain.ReviewChangesRequest {
+		t.Fatalf("Review = %q, want %q (should not downgrade to review_required)", write.pr.Review, domain.ReviewChangesRequest)
 	}
 	if len(write.threads) != 1 || write.threads[0].ThreadID != "t1" {
 		t.Fatalf("expected review thread t1 persisted, got %#v", write.threads)
