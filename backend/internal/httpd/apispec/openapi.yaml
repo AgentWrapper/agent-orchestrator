@@ -4540,6 +4540,7 @@ components:
           - copilot
           - cursor
           - kilocode
+          - kimchi
           - opencode
           - kiro
           - pi
@@ -6791,6 +6792,7 @@ components:
           - copilot
           - cursor
           - kilocode
+          - kimchi
           - opencode
           - kiro
           - pi
@@ -7083,6 +7085,7 @@ components:
           - copilot
           - cursor
           - kilocode
+          - kimchi
           - opencode
           - kiro
           - pi
