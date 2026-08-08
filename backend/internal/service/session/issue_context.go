@@ -8,30 +8,34 @@ import (
 	"strings"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
+	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 const issueContextBodyLimit = 12000
 
-func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) ports.SpawnConfig {
+func (s *Service) withIssueContext(ctx context.Context, cfg ports.SpawnConfig, project domain.ProjectRecord) (ports.SpawnConfig, error) {
 	if cfg.IssueContext != "" || cfg.IssueID == "" || s.tracker == nil {
-		return cfg
+		return cfg, nil
 	}
 	if cfg.Kind != "" && cfg.Kind != domain.KindWorker {
-		return cfg
+		return cfg, nil
 	}
 	id, ok := s.trackerIDForIssue(project, cfg.IssueID)
 	if !ok {
-		return cfg
+		return cfg, nil
 	}
 	issue, err := s.tracker.Get(ctx, id)
 	if err != nil {
-		return cfg
+		return cfg, nil
+	}
+	if issue.State.IsTerminal() {
+		return cfg, apierr.Conflict("ISSUE_CLOSED", fmt.Sprintf("Issue %s is closed. Cannot spawn a session for a closed/cancelled issue.", id.Native), nil)
 	}
 	if issueContext := formatIssueContext(issue); issueContext != "" {
 		cfg.IssueContext = issueContext
 	}
-	return cfg
+	return cfg, nil
 }
 
 func (s *Service) trackerIDForIssue(project domain.ProjectRecord, issueID domain.IssueID) (domain.TrackerID, bool) {

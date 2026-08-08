@@ -540,7 +540,7 @@ func cannotNudge(rec domain.SessionRecord) bool {
 }
 
 func isTerminalTrackerState(state domain.NormalizedIssueState) bool {
-	return state == domain.IssueDone || state == domain.IssueCancelled
+	return state.IsTerminal()
 }
 
 func newBotCommentContent(comments []ports.TrackerCommentObservation) ([]string, []string) {
