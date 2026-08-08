@@ -371,12 +371,9 @@ into structured Chat history.
 
 For TUI drains, AO gates new terminal input before checking quiescence. It accepts
 either an idle fact newer than the last accepted input or an adapter-confirmed
-idle terminal held across the settle window. If newer input contradicts a stale
-idle fact and terminal state cannot be verified, the transition fails after a
-short proof window without stopping the source controller. Activity reported as
-active work or a user-paced decision has no such deadline; an unverified stale
-idle row fails closed instead of guessing which state is on screen. Unsubmitted
-composer text is interface-local and must be submitted or copied before switching.
+idle terminal held across the settle window. A contradictory stale-idle fact has
+a bounded proof window and fails without stopping the source; activity reported
+as active work or a user-paced decision remains unbounded.
 
 ### Observation Flow
 

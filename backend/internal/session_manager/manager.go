@@ -73,10 +73,6 @@ var (
 	// ErrInterfaceTransitionNotCancellable protects the no-overlap invariant once
 	// the source controller is already stopping or stopped.
 	ErrInterfaceTransitionNotCancellable = errors.New("session: interface transition can no longer be cancelled")
-	// ErrDrainQuiescenceUnverified means the source still reports idle, but AO
-	// could not prove that terminal input accepted after that idle fact finished
-	// processing. The handoff does not stop the source controller on this path.
-	ErrDrainQuiescenceUnverified = errors.New("session: terminal quiescence could not be verified")
 	// ErrResumeInProgress prevents concurrent resume requests from replacing the
 	// same runtime twice.
 	ErrResumeInProgress = errors.New("session: agent resume already in progress")
@@ -427,12 +423,9 @@ type sendConfirmConfig struct {
 // making the contradictory stale-idle proof window short and testable. Only an
 // idle row older than accepted PTY input consumes staleIdleLimit.
 type interfaceTransitionConfig struct {
-	pollInterval      time.Duration
-	idleSettle        time.Duration
-	idleSampleMinimum int
-	staleIdleLimit    time.Duration
-	outputReadLimit   time.Duration
-	outputLines       int
+	pollInterval   time.Duration
+	idleSettle     time.Duration
+	staleIdleLimit time.Duration
 }
 
 // Production sendConfirm bounds: 3 Enters total (1 from Send + 2 re-sends),
@@ -508,12 +501,9 @@ func New(d Deps) *Manager {
 			maxAttempts:     sendConfirmMaxAttempts,
 		},
 		interfaceTransition: interfaceTransitionConfig{
-			pollInterval:      interfaceTransitionPoll,
-			idleSettle:        interfaceTransitionIdleSettle,
-			idleSampleMinimum: interfaceTransitionIdleSampleMinimum,
-			staleIdleLimit:    interfaceTransitionStaleIdleLimit,
-			outputReadLimit:   interfaceTransitionOutputReadLimit,
-			outputLines:       interfaceTransitionOutputLines,
+			pollInterval:   interfaceTransitionPoll,
+			idleSettle:     interfaceTransitionIdleSettle,
+			staleIdleLimit: interfaceTransitionStaleIdleLimit,
 		},
 		logger: d.Logger,
 	}

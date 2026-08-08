@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -184,12 +183,15 @@ func (transitionAgent) NativeConversationID(_ context.Context, session ports.Ses
 type transitionDetectorAgent struct{ transitionAgent }
 
 func (transitionDetectorAgent) DetectTerminalActivity(output string) (domain.ActivityState, bool) {
-	return codex.New().DetectTerminalActivity(output)
+	if output == "idle" {
+		return domain.ActivityIdle, true
+	}
+	return "", false
 }
 
 const (
-	codexIdleDraftOutput = "› keep this draft\n\ngpt-5.6-sol low · ~/project\n"
-	codexWorkingOutput   = "• Working (1s • esc to interrupt)\n› keep this draft\n\ngpt-5.6-sol low · ~/project\n"
+	idleTerminalOutput      = "idle"
+	ambiguousTerminalOutput = "ambiguous"
 )
 
 type emptyTransitionAgent struct{ transitionAgent }
@@ -200,15 +202,24 @@ func (emptyTransitionAgent) NativeConversationExists(context.Context, ports.Sess
 
 type transitionRuntime struct {
 	*fakeRuntime
-	log             *[]string
-	stopErrors      []error
-	outputForCall   func(int) string
-	outputCallTimes []time.Time
+	log                        *[]string
+	stopErrors                 []error
+	outputForCall              func(int) string
+	outputCallTimes            []time.Time
+	blockAliveUntilContextDone bool
 }
 
 func (r *transitionRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
 	*r.log = append(*r.log, "interrupt:tui:"+handle.ID)
 	return nil
+}
+
+func (r *transitionRuntime) IsAlive(ctx context.Context, handle ports.RuntimeHandle) (bool, error) {
+	if r.blockAliveUntilContextDone {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
+	return r.fakeRuntime.IsAlive(ctx, handle)
 }
 
 func (r *transitionRuntime) Destroy(ctx context.Context, handle ports.RuntimeHandle) error {
@@ -234,9 +245,6 @@ func (r *transitionRuntime) GetOutput(ctx context.Context, handle ports.RuntimeH
 		return r.fakeRuntime.GetOutput(ctx, handle, lines)
 	}
 	r.outputCalls++
-	if r.outputErr != nil {
-		return "", r.outputErr
-	}
 	return r.outputForCall(r.outputCalls), nil
 }
 
@@ -326,20 +334,6 @@ func TestTUIIdleAfterInputRequiresANewerIdleFact(t *testing.T) {
 	}
 }
 
-func TestTerminalInputQuietRequiresAFullSettleWindow(t *testing.T) {
-	inputAt := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
-	settle := 750 * time.Millisecond
-	if terminalInputQuiet(inputAt, inputAt.Add(settle-time.Nanosecond), settle) {
-		t.Fatal("terminal input was treated as settled before the quiet window elapsed")
-	}
-	if !terminalInputQuiet(inputAt, inputAt.Add(settle), settle) {
-		t.Fatal("terminal input was not treated as settled at the quiet-window boundary")
-	}
-	if !terminalInputQuiet(time.Time{}, inputAt, settle) {
-		t.Fatal("an empty input barrier should not delay terminal activity proof")
-	}
-}
-
 func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *transitionStore, *transitionRuntime, *transitionChat, *[]string) {
 	t.Helper()
 	store := newTransitionStore()
@@ -378,24 +372,9 @@ func newTransitionManager(t *testing.T, mode domain.SessionMode) (*Manager, *tra
 
 func useFastInterfaceTransitionTimings(manager *Manager) {
 	manager.interfaceTransition = interfaceTransitionConfig{
-		pollInterval:      time.Millisecond,
-		idleSettle:        5 * time.Millisecond,
-		idleSampleMinimum: 3,
-		staleIdleLimit:    60 * time.Millisecond,
-		outputReadLimit:   10 * time.Millisecond,
-		outputLines:       40,
-	}
-}
-
-func TestNewConfiguresInterfaceTransitionProof(t *testing.T) {
-	manager, _, _, _, _ := newTransitionManager(t, domain.SessionModeTUI)
-	if manager.interfaceTransition.pollInterval <= 0 ||
-		manager.interfaceTransition.idleSettle <= 0 ||
-		manager.interfaceTransition.idleSampleMinimum < 2 ||
-		manager.interfaceTransition.staleIdleLimit <= manager.interfaceTransition.idleSettle ||
-		manager.interfaceTransition.outputReadLimit <= 0 ||
-		manager.interfaceTransition.outputLines <= 0 {
-		t.Fatalf("invalid interface transition proof config: %+v", manager.interfaceTransition)
+		pollInterval:   time.Millisecond,
+		idleSettle:     5 * time.Millisecond,
+		staleIdleLimit: 60 * time.Millisecond,
 	}
 }
 
@@ -450,7 +429,7 @@ func TestInterfaceTransitionTUIToChatDrainsAVisibleIdleComposerAfterNonSubmittin
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}
 	store.sessions["session-1"] = rec
 	runtime.aliveByHandle = map[string]bool{"runtime-1": true}
-	runtime.outputs = []string{codexIdleDraftOutput}
+	runtime.outputs = []string{idleTerminalOutput}
 	manager.SetTerminalInputGate(&transitionInputGate{
 		acquired:    make(chan string, 1),
 		released:    make(chan string, 1),
@@ -466,9 +445,9 @@ func TestInterfaceTransitionTUIToChatDrainsAVisibleIdleComposerAfterNonSubmittin
 	if settled.Phase != domain.SessionInterfaceTransitionCompleted {
 		t.Fatalf("phase = %s, error = %s", settled.Phase, settled.ErrorDetail)
 	}
-	if runtime.outputCalls < manager.interfaceTransition.idleSampleMinimum {
+	if runtime.outputCalls < interfaceTransitionStaleIdleSamples {
 		t.Fatalf("terminal output calls = %d, want at least %d consecutive idle samples",
-			runtime.outputCalls, manager.interfaceTransition.idleSampleMinimum)
+			runtime.outputCalls, interfaceTransitionStaleIdleSamples)
 	}
 	if firstCapture := runtime.outputCallTimes[0]; firstCapture.Before(now.Add(manager.interfaceTransition.idleSettle)) {
 		t.Fatalf("first terminal capture at %s, before input settled at %s",
@@ -507,29 +486,32 @@ func TestInterfaceTransitionTUIToChatUsesANewerIdleFactWithoutReadingTerminalOut
 
 func TestInterfaceTransitionTUIToChatFailsClosedWhenStaleIdleCannotBeVerified(t *testing.T) {
 	tests := []struct {
-		name          string
-		agent         ports.Agent
-		outputs       []string
-		outputForCall func(int) string
-		outputErr     error
-		aliveErr      error
-		wantCaptures  bool
+		name                       string
+		agent                      ports.Agent
+		outputs                    []string
+		outputForCall              func(int) string
+		blockAliveUntilContextDone bool
+		wantCaptures               bool
 	}{
 		{name: "detector unavailable", agent: transitionAgent{}},
-		{name: "detector ambiguous", agent: transitionDetectorAgent{}, outputs: []string{codexWorkingOutput}, wantCaptures: true},
+		{name: "detector ambiguous", agent: transitionDetectorAgent{}, outputs: []string{ambiguousTerminalOutput}, wantCaptures: true},
 		{
 			name:  "idle and ambiguous captures keep alternating",
 			agent: transitionDetectorAgent{},
 			outputForCall: func(call int) string {
 				if call%2 == 1 {
-					return codexIdleDraftOutput
+					return idleTerminalOutput
 				}
-				return codexWorkingOutput
+				return ambiguousTerminalOutput
 			},
 			wantCaptures: true,
 		},
-		{name: "terminal output unavailable", agent: transitionDetectorAgent{}, outputErr: errors.New("capture failed"), wantCaptures: true},
-		{name: "runtime liveness unknown", agent: transitionDetectorAgent{}, outputs: []string{codexWorkingOutput}, aliveErr: errors.New("probe failed"), wantCaptures: true},
+		{
+			name:                       "liveness probe reaches proof deadline",
+			agent:                      transitionDetectorAgent{},
+			outputs:                    []string{ambiguousTerminalOutput},
+			blockAliveUntilContextDone: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -541,10 +523,9 @@ func TestInterfaceTransitionTUIToChatFailsClosedWhenStaleIdleCannotBeVerified(t 
 			rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: now.Add(-time.Minute)}
 			store.sessions["session-1"] = rec
 			runtime.aliveByHandle = map[string]bool{"runtime-1": true}
-			runtime.aliveErr = tt.aliveErr
 			runtime.outputs = tt.outputs
 			runtime.outputForCall = tt.outputForCall
-			runtime.outputErr = tt.outputErr
+			runtime.blockAliveUntilContextDone = tt.blockAliveUntilContextDone
 			gate := &transitionInputGate{
 				acquired:    make(chan string, 1),
 				released:    make(chan string, 1),

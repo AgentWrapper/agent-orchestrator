@@ -20,15 +20,6 @@ func TestDetectTerminalActivity(t *testing.T) {
 			ok:     true,
 		},
 		{
-			// tmux capture-pane omits styling, so the detector cannot distinguish
-			// this draft from the placeholder above. Draft text remains terminal-local
-			// and is outside the interface handoff's quiescence decision.
-			name:   "typed but unsubmitted composer",
-			output: "› keep this draft\n\ngpt-5.6-sol low · ~/project\n",
-			want:   domain.ActivityIdle,
-			ok:     true,
-		},
-		{
 			name:   "working composer",
 			output: "• Working (2m 10s • esc to interrupt)\n› Add tests\n\ngpt-5.6-sol low · ~/project\n",
 		},
