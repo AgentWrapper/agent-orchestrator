@@ -152,26 +152,21 @@ func TestGetLaunchCommandEmitsToolAllowlist(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Kimchi uses repeated --allow-tool / --deny-tool pairs (one per rule),
-	// not a single comma-joined value, so each rule survives as its own
-	// flag pair even when it contains spaces (e.g. "bash(git diff:*)").
-	if !containsSubsequence(cmd, []string{"--allow-tool", "read"}) {
-		t.Fatalf("missing --allow-tool read pair; got %#v", cmd)
+	// Kimchi's permission loader splits --allow-tool/--deny-tool values by
+	// comma (splitFlag), and repeated flags overwrite (last-wins), so the
+	// adapter must emit a single comma-joined value per flag — not one pair
+	// per rule — to avoid the deny list collapsing to a single entry.
+	if !containsSubsequence(cmd, []string{"--allow-tool", "read,grep,bash(git diff:*)"}) {
+		t.Fatalf("missing single comma-joined --allow-tool; got %#v", cmd)
 	}
-	if !containsSubsequence(cmd, []string{"--allow-tool", "grep"}) {
-		t.Fatalf("missing --allow-tool grep pair; got %#v", cmd)
+	if !containsSubsequence(cmd, []string{"--deny-tool", "edit,write,bash(git push:*)"}) {
+		t.Fatalf("missing single comma-joined --deny-tool; got %#v", cmd)
 	}
-	if !containsSubsequence(cmd, []string{"--allow-tool", "bash(git diff:*)"}) {
-		t.Fatalf("missing --allow-tool bash(git diff:*) pair; got %#v", cmd)
+	if n := countFlagOccurrences(cmd, "--allow-tool"); n != 1 {
+		t.Fatalf("--allow-tool appears %d times, want 1; got %#v", n, cmd)
 	}
-	if !containsSubsequence(cmd, []string{"--deny-tool", "edit"}) {
-		t.Fatalf("missing --deny-tool edit pair; got %#v", cmd)
-	}
-	if !containsSubsequence(cmd, []string{"--deny-tool", "write"}) {
-		t.Fatalf("missing --deny-tool write pair; got %#v", cmd)
-	}
-	if !containsSubsequence(cmd, []string{"--deny-tool", "bash(git push:*)"}) {
-		t.Fatalf("missing --deny-tool bash(git push:*) pair; got %#v", cmd)
+	if n := countFlagOccurrences(cmd, "--deny-tool"); n != 1 {
+		t.Fatalf("--deny-tool appears %d times, want 1; got %#v", n, cmd)
 	}
 }
 
@@ -204,6 +199,19 @@ func containsSubsequence(values, needle []string) bool {
 		}
 	}
 	return false
+}
+
+// countFlagOccurrences counts how many times flagName appears as an element
+// of values, asserting that --allow-tool / --deny-tool are emitted at most
+// once each.
+func countFlagOccurrences(values []string, flagName string) int {
+	n := 0
+	for _, v := range values {
+		if v == flagName {
+			n++
+		}
+	}
+	return n
 }
 
 // containsString reports whether values contains the given string. It is the
