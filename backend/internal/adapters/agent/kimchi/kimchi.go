@@ -50,7 +50,7 @@ func readBoundedSystemPrompt(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(f, systemPromptMaxBytes+1))
 	if err != nil {
