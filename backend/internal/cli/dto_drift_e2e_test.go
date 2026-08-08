@@ -144,6 +144,14 @@ func (f *fakeSessionService) GetWorkspaceFile(context.Context, domain.SessionID,
 	return sessionsvc.WorkspaceFileDetail{}, nil
 }
 
+func (f *fakeSessionService) ListEditors(context.Context) ([]sessionsvc.EditorInfo, error) {
+	return nil, nil
+}
+
+func (f *fakeSessionService) OpenInEditor(context.Context, domain.SessionID, sessionsvc.OpenEditorRequest) (sessionsvc.OpenEditorResult, error) {
+	return sessionsvc.OpenEditorResult{}, nil
+}
+
 func (f *fakeSessionService) StageAttachments(context.Context, domain.SessionID, []ports.SpawnAttachment) ([]string, error) {
 	return nil, nil
 }

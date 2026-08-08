@@ -140,6 +140,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/editors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the external code editors AO can launch on this machine */
+        get: operations["listEditors"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/events": {
         parameters: {
             query?: never;
@@ -895,6 +912,23 @@ export interface paths {
         head?: never;
         /** Configure whether PR completion terminates the session */
         patch: operations["setSessionMergePolicy"];
+        trace?: never;
+    };
+    "/api/v1/sessions/{sessionId}/open-editor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open a session workspace in an external editor, focusing its most recently changed file */
+        post: operations["openSessionEditor"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/sessions/{sessionId}/pin": {
@@ -1802,6 +1836,10 @@ export interface components {
         DomainReviewerConfig: {
             harness: string;
         };
+        EditorSummary: {
+            id: string;
+            name: string;
+        };
         ImportReport: {
             dryRun: boolean;
             notes?: string[];
@@ -1842,6 +1880,9 @@ export interface components {
         };
         ListCompactSessionUsageResponse: {
             sessions: components["schemas"]["CompactSessionUsageResponse"][];
+        };
+        ListEditorsResponse: {
+            editors: components["schemas"]["EditorSummary"][];
         };
         ListNotificationsResponse: {
             nextCursor?: string;
@@ -1940,6 +1981,19 @@ export interface components {
             /** @enum {string} */
             kind: "session" | "pr";
             prUrl?: string;
+            sessionId: string;
+        };
+        OpenSessionEditorRequest: {
+            editorId?: string;
+            path?: string;
+        };
+        OpenSessionEditorResponse: {
+            editorId: string;
+            editorName: string;
+            file: string;
+            ok: boolean;
+            /** @enum {string} */
+            scope: "workspace" | "project";
             sessionId: string;
         };
         OpenShellTerminalRequest: {
@@ -3016,6 +3070,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    listEditors: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListEditorsResponse"];
                 };
             };
             /** @description Internal Server Error */
@@ -5914,6 +6006,69 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SetSessionMergePolicyResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+            /** @description Not Implemented */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["APIError"];
+                };
+            };
+        };
+    };
+    openSessionEditor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Session identifier, e.g. project-1. */
+                sessionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenSessionEditorRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenSessionEditorResponse"];
                 };
             };
             /** @description Bad Request */
