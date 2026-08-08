@@ -1414,11 +1414,20 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 	if rec.IsTerminated {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrTerminated)
 	}
+	mode := domain.NormalizeSessionMode(rec.Mode)
 	if rec.Activity.State != domain.ActivityExited {
-		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
+		// Builds before the controller-stop lifecycle fix can leave a Chat row
+		// idle, active, or blocked even though no controller survived. The live
+		// registry is authoritative for whether a duplicate Chat controller could
+		// be created, so recover only when it confirms there is none. TUI keeps its
+		// existing durable-exited precondition.
+		if mode != domain.SessionModeChat || m.chat == nil || m.chat.HasLiveChatController(id) {
+			return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrAgentNotExited)
+		}
 	}
 	meta := rec.Metadata
-	if meta.WorkspacePath == "" || meta.Branch == "" || meta.RuntimeHandleID == "" {
+	if meta.WorkspacePath == "" || meta.Branch == "" ||
+		(mode != domain.SessionModeChat && meta.RuntimeHandleID == "") {
 		return RestoreResult{}, fmt.Errorf("resume agent %s: %w", id, ErrIncompleteHandle)
 	}
 
@@ -1431,6 +1440,9 @@ func (m *Manager) ResumeAgentWithMode(ctx context.Context, id domain.SessionID) 
 		Branch:    meta.Branch,
 		SessionID: rec.ID,
 		ProjectID: rec.ProjectID,
+	}
+	if mode == domain.SessionModeChat {
+		return m.relaunchSession(ctx, "resume agent", rec, project, ws, nil)
 	}
 	handle := ports.RuntimeHandle{ID: meta.RuntimeHandleID}
 	return m.relaunchSession(ctx, "resume agent", rec, project, ws, &handle)

@@ -166,11 +166,27 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 	defer gate.unlock()
 
 	s.mu.RLock()
-	if existing, ok := s.controllers[cfg.SessionID]; ok {
-		s.mu.RUnlock()
-		return existing, nil
-	}
+	existing := s.controllers[cfg.SessionID]
 	s.mu.RUnlock()
+	if existing != nil {
+		if existing.State() != ports.ChatControllerStopped {
+			return existing, nil
+		}
+		// A stopped event can reach the UI before the projector finishes its final
+		// durable cleanup and the registry goroutine releases the entry. Never hand
+		// that dead controller back as a successful resume. Wait for its stream to
+		// finish, then remove only that generation before opening the replacement.
+		select {
+		case <-existing.stopped:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		s.mu.Lock()
+		if current := s.controllers[cfg.SessionID]; current == existing {
+			delete(s.controllers, cfg.SessionID)
+		}
+		s.mu.Unlock()
+	}
 
 	driver, err := s.drivers.Driver(cfg.Harness)
 	if err != nil {
@@ -324,6 +340,17 @@ func (s *Service) Controller(sessionID domain.SessionID) (*Controller, error) {
 		return nil, ErrNoController
 	}
 	return controller, nil
+}
+
+// HasLiveChatController reports whether the service owns a controller that can
+// still process provider events. A stopped controller can remain in the registry
+// briefly while its final cleanup lands; Start waits for that cleanup before
+// replacing it rather than treating the dead entry as a successful resume.
+func (s *Service) HasLiveChatController(sessionID domain.SessionID) bool {
+	s.mu.RLock()
+	controller := s.controllers[sessionID]
+	s.mu.RUnlock()
+	return controller != nil && controller.State() != ports.ChatControllerStopped
 }
 
 // requireChatSession reads the persisted mode and refuses anything that is not a

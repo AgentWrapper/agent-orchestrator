@@ -259,6 +259,7 @@ func (c *transitionChat) RelayChatTurnWithID(_ context.Context, _ domain.Session
 	c.relayIDs = append(c.relayIDs, clientMessageID)
 	return "", nil
 }
+func (*transitionChat) HasLiveChatController(domain.SessionID) bool { return false }
 func (c *transitionChat) StopChat(_ context.Context, _ domain.SessionID) error {
 	*c.log = append(*c.log, "stop:chat")
 	return nil

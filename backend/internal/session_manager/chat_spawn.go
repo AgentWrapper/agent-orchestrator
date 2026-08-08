@@ -42,6 +42,10 @@ type ChatLauncher interface {
 	// the key through to ChatUserMessage so retry after an uncertain outbox
 	// acknowledgement cannot create a second provider turn.
 	RelayChatTurnWithID(ctx context.Context, id domain.SessionID, text, clientMessageID string) (string, error)
+	// HasLiveChatController reports whether the daemon still owns a controller
+	// for the session. Resume uses this to distinguish a stale durable activity
+	// state left by an older daemon from a genuinely live controller.
+	HasLiveChatController(id domain.SessionID) bool
 	// StopChat releases a session's controller.
 	StopChat(ctx context.Context, id domain.SessionID) error
 }
