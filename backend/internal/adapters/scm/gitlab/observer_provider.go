@@ -494,9 +494,15 @@ func (p *Provider) fetchCI(ctx context.Context, repo ports.SCMRepo, headSHA stri
 	}
 
 	path := fmt.Sprintf("/projects/%s/pipelines", projectPath(repo.Owner, repo.Name))
+	// per_page=1 matches CommitChecksGuard so both call sites produce the same
+	// cache key in Client.doGET's ETag cache. When the guard runs first (the
+	// cheap pre-check) and fetchCI runs second, doGET sends If-None-Match and
+	// receives a 304 — no body transfer, no JSON parse. Only pipelines[0] (the
+	// latest pipeline) is used, so per_page=1 is sufficient. Pipeline-jobs
+	// pagination (per_page=100, doGETPaginated) is intentionally untouched.
 	q := url.Values{
 		"sha":      {headSHA},
-		"per_page": {"10"},
+		"per_page": {"1"},
 		"order_by": {"id"},
 		"sort":     {"desc"},
 	}

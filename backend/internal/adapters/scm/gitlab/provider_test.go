@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -631,6 +632,88 @@ func TestCommitChecksGuard(t *testing.T) {
 	}
 	if !res2.NotModified {
 		t.Error("expected NotModified on second call with same data")
+	}
+}
+
+// TestCommitChecksGuard_ThenFetchPullRequests_Pipelines304Reused asserts that
+// CommitChecksGuard and fetchCI produce the same pipelines-endpoint cache key
+// (same query parameters), so the second call is served as a 304 by the
+// doGET ETag cache rather than a fresh 200. This is ticket 06's core
+// acceptance criterion: aligning per_page=1 across both call sites lets the
+// existing ETag cache do its job across the guard and the full fetch.
+//
+// The test counts 200 responses (full body transfers) on the pipelines
+// endpoint. With the guard running first, it populates the ETag cache; when
+// fetchCI runs second with the same query, it sends If-None-Match and receives
+// a 304 — so the pipelines handler sees exactly one 200.
+func TestCommitChecksGuard_ThenFetchPullRequests_Pipelines304Reused(t *testing.T) {
+	var pipelines200 atomic.Int32
+	var pipelinesTotal atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines", func(w http.ResponseWriter, r *http.Request) {
+		pipelinesTotal.Add(1)
+		// Behave like a real ETag-aware GitLab server: if the client sends
+		// If-None-Match matching our stable ETag, return 304 (no body). This is
+		// what lets the doGET ETag cache downgrade the second call.
+		if inm := r.Header.Get("If-None-Match"); inm == `"pipelines-v1"` {
+			w.Header().Set("ETag", `"pipelines-v1"`)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"pipelines-v1"`)
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 100, "status": "success", "sha": "abc123"},
+		})
+		pipelines200.Add(1)
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"iid": 1, "title": "Fix bug", "state": "opened", "draft": false,
+			"web_url":       "https://gitlab.com/myorg/myrepo/-/merge_requests/1",
+			"source_branch": "fix-bug", "target_branch": "main", "sha": "abc123",
+			"merge_status": "can_be_merged", "author": map[string]any{"username": "alice"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/pipelines/100/jobs", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": 200, "name": "build", "status": "success", "web_url": "https://gitlab.com/jobs/200"},
+		})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"approved": false, "approvals_required": 0, "approved_by": []any{}})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	// 1. Guard runs first (the cheap pre-check). This populates the doGET ETag
+	//    cache for the pipelines endpoint with per_page=1.
+	if _, err := p.CommitChecksGuard(context.Background(), repo, "abc123", ""); err != nil {
+		t.Fatalf("CommitChecksGuard: %v", err)
+	}
+
+	// 2. fetchCI (via FetchPullRequests) runs second with the same query
+	//    parameters. The doGET ETag cache sends If-None-Match and receives a
+	//    304, so the pipelines handler is NOT hit with a fresh 200.
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("expected 1 fetched observation, got %+v", obs)
+	}
+	if obs[0].CI.Summary != "passing" {
+		t.Errorf("CI.Summary = %q, want %q", obs[0].CI.Summary, "passing")
+	}
+
+	// The pipelines endpoint must have been hit exactly once with a 200
+	// (the guard's fetch). The second call (fetchCI) must be served as a 304
+	// by the ETag cache, so the handler never emits a second 200 body.
+	if got := pipelines200.Load(); got != 1 {
+		t.Errorf("pipelines 200 count = %d, want 1 (second call should be a 304 served by ETag cache)", got)
+	}
+	if got := pipelinesTotal.Load(); got != 2 {
+		t.Errorf("pipelines total requests = %d, want 2 (one 200 + one 304)", got)
 	}
 }
 
