@@ -294,6 +294,36 @@ func TestSCMCredentialsAvailable_SurfacesFirstRealError(t *testing.T) {
 	}
 }
 
+// TestSCMCredentialsAvailable_FirstErrorWinsWhenMultipleProvidersFail (Item 8)
+// verifies that when MULTIPLE providers report transient credential errors, the
+// FIRST provider's error (in registration order) is returned — not the second's,
+// and not nil. This closes the gap left by SurfacesFirstRealError, which only has
+// one provider with an error: the "first" in "first real error" is only truly
+// tested when a second error exists to lose to the first. Against the pre-fix
+// code (which discarded errors via `_ = err` and returned `(false, nil)`), this
+// test fails at the `err == nil` assertion.
+func TestSCMCredentialsAvailable_FirstErrorWinsWhenMultipleProvidersFail(t *testing.T) {
+	ghErr := errors.New("github probe 503")
+	glErr := errors.New("gitlab probe 502")
+	gh := &fakeProvider{key: "github", credsAvailable: false, credsErr: ghErr}
+	gl := &fakeProvider{key: "gitlab", credsAvailable: false, credsErr: glErr}
+	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
+
+	avail, err := m.SCMCredentialsAvailable(context.Background())
+	if avail {
+		t.Errorf("want available=false when no provider has credentials")
+	}
+	if err == nil {
+		t.Fatal("want the first real credential error, got nil (must not be discarded)")
+	}
+	if !errors.Is(err, ghErr) {
+		t.Errorf("err = %v, want the first provider's error %v (github is registered first)", err, ghErr)
+	}
+	if errors.Is(err, glErr) {
+		t.Errorf("err = %v, must not be the second provider's error %v", err, glErr)
+	}
+}
+
 // TestSCMCredentialsAvailable_HealthyProviderSuppressesError verifies that a
 // healthy provider's success still wins even when another provider returned a
 // transient credential error (the composite must report available=true, nil).
