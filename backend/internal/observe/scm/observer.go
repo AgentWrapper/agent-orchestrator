@@ -1482,7 +1482,8 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 		if hasObs && obs.Review.Decision != "" {
 			decision = obs.Review.Decision
 		}
-		if !o.needsReviewRefresh(pkey, s.known, decision, hasObs, now) {
+		updatedAtProvider := obs.PR.UpdatedAtProvider
+		if !o.needsReviewRefresh(pkey, s.known, decision, hasObs, updatedAtProvider, now) {
 			continue
 		}
 		review, err := o.provider.FetchReviewThreads(ctx, ports.SCMPRRef{Repo: s.repo, Number: s.known.Number, URL: s.known.URL})
@@ -1524,7 +1525,7 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 	}
 }
 
-func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, decision string, hasObs bool, now time.Time) bool {
+func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, decision string, hasObs bool, updatedAtProvider time.Time, now time.Time) bool {
 	if o.Cache.ReviewRefreshFailed[key] {
 		return true
 	}
@@ -1542,6 +1543,9 @@ func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, deci
 		return true
 	}
 	if local.ReviewHash != "" && string(local.Review) == string(domain.ReviewChangesRequest) && decision != string(domain.ReviewChangesRequest) {
+		return true
+	}
+	if hasObs && !updatedAtProvider.IsZero() && updatedAtProvider.After(local.ReviewObservedAt) {
 		return true
 	}
 	return false

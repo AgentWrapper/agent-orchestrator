@@ -1469,6 +1469,116 @@ func TestPoll_DoesNotCommitCommitETagWhenFetchFails(t *testing.T) {
 	}
 }
 
+func TestNeedsReviewRefresh_UpdatedAtProviderTriggersRefresh(t *testing.T) {
+	store := testStoreWithSession()
+	obs := newTestObserver(store, &fakeProvider{}, nil, time.Unix(500, 0).UTC())
+	key := prKey(testRepo, 1)
+
+	base := domain.PullRequest{
+		Number:           1,
+		Review:           domain.ReviewApproved,
+		ReviewHash:       "hash",
+		ReviewObservedAt: time.Unix(100, 0).UTC(),
+	}
+
+	// updated_at newer than ReviewObservedAt → refresh
+	if !obs.needsReviewRefresh(key, base, string(domain.ReviewApproved), true, time.Unix(200, 0).UTC(), time.Unix(500, 0).UTC()) {
+		t.Fatal("expected refresh when updatedAtProvider is newer than ReviewObservedAt")
+	}
+
+	// updated_at older than ReviewObservedAt → no refresh
+	if obs.needsReviewRefresh(key, base, string(domain.ReviewApproved), true, time.Unix(50, 0).UTC(), time.Unix(500, 0).UTC()) {
+		t.Fatal("expected no refresh when updatedAtProvider is older than ReviewObservedAt")
+	}
+
+	// updated_at equal to ReviewObservedAt → no refresh
+	if obs.needsReviewRefresh(key, base, string(domain.ReviewApproved), true, time.Unix(100, 0).UTC(), time.Unix(500, 0).UTC()) {
+		t.Fatal("expected no refresh when updatedAtProvider equals ReviewObservedAt")
+	}
+
+	// updated_at is zero → no refresh (falls back to existing conditions)
+	if obs.needsReviewRefresh(key, base, string(domain.ReviewApproved), true, time.Time{}, time.Unix(500, 0).UTC()) {
+		t.Fatal("expected no refresh when updatedAtProvider is zero")
+	}
+
+	// hasObs is false → updated_at check skipped, no refresh
+	if obs.needsReviewRefresh(key, base, string(domain.ReviewApproved), false, time.Unix(200, 0).UTC(), time.Unix(500, 0).UTC()) {
+		t.Fatal("expected no refresh when hasObs is false even with newer updatedAtProvider")
+	}
+}
+
+func TestPoll_UpdatedAtProviderTriggersReviewRefresh(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.Review = domain.ReviewApproved
+	local.ReviewHash = "review-hash"
+	local.ReviewObservedAt = time.Unix(100, 0).UTC()
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	obsValue := testObs(1)
+	obsValue.PR.UpdatedAtProvider = time.Unix(200, 0).UTC()
+	obsValue.Review = ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)}
+
+	review := ports.SCMReviewObservation{
+		Decision: string(domain.ReviewApproved),
+		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "comment"}}}},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): obsValue},
+		reviews:      map[string]ports.SCMReviewObservation{prKey(testRepo, 1): review},
+	}
+	now := time.Unix(500, 0).UTC()
+	obs := newTestObserver(store, provider, nil, now)
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provider.reviewCalls != 1 {
+		t.Fatalf("reviewCalls = %d, want 1 (should trigger FetchReviewThreads when updatedAtProvider is newer)", provider.reviewCalls)
+	}
+	if len(store.writes) == 0 {
+		t.Fatal("expected a write after review refresh")
+	}
+	write := store.writes[len(store.writes)-1]
+	if !write.pr.ReviewObservedAt.Equal(now) {
+		t.Fatalf("ReviewObservedAt = %s, want %s", write.pr.ReviewObservedAt, now)
+	}
+	if len(write.threads) != 1 || write.threads[0].ThreadID != "t1" {
+		t.Fatalf("expected review thread t1 persisted, got %#v", write.threads)
+	}
+}
+
+func TestPoll_UpdatedAtProviderStaleDoesNotTriggerReviewRefresh(t *testing.T) {
+	store := testStoreWithSession()
+	obsValue := testObs(1)
+	obsValue.PR.UpdatedAtProvider = time.Unix(100, 0).UTC() // older than ReviewObservedAt
+	obsValue.Review = ports.SCMReviewObservation{Decision: string(domain.ReviewApproved)}
+
+	local := knownPR(1)
+	local.Review = domain.ReviewApproved
+	local.ReviewObservedAt = time.Unix(200, 0).UTC()
+	local.MetadataHash = metadataSemanticHash(obsValue)
+	local.CIHash = ciSemanticHash(obsValue.CI)
+	local.ReviewHash = reviewSemanticHash(obsValue.Review)
+	store.prs["p-1"] = []domain.PullRequest{local}
+
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}},
+		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): obsValue},
+		reviews:      map[string]ports.SCMReviewObservation{prKey(testRepo, 1): {Decision: string(domain.ReviewApproved)}},
+	}
+	obs := newTestObserver(store, provider, nil, time.Unix(500, 0).UTC())
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provider.reviewCalls != 0 {
+		t.Fatalf("reviewCalls = %d, want 0 (stale updatedAtProvider should not trigger refresh)", provider.reviewCalls)
+	}
+	if len(store.writes) != 0 {
+		t.Fatalf("expected no writes when stale, got %d", len(store.writes))
+	}
+}
+
 func TestPoll_LifecycleFailureHoldsBackHashesForDurableRetry(t *testing.T) {
 	store := testStoreWithSession()
 	local := knownPR(1)
