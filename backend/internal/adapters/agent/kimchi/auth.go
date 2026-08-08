@@ -51,7 +51,9 @@ func kimchiGlobalConfigPath() string {
 // kimchiConfigAuthStatus reads the config file and classifies auth status.
 //   - File missing → Unknown (can't determine, user may not have run setup yet).
 //   - apiKey or api_key field present and non-empty → Authorized.
-//   - File exists but no key field → Unauthorized (user has config but no credentials).
+//   - File exists but no key field → Unknown (probe has no workspace path, so
+//     it cannot rule out a workspace-level config.json key that would authorize
+//     the launch; spawn remains the authoritative validation point).
 func kimchiConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) {
 	if configPath == "" {
 		return ports.AgentAuthStatusUnknown, nil
@@ -73,7 +75,7 @@ func kimchiConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) {
 	if key := kimchiExtractAPIKey(config); key != "" {
 		return ports.AgentAuthStatusAuthorized, nil
 	}
-	return ports.AgentAuthStatusUnauthorized, nil
+	return ports.AgentAuthStatusUnknown, nil
 }
 
 // kimchiExtractAPIKey reads the apiKey or api_key field from the parsed config.

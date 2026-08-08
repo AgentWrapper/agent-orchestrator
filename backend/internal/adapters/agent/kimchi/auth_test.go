@@ -83,7 +83,7 @@ func TestConfigAuthStatusPrefersCamelCase(t *testing.T) {
 	}
 }
 
-func TestConfigAuthStatusUnauthorizedWhenNoKey(t *testing.T) {
+func TestConfigAuthStatusUnknownWhenNoKey(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{"otherField":"value","onboarding":{"done":true}}`)
 
@@ -91,12 +91,12 @@ func TestConfigAuthStatusUnauthorizedWhenNoKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusUnauthorized)
+	if got != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusUnknown)
 	}
 }
 
-func TestConfigAuthStatusUnauthorizedWhenKeyEmpty(t *testing.T) {
+func TestConfigAuthStatusUnknownWhenKeyEmpty(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{"apiKey":""}`)
 
@@ -104,8 +104,8 @@ func TestConfigAuthStatusUnauthorizedWhenKeyEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusUnauthorized)
+	if got != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusUnknown)
 	}
 }
 
@@ -145,7 +145,7 @@ func TestConfigAuthStatusUnknownWhenPathEmpty(t *testing.T) {
 	}
 }
 
-func TestConfigAuthStatusIgnoresNonStringKey(t *testing.T) {
+func TestConfigAuthStatusUnknownWhenNonStringKey(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{"apiKey":12345}`)
 
@@ -153,8 +153,8 @@ func TestConfigAuthStatusIgnoresNonStringKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusUnauthorized)
+	if got != ports.AgentAuthStatusUnknown {
+		t.Fatalf("status = %q, want %q", got, ports.AgentAuthStatusUnknown)
 	}
 }
 
@@ -224,7 +224,7 @@ func TestAuthStatusAuthorizedFromConfig(t *testing.T) {
 	}
 }
 
-func TestAuthStatusUnauthorizedFromConfigWithoutKey(t *testing.T) {
+func TestAuthStatusUnknownFromConfigWithoutKey(t *testing.T) {
 	clearKimchiAuthEnv(t)
 	home := withTempHome(t)
 	writeKimchiGlobalConfig(t, home, `{"preferences":{"theme":"dark"}}`)
@@ -234,8 +234,8 @@ func TestAuthStatusUnauthorizedFromConfigWithoutKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != ports.AgentAuthStatusUnauthorized {
-		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusUnauthorized)
+	if got != ports.AgentAuthStatusUnknown {
+		t.Fatalf("AuthStatus = %q, want %q", got, ports.AgentAuthStatusUnknown)
 	}
 }
 
