@@ -727,7 +727,7 @@ describe("terminal link preview", () => {
 		try {
 			act(() => terminalLinkHandler?.("http://localhost:3000"));
 			await waitFor(() =>
-				expect(warning).toHaveBeenCalledWith("Unable to open terminal link in Browser preview", error),
+				expect(warning).toHaveBeenCalledWith("Unable to open link in Browser preview", error),
 			);
 			expect(invalidate).not.toHaveBeenCalled();
 		} finally {

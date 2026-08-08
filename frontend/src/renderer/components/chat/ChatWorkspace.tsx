@@ -58,6 +58,7 @@ import {
 	TurnChangedFiles,
 	TurnOutcome,
 } from "./ChatTimelineItems";
+import { ChatLinkProvider } from "./ChatMarkdown";
 import { ChatComposer } from "./ChatComposer";
 import { ActivityRun } from "./ActivityRun";
 import { TurnPlan } from "./TurnPlan";
@@ -136,6 +137,8 @@ export interface ChatWorkspaceProps {
 	onOpenShell?: () => void;
 	openingShell?: boolean;
 	shellError?: string;
+	/** Open an HTTP(S) link in this session's AO Browser panel. */
+	onLinkOpen?: (url: string) => void;
 	/** A send or decision is in flight. */
 	busy?: boolean;
 	/** The provider's model catalog. Empty hides the model control. */
@@ -212,6 +215,7 @@ export function ChatWorkspace({
 	onOpenShell,
 	openingShell,
 	shellError,
+	onLinkOpen,
 	busy,
 	models,
 	onChooseSettings,
@@ -364,16 +368,18 @@ export function ChatWorkspace({
 				turnInFlight={Boolean(turn)}
 				error={mcpReloadError}
 			/>
-			<Timeline
-				snapshot={snapshot}
-				hasOlder={hasOlder}
-				loadingOlder={loadingOlder}
-				onLoadOlder={onLoadOlder}
-				onDecide={onDecide}
-				onResolveInput={onResolveInput}
-				busy={busy}
-				onRollback={rollbackTarget}
-			/>
+			<ChatLinkProvider onLinkOpen={onLinkOpen}>
+				<Timeline
+					snapshot={snapshot}
+					hasOlder={hasOlder}
+					loadingOlder={loadingOlder}
+					onLoadOlder={onLoadOlder}
+					onDecide={onDecide}
+					onResolveInput={onResolveInput}
+					busy={busy}
+					onRollback={rollbackTarget}
+				/>
+			</ChatLinkProvider>
 
 			<div className="cursor-chat-composer-dock shrink-0 px-4 pb-3 pt-2">
 				<div className="mx-auto flex w-full max-w-3xl flex-col gap-2">
@@ -1103,7 +1109,7 @@ function Timeline({
 			<div
 				ref={scroller}
 				onScroll={onScroll}
-				className="chat-scroll-viewport cursor-chat-timeline h-full overflow-y-auto px-4 py-5"
+				className="chat-scroll-viewport cursor-chat-timeline h-full select-text overflow-y-auto px-4 py-5"
 				role="log"
 				aria-live="polite"
 				aria-label="Conversation"
