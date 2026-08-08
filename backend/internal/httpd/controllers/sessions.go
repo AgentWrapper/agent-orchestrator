@@ -1375,9 +1375,12 @@ func isWindowsAbsolutePath(raw string) bool {
 }
 
 func previewFileURLPath(raw string) (string, bool, error) {
-	parsed, err := url.Parse(raw)
-	if err != nil || !strings.EqualFold(parsed.Scheme, "file") {
+	if len(raw) < len("file:") || !strings.EqualFold(raw[:len("file:")], "file:") {
 		return "", false, nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", true, errPreviewFileNotFound
 	}
 	if parsed.Host != "" && !strings.EqualFold(parsed.Host, "localhost") {
 		return "", true, errPreviewFileOutsideWorkspace

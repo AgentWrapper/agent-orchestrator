@@ -1306,7 +1306,7 @@ func TestSessionsAPI_SetPreviewRejectsWorkspaceSymlinkEscape(t *testing.T) {
 	}
 }
 
-func TestSessionsAPI_SetPreviewMissingAbsoluteFilePathFailsWithoutOverwriting(t *testing.T) {
+func TestSessionsAPI_SetPreviewMissingOrMalformedFileFailsWithoutOverwriting(t *testing.T) {
 	svc := newFakeSessionService()
 	workspace := t.TempDir()
 	missing := filepath.Join(workspace, "implmentation_plan.html")
@@ -1315,9 +1315,11 @@ func TestSessionsAPI_SetPreviewMissingAbsoluteFilePathFailsWithoutOverwriting(t 
 	svc.sessions["ao-1"] = s
 	srv := newSessionTestServer(t, svc)
 
-	body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{"url":`+strconv.Quote(missing)+`}`)
-	if status != http.StatusNotFound {
-		t.Fatalf("set missing absolute preview = %d, want 404; body=%s", status, body)
+	for _, target := range []string{missing, "file:///%"} {
+		body, status, _ := doRequest(t, srv, "POST", "/api/v1/sessions/ao-1/preview", `{"url":`+strconv.Quote(target)+`}`)
+		if status != http.StatusNotFound || !bytes.Contains(body, []byte(`"code":"PREVIEW_FILE_NOT_FOUND"`)) {
+			t.Fatalf("set unavailable file preview %q = %d, want 404; body=%s", target, status, body)
+		}
 	}
 	if got := svc.sessions["ao-1"].Metadata.PreviewURL; got != "http://localhost:4321/docs" {
 		t.Fatalf("persisted previewUrl = %q, want existing target preserved", got)
