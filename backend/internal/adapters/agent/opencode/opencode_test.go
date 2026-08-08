@@ -937,3 +937,10 @@ func contains(values []string, needle string) bool {
 	}
 	return false
 }
+
+func TestExitDetectionUsesAOProcessSupervisor(t *testing.T) {
+	plugin := &Plugin{}
+	if got := plugin.ExitDetectionMode(); got != ports.AgentExitDetectionSupervisor {
+		t.Fatalf("exit detection mode = %q, want %q", got, ports.AgentExitDetectionSupervisor)
+	}
+}
