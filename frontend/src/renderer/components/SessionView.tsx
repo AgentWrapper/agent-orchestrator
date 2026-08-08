@@ -572,7 +572,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
-				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
+				{/* RRP's inner panel defaults to overflow:auto. Nothing scrolls at pane level,
+				    so clip the chat rail's active marker instead of creating a horizontal scrollbar. */}
+				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%" style={{ overflow: "hidden" }}>
 					<div className="relative h-full min-h-0">
 						{/* The committed mode owns the agent surface. Auxiliary shell and
 						    reviewer targets remain terminal surfaces in either mode. */}
