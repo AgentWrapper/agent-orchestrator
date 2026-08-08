@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 import type { TFunction } from "i18next";
 import { terminalTargetBelongsToSession, type TerminalTarget } from "../types/terminal";
 import { sessionIsActive, type WorkspaceSession } from "../types/workspace";
-import { useUiStore, type Theme } from "../stores/ui-store";
+import type { Theme } from "../stores/ui-store";
 import {
 	useTerminalSession,
 	type AttachableTerminal,
@@ -24,7 +24,6 @@ import {
 } from "../hooks/useTerminalSession";
 import { useSessionBrowserLink } from "../hooks/useSessionBrowserLink";
 import { getApiBaseUrl } from "../lib/api-client";
-import { createUrlWatcher, type UrlWatcher } from "../lib/detect-urls";
 import {
 	createTerminalMux,
 	createTerminalMuxPool,
@@ -886,32 +885,6 @@ function AttachedTerminal({
 	// A shell pane has no session, so it hands the hook its handle directly
 	// instead of reading one off `attachSession`.
 	const shellTerminalHandleId = terminalTarget?.kind === "shell" ? terminalTarget.handleId : undefined;
-	// Glow the Browser tab when the agent prints a URL in this worker's terminal
-	// (e.g. a pushed-PR link). Detection only badges — the user still chooses to
-	// open it — and is skipped while they are already looking at the Browser tab.
-	const watchLinks = Boolean(session?.id && session.kind === "worker" && terminalTarget?.kind !== "shell");
-	const urlWatcherRef = useRef<UrlWatcher | null>(null);
-	const isVisibleRef = useRef(isVisible);
-	isVisibleRef.current = isVisible;
-	const handleOutput = useCallback(
-		(text: string) => {
-			const sessionId = session?.id;
-			if (!sessionId) return;
-			if (!urlWatcherRef.current) {
-				urlWatcherRef.current = createUrlWatcher(() => {
-					const store = useUiStore.getState();
-					const current = store.inspectorSessions[sessionId];
-					const viewingBrowser =
-						isVisibleRef.current &&
-						(current?.isOpen ?? true) &&
-						(current?.view ?? "summary") === "browser";
-					if (!viewingBrowser) store.setBrowserUnseen(sessionId, true);
-				});
-			}
-			urlWatcherRef.current.push(text);
-		},
-		[session?.id],
-	);
 	const { attach, state, error, replaySettled, syncVisibleSize } = useTerminalSession(attachSession, {
 		coverInitialReplay: terminalTarget?.kind !== "reviewer",
 		createMux,
@@ -919,7 +892,6 @@ function AttachedTerminal({
 		inputDisabled,
 		isVisible,
 		shellTerminalHandleId,
-		onOutput: watchLinks ? handleOutput : undefined,
 	});
 	// xterm's write callback means the replay has been parsed, not that the
 	// browser has painted its final viewport. Keep the first-load cover mounted
