@@ -222,12 +222,6 @@ type restMR struct {
 	MergeStatus         string `json:"merge_status"`
 	DetailedMergeStatus string `json:"detailed_merge_status"`
 
-	DiffStats struct {
-		Additions int `json:"additions"`
-		Deletions int `json:"deletions"`
-		Changes   int `json:"changes"`
-	} `json:"diff_stats"`
-
 	Author struct {
 		Username string `json:"username"`
 	} `json:"author"`
@@ -274,9 +268,6 @@ func mrToSCMPRObservation(repo ports.SCMRepo, mr *restMR) ports.SCMPRObservation
 		TargetBranch:             mr.TargetBranch,
 		HeadSHA:                  mr.SHA,
 		Title:                    mr.Title,
-		Additions:                mr.DiffStats.Additions,
-		Deletions:                mr.DiffStats.Deletions,
-		ChangedFiles:             mr.DiffStats.Changes,
 		Author:                   mr.Author.Username,
 		ProviderState:            mr.State,
 		ProviderMergeable:        mr.MergeStatus,
