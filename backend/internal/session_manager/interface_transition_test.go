@@ -836,7 +836,7 @@ func TestSendQueuesDuringInterfaceTransition(t *testing.T) {
 		TargetMode: domain.SessionModeChat, Policy: domain.SessionInterfaceTransitionDrain,
 		Phase: domain.SessionInterfaceTransitionDraining, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := manager.Send(context.Background(), "session-1", "CI failed on linux"); err != nil {
+	if err := manager.Send(context.Background(), "session-1", "CI failed on linux", nil); err != nil {
 		t.Fatal(err)
 	}
 	messages, err := store.ListPendingSessionInterfaceTransitionMessages(context.Background(), "transition-1")
@@ -869,7 +869,7 @@ func TestTransitionMessagesReturnToSourceAfterPreflightFailure(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("preflight did not start")
 	}
-	if err := manager.Send(context.Background(), "session-1", "CI failed on linux"); err != nil {
+	if err := manager.Send(context.Background(), "session-1", "CI failed on linux", nil); err != nil {
 		t.Fatal(err)
 	}
 	close(chat.preflightRelease)

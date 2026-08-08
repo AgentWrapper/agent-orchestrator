@@ -624,7 +624,9 @@ type fakeSessionLifecycle struct {
 	restoreErr       error
 }
 
-func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string) error { return nil }
+func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
+	return nil
+}
 
 func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
 	return false, nil

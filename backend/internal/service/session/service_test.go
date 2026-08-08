@@ -1141,7 +1141,7 @@ func (f *fakeCommander) WaitForMessageDeliveryReady(_ context.Context, id domain
 	f.ready = append(f.ready, id)
 	return f.readyErr
 }
-func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string) error {
+func (f *fakeCommander) Send(_ context.Context, id domain.SessionID, message string, _ *ports.SpawnAttachment) error {
 	if f.sendFunc != nil {
 		return f.sendFunc(id, message)
 	}

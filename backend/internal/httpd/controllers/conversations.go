@@ -429,10 +429,10 @@ func (c *ConversationsController) send(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func conversationContent(req SendConversationMessageRequest) ([]ports.ChatContent, *spawnAttachmentError) {
-	spawnInputs := make([]SpawnAttachmentInput, 0, len(req.Attachments))
+func conversationContent(req SendConversationMessageRequest) ([]ports.ChatContent, *attachmentError) {
+	spawnInputs := make([]AttachmentInput, 0, len(req.Attachments))
 	for _, attachment := range req.Attachments {
-		spawnInputs = append(spawnInputs, SpawnAttachmentInput{
+		spawnInputs = append(spawnInputs, AttachmentInput{
 			MimeType: attachment.MIMEType,
 			Data:     attachment.Data,
 		})
@@ -449,7 +449,7 @@ func conversationContent(req SendConversationMessageRequest) ([]ports.ChatConten
 	}
 	for _, resource := range req.Resources {
 		if strings.TrimSpace(resource.URI) == "" || strings.TrimSpace(resource.Name) == "" {
-			return nil, &spawnAttachmentError{"INVALID_RESOURCE", "resource uri and name are required"}
+			return nil, &attachmentError{"INVALID_RESOURCE", "resource uri and name are required"}
 		}
 		kind, text := "resource_link", ""
 		if resource.Text != nil {

@@ -175,11 +175,12 @@ type SpawnSessionRequest struct {
 	// Attachments are files pasted or dropped into the task brief. Each carries
 	// its bytes as standard base64 (no data: URL prefix). The daemon writes them
 	// into the session worktree and appends path references to the prompt.
-	Attachments []SpawnAttachmentInput `json:"attachments,omitempty"`
+	Attachments []AttachmentInput `json:"attachments,omitempty"`
 }
 
-// SpawnAttachmentInput is one file attached to a spawn request.
-type SpawnAttachmentInput struct {
+// AttachmentInput is one file attached to a spawn, delegate, stage, or send
+// request.
+type AttachmentInput struct {
 	// MimeType is the browser-reported content type (e.g. "image/png"). Used to
 	// derive the on-disk file extension. Explicitly blocked types are rejected.
 	MimeType string `json:"mimeType,omitempty"`
@@ -207,7 +208,7 @@ type SpawnSessionResponse struct {
 type StageSessionAttachmentsRequest struct {
 	// Attachments each carry their bytes as standard base64 (no data: URL prefix).
 	// The same count, size, and blocked-type rules as spawn apply.
-	Attachments []SpawnAttachmentInput `json:"attachments"`
+	Attachments []AttachmentInput `json:"attachments"`
 }
 
 // StageSessionAttachmentsResponse is where the files were written.
@@ -461,6 +462,10 @@ type CleanupSessionsResponse struct {
 // SendSessionMessageRequest is the body of POST /api/v1/sessions/{sessionId}/send.
 type SendSessionMessageRequest struct {
 	Message string `json:"message" minLength:"1" maxLength:"4096"`
+	// Attachment is an optional inline image (e.g. a browser-annotation
+	// snapshot) delivered alongside the message. The daemon writes it into the
+	// session worktree and appends a path reference to the message.
+	Attachment *AttachmentInput `json:"attachment,omitempty"`
 }
 
 // SendSessionMessageResponse is the body of POST /api/v1/sessions/{sessionId}/send.
@@ -484,7 +489,7 @@ type DelegateTaskRequest struct {
 	// brief. Each carries bytes as standard base64 (no data: URL prefix). The
 	// daemon writes them into the spawned worker worktree and appends path
 	// references to the worker prompt.
-	Attachments []SpawnAttachmentInput `json:"attachments,omitempty"`
+	Attachments []AttachmentInput `json:"attachments,omitempty"`
 }
 
 // DelegateTaskResponse confirms which worker was spawned and, when available,

@@ -47,6 +47,11 @@ const (
 	// decoded total by ~4/3) would allocate in full first. Derived from the
 	// decoded total plus headroom for the prompt and JSON envelope.
 	maxSpawnBodyBytes = maxAttachmentsBytes*4/3 + (2 << 20)
+	// maxSendBodyBytes is the /send equivalent of maxSpawnBodyBytes, sized off
+	// maxAttachmentBytes (one attachment) rather than maxAttachmentsBytes
+	// (spawn's up-to-eight): unlike spawn, a send carries at most one inline
+	// attachment.
+	maxSendBodyBytes = maxAttachmentBytes*4/3 + (2 << 20)
 )
 
 // blockedAttachmentMimes contains MIME types that are explicitly rejected for
@@ -76,7 +81,7 @@ type SessionService interface {
 	SetPreview(ctx context.Context, id domain.SessionID, previewURL string) (domain.Session, error)
 	SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool) (domain.Session, error)
 	SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error)
-	Send(ctx context.Context, id domain.SessionID, message string) error
+	Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error
 	DelegateTask(ctx context.Context, in sessionsvc.DelegateTaskInput) (sessionsvc.DelegateTaskOutcome, error)
 	ListPRSummaries(ctx context.Context, id domain.SessionID) ([]sessionsvc.PRSummary, error)
 	ClaimPR(ctx context.Context, id domain.SessionID, ref string, opts sessionsvc.ClaimPROptions) (sessionsvc.ClaimPRResult, error)
@@ -245,9 +250,9 @@ func (c *SessionsController) spawn(w http.ResponseWriter, r *http.Request) {
 	envelope.WriteJSON(w, http.StatusCreated, SpawnSessionResponse{Session: sessionView(sess), PromptBytes: promptBytes, SystemPromptBytes: systemPromptBytes})
 }
 
-// spawnAttachmentError carries a client-facing API error code + message for a
+// attachmentError carries a client-facing API error code + message for a
 // rejected attachment payload.
-type spawnAttachmentError struct {
+type attachmentError struct {
 	code    string
 	message string
 }
@@ -299,45 +304,52 @@ func extensionForMimeType(mimeType string) string {
 	return ".bin"
 }
 
+// decodeAttachment validates and base64-decodes a single inline file
+// attachment shared by spawn, delegate, stage, and send requests, enforcing
+// the blocked-MIME-type rule and per-file size cap. Callers handling multiple
+// attachments are responsible for the count and total-size caps.
+func decodeAttachment(a AttachmentInput) (ports.SpawnAttachment, *attachmentError) {
+	mimeType := strings.ToLower(strings.TrimSpace(a.MimeType))
+	if blockedAttachmentMimes[mimeType] {
+		return ports.SpawnAttachment{}, &attachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
+	}
+	ext := extensionForMimeType(mimeType)
+	data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
+	if err != nil {
+		return ports.SpawnAttachment{}, &attachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
+	}
+	if len(data) == 0 {
+		return ports.SpawnAttachment{}, &attachmentError{"INVALID_ATTACHMENT_DATA", "attachment is empty"}
+	}
+	if len(data) > maxAttachmentBytes {
+		return ports.SpawnAttachment{}, &attachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
+	}
+	return ports.SpawnAttachment{Ext: ext, Data: data}, nil
+}
+
 // decodeSpawnAttachments validates and base64-decodes the inline file
 // attachments from a spawn request, enforcing count, per-file, and total size
 // caps. It accepts any MIME type except explicitly blocked ones (e.g., SVG
 // for security reasons). Returns a nil slice when there are no attachments.
-func decodeSpawnAttachments(in []SpawnAttachmentInput) ([]ports.SpawnAttachment, *spawnAttachmentError) {
+func decodeSpawnAttachments(in []AttachmentInput) ([]ports.SpawnAttachment, *attachmentError) {
 	if len(in) == 0 {
 		return nil, nil
 	}
 	if len(in) > maxAttachments {
-		return nil, &spawnAttachmentError{"TOO_MANY_ATTACHMENTS", "too many attachments"}
+		return nil, &attachmentError{"TOO_MANY_ATTACHMENTS", "too many attachments"}
 	}
 	out := make([]ports.SpawnAttachment, 0, len(in))
 	total := 0
 	for _, a := range in {
-		mimeType := strings.ToLower(strings.TrimSpace(a.MimeType))
-
-		// Check for blocked MIME types (e.g., SVG for security)
-		if blockedAttachmentMimes[mimeType] {
-			return nil, &spawnAttachmentError{"UNSUPPORTED_ATTACHMENT_TYPE", "unsupported attachment type"}
-		}
-
-		// Get file extension for the MIME type
-		ext := extensionForMimeType(mimeType)
-
-		data, err := base64.StdEncoding.DecodeString(strings.TrimSpace(a.Data))
+		attachment, err := decodeAttachment(a)
 		if err != nil {
-			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment data is not valid base64"}
+			return nil, err
 		}
-		if len(data) == 0 {
-			return nil, &spawnAttachmentError{"INVALID_ATTACHMENT_DATA", "attachment is empty"}
-		}
-		if len(data) > maxAttachmentBytes {
-			return nil, &spawnAttachmentError{"ATTACHMENT_TOO_LARGE", "attachment is too large"}
-		}
-		total += len(data)
+		total += len(attachment.Data)
 		if total > maxAttachmentsBytes {
-			return nil, &spawnAttachmentError{"ATTACHMENTS_TOO_LARGE", "attachments are too large"}
+			return nil, &attachmentError{"ATTACHMENTS_TOO_LARGE", "attachments are too large"}
 		}
-		out = append(out, ports.SpawnAttachment{Ext: ext, Data: data})
+		out = append(out, attachment)
 	}
 	return out, nil
 }
@@ -1037,6 +1049,7 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/send")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxSendBodyBytes)
 	var in SendSessionMessageRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
@@ -1050,8 +1063,17 @@ func (c *SessionsController) send(w http.ResponseWriter, r *http.Request) {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "MESSAGE_TOO_LONG", "Message is too long", nil)
 		return
 	}
+	var attachment *ports.SpawnAttachment
+	if in.Attachment != nil {
+		decoded, attachErr := decodeAttachment(*in.Attachment)
+		if attachErr != nil {
+			envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
+			return
+		}
+		attachment = &decoded
+	}
 	message := domain.SanitizeControlChars(in.Message)
-	if err := c.Svc.Send(r.Context(), sessionID(r), message); err != nil {
+	if err := c.Svc.Send(r.Context(), sessionID(r), message, attachment); err != nil {
 		envelope.WriteError(w, r, err)
 		return
 	}

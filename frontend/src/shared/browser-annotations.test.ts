@@ -37,33 +37,11 @@ describe("createBrowserAnnotationContext", () => {
 		expect(context.id).toBe("save");
 		expect(context.classes).toEqual(["primary", "cta"]);
 		expect(context.selector).toBe("button#save");
-		expect(context.rect).toEqual({ x: 16, y: 24, width: 140, height: 36 });
+		expect(context.size).toEqual({ width: 140, height: 36 });
 		expect(context.visibleText).toBe("Save changes");
 		expect(context.ariaLabel).toBe("Save profile");
-		expect(context.nearbyText.join(" ")).toContain("Changes apply to the active customer profile.");
 		expect(context.computedStyle.fontSize).toBe("18px");
 		expect(context.computedStyle.fontWeight).toBe("700");
-	});
-
-	it("keeps nearby text local to the selected element instead of capturing the whole page", () => {
-		document.body.innerHTML = `
-			<main>
-				<section id="chart">
-					<h2>Revenue chart</h2>
-					<p>Monthly sales by region.</p>
-				</section>
-				<section>
-					<h2>Alerts</h2>
-					<p>${"Unrelated alert copy. ".repeat(80)}</p>
-				</section>
-			</main>
-		`;
-		const chart = document.querySelector<HTMLElement>("#chart")!;
-
-		const context = createBrowserAnnotationContext(chart);
-
-		expect(context.nearbyText.join(" ")).toContain("Revenue chart");
-		expect(context.nearbyText.join(" ")).not.toContain("Unrelated alert copy");
 	});
 });
 
@@ -81,10 +59,9 @@ describe("formatBrowserAnnotationMessage", () => {
 					id: "save",
 					classes: ["primary"],
 					selector: "button#save",
-					rect: { x: 16, y: 24, width: 140, height: 36 },
+					size: { width: 140, height: 36 },
 					visibleText: "Save changes",
 					ariaLabel: "Save profile",
-					nearbyText: ["Profile settings"],
 					computedStyle: {
 						display: "inline-flex",
 						position: "static",
@@ -99,12 +76,44 @@ describe("formatBrowserAnnotationMessage", () => {
 			},
 		});
 
-		expect(message).toContain("Make the save button blue and larger.");
-		expect(message).toContain("http://localhost:5173/settings");
-		expect(message).toContain("button#save");
-		expect(message).toContain("Save changes");
-		expect(message).toContain("Do not start, restart, or background a dev server");
-		expect(message).toContain("Do not run watch-mode or long-running commands");
+		expect(message).toContain("Browser annotation — apply this change");
+		expect(message).toContain("Request: Make the save button blue and larger.");
+		expect(message).toContain("Target: button#save.primary (button#save)");
+		expect(message).toContain('Page: http://localhost:5173/settings — "Settings"');
+		expect(message).toContain("Size: 140×36");
+		expect(message).toContain('Text: "Save changes"');
+		expect(message).toContain('Aria-label: "Save profile"');
+		expect(message).toContain(
+			"Style: display:inline-flex; position:static; color:rgb(255,255,255); background:rgb(0,0,0); font:600 14px; padding:8px 12px; margin:0px",
+		);
+		expect(message).toContain(
+			"Constraints: smallest diff that satisfies the request; no watch-mode or long-running commands; use finite verification commands or the existing preview watcher.",
+		);
+		expect(message).not.toContain("Do not start, restart, or background a dev server");
+	});
+
+	it("omits optional lines when the element has no text, aria-label, or style data", () => {
+		const message = formatBrowserAnnotationMessage({
+			viewId: "1:sess-1",
+			instruction: "Move this over.",
+			selection: {
+				kind: "element",
+				context: {
+					url: "http://localhost:5173/",
+					tag: "div",
+					classes: [],
+					selector: "div:nth-of-type(3)",
+					size: { width: 40, height: 40 },
+					computedStyle: {},
+				},
+			},
+		});
+
+		expect(message).not.toContain("Text:");
+		expect(message).not.toContain("Aria-label:");
+		expect(message).not.toContain("Style:");
+		expect(message).toContain("Target: div (div:nth-of-type(3))");
+		expect(message).toContain("Page: http://localhost:5173/");
 	});
 
 	it("keeps the message below the daemon send-message limit", () => {
@@ -119,9 +128,8 @@ describe("formatBrowserAnnotationMessage", () => {
 					tag: "div",
 					classes: [],
 					selector: "body > div:nth-of-type(1)",
-					rect: { x: 0, y: 0, width: 100, height: 100 },
+					size: { width: 100, height: 100 },
 					visibleText: "Long visible text ".repeat(500),
-					nearbyText: ["Nearby copy ".repeat(500)],
 					computedStyle: {},
 				},
 			},
@@ -137,8 +145,7 @@ describe("formatBrowserAnnotationMessage", () => {
 			tag: "button",
 			classes: [],
 			selector: "button",
-			rect: { x: 10, y: 20, width: 80, height: 30 },
-			nearbyText: [],
+			size: { width: 80, height: 30 },
 			computedStyle: {},
 			...overrides,
 		});
@@ -154,10 +161,10 @@ describe("formatBrowserAnnotationMessage", () => {
 			},
 		});
 
-		expect(message).toContain("The user selected 2 elements in the AO browser preview and asked for a change.");
-		expect(message).toContain("Selected elements (2) at http://localhost:5173/:");
-		expect(message).toContain("1. button#save (selector: button#save, bounds: x=10, y=20, width=80, height=30)");
-		expect(message).toContain("2. button#cancel (selector: button#cancel, bounds: x=10, y=20, width=80, height=30)");
+		expect(message).toContain("Browser annotation — apply this change to 2 selected elements");
+		expect(message).toContain("Targets @ http://localhost:5173/:");
+		expect(message).toContain("1. button#save (selector: button#save) — 80×30");
+		expect(message).toContain("2. button#cancel (selector: button#cancel) — 80×30");
 	});
 
 	it("pluralizes correctly for a single-element multi-selection", () => {
@@ -172,16 +179,14 @@ describe("formatBrowserAnnotationMessage", () => {
 						tag: "button",
 						classes: [],
 						selector: "button#fix-me",
-						rect: { x: 10, y: 20, width: 80, height: 30 },
-						nearbyText: [],
+						size: { width: 80, height: 30 },
 						computedStyle: {},
 					},
 				],
 			},
 		});
 
-		expect(message).toContain("The user selected 1 element in the AO browser preview and asked for a change.");
-		expect(message).toContain("Selected element (1) at http://localhost:5173/:");
-		expect(message).not.toContain("1 elements");
+		expect(message).toContain("Browser annotation — apply this change to 1 selected element");
+		expect(message).not.toContain("1 selected elements");
 	});
 });

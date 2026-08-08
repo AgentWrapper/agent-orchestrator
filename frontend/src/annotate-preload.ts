@@ -538,15 +538,24 @@ function openPrompt(
 		const current = currentPromptRect();
 		if (current) repositionPrompt(current);
 	};
-	const submitAnnotation = (): boolean => {
+	let submitting = false;
+	const submitAnnotation = (): void => {
+		if (submitting) return;
 		const instruction = textarea.value.trim();
 		if (!instruction) {
 			textarea.focus();
-			return false;
+			return;
 		}
-		ipcRenderer.send("browser:annotation:submit", buildPayload(instruction));
-		setEnabled(false, "disabled");
-		return true;
+		submitting = true;
+		// Hide the input chrome but leave the highlight/selection boxes up, then
+		// wait a paint before invoking so the main process captures a clean
+		// snapshot of the picked element(s) — not the annotation popup itself.
+		// invoke (not send) so the overlay teardown below cannot race the
+		// snapshot capture in the main process.
+		mount.innerHTML = "";
+		void waitForPaint()
+			.then(() => ipcRenderer.invoke("browser:annotation:submit", buildPayload(instruction)))
+			.then(() => setEnabled(false, "disabled"));
 	};
 	form.addEventListener("submit", (event) => {
 		event.preventDefault();
@@ -630,6 +639,14 @@ function promptPosition(
 		promptHeight,
 		gutter: PROMPT_GUTTER,
 		gap: PROMPT_GAP,
+	});
+}
+
+// Resolves after the DOM mutation made just before calling this has been
+// painted, so a capture taken right after is guaranteed to reflect it.
+function waitForPaint(): Promise<void> {
+	return new Promise((resolve) => {
+		requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
 	});
 }
 

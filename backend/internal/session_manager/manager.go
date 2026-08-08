@@ -2353,7 +2353,18 @@ func (m *Manager) applyWorkspaceProjectPreserved(ctx context.Context, rows []por
 // (flipped to active by the user-prompt-submit hook) and re-sends Enter until
 // the session is active or the budget is exhausted. Confirmation never fails
 // the send: it only decides whether to nudge again.
-func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string) error {
+func (m *Manager) Send(ctx context.Context, id domain.SessionID, message string, attachment *ports.SpawnAttachment) error {
+	if attachment != nil {
+		// Reuses StageAttachments rather than a bespoke writer: it already owns the
+		// empty-workspace guard (refusing beats writing under the daemon's cwd),
+		// randomized naming safe for a session sent to repeatedly, directory
+		// creation, and the git-exclude step.
+		refs, err := m.StageAttachments(ctx, id, []ports.SpawnAttachment{*attachment})
+		if err != nil {
+			return fmt.Errorf("send %s: attachment: %w", id, err)
+		}
+		message = appendAttachmentReferences(message, refs)
+	}
 	return m.send(ctx, id, message, "")
 }
 

@@ -120,7 +120,7 @@ func (f *fakeSessionService) SetReviewerHarness(context.Context, domain.SessionI
 	return domain.Session{}, nil
 }
 
-func (f *fakeSessionService) Send(context.Context, domain.SessionID, string) error {
+func (f *fakeSessionService) Send(context.Context, domain.SessionID, string, *ports.SpawnAttachment) error {
 	return nil
 }
 

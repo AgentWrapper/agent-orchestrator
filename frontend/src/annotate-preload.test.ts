@@ -9,6 +9,7 @@ const electronMocks = vi.hoisted(() => {
 			listeners.set(channel, listener);
 		}),
 		send: vi.fn(),
+		invoke: vi.fn().mockResolvedValue(undefined),
 	};
 });
 
@@ -16,6 +17,7 @@ vi.mock("electron", () => ({
 	ipcRenderer: {
 		on: electronMocks.on,
 		send: electronMocks.send,
+		invoke: electronMocks.invoke,
 	},
 }));
 
@@ -111,15 +113,24 @@ function promptForm(): HTMLFormElement | null {
 	return overlayRoot().querySelector<HTMLFormElement>("form");
 }
 
-function submitPrompt(instruction: string): BrowserAnnotationPageSubmitPayload {
+// Submit now hides the prompt chrome and awaits a double-requestAnimationFrame
+// before invoking (see annotate-preload.ts), so the invoke call lands a real
+// tick after the dispatched submit event — vi.waitFor polls for it instead of
+// asserting synchronously.
+async function submitPrompt(instruction: string): Promise<BrowserAnnotationPageSubmitPayload> {
 	const root = overlayRoot();
 	const textarea = root.querySelector<HTMLTextAreaElement>("textarea");
 	const form = root.querySelector<HTMLFormElement>("form");
 	if (!textarea || !form) throw new Error("annotation prompt was not rendered");
 	textarea.value = instruction;
 	form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-	const submitCall = electronMocks.send.mock.calls.find(([channel]) => channel === "browser:annotation:submit");
-	if (!submitCall) throw new Error("annotation submit was not sent");
+	await vi.waitFor(() => {
+		if (electronMocks.invoke.mock.calls.every(([channel]) => channel !== "browser:annotation:submit")) {
+			throw new Error("annotation submit was not invoked");
+		}
+	});
+	const submitCall = electronMocks.invoke.mock.calls.find(([channel]) => channel === "browser:annotation:submit");
+	if (!submitCall) throw new Error("annotation submit was not invoked");
 	return submitCall[1] as BrowserAnnotationPageSubmitPayload;
 }
 
@@ -127,6 +138,7 @@ describe("annotate preload", () => {
 	beforeEach(() => {
 		document.body.innerHTML = "";
 		electronMocks.send.mockClear();
+		electronMocks.invoke.mockClear();
 		fontMocks.add.mockClear();
 		fontMocks.families.length = 0;
 		setAnnotationMode(true);
@@ -136,6 +148,7 @@ describe("annotate preload", () => {
 		setAnnotationMode(false);
 		document.body.innerHTML = "";
 		electronMocks.send.mockClear();
+		electronMocks.invoke.mockClear();
 	});
 
 	it("keeps the selected highlight locked while the prompt is open", () => {
@@ -167,14 +180,14 @@ describe("annotate preload", () => {
 		expect(highlightStyle().top).toBe("24px");
 	});
 
-	it("submits the captured selected element after an ignored page click", () => {
+	it("submits the captured selected element after an ignored page click", async () => {
 		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
 		const second = elementWithBounds("second", { left: 240, top: 160, width: 80, height: 30 });
 
 		dispatchPageEvent(first, "click");
 		dispatchPageEvent(second, "click");
 
-		const payload = submitPrompt("Make this button blue.");
+		const payload = await submitPrompt("Make this button blue.");
 
 		expect(payload.instruction).toBe("Make this button blue.");
 		expect(payload.selection.kind).toBe("element");
@@ -182,7 +195,7 @@ describe("annotate preload", () => {
 		expect(payload.selection.context.selector).toBe("button#first");
 	});
 
-	it("renders a compact auto-growing prompt and submits from the embedded action", () => {
+	it("renders a compact auto-growing prompt and submits from the embedded action", async () => {
 		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
 
 		dispatchPageEvent(first, "click");
@@ -216,10 +229,12 @@ describe("annotate preload", () => {
 			new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }),
 		);
 
-		expect(electronMocks.send).toHaveBeenCalledWith(
-			"browser:annotation:submit",
-			expect.objectContaining({ instruction: "Make this button easier to notice." }),
-		);
+		await vi.waitFor(() => {
+			expect(electronMocks.invoke).toHaveBeenCalledWith(
+				"browser:annotation:submit",
+				expect.objectContaining({ instruction: "Make this button easier to notice." }),
+			);
+		});
 	});
 
 	it("grows long comments to a viewport-aware limit with invisible scrolling", () => {
@@ -315,7 +330,7 @@ describe("annotate preload", () => {
 		expect(promptForm()).toBeNull();
 	});
 
-	it("opens the prompt with every selected element when Shift is pressed again", () => {
+	it("opens the prompt with every selected element when Shift is pressed again", async () => {
 		const first = elementWithBounds("first", { left: 12, top: 24, width: 120, height: 40 });
 		const second = elementWithBounds("second", { left: 240, top: 160, width: 80, height: 30 });
 
@@ -324,7 +339,7 @@ describe("annotate preload", () => {
 		dispatchPageEvent(second, "click");
 		shiftKeyDown();
 
-		const payload = submitPrompt("Align these two.");
+		const payload = await submitPrompt("Align these two.");
 
 		expect(payload.selection.kind).toBe("elements");
 		if (payload.selection.kind !== "elements") throw new Error("expected an elements selection");

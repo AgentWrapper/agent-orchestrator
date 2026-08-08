@@ -524,7 +524,7 @@ func TestSendRoutesIntoTheChatConversation(t *testing.T) {
 		t.Fatalf("Spawn: %v", err)
 	}
 
-	if err := mgr.Send(ctx, rec.ID, "relayed from an orchestrator"); err != nil {
+	if err := mgr.Send(ctx, rec.ID, "relayed from an orchestrator", nil); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if len(launcher.relayed) != 1 || launcher.relayed[0] != "relayed from an orchestrator" {
@@ -563,7 +563,7 @@ func TestSendRefusedForTerminatedChatSession(t *testing.T) {
 		t.Fatalf("Kill: %v", err)
 	}
 
-	err = mgr.Send(ctx, rec.ID, "too late")
+	err = mgr.Send(ctx, rec.ID, "too late", nil)
 	if !errors.Is(err, ErrTerminated) {
 		t.Fatalf("err = %v, want ErrTerminated", err)
 	}
