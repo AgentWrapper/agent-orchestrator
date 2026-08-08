@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/ao-logo.svg" alt="Agent Orchestrator" width="160" height="160" />
+  <img src="../assets/ao-logo.svg" alt="Agent Orchestrator" width="160" height="160" />
 
 # Agent Orchestrator
 
@@ -9,14 +9,14 @@
 [![Contributors](https://img.shields.io/github/contributors/Untrivial-ai/agent-orchestrator)](https://github.com/Untrivial-ai/agent-orchestrator/graphs/contributors)
 [![Twitter](https://img.shields.io/badge/Twitter-1DA1F2?logo=twitter&logoColor=white)](https://x.com/aoagents)
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20community-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/UZv7JjxbwG)
-[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](../LICENSE)
+
+[English](../README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · **한국어** · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md)
 
 격리된 워크스페이스에서 병렬 AI 코딩 에이전트를 감독하는 Agentic IDE입니다. 완전한 제어와 CI 실패, 리뷰 코멘트, 머지 충돌로부터의 자동 피드백 루프를 제공합니다.
 
-<img src="docs/assets/readme/dashboard.png" alt="병렬 코딩 에이전트 세션을 보여주는 Agent Orchestrator 대시보드" width="100%" />
+<img src="../docs/assets/readme/dashboard.png" alt="병렬 코딩 에이전트 세션을 보여주는 Agent Orchestrator 대시보드" width="100%" />
 </div>
-
-**Languages:** [English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · **한국어** · [Español](README.es.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [Português (Brasil)](README.pt-BR.md)
 
 ---
 
@@ -62,7 +62,7 @@ Agent Orchestrator는 그 루프를 가시적이고 관리 가능하게 유지�
       <p>같은 프로젝트에서 여러 코딩 에이전트를 시작하면서 파일, 브랜치, 터미널, 풀 리퀘스트 상태를 섞지 않습니다.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/dashboard.png" alt="여러 병렬 세션을 보여주는 Agent Orchestrator 보드" />
+      <img src="../docs/assets/readme/dashboard.png" alt="여러 병렬 세션을 보여주는 Agent Orchestrator 보드" />
     </td>
   </tr>
   <tr>
@@ -71,7 +71,7 @@ Agent Orchestrator는 그 루프를 가시적이고 관리 가능하게 유지�
       <p>세션을 열어 워커 터미널에 연결하면서 세션 요약, PR 상태, 후속 작업을 계속 볼 수 있습니다.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/session-terminal.png" alt="Agent Orchestrator 내부의 세션 터미널" />
+      <img src="../docs/assets/readme/session-terminal.png" alt="Agent Orchestrator 내부의 세션 터미널" />
     </td>
   </tr>
   <tr>
@@ -80,7 +80,7 @@ Agent Orchestrator는 그 루프를 가시적이고 관리 가능하게 유지�
       <p>리뷰어 에이전트를 실행하고, 리뷰 상태를 확인하며, 요청된 변경 사항을 올바른 워커 세션으로 다시 라우팅합니다.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/reviews-tab.png" alt="리뷰 실행과 작업을 보여주는 Reviews 탭" />
+      <img src="../docs/assets/readme/reviews-tab.png" alt="리뷰 실행과 작업을 보여주는 Reviews 탭" />
     </td>
   </tr>
   <tr>
@@ -89,7 +89,7 @@ Agent Orchestrator는 그 루프를 가시적이고 관리 가능하게 유지�
       <p>터미널 옆에서 세션의 로컬 앱을 미리 보아 UI 작업, 브라우저 상태, 에이전트 출력을 함께 유지합니다.</p>
     </td>
     <td width="64%">
-      <img src="docs/assets/readme/browser-preview.png" alt="로컬 앱 미리보기를 보여주는 브라우저 미리보기 탭" />
+      <img src="../docs/assets/readme/browser-preview.png" alt="로컬 앱 미리보기를 보여주는 브라우저 미리보기 탭" />
     </td>
   </tr>
 </table>
@@ -99,37 +99,37 @@ Agent Orchestrator는 그 루프를 가시적이고 관리 가능하게 유지�
 AO는 23개의 워커 에이전트 하네스 어댑터를 제공합니다:
 
 <p>
-  <a href="https://aoagents.dev/docs/plugins/agents/claude-code"><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/codex"><img src="frontend/src/renderer/assets/agents/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/aider"><img src="frontend/src/renderer/assets/agents/aider.png" alt="" width="16" height="16" valign="middle" /> <code>aider</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/grok.png" alt="" width="16" height="16" valign="middle" /> <code>grok</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/droid.png" alt="" width="16" height="16" valign="middle" /> <code>droid</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/amp.svg" alt="" width="16" height="16" valign="middle" /> <code>amp</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/agy.png" alt="" width="16" height="16" valign="middle" /> <code>agy</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/crush.png" alt="" width="16" height="16" valign="middle" /> <code>crush</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/cursor"><img src="frontend/src/renderer/assets/agents/cursor.svg" alt="" width="16" height="16" valign="middle" /> <code>cursor</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/qwen.png" alt="" width="16" height="16" valign="middle" /> <code>qwen</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/copilot.svg" alt="" width="16" height="16" valign="middle" /> <code>copilot</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/goose.svg" alt="" width="16" height="16" valign="middle" /> <code>goose</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/auggie.svg" alt="" width="16" height="16" valign="middle" /> <code>auggie</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/continue.png" alt="" width="16" height="16" valign="middle" /> <code>continue</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/devin.png" alt="" width="16" height="16" valign="middle" /> <code>devin</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/cline.svg" alt="" width="16" height="16" valign="middle" /> <code>cline</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kimi.png" alt="" width="16" height="16" valign="middle" /> <code>kimi</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kiro.png" alt="" width="16" height="16" valign="middle" /> <code>kiro</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/kilocode.svg" alt="" width="16" height="16" valign="middle" /> <code>kilocode</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/vibe.png" alt="" width="16" height="16" valign="middle" /> <code>vibe</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/pi.png" alt="" width="16" height="16" valign="middle" /> <code>pi</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents"><img src="frontend/src/renderer/assets/agents/autohand.svg" alt="" width="16" height="16" valign="middle" /> <code>autohand</code></a>
+  <a href="https://aoagents.dev/docs/plugins/agents/claude-code"><img src="../frontend/src/renderer/assets/agents/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/codex"><img src="../frontend/src/renderer/assets/agents/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/aider"><img src="../frontend/src/renderer/assets/agents/aider.png" alt="" width="16" height="16" valign="middle" /> <code>aider</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="../frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/grok.png" alt="" width="16" height="16" valign="middle" /> <code>grok</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/droid.png" alt="" width="16" height="16" valign="middle" /> <code>droid</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/amp.svg" alt="" width="16" height="16" valign="middle" /> <code>amp</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/agy.png" alt="" width="16" height="16" valign="middle" /> <code>agy</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/crush.png" alt="" width="16" height="16" valign="middle" /> <code>crush</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/cursor"><img src="../frontend/src/renderer/assets/agents/cursor.svg" alt="" width="16" height="16" valign="middle" /> <code>cursor</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/qwen.png" alt="" width="16" height="16" valign="middle" /> <code>qwen</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/copilot.svg" alt="" width="16" height="16" valign="middle" /> <code>copilot</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/goose.svg" alt="" width="16" height="16" valign="middle" /> <code>goose</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/auggie.svg" alt="" width="16" height="16" valign="middle" /> <code>auggie</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/continue.png" alt="" width="16" height="16" valign="middle" /> <code>continue</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/devin.png" alt="" width="16" height="16" valign="middle" /> <code>devin</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/cline.svg" alt="" width="16" height="16" valign="middle" /> <code>cline</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/kimi.png" alt="" width="16" height="16" valign="middle" /> <code>kimi</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/kiro.png" alt="" width="16" height="16" valign="middle" /> <code>kiro</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/kilocode.svg" alt="" width="16" height="16" valign="middle" /> <code>kilocode</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/vibe.png" alt="" width="16" height="16" valign="middle" /> <code>vibe</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/pi.png" alt="" width="16" height="16" valign="middle" /> <code>pi</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents"><img src="../frontend/src/renderer/assets/agents/autohand.svg" alt="" width="16" height="16" valign="middle" /> <code>autohand</code></a>
 </p>
 
 리뷰어 에이전트는 별도로 구성됩니다. 현재 리뷰어 하네스는 다음과 같습니다:
 
 <p>
-  <a href="https://aoagents.dev/docs/plugins/agents/claude-code"><img src="frontend/src/renderer/assets/agents/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/codex"><img src="frontend/src/renderer/assets/agents/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
-  <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a>
+  <a href="https://aoagents.dev/docs/plugins/agents/claude-code"><img src="../frontend/src/renderer/assets/agents/claude-code.svg" alt="" width="16" height="16" valign="middle" /> <code>claude-code</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/codex"><img src="../frontend/src/renderer/assets/agents/codex.svg" alt="" width="16" height="16" valign="middle" /> <code>codex</code></a> ·
+  <a href="https://aoagents.dev/docs/plugins/agents/opencode"><img src="../frontend/src/renderer/assets/agents/opencode.svg" alt="" width="16" height="16" valign="middle" /> <code>opencode</code></a>
 </p>
 
 **터미널에서 실행되면 Agent Orchestrator에서도 실행됩니다.**
@@ -167,12 +167,12 @@ ao start
   <tr>
     <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2026329204405723180">
-        <img src="assets/tweet2.png" height="330" alt="Agent Orchestrator 여정 스크린샷 1" />
+        <img src="../assets/tweet2.png" height="330" alt="Agent Orchestrator 여정 스크린샷 1" />
       </a>
     </td>
     <td width="50%" align="center">
       <a href="https://x.com/agent_wrapper/status/2025986105485733945">
-        <img src="assets/tweet1.png" height="330" alt="Agent Orchestrator 여정 스크린샷 2" />
+        <img src="../assets/tweet1.png" height="330" alt="Agent Orchestrator 여정 스크린샷 2" />
       </a>
     </td>
   </tr>
@@ -182,17 +182,17 @@ ao start
 
 | 문서                                                             | 다음이 필요할 때 여기서 시작                                                                 |
 | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [docs/architecture.md](docs/architecture.md)                     | 백엔드 멘탈 모델, 라이프사이클, 영속성, CDC, 상태 도출, 데몬 경계.                           |
-| [docs/backend-code-structure.md](docs/backend-code-structure.md) | 패키지 소유권과 각 백엔드 관심사가 속한 위치.                                                |
-| [docs/cli/README.md](docs/cli/README.md)                         | CLI 동작과 데몬 라우트 매핑.                                                                 |
-| [docs/development.md](docs/development.md)                       | 로컬 개발을 위한 사전 요구 사항, 빌드 단계, 테스트 실행, 문제 해결.                          |
-| [docs/STATUS.md](docs/STATUS.md)                                 | `main`에 현재 출시된 내용과 진행 중인 항목.                                                  |
-| [docs/stack.md](docs/stack.md)                                   | 라이브러리, 런타임, 의존성 결정.                                                             |
+| [docs/architecture.md](../docs/architecture.md)                     | 백엔드 멘탈 모델, 라이프사이클, 영속성, CDC, 상태 도출, 데몬 경계.                           |
+| [docs/backend-code-structure.md](../docs/backend-code-structure.md) | 패키지 소유권과 각 백엔드 관심사가 속한 위치.                                                |
+| [docs/cli/README.md](../docs/cli/README.md)                         | CLI 동작과 데몬 라우트 매핑.                                                                 |
+| [docs/development.md](../docs/development.md)                       | 로컬 개발을 위한 사전 요구 사항, 빌드 단계, 테스트 실행, 문제 해결.                          |
+| [docs/STATUS.md](../docs/STATUS.md)                                 | `main`에 현재 출시된 내용과 진행 중인 항목.                                                  |
+| [docs/stack.md](../docs/stack.md)                                   | 라이브러리, 런타임, 의존성 결정.                                                             |
 
 ## 텔레메트리
 
-Agent Orchestrator의 Electron 렌더러는 안정성과 제품 이해를 위해 익명 사용 이벤트를 PostHog로 전송합니다. PostHog 세션 녹화는 기본적으로 비활성화되어 있습니다. 한시적 조사에서 활성화되면 로컬 경로와 로컬 URL은 전송 전에 마스킹됩니다. 전송을 끄려면 빌드 전에 `VITE_AO_POSTHOG_KEY`를 빈 문자열로 설정하세요. 자세한 내용은 [docs/telemetry.md](docs/telemetry.md)를 참고하세요.
+Agent Orchestrator의 Electron 렌더러는 안정성과 제품 이해를 위해 익명 사용 이벤트를 PostHog로 전송합니다. PostHog 세션 녹화는 기본적으로 비활성화되어 있습니다. 한시적 조사에서 활성화되면 로컬 경로와 로컬 URL은 전송 전에 마스킹됩니다. 전송을 끄려면 빌드 전에 `VITE_AO_POSTHOG_KEY`를 빈 문자열로 설정하세요. 자세한 내용은 [docs/telemetry.md](../docs/telemetry.md)를 참고하세요.
 
 ## 라이선스
 
-Apache License 2.0. [LICENSE](LICENSE)를 참고하세요.
+Apache License 2.0. [LICENSE](../LICENSE)를 참고하세요.
