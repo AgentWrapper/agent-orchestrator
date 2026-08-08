@@ -39,7 +39,8 @@ func newTelemetrySink(cfg config.Config, store *sqlite.Store, log *slog.Logger) 
 	if cfg.Telemetry.Remote != config.TelemetryRemotePostHog {
 		return local
 	}
-	remote, err := telemetryadapter.NewPostHogSink(cfg.DataDir, cfg.Telemetry.PostHogKey, cfg.Telemetry.PostHogHost, nil, log)
+	remote, err := telemetryadapter.NewPostHogSink(cfg.DataDir, cfg.Telemetry.PostHogKey, cfg.Telemetry.PostHogHost,
+		cfg.Telemetry.AppVersion, cfg.Agent, nil, log)
 	if err != nil {
 		log.Warn("telemetry remote sink disabled", "remote", cfg.Telemetry.Remote, "error", err)
 		return local
@@ -53,5 +54,9 @@ func newTelemetrySink(cfg config.Config, store *sqlite.Store, log *slog.Logger) 
 	// job for every event name that isn't aggregated.
 	rateLimited := telemetryadapter.NewRateLimitedSink(remote, aggregatedEventNames)
 	aggregated := telemetryadapter.NewAggregatingSink(rateLimited, aggregatedEventNames, time.Minute)
-	return telemetryadapter.NewFanoutSink(local, aggregated)
+	// The kill switch sits outermost on the remote chain so a silenced stream
+	// costs nothing downstream: no aggregation window, no rate-limit slot, no
+	// export. Local storage is unaffected, so silenced events stay debuggable.
+	denied := telemetryadapter.NewDenylistSink(aggregated, cfg.Telemetry.DisabledEvents)
+	return telemetryadapter.NewFanoutSink(local, denied)
 }

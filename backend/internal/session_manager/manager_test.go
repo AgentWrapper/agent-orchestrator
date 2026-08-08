@@ -154,9 +154,32 @@ func (l *fakeLCM) MarkSpawned(_ context.Context, id domain.SessionID, metadata d
 	rec := l.store.sessions[id]
 	rec.IsTerminated = false
 	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	rec.FirstSignalAt = time.Now()
 	rec.Metadata = metadata
 	l.store.sessions[id] = rec
 	return nil
+}
+
+func (l *fakeLCM) CommitControllerEpoch(
+	_ context.Context,
+	id domain.SessionID,
+	source, target domain.SessionMode,
+	nativeConversationID string,
+	_ bool,
+) (bool, error) {
+	rec, ok := l.store.sessions[id]
+	if !ok || rec.IsTerminated || domain.NormalizeSessionMode(rec.Mode) != source {
+		return false, nil
+	}
+	rec.Mode = target
+	rec.Metadata.RuntimeHandleID = ""
+	rec.Metadata.RuntimeLaunchID = ""
+	rec.Metadata.AgentSessionID = nativeConversationID
+	rec.Metadata.ProviderConversationID = nativeConversationID
+	rec.Metadata.ControllerGeneration = ""
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now()}
+	l.store.sessions[id] = rec
+	return true, nil
 }
 func (l *fakeLCM) MarkTerminated(_ context.Context, id domain.SessionID) error {
 	if l.terminated == nil {
@@ -850,6 +873,18 @@ func TestSpawn_ResolvesProjectConfig(t *testing.T) {
 	}
 	if rt.lastCfg.Env[EnvSessionID] == "" {
 		t.Fatal("runtime env missing AO_SESSION_ID")
+	}
+
+	agent.lastConfig = ports.AgentConfig{}
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{
+		ProjectID:   "mer",
+		Kind:        domain.KindWorker,
+		AgentConfig: ports.AgentConfig{Model: "request-model"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if agent.lastConfig.Model != "request-model" {
+		t.Fatalf("launch model = %q, want request model override", agent.lastConfig.Model)
 	}
 
 	// A project with no stored config yields a zero AgentConfig (adapter defaults)
@@ -1825,8 +1860,10 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	m, st, rt, ws := newManager()
 	preview := &fakePreviewLifecycle{}
 	browser := &fakeBrowserLifecycle{}
+	reviewer := &fakeReviewerTerminator{}
 	m.preview = preview
 	m.browser = browser
+	m.SetReviewerTerminator(reviewer)
 	dataDir := t.TempDir()
 	m.dataDir = dataDir
 	st.sessions["mer-1"] = mkLive("mer-1")
@@ -1846,7 +1883,36 @@ func TestKill_TearsDownRuntimeAndWorkspace(t *testing.T) {
 	if !reflect.DeepEqual(browser.destroyed, []domain.SessionID{"mer-1"}) {
 		t.Fatalf("browser destroys = %v, want [mer-1]", browser.destroyed)
 	}
+	if !reflect.DeepEqual(reviewer.calls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer terminates = %v, want [mer-1]", reviewer.calls)
+	}
+	if len(reviewer.bodies) != 1 || !strings.Contains(reviewer.bodies[0], "termination") {
+		t.Fatalf("reviewer terminate bodies = %v", reviewer.bodies)
+	}
 	requireNoPromptDir(t, dataDir, "mer-1")
+}
+
+func TestKill_ReviewerTeardownFailureLeavesSessionActive(t *testing.T) {
+	m, st, rt, ws := newManager()
+	m.SetReviewerTerminator(&fakeReviewerTerminator{err: errors.New("reviewer still alive")})
+	st.sessions["mer-1"] = mkLive("mer-1")
+
+	freed, err := m.Kill(ctx, "mer-1")
+	if err == nil || !strings.Contains(err.Error(), "reviewer still alive") {
+		t.Fatalf("freed=%v err=%v, want reviewer teardown error", freed, err)
+	}
+	if freed {
+		t.Fatal("workspace must not be reported freed when reviewer teardown fails")
+	}
+	if rt.destroyed != 1 {
+		t.Fatalf("worker runtime destroy calls = %d, want 1", rt.destroyed)
+	}
+	if ws.destroyed != 0 {
+		t.Fatalf("workspace destroy calls = %d, want 0 after reviewer failure", ws.destroyed)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must remain active when reviewer teardown fails")
+	}
 }
 
 // TestKill_TerminatesIncompleteHandle: a session whose runtime handle or
@@ -1880,6 +1946,42 @@ func (f *fakeShellTerminalCloser) BeginSessionTeardown(_ context.Context, id dom
 			*f.sharedLog = append(*f.sharedLog, "EndSessionTeardown:"+string(id))
 		}
 	}, nil
+}
+
+type fakeReviewerTerminator struct {
+	calls         []domain.SessionID
+	bodies        []string
+	teardownCalls []domain.SessionID
+	restoreCalls  []domain.SessionID
+	err           error
+	teardownErr   error
+	restoreErr    error
+	sharedLog     *[]string
+}
+
+func (f *fakeReviewerTerminator) TerminateReviewer(_ context.Context, id domain.SessionID, body string) error {
+	f.calls = append(f.calls, id)
+	f.bodies = append(f.bodies, body)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "TerminateReviewer:"+string(id))
+	}
+	return f.err
+}
+
+func (f *fakeReviewerTerminator) TeardownReviewerTerminal(_ context.Context, id domain.SessionID) error {
+	f.teardownCalls = append(f.teardownCalls, id)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "TeardownReviewerTerminal:"+string(id))
+	}
+	return f.teardownErr
+}
+
+func (f *fakeReviewerTerminator) RestoreReviewer(_ context.Context, id domain.SessionID) error {
+	f.restoreCalls = append(f.restoreCalls, id)
+	if f.sharedLog != nil {
+		*f.sharedLog = append(*f.sharedLog, "RestoreReviewer:"+string(id))
+	}
+	return f.restoreErr
 }
 
 // TestKill_ClosesScopedShellTerminalsBeforeWorkspaceTeardown is the regression
@@ -2165,6 +2267,58 @@ func TestRestore_ReopensTerminal(t *testing.T) {
 	}
 	if rt.created != 1 {
 		t.Fatal("restore should relaunch")
+	}
+}
+
+func TestRestore_RestoresReviewerWithoutTerminating(t *testing.T) {
+	m, st, rt, _ := newManager()
+	reviewer := &fakeReviewerTerminator{err: errors.New("reviewer still alive")}
+	m.SetReviewerTerminator(reviewer)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessClaudeCode
+	st.sessions["mer-1"] = rec
+
+	if _, err := m.RestoreWithMode(ctx, "mer-1"); err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want 1", rt.created)
+	}
+	if len(reviewer.calls) != 0 {
+		t.Fatalf("reviewer terminates = %v, want none", reviewer.calls)
+	}
+	if !reflect.DeepEqual(reviewer.restoreCalls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+}
+
+func TestRestore_ReviewerRestoreFailureLeavesWorkerRestored(t *testing.T) {
+	m, st, rt, _ := newManager()
+	reviewer := &fakeReviewerTerminator{restoreErr: errors.New("reviewer unavailable")}
+	m.SetReviewerTerminator(reviewer)
+	seedTerminal(st, "mer-1", domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "b", AgentSessionID: "agent-x"})
+	rec := st.sessions["mer-1"]
+	rec.Kind = domain.KindWorker
+	rec.Harness = domain.HarnessClaudeCode
+	st.sessions["mer-1"] = rec
+
+	res, err := m.RestoreWithMode(ctx, "mer-1")
+	if err != nil {
+		t.Fatalf("RestoreWithMode: %v", err)
+	}
+	if res.Session.ID != "mer-1" || res.Session.IsTerminated {
+		t.Fatalf("restore result session = %+v, want active mer-1", res.Session)
+	}
+	if rt.created != 1 {
+		t.Fatalf("runtime created = %d, want 1", rt.created)
+	}
+	if !reflect.DeepEqual(reviewer.restoreCalls, []domain.SessionID{"mer-1"}) {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("worker session must remain restored when reviewer restore fails")
 	}
 }
 
@@ -4476,6 +4630,87 @@ func TestSaveAndTeardownAll_ClosesScopedShellTerminalsBeforeForceDestroy(t *test
 	}
 	if beginIdx >= forceIdx || forceIdx >= endIdx {
 		t.Fatalf("call order = %v, want begin, then force destroy, then end", sharedLog)
+	}
+}
+
+func TestSaveAndTeardownAll_TeardownsReviewerTerminalWithoutTerminate(t *testing.T) {
+	m, st, _, ws := newLifecycleManager()
+	var sharedLog []string
+	st.sharedLog = &sharedLog
+	ws.sharedLog = &sharedLog
+	reviewer := &fakeReviewerTerminator{sharedLog: &sharedLog}
+	m.SetReviewerTerminator(reviewer)
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Metadata:  domain.SessionMetadata{WorkspacePath: "/ws/mer-1", Branch: "ao/mer-1/root", RuntimeHandleID: "h1"},
+		Activity:  domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if len(reviewer.calls) != 0 {
+		t.Fatalf("reviewer terminates = %v, want none for shutdown save/teardown", reviewer.calls)
+	}
+	if len(reviewer.teardownCalls) != 1 || reviewer.teardownCalls[0] != "mer-1" {
+		t.Fatalf("reviewer teardowns = %v, want [mer-1]", reviewer.teardownCalls)
+	}
+	teardownIdx, forceIdx := -1, -1
+	for i, c := range sharedLog {
+		switch c {
+		case "TeardownReviewerTerminal:mer-1":
+			teardownIdx = i
+		case "ForceDestroy:mer-1":
+			forceIdx = i
+		}
+	}
+	if teardownIdx == -1 || forceIdx == -1 {
+		t.Fatalf("call log missing expected entries: %v", sharedLog)
+	}
+	if teardownIdx >= forceIdx {
+		t.Fatalf("call order = %v, want reviewer teardown before force destroy", sharedLog)
+	}
+}
+
+func TestSaveAndTeardownAllThenRestoreAll_TeardownsAndRestoresReviewerTerminal(t *testing.T) {
+	m, st, rt, ws := newLifecycleManager()
+	reviewer := &fakeReviewerTerminator{}
+	m.SetReviewerTerminator(reviewer)
+	ws.stashRef = "refs/ao/preserved/mer-1"
+	st.sessions["mer-1"] = domain.SessionRecord{
+		ID:        "mer-1",
+		ProjectID: "mer",
+		Kind:      domain.KindWorker,
+		Harness:   domain.HarnessClaudeCode,
+		Metadata: domain.SessionMetadata{
+			WorkspacePath:   "/ws/mer-1",
+			Branch:          "ao/mer-1/root",
+			RuntimeHandleID: "h1",
+			AgentSessionID:  "agent-w",
+		},
+		Activity: domain.Activity{State: domain.ActivityActive},
+	}
+
+	if err := m.SaveAndTeardownAll(ctx); err != nil {
+		t.Fatalf("SaveAndTeardownAll err = %v", err)
+	}
+	if len(reviewer.teardownCalls) != 1 || reviewer.teardownCalls[0] != "mer-1" {
+		t.Fatalf("reviewer teardowns = %v, want [mer-1]", reviewer.teardownCalls)
+	}
+	if err := m.RestoreAll(ctx); err != nil {
+		t.Fatalf("RestoreAll err = %v", err)
+	}
+	if rt.created != 1 {
+		t.Fatalf("RestoreAll runtime creates = %d, want 1", rt.created)
+	}
+	if len(reviewer.restoreCalls) != 1 || reviewer.restoreCalls[0] != "mer-1" {
+		t.Fatalf("reviewer restores = %v, want [mer-1]", reviewer.restoreCalls)
+	}
+	if st.sessions["mer-1"].IsTerminated {
+		t.Fatal("session must be live after RestoreAll")
 	}
 }
 

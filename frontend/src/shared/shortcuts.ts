@@ -14,8 +14,11 @@ export type ShortcutChord = {
 	alt: boolean;
 };
 
+export const SET_CLOSE_SHELL_TERMINAL_SHORTCUT_ENABLED_CHANNEL =
+	"app:set-close-shell-terminal-shortcut-enabled";
+
 export type AppShortcutId =
-	"new-session" | "new-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "focus-terminal";
+	"new-session" | "new-shell-terminal" | "close-shell-terminal" | "keyboard-shortcuts" | "toggle-sidebar" | "open-project" | "toggle-inspector" | "command-palette" | "open-settings" | "previous-session" | "next-session" | "previous-tab" | "next-tab" | "focus-terminal" | "toggle-browser-devtools";
 
 export type ShortcutCategory = "General" | "Navigation" | "Session";
 
@@ -54,6 +57,11 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		category: "General",
 	},
 	{
+		id: "close-shell-terminal",
+		label: "Close terminal",
+		category: "Session",
+	},
+	{
 		id: "keyboard-shortcuts",
 		label: "Show keyboard shortcuts",
 		category: "General",
@@ -90,6 +98,16 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 		category: "Navigation",
 	},
 	{
+		id: "previous-tab",
+		label: "Previous tab",
+		category: "Navigation",
+	},
+	{
+		id: "next-tab",
+		label: "Next tab",
+		category: "Navigation",
+	},
+	{
 		id: "toggle-inspector",
 		label: "Toggle inspector",
 		category: "Session",
@@ -97,6 +115,11 @@ export const APP_SHORTCUTS: readonly ShortcutDefinition[] = [
 	{
 		id: "focus-terminal",
 		label: "Focus terminal",
+		category: "Session",
+	},
+	{
+		id: "toggle-browser-devtools",
+		label: "Toggle browser DevTools",
 		category: "Session",
 	},
 ];
@@ -118,12 +141,9 @@ export function defaultShortcutBindings(id: AppShortcutId, isMac: boolean): read
 		case "new-session":
 			return [isMac ? binding("n", { meta: true }) : binding("n", { ctrl: true, shift: true })];
 		case "new-shell-terminal":
-			// Preserve both the advertised create-terminal chord and the familiar
-			// VS Code toggle/focus alias.
-			return [
-				binding("`", { code: "Backquote", ctrl: true, shift: true }),
-				binding("`", { code: "Backquote", ctrl: true }),
-			];
+			return [isMac ? binding("t", { meta: true }) : binding("t", { ctrl: true })];
+		case "close-shell-terminal":
+			return [isMac ? binding("w", { meta: true }) : binding("w", { ctrl: true })];
 		case "keyboard-shortcuts":
 			return [isMac ? binding("/", { meta: true }) : binding("/", { ctrl: true })];
 		case "toggle-sidebar":
@@ -140,8 +160,14 @@ export function defaultShortcutBindings(id: AppShortcutId, isMac: boolean): read
 			return [isMac ? binding("ArrowUp", { meta: true, alt: true }) : binding("PageUp", { ctrl: true })];
 		case "next-session":
 			return [isMac ? binding("ArrowDown", { meta: true, alt: true }) : binding("PageDown", { ctrl: true })];
+		case "previous-tab":
+			return [binding("Tab", { ctrl: true, shift: true })];
+		case "next-tab":
+			return [binding("Tab", { ctrl: true })];
 		case "focus-terminal":
 			return [isMac ? binding("t", { meta: true, shift: true }) : binding("t", { ctrl: true, shift: true })];
+		case "toggle-browser-devtools":
+			return [isMac ? binding("i", { meta: true, alt: true }) : binding("i", { ctrl: true, shift: true })];
 	}
 }
 
@@ -254,9 +280,12 @@ export function shortcutBindingLabel(binding: ShortcutBinding, isMac: boolean): 
 export const NEW_SESSION_SHORTCUT_CHANNEL = "app:new-session";
 export const KEYBOARD_SHORTCUTS_HELP_CHANNEL = "app:keyboard-shortcuts-help";
 export const NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL = "app:new-shell-terminal";
+export const CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL = "app:close-shell-terminal";
 export const OPEN_SETTINGS_SHORTCUT_CHANNEL = "app:open-settings";
 export const PREVIOUS_SESSION_SHORTCUT_CHANNEL = "app:previous-session";
 export const NEXT_SESSION_SHORTCUT_CHANNEL = "app:next-session";
+export const PREVIOUS_TAB_SHORTCUT_CHANNEL = "app:previous-tab";
+export const NEXT_TAB_SHORTCUT_CHANNEL = "app:next-tab";
 export const FOCUS_TERMINAL_SHORTCUT_CHANNEL = "app:focus-terminal";
 
 // New session: ⌘N on macOS, Ctrl+Shift+N on Windows/Linux. Plain Ctrl+N is a
@@ -268,18 +297,10 @@ export function matchesNewSessionShortcut(chord: ShortcutChord, isMac: boolean):
 	return matchesAppShortcut("new-session", chord, isMac);
 }
 
-// New standalone terminal, bound to the backtick chords VS Code / Cursor /
-// Codex use for the integrated terminal — Ctrl (never ⌘) on every platform, so
-// there is nothing platform-specific to learn (⌘` is taken by the OS on macOS):
-//
-//   • Ctrl+Shift+` — "Create New Terminal" (the primary, advertised binding).
-//   • Ctrl+`       — VS Code's toggle/focus chord; also opens one here.
-//
-// Handled in the main process so it fires even while focus is inside xterm; the
-// tradeoff (no pane shell can receive these chords while AO owns them) matches
-// VS Code.
-export function matchesNewShellTerminalShortcut(chord: ShortcutChord, _isMac: boolean): boolean {
-	return matchesAppShortcut("new-shell-terminal", chord, _isMac);
+// Terminal tabs follow the desktop tab convention: ⌘T on macOS and Ctrl+T on
+// Windows/Linux. Handled in the main process so xterm cannot swallow it.
+export function matchesNewShellTerminalShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	return matchesAppShortcut("new-shell-terminal", chord, isMac);
 }
 
 // Keyboard shortcut help: ⌘/ on macOS, Ctrl+/ on Windows/Linux. This is also
@@ -299,6 +320,14 @@ export function matchesPreviousSessionShortcut(chord: ShortcutChord, isMac: bool
 
 export function matchesNextSessionShortcut(chord: ShortcutChord, isMac: boolean): boolean {
 	return matchesAppShortcut("next-session", chord, isMac);
+}
+
+export function matchesPreviousTabShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	return matchesAppShortcut("previous-tab", chord, isMac);
+}
+
+export function matchesNextTabShortcut(chord: ShortcutChord, isMac: boolean): boolean {
+	return matchesAppShortcut("next-tab", chord, isMac);
 }
 
 export function matchesFocusTerminalShortcut(chord: ShortcutChord, isMac: boolean): boolean {

@@ -110,11 +110,17 @@ type Configuration struct {
 }
 
 type serverRun struct {
-	status   Status
-	cmd      *exec.Cmd
-	done     chan struct{}
-	logs     *lineBuffer
-	stopping bool
+	status Status
+	cmd    *exec.Cmd
+	// startTime pins cmd's PID to the process AO launched (kernel start time,
+	// captured right after Start). Every group/tree kill re-verifies against
+	// it: once the child is reaped the bare PID may already belong to an
+	// unrelated process group (issue #3475). Written once before the run is
+	// published; immutable afterwards.
+	startTime string
+	done      chan struct{}
+	logs      *lineBuffer
+	stopping  bool
 }
 
 type sessionOperation struct {
@@ -127,6 +133,10 @@ type persistedProcess struct {
 	PID       int              `json:"pid"`
 	Port      int              `json:"port"`
 	StartedAt time.Time        `json:"startedAt"`
+	// StartTime is the kernel-reported start time of PID at launch. A PID from
+	// a previous daemon generation is stale by construction; reap refuses to
+	// kill unless the live process still carries this identity.
+	StartTime string `json:"startTime,omitempty"`
 }
 
 // Manager supervises at most one managed preview server per AO session.
@@ -273,6 +283,11 @@ func (m *Manager) Start(
 		run.status.Error = fmt.Sprintf("start preview server: %v", err)
 		return m.statusFor(run), serviceError("PREVIEW_START_FAILED", run.status.Error)
 	}
+	run.startTime = previewProcessStartTime(cmd.Process.Pid)
+	if run.startTime == "" {
+		m.log.Warn("could not capture preview process start time; teardown will only signal the direct child",
+			"session", sessionID, "pid", cmd.Process.Pid)
+	}
 
 	m.mu.Lock()
 	m.runs[sessionID] = run
@@ -362,26 +377,28 @@ func (m *Manager) stop(ctx context.Context, sessionID domain.SessionID) (Status,
 	run.stopping = true
 	run.status.State = StateStopping
 	cmd := run.cmd
+	startTime := run.startTime
 	done := run.done
 	m.mu.Unlock()
 
-	if err := terminatePreviewProcess(cmd); err != nil {
+	if err := terminatePreviewProcess(cmd, startTime); err != nil {
 		m.log.Warn("stop preview process tree", "session", sessionID, "err", err)
 	}
 	select {
 	case <-done:
-		// The root may exit before descendants that ignored SIGTERM. Escalate
-		// against the owned process tree even after Wait has completed.
-		_ = forceKillPreviewProcess(cmd)
+		// The root has exited and been reaped. Descendants that ignored
+		// SIGTERM may survive it, but the PID no longer provably belongs to
+		// AO's preview, so nothing is killed: a leaked preview process is
+		// safer than a group kill landing on a recycled PID (issue #3475).
 	case <-ctx.Done():
-		go m.forceStopAfterGrace(sessionID, run, cmd, done)
+		go m.forceStopAfterGrace(sessionID, run, cmd, startTime, done)
 		return m.Status(sessionID), ctx.Err()
 	case <-time.After(5 * time.Second):
-		_ = forceKillPreviewProcess(cmd)
+		_ = forceKillPreviewProcess(cmd, startTime)
 		select {
 		case <-done:
 		case <-ctx.Done():
-			go m.forceStopAfterGrace(sessionID, run, cmd, done)
+			go m.forceStopAfterGrace(sessionID, run, cmd, startTime, done)
 			return m.Status(sessionID), ctx.Err()
 		case <-time.After(time.Second):
 			message := "preview server process did not exit after it was killed"
@@ -467,12 +484,10 @@ func (m *Manager) Close() {
 
 func (m *Manager) waitForExit(sessionID domain.SessionID, run *serverRun) {
 	err := run.cmd.Wait()
-	m.mu.Lock()
-	unexpectedExit := !run.stopping
-	m.mu.Unlock()
-	if unexpectedExit {
-		_ = forceKillPreviewProcess(run.cmd)
-	}
+	// Wait has returned, so the PID is back in the OS pool and no longer
+	// provably AO's. No escalation happens here: descendants the dead root
+	// left behind are leaked rather than group-killed on a number that may
+	// already belong to something else (issue #3475).
 	m.mu.Lock()
 	if m.runs[sessionID] == run {
 		run.cmd = nil
@@ -516,14 +531,15 @@ func (m *Manager) failAndStop(
 		run.stopping = true
 	}
 	cmd := run.cmd
+	startTime := run.startTime
 	m.mu.Unlock()
 	if cmd != nil {
-		_ = terminatePreviewProcess(cmd)
+		_ = terminatePreviewProcess(cmd, startTime)
 		select {
 		case <-run.done:
-			_ = forceKillPreviewProcess(cmd)
+			// Reaped: the PID is no longer provably AO's, nothing to escalate.
 		case <-time.After(3 * time.Second):
-			_ = forceKillPreviewProcess(cmd)
+			_ = forceKillPreviewProcess(cmd, startTime)
 		}
 	}
 	return m.statusFor(run), serviceError(code, message)
@@ -790,13 +806,14 @@ func (m *Manager) forceStopAfterGrace(
 	sessionID domain.SessionID,
 	run *serverRun,
 	cmd *exec.Cmd,
+	startTime string,
 	done <-chan struct{},
 ) {
 	select {
 	case <-done:
-		_ = forceKillPreviewProcess(cmd)
+		// Reaped: the PID is no longer provably AO's, nothing to escalate.
 	case <-time.After(5 * time.Second):
-		_ = forceKillPreviewProcess(cmd)
+		_ = forceKillPreviewProcess(cmd, startTime)
 		select {
 		case <-done:
 		case <-time.After(time.Second):
@@ -825,10 +842,20 @@ func (m *Manager) reapPersistedProcesses() {
 		return
 	}
 	for _, process := range processes {
-		if process.PID > 0 {
-			if err := forceKillPreviewPID(process.PID); err != nil {
-				m.log.Warn("reap orphaned preview process", "session", process.SessionID, "pid", process.PID, "err", err)
-			}
+		if process.PID <= 0 {
+			continue
+		}
+		// PIDs recorded by a previous daemon generation are stale by
+		// construction: the number may have been recycled by anything since
+		// (one recycled group kill destroyed a whole tmux server, #3475).
+		// Kill only what still carries the recorded launch identity.
+		if process.StartTime == "" {
+			m.log.Warn("skip reaping preview process without a recorded start time",
+				"session", process.SessionID, "pid", process.PID)
+			continue
+		}
+		if err := forceKillPreviewPID(process.PID, process.StartTime); err != nil {
+			m.log.Warn("reap orphaned preview process", "session", process.SessionID, "pid", process.PID, "err", err)
 		}
 	}
 	if err := os.Remove(m.registryPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -850,6 +877,7 @@ func (m *Manager) persistProcessesLocked() {
 			PID:       run.cmd.Process.Pid,
 			Port:      run.status.Port,
 			StartedAt: run.status.StartedAt,
+			StartTime: run.startTime,
 		})
 	}
 	if len(processes) == 0 {

@@ -11,7 +11,7 @@ import (
 	telemetryadapter "github.com/aoagents/agent-orchestrator/backend/internal/adapters/telemetry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/config"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
-	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func TestNewTelemetrySink_DefaultsToNoopWhenDisabled(t *testing.T) {
@@ -30,7 +30,7 @@ func TestNewTelemetrySink_MetricsOnlyDoesNotEnableEvents(t *testing.T) {
 
 func TestNewTelemetrySink_UsesLocalSQLiteWhenEnabled(t *testing.T) {
 	dataDir := t.TempDir()
-	store, err := sqlite.Open(dataDir)
+	store, err := sqlitetest.Open(dataDir)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestNewTelemetrySink_UsesLocalSQLiteWhenEnabled(t *testing.T) {
 
 func TestNewTelemetrySink_FanoutIncludesPostHogWhenConfigured(t *testing.T) {
 	dataDir := t.TempDir()
-	store, err := sqlite.Open(dataDir)
+	store, err := sqlitetest.Open(dataDir)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
@@ -85,7 +85,7 @@ func (f wiringTestRoundTripper) Do(req *http.Request) (*http.Response, error) { 
 // reaching PostHog even once aggregation ran correctly).
 func TestTelemetryWiringAggregatesUsageErrorsAndPreservesCountOnTheWire(t *testing.T) {
 	requests := make(chan map[string]any, 1)
-	remote, err := telemetryadapter.NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com",
+	remote, err := telemetryadapter.NewPostHogSink(t.TempDir(), "phc_test", "https://us.i.posthog.com", "", "",
 		wiringTestRoundTripper(func(req *http.Request) (*http.Response, error) {
 			defer req.Body.Close()
 			var body map[string]any

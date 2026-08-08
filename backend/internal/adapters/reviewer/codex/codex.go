@@ -8,6 +8,7 @@ import (
 	"os"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/codex"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/agentrestore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -29,6 +30,7 @@ func (r *Reviewer) Harness() domain.ReviewerHarness {
 
 var _ ports.Reviewer = (*Reviewer)(nil)
 var _ ports.ReviewerCanceller = (*Reviewer)(nil)
+var _ ports.ReviewerRestorer = (*Reviewer)(nil)
 
 // ReviewCommand launches the reviewer with an enforced read-only filesystem
 // sandbox. Auto approval lets the headless session request the narrowly needed
@@ -45,21 +47,26 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	if err != nil {
 		return ports.ReviewCommandSpec{}, err
 	}
-	extra := []string{"--sandbox", "read-only"}
-	// Shell commands inherit only Codex's core environment by default. Preserve
-	// the AO location overrides the reviewer needs to submit to this daemon.
-	for _, name := range []string{"AO_PORT", "AO_DATA_DIR", "AO_RUN_FILE"} {
-		value := os.Getenv(name)
-		if value == "" {
-			continue
-		}
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return ports.ReviewCommandSpec{}, fmt.Errorf("encode %s: %w", name, err)
-		}
-		extra = append(extra, "-c", "shell_environment_policy.set."+name+"="+string(encoded))
+	extra, err := codexReadOnlyArgs()
+	if err != nil {
+		return ports.ReviewCommandSpec{}, err
 	}
 	return ports.ReviewCommandSpec{Argv: insertBeforePrompt(argv, extra...)}, nil
+}
+
+// ReviewRestoreCommand resumes the reviewer Codex conversation captured from
+// Codex hooks when AO recreates the reviewer pane after worker restore.
+func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
+	cmd, ok, err := agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{Permissions: ports.PermissionModeAuto})
+	if err != nil || !ok {
+		return cmd, ok, err
+	}
+	extra, err := codexReadOnlyArgs()
+	if err != nil {
+		return ports.ReviewCommandSpec{}, false, err
+	}
+	cmd.Argv = insertBeforeLastArg(cmd.Argv, extra...)
+	return cmd, true, nil
 }
 
 // ReviewMessage returns the centrally-authored task for an existing pane.
@@ -68,9 +75,13 @@ func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) 
 }
 
 // ReviewCancel stops the active Codex reviewer turn while preserving the
-// terminal pane for inspection.
+// terminal pane for inspection. Codex advertises "esc to interrupt", and a
+// single Escape stops the active turn without queuing prompt text.
 func (r *Reviewer) ReviewCancel(context.Context) (ports.ReviewCancelSpec, error) {
-	return ports.ReviewCancelSpec{Mode: ports.ReviewCancelInterrupt, Interrupts: 2}, nil
+	return ports.ReviewCancelSpec{
+		Mode:  ports.ReviewCancelInput,
+		Input: "\x1b",
+	}, nil
 }
 
 func insertBeforePrompt(argv []string, extra ...string) []string {
@@ -83,4 +94,32 @@ func insertBeforePrompt(argv []string, extra ...string) []string {
 		}
 	}
 	return append(argv, extra...)
+}
+
+func insertBeforeLastArg(argv []string, extra ...string) []string {
+	if len(argv) == 0 {
+		return append([]string{}, extra...)
+	}
+	out := make([]string, 0, len(argv)+len(extra))
+	out = append(out, argv[:len(argv)-1]...)
+	out = append(out, extra...)
+	return append(out, argv[len(argv)-1])
+}
+
+func codexReadOnlyArgs() ([]string, error) {
+	extra := []string{"--sandbox", "read-only"}
+	// Shell commands inherit only Codex's core environment by default. Preserve
+	// the AO location overrides the reviewer needs to submit to this daemon.
+	for _, name := range []string{"AO_PORT", "AO_DATA_DIR", "AO_RUN_FILE"} {
+		value := os.Getenv(name)
+		if value == "" {
+			continue
+		}
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("encode %s: %w", name, err)
+		}
+		extra = append(extra, "-c", "shell_environment_policy.set."+name+"="+string(encoded))
+	}
+	return extra, nil
 }

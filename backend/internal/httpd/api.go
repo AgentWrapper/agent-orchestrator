@@ -19,17 +19,24 @@ import (
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {
-	Agents              controllers.AgentCatalog
-	Projects            projectsvc.Manager
-	Sessions            controllers.SessionService
-	Activity            controllers.ActivityRecorder
-	PRs                 prsvc.ActionManager
-	Reviews             reviewsvc.Manager
-	Notifications       controllers.NotificationService
-	NotificationStream  controllers.NotificationStream
-	Push                controllers.PushRegistry
-	Import              controllers.ImportService
-	ShellTerminals      controllers.ShellTerminalService
+	Agents             controllers.AgentCatalog
+	Projects           projectsvc.Manager
+	Sessions           controllers.SessionService
+	Activity           controllers.ActivityRecorder
+	UsageHooks         controllers.UsageHookRecorder
+	UsageSummary       controllers.UsageSummaryService
+	PRs                prsvc.ActionManager
+	Reviews            reviewsvc.Manager
+	Notifications      controllers.NotificationService
+	NotificationStream controllers.NotificationStream
+	Push               controllers.PushRegistry
+	Import             controllers.ImportService
+	ShellTerminals     controllers.ShellTerminalService
+	// Conversations is nil until a Chat driver is wired; the controller then
+	// answers 501 rather than panicking, matching the other optional surfaces.
+	Conversations controllers.ConversationService
+	// Settings is the daemon-owned preference surface.
+	Settings            controllers.SettingsService
 	DevImport           controllers.DevImportService
 	CDC                 cdc.Source
 	Events              cdcSubscriber
@@ -47,12 +54,15 @@ type API struct {
 	agents        *controllers.AgentsController
 	projects      *controllers.ProjectsController
 	sessions      *controllers.SessionsController
+	usage         *controllers.UsageController
 	prs           *controllers.PRsController
 	reviews       *controllers.ReviewsController
 	notifications *controllers.NotificationsController
 	push          *controllers.PushController
 	imports       *controllers.ImportController
 	shellTerms    *controllers.ShellTerminalsController
+	conversations *controllers.ConversationsController
+	settings      *controllers.SettingsController
 	dev           *controllers.DevController
 	browser       *controllers.BrowserController
 	events        *EventsController
@@ -73,15 +83,19 @@ func NewAPI(cfg config.Config, deps APIDeps) *API {
 		sessions: &controllers.SessionsController{
 			Svc:           deps.Sessions,
 			Activity:      deps.Activity,
+			Usage:         deps.UsageHooks,
 			PreviewServer: deps.PreviewServer,
 			Capabilities:  deps.SessionCapabilities,
 		},
+		usage:         &controllers.UsageController{Svc: deps.UsageSummary},
 		prs:           &controllers.PRsController{Svc: deps.PRs},
 		reviews:       &controllers.ReviewsController{Svc: deps.Reviews},
 		notifications: &controllers.NotificationsController{Svc: deps.Notifications, Stream: deps.NotificationStream},
 		push:          &controllers.PushController{Registry: deps.Push},
 		imports:       &controllers.ImportController{Svc: deps.Import},
 		shellTerms:    &controllers.ShellTerminalsController{Svc: deps.ShellTerminals},
+		conversations: &controllers.ConversationsController{Svc: deps.Conversations},
+		settings:      &controllers.SettingsController{Svc: deps.Settings},
 		dev:           &controllers.DevController{Import: deps.DevImport},
 		browser:       &controllers.BrowserController{Svc: deps.Browser},
 		events:        &EventsController{Source: deps.CDC, Live: deps.Events},
@@ -105,18 +119,22 @@ func (a *API) Register(root chi.Router) {
 			a.agents.Register(r)
 			a.projects.Register(r)
 			a.sessions.Register(r)
+			a.usage.Register(r)
 			a.prs.Register(r)
 			a.reviews.Register(r)
 			a.notifications.Register(r)
 			a.push.Register(r)
 			a.imports.Register(r)
 			a.shellTerms.Register(r)
+			a.conversations.Register(r)
+			a.settings.Register(r)
 			a.dev.Register(r)
 			a.browser.Register(r)
 			// Sibling REST controllers plug in here.
 		})
 		// Long-lived streams intentionally bypass the REST timeout middleware.
 		a.notifications.RegisterStream(r)
+		a.sessions.RegisterStreams(r)
 		a.events.Register(r)
 	})
 }

@@ -121,8 +121,8 @@ beforeEach(async () => {
 	getUpdate.mockResolvedValue({ enabled: true, channel: "latest", nightlyAck: false, feature: null });
 	setUpdate.mockResolvedValue(undefined);
 	getUiSettings.mockResolvedValue({ locale: "en" });
-	setUiSettings.mockImplementation(async (settings: { locale: "en" | "zh-CN" }) => ({
-		locale: settings.locale === "zh-CN" ? "zh-CN" : "en",
+	setUiSettings.mockImplementation(async (settings: { locale: string }) => ({
+		locale: settings.locale,
 	}));
 	updGetStatus.mockResolvedValue({ state: "idle" });
 	updCheck.mockResolvedValue(undefined);
@@ -151,13 +151,24 @@ describe("GlobalSettingsForm", () => {
 	it("renders the Figma settings sections", async () => {
 		renderForm();
 		expect(await screen.findByLabelText("Settings")).toBeInTheDocument();
-		expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+		// "Settings" heading is now in the modal dialog header, not in the form body
 		expect(screen.getByText("General")).toBeInTheDocument();
 		expect(screen.getByText("Language")).toBeInTheDocument();
 		expect(screen.getByText("Updates")).toBeInTheDocument();
 		expect(screen.getByRole("switch", { name: "Developer Mode" })).toBeInTheDocument();
 		expect(screen.getByText("Get help")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
+	});
+
+	it("gives settings link rows internal padding and rounded borders", async () => {
+		renderForm();
+
+		const connectMobile = await screen.findByRole("button", { name: "Connect Mobile" });
+		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard shortcuts" });
+
+		for (const row of [connectMobile, keyboardShortcuts]) {
+			expect(row).toHaveClass("settings-row-bar", "settings-link-row");
+		}
 	});
 
 	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
@@ -198,7 +209,8 @@ describe("GlobalSettingsForm", () => {
 
 		await user.keyboard("{Escape}");
 
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/" });
+		// Escape is handled by the wrapping Radix Dialog, not the form itself
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("lets an open settings dialog consume Escape first", async () => {

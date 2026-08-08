@@ -18,10 +18,11 @@ test("renderer: added project appears in the sidebar and board @T0 @PRJ", async 
 	await expect(page.getByText("Projects")).toBeVisible();
 
 	// Sidebar row for the project.
-	await expect(page.getByRole("button", { name: "Open ao-demo dashboard" })).toBeVisible();
+	const projectRow = page.locator('[data-sidebar="menu-button"]').filter({ hasText: "ao-demo" }).first();
+	await expect(projectRow).toBeVisible();
 
 	// Opening it renders that project's board with its session cards.
-	await page.getByRole("button", { name: "Open ao-demo dashboard" }).click();
+	await projectRow.click();
 	await expect(page).toHaveURL(/projects\/ao-demo/);
 	await expect(page.getByTestId("board")).toBeVisible();
 	await expect(page.getByTestId("board-session-card").first()).toBeVisible();

@@ -99,13 +99,15 @@ func writeBrowserError(w http.ResponseWriter, r *http.Request, err error) {
 		status := http.StatusUnprocessableEntity
 		typeName := "unprocessable"
 		switch commandErr.Code {
-		case "INVALID_ARGUMENT", "URL_REQUIRED", "REFERENCE_REQUIRED", "TAB_ID_REQUIRED":
+		case "INVALID_ARGUMENT", "URL_REQUIRED", "REFERENCE_REQUIRED", "TAB_ID_REQUIRED",
+			"AGENT_BROWSER_COMMAND_BLOCKED":
 			status = http.StatusBadRequest
 			typeName = "bad_request"
 		case "STALE_REFERENCE", "TAB_NOT_FOUND":
 			status = http.StatusConflict
 			typeName = "conflict"
-		case "BROWSER_TARGET_UNAVAILABLE":
+		case "BROWSER_TARGET_UNAVAILABLE", "BROWSER_AUTOMATION_UNAVAILABLE", "AGENT_BROWSER_NOT_INSTALLED",
+			"AGENT_BROWSER_START_FAILED", "BROWSER_DEVTOOLS_UNAVAILABLE":
 			status = http.StatusServiceUnavailable
 			typeName = "unavailable"
 		}

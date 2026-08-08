@@ -38,6 +38,10 @@ type browserCommandResponseDTO struct {
 
 const browserCapabilityHeader = "X-AO-Browser-Capability"
 const maxBrowserWaitMillis = 55_000
+const (
+	browserUntrustedBegin = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>"
+	browserUntrustedEnd   = "<<<END UNTRUSTED EXTERNAL CONTENT>>>"
+)
 
 func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	var jsonOutput bool
@@ -99,6 +103,33 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return ctx.runBrowserAction(cmd, "click", map[string]any{"ref": args[0]}, jsonOutput)
+		},
+	})
+
+	for _, action := range []struct {
+		name  string
+		short string
+	}{
+		{name: "dblclick", short: "Double-click an element reference from the latest snapshot"},
+		{name: "focus", short: "Focus an element reference from the latest snapshot"},
+		{name: "scrollintoview", short: "Scroll an element reference into view"},
+	} {
+		cmd.AddCommand(&cobra.Command{
+			Use:   action.name + " <ref>",
+			Short: action.short,
+			Args:  exactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return ctx.runBrowserAction(cmd, action.name, map[string]any{"ref": args[0]}, jsonOutput)
+			},
+		})
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "drag <source-ref> <target-ref>",
+		Short: "Drag one element onto another",
+		Args:  exactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "drag", map[string]any{"ref": args[0], "targetRef": args[1]}, jsonOutput)
 		},
 	})
 
@@ -203,6 +234,33 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 		},
 	})
 	cmd.AddCommand(tabCmd)
+
+	devtoolsCmd := &cobra.Command{
+		Use:   "devtools",
+		Short: "Open and control Chromium's DevTools for the active page",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "devtools-open", nil, jsonOutput)
+		},
+	}
+	devtoolsOpen := &cobra.Command{
+		Use:   "open",
+		Short: "Open the real Chromium DevTools frontend",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "devtools-open", nil, jsonOutput)
+		},
+	}
+	devtoolsCmd.AddCommand(devtoolsOpen)
+	devtoolsCmd.AddCommand(&cobra.Command{
+		Use:   "close",
+		Short: "Close Chromium DevTools",
+		Args:  noArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return ctx.runBrowserAction(cmd, "devtools-close", nil, jsonOutput)
+		},
+	})
+	cmd.AddCommand(devtoolsCmd)
 
 	var scrollAmount int
 	scroll := &cobra.Command{
@@ -398,6 +456,40 @@ func newBrowserCommand(ctx *commandContext) *cobra.Command {
 	}
 	cmd.AddCommand(networkCmd)
 
+	cmd.AddCommand(&cobra.Command{
+		Use:   "frame <ref|main>",
+		Short: "Switch automation into a frame or back to the main document",
+		Args:  exactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return ctx.runBrowserAction(cmd, "frame", map[string]any{"target": args[0]}, jsonOutput)
+		},
+	})
+
+	dialogCmd := &cobra.Command{Use: "dialog", Short: "Inspect or handle a page dialog", Args: noArgs}
+	dialogCmd.AddCommand(&cobra.Command{
+		Use:   "accept [text]",
+		Short: "Accept a dialog, optionally supplying prompt text",
+		Args:  atMostOneArg,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			actionArgs := map[string]any{"operation": "accept"}
+			if len(args) == 1 {
+				actionArgs["text"] = args[0]
+			}
+			return ctx.runBrowserAction(cmd, "dialog", actionArgs, jsonOutput)
+		},
+	})
+	for _, operation := range []string{"dismiss", "status"} {
+		dialogCmd.AddCommand(&cobra.Command{
+			Use:   operation,
+			Short: operation + " the current page dialog",
+			Args:  noArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				return ctx.runBrowserAction(cmd, "dialog", map[string]any{"operation": operation}, jsonOutput)
+			},
+		})
+	}
+	cmd.AddCommand(dialogCmd)
+
 	for _, action := range []string{"console", "errors"} {
 		cmd.AddCommand(&cobra.Command{
 			Use:   action,
@@ -489,7 +581,7 @@ func (c *commandContext) runBrowserAction(cmd *cobra.Command, action string, arg
 func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any) error {
 	if action == "snapshot" {
 		if text, ok := result["text"].(string); ok {
-			_, err := fmt.Fprintln(cmd.OutOrStdout(), text)
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), browserUntrustedText(text))
 			return err
 		}
 	}
@@ -503,7 +595,7 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 			if item, ok := message.(map[string]any); ok {
 				level, _ := item["level"].(string)
 				text, _ := item["message"].(string)
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", level, text); err != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", level, browserUntrustedText(text)); err != nil {
 					return err
 				}
 			}
@@ -511,6 +603,10 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 		return nil
 	}
 	if action == "get" {
+		if value, ok := result["value"].(string); ok {
+			_, err := fmt.Fprintln(cmd.OutOrStdout(), browserUntrustedText(value))
+			return err
+		}
 		if value, ok := result["value"]; ok {
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), value)
 			return err
@@ -522,6 +618,7 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), "No browser tabs.")
 			return err
 		}
+		var output strings.Builder
 		for _, raw := range tabs {
 			tab, _ := raw.(map[string]any)
 			id, _ := tab["id"].(string)
@@ -531,21 +628,34 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 			if active, _ := tab["active"].(bool); active {
 				marker = "*"
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\t%s\t%s\n", marker, id, title, currentURL); err != nil {
+			if _, err := fmt.Fprintf(&output, "%s %s\t%s\t%s\n", marker, id, title, currentURL); err != nil {
 				return err
 			}
 		}
-		return nil
+		_, err := fmt.Fprintln(
+			cmd.OutOrStdout(),
+			browserUntrustedText(strings.TrimSuffix(output.String(), "\n")),
+		)
+		return err
 	}
 	if strings.HasPrefix(action, "network-") {
 		return writeBrowserNetworkResult(cmd, action, result)
 	}
 	if currentURL, ok := result["url"].(string); ok && currentURL != "" {
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), currentURL)
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), browserUntrustedText(currentURL))
 		return err
 	}
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), "Browser "+action+" completed.")
 	return err
+}
+
+func browserUntrustedText(value string) string {
+	// Page-controlled text must not be able to inject a delimiter that looks
+	// like the end of AO's trust boundary. Escape only exact marker collisions;
+	// the surrounding fixed markers remain easy for humans and agents to parse.
+	value = strings.ReplaceAll(value, browserUntrustedBegin, `\u003c`+browserUntrustedBegin[1:])
+	value = strings.ReplaceAll(value, browserUntrustedEnd, `\u003c`+browserUntrustedEnd[1:])
+	return browserUntrustedBegin + "\n" + value + "\n" + browserUntrustedEnd
 }
 
 func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[string]any) error {
@@ -584,6 +694,7 @@ func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[str
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "No browser network requests captured.")
 		return err
 	}
+	var output strings.Builder
 	for _, raw := range requests {
 		request, _ := raw.(map[string]any)
 		method, _ := request["method"].(string)
@@ -602,7 +713,7 @@ func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[str
 			duration = "-"
 		}
 		if _, err := fmt.Fprintf(
-			cmd.OutOrStdout(),
+			&output,
 			"%s %s %s %s %s\n",
 			method,
 			status,
@@ -613,7 +724,11 @@ func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[str
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(
+		cmd.OutOrStdout(),
+		browserUntrustedText(strings.TrimSuffix(output.String(), "\n")),
+	)
+	return err
 }
 
 func writeBrowserScreenshot(cmd *cobra.Command, result map[string]any, target string) error {

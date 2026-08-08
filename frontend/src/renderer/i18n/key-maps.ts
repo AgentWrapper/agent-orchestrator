@@ -5,6 +5,7 @@ import type { MessageKey } from "./messages";
 export const shortcutLabelKeys: Record<AppShortcutId, MessageKey> = {
 	"new-session": "shortcut.new-session",
 	"new-shell-terminal": "shortcut.new-shell-terminal",
+	"close-shell-terminal": "shortcut.close-shell-terminal",
 	"keyboard-shortcuts": "shortcut.keyboard-shortcuts",
 	"command-palette": "shortcut.command-palette",
 	"open-settings": "shortcut.open-settings",
@@ -12,8 +13,11 @@ export const shortcutLabelKeys: Record<AppShortcutId, MessageKey> = {
 	"open-project": "shortcut.open-project",
 	"previous-session": "shortcut.previous-session",
 	"next-session": "shortcut.next-session",
+	"previous-tab": "shortcut.previous-tab",
+	"next-tab": "shortcut.next-tab",
 	"toggle-inspector": "shortcut.toggle-inspector",
 	"focus-terminal": "shortcut.focus-terminal",
+	"toggle-browser-devtools": "titlebar.devtools",
 };
 
 export const shortcutCategoryLabelKeys: Record<ShortcutCategory, MessageKey> = {

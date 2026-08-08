@@ -10,8 +10,30 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
+
+func TestNativeConversationIDRequiresCapturedCodexThreadForTUI(t *testing.T) {
+	p := &Plugin{}
+	if id, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{
+		ID: "ao-session-1", Metadata: map[string]string{},
+	}, domain.SessionModeTUI, ""); err != nil || ok || id != "" {
+		t.Fatalf("uncaptured TUI native id = %q ok=%v err=%v", id, ok, err)
+	}
+	tuiID, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{
+		ID:       "ao-session-1",
+		Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "codex-thread-1"},
+	}, domain.SessionModeTUI, "")
+	if err != nil || !ok || tuiID != "codex-thread-1" {
+		t.Fatalf("captured TUI native id = %q ok=%v err=%v", tuiID, ok, err)
+	}
+	chatID, ok, err := p.NativeConversationID(context.Background(), ports.SessionRef{},
+		domain.SessionModeChat, tuiID)
+	if err != nil || !ok || chatID != tuiID {
+		t.Fatalf("Chat native id = %q ok=%v err=%v", chatID, ok, err)
+	}
+}
 
 // canonicalTempDir returns a t.TempDir() with symlinks resolved so the
 // workspace trust flag collapses to a single predictable entry (macOS TempDir

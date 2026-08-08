@@ -15,7 +15,11 @@ const { getMock, navigateMock, chooseDirectoryMock, spawnOrchestratorMock } = vi
 	spawnOrchestratorMock: vi.fn(),
 }));
 
-vi.mock("../../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnOrchestratorMock }));
+vi.mock("../../lib/spawn-orchestrator", () => ({
+	isChatPreflightError: (error: unknown) =>
+		error instanceof Error && (error as Error & { code?: string }).code === "CHAT_DRIVER_UNAVAILABLE",
+	spawnOrchestrator: spawnOrchestratorMock,
+}));
 
 vi.mock("../../lib/api-client", () => ({
 	apiClient: { GET: getMock, POST: vi.fn() },
@@ -112,6 +116,7 @@ beforeEach(() => {
 		orchestratorReplacementErrors: {},
 		orchestratorStartupErrors: {},
 		restartingProjectIds: new Set(),
+		settingsModal: null,
 	});
 });
 
@@ -241,6 +246,23 @@ describe("project board with no sessions", () => {
 		expect(await screen.findByText(/branch is already checked out/)).toBeInTheDocument();
 	});
 
+	it("offers an explicit Terminal UI fallback when Chat preflight fails", async () => {
+		respondWith([project], []);
+		const preflightError = Object.assign(new Error("Claude Code is unavailable"), {
+			code: "CHAT_DRIVER_UNAVAILABLE",
+		});
+		spawnOrchestratorMock.mockRejectedValueOnce(preflightError).mockResolvedValueOnce("proj-1-orchestrator");
+		renderBoard(<SessionsBoard projectId="proj-1" />);
+
+		await screen.findByText("No worker sessions yet");
+		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
+		await userEvent.click(spawnButton);
+		await userEvent.click(await screen.findByRole("button", { name: "Create as Terminal UI" }));
+
+		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(1, "proj-1", "board", false, undefined);
+		expect(spawnOrchestratorMock).toHaveBeenNthCalledWith(2, "proj-1", "board", false, "tui");
+	});
+
 	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
 		const unconfiguredProject = { ...project, orchestratorAgent: undefined };
 		respondWith([unconfiguredProject], []);
@@ -250,10 +272,8 @@ describe("project board with no sessions", () => {
 		const [spawnButton] = screen.getAllByRole("button", { name: "Spawn Orchestrator" });
 		await userEvent.click(spawnButton);
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnOrchestratorMock).not.toHaveBeenCalled();
 	});
 

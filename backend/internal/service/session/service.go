@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
@@ -23,6 +26,8 @@ type Store interface {
 	RenameSession(ctx context.Context, id domain.SessionID, displayName string, updatedAt time.Time) (bool, error)
 	SetSessionPreviewURL(ctx context.Context, id domain.SessionID, previewURL string, updatedAt time.Time) (bool, error)
 	SetSessionTerminateOnPRMerge(ctx context.Context, id domain.SessionID, terminate bool, updatedAt time.Time) (bool, error)
+	SetSessionPinned(ctx context.Context, id domain.SessionID, isPinned bool, pinnedAt *time.Time, updatedAt time.Time) (bool, error)
+	SetSessionReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness, updatedAt time.Time) (bool, error)
 	GetDisplayPRFactsForSession(ctx context.Context, id domain.SessionID) (domain.PRFacts, bool, error)
 	ListPRFactsForSession(ctx context.Context, id domain.SessionID) ([]domain.PRFacts, error)
 	ListPRsBySession(ctx context.Context, sessionID domain.SessionID) ([]domain.PullRequest, error)
@@ -50,9 +55,20 @@ type commander interface {
 	ResumeAgentWithMode(ctx context.Context, id domain.SessionID) (sessionmanager.RestoreResult, error)
 	Kill(ctx context.Context, id domain.SessionID) (bool, error)
 	RetireForReplacement(ctx context.Context, id domain.SessionID) error
+	WaitForMessageDeliveryReady(ctx context.Context, id domain.SessionID) error
 	Send(ctx context.Context, id domain.SessionID, message string) error
 	Cleanup(ctx context.Context, project domain.ProjectID) (sessionmanager.CleanupResult, error)
 	RollbackSpawn(ctx context.Context, id domain.SessionID) (deleted, killed bool, err error)
+	StageAttachments(ctx context.Context, id domain.SessionID, attachments []ports.SpawnAttachment) ([]string, error)
+}
+
+// interfaceTransitionCommander is an optional command capability. Keeping it
+// separate avoids widening every focused session-service fake while production
+// can expose the feature through the concrete Session Manager.
+type interfaceTransitionCommander interface {
+	InterfaceTransitionStatus(context.Context, domain.SessionID) (sessionmanager.InterfaceTransitionStatus, error)
+	StartInterfaceTransition(context.Context, domain.SessionID, domain.SessionMode, domain.SessionInterfaceTransitionPolicy) (domain.SessionInterfaceTransition, error)
+	CancelInterfaceTransition(context.Context, domain.SessionID) error
 }
 
 // RollbackOutcome reports what happened in a rollback: either the seed row was
@@ -100,6 +116,16 @@ type ResumeAgentOutcome struct {
 	Mode    RestoreModeView `json:"resumeMode"`
 }
 
+// InterfaceTransitionStatus describes whether this session can cross between
+// its TUI and Chat controllers and includes the latest durable handoff attempt.
+type InterfaceTransitionStatus struct {
+	Supported  bool
+	TargetMode domain.SessionMode
+	ReasonCode string
+	Reason     string
+	Transition *domain.SessionInterfaceTransition
+}
+
 type scmProvider interface {
 	ParseRepository(remote string) (ports.SCMRepo, bool)
 	FetchPullRequests(ctx context.Context, refs []ports.SCMPRRef) ([]ports.SCMObservation, error)
@@ -118,8 +144,17 @@ type Service struct {
 	clock               func() time.Time
 	dataDir             string
 	telemetry           ports.EventSink
+	logger              *slog.Logger
+	backgroundContext   context.Context
+	runBackground       func(func())
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
+	workspaceCache      *workspaceCache
+	// workspaceGroup coalesces concurrent cache-miss compare/status lookups
+	// for the same (session, root): "Expand All" on many files fires that
+	// many GetWorkspaceFile calls at once, and without this each one would
+	// independently spawn its own git subprocesses for identical work.
+	workspaceGroup singleflight.Group
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -144,6 +179,11 @@ type Deps struct {
 	Clock     func() time.Time
 	DataDir   string
 	Telemetry ports.EventSink
+	Logger    *slog.Logger
+	// BackgroundContext owns best-effort work that must survive an HTTP request
+	// returning but stop with the daemon. It defaults to context.Background for
+	// focused service tests and non-daemon callers.
+	BackgroundContext context.Context
 	// SignalCapable gates the no_signal status downgrade per harness; daemon
 	// wiring passes activitydispatch.SupportsHarness. Left nil, no session is
 	// ever downgraded to no_signal.
@@ -152,7 +192,11 @@ type Deps struct {
 
 // NewWithDeps wires a session service with optional PR-claim dependencies.
 func NewWithDeps(d Deps) *Service {
-	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry}
+	backgroundContext := d.BackgroundContext
+	if backgroundContext == nil {
+		backgroundContext = context.Background()
+	}
+	s := &Service{manager: d.Manager, store: d.Store, prClaimer: d.PRClaimer, scm: d.SCM, tracker: d.Tracker, clock: d.Clock, dataDir: d.DataDir, signalCapable: d.SignalCapable, telemetry: d.Telemetry, logger: d.Logger, backgroundContext: backgroundContext}
 	if s.prClaimer == nil {
 		if w, ok := d.Store.(ports.PRClaimer); ok {
 			s.prClaimer = w
@@ -161,6 +205,7 @@ func NewWithDeps(d Deps) *Service {
 	if s.clock == nil {
 		s.clock = time.Now
 	}
+	s.workspaceCache = newWorkspaceCache(workspaceCacheTTL, s.clock)
 	return s
 }
 
@@ -319,7 +364,12 @@ func (s *Service) emitSpawnFailed(cfg ports.SpawnConfig, err error, durationMs i
 // one is the only live coordinator. When clean is false it is idempotent: if an
 // active orchestrator already exists it is returned as-is. A business rule that
 // belongs here, not in the HTTP controller.
-func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.ProjectID, clean bool) (domain.Session, error) {
+func (s *Service) SpawnOrchestrator(
+	ctx context.Context,
+	projectID domain.ProjectID,
+	clean bool,
+	requestedMode domain.SessionMode,
+) (domain.Session, error) {
 	unlock := s.lockOrchestratorProject(projectID)
 	defer unlock()
 
@@ -327,10 +377,19 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 	if err != nil {
 		return domain.Session{}, err
 	}
+	mode := requestedMode
 	if clean {
 		existing, err := s.activeOrchestrators(ctx, projectID)
 		if err != nil {
 			return domain.Session{}, err
+		}
+		if len(existing) > 0 && mode == "" {
+			// Clean replacement preserves the controller contract of the
+			// orchestrator being replaced only when the caller did not make an
+			// explicit choice. The global default still must not silently flip an
+			// existing project's coordinator, but an explicit replacement mode is
+			// authoritative.
+			mode = newestSession(existing).Mode
 		}
 		for _, orch := range existing {
 			_ = s.sendRetireNotice(ctx, orch.ID)
@@ -347,7 +406,11 @@ func (s *Service) SpawnOrchestrator(ctx context.Context, projectID domain.Projec
 			return newestSession(existing), nil
 		}
 	}
-	sess, _, _, err := s.spawn(ctx, ports.SpawnConfig{ProjectID: projectID, Kind: domain.KindOrchestrator})
+	sess, _, _, err := s.spawn(ctx, ports.SpawnConfig{
+		ProjectID:     projectID,
+		Kind:          domain.KindOrchestrator,
+		RequestedMode: mode,
+	})
 	if err != nil {
 		return domain.Session{}, err
 	}
@@ -462,6 +525,60 @@ func (s *Service) ResumeAgent(ctx context.Context, id domain.SessionID) (ResumeA
 	return ResumeAgentOutcome{Session: session, Mode: restoreModeView(res.Mode)}, nil
 }
 
+// InterfaceTransitionStatus returns capability and progress without launching
+// a provider process or mutating the session.
+func (s *Service) InterfaceTransitionStatus(ctx context.Context, id domain.SessionID) (InterfaceTransitionStatus, error) {
+	manager, ok := s.manager.(interfaceTransitionCommander)
+	if !ok {
+		return InterfaceTransitionStatus{}, apierr.Conflict(
+			"INTERFACE_HANDOFF_UNSUPPORTED", "This build cannot switch session interfaces", nil)
+	}
+	status, err := manager.InterfaceTransitionStatus(ctx, id)
+	if err != nil {
+		return InterfaceTransitionStatus{}, toAPIError(err)
+	}
+	return InterfaceTransitionStatus{
+		Supported: status.Supported, TargetMode: status.TargetMode,
+		ReasonCode: status.ReasonCode, Reason: status.Reason,
+		Transition: status.Transition,
+	}, nil
+}
+
+// StartInterfaceTransition begins a durable, asynchronous controller handoff.
+func (s *Service) StartInterfaceTransition(
+	ctx context.Context,
+	id domain.SessionID,
+	target domain.SessionMode,
+	policy domain.SessionInterfaceTransitionPolicy,
+) (domain.SessionInterfaceTransition, error) {
+	if !target.Valid() {
+		return domain.SessionInterfaceTransition{}, apierr.Invalid(
+			"INVALID_SESSION_MODE", "Target mode must be chat or tui", nil)
+	}
+	if !policy.Valid() {
+		return domain.SessionInterfaceTransition{}, apierr.Invalid(
+			"INVALID_TRANSITION_POLICY", "Policy must be drain or interrupt", nil)
+	}
+	manager, ok := s.manager.(interfaceTransitionCommander)
+	if !ok {
+		return domain.SessionInterfaceTransition{}, apierr.Conflict(
+			"INTERFACE_HANDOFF_UNSUPPORTED", "This build cannot switch session interfaces", nil)
+	}
+	transition, err := manager.StartInterfaceTransition(ctx, id, target, policy)
+	return transition, toAPIError(err)
+}
+
+// CancelInterfaceTransition cancels a handoff while its source controller is
+// still safe to reopen.
+func (s *Service) CancelInterfaceTransition(ctx context.Context, id domain.SessionID) error {
+	manager, ok := s.manager.(interfaceTransitionCommander)
+	if !ok {
+		return apierr.Conflict(
+			"INTERFACE_HANDOFF_UNSUPPORTED", "This build cannot switch session interfaces", nil)
+	}
+	return toAPIError(manager.CancelInterfaceTransition(ctx, id))
+}
+
 func restoreModeView(mode sessionmanager.RestoreMode) RestoreModeView {
 	switch mode {
 	case sessionmanager.RestoreModeNative:
@@ -537,6 +654,48 @@ func (s *Service) SetTerminateOnPRMerge(ctx context.Context, id domain.SessionID
 	updated, err := s.store.SetSessionTerminateOnPRMerge(ctx, id, terminate, time.Now().UTC())
 	if err != nil {
 		return domain.Session{}, fmt.Errorf("set terminate-on-pr-merge %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// Pin marks a session as pinned and returns the refreshed read model.
+func (s *Service) Pin(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+	now := s.now()
+	updated, err := s.store.SetSessionPinned(ctx, id, true, &now, now)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("pin %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// Unpin marks a session as unpinned and returns the refreshed read model.
+func (s *Service) Unpin(ctx context.Context, id domain.SessionID) (domain.Session, error) {
+	now := s.now()
+	updated, err := s.store.SetSessionPinned(ctx, id, false, nil, now)
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("unpin %s: %w", id, err)
+	}
+	if !updated {
+		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
+	}
+	return s.Get(ctx, id)
+}
+
+// SetReviewerHarness persists the reviewer selected for this session. Empty
+// clears the preference and restores the project-level fallback.
+func (s *Service) SetReviewerHarness(ctx context.Context, id domain.SessionID, harness domain.ReviewerHarness) (domain.Session, error) {
+	if harness != "" && !harness.IsKnown() {
+		return domain.Session{}, apierr.Invalid("UNKNOWN_REVIEWER_HARNESS", "Unknown reviewer harness", nil)
+	}
+	updated, err := s.store.SetSessionReviewerHarness(ctx, id, harness, time.Now().UTC())
+	if err != nil {
+		return domain.Session{}, fmt.Errorf("set reviewer harness %s: %w", id, err)
 	}
 	if !updated {
 		return domain.Session{}, apierr.NotFound("SESSION_NOT_FOUND", "Unknown session")
@@ -663,6 +822,22 @@ func toAPIError(err error) error {
 	case errors.Is(err, sessionmanager.ErrResumeInProgress):
 		return apierr.Conflict("AGENT_RESUME_IN_PROGRESS",
 			"The agent is already being resumed", nil)
+	case errors.Is(err, sessionmanager.ErrSwitchInProgress):
+		return apierr.Conflict("INTERFACE_TRANSITION_IN_PROGRESS",
+			"This session is already switching interfaces", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceHandoffUnsupported):
+		return apierr.Conflict("INTERFACE_HANDOFF_UNSUPPORTED", err.Error(), nil)
+	case errors.Is(err, sessionmanager.ErrNativeConversationMissing):
+		return apierr.Conflict("NATIVE_SESSION_MISSING",
+			"The agent has not exposed a native conversation that can resume in the other interface", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNotCancellable):
+		return apierr.Conflict("INTERFACE_TRANSITION_NOT_CANCELLABLE",
+			"The source controller has already stopped; AO must finish or recover the switch", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceAlreadySelected):
+		return apierr.Conflict("INTERFACE_ALREADY_SELECTED",
+			"The session is already using the requested interface", nil)
+	case errors.Is(err, sessionmanager.ErrInterfaceTransitionNotFound):
+		return apierr.NotFound("INTERFACE_TRANSITION_NOT_FOUND", "No active interface switch exists")
 	case errors.Is(err, sessionmanager.ErrAwaitingDecision):
 		return apierr.Conflict("SESSION_AWAITING_DECISION",
 			"Session is paused on a permission decision; answer it in the session terminal first", nil)
@@ -689,6 +864,14 @@ func toAPIError(err error) error {
 		return apierr.Invalid("AGENT_BINARY_NOT_FOUND", err.Error(), nil)
 	case errors.Is(err, ports.ErrRuntimePrerequisite):
 		return apierr.Invalid("RUNTIME_PREREQUISITE_MISSING", err.Error(), nil)
+	case errors.Is(err, ports.ErrChatUnsupported):
+		return apierr.Conflict("SESSION_MODE_UNSUPPORTED", err.Error(), nil)
+	case errors.Is(err, ports.ErrChatDriverUnavailable):
+		return apierr.Conflict("CHAT_DRIVER_UNAVAILABLE", err.Error(), nil)
+	case errors.Is(err, ports.ErrChatDriverIncompatible):
+		return apierr.Conflict("CHAT_DRIVER_INCOMPATIBLE", err.Error(), nil)
+	case errors.Is(err, ports.ErrChatAuthRequired):
+		return apierr.Conflict("CHAT_AUTH_REQUIRED", "The agent is installed but not authenticated", nil)
 	case errors.Is(err, ports.ErrRuntimeWorkspaceCwdMismatch):
 		return apierr.Conflict("WORKSPACE_CWD_MISMATCH", err.Error(), nil)
 	case errors.Is(err, ports.ErrWorkspaceLocked):

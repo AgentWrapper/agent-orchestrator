@@ -1,12 +1,15 @@
 import {
+	CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL,
 	FOCUS_TERMINAL_SHORTCUT_CHANNEL,
 	KEYBOARD_SHORTCUTS_HELP_CHANNEL,
 	matchesAppShortcut,
 	NEXT_SESSION_SHORTCUT_CHANNEL,
+	NEXT_TAB_SHORTCUT_CHANNEL,
 	NEW_SESSION_SHORTCUT_CHANNEL,
 	NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL,
 	OPEN_SETTINGS_SHORTCUT_CHANNEL,
 	PREVIOUS_SESSION_SHORTCUT_CHANNEL,
+	PREVIOUS_TAB_SHORTCUT_CHANNEL,
 	type AppShortcutId,
 	type KeybindingOverrides,
 	type ShortcutChord,
@@ -43,10 +46,13 @@ type ShortcutTargetContents = {
 const mainShortcutChannels: readonly [AppShortcutId, string][] = [
 	["new-session", NEW_SESSION_SHORTCUT_CHANNEL],
 	["new-shell-terminal", NEW_SHELL_TERMINAL_SHORTCUT_CHANNEL],
+	["close-shell-terminal", CLOSE_SHELL_TERMINAL_SHORTCUT_CHANNEL],
 	["keyboard-shortcuts", KEYBOARD_SHORTCUTS_HELP_CHANNEL],
 	["open-settings", OPEN_SETTINGS_SHORTCUT_CHANNEL],
 	["previous-session", PREVIOUS_SESSION_SHORTCUT_CHANNEL],
 	["next-session", NEXT_SESSION_SHORTCUT_CHANNEL],
+	["previous-tab", PREVIOUS_TAB_SHORTCUT_CHANNEL],
+	["next-tab", NEXT_TAB_SHORTCUT_CHANNEL],
 	["focus-terminal", FOCUS_TERMINAL_SHORTCUT_CHANNEL],
 ];
 
@@ -54,9 +60,9 @@ const appShortcutChannel = (
 	chord: ShortcutChord,
 	isMac: boolean,
 	overrides: KeybindingOverrides,
-): string | null => {
+): readonly [AppShortcutId, string] | null => {
 	for (const [id, channel] of mainShortcutChannels) {
-		if (matchesAppShortcut(id, chord, isMac, overrides)) return channel;
+		if (matchesAppShortcut(id, chord, isMac, overrides)) return [id, channel];
 	}
 	return null;
 };
@@ -71,25 +77,32 @@ export function attachAppShortcuts(
 	focusTarget = false,
 	getOverrides: () => KeybindingOverrides = () => ({}),
 	isRecording: () => boolean = () => false,
+	shouldHandle: (id: AppShortcutId) => boolean = () => true,
+	onShortcut?: (id: AppShortcutId) => void,
 ): void {
 	contents.on("before-input-event", (event, input) => {
 		if (input.type !== "keyDown" || input.isAutoRepeat) return;
 		// Let the renderer's capture listener receive application-owned chords
 		// while the user is recording a replacement binding.
 		if (isRecording()) return;
-		const channel = appShortcutChannel(
-			{
-				key: input.key,
-				code: input.code,
-				ctrl: input.control,
-				meta: input.meta,
-				shift: input.shift,
-				alt: input.alt,
-			},
-			isMac,
-			getOverrides(),
-		);
-		if (!channel) return;
+		const chord = {
+			key: input.key,
+			code: input.code,
+			ctrl: input.control,
+			meta: input.meta,
+			shift: input.shift,
+			alt: input.alt,
+		};
+		if (onShortcut && matchesAppShortcut("toggle-browser-devtools", chord, isMac, getOverrides())) {
+			event.preventDefault();
+			if (focusTarget) target.focus();
+			onShortcut("toggle-browser-devtools");
+			return;
+		}
+		const match = appShortcutChannel(chord, isMac, getOverrides());
+		if (!match) return;
+		const [id, channel] = match;
+		if (!shouldHandle(id)) return;
 
 		event.preventDefault();
 		if (focusTarget) target.focus();

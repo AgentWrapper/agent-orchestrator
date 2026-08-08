@@ -6,9 +6,15 @@ import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
-import { agentLabelCompare, buildRankedAgentOptions } from "../lib/agent-select-options";
+import {
+	agentLabelCompare,
+	buildRankedAgentOptions,
+	DEFAULT_AGENT_PRIORITY,
+	DEFAULT_AGENT_PRIORITY_RANK,
+} from "../lib/agent-select-options";
 import { cn } from "../lib/utils";
 import { AgentAvatar } from "./AgentAvatar";
+import { FieldDefaultHint } from "./FieldDefaultHint";
 import { buildIntake, type IntakeForm, IntakeFields, intakeNeedsRule } from "./IntakeFields";
 import { AgentSelectMenuItem } from "./settings/AgentSelectMenuItem";
 import { SettingsRow } from "./settings/SettingsRow";
@@ -30,11 +36,6 @@ export type CreateProjectAgentSelection = {
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
-const DEFAULT_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
-const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
-	DEFAULT_AGENT_PRIORITY.map((agent, index) => [agent, index]),
-);
-
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	isCreating: boolean;
@@ -159,7 +160,7 @@ export function CreateProjectAgentSheet({
 			<Dialog.Portal>
 				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
 				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-[min(480px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-agents-sheet border border-[var(--color-border-agents-sheet)] bg-[var(--color-bg-agents-sheet)] p-0 text-[var(--color-text-agents-sheet-title)] shadow-[var(--shadow-import-modal)] data-[state=open]:animate-modal-in">
-					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] px-6 py-5">
+					<div className="flex items-start justify-between gap-4 border-b border-[var(--color-border-agents-sheet)] p-(--size-import-dialog-padding)">
 						<div className="min-w-0">
 							<Dialog.Title className="text-subtitle font-semibold text-[var(--color-text-agents-sheet-title)]">
 								{kind === "workspace" ? t("createProject.workspaceAgents") : t("createProject.projectAgents")}
@@ -171,7 +172,7 @@ export function CreateProjectAgentSheet({
 						<Dialog.Close asChild>
 							<button
 								type="button"
-								className="grid size-7 shrink-0 place-items-center rounded-md text-[var(--color-text-agents-sheet-description)] transition hover:bg-interactive-hover hover:text-[var(--color-text-agents-sheet-title)] disabled:pointer-events-none disabled:opacity-50"
+								className="settings-close-button"
 								aria-label={t("createProject.closeAgents")}
 								disabled={isBusy}
 							>
@@ -180,7 +181,7 @@ export function CreateProjectAgentSheet({
 						</Dialog.Close>
 					</div>
 					<form
-						className="space-y-5 px-6 py-5"
+						className="space-y-5 p-(--size-import-dialog-padding)"
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!canSubmit) return;
@@ -307,17 +308,16 @@ export function CreateProjectAgentSheet({
 							</div>
 						)}
 
-						<div className="flex items-center justify-end gap-2 pt-1">
+						<div className="flex items-center justify-end gap-3 pt-1">
 							<Button
 								type="button"
-								variant="outline"
+								variant="footer"
 								disabled={isBusy}
-								className="rounded-lg border-[var(--color-border-agents-sheet)] bg-transparent text-[var(--color-text-agents-sheet-title)] hover:bg-interactive-hover"
 								onClick={() => onOpenChange(false)}
 							>
 								{t("createProject.cancel")}
 							</Button>
-							<Button type="submit" variant="primary" className="rounded-lg" disabled={!canSubmit}>
+							<Button type="submit" variant="footer-primary" disabled={!canSubmit}>
 								{isInitializing
 									? t("createProject.settingUp")
 									: isCreating
@@ -337,6 +337,7 @@ export function CreateProjectAgentSheet({
 export const RequiredAgentField = memo(function RequiredAgentField({
 	authorized,
 	disabled = false,
+	hint,
 	icon,
 	id,
 	invalid = false,
@@ -353,6 +354,8 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 }: {
 	authorized?: AgentInfo[];
 	disabled?: boolean;
+	/** Caption beside the label, e.g. naming where a preselected default came from. */
+	hint?: string;
 	icon?: LucideIcon;
 	id: string;
 	invalid?: boolean;
@@ -365,7 +368,7 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 	labelClassName?: string;
 	contentClassName?: string;
 	value: string;
-	variant?: "stacked" | "settings-row";
+	variant?: "stacked" | "settings-row" | "chip";
 }) {
 	const fallbackAgents: AgentInfo[] = AGENT_OPTIONS.map((agent) => ({ id: agent, label: agent }));
 	const options = buildRankedAgentOptions({
@@ -420,11 +423,75 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 		);
 	}
 
+	const selectedOption = options.find((agent) => agent.id === value);
+
+	// Chip: the value reads as part of a sentence ("Runs with Codex") rather than
+	// as a form field, so the label is carried by that sentence, not by a <Label>.
+	if (variant === "chip") {
+		return (
+			<Select value={value} onValueChange={onChange} disabled={disabled}>
+				{/* The ! overrides are deliberate: SelectTrigger ships a form-control
+				    height, padding and chevron size, and a chip has to match the model
+				    chip beside it rather than the field it descends from. */}
+				<SelectTrigger
+					id={id}
+					size="sm"
+					className={cn(
+						"composer-chip h-control-md! bg-(--color-bg-composer-chip)! px-2! text-control! [&_svg]:size-icon-sm",
+						invalid && "text-error",
+						triggerClassName,
+					)}
+					aria-label={label}
+					aria-invalid={invalid || undefined}
+				>
+					<SelectValue placeholder={placeholder}>
+						{selectedOption ? (
+							<span className="flex min-w-0 items-center gap-2">
+								<AgentAvatar provider={selectedOption.id} className="size-icon-base" decorative />
+								<span className="min-w-0 truncate" title={selectedOption.label}>
+									{selectedOption.label}
+								</span>
+							</span>
+						) : null}
+					</SelectValue>
+				</SelectTrigger>
+				<SelectContent
+					position="popper"
+					side="bottom"
+					align="start"
+					sideOffset={6}
+					className={cn("max-h-select-menu-max!", contentClassName)}
+				>
+					{options.map((agent) => (
+						<SelectItem
+							key={agent.id}
+							value={agent.id}
+							disabled={agent.disabled}
+							className="[&>span:last-child]:w-full"
+						>
+							<AgentSelectMenuItem
+								agentId={agent.id}
+								label={agent.label}
+								selected={value === agent.id}
+								status={agent.status}
+								statusTone={agent.statusTone}
+								disabled={agent.disabled}
+							/>
+						</SelectItem>
+					))}
+				</SelectContent>
+			</Select>
+		);
+	}
+
 	return (
 		<div className="flex flex-col gap-1.5">
-			<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
-				{label}
-			</Label>
+			<div className="flex min-w-0 items-baseline gap-1.5">
+				<Label htmlFor={id} className={cn("text-xs font-medium text-muted-foreground", labelClassName)}>
+					{label}
+				</Label>
+				{hint && <FieldDefaultHint text={hint} />}
+			</div>
 			<Select value={value} onValueChange={onChange} disabled={disabled}>
 				<SelectTrigger
 					id={id}
@@ -433,7 +500,16 @@ export const RequiredAgentField = memo(function RequiredAgentField({
 					aria-label={label}
 					aria-invalid={invalid || undefined}
 				>
-					<SelectValue placeholder={placeholder} />
+					{/* Radix would otherwise clone the whole menu row into the trigger,
+					    dragging the selected checkmark and install status with it. */}
+					<SelectValue placeholder={placeholder}>
+						{selectedOption ? (
+							<span className="flex min-w-0 items-center gap-3">
+								<AgentAvatar provider={selectedOption.id} className="size-icon-lg" decorative />
+								<span className="min-w-0 truncate">{selectedOption.label}</span>
+							</span>
+						) : null}
+					</SelectValue>
 				</SelectTrigger>
 				<SelectContent
 					position="popper"

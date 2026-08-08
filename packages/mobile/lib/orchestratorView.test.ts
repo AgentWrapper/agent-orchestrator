@@ -13,6 +13,7 @@ const link = (over: Partial<OrchestratorLink> = {}): OrchestratorLink => ({
 	id: "proj-orchestrator",
 	projectId: "proj",
 	projectName: "proj",
+	mode: "chat",
 	...over,
 });
 
@@ -122,4 +123,3 @@ describe("zoneCounts", () => {
 		expect(zoneCounts([])).toEqual({});
 	});
 });
-

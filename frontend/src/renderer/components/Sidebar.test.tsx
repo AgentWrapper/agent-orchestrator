@@ -1,11 +1,20 @@
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+// Disable motion animations so AnimatePresence unmounts children immediately
+// (no exit-animation timer keeps them alive after conditional removal).
+vi.mock("motion/react", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("motion/react")>();
+	return {
+		...actual,
+		AnimatePresence: ({ children }: { children: React.ReactNode }) => children,
+	};
+});
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	Sidebar,
-	SIDEBAR_COLLAPSE_THRESHOLD,
 	SIDEBAR_DEFAULT_WIDTH,
 	SIDEBAR_MIN_WIDTH,
 } from "./Sidebar";
@@ -17,7 +26,7 @@ const { getMock, navigateMock, mockParams, renameSessionMock, spawnMock, updateS
 	() => ({
 		getMock: vi.fn(),
 		navigateMock: vi.fn(),
-		mockParams: { projectId: undefined as string | undefined },
+		mockParams: { projectId: undefined as string | undefined, sessionId: undefined as string | undefined },
 		renameSessionMock: vi.fn().mockResolvedValue(undefined),
 		spawnMock: vi.fn(),
 		updateStatusMock: vi.fn(),
@@ -37,7 +46,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => {
 	return {
 		...actual,
 		useNavigate: () => navigateMock,
-		useParams: () => ({}),
+		useParams: () => ({ ...mockParams }),
 		useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => unknown }) =>
 			select({ location: { pathname: "/" } }),
 	};
@@ -116,12 +125,14 @@ function renderSidebar({
 	onRemoveProject = vi.fn().mockResolvedValue(undefined) as RemoveProjectHandler,
 	seedAgents = true,
 	workspaces = [workspace],
+	initialOpen = true,
 }: {
 	onCreateProject?: CreateProjectHandler;
 	onInitializeProject?: InitializeProjectHandler;
 	onRemoveProject?: RemoveProjectHandler;
 	seedAgents?: boolean;
 	workspaces?: WorkspaceSummary[];
+	initialOpen?: boolean;
 } = {}) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -144,7 +155,7 @@ function renderSidebar({
 	}
 	render(
 		<QueryClientProvider client={queryClient}>
-			<SidebarProvider>
+			<SidebarProvider defaultOpen={initialOpen}>
 				<Sidebar
 					onCreateProject={onCreateProject}
 					onInitializeProject={onInitializeProject}
@@ -156,6 +167,8 @@ function renderSidebar({
 	);
 	return onRemoveProject;
 }
+
+/** Projects render collapsed; open one to list all of its sessions. */
 
 async function chooseOption(trigger: HTMLElement, optionName: string) {
 	await userEvent.click(trigger);
@@ -204,7 +217,7 @@ beforeEach(() => {
 	window.localStorage.clear();
 	document.documentElement.style.removeProperty("--ao-sidebar-w");
 	commandPaletteEnabled.current = true;
-	useUiStore.setState({ isCommandPaletteOpen: false });
+	useUiStore.setState({ isCommandPaletteOpen: false, settingsModal: null });
 	getMock.mockReset();
 	getMock.mockResolvedValue({
 		data: {
@@ -228,6 +241,7 @@ beforeEach(() => {
 	spawnMock.mockReset();
 	updateStatusMock.mockReset().mockResolvedValue({ state: "idle" });
 	mockParams.projectId = undefined;
+	mockParams.sessionId = undefined;
 });
 
 afterEach(() => {
@@ -235,6 +249,21 @@ afterEach(() => {
 });
 
 describe("Sidebar", () => {
+	it("suppresses focus chrome without removing keyboard focusability", () => {
+		renderSidebar();
+
+		expect(document.querySelector('[data-slot="sidebar-container"]')).toHaveClass("sidebar-focusless");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveAttribute("tabindex", "0");
+	});
+
+	it("aligns the Settings footer hairline and row height with the board Archive bar", () => {
+		renderSidebar();
+
+		const footer = document.querySelector('[data-sidebar="footer"]');
+		expect(footer).toHaveClass("border-t", "border-border-strong", "!py-2");
+		expect(screen.getAllByRole("button", { name: "Settings" })[0]).toHaveClass("h-[42px]");
+	});
+
 	it("keeps only the expanded Settings control keyboard-accessible while expanded", () => {
 		renderSidebar();
 
@@ -249,15 +278,8 @@ describe("Sidebar", () => {
 		expect(collapsedButton?.closest('[aria-hidden="true"]')).toBeInTheDocument();
 	});
 
-	it("keeps only the collapsed Settings control keyboard-accessible while collapsed", async () => {
-		renderSidebar();
-
-		fireEvent.pointerDown(screen.getByTestId("resize-handle"), { clientX: SIDEBAR_DEFAULT_WIDTH });
-		fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
-
-		await waitFor(() => {
-			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
-		});
+	it("keeps only the collapsed Settings control keyboard-accessible while collapsed", () => {
+		renderSidebar({ initialOpen: false });
 
 		const settingsButtons = Array.from(document.querySelectorAll<HTMLButtonElement>('button[aria-label="Settings"]'));
 		const expandedButton = settingsButtons.find((button) => button.textContent?.includes("Settings"));
@@ -270,12 +292,12 @@ describe("Sidebar", () => {
 		expect(collapsedButton?.closest('[aria-hidden="true"]')).toBeNull();
 	});
 
-	it("keeps sidebar scrolling functional while hiding the visible scrollbar", () => {
+	it("keeps sidebar scrolling functional with overflow-y-auto", () => {
 		renderSidebar();
 
 		const content = document.querySelector('[data-sidebar="content"]');
 		expect(content).toHaveClass("overflow-y-auto");
-		expect(content).toHaveClass("scrollbar-none");
+		expect(content).not.toHaveClass("scrollbar-none");
 		expect(content).not.toContainElement(screen.getByText("Projects"));
 	});
 
@@ -285,10 +307,8 @@ describe("Sidebar", () => {
 
 		await user.click(screen.getByRole("button", { name: "Spawn Project One orchestrator" }));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
 
@@ -397,10 +417,10 @@ describe("Sidebar", () => {
 		expect(await screen.findByRole("dialog", { name: "Import to Agent Orchestrator" })).toBeInTheDocument();
 	});
 
-	it("reveals dashboard and orchestrator buttons alongside the kebab on the project row", () => {
+	it("reveals orchestrator and kebab buttons on the project row (no dashboard button)", () => {
 		renderSidebar();
 
-		expect(screen.getByLabelText("Open Project One dashboard")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Open Project One dashboard")).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Spawn Project One orchestrator")).toBeInTheDocument();
 		expect(screen.getByLabelText("Project actions for Project One")).toBeInTheDocument();
 	});
@@ -421,22 +441,89 @@ describe("Sidebar", () => {
 		expect(screen.getByText("fix login")).toBeInTheDocument();
 		expect(screen.getByText("other task")).toBeInTheDocument();
 
-		const folder = screen.getByText("Project Two").closest("button")?.querySelector("[data-project-folder]");
+		const folder = screen.getByRole("button", { name: "Toggle Project Two sessions" });
 		expect(folder).toBeTruthy();
-		await user.click(folder!);
+		await user.click(folder);
 
 		expect(screen.queryByText("other task")).not.toBeInTheDocument();
 		expect(screen.getByText("fix login")).toBeInTheDocument();
 		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
-	it("navigates to the project board when the dashboard button is clicked", async () => {
+	it("navigates to the project board when the project row button is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
 
-		await user.click(screen.getByLabelText("Open Project One dashboard"));
+		// Click the project name text — it's inside SidebarMenuButton and bubbles up to onProjectClick.
+		await user.click(screen.getByText("Project One"));
 
 		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+	});
+
+	it("returns to the project board from an orchestrator session without collapsing", async () => {
+		const user = userEvent.setup();
+		const orchestrator: WorkspaceSession = {
+			...session,
+			id: "proj-1-orc",
+			title: "Orchestrator",
+			kind: "orchestrator",
+		};
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = "proj-1-orc";
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+
+		await user.click(screen.getByText("Project One"));
+
+		expect(navigateMock).toHaveBeenCalledWith({ to: "/projects/$projectId", params: { projectId: "proj-1" } });
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "true");
+	});
+
+	it("collapses an expanded project when its board is already active", async () => {
+		const user = userEvent.setup();
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = undefined;
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [session] }],
+		});
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+
+		await user.click(screen.getByText("Project One"));
+
+		expect(navigateMock).not.toHaveBeenCalled();
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
+	});
+
+	it("expands a collapsed project when opening its orchestrator", async () => {
+		const user = userEvent.setup();
+		const orchestrator: WorkspaceSession = {
+			...session,
+			id: "proj-1-orc",
+			title: "Orchestrator",
+			kind: "orchestrator",
+		};
+		renderSidebar({
+			workspaces: [{ ...workspace, sessions: [orchestrator, session] }],
+		});
+
+		await user.click(screen.getByRole("button", { name: "Toggle Project One sessions" }));
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "false");
+
+		await user.click(screen.getByRole("button", { name: "Open Project One orchestrator" }));
+
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "proj-1-orc" },
+		});
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByText("Project One").closest("button")).toHaveAttribute("aria-expanded", "true");
 	});
 
 	it("defaults worker and orchestrator agents when creating a project", async () => {
@@ -890,11 +977,12 @@ describe("Sidebar", () => {
 		);
 	});
 
-	it("navigates to settings when the footer Settings button is clicked", async () => {
+	it("opens settings when the footer Settings button is clicked", async () => {
 		const user = userEvent.setup();
 		renderSidebar();
 		await user.click(screen.getAllByRole("button", { name: "Settings" })[0]);
-		expect(navigateMock).toHaveBeenCalledWith({ to: "/settings" });
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "global" });
+		expect(navigateMock).not.toHaveBeenCalled();
 	});
 
 	it("opens the command palette when Search is clicked", async () => {
@@ -973,48 +1061,62 @@ describe("Sidebar", () => {
 	it("always shows action icons and reserves padding for them", () => {
 		renderSidebar();
 
-		const projectRow = screen.getByText("Project One").closest("button");
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		const actionCluster = screen.getByLabelText("Project actions for Project One").parentElement;
 
 		if (!projectRow) throw new Error("Project row button not found");
-		// Padding is always reserved for the action cluster (not hover-gated)
 		expect(projectRow).toHaveClass("pr-sidebar-project-actions");
+		expect(actionCluster).toHaveAttribute("data-project-actions");
+		expect(actionCluster).toHaveClass("right-0.5", "gap-px");
+		expect(within(actionCluster as HTMLElement).getAllByRole("button")).toHaveLength(2);
+		expect(screen.getByLabelText("Project actions for Project One")).not.toHaveClass("opacity-0");
 	});
 
-	it("snaps to the real collapsed rail when dragged past the resize collapse threshold", async () => {
+	it("scales project actions with the row without scaling for action-button presses", () => {
+		renderSidebar();
+
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		const pressSurface = projectRow?.closest<HTMLElement>("[data-project-press]");
+		const projectActions = screen.getByLabelText("Project actions for Project One");
+
+		if (!projectRow || !pressSurface) throw new Error("Project press surface not found");
+		expect(pressSurface).toContainElement(projectActions);
+
+		fireEvent.pointerDown(projectRow);
+		expect(pressSurface).toHaveClass("scale-[0.98]");
+		fireEvent.pointerUp(projectRow);
+		expect(pressSurface).not.toHaveClass("scale-[0.98]");
+
+		fireEvent.pointerDown(projectActions);
+		expect(pressSurface).not.toHaveClass("scale-[0.98]");
+	});
+
+	it("optically aligns the project folder and label with its action icons", () => {
+		renderSidebar();
+
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]');
+		expect(projectRow?.querySelector("[data-project-folder-visual]")).toHaveClass("translate-y-px");
+		expect(projectRow?.querySelector("[data-project-label]")).toHaveClass("translate-y-px");
+	});
+
+	it("clamps width at minimum when dragged past the resize floor (no auto-collapse)", async () => {
 		renderSidebar();
 
 		const resizeHandle = screen.getByTestId("resize-handle");
 		expect(resizeHandle).toBeInTheDocument();
-
 		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
 
 		fireEvent.pointerDown(resizeHandle, { clientX: SIDEBAR_DEFAULT_WIDTH });
-		fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
-
-		await waitFor(() => {
-			expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
-		});
-		expect(document.cookie).toContain("sidebar_state=false");
-		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_DEFAULT_WIDTH));
-		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
-		expect(document.body).not.toHaveClass("is-resizing-x");
-
-		const expandRail = document.querySelector('[data-sidebar="rail"]');
-		if (!(expandRail instanceof HTMLElement)) throw new Error("Sidebar rail not found");
-		const expandedWidth = SIDEBAR_DEFAULT_WIDTH + (SIDEBAR_DEFAULT_WIDTH - SIDEBAR_MIN_WIDTH);
-		const expandDistance = expandedWidth - SIDEBAR_MIN_WIDTH;
-		fireEvent.pointerDown(expandRail, { clientX: 0 });
-		fireEvent.pointerMove(window, { clientX: expandDistance });
+		// Drag well past minimum — sidebar should stay expanded and clamp at min.
+		fireEvent.pointerMove(window, { clientX: SIDEBAR_MIN_WIDTH - 50 });
 		fireEvent.pointerUp(window);
 
-		await waitFor(() => {
-			expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
-		});
-		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${expandedWidth}px`);
-		expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(expandedWidth));
+		// Sidebar stays expanded; dragging no longer collapses it.
+		expect(document.querySelector('[data-slot="sidebar"][data-state="expanded"]')).toBeInTheDocument();
+		expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_MIN_WIDTH}px`);
 	});
 
-	it("discards a queued narrow resize frame when collapsing", async () => {
+	it("flushes any queued rAF frame on pointer-up and persists the clamped width", async () => {
 		let queuedFrame: FrameRequestCallback | undefined;
 		const requestAnimationFrameSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
 			queuedFrame = callback;
@@ -1029,24 +1131,22 @@ describe("Sidebar", () => {
 
 			fireEvent.pointerDown(resizeHandle, { clientX: SIDEBAR_DEFAULT_WIDTH });
 			fireEvent.pointerMove(window, { clientX: SIDEBAR_MIN_WIDTH + 5 });
-			fireEvent.pointerMove(window, { clientX: SIDEBAR_COLLAPSE_THRESHOLD - 1 });
+			fireEvent.pointerUp(window);
 
-			await waitFor(() => {
-				expect(document.querySelector('[data-slot="sidebar"][data-state="collapsed"]')).toBeInTheDocument();
-			});
+			// rAF was queued; pointerUp should flush it via cancelAnimationFrame.
 			expect(cancelAnimationFrameSpy).toHaveBeenCalledWith(1);
-			expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_DEFAULT_WIDTH));
-			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
+			expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_MIN_WIDTH + 5));
 
+			// Firing the stale frame after cancellation should not overwrite width.
 			queuedFrame?.(performance.now());
-			expect(document.documentElement.style.getPropertyValue("--ao-sidebar-w")).toBe(`${SIDEBAR_DEFAULT_WIDTH}px`);
+			expect(window.localStorage.getItem("ao-sidebar-w")).toBe(String(SIDEBAR_MIN_WIDTH + 5));
 		} finally {
 			requestAnimationFrameSpy.mockRestore();
 			cancelAnimationFrameSpy.mockRestore();
 		}
 	});
 
-	it("animates active sidebar dots using their PR context color", () => {
+	it("renders active activity as pulsing blue regardless of PR context", () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1106,9 +1206,8 @@ describe("Sidebar", () => {
 				},
 			],
 		});
-
 		const sessionDot = (title: string) =>
-			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("span.rounded-full");
+			screen.getByLabelText(`Open ${title}`).querySelector<HTMLElement>("[data-session-status]");
 
 		expect(sessionDot("idle task")).toHaveClass("bg-status-idle");
 		expect(sessionDot("idle task")).not.toHaveClass("animate-status-pulse");
@@ -1118,15 +1217,15 @@ describe("Sidebar", () => {
 		expect(workingDot).toHaveClass("animate-status-pulse");
 
 		const ciFailedDot = sessionDot("ci failed task");
-		expect(ciFailedDot).toHaveClass("bg-status-needs-you");
+		expect(ciFailedDot).toHaveClass("bg-status-working");
 		expect(ciFailedDot).toHaveClass("animate-status-pulse");
 
-		expect(sessionDot("review task")).toHaveClass("bg-status-in-review", "animate-status-pulse");
-		expect(sessionDot("ready task")).toHaveClass("bg-status-ready", "animate-status-pulse");
-		expect(sessionDot("merged task")).toHaveClass("bg-status-merged", "animate-status-pulse");
+		expect(sessionDot("review task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("ready task")).toHaveClass("bg-status-working", "animate-status-pulse");
+		expect(sessionDot("merged task")).toHaveClass("bg-status-working", "animate-status-pulse");
 	});
 
-	it("renders a static gray dot for idle activity across session statuses", () => {
+	it("renders a static gray dot for idle activity across session statuses", async () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1151,6 +1250,7 @@ describe("Sidebar", () => {
 			],
 		});
 
+
 		const idleActivityDot = screen
 			.getByLabelText("Open idle activity task")
 			.querySelector<HTMLElement>("span.rounded-full");
@@ -1162,7 +1262,56 @@ describe("Sidebar", () => {
 		expect(idleDraftDot).not.toHaveClass("animate-status-pulse");
 	});
 
-	it("keeps merged sessions in the list until they are terminated", () => {
+	it("shows sessions on load and hides them once collapsed", async () => {
+		const user = userEvent.setup();
+		const workspaceWithSessions = {
+			...workspace,
+			sessions: [session, { ...session, id: "proj-1-2", title: "second task" }],
+		};
+		renderSidebar({ workspaces: [workspaceWithSessions] });
+
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(screen.getByLabelText("Open second task")).toBeInTheDocument();
+
+		// Collapse via folder icon
+		const folder = screen.getByRole("button", { name: "Toggle Project One sessions" });
+		expect(folder).toBeTruthy();
+		await user.click(folder);
+
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
+	});
+
+	it("hides all sessions when project is collapsed via folder icon", async () => {
+		const user = userEvent.setup();
+		mockParams.projectId = "proj-1";
+		mockParams.sessionId = "proj-1-2";
+		renderSidebar({
+			workspaces: [
+				{
+					...workspace,
+					sessions: [session, { ...session, id: "proj-1-2", title: "second task" }],
+				},
+			],
+		});
+
+		const projectRow = screen.getByText("Project One").closest('button, [role="button"]')!;
+		// Project starts expanded — sessions visible
+		expect(screen.getByLabelText("Open second task")).toBeInTheDocument();
+		expect(screen.getByLabelText("Open fix login")).toBeInTheDocument();
+		expect(projectRow).toHaveAttribute("aria-expanded", "true");
+
+		// Collapse via folder icon
+		const folder = screen.getByRole("button", { name: "Toggle Project One sessions" });
+		expect(folder).toBeTruthy();
+		await user.click(folder);
+
+		expect(projectRow).toHaveAttribute("aria-expanded", "false");
+		expect(screen.queryByLabelText("Open second task")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Open fix login")).not.toBeInTheDocument();
+	});
+
+	it("keeps merged sessions in the list until they are terminated", async () => {
 		renderSidebar({
 			workspaces: [
 				{
@@ -1174,6 +1323,7 @@ describe("Sidebar", () => {
 				},
 			],
 		});
+
 
 		expect(screen.getByLabelText("Open merged live task")).toBeInTheDocument();
 		expect(screen.queryByLabelText("Open merged terminated task")).not.toBeInTheDocument();

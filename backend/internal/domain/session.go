@@ -34,6 +34,18 @@ type SessionMetadata struct {
 	RuntimeLaunchID   string `json:"runtimeLaunchId,omitempty"`
 	AgentSessionID    string `json:"agentSessionId,omitempty"`
 	Prompt            string `json:"prompt,omitempty"`
+	// ProviderConversationID is the opaque handle a Chat driver needs to resume
+	// this session's provider conversation after a restart (a Codex thread id
+	// today). Normally empty for TUI sessions. It remains a distinct field from
+	// AgentSessionID because most harnesses do not prove those protocol identities
+	// interchangeable; the interface-transition coordinator copies one value into
+	// both only after the adapter explicitly declares that equivalence.
+	ProviderConversationID string `json:"providerConversationId,omitempty"`
+	// ControllerGeneration is rotated each time a Chat controller is started for
+	// this session. Events carrying an older generation are rejected, so a
+	// controller that is dying cannot mutate the session that replaced it. Not
+	// the same fence as RuntimeLaunchID, which covers terminal runtimes.
+	ControllerGeneration string `json:"controllerGeneration,omitempty"`
 	// PreviewURL is the browser preview target the desktop app opens for this
 	// session. Set via `ao preview` (POST /sessions/{id}/preview); persisted so
 	// it survives a daemon restart. Empty means no preview has been requested.
@@ -42,19 +54,34 @@ type SessionMetadata struct {
 	// even when PreviewURL is unchanged. The desktop browser panel keys
 	// navigation on it so a repeated `ao preview <same-url>` still refreshes.
 	PreviewRevision int64 `json:"previewRevision,omitempty"`
+	// BrowserCapabilityVerifier is a one-way verifier for the random browser
+	// capability held by this session's worker process. The bearer token itself
+	// is never persisted, so reading the database cannot grant access to another
+	// session. Keeping the verifier durable lets a surviving worker authenticate
+	// after the desktop app or daemon restarts.
+	BrowserCapabilityVerifier string `json:"-"`
 }
 
 // SessionRecord is the persistence shape. It intentionally stores only durable
 // facts: identity, agent harness, activity_state, is_terminated, and operational
 // metadata. The user-facing Status is derived from these facts plus PR facts.
 type SessionRecord struct {
-	ID          SessionID    `json:"id"`
-	ProjectID   ProjectID    `json:"projectId"`
-	IssueID     IssueID      `json:"issueId,omitempty"`
-	Kind        SessionKind  `json:"kind"`
-	Harness     AgentHarness `json:"harness,omitempty"`
-	DisplayName string       `json:"displayName,omitempty"`
-	Activity    Activity     `json:"activity"`
+	ID        SessionID    `json:"id"`
+	ProjectID ProjectID    `json:"projectId"`
+	IssueID   IssueID      `json:"issueId,omitempty"`
+	Kind      SessionKind  `json:"kind"`
+	Harness   AgentHarness `json:"harness,omitempty"`
+	// ReviewerHarness is this session's preferred reviewer. Empty delegates to
+	// the project configuration.
+	ReviewerHarness ReviewerHarness `json:"reviewerHarness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
+	DisplayName     string          `json:"displayName,omitempty"`
+	// Mode is the session's currently committed conversation controller. Every
+	// send, restore, kill, and reaper decision dispatches from it. Only the
+	// durable interface-transition coordinator may change it; the daemon default
+	// never changes an existing session. Rows written before Chat mode existed
+	// read back as SessionModeTUI.
+	Mode     SessionMode `json:"mode" enum:"chat,tui"`
+	Activity Activity    `json:"activity"`
 	// FirstSignalAt is when the FIRST agent hook callback arrived for the
 	// current spawn/restore: raw signal receipt, independent of the derived
 	// activity state. Zero means no hook has ever reported, which deriveStatus
@@ -71,9 +98,11 @@ type SessionRecord struct {
 	// durable cleanup facts with the generation they were written for so a
 	// finalize started under an earlier terminal episode cannot satisfy a later
 	// one. Internal fact, not part of the API read model.
-	CleanupGeneration int64     `json:"-"`
-	CreatedAt         time.Time `json:"createdAt"`
-	UpdatedAt         time.Time `json:"updatedAt"`
+	CleanupGeneration int64      `json:"-"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
+	IsPinned          bool       `json:"isPinned"`
+	PinnedAt          *time.Time `json:"pinnedAt,omitempty"`
 }
 
 // Session is the read-model returned across the API boundary: a SessionRecord

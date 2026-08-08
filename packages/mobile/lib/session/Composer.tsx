@@ -1,5 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Pressable, StyleSheet, TextInput, View } from "react-native";
+import { MicKey } from "../voice/MicKey";
+import type { VoiceMode, VoiceState } from "../voice/types";
 import { useTheme, useThemedStyles, useThemeState } from "../ThemeProvider";
 import type { Theme } from "../theme";
 import type { SendTarget } from "./sendRoute";
@@ -15,8 +17,10 @@ export function Composer({
 	sending,
 	target,
 	onTargetChange,
+	voice,
 	keyboardVisible,
 	onDismissKeyboard,
+	targetLocked,
 }: {
 	value: string;
 	onChangeText: (v: string) => void;
@@ -24,8 +28,11 @@ export function Composer({
 	sending: boolean;
 	target: SendTarget;
 	onTargetChange: (target: SendTarget) => void;
+	voice: { state: VoiceState; mode: VoiceMode; pressIn(): void; pressOut(): void };
 	keyboardVisible: boolean;
 	onDismissKeyboard: () => void;
+	/** Plain worktree shells have no agent route; hide the misleading toggle. */
+	targetLocked?: boolean;
 }) {
 	const t = useTheme();
 	const { scheme } = useThemeState();
@@ -47,7 +54,7 @@ export function Composer({
 					// No autoFocus: the bar is always mounted now, so focusing on mount
 					// would pop the keyboard over the terminal every time the screen opens.
 				/>
-				<Pressable
+				{!targetLocked ? <Pressable
 					accessibilityRole="button"
 					accessibilityLabel={target === "terminal" ? "Switch to chat" : "Switch to terminal"}
 					accessibilityState={{ selected: target === "terminal" }}
@@ -64,7 +71,7 @@ export function Composer({
 						size={15}
 						color={target === "terminal" ? t.textTertiary : t.blue}
 					/>
-				</Pressable>
+				</Pressable> : null}
 				{/* Only offered while there is a keyboard to dismiss, instead of a
 				    permanent toggle that claimed to hide a keyboard it did not own. */}
 				{keyboardVisible ? (
@@ -79,6 +86,8 @@ export function Composer({
 					</Pressable>
 				) : null}
 			</View>
+
+			<MicKey state={voice.state} mode={voice.mode} onPressIn={voice.pressIn} onPressOut={voice.pressOut} />
 
 			<Pressable
 				accessibilityRole="button"
@@ -137,8 +146,8 @@ const makeStyles = (t: Theme) =>
 		borderRadius: 8,
 	},
 	routeToggleActive: { backgroundColor: t.tintBlue },
-	// Rounded square rather than a circle, so it matches the radius of the field
-	// beside it instead of being the only circle in the dock.
+	// Rounded square at the same radius as the mic, so the two read as a pair and
+	// match the field beside them rather than being the only circles in the dock.
 	send: {
 		width: CONTROL_SIZE,
 		height: CONTROL_SIZE,

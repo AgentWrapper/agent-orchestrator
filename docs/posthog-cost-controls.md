@@ -168,6 +168,13 @@ Use layered controls:
    - renderer captures are bounded per event name per minute and per day
    - daemon remote exports are bounded per event name per minute and per day
    - burst-prone daemon failures are aggregated before export
+5. Use the AO kill switch for a stream that turns out to be noisy. Setting
+   `AO_TELEMETRY_DISABLED_EVENTS` silences named streams (with `*` prefix
+   matching) on installs that already exist, without shipping a release. Local
+   SQLite still records them, so the stream stays debuggable. See the kill-switch
+   section in [telemetry.md](telemetry.md). This is the in-app counterpart to a
+   PostHog ingestion rule: the rule stops paying for events already sent, the
+   switch stops sending them.
 
 Those steps protect cost from normal bugs and known old clients, but they do
 not fully protect a public project token from deliberate abuse.

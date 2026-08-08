@@ -7,6 +7,7 @@ import (
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite"
+	"github.com/aoagents/agent-orchestrator/backend/internal/storage/sqlite/sqlitetest"
 )
 
 func TestRunImportsIntoEmptyTarget(t *testing.T) {
@@ -369,7 +370,7 @@ func TestRunCopiesWorkspaceChildRepos(t *testing.T) {
 
 func newStore(t *testing.T) *sqlite.Store {
 	t.Helper()
-	store, err := sqlite.Open(t.TempDir())
+	store, err := sqlitetest.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

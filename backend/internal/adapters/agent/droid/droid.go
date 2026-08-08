@@ -210,6 +210,9 @@ func runtimeSettingsArgs(dataDir, sessionID string, mode ports.PermissionMode, m
 	if level == "" && model == "" {
 		return nil, nil
 	}
+	if strings.TrimSpace(dataDir) == "" {
+		return nil, fmt.Errorf("droid: AO data directory required for runtime settings")
+	}
 
 	settings := map[string]any{}
 	if level != "" {
@@ -232,6 +235,17 @@ func runtimeSettingsArgs(dataDir, sessionID string, mode ports.PermissionMode, m
 		return nil, fmt.Errorf("droid: write runtime settings: %w", err)
 	}
 	return []string{"--settings", path}, nil
+}
+
+// PrepareRuntimeSettingsArgs exposes the same process-scoped settings overlay
+// to Droid's native ACP binding. Keeping this here prevents Chat and TUI modes
+// from inventing different model or autonomy mappings for the same harness.
+func PrepareRuntimeSettingsArgs(
+	dataDir, sessionID string,
+	mode ports.PermissionMode,
+	model string,
+) ([]string, error) {
+	return runtimeSettingsArgs(dataDir, sessionID, mode, model)
 }
 
 // runtimeSettingsPath is the deterministic path for a session's process-scoped
