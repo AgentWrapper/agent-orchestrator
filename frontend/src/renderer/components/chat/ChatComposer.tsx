@@ -75,27 +75,6 @@ function withAttachmentReferences(text: string, paths: string[]): string {
 		.join("\n")}`;
 }
 
-/**
- * Match the field to its content until CSS's seven-line cap takes over.
- *
- * Resetting first is what lets a deleted draft shrink as well as grow. The cap
- * remains in CSS so typography and spacing stay the source of truth; this helper
- * only decides when the textarea needs its own scroll surface.
- */
-function resizeTextareaToContent(node: HTMLTextAreaElement) {
-	node.style.height = "0px";
-	node.style.overflowY = "hidden";
-
-	const contentHeight = node.scrollHeight;
-	const maxHeight = Number.parseFloat(window.getComputedStyle(node).maxHeight);
-	const cappedHeight = Number.isFinite(maxHeight)
-		? Math.min(contentHeight, maxHeight)
-		: contentHeight;
-
-	node.style.height = `${cappedHeight}px`;
-	node.style.overflowY = contentHeight > cappedHeight ? "auto" : "hidden";
-}
-
 export function ChatComposer({
 	onSend,
 	busy,
@@ -174,8 +153,22 @@ export function ChatComposer({
 	const pendingCaret = useRef<number | null>(null);
 	const stagedDelivery = useRef<{ signature: string; paths: string[] } | null>(null);
 	const menuId = useId();
+	/** Match the field to its content until CSS's seven-line cap takes over. */
 	const resizeTextarea = useCallback(() => {
-		if (textarea.current) resizeTextareaToContent(textarea.current);
+		const node = textarea.current;
+		if (!node) return;
+		// Reset first so deleting a draft shrinks the field as well as growing it.
+		node.style.height = "0px";
+		node.style.overflowY = "hidden";
+
+		const contentHeight = node.scrollHeight;
+		const maxHeight = Number.parseFloat(window.getComputedStyle(node).maxHeight);
+		const cappedHeight = Number.isFinite(maxHeight)
+			? Math.min(contentHeight, maxHeight)
+			: contentHeight;
+
+		node.style.height = `${cappedHeight}px`;
+		node.style.overflowY = contentHeight > cappedHeight ? "auto" : "hidden";
 	}, []);
 
 	const fileAttachments = useFileAttachments();
