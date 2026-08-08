@@ -63,23 +63,7 @@ function humanMessage(text: string): ConversationMessage {
 }
 
 describe("HumanMessage attachments", () => {
-	it.each([
-		[
-			"chat",
-			"Attached files (read these files in the workspace):",
-			"attachment-d9014f798f.png",
-		],
-		[
-			"spawn",
-			"Attached files (read these files in the workspace for context):",
-			"attachment-1.jpg",
-		],
-		[
-			"legacy chat",
-			"Attached images (read these files in the workspace for visual context):",
-			"image-a1b2c3d4.webp",
-		],
-	])("renders an AO-generated %s image reference as an image", (_source, header, name) => {
+	function renderImageAttachment(header: string, name: string) {
 		render(
 			<HumanMessage
 				message={humanMessage(`check again\n\n${header}\n- .ao/attachments/${name}`)}
@@ -94,6 +78,42 @@ describe("HumanMessage attachments", () => {
 		);
 		expect(screen.getByText("check again")).toBeInTheDocument();
 		expect(screen.queryByText(/Attached (?:files|images) \(read these files/)).not.toBeInTheDocument();
+	}
+
+	it("renders staged image references in human messages as images", () => {
+		renderImageAttachment(
+			"Attached files (read these files in the workspace):",
+			"attachment-d9014f798f.png",
+		);
+	});
+
+	it.each([
+		[
+			"spawn",
+			"Attached files (read these files in the workspace for context):",
+			"attachment-1.jpg",
+		],
+		[
+			"legacy chat",
+			"Attached images (read these files in the workspace for visual context):",
+			"image-a1b2c3d4.webp",
+		],
+	])("renders an AO-generated %s image reference as an image", (_source, header, name) => {
+		renderImageAttachment(header, name);
+	});
+
+	it("preserves authored trailing whitespace before generated references", () => {
+		const authoredBody = "keep my spacing  \n";
+		const { container } = render(
+			<HumanMessage
+				message={humanMessage(
+					`${authoredBody}\n\nAttached files (read these files in the workspace):\n- .ao/attachments/attachment-ab12.png`,
+				)}
+				sessionId="ao-1"
+			/>,
+		);
+
+		expect(container.querySelector(".cursor-chat-human-message > p")?.textContent).toBe(authoredBody);
 	});
 
 	it("shows non-image attachments as file labels instead of internal prompt text", () => {

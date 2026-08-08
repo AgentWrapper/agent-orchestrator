@@ -100,7 +100,9 @@ function humanMessageParts(text: string): { body: string; attachments: string[] 
 	if (attachments.length === 0 || attachments.some((path) => !STAGED_ATTACHMENT_PATH.test(path))) {
 		return { body: text, attachments: [] };
 	}
-	return { body: text.slice(0, match.index).trimEnd(), attachments };
+	// The match begins at the generated separator, so slicing at its index
+	// removes only AO-owned text and preserves the authored body byte-for-byte.
+	return { body: text.slice(0, match.index), attachments };
 }
 
 function attachmentName(path: string): string {
