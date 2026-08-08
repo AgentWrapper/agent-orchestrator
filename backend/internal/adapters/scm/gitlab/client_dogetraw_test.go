@@ -44,7 +44,7 @@ func TestDoGETRawBoundedLargeTrace(t *testing.T) {
 		RESTBase: srv.URL + "/api/v4",
 	})
 
-	got, err := c.doGETRaw(context.Background(), "/projects/1/jobs/1/trace", nil)
+	got, err := c.doGETRaw(context.Background(), "/projects/1/jobs/1/trace")
 	if err != nil {
 		t.Fatalf("doGETRaw: unexpected error: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestDoGETRawBoundedNormalTrace(t *testing.T) {
 		RESTBase: srv.URL + "/api/v4",
 	})
 
-	got, err := c.doGETRaw(context.Background(), "/projects/1/jobs/1/trace", nil)
+	got, err := c.doGETRaw(context.Background(), "/projects/1/jobs/1/trace")
 	if err != nil {
 		t.Fatalf("doGETRaw: unexpected error: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestDoGETRawErrorBodyCapped(t *testing.T) {
 		RESTBase: srv.URL + "/api/v4",
 	})
 
-	_, err := c.doGETRaw(context.Background(), "/projects/1/jobs/1/trace", nil)
+	_, err := c.doGETRaw(context.Background(), "/projects/1/jobs/1/trace")
 	if err == nil {
 		t.Fatal("doGETRaw: error = nil, want an error for HTTP 500")
 	}
@@ -155,7 +155,7 @@ func TestDoGETRawErrorBodyCappedExact(t *testing.T) {
 		RESTBase: srv.URL + "/api/v4",
 	})
 
-	_, err := c.doGETRaw(context.Background(), "/projects/1/jobs/1/trace", nil)
+	_, err := c.doGETRaw(context.Background(), "/projects/1/jobs/1/trace")
 	if err == nil {
 		t.Fatal("doGETRaw: error = nil, want an error for HTTP 502")
 	}

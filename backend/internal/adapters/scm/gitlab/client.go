@@ -234,8 +234,8 @@ func (c *Client) doGET(ctx context.Context, path string, q url.Values) (RESTResp
 // long lines), the tail contains fewer than 20 lines (whatever fits). Error
 // response bodies (status >= 400) are capped at errorBodyMaxBytes before
 // classification, since only the short message is needed.
-func (c *Client) doGETRaw(ctx context.Context, path string, q url.Values) ([]byte, error) {
-	u := c.restURL(path, q)
+func (c *Client) doGETRaw(ctx context.Context, path string) ([]byte, error) {
+	u := c.restURL(path, nil)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, http.NoBody)
 	if err != nil {
 		return nil, err

@@ -84,7 +84,7 @@ func TestPerHostCredentialIsolation(t *testing.T) {
 		host  string
 		token string
 	}
-	var mu chan tokenRecord = make(chan tokenRecord, 16)
+	mu := make(chan tokenRecord, 16)
 
 	// gitlab.com test server — expects the gitlab.com token.
 	comSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
