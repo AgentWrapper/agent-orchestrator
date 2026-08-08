@@ -749,6 +749,7 @@ type restApprovals struct {
 		User struct {
 			Username string `json:"username"`
 		} `json:"user"`
+		ApprovedAt *time.Time `json:"approved_at"`
 	} `json:"approved_by"`
 }
 
@@ -891,10 +892,11 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 	for _, ab := range approvals.ApprovedBy {
 		username := ab.User.Username
 		reviews = append(reviews, ports.SCMReviewSummaryObservation{
-			ID:     "approval:" + username,
-			Author: username,
-			State:  string(domain.ReviewApproved),
-			IsBot:  isBotAuthor(username),
+			ID:          "approval:" + username,
+			Author:      username,
+			State:       string(domain.ReviewApproved),
+			IsBot:       isBotAuthor(username),
+			SubmittedAt: safeTime(ab.ApprovedAt),
 		})
 	}
 

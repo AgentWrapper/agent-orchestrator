@@ -439,7 +439,9 @@ func TestFetchReviewThreads(t *testing.T) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"approved":           false,
 			"approvals_required": 1,
-			"approved_by":        []any{},
+			"approved_by": []map[string]any{
+				{"user": map[string]any{"username": "reviewer1"}, "approved_at": "2025-01-15T10:30:00Z"},
+			},
 		})
 	})
 	_, p := testServer(t, mux)
@@ -466,6 +468,13 @@ func TestFetchReviewThreads(t *testing.T) {
 	if th.Line != 42 {
 		t.Errorf("Line = %d, want %d", th.Line, 42)
 	}
+	if len(review.Reviews) != 1 {
+		t.Fatalf("Reviews = %d, want 1", len(review.Reviews))
+	}
+	wantSubmittedAt := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+	if !review.Reviews[0].SubmittedAt.Equal(wantSubmittedAt) {
+		t.Errorf("Reviews[0].SubmittedAt = %v, want %v", review.Reviews[0].SubmittedAt, wantSubmittedAt)
+	}
 }
 
 // TestFetchReviewThreads_SingleApprovalsCall verifies that FetchReviewThreads
@@ -484,8 +493,8 @@ func TestFetchReviewThreads_SingleApprovalsCall(t *testing.T) {
 			"approved":           true,
 			"approvals_required": 2,
 			"approved_by": []map[string]any{
-				{"user": map[string]any{"username": "reviewer1"}},
-				{"user": map[string]any{"username": "reviewer2"}},
+				{"user": map[string]any{"username": "reviewer1"}, "approved_at": "2025-01-15T10:30:00Z"},
+				{"user": map[string]any{"username": "reviewer2"}, "approved_at": "2025-01-15T11:00:00Z"},
 			},
 		})
 	})
@@ -505,6 +514,14 @@ func TestFetchReviewThreads_SingleApprovalsCall(t *testing.T) {
 	}
 	if len(review.Reviews) != 2 {
 		t.Fatalf("Reviews = %d, want 2", len(review.Reviews))
+	}
+	wantFirst := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
+	if !review.Reviews[0].SubmittedAt.Equal(wantFirst) {
+		t.Errorf("Reviews[0].SubmittedAt = %v, want %v", review.Reviews[0].SubmittedAt, wantFirst)
+	}
+	wantSecond := time.Date(2025, 1, 15, 11, 0, 0, 0, time.UTC)
+	if !review.Reviews[1].SubmittedAt.Equal(wantSecond) {
+		t.Errorf("Reviews[1].SubmittedAt = %v, want %v", review.Reviews[1].SubmittedAt, wantSecond)
 	}
 }
 
@@ -589,6 +606,9 @@ func TestApprovalsDedup_BetweenFetchPullRequestsAndFetchReviewThreads(t *testing
 	}
 	if review.Reviews[0].Author != "reviewer1" {
 		t.Errorf("FetchReviewThreads Reviews[0].Author = %q, want %q", review.Reviews[0].Author, "reviewer1")
+	}
+	if !review.Reviews[0].SubmittedAt.IsZero() {
+		t.Errorf("FetchReviewThreads Reviews[0].SubmittedAt = %v, want zero (approved_at absent in fixture)", review.Reviews[0].SubmittedAt)
 	}
 }
 
@@ -806,6 +826,7 @@ func TestApprovalDecision(t *testing.T) {
 					User struct {
 						Username string `json:"username"`
 					} `json:"user"`
+					ApprovedAt *time.Time `json:"approved_at"`
 				}{
 					User: struct {
 						Username string `json:"username"`
