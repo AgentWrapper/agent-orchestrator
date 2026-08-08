@@ -626,22 +626,53 @@ type restJob struct {
 }
 
 func (p *Provider) fetchApprovalDecision(ctx context.Context, repo ports.SCMRepo, mrIID int) (domain.ReviewDecision, error) {
+	approvals, err := p.fetchApprovalsCached(ctx, repo, mrIID)
+	if err != nil {
+		return domain.ReviewNone, err
+	}
+	return approvalDecision(*approvals), nil
+}
+
+// fetchApprovalsCached returns the approvals state for (repo, mrIID),
+// consulting the provider-level approvals cache first (keyed by
+// host+repo+IID, TTL 60s). On a cache hit, returns the cached *restApprovals
+// without an HTTP call — eliminating the duplicate
+// GET /merge_requests/:iid/approvals round-trip that would otherwise occur
+// when both fetchApprovalDecision (inside FetchPullRequests) and the approvals
+// fetch in FetchReviewThreads run for the same MR in the same observer cycle.
+//
+// On a miss (entry expired, or not yet fetched this cycle), fetches via doGET,
+// caches the result, and returns it. This is the single highest-impact
+// deduplication: one eliminated HTTP round-trip per active MR per
+// review-refresh cycle. The 304 from the ETag cache (which still counts
+// against rate limits) is avoided entirely — the second call is a memory
+// lookup with zero network I/O.
+//
+// Maximum staleness: ~60s. The approvals state within a single cycle is
+// already implicitly stale (the observer fetches it once per cycle), so
+// serving a cached copy within the same cycle introduces no new staleness
+// relative to the observer's existing behavior.
+func (p *Provider) fetchApprovalsCached(ctx context.Context, repo ports.SCMRepo, mrIID int) (*restApprovals, error) {
+	if cached, ok := p.cache.getApprovals(repo.Host, repo.Repo, mrIID); ok {
+		return cached, nil
+	}
 	path := fmt.Sprintf("/projects/%s/merge_requests/%d/approvals", projectPath(repo.Owner, repo.Name), mrIID)
 	hc, err := p.clientForRepoErr(repo)
 	if err != nil {
-		return domain.ReviewNone, err
+		return nil, err
 	}
 
 	resp, err := hc.doGET(ctx, path, nil)
 	if err != nil {
-		return domain.ReviewNone, fmt.Errorf("fetch approvals: %w", err)
+		return nil, fmt.Errorf("fetch approvals: %w", err)
 	}
 
 	var approvals restApprovals
 	if err := json.Unmarshal(resp.Body, &approvals); err != nil {
-		return domain.ReviewNone, fmt.Errorf("unmarshal approvals: %w", err)
+		return nil, fmt.Errorf("unmarshal approvals: %w", err)
 	}
-	return approvalDecision(approvals), nil
+	p.cache.setApprovals(repo.Host, repo.Repo, mrIID, &approvals)
+	return &approvals, nil
 }
 
 // approvalDecision derives the review decision from parsed approval state.
@@ -777,19 +808,17 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 		})
 	}
 
-	// Fetch approvals ONCE and reuse for both the review decision and the
-	// review summaries. The previous implementation called
-	// fetchApprovalDecision AND re-fetched the approvals endpoint separately.
-	approvalPath := fmt.Sprintf("/projects/%s/merge_requests/%d/approvals", projectPath(repo.Owner, repo.Name), ref.Number)
-
-	approvalResp, err := hc.doGET(ctx, approvalPath, nil)
+	// Fetch approvals via the shared cache (ticket 04). When FetchPullRequests
+	// has already run for this MR in the same cycle, fetchApprovalDecision
+	// populated the approvals cache and this call is a memory lookup with zero
+	// network I/O — eliminating the duplicate /merge_requests/:iid/approvals
+	// round-trip. The cached *restApprovals is reused for both the review
+	// decision and the review summaries.
+	approvalsPtr, err := p.fetchApprovalsCached(ctx, repo, ref.Number)
 	if err != nil {
-		return ports.SCMReviewObservation{}, fmt.Errorf("gitlab scm: fetch approvals: %w", err)
+		return ports.SCMReviewObservation{}, fmt.Errorf("gitlab scm: %w", err)
 	}
-	var approvals restApprovals
-	if err := json.Unmarshal(approvalResp.Body, &approvals); err != nil {
-		return ports.SCMReviewObservation{}, fmt.Errorf("gitlab scm: unmarshal approvals: %w", err)
-	}
+	approvals := *approvalsPtr
 	decision := approvalDecision(approvals)
 
 	// Build review summaries with stable, unique IDs so multiple approvers
