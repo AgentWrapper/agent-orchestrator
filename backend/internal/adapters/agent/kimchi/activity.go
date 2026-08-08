@@ -70,9 +70,13 @@ func sessionEndState(payload []byte) (domain.ActivityState, bool) {
 	}
 	_ = json.Unmarshal(payload, &p)
 	switch p.Reason {
-	case "clear", "resume":
+	case "reload", "new", "resume", "fork":
+		// Non-terminal: the native session is replaced or reloaded while the
+		// AO session stays alive. Report nothing so the activity feed is
+		// unaffected and the session continues.
 		return "", false
 	default:
+		// quit and any absent/unknown reason are terminal.
 		return domain.ActivityExited, true
 	}
 }
