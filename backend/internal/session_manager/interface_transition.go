@@ -12,13 +12,17 @@ import (
 )
 
 const (
-	interfaceTransitionPoll       = 150 * time.Millisecond
-	interfaceTransitionIdleSettle = 750 * time.Millisecond
-	interfaceInterruptSettle      = 2 * time.Second
-	interfaceTransitionStopLimit  = 15 * time.Second
-	interfaceTransitionStepLimit  = 45 * time.Second
-	interfaceDeliveryRetry        = 2 * time.Second
-	interfaceDeliveryIdlePoll     = 30 * time.Second
+	interfaceTransitionPoll              = 150 * time.Millisecond
+	interfaceTransitionIdleSettle        = 750 * time.Millisecond
+	interfaceTransitionIdleSampleMinimum = 3
+	interfaceTransitionStaleIdleLimit    = 5 * time.Second
+	interfaceTransitionOutputReadLimit   = 2 * time.Second
+	interfaceTransitionOutputLines       = 40
+	interfaceInterruptSettle             = 2 * time.Second
+	interfaceTransitionStopLimit         = 15 * time.Second
+	interfaceTransitionStepLimit         = 45 * time.Second
+	interfaceDeliveryRetry               = 2 * time.Second
+	interfaceDeliveryIdlePoll            = 30 * time.Second
 )
 
 // interfaceTransitionStore is optional so the existing narrow Manager Store
@@ -287,7 +291,12 @@ func (m *Manager) runInterfaceTransition(
 		return
 	}
 	if err := m.prepareSourceHandoff(ctx, rec, transition.Policy, lastTerminalInputAt); err != nil {
-		fail("SOURCE_QUIESCE_FAILED", err)
+		code := "SOURCE_QUIESCE_FAILED"
+		if errors.Is(err, ErrDrainQuiescenceUnverified) {
+			code = "DRAIN_QUIESCENCE_UNVERIFIED"
+			err = errors.New("AO could not verify that the terminal was idle after the latest input. The source interface was left untouched; retry Finish work or choose Stop now")
+		}
+		fail(code, err)
 		return
 	}
 	sourcePrepared = true
@@ -519,9 +528,15 @@ func (m *Manager) prepareSourceHandoff(
 		}
 	}
 
-	ticker := time.NewTicker(interfaceTransitionPoll)
+	var detector ports.TerminalActivityDetector
+	if agent, ok := m.agents.Agent(rec.Harness); ok {
+		detector, _ = agent.(ports.TerminalActivityDetector)
+	}
+	ticker := time.NewTicker(m.interfaceTransition.pollInterval)
 	defer ticker.Stop()
 	idleSince := time.Time{}
+	idleSamples := 0
+	staleIdleSince := time.Time{}
 	for {
 		current, ok, err := m.store.GetSession(ctx, rec.ID)
 		if err != nil {
@@ -533,18 +548,60 @@ func (m *Manager) prepareSourceHandoff(
 		if current.Activity.State == domain.ActivityExited {
 			return nil
 		}
-		if tuiIdleAfterInput(current, lastTerminalInputAt) {
+		now := time.Now()
+		idleProven := tuiIdleAfterInput(current, lastTerminalInputAt)
+		staleIdle := current.Activity.State == domain.ActivityIdle && !idleProven
+		if staleIdle {
+			if staleIdleSince.IsZero() {
+				staleIdleSince = now
+			}
+			// A screen can still show the idle composer briefly after Enter was
+			// accepted. Give the last input a full settle window before treating
+			// adapter markers as evidence, then require repeated samples below.
+			if detector != nil && terminalInputQuiet(lastTerminalInputAt, now, m.interfaceTransition.idleSettle) {
+				readLimit := m.interfaceTransition.outputReadLimit
+				remaining := m.interfaceTransition.staleIdleLimit - now.Sub(staleIdleSince)
+				if remaining < readLimit {
+					readLimit = remaining
+				}
+				if readLimit > 0 {
+					outputCtx, cancel := context.WithTimeout(ctx, readLimit)
+					output, outputErr := m.runtime.GetOutput(outputCtx, handle, m.interfaceTransition.outputLines)
+					cancel()
+					now = time.Now()
+					if outputErr == nil {
+						state, authoritative := detector.DetectTerminalActivity(output)
+						idleProven = authoritative && state == domain.ActivityIdle
+					}
+				}
+			}
+		} else {
+			// A reported active turn or user-paced decision is allowed to wait
+			// without a deadline. A real state change resets prior ambiguity.
+			staleIdleSince = time.Time{}
+		}
+		if idleProven {
+			idleSamples++
 			if idleSince.IsZero() {
-				idleSince = time.Now()
-			} else if time.Since(idleSince) >= interfaceTransitionIdleSettle {
+				idleSince = now
+			} else if now.Sub(idleSince) >= m.interfaceTransition.idleSettle &&
+				idleSamples >= m.interfaceTransition.idleSampleMinimum {
 				return nil
 			}
 		} else {
 			idleSince = time.Time{}
+			idleSamples = 0
 		}
 		alive, probeErr := m.runtime.IsAlive(ctx, handle)
 		if probeErr == nil && !alive {
 			return nil
+		}
+		now = time.Now()
+		// Bound the whole contradictory stale-idle regime, not just consecutive
+		// unknown captures. Partial terminal redraws may alternate between idle
+		// and ambiguous forever; neither outcome is enough to stop the source.
+		if staleIdle && now.Sub(staleIdleSince) >= m.interfaceTransition.staleIdleLimit {
+			return ErrDrainQuiescenceUnverified
 		}
 		select {
 		case <-ctx.Done():
@@ -552,6 +609,10 @@ func (m *Manager) prepareSourceHandoff(
 		case <-ticker.C:
 		}
 	}
+}
+
+func terminalInputQuiet(lastInputAt, now time.Time, settle time.Duration) bool {
+	return lastInputAt.IsZero() || !now.Before(lastInputAt.Add(settle))
 }
 
 // tuiIdleAfterInput proves that the idle fact was written after every terminal
