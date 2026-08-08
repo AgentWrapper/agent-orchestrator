@@ -4,8 +4,7 @@ type Agent = { name: string; src: string };
 // agent assets; goose uses a whitened mark and agy (Antigravity) / auggie
 // (Augment) / autohand use their own brand favicons so every mark reads on
 // the dark background. Copilot and Codex marks come from the LobeHub icon
-// set; Kilo Code uses the Kilo-Org brand tile.
-const AGENTS: Agent[] = [
+// set; Kilo Code uses the Kilo-Org brand tile.const AGENTS: Agent[] = [
   { name: "Claude Code", src: "/app-icons/agents/claude-code.svg" },
   { name: "Codex", src: "/app-icons/agents/codex.svg" },
   { name: "Cursor", src: "/app-icons/agents/cursor.svg" },
@@ -25,6 +24,7 @@ const AGENTS: Agent[] = [
   { name: "Kilo Code", src: "/app-icons/agents/kilocode.png" },
   { name: "Mistral Vibe", src: "/app-icons/agents/vibe.png" },
   { name: "Pi", src: "/app-icons/agents/pi.png" },
+  { name: "Kimchi", src: "https://www.google.com/s2/favicons?domain=kimchi.dev&sz=64" },
   { name: "Amp", src: "/app-icons/agents/amp.svg" },
   { name: "Cline", src: "/app-icons/agents/cline.svg" },
   { name: "Antigravity", src: "/app-icons/agents/agy.png" },
