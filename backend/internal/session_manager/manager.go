@@ -103,6 +103,9 @@ const (
 	// EnvBrowserRuntimeToken must never be inherited by a worker. It authenticates
 	// the privileged Electron runtime, not session-scoped browser callers.
 	EnvBrowserRuntimeToken = "AO_BROWSER_RUNTIME_TOKEN" //nolint:gosec // Environment variable name, not a credential.
+	// EnvBrowserRuntimeTokenStdin is the daemon-only token handoff marker and
+	// must be cleared before a worker process is spawned.
+	EnvBrowserRuntimeTokenStdin = "AO_BROWSER_RUNTIME_TOKEN_STDIN" //nolint:gosec // Environment variable name, not a credential.
 )
 
 // hookBinaryName is the executable name the workspace hook commands invoke:
@@ -397,9 +400,10 @@ type BrowserLifecycle interface {
 	DestroySession(ctx context.Context, id domain.SessionID) error
 }
 
-// BrowserCapabilityIssuer derives the capability injected into a worker.
+// BrowserCapabilityIssuer mints the split capability injected into a worker
+// and persisted as a one-way verifier on its session row.
 type BrowserCapabilityIssuer interface {
-	Token(id domain.SessionID) string
+	Issue(id domain.SessionID) (token, verifier string, err error)
 }
 
 // sendConfirmConfig bounds the best-effort activity-confirmation loop run after
@@ -665,7 +669,16 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: no agent adapter for harness %q", id, cfg.Harness)
 	}
 	agentConfig := applySpawnAgentConfig(effectiveAgentConfig(cfg.Kind, project.Config), cfg.AgentConfig)
-	env := m.runtimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
+	env, browserCapabilityVerifier, err := m.launchRuntimeEnv(id, cfg.ProjectID, cfg.IssueID, project.Config.Env)
+	if err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: browser capability: %w", id, err)
+	}
+	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, browserCapabilityVerifier)
+	if err != nil {
+		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, true)
+		return domain.SessionRecord{}, 0, 0, fmt.Errorf("spawn %s: persist browser capability: %w", id, err)
+	}
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, id, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		m.rollbackSeedSpawnWorkspace(ctx, rec, ws, workspaceProject, false)
@@ -727,12 +740,13 @@ func (m *Manager) Spawn(ctx context.Context, cfg ports.SpawnConfig) (domain.Sess
 	}
 
 	metadata := domain.SessionMetadata{
-		Branch:            ws.Branch,
-		WorkspacePath:     ws.Path,
-		WorkspaceRepoPath: ws.RepoPath,
-		RuntimeHandleID:   handle.ID,
-		RuntimeLaunchID:   launchID,
-		Prompt:            prompt,
+		Branch:                    ws.Branch,
+		WorkspacePath:             ws.Path,
+		WorkspaceRepoPath:         ws.RepoPath,
+		RuntimeHandleID:           handle.ID,
+		RuntimeLaunchID:           launchID,
+		Prompt:                    prompt,
+		BrowserCapabilityVerifier: browserCapabilityVerifier,
 	}
 	if projectKind == domain.ProjectKindSingleRepo {
 		metadata.DiffBaseSHA, metadata.DiffBaseRef = resolveSpawnDiffBase(ctx, ws.Path, project.Config.WithDefaults().DefaultBranch)
@@ -1528,7 +1542,14 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	// Restore re-applies the project's resolved agent config so a configured
 	// model/permissions carry across a restore, matching fresh spawn.
 	agentConfig := effectiveAgentConfig(rec.Kind, project.Config)
-	env := m.runtimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	env, browserCapabilityVerifier, err := m.launchRuntimeEnv(rec.ID, rec.ProjectID, rec.IssueID, project.Config.Env)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: browser capability: %w", operation, rec.ID, err)
+	}
+	rec, err = m.persistBrowserCapabilityVerifier(ctx, rec, browserCapabilityVerifier)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: persist browser capability: %w", operation, rec.ID, err)
+	}
 	m.augmentAgentRuntimeEnv(agent, env)
 	if err := m.prepareWorkspace(ctx, agent, rec.ID, ws.Path, systemPrompt, systemPromptFile, agentConfig, env); err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: %w", operation, rec.ID, err)
@@ -1579,13 +1600,14 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 		return RestoreResult{}, fmt.Errorf("%s %s: runtime: %w", operation, rec.ID, err)
 	}
 	metadata := domain.SessionMetadata{
-		Branch:            ws.Branch,
-		WorkspacePath:     ws.Path,
-		WorkspaceRepoPath: ws.RepoPath,
-		RuntimeHandleID:   handle.ID,
-		RuntimeLaunchID:   launchID,
-		AgentSessionID:    rec.Metadata.AgentSessionID,
-		Prompt:            rec.Metadata.Prompt,
+		Branch:                    ws.Branch,
+		WorkspacePath:             ws.Path,
+		WorkspaceRepoPath:         ws.RepoPath,
+		RuntimeHandleID:           handle.ID,
+		RuntimeLaunchID:           launchID,
+		AgentSessionID:            rec.Metadata.AgentSessionID,
+		Prompt:                    rec.Metadata.Prompt,
+		BrowserCapabilityVerifier: browserCapabilityVerifier,
 	}
 	if err := m.lcm.MarkSpawned(ctx, rec.ID, metadata); err != nil {
 		_ = m.runtime.Destroy(ctx, handle)
@@ -3062,10 +3084,9 @@ func spawnEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueI
 // logged so the degradation isn't silent.
 func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) map[string]string {
 	env := spawnEnv(id, project, issue, m.dataDir, projectEnv)
-	if m.browserCapabilities != nil {
-		env[EnvBrowserCapability] = m.browserCapabilities.Token(id)
-	}
+	env[EnvBrowserCapability] = ""
 	env[EnvBrowserRuntimeToken] = ""
+	env[EnvBrowserRuntimeTokenStdin] = ""
 	path, err := HookPATH(m.executable, os.Getenv, projectEnv)
 	if err != nil {
 		m.logger.Warn("session PATH not pinned to the daemon binary; `ao hooks` callbacks may resolve to a different ao and activity tracking will stall",
@@ -3074,6 +3095,38 @@ func (m *Manager) runtimeEnv(id domain.SessionID, project domain.ProjectID, issu
 	}
 	env["PATH"] = path
 	return env
+}
+
+func (m *Manager) launchRuntimeEnv(id domain.SessionID, project domain.ProjectID, issue domain.IssueID, projectEnv map[string]string) (map[string]string, string, error) {
+	env := m.runtimeEnv(id, project, issue, projectEnv)
+	if m.browserCapabilities == nil {
+		return env, "", nil
+	}
+	token, verifier, err := m.browserCapabilities.Issue(id)
+	if err != nil {
+		return nil, "", err
+	}
+	if strings.TrimSpace(token) == "" || strings.TrimSpace(verifier) == "" {
+		return nil, "", errors.New("browser capability issuer returned an empty credential")
+	}
+	env[EnvBrowserCapability] = token
+	return env, verifier, nil
+}
+
+// persistBrowserCapabilityVerifier runs before the worker runtime starts. This
+// closes the launch race where an eager worker could present its freshly
+// injected token before the daemon had stored the verifier needed to validate
+// it. The bearer token remains only in the runtime environment.
+func (m *Manager) persistBrowserCapabilityVerifier(ctx context.Context, rec domain.SessionRecord, verifier string) (domain.SessionRecord, error) {
+	if verifier == "" {
+		return rec, nil
+	}
+	rec.Metadata.BrowserCapabilityVerifier = verifier
+	rec.UpdatedAt = m.clock()
+	if err := m.store.UpdateSession(ctx, rec); err != nil {
+		return rec, err
+	}
+	return rec, nil
 }
 
 // HookPATH builds the PATH value pinned into a spawned session: the daemon

@@ -1008,6 +1008,7 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
+	set(&base.BrowserCapabilityVerifier, in.BrowserCapabilityVerifier)
 	// The chat controller's resume handle. Without this a restart has no thread to
 	// resume and the conversation is stranded — the provider still holds it, but
 	// AO no longer knows its id.

@@ -2955,16 +2955,8 @@ body.is-resizing-x [data-slot="sidebar-container"] {
 		background var(--duration-normal) ease;
 }
 
-.browser-panel--agent-active {
-	border-color: color-mix(in srgb, var(--color-accent) 42%, var(--color-border));
-	box-shadow:
-		0 0 0 1px color-mix(in srgb, var(--color-accent) 20%, transparent),
-		0 0 28px color-mix(in srgb, var(--color-accent) 10%, transparent),
-		var(--elevation-sm);
-}
-
-/* Maximized workspace overlays: fixed layers portaled to <body>, so they cover
-   the sidebar + topbar too, not just the session area.
+/* Maximized browser overlay: a fixed layer over the app workspace (portaled to
+   <body>, so it covers the sidebar + topbar too, not just the session area).
    Electron's Window Controls Overlay owns the top-right titlebar region on
    Windows, so start below its reported safe-area height. macOS hides the shell
    topbar; windowed mode reserves the native traffic-light band below, while

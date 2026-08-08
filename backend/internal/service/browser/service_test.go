@@ -38,19 +38,39 @@ func (f *fakeRuntime) Execute(
 }
 
 func TestServiceRequiresOwningCapabilityAndLiveSession(t *testing.T) {
-	authority := &Authority{key: []byte("01234567890123456789012345678901")}
+	authority := NewAuthority()
+	token, verifier, err := authority.Issue("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
 	runtime := &fakeRuntime{}
-	service := New(fakeSessions{session: domain.Session{SessionRecord: domain.SessionRecord{ID: "s1"}}}, runtime, authority)
+	service := New(fakeSessions{session: domain.Session{SessionRecord: domain.SessionRecord{
+		ID:       "s1",
+		Metadata: domain.SessionMetadata{BrowserCapabilityVerifier: verifier},
+	}}}, runtime, authority)
 
 	if _, err := service.Status(context.Background(), "s1", "wrong"); apiErrorCode(err) != "BROWSER_CAPABILITY_INVALID" {
 		t.Fatalf("wrong capability error = %v", err)
 	}
-	token := authority.Token("s1")
 	if _, err := service.Status(context.Background(), "s1", token); err != nil {
 		t.Fatalf("valid capability: %v", err)
 	}
 	if _, action, err := service.Execute(context.Background(), "s1", token, " SNAPSHOT ", nil); err != nil || action != "snapshot" || runtime.action != "snapshot" {
 		t.Fatalf("execute action=%q runtime=%q err=%v", action, runtime.action, err)
+	}
+	if _, action, err := service.Execute(context.Background(), "s1", token, "dblclick", nil); err != nil || action != "dblclick" || runtime.action != "dblclick" {
+		t.Fatalf("expanded action=%q runtime=%q err=%v", action, runtime.action, err)
+	}
+	if _, action, err := service.Execute(context.Background(), "s1", token, "DEVTOOLS-OPEN", nil); err != nil || action != "devtools-open" || runtime.action != "devtools-open" {
+		t.Fatalf("devtools action=%q runtime=%q err=%v", action, runtime.action, err)
+	}
+	for _, action := range []string{"devtools-toggle", "devtools-focus"} {
+		if _, _, err := service.Execute(context.Background(), "s1", token, action, nil); apiErrorCode(err) != "BROWSER_ACTION_UNSUPPORTED" {
+			t.Fatalf("agent-facing %s error = %v", action, err)
+		}
+	}
+	if _, _, err := service.Execute(context.Background(), "s1", token, "agent-browser-run", nil); apiErrorCode(err) != "BROWSER_ACTION_UNSUPPORTED" {
+		t.Fatalf("removed nested action error = %v", err)
 	}
 	if _, _, err := service.Execute(context.Background(), "s1", token, "eval", nil); apiErrorCode(err) != "BROWSER_ACTION_UNSUPPORTED" {
 		t.Fatalf("unsupported action error = %v", err)
@@ -66,18 +86,37 @@ func TestServiceRequiresOwningCapabilityAndLiveSession(t *testing.T) {
 	}
 }
 
-func TestAuthorityPersistsStableSecret(t *testing.T) {
-	dir := t.TempDir()
-	first, err := LoadAuthority(dir)
+func TestAuthorityUsesLaunchScopedSessionSecrets(t *testing.T) {
+	authority := NewAuthority()
+	firstToken, firstVerifier, err := authority.Issue("s1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := LoadAuthority(dir)
+	secondToken, secondVerifier, err := authority.Issue("s1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Token("s1") == "" || first.Token("s1") != second.Token("s1") || first.Token("s1") == first.Token("s2") {
-		t.Fatal("authority tokens are not stable and session-scoped")
+	otherToken, _, err := authority.Issue("s2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstToken == "" || firstToken == secondToken || firstToken == otherToken || firstVerifier == secondVerifier {
+		t.Fatal("issued capabilities are not random and launch-scoped")
+	}
+}
+
+func TestAuthorityValidatesDurableVerifierAcrossDaemonReplacement(t *testing.T) {
+	first := NewAuthority()
+	token, verifier, err := first.Issue("s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := NewAuthority()
+	if !replacement.Valid("s1", token, verifier) {
+		t.Fatal("replacement daemon rejected the surviving worker capability")
+	}
+	if replacement.Valid("s2", token, verifier) || replacement.Valid("s1", verifier, verifier) {
+		t.Fatal("verifier authorized a different session or worked as a bearer token")
 	}
 }
 

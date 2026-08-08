@@ -12,12 +12,13 @@ import (
 )
 
 var actions = map[string]struct{}{
-	"open": {}, "snapshot": {}, "click": {}, "fill": {}, "type": {}, "press": {},
-	"hover": {}, "highlight": {}, "unhighlight": {}, "tabs": {}, "tab-new": {},
+	"open": {}, "snapshot": {}, "click": {}, "dblclick": {}, "focus": {}, "fill": {}, "type": {}, "press": {},
+	"hover": {}, "highlight": {}, "unhighlight": {}, "scrollintoview": {}, "drag": {}, "tabs": {}, "tab-new": {},
 	"tab-select": {}, "tab-close": {}, "scroll": {}, "select": {}, "check": {},
 	"uncheck": {}, "get": {}, "wait": {}, "screenshot": {}, "network-start": {},
 	"network-status": {}, "network-list": {}, "network-stop": {}, "network-clear": {},
-	"console": {}, "errors": {},
+	"console": {}, "errors": {}, "frame": {}, "dialog": {},
+	"devtools-open": {}, "devtools-close": {},
 }
 
 type sessionReader interface {
@@ -81,7 +82,11 @@ func (s *Service) authorize(ctx context.Context, sessionID domain.SessionID, cap
 	if session.IsTerminated {
 		return apierr.Conflict("SESSION_TERMINATED", "Session is terminated", nil)
 	}
-	if s.authority == nil || !s.authority.Valid(sessionID, strings.TrimSpace(capability)) {
+	if s.authority == nil || !s.authority.Valid(
+		sessionID,
+		strings.TrimSpace(capability),
+		session.Metadata.BrowserCapabilityVerifier,
+	) {
 		return apierr.Forbidden("BROWSER_CAPABILITY_INVALID", "Browser capability is invalid")
 	}
 	return nil

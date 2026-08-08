@@ -36,3 +36,22 @@ import type { DaemonProbe } from "./daemon-attach";
 export function shouldReplacePortHolder(probe: DaemonProbe | null, holderPidAlive: boolean): boolean {
 	return probe !== null || holderPidAlive;
 }
+
+export type BrowserDaemonOwnershipDecision =
+	| { action: "attach" }
+	| { action: "replace"; keepAlive: boolean };
+
+/**
+ * A daemon can authenticate to only the Electron launch that handed it the
+ * memory-only browser runtime token. Reuse within that launch is safe. Across
+ * launches we replace it gracefully, preserving the original persistence mode:
+ * app-owned daemons remain app-owned; persistent/headless daemons remain alive
+ * after the window closes.
+ */
+export function browserDaemonOwnershipDecision(
+	currentAppRunId: string,
+	existing: { owner?: string; appRunId?: string },
+): BrowserDaemonOwnershipDecision {
+	if (existing.appRunId === currentAppRunId) return { action: "attach" };
+	return { action: "replace", keepAlive: existing.owner !== "app" };
+}
