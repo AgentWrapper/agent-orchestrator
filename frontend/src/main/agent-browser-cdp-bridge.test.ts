@@ -158,6 +158,85 @@ describe("worker-scoped agent-browser CDP bridge", () => {
 		}
 	});
 
+	it("routes flattened cross-origin iframe sessions only through their owning target connection", async () => {
+		const firstDebug = new FakeDebugger();
+		const secondDebug = new FakeDebugger();
+		const targets: AgentBrowserTarget[] = [
+			{ id: "t1", url: "https://first.example/", title: "First", debugger: firstDebug },
+			{ id: "t2", url: "https://second.example/", title: "Second", debugger: secondDebug },
+		];
+		const bridge = new AgentBrowserCDPBridge({
+			listTargets: () => targets,
+			createTarget: vi.fn(async () => targets[0]),
+			activateTarget: vi.fn(),
+			closeTarget: vi.fn(),
+		});
+		const endpoint = await bridge.start();
+		const owner = await connect(endpoint);
+		const sibling = await connect(endpoint);
+
+		try {
+			const ownerAttach = await rpc(owner, 1, "Target.attachToTarget", { targetId: "t1", flatten: true });
+			const ownerSessionId = (ownerAttach.result as { sessionId: string }).sessionId;
+			await rpc(sibling, 2, "Target.attachToTarget", { targetId: "t2", flatten: true });
+
+			const attachedEvent = nextCDPEvent(owner, "Target.attachedToTarget");
+			firstDebug.emit(
+				"message",
+				{},
+				"Target.attachedToTarget",
+				{
+					sessionId: "chromium-oopif-session",
+					targetInfo: { targetId: "oopif-1", type: "iframe", url: "https://cross-origin.example/" },
+					waitingForDebugger: false,
+				},
+			);
+			expect(await attachedEvent).toMatchObject({ sessionId: ownerSessionId });
+
+			const childEvent = nextCDPEvent(owner, "Runtime.executionContextCreated");
+			firstDebug.emit(
+				"message",
+				{},
+				"Runtime.executionContextCreated",
+				{ context: { id: 7 } },
+				"chromium-oopif-session",
+			);
+			expect(await childEvent).toMatchObject({ sessionId: "chromium-oopif-session" });
+
+			const childCommand = await rpc(
+				owner,
+				3,
+				"Runtime.evaluate",
+				{ expression: "document.title" },
+				"chromium-oopif-session",
+			);
+			expect(childCommand.error).toBeUndefined();
+			expect(firstDebug.sendCommand).toHaveBeenCalledWith(
+				"Runtime.evaluate",
+				{ expression: "document.title" },
+				"chromium-oopif-session",
+			);
+
+			const crossTab = await rpc(sibling, 4, "Runtime.enable", {}, "chromium-oopif-session");
+			expect(crossTab.error?.message).toContain("Unknown or expired target session");
+
+			const detachedEvent = nextCDPEvent(owner, "Target.detachedFromTarget");
+			firstDebug.emit(
+				"message",
+				{},
+				"Target.detachedFromTarget",
+				{ sessionId: "chromium-oopif-session", targetId: "oopif-1" },
+			);
+			await detachedEvent;
+			const expired = await rpc(owner, 5, "Runtime.enable", {}, "chromium-oopif-session");
+			expect(expired.error?.message).toContain("Unknown or expired target session");
+		} finally {
+			owner.close();
+			sibling.close();
+			await bridge.close();
+		}
+	});
+
 	it("does not elevate an agent connection through forged query parameters", async () => {
 		const debug = new FakeDebugger();
 		const target: AgentBrowserTarget = {
@@ -235,6 +314,12 @@ type RPCResponse = {
 	error?: { message: string };
 };
 
+type CDPEvent = {
+	method: string;
+	params?: Record<string, unknown>;
+	sessionId?: string;
+};
+
 async function connect(endpoint: string): Promise<WebSocket> {
 	const socket = new WebSocket(endpoint);
 	await new Promise<void>((resolve, reject) => {
@@ -262,6 +347,18 @@ async function rpc(
 	});
 	socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
 	return response;
+}
+
+function nextCDPEvent(socket: WebSocket, method: string): Promise<CDPEvent> {
+	return new Promise((resolve) => {
+		const listener = (data: Buffer) => {
+			const message = JSON.parse(data.toString()) as CDPEvent;
+			if (message.method !== method) return;
+			socket.off("message", listener);
+			resolve(message);
+		};
+		socket.on("message", listener);
+	});
 }
 
 async function expectRPCResult(

@@ -618,6 +618,7 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 			_, err := fmt.Fprintln(cmd.OutOrStdout(), "No browser tabs.")
 			return err
 		}
+		var output strings.Builder
 		for _, raw := range tabs {
 			tab, _ := raw.(map[string]any)
 			id, _ := tab["id"].(string)
@@ -627,17 +628,21 @@ func writeBrowserResult(cmd *cobra.Command, action string, result map[string]any
 			if active, _ := tab["active"].(bool); active {
 				marker = "*"
 			}
-			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s %s\t%s\t%s\n", marker, id, title, currentURL); err != nil {
+			if _, err := fmt.Fprintf(&output, "%s %s\t%s\t%s\n", marker, id, title, currentURL); err != nil {
 				return err
 			}
 		}
-		return nil
+		_, err := fmt.Fprintln(
+			cmd.OutOrStdout(),
+			browserUntrustedText(strings.TrimSuffix(output.String(), "\n")),
+		)
+		return err
 	}
 	if strings.HasPrefix(action, "network-") {
 		return writeBrowserNetworkResult(cmd, action, result)
 	}
 	if currentURL, ok := result["url"].(string); ok && currentURL != "" {
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), currentURL)
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), browserUntrustedText(currentURL))
 		return err
 	}
 	_, err := fmt.Fprintln(cmd.OutOrStdout(), "Browser "+action+" completed.")
@@ -689,6 +694,7 @@ func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[str
 		_, err := fmt.Fprintln(cmd.OutOrStdout(), "No browser network requests captured.")
 		return err
 	}
+	var output strings.Builder
 	for _, raw := range requests {
 		request, _ := raw.(map[string]any)
 		method, _ := request["method"].(string)
@@ -707,7 +713,7 @@ func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[str
 			duration = "-"
 		}
 		if _, err := fmt.Fprintf(
-			cmd.OutOrStdout(),
+			&output,
 			"%s %s %s %s %s\n",
 			method,
 			status,
@@ -718,7 +724,11 @@ func writeBrowserNetworkResult(cmd *cobra.Command, action string, result map[str
 			return err
 		}
 	}
-	return nil
+	_, err := fmt.Fprintln(
+		cmd.OutOrStdout(),
+		browserUntrustedText(strings.TrimSuffix(output.String(), "\n")),
+	)
+	return err
 }
 
 func writeBrowserScreenshot(cmd *cobra.Command, result map[string]any, target string) error {

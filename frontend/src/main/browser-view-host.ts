@@ -259,9 +259,15 @@ type BrowserSessionEntry = {
 	visible: boolean;
 	parked: boolean;
 	networkTabId?: string;
+	nativeActiveTabId?: string;
+	nativeOperationQueue: Promise<void>;
 	devtools?: {
 		window: BrowserDevToolsWindowLike;
 		targetTabId: string;
+		desiredTabId: string;
+		retargetGeneration: number;
+		retargetQueue: Promise<void>;
+		revealRequested: boolean;
 	};
 };
 
@@ -466,7 +472,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		});
 	}
 
-	const createTab = (session: BrowserSessionEntry, activate: boolean): BrowserEntry => {
+	const createTab = (session: BrowserSessionEntry, activate: boolean, syncNativeOnActivate = false): BrowserEntry => {
 		if (session.tabs.size >= MAX_BROWSER_TABS) {
 			throw browserError("BROWSER_TAB_LIMIT", `Browser tab limit of ${MAX_BROWSER_TABS} reached`);
 		}
@@ -498,7 +504,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		session.tabs.set(tabId, entry);
 		tabsByWebContentsId.set(view.webContents.id, entry);
 		hardenWebContents(view.webContents, options, entry, () => {
-			const popup = createTab(session, true);
+			const popup = createTab(session, true, true);
 			pushTabsState(options, session, { kind: "popup", tabId: popup.tabId });
 			return popup.view.webContents;
 		}, () => session.tabs.size < MAX_BROWSER_TABS);
@@ -542,7 +548,10 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		// Keep an unobserved tab initialization failure from becoming an unhandled
 		// rejection; callers that need the target still await the original promise.
 		void entry.ready.catch(() => undefined);
-		if (activate) activateTab(session, tabId, false);
+		if (activate) {
+			activateTab(session, tabId, false);
+			if (syncNativeOnActivate) queueNativeActiveTabSync(session);
+		}
 		return entry;
 	};
 
@@ -566,10 +575,15 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				zoomFactor: 1,
 				visible: false,
 				parked: false,
+				nativeOperationQueue: Promise.resolve(),
 			};
 			entries.set(viewId, session);
 			viewIdsBySessionId.set(sessionId, viewId);
 			createTab(session, true);
+			// A fresh native session starts on the provider's first target. Recording
+			// that invariant avoids an unnecessary tab command before the first action;
+			// later human selections and popups explicitly invalidate it.
+			session.nativeActiveTabId = session.activeTabId;
 		}
 		if (rendererId !== undefined) {
 			const owners = rendererOwnersByViewId.get(viewId) ?? new Set<number>();
@@ -578,6 +592,42 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		}
 		return session;
 	};
+
+	const queueNativeOperation = <T>(session: BrowserSessionEntry, operation: () => Promise<T>): Promise<T> => {
+		const result = session.nativeOperationQueue.then(operation, operation);
+		// A failed operation is returned to its caller, but must not permanently
+		// poison the session queue. The next operation re-validates the active tab.
+		session.nativeOperationQueue = result.then(
+			() => undefined,
+			() => undefined,
+		);
+		return result;
+	};
+
+	const ensureNativeActiveTab = async (session: BrowserSessionEntry, signal?: AbortSignal): Promise<void> => {
+		if (!options.agentBrowserRuntime) return;
+		while (session.nativeActiveTabId !== session.activeTabId) {
+			const tabId = session.activeTabId;
+			const entry = session.tabs.get(tabId);
+			if (!entry) throw browserError("BROWSER_TARGET_UNAVAILABLE", "Active browser tab is unavailable");
+			await entry.ready;
+			// The human-facing BrowserView state is authoritative. Selecting through
+			// agent-browser updates its independent active_page_index before another
+			// native command is allowed to run.
+			await options.agentBrowserRuntime.runAction(
+				session.sessionId,
+				"tab-select",
+				{ tabId },
+				agentBrowserTargets(session),
+				signal,
+			);
+			session.nativeActiveTabId = tabId;
+		}
+	};
+
+	function queueNativeActiveTabSync(session: BrowserSessionEntry): void {
+		void queueNativeOperation(session, () => ensureNativeActiveTab(session)).catch(() => undefined);
+	}
 
 	const openTab = async (
 		session: BrowserSessionEntry,
@@ -618,7 +668,7 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 		pushNavState(options, next);
 		if (notify) pushTabsState(options, session, { kind: "selected", tabId });
 		if (session.devtools) pushDevToolsState(session);
-		if (session.devtools && session.devtools.targetTabId !== tabId) {
+		if (session.devtools && session.devtools.desiredTabId !== tabId) {
 			void retargetDevTools(session, tabId).catch(() => undefined);
 		}
 		return next;
@@ -674,24 +724,48 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	): Promise<BrowserDevToolsState> => {
 		const devtools = session.devtools;
 		if (!devtools) return pushDevToolsState(session);
-		const entry = session.tabs.get(tabId);
-		if (!entry) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
-		await entry.ready;
-		if (!options.agentBrowserRuntime) {
-			throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
-		}
-		const endpoint = await options.agentBrowserRuntime.devtoolsEndpoint(
-			session.sessionId,
-			entry.tabId,
-			agentBrowserTargets(session),
+		devtools.desiredTabId = tabId;
+		if (reveal) devtools.revealRequested = true;
+		const generation = ++devtools.retargetGeneration;
+		const retarget = async (): Promise<BrowserDevToolsState> => {
+			if (session.devtools !== devtools || generation !== devtools.retargetGeneration) {
+				return pushDevToolsState(session);
+			}
+			const entry = session.tabs.get(tabId);
+			if (!entry) throw browserError("TAB_NOT_FOUND", `Browser tab ${tabId} does not exist`);
+			await entry.ready;
+			if (session.devtools !== devtools || generation !== devtools.retargetGeneration) {
+				return pushDevToolsState(session);
+			}
+			if (!options.agentBrowserRuntime) {
+				throw browserError("BROWSER_DEVTOOLS_UNAVAILABLE", "Browser DevTools are unavailable");
+			}
+			const endpoint = await options.agentBrowserRuntime.devtoolsEndpoint(
+				session.sessionId,
+				entry.tabId,
+				agentBrowserTargets(session),
+			);
+			if (session.devtools !== devtools || generation !== devtools.retargetGeneration) {
+				return pushDevToolsState(session);
+			}
+			await devtools.window.webContents.loadURL(devtoolsURL(endpoint));
+			if (session.devtools !== devtools || generation !== devtools.retargetGeneration) {
+				return pushDevToolsState(session);
+			}
+			devtools.targetTabId = entry.tabId;
+			if (devtools.revealRequested) {
+				devtools.revealRequested = false;
+				devtools.window.show();
+				devtools.window.focus();
+			}
+			return pushDevToolsState(session);
+		};
+		const result = devtools.retargetQueue.then(retarget, retarget);
+		devtools.retargetQueue = result.then(
+			() => undefined,
+			() => undefined,
 		);
-		await devtools.window.webContents.loadURL(devtoolsURL(endpoint));
-		devtools.targetTabId = entry.tabId;
-		if (reveal) {
-			devtools.window.show();
-			devtools.window.focus();
-		}
-		return pushDevToolsState(session);
+		return result;
 	};
 
 	const openDevTools = async (
@@ -728,7 +802,14 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				session.devtools = undefined;
 				pushDevToolsState(session);
 			});
-			session.devtools = { window, targetTabId: entry.tabId };
+			session.devtools = {
+				window,
+				targetTabId: "",
+				desiredTabId: entry.tabId,
+				retargetGeneration: 0,
+				retargetQueue: Promise.resolve(),
+				revealRequested: false,
+			};
 		}
 		return retargetDevTools(session, entry.tabId, true);
 	};
@@ -1043,14 +1124,34 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 	handle("browser:selectTab", (event, input: BrowserTabInput) => {
 		const session = entries.get(input.viewId);
 		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
-		activateTab(session, input.tabId);
-		return listTabs(session);
+		return queueNativeOperation(session, async () => {
+			activateTab(session, input.tabId);
+			await ensureNativeActiveTab(session);
+			return listTabs(session);
+		});
 	});
 	handle("browser:closeTab", (event, input: BrowserTabInput) => {
 		const session = entries.get(input.viewId);
-		return session && isRendererOwned(event, input.viewId)
-			? closeTab(session, input.tabId)
-			: emptyTabsState(input.viewId);
+		if (!session || !isRendererOwned(event, input.viewId)) return emptyTabsState(input.viewId);
+		if (session.tabs.size === 1) {
+			throw browserError("CANNOT_CLOSE_LAST_TAB", "The only browser tab cannot be closed");
+		}
+		if (!session.tabs.has(input.tabId)) {
+			throw browserError("TAB_NOT_FOUND", `Browser tab ${input.tabId} does not exist`);
+		}
+		if (!options.agentBrowserRuntime) return closeTab(session, input.tabId);
+		return queueNativeOperation(session, async () => {
+			await ensureNativeActiveTab(session);
+			await options.agentBrowserRuntime!.runAction(
+				session.sessionId,
+				"tab-close",
+				{ tabId: input.tabId },
+				agentBrowserTargets(session),
+			);
+			session.nativeActiveTabId = undefined;
+			await ensureNativeActiveTab(session);
+			return listTabs(session);
+		});
 	});
 	handle("browser:devtools", (event, input: BrowserDevToolsInput) => {
 		if (!input || typeof input.viewId !== "string" || !isRendererOwned(event, input.viewId)) {
@@ -1090,14 +1191,25 @@ export function createBrowserViewHost(options: BrowserViewHostOptions): BrowserV
 				if (!options.agentBrowserRuntime) {
 					throw browserError("BROWSER_AUTOMATION_UNAVAILABLE", "Browser automation runtime is unavailable");
 				}
-				await activeEntry(session).ready;
-				return options.agentBrowserRuntime.runAction(
-					sessionId,
-					nativeAction,
-					nativeArgs,
-					agentBrowserTargets(session),
-					signal,
-				);
+				return queueNativeOperation(session, async () => {
+					await ensureNativeActiveTab(session, signal);
+					await activeEntry(session).ready;
+					const result = await options.agentBrowserRuntime!.runAction(
+						sessionId,
+						nativeAction,
+						nativeArgs,
+						agentBrowserTargets(session),
+						signal,
+					);
+					if (nativeAction === "tab-select" && typeof nativeArgs.tabId === "string") {
+						session.nativeActiveTabId = nativeArgs.tabId;
+					}
+					if (nativeAction === "tab-new" || nativeAction === "tab-close") {
+						session.nativeActiveTabId = undefined;
+					}
+					if (nativeAction.startsWith("tab-")) await ensureNativeActiveTab(session, signal);
+					return result;
+				});
 			};
 			switch (action) {
 				case "open": {
@@ -1332,25 +1444,25 @@ function activeEntry(session: BrowserSessionEntry): BrowserEntry {
 	return entry;
 }
 
-function tabResult(entry: BrowserEntry, active: boolean): {
-	id: string;
-	url: string;
-	title: string;
-	active: boolean;
-} {
+function tabResult(entry: BrowserEntry, active: boolean): BrowserTabState & { untrustedExternalContent: true } {
 	return {
 		id: entry.tabId,
 		url: entry.view.webContents.getURL(),
 		title: entry.view.webContents.getTitle(),
 		active,
+		untrustedExternalContent: true,
 	};
 }
 
-function listTabs(session: BrowserSessionEntry, change?: BrowserTabsState["change"]): BrowserTabsState {
+function listTabs(
+	session: BrowserSessionEntry,
+	change?: BrowserTabsState["change"],
+): BrowserTabsState & { untrustedExternalContent: true } {
 	return {
 		viewId: session.viewId,
 		activeTabId: session.activeTabId,
 		tabs: [...session.tabs.values()].map((entry) => tabResult(entry, entry.tabId === session.activeTabId)),
+		untrustedExternalContent: true,
 		...(change ? { change } : {}),
 	};
 }
@@ -1533,6 +1645,7 @@ function networkCaptureStatus(entry: BrowserEntry): Record<string, unknown> {
 			tabId: entry.tabId,
 			requestCount: 0,
 			maxEntries: MAX_NETWORK_REQUESTS,
+			untrustedExternalContent: true,
 		};
 	}
 	return {
@@ -1545,6 +1658,7 @@ function networkCaptureStatus(entry: BrowserEntry): Record<string, unknown> {
 		expiresAt: capture.expiresAt,
 		...(capture.stoppedAt ? { stoppedAt: capture.stoppedAt } : {}),
 		...(capture.stopReason ? { stopReason: capture.stopReason } : {}),
+		untrustedExternalContent: true,
 	};
 }
 
@@ -1566,12 +1680,9 @@ async function stopNetworkCapture(entry: BrowserEntry, reason: string): Promise<
 	capture.active = false;
 	capture.stoppedAt = new Date().toISOString();
 	capture.stopReason = reason;
-	try {
-		await entry.view.webContents.debugger.sendCommand("Network.disable");
-	} catch {
-		// The target may have closed while an expiry timer was firing. The in-memory
-		// capture is still safely stopped and can be discarded with the tab.
-	}
+	// The debugger attachment is shared by capture, agent-browser, and DevTools.
+	// Stop recording locally, but leave the shared Network domain enabled until
+	// the attachment itself is released.
 	return networkCaptureResult(entry);
 }
 
@@ -1587,19 +1698,11 @@ function clearNetworkCapture(entry: BrowserEntry): Record<string, unknown> {
 function disposeNetworkCapture(entry: BrowserEntry, reason: string): void {
 	const capture = entry.networkCapture;
 	if (!capture) return;
-	const wasActive = capture.active;
 	if (capture.timer) clearTimeout(capture.timer);
 	capture.timer = undefined;
 	capture.active = false;
 	capture.stoppedAt = new Date().toISOString();
 	capture.stopReason = reason;
-	try {
-		if (wasActive && entry.view.webContents.debugger?.isAttached()) {
-			void entry.view.webContents.debugger.sendCommand("Network.disable").catch(() => undefined);
-		}
-	} catch {
-		// Electron may already have destroyed the target during window shutdown.
-	}
 }
 
 function handleNetworkDebuggerEvent(entry: BrowserEntry, method: string, params: Record<string, unknown>): void {

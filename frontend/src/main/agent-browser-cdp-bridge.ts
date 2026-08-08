@@ -44,6 +44,7 @@ type AttachedTarget = {
 	targetId: string;
 	connection: ConnectionContext;
 	protocolSessionId?: string;
+	chromiumChildSessionIds: Set<string>;
 };
 
 /**
@@ -173,7 +174,7 @@ export class AgentBrowserCDPBridge {
 				connection.trustedDevtools && connection.targetId
 					? await this.forwardDirectDevtoolsCommand(connection, request)
 					: request.sessionId
-						? await this.forwardTargetCommand(request)
+						? await this.forwardTargetCommand(connection, request)
 						: await this.handleBrowserCommand(connection, request);
 			this.send(connection.socket, {
 				id: request.id,
@@ -272,7 +273,7 @@ export class AgentBrowserCDPBridge {
 					throw new Error("Target.sendMessageToTarget message must be valid JSON");
 				}
 				if (typeof nested.method !== "string") throw new Error("Target message method is required");
-				return this.forwardTargetCommand({ ...nested, sessionId });
+				return this.forwardTargetCommand(connection, { ...nested, sessionId });
 			}
 			case "Target.createTarget": {
 				if (connection.targetId) throw new Error("Target creation is not permitted for a pinned DevTools client");
@@ -310,18 +311,38 @@ export class AgentBrowserCDPBridge {
 	private attachTarget(connection: ConnectionContext, target: AgentBrowserTarget): string {
 		const sessionId = `ao-${randomUUID()}`;
 		const physical = this.ensurePhysical(target);
-		const client: AttachedTarget = { targetId: target.id, connection, protocolSessionId: sessionId };
+		const client: AttachedTarget = {
+			targetId: target.id,
+			connection,
+			protocolSessionId: sessionId,
+			chromiumChildSessionIds: new Set(),
+		};
 		physical.clients.set(sessionId, client);
 		this.attached.set(sessionId, client);
 		return sessionId;
 	}
 
-	private async forwardTargetCommand(request: CDPRequest): Promise<unknown> {
-		const attached = this.attached.get(request.sessionId!);
+	private async forwardTargetCommand(connection: ConnectionContext, request: CDPRequest): Promise<unknown> {
+		const requestedSessionId = request.sessionId!;
+		let attached = this.attached.get(requestedSessionId);
+		let chromiumSessionId: string | undefined;
+		if (attached && attached.connection.socket !== connection.socket) {
+			throw new Error("Target session belongs to another CDP client");
+		}
+		if (!attached) {
+			attached = [...this.attached.values()].find(
+				(candidate) =>
+					candidate.connection.socket === connection.socket &&
+					candidate.chromiumChildSessionIds.has(requestedSessionId),
+			);
+			chromiumSessionId = attached ? requestedSessionId : undefined;
+		}
 		if (!attached) throw new Error("Unknown or expired target session");
 		const target = this.requireTarget(attached.targetId, attached.connection);
 		if (!attached.connection.trustedDevtools) assertSafeTargetMethod(request.method, request.params);
-		return target.debugger.sendCommand(request.method, request.params);
+		return chromiumSessionId
+			? target.debugger.sendCommand(request.method, request.params, chromiumSessionId)
+			: target.debugger.sendCommand(request.method, request.params);
 	}
 
 	/**
@@ -342,7 +363,7 @@ export class AgentBrowserCDPBridge {
 		if (!connection.devtoolsClientKey) {
 			const clientKey = `devtools-${randomUUID()}`;
 			connection.devtoolsClientKey = clientKey;
-			physical.clients.set(clientKey, { targetId: target.id, connection });
+			physical.clients.set(clientKey, { targetId: target.id, connection, chromiumChildSessionIds: new Set() });
 		}
 		// User-facing DevTools intentionally retains the full CDP surface. AO's
 		// agent client remains on forwardTargetCommand and its safety policy.
@@ -367,17 +388,25 @@ export class AgentBrowserCDPBridge {
 		physical.messageListener = (...args: unknown[]) => {
 			const method = typeof args[1] === "string" ? args[1] : "";
 			if (!method) return;
+			const params = isRecord(args[2]) ? args[2] : {};
 			const chromiumSessionId = optionalString(args[3]);
 			for (const client of physical.clients.values()) {
+				const eventSessionId = client.protocolSessionId
+					? chromiumSessionId && client.chromiumChildSessionIds.has(chromiumSessionId)
+						? chromiumSessionId
+						: client.protocolSessionId
+					: chromiumSessionId;
 				this.send(client.connection.socket, {
 					method,
-					params: isRecord(args[2]) ? args[2] : {},
-					...(client.protocolSessionId
-						? { sessionId: client.protocolSessionId }
-						: chromiumSessionId
-							? { sessionId: chromiumSessionId }
-							: {}),
+					params,
+					...(eventSessionId ? { sessionId: eventSessionId } : {}),
 				});
+				const childSessionId = optionalString(params.sessionId);
+				if (method === "Target.attachedToTarget" && childSessionId) {
+					client.chromiumChildSessionIds.add(childSessionId);
+				} else if (method === "Target.detachedFromTarget" && childSessionId) {
+					client.chromiumChildSessionIds.delete(childSessionId);
+				}
 			}
 		};
 		physical.detachListener = () => {

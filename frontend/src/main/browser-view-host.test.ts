@@ -373,7 +373,7 @@ function setupTabHost() {
 		handlers.get(channel)!({ sender: { id: 1 } }, ...args) as Promise<unknown>;
 	const emit = (channel: string, ...args: unknown[]) =>
 		eventHandlers.get(channel)!({ sender: { id: 1, getZoomFactor: () => 1 } }, ...args);
-	return { constructorOptions, emit, host, invoke, sent, views };
+	return { activeTargets, constructorOptions, emit, host, invoke, runtime, sent, views };
 }
 
 describe("new-session shortcut forwarding", () => {
@@ -443,6 +443,33 @@ describe("shared Chromium DevTools host", () => {
 		const closed = await invoke("browser:devtools", { viewId, operation: "close" });
 		expect(closed).toMatchObject({ viewId, open: false });
 		expect(devtoolsWindow.close).toHaveBeenCalled();
+	});
+
+	it("settles rapid tab retargeting on the latest active tab", async () => {
+		const { devtoolsWindow, host, invoke } = setupHost();
+		const nav = await invoke("browser:ensure", "sess-1");
+		const viewId = (nav as BrowserNavState).viewId;
+		await host.execute("sess-1", "tab-new");
+		await host.execute("sess-1", "tab-select", { tabId: "t1" });
+		await invoke("browser:devtools", { viewId, operation: "open" });
+
+		let releaseSecondLoad: (() => void) | undefined;
+		devtoolsWindow.webContents.loadURL.mockImplementation((url: string) => {
+			if (!url.includes("target%3Dt2") && !url.includes("target=t2")) return Promise.resolve(undefined);
+			return new Promise<undefined>((resolve) => {
+				releaseSecondLoad = () => resolve(undefined);
+			});
+		});
+
+		await invoke("browser:selectTab", { viewId, tabId: "t2" });
+		await vi.waitFor(() => expect(releaseSecondLoad).toBeDefined());
+		await invoke("browser:selectTab", { viewId, tabId: "t1" });
+		releaseSecondLoad?.();
+
+		await vi.waitFor(() => {
+			const loadedURL = devtoolsWindow.webContents.loadURL.mock.calls.at(-1)?.[0] as string;
+			expect(new URL(loadedURL).searchParams.get("ws")).toContain("target=t1");
+		});
 	});
 });
 
@@ -586,7 +613,10 @@ describe("agent browser runtime", () => {
 		const blankReady = new Promise<void>((resolve) => {
 			releaseBlank = resolve;
 		});
-		const runAction = vi.fn(async () => ({ snapshot: "(empty accessibility snapshot)", refs: {} }));
+		const runAction = vi.fn(async (..._args: unknown[]) => ({
+			snapshot: "(empty accessibility snapshot)",
+			refs: {},
+		}));
 		const runtime = {
 			runAction,
 			closeSession: vi.fn(async () => undefined),
@@ -605,6 +635,7 @@ describe("agent browser runtime", () => {
 		await request;
 		expect(webContents.loadURL).toHaveBeenCalledWith("about:blank");
 		expect(runAction).toHaveBeenCalledTimes(1);
+		expect(runAction.mock.calls[0]?.[1]).toBe("snapshot");
 	});
 
 	it("routes the native adapter through only the current session targets", async () => {
@@ -721,7 +752,7 @@ describe("agent browser runtime", () => {
 		await host.execute("sess-1", "snapshot");
 		const created = (await host.execute("sess-1", "tab-new", {
 			url: "http://localhost:4173",
-		})) as { id: string };
+		})) as { id: string; untrustedExternalContent: boolean };
 		expect(views[0].setBounds).toHaveBeenCalledWith({
 			x: -10_000,
 			y: -10_000,
@@ -734,6 +765,8 @@ describe("agent browser runtime", () => {
 			tabs: Array<{ id: string; url: string; active: boolean }>;
 		};
 		expect(created.id).toBe("t2");
+		expect(created.untrustedExternalContent).toBe(true);
+		expect(listed).toMatchObject({ untrustedExternalContent: true });
 		expect(listed.activeTabId).toBe("t2");
 		expect(listed.tabs).toEqual([
 			expect.objectContaining({ id: "t1", url: "http://localhost:3000/", active: false }),
@@ -816,7 +849,7 @@ describe("agent browser runtime", () => {
 	});
 
 	it("exposes owned tab state and manual tab actions to the renderer", async () => {
-		const { invoke, sent, views } = setupTabHost();
+		const { activeTargets, host, invoke, runtime, sent, views } = setupTabHost();
 		const ensured = (await invoke("browser:ensure", "sess-1")) as BrowserNavState;
 
 		views[0].webContents.openWindow("http://localhost:3000/popup");
@@ -828,6 +861,7 @@ describe("agent browser runtime", () => {
 			expect(state.tabs).toHaveLength(2);
 			expect(state.activeTabId).toBe("t2");
 		});
+		await vi.waitFor(() => expect(activeTargets.get("sess-1")).toBe("t2"));
 		expect(sent).toContainEqual({
 			channel: "browser:tabsState",
 			payload: expect.objectContaining({
@@ -841,12 +875,29 @@ describe("agent browser runtime", () => {
 			tabId: "t1",
 		})) as { activeTabId: string };
 		expect(selected.activeTabId).toBe("t1");
+		expect(activeTargets.get("sess-1")).toBe("t1");
+		expect(runtime.runAction).toHaveBeenCalledWith(
+			"sess-1",
+			"tab-select",
+			{ tabId: "t1" },
+			expect.anything(),
+			undefined,
+		);
+		expect(await host.execute("sess-1", "get", { property: "url" })).toMatchObject({
+			value: "about:blank",
+		});
 
 		const closed = (await invoke("browser:closeTab", {
 			viewId: ensured.viewId,
 			tabId: "t2",
 		})) as { tabs: Array<{ id: string }> };
 		expect(closed.tabs.map((tab) => tab.id)).toEqual(["t1"]);
+		expect(runtime.runAction).toHaveBeenCalledWith(
+			"sess-1",
+			"tab-close",
+			{ tabId: "t2" },
+			expect.anything(),
+		);
 		expect(views[1].webContents.close).toHaveBeenCalled();
 	});
 });
@@ -870,6 +921,7 @@ describe("agent browser network capture", () => {
 		expect(await host.execute("sess-1", "network-start", { durationSeconds: 30 })).toMatchObject({
 			active: true,
 			metadataOnly: true,
+			untrustedExternalContent: true,
 			tabId: "t1",
 			requestCount: 0,
 			maxEntries: 200,
@@ -940,7 +992,7 @@ describe("agent browser network capture", () => {
 			stopReason: "stopped",
 			requestCount: 1,
 		});
-		expect(debuggerSendCommand).toHaveBeenCalledWith("Network.disable");
+		expect(debuggerSendCommand).not.toHaveBeenCalledWith("Network.disable");
 	});
 
 	it("retains only the newest 200 requests and validates the capture duration", async () => {
@@ -992,7 +1044,7 @@ describe("agent browser network capture", () => {
 				active: false,
 				stopReason: "expired",
 			});
-			expect(debuggerSendCommand).toHaveBeenCalledWith("Network.disable");
+			expect(debuggerSendCommand).not.toHaveBeenCalledWith("Network.disable");
 		} finally {
 			vi.useRealTimers();
 		}
