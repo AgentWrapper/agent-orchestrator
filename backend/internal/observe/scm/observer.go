@@ -1507,7 +1507,11 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 			obs = observationFromLocal(s.repo, s.known, checks)
 			localOnlyObservations[pkey] = true
 		}
-		if review.Decision != "" {
+		// Precedence guard: don't let FetchReviewThreads downgrade a higher-
+		// priority decision that was set by the fast-path. Only overwrite when
+		// the fetched decision has equal or higher priority. Threads, summaries,
+		// and the partial flag are always adopted regardless of the guard.
+		if review.Decision != "" && reviewDecisionPriority(domain.ReviewDecision(review.Decision)) >= reviewDecisionPriority(domain.ReviewDecision(obs.Review.Decision)) {
 			obs.Review.Decision = review.Decision
 		}
 		obs.Review.Reviews = review.Reviews
@@ -1522,6 +1526,26 @@ func (o *Observer) refreshReviews(ctx context.Context, subjects map[string]*subj
 			reviewModes[pkey] = ports.ReviewWriteReplace
 		}
 		cacheDelete(o.Cache.ReviewRefreshFailed, &o.Cache.reviewFailedOrder, pkey)
+	}
+}
+
+// reviewDecisionPriority returns a numeric priority for a review decision.
+// Higher values represent more authoritative or blocking decisions. The guard
+// in refreshReviews uses this to prevent FetchReviewThreads from downgrading a
+// decision that was set by the fast-path (e.g. fetchSingleMR mapping
+// detailed_merge_status=requested_changes to ReviewChangesRequest). The guard
+// is cross-provider: it also protects GitHub PRs whose CHANGES_REQUESTED status
+// was mapped to ReviewChangesRequest in the fast path.
+func reviewDecisionPriority(d domain.ReviewDecision) int {
+	switch d {
+	case domain.ReviewChangesRequest:
+		return 3
+	case domain.ReviewRequired:
+		return 2
+	case domain.ReviewApproved:
+		return 1
+	default:
+		return 0
 	}
 }
 
