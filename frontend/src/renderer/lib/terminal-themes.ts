@@ -10,11 +10,16 @@ function cssVar(name: string): string {
 export function buildTerminalThemes(): { dark: ITheme; light: ITheme } {
 	// Opaque plate — xterm cells must not be translucent or the p-2 gutter and
 	// the glyph grid pick up different composites against app chrome.
-	const terminalBg = cssVar("--color-bg-terminal-opaque") || cssVar("--color-bg-terminal");
+	const namedThemeActive = typeof document !== "undefined" && Boolean(document.documentElement.dataset.styleTheme);
+	const terminalBg = namedThemeActive
+		? cssVar("--background")
+		: cssVar("--color-bg-terminal-opaque") || cssVar("--color-bg-terminal");
+	const terminalForeground = namedThemeActive ? cssVar("--foreground") : cssVar("--color-text-terminal");
+	const terminalCursor = namedThemeActive ? cssVar("--primary") : cssVar("--color-working");
 	const dark: ITheme = {
 		background: terminalBg,
-		foreground: cssVar("--color-text-terminal"),
-		cursor: cssVar("--color-working"),
+		foreground: terminalForeground,
+		cursor: terminalCursor,
 		cursorAccent: terminalBg,
 		selectionBackground: cssVar("--color-term-selection-dark"),
 		selectionInactiveBackground: cssVar("--color-term-selection-inactive"),
@@ -38,8 +43,8 @@ export function buildTerminalThemes(): { dark: ITheme; light: ITheme } {
 
 	const light: ITheme = {
 		background: terminalBg,
-		foreground: cssVar("--color-text-terminal"),
-		cursor: cssVar("--color-working"),
+		foreground: terminalForeground,
+		cursor: terminalCursor,
 		cursorAccent: terminalBg,
 		selectionBackground: cssVar("--color-term-selection-light"),
 		selectionInactiveBackground: cssVar("--color-term-selection-inactive-light"),

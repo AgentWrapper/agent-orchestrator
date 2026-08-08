@@ -822,6 +822,17 @@
    Text chroma is capped so re-lighting cannot oversaturate a hue.
    ═══════════════════════════════════════════════════════════════ */
 
+/* A named palette owns the terminal's default plate and text as well as the
+   surrounding app chrome. ANSI slots stay independent because agent TUIs use
+   them semantically, but the formerly near-black terminal canvas now follows
+   each palette in both dark and light modes. */
+:root[data-style-theme] {
+	--color-bg-terminal-opaque: var(--background);
+	--color-bg-terminal: var(--background);
+	--color-text-terminal: var(--foreground);
+	--color-text-terminal-dim: var(--muted-foreground);
+}
+
 /* ── GitHub (Primer) ── */
 :root[data-style-theme="github"] {
 	/* Dark */
