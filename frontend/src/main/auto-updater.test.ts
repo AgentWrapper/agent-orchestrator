@@ -1,5 +1,8 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import os from "node:os";
+import nodePath from "node:path";
 
 type UpdateSettings = {
   enabled: boolean;
@@ -1229,5 +1232,119 @@ describe("returnToHome", () => {
 
     expect(updateUpdateSettings).not.toHaveBeenCalled();
     expect(autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+  });
+});
+
+// stubProcess swaps process.platform/execPath for one test. The install
+// preflight reads both at call time, so no module re-import is needed after
+// the swap — but the restore MUST run even when the assertion throws.
+function stubProcess(platform: NodeJS.Platform, execPath: string): () => void {
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const originalExecPath = Object.getOwnPropertyDescriptor(process, "execPath")!;
+  Object.defineProperty(process, "platform", { value: platform });
+  Object.defineProperty(process, "execPath", { value: execPath });
+  return () => {
+    Object.defineProperty(process, "platform", originalPlatform);
+    Object.defineProperty(process, "execPath", originalExecPath);
+  };
+}
+
+describe("quitAndInstallUpdate", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  const TRANSLOCATED_EXEC_PATH =
+    "/private/var/folders/hg/vkmz93d1T/T/AppTranslocation/0AC4-11EE/d/Agent Orchestrator.app/Contents/MacOS/agent-orchestrator";
+
+  it("shows an actionable dialog instead of installing when running translocated on macOS", async () => {
+    const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+      const box = dialog.showMessageBox.mock.calls[0][0] as {
+        message: string;
+        detail: string;
+      };
+      expect(box.detail).toContain("/Applications");
+    } finally {
+      restore();
+    }
+  });
+
+  it("shows the dialog when the app bundle is not writable", async () => {
+    const root = mkdtempSync(nodePath.join(os.tmpdir(), "ao-updater-ro-"));
+    const bundle = nodePath.join(root, "Agent Orchestrator.app");
+    mkdirSync(nodePath.join(bundle, "Contents", "MacOS"), { recursive: true });
+    chmodSync(bundle, 0o555);
+    const restore = stubProcess(
+      "darwin",
+      nodePath.join(bundle, "Contents", "MacOS", "agent-orchestrator"),
+    );
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+      expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    } finally {
+      restore();
+      chmodSync(bundle, 0o755);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("fails open and installs when the derived bundle path does not exist", async () => {
+    const restore = stubProcess(
+      "darwin",
+      "/nonexistent-ao-test/Agent Orchestrator.app/Contents/MacOS/agent-orchestrator",
+    );
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("never blocks off macOS, even for translocation-looking paths", async () => {
+    const restore = stubProcess("win32", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater();
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+    } finally {
+      restore();
+    }
+  });
+
+  it("does nothing when the app is not packaged", async () => {
+    const restore = stubProcess("darwin", TRANSLOCATED_EXEC_PATH);
+    try {
+      const { module, autoUpdater, dialog } = await importAutoUpdater(
+        undefined,
+        { isPackaged: false },
+      );
+
+      module.quitAndInstallUpdate();
+
+      expect(dialog.showMessageBox).not.toHaveBeenCalled();
+      expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
   });
 });
