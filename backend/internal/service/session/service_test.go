@@ -2090,6 +2090,28 @@ type fakeSCM struct {
 	reviewErr error
 }
 
+func TestClaimRowsFromSCMSnapshotsSessionReviewPolicy(t *testing.T) {
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	obs := ports.SCMObservation{
+		PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+		Review: ports.SCMReviewObservation{
+			Reviews: []ports.SCMReviewSummaryObservation{{ID: "r1", State: string(domain.ReviewChangesRequest), Body: "review body"}},
+			Threads: []ports.SCMReviewThreadObservation{{ID: "t1", Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Body: "inline comment"}}}},
+		},
+	}
+	for _, autoInject := range []bool{false, true} {
+		t.Run(fmt.Sprintf("auto_inject_%t", autoInject), func(t *testing.T) {
+			_, _, reviews, _, comments := claimRowsFromSCM("mer-1", obs, now, domain.SessionRecord{AutoInjectReview: autoInject})
+			if len(reviews) != 1 || reviews[0].AutoInjectReview != autoInject {
+				t.Fatalf("reviews = %+v, want policy %t", reviews, autoInject)
+			}
+			if len(comments) != 1 || comments[0].AutoInjectReview != autoInject {
+				t.Fatalf("comments = %+v, want policy %t", comments, autoInject)
+			}
+		})
+	}
+}
+
 func (f fakeSCM) ParseRepository(remote string) (ports.SCMRepo, bool) {
 	owner, repo, err := githubRepoFromURL(remote)
 	if err != nil {

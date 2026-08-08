@@ -61,7 +61,7 @@ func (m *Manager) write(ctx context.Context, id domain.SessionID, o ports.PRObse
 	}
 	comments := make([]domain.PullRequestComment, len(o.Comments))
 	for i, c := range o.Comments {
-		comments[i] = domain.PullRequestComment{ID: c.ID, Author: c.Author, File: c.File, Line: c.Line, Body: c.Body, Resolved: c.Resolved, CreatedAt: now}
+		comments[i] = domain.PullRequestComment{ID: c.ID, Author: c.Author, File: c.File, Line: c.Line, Body: c.Body, Resolved: c.Resolved, CreatedAt: now, AutoInjectReview: c.AutoInjectReview}
 	}
 	return m.writer.WritePR(ctx, row, checks, comments)
 }
