@@ -1,6 +1,7 @@
 package lifecycle
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +42,24 @@ func blockOnDialog(t *testing.T, m *Manager, st *fakeStore, id domain.SessionID,
 	t.Helper()
 	mustApply(t, m, id, sig(domain.ActivityActive, "pre-tool-use", toolName, toolUseID))
 	mustApply(t, m, id, sig(domain.ActivityBlocked, "permission-request", toolName, ""))
+	if got := stateOf(st, id); got != domain.ActivityBlocked {
+		t.Fatalf("setup: state = %q, want blocked", got)
+	}
+}
+
+// blockOnNotificationCorrelation drives a session into blocked through the
+// notification correlation path: the blocking tool's pre-tool-use, then a
+// notification(permission_prompt) whose tool_use_id matches the inflight entry.
+// The notification's tool_name is lowercased to mirror adapters (e.g. Kimchi)
+// whose notification payloads carry the internal tool name while hooks carry
+// the external capitalized name.
+func blockOnNotificationCorrelation(t *testing.T, m *Manager, st *fakeStore, id domain.SessionID, toolName, toolUseID string) {
+	t.Helper()
+	mustApply(t, m, id, sig(domain.ActivityActive, "pre-tool-use", toolName, toolUseID))
+	mustApply(t, m, id, ports.ActivitySignal{
+		Valid: true, State: domain.ActivityBlocked, Event: "notification",
+		ToolName: strings.ToLower(toolName), ToolUseID: toolUseID,
+	})
 	if got := stateOf(st, id); got != domain.ActivityBlocked {
 		t.Fatalf("setup: state = %q, want blocked", got)
 	}
@@ -313,19 +332,7 @@ func TestToolPrecedence_ToolUseIDMatchBridgesCasingMismatch(t *testing.T) {
 	// correlated post-tool-use.
 	m, st, _ := newManager()
 	seedSignaled(st, "mer-1", domain.ActivityActive)
-
-	// pre-tool-use: tool_name="Bash", tool_use_id="toolu_1"
-	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "pre-tool-use", "Bash", "toolu_1"))
-
-	// notification(permission_prompt): tool_name="bash" (lowercase!),
-	// tool_use_id="toolu_1" (same id, present in inflight map).
-	mustApply(t, m, "mer-1", ports.ActivitySignal{
-		Valid: true, State: domain.ActivityBlocked, Event: "notification",
-		ToolName: "bash", ToolUseID: "toolu_1",
-	})
-	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
-		t.Fatalf("after notification: state = %q, want blocked", got)
-	}
+	blockOnNotificationCorrelation(t, m, st, "mer-1", "Bash", "toolu_1")
 
 	// User accepts. post-tool-use: tool_name="Bash", tool_use_id="toolu_1".
 	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use", "Bash", "toolu_1"))
@@ -344,19 +351,7 @@ func TestToolPrecedence_ToolUseIDMatchBridgesCasingMismatch(t *testing.T) {
 func TestToolPrecedence_NotificationCorrelationFailurePostClearsBlocked(t *testing.T) {
 	m, st, _ := newManager()
 	seedSignaled(st, "mer-1", domain.ActivityActive)
-
-	// pre-tool-use: tool_name="Bash", tool_use_id="toolu_1"
-	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "pre-tool-use", "Bash", "toolu_1"))
-
-	// notification(permission_prompt): tool_name="bash" (lowercase),
-	// tool_use_id="toolu_1" (matches inflight entry).
-	mustApply(t, m, "mer-1", ports.ActivitySignal{
-		Valid: true, State: domain.ActivityBlocked, Event: "notification",
-		ToolName: "bash", ToolUseID: "toolu_1",
-	})
-	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
-		t.Fatalf("after notification: state = %q, want blocked", got)
-	}
+	blockOnNotificationCorrelation(t, m, st, "mer-1", "Bash", "toolu_1")
 
 	// post-tool-use-failure: the approved tool ran and failed — blocked must clear.
 	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use-failure", "Bash", "toolu_1"))
@@ -372,16 +367,7 @@ func TestToolPrecedence_NotificationCorrelationFailurePostClearsBlocked(t *testi
 func TestToolPrecedence_NotificationCorrelationSiblingDoesNotClear(t *testing.T) {
 	m, st, _ := newManager()
 	seedSignaled(st, "mer-1", domain.ActivityActive)
-
-	// Enter blocked via the notification correlation path.
-	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "pre-tool-use", "Bash", "toolu_1"))
-	mustApply(t, m, "mer-1", ports.ActivitySignal{
-		Valid: true, State: domain.ActivityBlocked, Event: "notification",
-		ToolName: "bash", ToolUseID: "toolu_1",
-	})
-	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
-		t.Fatalf("after notification: state = %q, want blocked", got)
-	}
+	blockOnNotificationCorrelation(t, m, st, "mer-1", "Bash", "toolu_1")
 
 	// A sibling tool's post must NOT clear blocked.
 	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use", "Read", "toolu_sibling"))
