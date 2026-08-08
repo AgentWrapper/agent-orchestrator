@@ -323,9 +323,11 @@ const MAX_BROWSER_TABS = 16;
 const MAX_EXTERNAL_TEXT_BYTES = 1 << 20;
 const UNTRUSTED_BEGIN = "<<<BEGIN UNTRUSTED EXTERNAL CONTENT>>>";
 const UNTRUSTED_END = "<<<END UNTRUSTED EXTERNAL CONTENT>>>";
-// The human-facing address bar may open local preview files. Agent commands use
-// normalizeAgentBrowserURL below, which permits only explicit HTTP(S) targets.
-const ALLOWED_PROTOCOLS = new Set(["http:", "https:", "file:"]);
+// Browser targets are shared with session automation after navigation. Keep
+// local files out of this surface even when navigation starts in the human
+// address bar; workspace files arrive through the daemon's confined HTTP
+// preview origin instead.
+const ALLOWED_PROTOCOLS = new Set(["http:", "https:"]);
 export function normalizeBrowserURL(input: string): URL {
 	const raw = input.trim();
 	if (raw === "") {

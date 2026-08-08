@@ -7,10 +7,6 @@
 
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE sessions ADD COLUMN browser_capability_verifier TEXT NOT NULL DEFAULT '';
--- +goose StatementEnd
-
--- +goose StatementBegin
 ALTER TABLE review ADD COLUMN agent_session_id TEXT NOT NULL DEFAULT '';
 -- +goose StatementEnd
 
@@ -70,10 +66,6 @@ CREATE UNIQUE INDEX idx_review_run_session_pr_sha_harness
 -- +goose StatementEnd
 
 -- +goose Down
--- +goose StatementBegin
-ALTER TABLE sessions DROP COLUMN browser_capability_verifier;
--- +goose StatementEnd
-
 -- +goose StatementBegin
 DROP TABLE review_session;
 -- +goose StatementEnd

@@ -469,17 +469,17 @@ describe("normalizeBrowserURL", () => {
 		expect(normalizeBrowserURL("time: now").href).toBe("https://www.google.com/search?q=time%3A%20now");
 	});
 
-	it("allows file:// preview targets without mangling the scheme", () => {
-		expect(normalizeBrowserURL("file:///tmp/preview/index.html").href).toBe("file:///tmp/preview/index.html");
-		expect(normalizeBrowserURL("file:///C:/tmp/index.html").protocol).toBe("file:");
+	it("rejects file URLs because the browser target is automatable", () => {
+		expect(() => normalizeBrowserURL("file:///tmp/preview/index.html")).toThrow("Unsupported browser URL scheme");
+		expect(() => normalizeBrowserURL("file:///C:/tmp/index.html")).toThrow("Unsupported browser URL scheme");
 	});
 
-	it("converts absolute local file paths to file URLs", () => {
-		expect(normalizeBrowserURL("C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html").href).toBe(
-			"file:///C:/Users/Lenovo/Downloads/sm5/paper_explainer.html",
+	it("rejects absolute local paths rather than converting them into automatable files", () => {
+		expect(() => normalizeBrowserURL("C:\\Users\\Lenovo\\Downloads\\sm5\\paper_explainer.html")).toThrow(
+			"Unsupported browser URL scheme",
 		);
-		expect(normalizeBrowserURL("C:/Users/Lenovo/My File.html").href).toBe("file:///C:/Users/Lenovo/My%20File.html");
-		expect(normalizeBrowserURL("/tmp/preview/index.html").href).toBe("file:///tmp/preview/index.html");
+		expect(() => normalizeBrowserURL("C:/Users/Lenovo/My File.html")).toThrow("Unsupported browser URL scheme");
+		expect(() => normalizeBrowserURL("/tmp/preview/index.html")).toThrow("Unsupported browser URL scheme");
 	});
 
 	it("rejects privileged or unsupported schemes", () => {
@@ -489,8 +489,8 @@ describe("normalizeBrowserURL", () => {
 });
 
 describe("isAllowedBrowserURL", () => {
-	it("allows file:// even when a renderer origin is set", () => {
-		expect(isAllowedBrowserURL("file:///tmp/preview/index.html", "http://localhost:5173")).toBe(true);
+	it("rejects file URLs even when a renderer origin is set", () => {
+		expect(isAllowedBrowserURL("file:///tmp/preview/index.html", "http://localhost:5173")).toBe(false);
 	});
 
 	it("still blocks the renderer's own http origin", () => {

@@ -5,17 +5,23 @@ package browserruntime
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"sync"
+	"syscall"
 )
 
 // Darwin's sockaddr_un.sun_path is 104 bytes including the trailing NUL. Keep
 // the address at or below 103 bytes so the same path is valid on macOS and
 // Linux regardless of the user's home/data-directory length.
 const maxUnixSocketPathBytes = 103
+
+var runtimeAliasPattern = regexp.MustCompile(`^ao-brd-(\d+)-[0-9a-f]{16}$`)
 
 // Listen creates the local daemon-to-Electron browser bridge listener.
 func Listen(runFilePath string) (net.Listener, string, error) {
@@ -37,6 +43,7 @@ func listenUnix(runFilePath, aliasRoot string) (net.Listener, string, error) {
 	if err := os.MkdirAll(runtimeDir, 0o700); err != nil {
 		return nil, "", fmt.Errorf("create browser runtime directory: %w", err)
 	}
+	cleanupStaleRuntimeAliases(aliasRoot, runtimeDir, unixProcessAlive)
 
 	aliasPath, err := createRuntimeAlias(aliasRoot, runtimeDir)
 	if err != nil {
@@ -67,7 +74,7 @@ func createRuntimeAlias(root, runtimeDir string) (string, error) {
 		if _, err := rand.Read(random); err != nil {
 			return "", fmt.Errorf("generate browser runtime alias: %w", err)
 		}
-		aliasPath := filepath.Join(root, "ao-br-"+hex.EncodeToString(random))
+		aliasPath := filepath.Join(root, fmt.Sprintf("ao-brd-%d-%s", os.Getpid(), hex.EncodeToString(random)))
 		if err := os.Symlink(runtimeDir, aliasPath); err == nil {
 			return aliasPath, nil
 		} else if !os.IsExist(err) {
@@ -75,6 +82,45 @@ func createRuntimeAlias(root, runtimeDir string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("create browser runtime alias: exhausted random names")
+}
+
+func cleanupStaleRuntimeAliases(root, runtimeDir string, processAlive func(int) bool) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		match := runtimeAliasPattern.FindStringSubmatch(entry.Name())
+		if len(match) != 2 || entry.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		pid, err := strconv.Atoi(match[1])
+		if err != nil || pid <= 0 || processAlive(pid) {
+			continue
+		}
+		aliasPath := filepath.Join(root, entry.Name())
+		target, err := os.Readlink(aliasPath)
+		if err != nil {
+			continue
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(root, target)
+		}
+		target, err = filepath.Abs(target)
+		if err != nil || filepath.Clean(target) != runtimeDir {
+			continue
+		}
+		_ = os.Remove(aliasPath)
+	}
+}
+
+func unixProcessAlive(pid int) bool {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	err = process.Signal(syscall.Signal(0))
+	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
 type cleanupUnixListener struct {

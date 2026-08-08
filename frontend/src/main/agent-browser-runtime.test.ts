@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -11,6 +11,7 @@ import {
 	nativeArgumentsForAction,
 	parseAgentBrowserJSON,
 	scavengeBrowserRuntime,
+	scavengeBrowserSocketAliases,
 	validateAgentBrowserArguments,
 } from "./agent-browser-runtime";
 
@@ -183,6 +184,86 @@ describe("agent-browser runtime lifecycle", () => {
 		}
 	});
 
+	it("re-disables streaming before every command across native daemon replacement", async () => {
+		let streamingEnabled = true;
+		const calls: string[][] = [];
+		const { dataDir, runtime } = await fixture({
+			processRunner: async (...args) => {
+				const command = args[1] as string[];
+				calls.push(command);
+				if (command[0] === "stream" && command[1] === "disable") {
+					streamingEnabled = false;
+					return { stdout: "", stderr: "", exitCode: 0 };
+				}
+				if (command[0] === "close") return { stdout: "", stderr: "", exitCode: 0 };
+				if (streamingEnabled) return { stdout: "", stderr: "streaming remained enabled", exitCode: 1 };
+				// Simulate the native daemon expiring after this command. Its next
+				// generation starts with the input-capable stream enabled again.
+				streamingEnabled = true;
+				return { stdout: "", stderr: "", exitCode: 0 };
+			},
+		});
+		try {
+			await runtime.run("session-1", ["snapshot"], provider);
+			await runtime.run("session-1", ["get", "url"], provider);
+			expect(calls).toEqual([
+				["stream", "disable"],
+				["snapshot"],
+				["stream", "disable"],
+				["get", "url"],
+			]);
+		} finally {
+			await runtime.dispose();
+			await cleanup(dataDir);
+		}
+	});
+
+	it("runs tab new when streaming is already disabled", async () => {
+		const calls: string[][] = [];
+		const { dataDir, runtime } = await fixture({
+			processRunner: async (...args) => {
+				const command = args[1] as string[];
+				calls.push(command);
+				if (command[0] === "stream" && command[1] === "disable") {
+					return {
+						stdout: "",
+						stderr: "Streaming is not enabled for this session",
+						exitCode: 1,
+					};
+				}
+				return { stdout: '{"success":true}', stderr: "", exitCode: 0 };
+			},
+		});
+		try {
+			const result = await runtime.run("session-1", ["tab", "new", "https://theuselessweb.com", "--json"], provider);
+			expect(result.exitCode).toBe(0);
+			expect(calls).toEqual([
+				["stream", "disable"],
+				["tab", "new", "https://theuselessweb.com", "--json"],
+			]);
+		} finally {
+			await runtime.dispose();
+			await cleanup(dataDir);
+		}
+	});
+
+	it("does not hide genuine stream-disable failures", async () => {
+		const { dataDir, runtime } = await fixture({
+			processRunner: async () => ({ stdout: "", stderr: "daemon transport failed", exitCode: 1 }),
+		});
+		try {
+			await expect(
+				runtime.run("session-1", ["tab", "new", "https://theuselessweb.com", "--json"], provider),
+			).rejects.toMatchObject({
+				code: "AGENT_BROWSER_START_FAILED",
+				message: "daemon transport failed",
+			});
+		} finally {
+			await runtime.dispose();
+			await cleanup(dataDir);
+		}
+	});
+
 	it("rejects an oversized Unix socket path before starting the bridge", async () => {
 		const socketBase = await mkdtemp(path.join(os.tmpdir(), "ao-browser-runtime-long-path-test-"));
 		const socketDir = path.join(socketBase, "x".repeat(120));
@@ -292,6 +373,42 @@ describe("agent-browser runtime lifecycle", () => {
 			expect(await readFile(path.join(legacy, "config.json"), "utf8")).toBe("{}\n");
 		} finally {
 			await cleanup(dataDir);
+		}
+	});
+
+	it.skipIf(process.platform === "win32")("removes only confirmed-dead socket aliases owned by this data root", async () => {
+		const dataDir = await mkdtemp(path.join(shortTempDir, "ao-browser-alias-data-"));
+		const aliasRoot = await mkdtemp(path.join(shortTempDir, "ao-browser-alias-root-"));
+		const foreignRoot = await mkdtemp(path.join(shortTempDir, "ao-browser-alias-foreign-"));
+		try {
+			const deadTarget = path.join(dataDir, "r-aaaaaaaaaa", "s");
+			const liveTarget = path.join(dataDir, "r-bbbbbbbbbb", "s");
+			const foreignTarget = path.join(foreignRoot, "r-cccccccccc", "s");
+			await Promise.all([
+				mkdir(deadTarget, { recursive: true }),
+				mkdir(liveTarget, { recursive: true }),
+				mkdir(foreignTarget, { recursive: true }),
+			]);
+			await Promise.all([
+				symlink(deadTarget, path.join(aliasRoot, "ao-br-101-aaaaaaaaaaaa"), "dir"),
+				symlink(liveTarget, path.join(aliasRoot, "ao-br-202-bbbbbbbbbbbb"), "dir"),
+				symlink(foreignTarget, path.join(aliasRoot, "ao-br-303-cccccccccccc"), "dir"),
+				symlink(deadTarget, path.join(aliasRoot, "ao-br-not-owned"), "dir"),
+			]);
+
+			await scavengeBrowserSocketAliases(dataDir, (pid) => pid === 202, undefined, aliasRoot);
+
+			expect((await readdir(aliasRoot)).sort()).toEqual([
+				"ao-br-202-bbbbbbbbbbbb",
+				"ao-br-303-cccccccccccc",
+				"ao-br-not-owned",
+			]);
+		} finally {
+			await Promise.all([
+				rm(aliasRoot, { recursive: true, force: true }),
+				rm(dataDir, { recursive: true, force: true }),
+				rm(foreignRoot, { recursive: true, force: true }),
+			]);
 		}
 	});
 });

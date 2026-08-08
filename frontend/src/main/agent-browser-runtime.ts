@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, readlink, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AgentBrowserCDPBridge, type AgentBrowserTargetProvider } from "./agent-browser-cdp-bridge";
 
@@ -15,6 +15,8 @@ export const BROWSER_RUNTIME_RECLAIM_GRACE_MS = 15 * 60_000;
 const RUNTIME_OWNER_MARKER = "AO_BROWSER_RUNTIME_V1";
 const RUNTIME_OWNER_FILE = "owner.json";
 const RUNTIME_ROOT_PATTERN = /^(?:run-(\d+)-[0-9a-f]{12}|r-[0-9a-f]{10})$/;
+const SOCKET_ALIAS_PATTERN = /^ao-br-(\d+)-[0-9a-f]{12}$/;
+const STREAM_ALREADY_DISABLED_MESSAGE = "Streaming is not enabled for this session";
 /** Agent Browser's Unix preflight uses the macOS-sized 103-byte limit on all Unix builds. */
 export const AGENT_BROWSER_UNIX_SOCKET_PATH_MAX_BYTES = 103;
 
@@ -125,7 +127,6 @@ export type NativeProcessRunner = (
 type SessionRuntime = {
 	bridge: AgentBrowserBridge;
 	endpoint: string;
-	streamDisabled: boolean;
 	namespace: string;
 	runtimeDir: string;
 	configPath: string;
@@ -167,6 +168,9 @@ export class AgentBrowserRuntime {
 	/** Reclaim confirmed-dead run roots before the browser UI is created. */
 	async prepare(): Promise<void> {
 		if (this.disposed) throw runtimeError("AGENT_BROWSER_RUNTIME_CLOSED", "Browser automation runtime is closed");
+		if (this.platform !== "win32") {
+			await scavengeBrowserSocketAliases(this.options.dataDir, this.processAlive, this.log);
+		}
 		await scavengeBrowserRuntime(this.options.dataDir, this.processAlive, this.log);
 	}
 
@@ -182,20 +186,22 @@ export class AgentBrowserRuntime {
 		const runtime = await this.ensureSession(sessionId, provider);
 		await this.touchRuntimeRoot();
 		const environment = this.environment(runtime);
-		if (!runtime.streamDisabled) {
-			const disabled = await this.processRunner(
-				this.options.binaryPath,
-				["stream", "disable"],
-				environment,
-				signal,
+		// The native daemon can expire and be recreated independently while this
+		// AO session runtime remains alive. Its replacement starts streaming by
+		// default, so reassert the input-surface policy immediately before every
+		// command. agent-browser reports "already disabled" as a non-zero result;
+		// that state is the policy we need, while every other failure remains fatal.
+		const disabled = await this.processRunner(
+			this.options.binaryPath,
+			["stream", "disable"],
+			environment,
+			signal,
+		);
+		if (disabled.exitCode !== 0 && !streamAlreadyDisabled(disabled)) {
+			throw runtimeError(
+				"AGENT_BROWSER_START_FAILED",
+				disabled.stderr.trim() || "Unable to disable agent-browser streaming",
 			);
-			if (disabled.exitCode !== 0) {
-				throw runtimeError(
-					"AGENT_BROWSER_START_FAILED",
-					disabled.stderr.trim() || "Unable to disable agent-browser streaming",
-				);
-			}
-			runtime.streamDisabled = true;
 		}
 		const result = await this.processRunner(this.options.binaryPath, args, environment, signal);
 		if (result.exitCode !== 0) {
@@ -321,7 +327,7 @@ export class AgentBrowserRuntime {
 			const configPath = path.join(runtimeDir, "config.json");
 			await mkdir(runtimeDir, { recursive: true, mode: 0o700 });
 			await writeFile(configPath, "{}\n", "utf8");
-			return { bridge, endpoint, streamDisabled: false, namespace, runtimeDir, configPath };
+			return { bridge, endpoint, namespace, runtimeDir, configPath };
 		} catch (error) {
 			try {
 				await closeBridgeWithTimeout(bridge);
@@ -526,6 +532,56 @@ export async function scavengeBrowserRuntime(
 		removals.push(removePath(runDir, log, `stale runtime root ${entry.name}`));
 	}
 	await Promise.all(removals);
+}
+
+function streamAlreadyDisabled(result: NativeProcessResult): boolean {
+	return result.stderr.includes(STREAM_ALREADY_DISABLED_MESSAGE) || result.stdout.includes(STREAM_ALREADY_DISABLED_MESSAGE);
+}
+
+/** Remove only confirmed-dead frontend aliases owned by this AO data root. */
+export async function scavengeBrowserSocketAliases(
+	dataDir: string,
+	processAlive: (pid: number) => boolean = defaultProcessAlive,
+	log: (message: string) => void = () => undefined,
+	aliasRoot = "/tmp",
+): Promise<void> {
+	let entries;
+	try {
+		entries = await readdir(aliasRoot, { withFileTypes: true });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+			log(`agent-browser socket alias scan failed: ${String(error)}`);
+		}
+		return;
+	}
+	const resolvedDataDir = path.resolve(dataDir);
+	for (const entry of entries) {
+		const match = SOCKET_ALIAS_PATTERN.exec(entry.name);
+		if (!match || !entry.isSymbolicLink()) continue;
+		const pid = Number(match[1]);
+		if (!Number.isSafeInteger(pid) || pid <= 0 || processAlive(pid)) continue;
+		const aliasPath = path.join(aliasRoot, entry.name);
+		try {
+			const target = await readlink(aliasPath);
+			const resolvedTarget = path.resolve(aliasRoot, target);
+			const relative = path.relative(resolvedDataDir, resolvedTarget);
+			const parts = relative.split(path.sep);
+			if (
+				relative.startsWith(`..${path.sep}`) ||
+				path.isAbsolute(relative) ||
+				parts.length !== 2 ||
+				!/^r-[0-9a-f]{10}$/.test(parts[0]) ||
+				parts[1] !== "s"
+			) {
+				continue;
+			}
+			await rm(aliasPath);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+				log(`agent-browser socket alias cleanup failed for ${entry.name}: ${String(error)}`);
+			}
+		}
+	}
 }
 
 function validRuntimeOwner(value: unknown, expectedPid?: string): value is RuntimeOwner {

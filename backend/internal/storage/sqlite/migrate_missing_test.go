@@ -76,7 +76,7 @@ WHERE is_applied = 1 AND version_id IN (28, 29, 30, 31)
 // TestMigrateAppliesBrowserVerifierAfterUpstreamVersion41 guards the migration
 // number collision with upstream's 0041_notification_resolution migration.
 // A database that already recorded version 41 must still receive the browser
-// capability column from this branch's 0048 migration.
+// capability column from the append-only 0081 migration.
 func TestMigrateAppliesBrowserVerifierAfterUpstreamVersion41(t *testing.T) {
 	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
 	if err != nil {
@@ -105,12 +105,44 @@ func TestMigrateAppliesBrowserVerifierAfterUpstreamVersion41(t *testing.T) {
 
 	var applied int
 	if err := db.QueryRow(
-		"SELECT COUNT(*) FROM goose_db_version WHERE version_id = 48 AND is_applied = 1",
+		"SELECT COUNT(*) FROM goose_db_version WHERE version_id = 81 AND is_applied = 1",
 	).Scan(&applied); err != nil {
 		t.Fatalf("query browser verifier migration version: %v", err)
 	}
 	if applied != 1 {
 		t.Fatalf("browser verifier migration applied rows = %d, want 1", applied)
+	}
+}
+
+func TestMigrateRecognizesBrowserVerifierFromEarlierBranchBuild(t *testing.T) {
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "ao.db")+pragmas)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	upTo(t, db, 48)
+	if _, err := db.Exec(`ALTER TABLE sessions ADD COLUMN browser_capability_verifier TEXT NOT NULL DEFAULT ''`); err != nil {
+		t.Fatalf("seed verifier from earlier branch build: %v", err)
+	}
+
+	if err := migrate(db); err != nil {
+		t.Fatalf("migrate database with pre-existing verifier: %v", err)
+	}
+
+	var columns, applied int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
+	).Scan(&columns); err != nil {
+		t.Fatalf("query browser verifier column: %v", err)
+	}
+	if err := db.QueryRow(
+		"SELECT COUNT(*) FROM goose_db_version WHERE version_id = 81 AND is_applied = 1",
+	).Scan(&applied); err != nil {
+		t.Fatalf("query browser verifier migration version: %v", err)
+	}
+	if columns != 1 || applied != 1 {
+		t.Fatalf("browser verifier state = columns %d, applied rows %d; want 1, 1", columns, applied)
 	}
 }
 
