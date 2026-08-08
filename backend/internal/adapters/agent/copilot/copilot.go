@@ -204,7 +204,7 @@ func ResolveCopilotBinary(ctx context.Context) (string, error) {
 			candidates = append(candidates, filepath.Join(home, ".copilot", "bin", "copilot.exe"))
 		}
 		for _, candidate := range candidates {
-			if hookutil.FileExists(candidate) {
+			if hookutil.IsExecutableFile(candidate) {
 				return candidate, nil
 			}
 			if err := ctx.Err(); err != nil {
@@ -239,7 +239,7 @@ func ResolveCopilotBinary(ctx context.Context) (string, error) {
 	}
 
 	for _, candidate := range candidates {
-		if hookutil.FileExists(candidate) {
+		if hookutil.IsExecutableFile(candidate) {
 			if native := copilotNativeBinaryForLoader(candidate); native != "" {
 				return native, nil
 			}
@@ -266,7 +266,7 @@ func copilotNativeBinaryForLoader(path string) string {
 		platform = "darwin"
 	}
 	native := filepath.Join(filepath.Dir(resolved), "node_modules", ".bin", "copilot-"+platform+"-"+runtime.GOARCH)
-	if hookutil.FileExists(native) {
+	if hookutil.IsExecutableFile(native) {
 		return native
 	}
 	return ""

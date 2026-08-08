@@ -57,11 +57,11 @@ surface (`npm run sqlc`, `npm run api`).
   `POST /reviews/{id}/send`.
 - Interactive reviewer panes for Aider, Agy, Amp, Auggie, Autohand,
   Claude Code, Cline, Codex, Continue, GitHub Copilot, Crush, Cursor, Devin,
-  Droid, Goose, Grok, Kilo Code, Kiro, Kimi, OpenCode, Pi, Qwen, and Vibe. Pi uses an AO-data-owned extension with built-in/project
+  Droid, Goose, Grok, Kilo Code, Kimchi, Kiro, Kimi, OpenCode, Pi, Qwen, and Vibe. Pi uses an AO-data-owned extension with built-in/project
   resources disabled, structured read-only inspection/reporting tools, and
   Escape-based turn cancellation. Kiro also uses its native Escape
   cancellation. Continue, Qwen, and Vibe also use Escape cancellation. Agy,
-  Continue, Devin, Droid, Goose, Kimi, Qwen, and Vibe are explicitly experimental and host-trusted. Grok, Crush, Auggie, Cline, and Autohand are experimental user-approved reviewers that retain their native approval prompts instead of receiving broad unattended flags:
+  Continue, Devin, Droid, Goose, Kimchi, Kimi, Qwen, and Vibe are explicitly experimental and host-trusted. Grok, Crush, Auggie, Cline, and Autohand are experimental user-approved reviewers that retain their native approval prompts instead of receiving broad unattended flags:
   native modes, autonomous settings, and prompts are not OS or network containment.
 - The provider-neutral interactive-reviewer capability gateway and neutral
   AO-owned working-directory contract are available. The experimental

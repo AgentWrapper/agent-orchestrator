@@ -793,14 +793,14 @@ describe("ProjectSettingsForm", () => {
 	});
 
 	it("warns when an experimental reviewer is selected", async () => {
-		const qwen = { id: "qwen", label: "Qwen Code", authStatus: "authorized" };
+		const kimchi = { id: "kimchi", label: "Kimchi", authStatus: "authorized" };
 		getMock.mockImplementation(async (path: string) => {
 			if (path === "/api/v1/agents") {
 				return {
 					data: {
-						supported: [...agentCatalogResponse.data.supported, qwen],
-						installed: [...agentCatalogResponse.data.installed, qwen],
-						authorized: [...agentCatalogResponse.data.authorized, qwen],
+						supported: [...agentCatalogResponse.data.supported, kimchi],
+						installed: [...agentCatalogResponse.data.installed, kimchi],
+						authorized: [...agentCatalogResponse.data.authorized, kimchi],
 					},
 					error: undefined,
 				};
@@ -823,7 +823,7 @@ describe("ProjectSettingsForm", () => {
 		});
 
 		renderSettings("proj-1", undefined, "workflow");
-		await chooseOption(await screen.findByRole("button", { name: "Default reviewer agent" }), "Qwen Code");
+		await chooseOption(await screen.findByRole("button", { name: "Default reviewer agent" }), "Kimchi");
 		expect(screen.getByRole("status")).toHaveTextContent("Experimental host-trusted reviewer");
 	});
 

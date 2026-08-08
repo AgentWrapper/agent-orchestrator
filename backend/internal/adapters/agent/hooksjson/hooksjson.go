@@ -1,7 +1,7 @@
 // Package hooksjson implements the matcher-group hooks file that several agents
-// (claude-code, goose, qwen, agy, droid) share byte-for-byte in shape. Each such
-// file is a JSON object with a "hooks" sub-map keyed by native event name, whose
-// values are matcher groups ({matcher?, hooks:[{type,command,timeout}]}). The
+// (claude-code, goose, qwen, agy, droid, kimchi) share byte-for-byte in shape.
+// Each file is a JSON object with a "hooks" sub-map keyed by native event name,
+// whose values are matcher groups ({matcher?, hooks:[{type,command,timeout}]}). The
 // adapters differed only in the file path, the AO command prefix, the per-hook
 // timeout, and which events they install, so they describe those with a Manager
 // and share the install/uninstall/detect logic here.
@@ -25,17 +25,128 @@ import (
 
 // HookEntry is one command hook inside a matcher group.
 type HookEntry struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-	Timeout int    `json:"timeout,omitempty"`
+	Type    string                     `json:"type"`
+	Command string                     `json:"command"`
+	Timeout int                        `json:"timeout,omitempty"`
+	Extra   map[string]json.RawMessage `json:"-"`
 }
 
 // MatcherGroup is a set of hooks sharing one matcher. Matcher is a pointer so it
 // round-trips exactly: events that require a matcher (e.g. claude SessionStart's
 // "startup") carry one; events that omit it serialize without the key.
 type MatcherGroup struct {
-	Matcher *string     `json:"matcher,omitempty"`
-	Hooks   []HookEntry `json:"hooks"`
+	Matcher *string                    `json:"matcher,omitempty"`
+	Hooks   []HookEntry                `json:"hooks"`
+	Extra   map[string]json.RawMessage `json:"-"`
+}
+
+// UnmarshalJSON retains fields introduced by an agent before AO learns about
+// them. User hooks may depend on agent-specific keys such as async or
+// commandWindows, and reconciling AO hooks must not remove them.
+func (h *HookEntry) UnmarshalJSON(data []byte) error {
+	type known struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
+		Timeout int    `json:"timeout,omitempty"`
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	var parsed known
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	h.Type = parsed.Type
+	h.Command = parsed.Command
+	h.Timeout = parsed.Timeout
+	delete(fields, "type")
+	delete(fields, "command")
+	delete(fields, "timeout")
+	if len(fields) == 0 {
+		fields = nil
+	}
+	h.Extra = fields
+	return nil
+}
+
+// MarshalJSON writes known fields from the typed representation and folds all
+// preserved agent-specific fields back into the same object.
+func (h HookEntry) MarshalJSON() ([]byte, error) {
+	fields := cloneRawFields(h.Extra)
+	if err := setRawField(fields, "type", h.Type); err != nil {
+		return nil, err
+	}
+	if err := setRawField(fields, "command", h.Command); err != nil {
+		return nil, err
+	}
+	if h.Timeout != 0 {
+		if err := setRawField(fields, "timeout", h.Timeout); err != nil {
+			return nil, err
+		}
+	} else {
+		delete(fields, "timeout")
+	}
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON preserves unknown matcher-group fields for the same reason as
+// HookEntry: reconciling one AO hook must not rewrite unrelated user behavior.
+func (g *MatcherGroup) UnmarshalJSON(data []byte) error {
+	type known struct {
+		Matcher *string     `json:"matcher,omitempty"`
+		Hooks   []HookEntry `json:"hooks"`
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	var parsed known
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	g.Matcher = parsed.Matcher
+	g.Hooks = parsed.Hooks
+	delete(fields, "matcher")
+	delete(fields, "hooks")
+	if len(fields) == 0 {
+		fields = nil
+	}
+	g.Extra = fields
+	return nil
+}
+
+// MarshalJSON folds preserved matcher-group fields back into the object.
+func (g MatcherGroup) MarshalJSON() ([]byte, error) {
+	fields := cloneRawFields(g.Extra)
+	if g.Matcher != nil {
+		if err := setRawField(fields, "matcher", g.Matcher); err != nil {
+			return nil, err
+		}
+	} else {
+		delete(fields, "matcher")
+	}
+	if err := setRawField(fields, "hooks", g.Hooks); err != nil {
+		return nil, err
+	}
+	return json.Marshal(fields)
+}
+
+func cloneRawFields(source map[string]json.RawMessage) map[string]json.RawMessage {
+	fields := make(map[string]json.RawMessage, len(source)+3)
+	for key, value := range source {
+		fields[key] = value
+	}
+	return fields
+}
+
+func setRawField(fields map[string]json.RawMessage, key string, value any) error {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	fields[key] = encoded
+	return nil
 }
 
 // HookSpec describes one hook AO installs: the native event it attaches to, its
@@ -286,16 +397,29 @@ func marshalEvent(rawHooks map[string]json.RawMessage, event string, groups []Ma
 // while preserving every unrelated hook in the affected groups.
 func reconcileHook(groups []MatcherGroup, hook HookEntry, matcher *string) []MatcherGroup {
 	result := make([]MatcherGroup, 0, len(groups))
+	keptEmptyTarget := false
 	for _, group := range groups {
 		kept := make([]HookEntry, 0, len(group.Hooks))
+		removedManaged := false
 		for _, existing := range group.Hooks {
-			if existing.Command != hook.Command {
-				kept = append(kept, existing)
+			if existing.Command == hook.Command {
+				removedManaged = true
+				if hook.Extra == nil {
+					hook.Extra = existing.Extra
+				}
+				continue
 			}
+			kept = append(kept, existing)
 		}
 		if len(kept) > 0 {
 			group.Hooks = kept
 			result = append(result, group)
+		} else if removedManaged && !keptEmptyTarget && matchersEqual(group.Matcher, matcher) {
+			// Reuse the target group so agent-specific group fields survive an
+			// in-place refresh of AO's hook.
+			group.Hooks = nil
+			result = append(result, group)
+			keptEmptyTarget = true
 		}
 	}
 	return addHook(result, hook, matcher)

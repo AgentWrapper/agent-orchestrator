@@ -90,6 +90,19 @@ func TestToolPrecedence_ApprovedToolFailurePostAlsoClears(t *testing.T) {
 	}
 }
 
+func TestToolPrecedence_LegacyKimchiFailurePostAlsoClears(t *testing.T) {
+	// Old Kimchi hook files used this non-canonical subcommand. Keep accepting
+	// it so existing worktrees do not remain blocked after a failed tool call.
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+	blockOnDialog(t, m, st, "mer-1", "Bash", "toolu_1")
+
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use-fail", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("state after legacy failure post = %q, want active", got)
+	}
+}
+
 func TestToolPrecedence_SubagentTrafficDoesNotClearBlocked(t *testing.T) {
 	// The failure that reverted the naive mapping in PR #5's review: parallel
 	// subagent tool signals (same session id) land while the dialog is still
@@ -155,6 +168,21 @@ func TestToolPrecedence_NotificationSubtypesDoNotClearBlocked(t *testing.T) {
 	mustApply(t, m, "mer-1", sig(domain.ActivityWaitingInput, "notification", "", ""))
 	if got := stateOf(st, "mer-1"); got != domain.ActivityBlocked {
 		t.Fatalf("state after notification waiting_input = %q, want blocked", got)
+	}
+}
+
+func TestToolPrecedence_IdentitylessBlockedDuplicatePreservesCandidate(t *testing.T) {
+	// Claude can report the same permission dialog twice: first with its tool
+	// identity, then as a bare Notification. The duplicate must not erase the
+	// candidate needed to correlate the approved tool's post.
+	m, st, _ := newManager()
+	seedSignaled(st, "mer-1", domain.ActivityActive)
+	blockOnDialog(t, m, st, "mer-1", "Bash", "toolu_1")
+
+	mustApply(t, m, "mer-1", sig(domain.ActivityBlocked, "notification", "", ""))
+	mustApply(t, m, "mer-1", sig(domain.ActivityActive, "post-tool-use", "Bash", "toolu_1"))
+	if got := stateOf(st, "mer-1"); got != domain.ActivityActive {
+		t.Fatalf("state after duplicate notification and approved post = %q, want active", got)
 	}
 }
 

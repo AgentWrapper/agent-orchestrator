@@ -68,7 +68,10 @@ const systemPromptMaxBytes = 128 * 1024
 // A regular-file check (os.Stat + Mode().IsRegular) is performed before
 // opening: FIFOs, sockets, and device files can cause io.ReadAll to block
 // indefinitely, and a system-prompt file should always be a regular file.
-func readBoundedSystemPrompt(path string) (string, error) {
+func readBoundedSystemPrompt(ctx context.Context, path string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
@@ -76,21 +79,46 @@ func readBoundedSystemPrompt(path string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("kimchi: system prompt file %s is not a regular file (mode %s)", path, info.Mode())
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 
 	f, err := os.Open(path) //nolint:gosec // path is AO-owned config
 	if err != nil {
 		return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
+	openedInfo, err := f.Stat()
+	if err != nil {
+		return "", fmt.Errorf("kimchi: inspect system prompt file: %w", err)
+	}
+	if !openedInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("kimchi: system prompt file %s is not a regular file (mode %s)", path, openedInfo.Mode())
+	}
 
-	data, err := io.ReadAll(io.LimitReader(f, systemPromptMaxBytes+1))
+	data, err := io.ReadAll(io.LimitReader(contextReader{ctx: ctx, reader: f}, systemPromptMaxBytes+1))
 	if err != nil {
 		return "", fmt.Errorf("kimchi: read system prompt file: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	if len(data) > systemPromptMaxBytes {
 		return "", fmt.Errorf("kimchi: system prompt file %s exceeds %d byte limit", path, systemPromptMaxBytes)
 	}
 	return string(data), nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(p)
 }
 
 // Plugin implements the Kimchi agent adapter.
@@ -202,7 +230,7 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 	}
 
 	if cfg.SystemPromptFile != "" {
-		data, err := readBoundedSystemPrompt(cfg.SystemPromptFile)
+		data, err := readBoundedSystemPrompt(ctx, cfg.SystemPromptFile)
 		if err != nil {
 			return nil, err
 		}
@@ -249,7 +277,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 		return nil, false, err
 	}
 
-	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
+	systemPrompt, err := resolveRestoreSystemPrompt(ctx, cfg)
 	if err != nil {
 		return nil, false, err
 	}
@@ -278,8 +306,8 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 //
 // Kimchi's permission loader splits the flag value by comma (splitFlag), and
 // repeated flags overwrite (last-wins), so emitting one pair per rule would
-// collapse the deny list to a single entry — silently breaking the reviewer's
-// read-only guarantee. Comma-joining into a single value ensures every rule
+// collapse the deny list to a single entry — silently weakening the reviewer's
+// best-effort tool policy. Comma-joining into a single value ensures every rule
 // survives the split. Kimchi's --allow-tool/--deny-tool flags accept the same
 // rule syntax as Claude Code (bash(git diff:*), edit, mcp__server__tool), and
 // the rule parser is case-insensitive on tool names, so lowercase tool names
@@ -341,9 +369,12 @@ func sanitizePrompt(prompt string) string {
 // cfg.SystemPrompt is used inline. A file-read error is returned rather than
 // silently dropping the prompt, so a resumed orchestrator cannot lose its
 // standing instructions without the caller knowing.
-func resolveRestoreSystemPrompt(cfg ports.RestoreConfig) (string, error) {
+func resolveRestoreSystemPrompt(ctx context.Context, cfg ports.RestoreConfig) (string, error) {
 	if cfg.SystemPromptFile != "" {
-		return readBoundedSystemPrompt(cfg.SystemPromptFile)
+		return readBoundedSystemPrompt(ctx, cfg.SystemPromptFile)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
 	return cfg.SystemPrompt, nil
 }

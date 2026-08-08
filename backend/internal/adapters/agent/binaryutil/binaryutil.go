@@ -134,7 +134,7 @@ func ResolveBinary(ctx context.Context, spec BinarySpec) (string, error) {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		if hookutil.FileExists(candidate) {
+		if hookutil.IsExecutableFile(candidate) {
 			return candidate, nil
 		}
 	}
@@ -201,7 +201,7 @@ func unixVoltaBinCandidates(ctx context.Context, home, name string) ([]string, e
 		voltaHome = filepath.Join(home, ".volta")
 	}
 	candidate := filepath.Join(voltaHome, "bin", name)
-	if hookutil.FileExists(candidate) {
+	if hookutil.IsExecutableFile(candidate) {
 		return []string{candidate}, nil
 	}
 	return nil, ctx.Err()

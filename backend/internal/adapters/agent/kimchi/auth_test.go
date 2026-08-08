@@ -48,7 +48,7 @@ func TestConfigAuthStatusAuthorizedFromAPIKey(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{"apiKey":"test-key-123"}`)
 
-	got, err := kimchiConfigAuthStatus(path)
+	got, err := kimchiConfigAuthStatus(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestConfigAuthStatusAuthorizedFromSnakeCase(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{"api_key":"legacy-key-456"}`)
 
-	got, err := kimchiConfigAuthStatus(path)
+	got, err := kimchiConfigAuthStatus(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestConfigAuthStatusPrefersCamelCase(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{"apiKey":"new-key","api_key":"old-key"}`)
 
-	got, err := kimchiConfigAuthStatus(path)
+	got, err := kimchiConfigAuthStatus(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestConfigAuthStatusUnknownWhenNoKey(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{"otherField":"value","onboarding":{"done":true}}`)
 
-	got, err := kimchiConfigAuthStatus(path)
+	got, err := kimchiConfigAuthStatus(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestConfigAuthStatusUnknownWhenKeyEmpty(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{"apiKey":""}`)
 
-	got, err := kimchiConfigAuthStatus(path)
+	got, err := kimchiConfigAuthStatus(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestConfigAuthStatusUnknownWhenFileMissing(t *testing.T) {
 	home := withTempHome(t)
 	missingPath := filepath.Join(home, ".config", "kimchi", "config.json")
 
-	got, err := kimchiConfigAuthStatus(missingPath)
+	got, err := kimchiConfigAuthStatus(context.Background(), missingPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestConfigAuthStatusUnknownWhenMalformed(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{not valid json`)
 
-	got, err := kimchiConfigAuthStatus(path)
+	got, err := kimchiConfigAuthStatus(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestConfigAuthStatusUnknownWhenMalformed(t *testing.T) {
 }
 
 func TestConfigAuthStatusUnknownWhenPathEmpty(t *testing.T) {
-	got, err := kimchiConfigAuthStatus("")
+	got, err := kimchiConfigAuthStatus(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestConfigAuthStatusUnknownWhenNonStringKey(t *testing.T) {
 	home := withTempHome(t)
 	path := writeKimchiGlobalConfig(t, home, `{"apiKey":12345}`)
 
-	got, err := kimchiConfigAuthStatus(path)
+	got, err := kimchiConfigAuthStatus(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}

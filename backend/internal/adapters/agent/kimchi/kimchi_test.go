@@ -549,12 +549,21 @@ func TestReadBoundedSystemPromptReadsRegularFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := readBoundedSystemPrompt(file)
+	got, err := readBoundedSystemPrompt(context.Background(), file)
 	if err != nil {
 		t.Fatalf("readBoundedSystemPrompt: %v", err)
 	}
 	if got != "hello system prompt" {
 		t.Fatalf("got %q, want %q", got, "hello system prompt")
+	}
+}
+
+func TestReadBoundedSystemPromptHonorsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := readBoundedSystemPrompt(ctx, filepath.Join(t.TempDir(), "missing.md"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 }
 

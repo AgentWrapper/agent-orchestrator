@@ -543,7 +543,13 @@ const maxInflightTools = 128
 // isToolUseEvent reports whether the AO hook event is one of the tool-use
 // trio whose signals must not demote a sticky state on their own.
 func isToolUseEvent(event string) bool {
-	return event == "pre-tool-use" || event == "post-tool-use" || event == "post-tool-use-failure"
+	return event == "pre-tool-use" || isPostToolUseEvent(event)
+}
+
+func isPostToolUseEvent(event string) bool {
+	// post-tool-use-fail is retained for Kimchi hook files installed before the
+	// adapter switched to AO's canonical failure event name.
+	return event == "post-tool-use" || event == "post-tool-use-failure" || event == "post-tool-use-fail"
 }
 
 // isTurnBoundaryEvent reports the events that reliably mean the pending
@@ -586,7 +592,7 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 			}
 			f.inflight[s.ToolUseID] = s.ToolName
 		}
-	case "post-tool-use", "post-tool-use-failure":
+	case "post-tool-use", "post-tool-use-failure", "post-tool-use-fail":
 		if fl != nil {
 			delete(fl.inflight, s.ToolUseID)
 		}
@@ -608,9 +614,12 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		// candidate is recorded and the block clears only at a turn boundary
 		// (fail-closed).
 		f := ensure()
-		// Recompute from scratch: this is a fresh dialog, so any candidate
-		// carried from a prior one must not leak in.
-		f.blockedCandidate = ""
+		// Recompute only when this signal identifies a dialog. Claude can emit an
+		// identity-less Notification duplicate after permission-request; that
+		// duplicate must not erase the candidate captured by the first signal.
+		if s.ToolUseID != "" || s.ToolName != "" {
+			f.blockedCandidate = ""
+		}
 		if s.ToolUseID != "" {
 			// If the blocking signal carries a tool_use_id that is in the
 			// inflight map, use it directly — this is more precise than a
@@ -644,7 +653,7 @@ func (m *Manager) applyToolPrecedenceLocked(id domain.SessionID, cur domain.Acti
 		case isTurnBoundaryEvent(s.Event):
 			delete(m.flights, id)
 			return s
-		case (s.Event == "post-tool-use" || s.Event == "post-tool-use-failure") &&
+		case isPostToolUseEvent(s.Event) &&
 			fl != nil && fl.blockedCandidate != "" && s.ToolUseID == fl.blockedCandidate:
 			// The single unambiguous blocking tool finished: the dialog was
 			// answered. Clear the candidate so a later dialog in the same turn

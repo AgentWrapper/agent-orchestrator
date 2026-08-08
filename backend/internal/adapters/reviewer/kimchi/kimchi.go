@@ -1,22 +1,27 @@
-// Package kimchi adapts the Kimchi worker agent for code-review sessions.
+// Package kimchi adapts Kimchi as an experimental host-trusted reviewer.
 package kimchi
 
 import (
 	"context"
 
 	workeragent "github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/kimchi"
+	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/reviewer/agentrestore"
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// reviewerAllowedTools is the read-only tool allowlist the reviewer launches
-// with. The reviewer runs headless (no human to approve prompts) but must stay
-// read-only, so instead of bypassPermissions — which skips the permission
-// system entirely and ignores allow/deny rules — it launches in --auto mode
-// where these rules are honored: allow rules auto-approve without prompting,
-// so the reviewer can read the checkout and run the few commands it needs (git
+// HostTrustWarning documents the boundary users accept when selecting Kimchi.
+// Tool rules reduce accidental writes but do not contain shell or network
+// authority at the operating-system boundary.
+const HostTrustWarning = "experimental host-trusted reviewer: Kimchi tool allow/deny rules are not OS isolation; shell commands and GitHub access retain host authority"
+
+// reviewerAllowedTools is the best-effort tool policy the reviewer launches
+// with. Instead of bypassPermissions — which skips Kimchi's permission system
+// entirely — it launches in --auto mode where these rules are honored. The
+// reviewer can read the checkout and run the few commands it needs (git
 // diff/log/status to inspect the PR, gh api to post the review, printf to pipe
-// JSON, and `ao review submit` to record the verdict) without stalling.
+// JSON, and `ao review submit` to record the verdict) without stalling. This is
+// hardening, not an OS sandbox; the adapter remains host-trusted.
 //
 // The review protocol (review/prompt.go step 1) requires the piped command:
 //
@@ -41,12 +46,10 @@ var reviewerAllowedTools = []string{
 	"bash(ao review submit:*)",
 }
 
-// reviewerDisallowedTools hard-denies the write and exfiltration paths as
-// defense in depth, so a misbehaving model cannot edit files, move the branch,
-// read arbitrary tracked content, or post dangerous gh mutations even if a
-// future allowlist entry would otherwise admit it. Kimchi's deny matcher
-// checks all pipeline segments, so a denied program behind a pipe still blocks.
-// Kimchi has no NotebookEdit tool, so it is omitted from the deny list.
+// reviewerDisallowedTools denies common write and exfiltration paths inside
+// Kimchi's own permission layer. It is defense in depth only: a shell-capable
+// process in the worker checkout still has host authority. Kimchi has no
+// NotebookEdit tool, so it is omitted from the deny list.
 //
 // Deny-before-allow ordering: Kimchi's evaluateRules (in
 // src/extensions/permissions/rules.ts) checks deny rules before allow rules
@@ -58,8 +61,7 @@ var reviewerAllowedTools = []string{
 // The blanket bash(gh:*) deny was removed because the review protocol requires
 // gh api --method POST to post reviews. Instead, specific dangerous gh verbs
 // are denied: pr merge (self-merge), api --method DELETE/PUT/PATCH (mutate
-// repo state), and gist (exfiltration). This is strictly safer than the
-// claudecode reviewer, which allows all of gh:* and denies nothing in gh.
+// repo state), and gist (exfiltration).
 var reviewerDisallowedTools = []string{
 	"edit",
 	"write",
@@ -93,22 +95,11 @@ var _ ports.ReviewerCanceller = (*Reviewer)(nil)
 var _ ports.ReviewerRestorer = (*Reviewer)(nil)
 
 // ReviewCommand builds the argv to launch a fresh Kimchi reviewer over the
-// worker's checkout. --auto lets the headless session run without prompting
-// while still honoring the allow/deny tool lists, which enforce read-only
-// operation: allow rules auto-approve the read-only review tools (git
+// worker's checkout. --auto keeps the session moving while the allow/deny tool
+// lists provide best-effort hardening for the review tools (git
 // diff/log/status to inspect the PR, gh api to post the review, printf to pipe
-// JSON, and `ao review submit` to record the verdict) without stalling, and
-// the deny list hard-blocks the write, exfiltration, and dangerous gh
-// mutation paths (git show, gh pr merge, gh api --method DELETE/PUT/PATCH,
-// gh gist) as defense in depth.
-//
-// Note: bash(git diff:*) uses prefix matching, which admits --output=/tmp/file
-// — a write bypass via Bash that the edit/write deny rules don't cover. This
-// exposure is identical to the claudecode reviewer (already shipped), which
-// allows Bash(git diff:*) with no OS sandbox. An OS-level read-only sandbox
-// (like Codex's --sandbox read-only) is a cross-adapter concern tracked by
-// ADR 0002 (docs/adr/0002-secure-interactive-reviewer-gateway.md), not a
-// Kimchi-specific blocker.
+// JSON, and `ao review submit` to record the verdict). The deny list covers
+// common mutation paths, but does not make the process read-only or isolated.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:        inv.ReviewerID,
@@ -126,16 +117,25 @@ func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation
 	return ports.ReviewCommandSpec{Argv: argv}, nil
 }
 
+// PreLaunch installs Kimchi's native hooks in the selected review workspace so
+// AO can capture the native conversation id and activity events.
+func (r *Reviewer) PreLaunch(ctx context.Context, inv ports.ReviewInvocation) error {
+	return r.agent.GetAgentHooks(ctx, ports.WorkspaceHookConfig{WorkspacePath: inv.WorkspacePath})
+}
+
 // ReviewMessage returns the centrally-authored task for an existing pane.
 func (r *Reviewer) ReviewMessage(_ context.Context, inv ports.ReviewInvocation) (string, error) {
 	return inv.Prompt, nil
 }
 
-// ReviewRestoreCommand restores a recorded Kimchi reviewer pane by relaunching
-// the request-scoped reviewer command with the current task context.
+// ReviewRestoreCommand resumes the captured native Kimchi conversation and
+// reapplies the same best-effort tool policy as a fresh reviewer launch.
 func (r *Reviewer) ReviewRestoreCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, bool, error) {
-	cmd, err := r.ReviewCommand(ctx, inv)
-	return cmd, true, err
+	return agentrestore.Command(ctx, r.agent, inv, agentrestore.Options{
+		Permissions:     ports.PermissionModeAuto,
+		AllowedTools:    reviewerAllowedTools,
+		DisallowedTools: reviewerDisallowedTools,
+	})
 }
 
 // ReviewCancel stops the active Kimchi reviewer turn while preserving the

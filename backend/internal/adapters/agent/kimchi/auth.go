@@ -34,7 +34,7 @@ func (p *Plugin) AuthStatus(ctx context.Context) (ports.AgentAuthStatus, error) 
 	}
 
 	// Tier 2: global ~/.config/kimchi/config.json apiKey field.
-	return kimchiConfigAuthStatus(kimchiGlobalConfigPath())
+	return kimchiConfigAuthStatus(ctx, kimchiGlobalConfigPath())
 }
 
 // kimchiGlobalConfigPath returns the path to kimchi's global config file.
@@ -54,7 +54,10 @@ func kimchiGlobalConfigPath() string {
 //   - File exists but no key field → Unknown (probe has no workspace path, so
 //     it cannot rule out a workspace-level config.json key that would authorize
 //     the launch; spawn remains the authoritative validation point).
-func kimchiConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) {
+func kimchiConfigAuthStatus(ctx context.Context, configPath string) (ports.AgentAuthStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.AgentAuthStatusUnknown, err
+	}
 	if configPath == "" {
 		return ports.AgentAuthStatusUnknown, nil
 	}
@@ -64,6 +67,9 @@ func kimchiConfigAuthStatus(configPath string) (ports.AgentAuthStatus, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			return ports.AgentAuthStatusUnknown, nil
 		}
+		return ports.AgentAuthStatusUnknown, err
+	}
+	if err := ctx.Err(); err != nil {
 		return ports.AgentAuthStatusUnknown, err
 	}
 

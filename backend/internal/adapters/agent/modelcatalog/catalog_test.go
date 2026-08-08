@@ -174,10 +174,10 @@ func TestKimchiDiscoveryUsesListModelsFlag(t *testing.T) {
 
 func TestParseKimchiModelsBuildsProviderQualifiedIDs(t *testing.T) {
 	got, err := parsePiModels([]byte(`provider              model                 context  max-out  thinking  images
-kimchi-dev            deepseek-v4-flash     1.0M     1.0M     yes       no    
-kimchi-dev            glm-5.2-fp8           1.0M     1.0M     yes       no    
-kimchi-dev/anthropic  claude-sonnet-5       1M       128K     yes       yes   
-kimchi-dev/anthropic  claude-opus-4-8       1M       128K     yes       yes   
+kimchi-dev            deepseek-v4-flash     1.0M     1.0M     yes       no
+kimchi-dev            glm-5.2-fp8           1.0M     1.0M     yes       no
+kimchi-dev/anthropic  claude-sonnet-5       1M       128K     yes       yes
+kimchi-dev/anthropic  claude-opus-4-8       1M       128K     yes       yes
 `))
 	if err != nil {
 		t.Fatal(err)

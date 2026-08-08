@@ -1,6 +1,7 @@
 package cline
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -276,6 +277,31 @@ func TestGetAgentHooksInstallsClineHooks(t *testing.T) {
 	}
 	if strings.Contains(string(data), clineHookMarker) {
 		t.Fatalf("user PostToolUse hook was overwritten by AO: %s", data)
+	}
+}
+
+func TestGetAgentHooksPreservesNonExecutableUserHook(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "cline"}
+	workspace := t.TempDir()
+	hooksDir := filepath.Join(workspace, clineHooksDirName, clineHooksSubDir)
+	if err := os.MkdirAll(hooksDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(hooksDir, "TaskStart")
+	want := []byte("user-owned hook without execute permission\n")
+	if err := os.WriteFile(path, want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := plugin.GetAgentHooks(context.Background(), ports.WorkspaceHookConfig{WorkspacePath: workspace}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("non-executable user hook was overwritten: got %q, want %q", got, want)
 	}
 }
 

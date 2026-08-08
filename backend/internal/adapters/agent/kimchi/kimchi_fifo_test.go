@@ -3,6 +3,7 @@
 package kimchi
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -16,7 +17,7 @@ func TestReadBoundedSystemPromptRejectsNonRegularFile(t *testing.T) {
 		t.Fatalf("syscall.Mkfifo: %v", err)
 	}
 
-	_, err := readBoundedSystemPrompt(fifo)
+	_, err := readBoundedSystemPrompt(context.Background(), fifo)
 	if err == nil {
 		t.Fatal("expected error for non-regular file (FIFO), got nil")
 	}

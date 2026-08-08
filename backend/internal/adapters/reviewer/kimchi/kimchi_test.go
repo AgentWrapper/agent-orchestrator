@@ -2,16 +2,18 @@ package kimchi
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-// captureAgent is a stub ports.Agent that records the LaunchConfig the reviewer
-// builds, so the test asserts the reviewer's tool policy without needing the
-// real kimchi binary on PATH.
+// captureAgent is a stub ports.Agent that records the configs the reviewer
+// builds without needing the real kimchi binary on PATH.
 type captureAgent struct {
-	got ports.LaunchConfig
+	got        ports.LaunchConfig
+	gotRestore ports.RestoreConfig
+	hooks      []ports.WorkspaceHookConfig
 }
 
 func (a *captureAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -24,15 +26,23 @@ func (a *captureAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfi
 func (a *captureAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	return ports.PromptDeliveryInCommand, nil
 }
-func (a *captureAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error { return nil }
-func (a *captureAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error) {
-	return nil, false, nil
+func (a *captureAgent) GetAgentHooks(_ context.Context, cfg ports.WorkspaceHookConfig) error {
+	a.hooks = append(a.hooks, cfg)
+	return nil
+}
+func (a *captureAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	a.gotRestore = cfg
+	id := cfg.Session.Metadata[ports.MetadataKeyAgentSessionID]
+	if id == "" {
+		return nil, false, nil
+	}
+	return []string{"kimchi", "--session", id}, true, nil
 }
 func (a *captureAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
 }
 
-func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
+func TestReviewCommandAppliesBestEffortPolicyOffBypass(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
 
@@ -45,9 +55,8 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
 
-	// The allowlist is what enforces read-only, so it must launch in an
-	// explicit non-bypass mode: --yolo (bypassPermissions) ignores allow/deny
-	// rules entirely, and an empty mode would defer to Kimchi's default.
+	// The policy is only useful in an explicit non-bypass mode: --yolo ignores
+	// allow/deny rules, and an empty mode would defer to Kimchi's default.
 	if agent.got.Permissions != ports.PermissionModeAuto {
 		t.Fatalf("reviewer must launch in auto permission mode; got %q", agent.got.Permissions)
 	}
@@ -69,6 +78,18 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 		if !contains(agent.got.DisallowedTools, denied) {
 			t.Fatalf("disallow list missing %q: %#v", denied, agent.got.DisallowedTools)
 		}
+	}
+}
+
+func TestPreLaunchInstallsKimchiHooksInReviewWorkspace(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	if err := r.PreLaunch(context.Background(), ports.ReviewInvocation{WorkspacePath: "/ws/w1"}); err != nil {
+		t.Fatalf("PreLaunch: %v", err)
+	}
+	if len(agent.hooks) != 1 || agent.hooks[0].WorkspacePath != "/ws/w1" {
+		t.Fatalf("hooks = %#v, want Kimchi hook install for /ws/w1", agent.hooks)
 	}
 }
 
@@ -141,6 +162,60 @@ func TestAllowlistIncludesProtocolToolsAndDeniesDangerousGh(t *testing.T) {
 	// protocol's gh api --method POST call.
 	if contains(agent.got.DisallowedTools, "bash(gh:*)") {
 		t.Fatalf("disallow list must not contain blanket bash(gh:*): %#v", agent.got.DisallowedTools)
+	}
+}
+
+func TestReviewRestoreCommandUsesNativeSessionAndReappliesPolicy(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	spec, ok, err := r.ReviewRestoreCommand(context.Background(), ports.ReviewInvocation{
+		ReviewerID:       "review-w1",
+		AgentSessionID:   "kimchi-native-1",
+		WorkspacePath:    "/ws/w1",
+		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+	})
+	if err != nil {
+		t.Fatalf("ReviewRestoreCommand: %v", err)
+	}
+	if !ok {
+		t.Fatal("ReviewRestoreCommand ok = false, want true")
+	}
+	if strings.Join(spec.Argv, " ") != "kimchi --session kimchi-native-1" {
+		t.Fatalf("argv = %#v", spec.Argv)
+	}
+	if spec.AgentSessionID != "kimchi-native-1" {
+		t.Fatalf("AgentSessionID = %q, want kimchi-native-1", spec.AgentSessionID)
+	}
+	if agent.gotRestore.Session.Metadata[ports.MetadataKeyAgentSessionID] != "kimchi-native-1" {
+		t.Fatalf("restore metadata = %#v", agent.gotRestore.Session.Metadata)
+	}
+	if agent.gotRestore.Permissions != ports.PermissionModeAuto {
+		t.Fatalf("restore permissions = %q, want auto", agent.gotRestore.Permissions)
+	}
+	if !contains(agent.gotRestore.AllowedTools, "read") || !contains(agent.gotRestore.DisallowedTools, "write") {
+		t.Fatalf("restore tool policy allowed=%#v disallowed=%#v", agent.gotRestore.AllowedTools, agent.gotRestore.DisallowedTools)
+	}
+}
+
+func TestReviewRestoreCommandWithoutNativeSessionFallsBack(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	_, ok, err := r.ReviewRestoreCommand(context.Background(), ports.ReviewInvocation{ReviewerID: "review-w1"})
+	if err != nil {
+		t.Fatalf("ReviewRestoreCommand: %v", err)
+	}
+	if ok {
+		t.Fatal("ReviewRestoreCommand ok = true without a native Kimchi session id")
+	}
+}
+
+func TestHostTrustWarningNamesBoundary(t *testing.T) {
+	for _, phrase := range []string{"host-trusted", "not OS isolation", "shell commands", "GitHub access"} {
+		if !strings.Contains(HostTrustWarning, phrase) {
+			t.Fatalf("HostTrustWarning %q is missing %q", HostTrustWarning, phrase)
+		}
 	}
 }
 
