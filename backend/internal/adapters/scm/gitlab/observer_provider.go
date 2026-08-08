@@ -318,6 +318,15 @@ func effectiveMergeStatus(mr *restMR) string {
 	return mr.MergeStatus
 }
 
+// changesRequested reports whether the MR's effective merge status is
+// "requested_changes" — GitLab's signal that a reviewer explicitly asked for
+// changes (the direct equivalent of GitHub's CHANGES_REQUESTED). Both
+// fetchSingleMR and FetchReviewThreads use this to override the approvals-
+// based review decision.
+func changesRequested(mr *restMR) bool {
+	return effectiveMergeStatus(mr) == "requested_changes"
+}
+
 func safeTime(t *time.Time) time.Time {
 	if t == nil {
 		return time.Time{}
@@ -492,6 +501,13 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 	reviewDecision, err := p.fetchApprovalDecision(ctx, repo, ref.Number)
 	if err != nil {
 		return ports.SCMObservation{}, fmt.Errorf("gitlab scm: fetch approvals: %w", err)
+	}
+
+	// Override the review decision when the MR has requested_changes —
+	// see changesRequested for rationale. The approvals endpoint alone
+	// does not capture this signal, so we override regardless of approvals.
+	if changesRequested(&mr) {
+		reviewDecision = domain.ReviewChangesRequest
 	}
 
 	// 4. Build mergeability
@@ -858,6 +874,17 @@ func (p *Provider) FetchReviewThreads(ctx context.Context, ref ports.SCMPRRef) (
 	approvals := *approvalsPtr
 	decision := approvalDecision(approvals)
 
+	// Override the review decision when the cached MR detail has
+	// requested_changes — see changesRequested for rationale. When the cache
+	// is cold (e.g. FetchReviewThreads runs before FetchPullRequests in a
+	// cycle), the override is skipped and the approvals-based decision stands
+	// — no crash, no false override.
+	if cached, ok := p.cache.getMRDetail(repo.Host, repo.Repo, ref.Number); ok {
+		if changesRequested(cached) {
+			decision = domain.ReviewChangesRequest
+		}
+	}
+
 	// Build review summaries with stable, unique IDs so multiple approvers
 	// don't overwrite each other in persistence
 	var reviews []ports.SCMReviewSummaryObservation
@@ -1019,8 +1046,20 @@ func mergeabilityFromMR(mr *restMR, ciState, reviewDecision string) ports.SCMMer
 			Blockers: []string{"draft"},
 		}
 
-	// Approval blockers (current + legacy).
-	case "not_approved", "requested_changes":
+	// Review blockers.
+	case "requested_changes":
+		// A reviewer explicitly requested changes — the direct equivalent
+		// of GitHub's CHANGES_REQUESTED. The blocker label differs from
+		// not_approved so downstream status logic can distinguish "someone
+		// asked for changes" from "nobody has approved yet".
+		return ports.SCMMergeabilityObservation{
+			State:    string(domain.MergeBlocked),
+			Blockers: []string{"changes_requested"},
+		}
+
+	case "not_approved":
+		// Approvals are required and have not been granted. The approvals
+		// endpoint is authoritative for this case.
 		return ports.SCMMergeabilityObservation{
 			State:    string(domain.MergeBlocked),
 			Blockers: []string{"review_required"},

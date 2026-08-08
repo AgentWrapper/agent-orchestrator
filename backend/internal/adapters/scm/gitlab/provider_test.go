@@ -957,7 +957,7 @@ func TestMergeabilityFromMR(t *testing.T) {
 		{"preparing", "preparing", "", "passing", "approved", false, "unknown", false, false, nil},
 		{"unchecked", "unchecked", "", "passing", "approved", false, "unknown", false, false, nil},
 		{"need_rebase", "need_rebase", "", "passing", "approved", false, "blocked", false, true, []string{"behind_base"}},
-		{"requested_changes", "requested_changes", "", "passing", "approved", false, "blocked", false, false, []string{"review_required"}},
+		{"requested_changes", "requested_changes", "", "passing", "approved", false, "blocked", false, false, []string{"changes_requested"}},
 		{"not_approved", "not_approved", "", "passing", "none", false, "blocked", false, false, []string{"review_required"}},
 		{"ci_must_pass", "ci_must_pass", "", "passing", "approved", false, "blocked", false, false, []string{"ci_failing"}},
 		{"ci_still_running", "ci_still_running", "", "passing", "approved", false, "blocked", false, false, []string{"ci_failing"}},
@@ -2688,5 +2688,128 @@ func TestAuthenticatedIdentityAuthErrorNotCached(t *testing.T) {
 	}
 	if got := calls.Load(); got != 2 {
 		t.Fatalf("GET /user calls = %d, want 2 (no caching on auth failure)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// requested_changes → ReviewChangesRequest override tests
+// ---------------------------------------------------------------------------
+
+// mrDetailFixtureWithStatus is like mrDetailFixture but allows overriding
+// the detailed_merge_status.
+func mrDetailFixtureWithStatus(iid int, baseSHA, detailedMergeStatus string) map[string]any {
+	m := mrDetailFixture(iid, baseSHA)
+	m["detailed_merge_status"] = detailedMergeStatus
+	return m
+}
+
+// TestFetchPullRequests_RequestedChangesOverridesReviewDecision verifies
+// that fetchSingleMR returns ReviewChangesRequest when the MR's
+// detailed_merge_status is "requested_changes", even when approvals say the
+// MR is fully approved.
+func TestFetchPullRequests_RequestedChangesOverridesReviewDecision(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(mrDetailFixtureWithStatus(1, "base123", "requested_changes"))
+	})
+	registerMRSupportingEndpoints(mux)
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	obs, err := p.FetchPullRequests(context.Background(), []ports.SCMPRRef{ref})
+	if err != nil {
+		t.Fatalf("FetchPullRequests: %v", err)
+	}
+	if len(obs) != 1 || !obs[0].Fetched {
+		t.Fatalf("expected one fetched observation, got %+v", obs)
+	}
+	// The review decision must be overridden to changes_requested even though
+	// the approvals endpoint returns approved=true (registerMRSupportingEndpoints
+	// returns approved=true with approvals_required=1).
+	if got, want := obs[0].Review.Decision, string(domain.ReviewChangesRequest); got != want {
+		t.Errorf("Review.Decision = %q, want %q (requested_changes must override approvals)", got, want)
+	}
+	// The mergeability blocker must be changes_requested, not review_required.
+	if len(obs[0].Mergeability.Blockers) == 0 || obs[0].Mergeability.Blockers[0] != "changes_requested" {
+		t.Errorf("Mergeability.Blockers = %v, want [changes_requested]", obs[0].Mergeability.Blockers)
+	}
+}
+
+// TestFetchReviewThreads_RequestedChangesOverridesWhenMRDetailCached verifies
+// that FetchReviewThreads returns ReviewChangesRequest when the cached MR
+// detail (populated by ListPRsByRepo or fetchSingleMR) has
+// detailed_merge_status == "requested_changes", even when approvals say the
+// MR is fully approved.
+func TestFetchReviewThreads_RequestedChangesOverridesWhenMRDetailCached(t *testing.T) {
+	mux := http.NewServeMux()
+	// MR list endpoint — populates the MR-detail cache with requested_changes.
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]map[string]any{mrDetailFixtureWithStatus(1, "base123", "requested_changes")})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/discussions", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"approved":           true,
+			"approvals_required": 2,
+			"approved_by": []map[string]any{
+				{"user": map[string]any{"username": "reviewer1"}},
+				{"user": map[string]any{"username": "reviewer2"}},
+			},
+		})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+
+	// Populate the MR-detail cache via the listing so FetchReviewThreads can
+	// consult it.
+	if _, err := p.ListPRsByRepo(context.Background(), repo, time.Time{}); err != nil {
+		t.Fatalf("ListPRsByRepo: %v", err)
+	}
+
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+	review, err := p.FetchReviewThreads(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("FetchReviewThreads: %v", err)
+	}
+	if got, want := review.Decision, string(domain.ReviewChangesRequest); got != want {
+		t.Errorf("Decision = %q, want %q (cached MR detail has requested_changes)", got, want)
+	}
+}
+
+// TestFetchReviewThreads_FallsBackToApprovalsWhenMRDetailCacheCold verifies
+// that when the MR-detail cache is cold (no prior listing or detail fetch),
+// FetchReviewThreads does NOT override the review decision — it falls back to
+// the approvals-based decision without crashing.
+func TestFetchReviewThreads_FallsBackToApprovalsWhenMRDetailCacheCold(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/discussions", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{})
+	})
+	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests/1/approvals", func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"approved":           true,
+			"approvals_required": 2,
+			"approved_by": []map[string]any{
+				{"user": map[string]any{"username": "reviewer1"}},
+				{"user": map[string]any{"username": "reviewer2"}},
+			},
+		})
+	})
+	_, p := testServer(t, mux)
+	repo := ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
+	ref := ports.SCMPRRef{Repo: repo, Number: 1, URL: "https://gitlab.com/myorg/myrepo/-/merge_requests/1"}
+
+	// No prior ListPRsByRepo or FetchPullRequests — the MR-detail cache is cold.
+	review, err := p.FetchReviewThreads(context.Background(), ref)
+	if err != nil {
+		t.Fatalf("FetchReviewThreads: %v", err)
+	}
+	// With a cold cache, the override is skipped and the approvals-based
+	// decision stands: approved (true + approvals_required=2 + 2 approvers).
+	if got, want := review.Decision, string(domain.ReviewApproved); got != want {
+		t.Errorf("Decision = %q, want %q (cold cache must fall back to approvals)", got, want)
 	}
 }
