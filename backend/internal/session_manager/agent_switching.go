@@ -219,17 +219,18 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 
 	now := m.clock()
 	switchRec := domain.AgentSwitch{
-		ID:                 domain.AgentSwitchID("switch-" + uuid.NewString()),
-		SessionID:          id,
-		IdempotencyKey:     cfg.IdempotencyKey,
-		RequestFingerprint: requestFingerprint,
-		FromHarness:        rec.Harness,
-		TargetHarness:      cfg.TargetHarness,
-		State:              domain.AgentSwitchPreparingHandoff,
-		AgentHandoffStatus: domain.AgentHandoffNotAttempted,
-		SourceGenerationID: sourceGeneration,
-		RequestedAt:        now,
-		UpdatedAt:          now,
+		ID:                     domain.AgentSwitchID("switch-" + uuid.NewString()),
+		SessionID:              id,
+		IdempotencyKey:         cfg.IdempotencyKey,
+		RequestFingerprint:     requestFingerprint,
+		FromHarness:            rec.Harness,
+		TargetHarness:          cfg.TargetHarness,
+		State:                  domain.AgentSwitchPreparingHandoff,
+		AgentHandoffStatus:     domain.AgentHandoffNotAttempted,
+		SourceTranscriptStatus: domain.AgentSwitchSourceTranscriptNotAttempted,
+		SourceGenerationID:     sourceGeneration,
+		RequestedAt:            now,
+		UpdatedAt:              now,
 	}
 	requestedSwitch := switchRec
 	switchRec, created, err := store.CreateAgentSwitch(ctx, requestedSwitch)
@@ -416,7 +417,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 		deliverySwitch.AgentHandoffHash = ""
 	}
 	includeTranscriptFallback := !semanticHandoffAvailable
-	observedTranscript := m.captureSourceTranscriptFact(ctx, sourceAgent, sourceNative, includeTranscriptFallback)
+	observedTranscript, sourceTranscriptStatus := m.captureSourceTranscriptFact(ctx, sourceAgent, sourceNative, includeTranscriptFallback)
 	finalContext := deterministicSwitchContext{
 		UserNote:              cfg.Note,
 		OriginalTask:          stoppedSession.Metadata.Prompt,
@@ -439,7 +440,7 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: retain finalized handoff: %w", id, err)
 	}
-	finalized, err := m.finalizeAgentSwitchHandoff(ctx, store, result, writtenFinal, semanticHandoffAvailable)
+	finalized, err := m.finalizeAgentSwitchHandoff(ctx, store, result, writtenFinal, semanticHandoffAvailable, sourceTranscriptStatus)
 	if err != nil {
 		return result, fmt.Errorf("switch agent %s: record finalized handoff: %w", id, err)
 	}
@@ -483,10 +484,16 @@ func (m *Manager) SwitchAgent(ctx context.Context, id domain.SessionID, cfg Swit
 		// both masks the real Create failure and cannot reveal target ownership.
 		targetRuntimeAmbiguous = true
 		skipTerminalization = true
-		if createErr != nil {
-			return result, fmt.Errorf("switch agent %s: start target runtime: %w", id, createErr)
+		markCtx, cancelMark := switchDurableContext(ctx)
+		marked, markErr := m.markTargetStartUnconfirmed(markCtx, store, result)
+		cancelMark()
+		if markErr == nil {
+			result = marked
 		}
-		return result, fmt.Errorf("switch agent %s: start target runtime: runtime returned an empty target handle", id)
+		if createErr != nil {
+			return result, fmt.Errorf("switch agent %s: start target runtime: %w", id, errors.Join(createErr, markErr))
+		}
+		return result, fmt.Errorf("switch agent %s: start target runtime: %w", id, errors.Join(errors.New("runtime returned an empty target handle"), markErr))
 	}
 	recordHandleCtx, cancelRecordHandle := switchDurableContext(ctx)
 	err = m.advanceAgentSwitch(recordHandleCtx, store, &result, domain.AgentSwitchStartingTarget, func(next *domain.AgentSwitch) {
@@ -1080,10 +1087,10 @@ func safeNativeTranscriptPath(ctx context.Context, path, configDir string) strin
 	return realPath
 }
 
-func (m *Manager) captureSourceTranscriptFact(ctx context.Context, agent ports.Agent, source domain.AgentNativeSession, includeTail bool) *switchTranscriptFact {
+func (m *Manager) captureSourceTranscriptFact(ctx context.Context, agent ports.Agent, source domain.AgentNativeSession, includeTail bool) (*switchTranscriptFact, domain.AgentSwitchSourceTranscriptStatus) {
 	locator, ok := agent.(ports.AgentTranscriptLocator)
 	if !ok || strings.TrimSpace(source.NativeSessionID) == "" {
-		return nil
+		return nil, domain.AgentSwitchSourceTranscriptUnavailable
 	}
 	ref := ports.NativeSessionRef{
 		NativeSessionID: source.NativeSessionID,
@@ -1091,14 +1098,14 @@ func (m *Manager) captureSourceTranscriptFact(ctx context.Context, agent ports.A
 	}
 	located, found, err := locator.LocateTranscript(ctx, ref)
 	if err != nil || !found {
-		return nil
+		return nil, domain.AgentSwitchSourceTranscriptUnavailable
 	}
 	path := safeNativeTranscriptPath(ctx, located, source.ConfigDir)
 	if path == "" {
-		return nil
+		return nil, domain.AgentSwitchSourceTranscriptUnavailable
 	}
 	if !includeTail {
-		return &switchTranscriptFact{Path: path}
+		return &switchTranscriptFact{Path: path}, domain.AgentSwitchSourceTranscriptAvailable
 	}
 	openFile := m.openTranscriptFile
 	if openFile == nil {
@@ -1106,9 +1113,9 @@ func (m *Manager) captureSourceTranscriptFact(ctx context.Context, agent ports.A
 	}
 	tail, truncated, readable := readNativeTranscriptTailWithOpen(ctx, path, source.ConfigDir, openFile)
 	if !readable {
-		return nil
+		return nil, domain.AgentSwitchSourceTranscriptUnavailable
 	}
-	return &switchTranscriptFact{Path: path, Tail: tail, Truncated: truncated}
+	return &switchTranscriptFact{Path: path, Tail: tail, Truncated: truncated}, domain.AgentSwitchSourceTranscriptAvailable
 }
 
 func (m *Manager) captureWorkspaceFacts(ctx context.Context, rec domain.SessionRecord) []switchWorkspaceFact {
@@ -2028,7 +2035,7 @@ func (m *Manager) waitForTargetAcknowledgement(ctx context.Context, store ports.
 	}
 }
 
-func (m *Manager) finalizeAgentSwitchHandoff(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, written writtenAgentHandoff, semanticIncluded bool) (domain.AgentSwitch, error) {
+func (m *Manager) finalizeAgentSwitchHandoff(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch, written writtenAgentHandoff, semanticIncluded bool, transcriptStatus domain.AgentSwitchSourceTranscriptStatus) (domain.AgentSwitch, error) {
 	if strings.TrimSpace(written.Path) == "" || strings.TrimSpace(written.Hash) == "" {
 		return sw, errors.New("agent switch: finalized handoff path and hash are required")
 	}
@@ -2044,6 +2051,7 @@ func (m *Manager) finalizeAgentSwitchHandoff(ctx context.Context, store ports.Ag
 		written.Path,
 		written.Hash,
 		semanticIncluded,
+		transcriptStatus,
 		updatedAt,
 	)
 	current, found, getErr := store.GetAgentSwitch(finalizeCtx, sw.ID)
@@ -2053,7 +2061,8 @@ func (m *Manager) finalizeAgentSwitchHandoff(ctx context.Context, store ports.Ag
 	if !found {
 		return sw, errors.Join(recordErr, ErrSwitchNotFound)
 	}
-	if current.FinalHandoffPath == written.Path && current.FinalHandoffHash == written.Hash {
+	if current.FinalHandoffPath == written.Path && current.FinalHandoffHash == written.Hash &&
+		current.SourceTranscriptStatus == transcriptStatus && current.SemanticHandoffIncluded == semanticIncluded {
 		if _, valid := m.readVerifiedFinalizedHandoff(finalizeCtx, current); !valid {
 			return current, errors.New("agent switch: durable finalized handoff failed verification")
 		}
@@ -2066,6 +2075,21 @@ func (m *Manager) finalizeAgentSwitchHandoff(ctx context.Context, store ports.Ag
 		return current, errors.New("agent switch: finalized handoff changed concurrently")
 	}
 	return current, errors.New("agent switch: finalized handoff record was not observable")
+}
+
+func (m *Manager) markTargetStartUnconfirmed(ctx context.Context, store ports.AgentSwitchStore, sw domain.AgentSwitch) (domain.AgentSwitch, error) {
+	if sw.RequiresRecovery() {
+		return sw, nil
+	}
+	if sw.State != domain.AgentSwitchStartingTarget || strings.TrimSpace(sw.TargetRuntimeHandleID) != "" {
+		return sw, fmt.Errorf("agent switch %s: target-start recovery marker requires starting_target without a runtime handle", sw.ID)
+	}
+	if err := m.advanceAgentSwitch(ctx, store, &sw, sw.State, func(next *domain.AgentSwitch) {
+		next.ErrorCode = domain.AgentSwitchErrorTargetStartUnconfirmed
+	}); err != nil {
+		return sw, err
+	}
+	return sw, nil
 }
 
 func requireAgentSwitch(ctx context.Context, store ports.AgentSwitchStore, id domain.AgentSwitchID) (domain.AgentSwitch, error) {
@@ -2554,7 +2578,13 @@ func (m *Manager) reconcileStoppingSource(ctx context.Context, store ports.Agent
 func (m *Manager) reconcileStartingTarget(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, sw domain.AgentSwitch) (bool, error) {
 	targetHandleID := strings.TrimSpace(sw.TargetRuntimeHandleID)
 	if targetHandleID == "" {
-		return false, errors.New("starting-target agent switch lacks a durable target runtime handle; target ownership is inconclusive")
+		if _, err := m.markTargetStartUnconfirmed(ctx, store, sw); err != nil {
+			// Missing target ownership must keep the input gate closed, but a
+			// transient marker write must not prevent the daemon/API from starting.
+			// A later reconciliation can backfill the same monotonic marker.
+			m.logger.Warn("agent switch: could not persist target-start recovery marker", "sessionID", sw.SessionID, "switchID", sw.ID, "error", err)
+		}
+		return false, nil
 	}
 	handle := ports.RuntimeHandle{ID: targetHandleID}
 	alive, err := m.runtime.IsAlive(ctx, handle)

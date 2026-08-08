@@ -118,6 +118,10 @@ CREATE TABLE agent_switches (
             'not_attempted', 'requested', 'received', 'unavailable',
             'timed_out', 'failed', 'rejected'
         )),
+    source_transcript_status   TEXT NOT NULL DEFAULT 'not_attempted'
+        CHECK (source_transcript_status IN ('not_attempted', 'available', 'unavailable')),
+    semantic_handoff_included INTEGER NOT NULL DEFAULT 0
+        CHECK (semantic_handoff_included IN (0, 1)),
     agent_handoff_path         TEXT NOT NULL DEFAULT '',
     agent_handoff_hash         TEXT NOT NULL DEFAULT '',
     source_generation_id       TEXT NOT NULL CHECK (length(source_generation_id) > 0),
@@ -127,6 +131,8 @@ CREATE TABLE agent_switches (
     error_code                 TEXT NOT NULL DEFAULT '',
     requested_at               TIMESTAMP NOT NULL,
     updated_at                 TIMESTAMP NOT NULL,
+    final_handoff_path         TEXT NOT NULL DEFAULT '',
+    final_handoff_hash         TEXT NOT NULL DEFAULT '',
     UNIQUE (session_id, idempotency_key),
     CHECK (from_harness <> target_harness),
     CHECK (

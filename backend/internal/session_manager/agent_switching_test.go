@@ -226,7 +226,7 @@ func (s *switchTestStore) RecordAgentHandoff(_ context.Context, id domain.AgentS
 	return true, nil
 }
 
-func (s *switchTestStore) FinalizeAgentSwitchHandoff(_ context.Context, id domain.AgentSwitchID, sessionID domain.SessionID, source, target domain.AgentGenerationID, path, hash string, semanticIncluded bool, at time.Time) (bool, error) {
+func (s *switchTestStore) FinalizeAgentSwitchHandoff(_ context.Context, id domain.AgentSwitchID, sessionID domain.SessionID, source, target domain.AgentGenerationID, path, hash string, semanticIncluded bool, transcriptStatus domain.AgentSwitchSourceTranscriptStatus, at time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.switches[id]
@@ -237,6 +237,8 @@ func (s *switchTestStore) FinalizeAgentSwitchHandoff(_ context.Context, id domai
 	}
 	rec.FinalHandoffPath = path
 	rec.FinalHandoffHash = hash
+	rec.SourceTranscriptStatus = transcriptStatus
+	rec.SemanticHandoffIncluded = semanticIncluded
 	if rec.AgentHandoffStatus == domain.AgentHandoffReceived && semanticIncluded {
 		rec.AgentHandoffPath = path
 		rec.AgentHandoffHash = hash
@@ -886,7 +888,7 @@ func TestCaptureSourceTranscriptFactRequiresProviderLocator(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := New(Deps{})
-	got := manager.captureSourceTranscriptFact(
+	got, status := manager.captureSourceTranscriptFact(
 		context.Background(),
 		fakeAgent{},
 		domain.AgentNativeSession{NativeSessionID: "session-1", ConfigDir: configDir, TranscriptPath: path},
@@ -894,6 +896,9 @@ func TestCaptureSourceTranscriptFactRequiresProviderLocator(t *testing.T) {
 	)
 	if got != nil {
 		t.Fatalf("provider without transcript locator produced full-transcript context: %+v", got)
+	}
+	if status != domain.AgentSwitchSourceTranscriptUnavailable {
+		t.Fatalf("transcript status = %q, want unavailable", status)
 	}
 }
 
@@ -911,7 +916,7 @@ func TestCaptureSourceTranscriptFactRejectsEmptyLocatedTranscript(t *testing.T) 
 		},
 	}
 	manager := New(Deps{})
-	got := manager.captureSourceTranscriptFact(
+	got, status := manager.captureSourceTranscriptFact(
 		context.Background(),
 		agent,
 		domain.AgentNativeSession{NativeSessionID: "session-1", ConfigDir: configDir},
@@ -919,6 +924,9 @@ func TestCaptureSourceTranscriptFactRejectsEmptyLocatedTranscript(t *testing.T) 
 	)
 	if got != nil {
 		t.Fatalf("empty located transcript was advertised: %+v", got)
+	}
+	if status != domain.AgentSwitchSourceTranscriptUnavailable {
+		t.Fatalf("transcript status = %q, want unavailable", status)
 	}
 }
 
@@ -940,7 +948,7 @@ func TestCaptureSourceTranscriptFactDoesNotReadTailWhenSemanticHandoffExists(t *
 		t.Fatal("semantic handoff path should not read a transcript fallback")
 		return nil, errors.New("unreachable")
 	}
-	got := manager.captureSourceTranscriptFact(
+	got, status := manager.captureSourceTranscriptFact(
 		context.Background(),
 		agent,
 		domain.AgentNativeSession{NativeSessionID: "session-1", ConfigDir: configDir},
@@ -948,6 +956,9 @@ func TestCaptureSourceTranscriptFactDoesNotReadTailWhenSemanticHandoffExists(t *
 	)
 	if got == nil || got.Path == "" || got.Tail != "" || got.Truncated {
 		t.Fatalf("semantic transcript reference = %+v, want path-only fact", got)
+	}
+	if status != domain.AgentSwitchSourceTranscriptAvailable {
+		t.Fatalf("transcript status = %q, want available", status)
 	}
 }
 
@@ -1094,6 +1105,9 @@ func TestSwitchAgentFreshPreservesAOIdentityAndDeliversArtifact(t *testing.T) {
 	}
 	if sw.State != domain.AgentSwitchCompleted || sw.TargetStartMode != domain.AgentSwitchTargetStartFresh {
 		t.Fatalf("switch = state %q mode %q", sw.State, sw.TargetStartMode)
+	}
+	if sw.SourceTranscriptStatus != domain.AgentSwitchSourceTranscriptAvailable {
+		t.Fatalf("source transcript status = %q, want available", sw.SourceTranscriptStatus)
 	}
 	if sw.TargetRuntimeHandleID != "h1" {
 		t.Fatalf("durable target runtime handle = %q, want opaque runtime handle h1", sw.TargetRuntimeHandleID)
@@ -1260,6 +1274,9 @@ func TestSwitchAgentRetainsSwitchWhenCreateReturnsNoHandle(t *testing.T) {
 	if sw.State != domain.AgentSwitchStartingTarget || sw.TargetRuntimeHandleID != "" {
 		t.Fatalf("switch = state %q handle %q, want retained starting_target with no handle", sw.State, sw.TargetRuntimeHandleID)
 	}
+	if sw.ErrorCode != domain.AgentSwitchErrorTargetStartUnconfirmed || !sw.RequiresRecovery() {
+		t.Fatalf("switch recovery marker = code %q required=%v, want target start unconfirmed", sw.ErrorCode, sw.RequiresRecovery())
+	}
 	if runtime.destroyed != 1 || len(runtime.destroyedIDs) != 1 || runtime.destroyedIDs[0] != "proj-1" {
 		t.Fatalf("runtime destroys = %d %v, want only the source handle", runtime.destroyed, runtime.destroyedIDs)
 	}
@@ -1331,6 +1348,9 @@ func TestSwitchAgentTranscriptReadFailureUsesSingleTerminalFallback(t *testing.T
 	if sw.State != domain.AgentSwitchCompleted ||
 		strings.Count(target.launchSystemPrompt, terminalSentinel) != 1 || strings.Contains(target.launchSystemPrompt, path) {
 		t.Fatalf("transcript read failure did not fall back exactly once without advertising its path: switch=%+v continuation=%q", sw, target.launchSystemPrompt)
+	}
+	if sw.SourceTranscriptStatus != domain.AgentSwitchSourceTranscriptUnavailable {
+		t.Fatalf("source transcript status = %q, want unavailable", sw.SourceTranscriptStatus)
 	}
 	if sw.AgentHandoffPath != "" || sw.AgentHandoffHash != "" {
 		t.Fatalf("transcript-read fallback unexpectedly retained semantic handoff: %+v", sw)
@@ -1473,6 +1493,9 @@ func TestSwitchAgentIncludesAvailableSourceAuthoredHandoff(t *testing.T) {
 	}
 	if sw.AgentHandoffStatus != domain.AgentHandoffReceived {
 		t.Fatalf("semantic handoff status = %q", sw.AgentHandoffStatus)
+	}
+	if !sw.SemanticHandoffIncluded {
+		t.Fatal("finalized switch did not record semantic handoff inclusion")
 	}
 	if filepath.Base(sw.AgentHandoffPath) != "handoff.json" || sw.AgentHandoffHash == "" || sw.FinalHandoffPath != sw.AgentHandoffPath || sw.FinalHandoffHash != sw.AgentHandoffHash {
 		t.Fatalf("semantic handoff location = path %q hash %q", sw.AgentHandoffPath, sw.AgentHandoffHash)
@@ -2296,7 +2319,7 @@ func TestReconcileAgentSwitchesUsesDurableBoundaries(t *testing.T) {
 		{name: "stopped source stays source-owned and exited", state: domain.AgentSwitchStoppingSource, runtimeAlive: false, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "daemon_restart_post_stop"},
 		{name: "inconclusive source probe safely retains source ownership", state: domain.AgentSwitchStoppingSource, runtimeErr: errors.New("probe unavailable"), wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessClaudeCode, wantErrorCode: "source_stop_unconfirmed"},
 		{name: "exact starting target is adopted by opaque handle without delivery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, targetHandle: "opaque-target-handle", wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantHandle: "opaque-target-handle", wantErrorCode: "daemon_restart_before_delivery"},
-		{name: "starting target without a durable handle remains gated", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, wantState: domain.AgentSwitchStartingTarget, wantHarness: domain.HarnessClaudeCode, wantError: "lacks a durable target runtime handle", wantGated: true},
+		{name: "starting target without a durable handle requires recovery", state: domain.AgentSwitchStartingTarget, runtimeAlive: true, wantState: domain.AgentSwitchStartingTarget, wantHarness: domain.HarnessClaudeCode, wantErrorCode: domain.AgentSwitchErrorTargetStartUnconfirmed, wantGated: true},
 		{name: "acknowledged delivery completes", state: domain.AgentSwitchDelivering, runtimeAlive: true, acknowledged: true, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex},
 		{name: "acknowledgement winning recovery failure CAS completes", state: domain.AgentSwitchDelivering, runtimeAlive: true, ackBeforeFail: true, wantState: domain.AgentSwitchCompleted, wantHarness: domain.HarnessCodex},
 		{name: "ambiguous delivery is not resent", state: domain.AgentSwitchDelivering, runtimeAlive: true, wantState: domain.AgentSwitchFailed, wantHarness: domain.HarnessCodex, wantErrorCode: "delivery_unconfirmed"},
@@ -2608,6 +2631,9 @@ func TestSwitchAgentFallsBackWhenReceivedSemanticFileIsChangedBeforeSourceStop(t
 	}
 	if sw.AgentHandoffStatus != domain.AgentHandoffReceived {
 		t.Fatalf("durable provenance status = %q, want received", sw.AgentHandoffStatus)
+	}
+	if sw.SemanticHandoffIncluded {
+		t.Fatal("changed semantic file was recorded as included")
 	}
 	continuation := target.launchSystemPrompt
 	if strings.Contains(continuation, sw.AgentHandoffPath) || !strings.Contains(continuation, "Optional source-authored semantic handoff: unavailable") || !strings.Contains(continuation, "LATEST TERMINAL FALLBACK") {

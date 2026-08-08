@@ -43,14 +43,16 @@ func (c *agentSwitchRequestCapture) snapshot() (string, string, []byte, int) {
 
 func agentSwitchFixture(id, state string) string {
 	b, _ := json.Marshal(map[string]any{
-		"id":                 id,
-		"sessionId":          "demo-1",
-		"fromHarness":        "claude-code",
-		"targetHarness":      "codex",
-		"state":              state,
-		"agentHandoffStatus": "not_attempted",
-		"requestedAt":        "2026-08-04T10:00:00Z",
-		"updatedAt":          "2026-08-04T10:01:00Z",
+		"id":                      id,
+		"sessionId":               "demo-1",
+		"fromHarness":             "claude-code",
+		"targetHarness":           "codex",
+		"state":                   state,
+		"agentHandoffStatus":      "not_attempted",
+		"semanticHandoffIncluded": false,
+		"sourceTranscriptStatus":  "available",
+		"requestedAt":             "2026-08-04T10:00:00Z",
+		"updatedAt":               "2026-08-04T10:01:00Z",
 	})
 	return string(b)
 }
@@ -110,7 +112,7 @@ func TestSessionSwitchAgentPostsRequestAndPrintsSwitch(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("request = %#v, want %#v", got, want)
 	}
-	for _, needle := range []string{"id: switch-1", "from: claude-code", "target: codex", "state: preparing_handoff"} {
+	for _, needle := range []string{"id: switch-1", "from: claude-code", "target: codex", "state: preparing_handoff", "source transcript: available"} {
 		if !strings.Contains(out, needle) {
 			t.Errorf("output missing %q:\n%s", needle, out)
 		}

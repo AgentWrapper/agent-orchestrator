@@ -28,7 +28,18 @@ const agentSwitchMocks = vi.hoisted(() => ({
 
 vi.mock("../hooks/useAgentSwitches", () => ({
 	findActiveAgentSwitch: (switches: AgentSwitch[]) =>
-		switches.find((agentSwitch) => agentSwitch.state !== "completed" && agentSwitch.state !== "failed"),
+		switches.find(
+			(agentSwitch) =>
+				agentSwitch.state !== "completed" &&
+				agentSwitch.state !== "failed" &&
+				agentSwitch.errorCode !== "target_start_unconfirmed",
+		),
+	findRecoveryRequiredAgentSwitch: (switches: AgentSwitch[]) =>
+		switches.find(
+			(agentSwitch) =>
+				agentSwitch.state === "starting_target" &&
+				agentSwitch.errorCode === "target_start_unconfirmed",
+		),
 	useAgentSwitches: () => ({ data: agentSwitchMocks.switches, refetch: agentSwitchMocks.refetch }),
 }));
 
@@ -155,6 +166,7 @@ describe("CenterPane toolbar session label", () => {
 			fromHarness: "claude-code",
 			id: "switch-2",
 			requestedAt: "2026-06-10T00:00:00Z",
+			semanticHandoffIncluded: true,
 			sessionId: worker.id,
 			state: "preparing_handoff",
 			targetHarness: "codex",
@@ -176,6 +188,35 @@ describe("CenterPane toolbar session label", () => {
 			),
 		).toBeInTheDocument();
 		expect(screen.queryByRole("button", { name: "Cancel switch" })).not.toBeInTheDocument();
+	});
+
+	it("keeps input locked but replaces transfer animation with a recovery warning", () => {
+		agentSwitchMocks.switches.push({
+			agentHandoffStatus: "unavailable",
+			errorCode: "target_start_unconfirmed",
+			fromHarness: "claude-code",
+			id: "switch-recovery",
+			requestedAt: "2026-06-10T00:00:00Z",
+			semanticHandoffIncluded: true,
+			sessionId: worker.id,
+			state: "starting_target",
+			targetHarness: "codex",
+			updatedAt: "2026-06-10T00:00:01Z",
+		});
+
+		renderCenterPane({
+			session: {
+				...worker,
+				activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
+				status: "exited",
+			},
+		});
+
+		const overlay = screen.getByRole("alert", { name: "Agent switch needs recovery" });
+		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
+		expect(screen.getByTestId("agent-switch-terminal-overlay")).not.toHaveClass("cursor-wait");
+		expect(within(overlay).getByText("Target startup could not be confirmed")).toBeInTheDocument();
+		expect(overlay.querySelector(".agent-switch-transfer-pulse")).not.toBeInTheDocument();
 	});
 
 	it("renders only this session's own tab, never a sibling session", () => {

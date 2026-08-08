@@ -47,13 +47,14 @@ INSERT INTO agent_switches (
     id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
     final_handoff_path, final_handoff_hash
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT DO NOTHING;
 
@@ -61,7 +62,8 @@ ON CONFLICT DO NOTHING;
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
@@ -73,7 +75,8 @@ WHERE id = ?;
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
@@ -85,7 +88,8 @@ WHERE session_id = ? AND idempotency_key = ?;
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
@@ -98,7 +102,8 @@ WHERE session_id = ?
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
@@ -121,6 +126,7 @@ WHERE id = sqlc.arg(id)
   AND state = sqlc.arg(expected_state)
   AND source_generation_id = sqlc.arg(expected_source_generation_id)
   AND target_generation_id = sqlc.arg(expected_target_generation_id)
+  AND (error_code = '' OR error_code = sqlc.arg(error_code))
   AND (
       target_runtime_handle_id = ''
       OR target_runtime_handle_id = sqlc.arg(next_target_runtime_handle_id)
@@ -180,6 +186,8 @@ WHERE id = sqlc.arg(id)
 UPDATE agent_switches SET
     final_handoff_path = sqlc.arg(final_handoff_path),
     final_handoff_hash = sqlc.arg(final_handoff_hash),
+    source_transcript_status = sqlc.arg(source_transcript_status),
+    semantic_handoff_included = sqlc.arg(semantic_included),
     agent_handoff_path = CASE
         WHEN agent_handoff_status = 'received' AND CAST(sqlc.arg(semantic_included) AS INTEGER) = 1 THEN sqlc.arg(final_handoff_path)
         ELSE agent_handoff_path
@@ -196,7 +204,12 @@ WHERE id = sqlc.arg(id)
   AND target_generation_id = sqlc.arg(target_generation_id)
   AND target_generation_id <> ''
   AND final_handoff_path = ''
-  AND final_handoff_hash = '';
+  AND final_handoff_hash = ''
+  AND source_transcript_status = 'not_attempted'
+  AND (
+      CAST(sqlc.arg(semantic_included) AS INTEGER) = 0
+      OR agent_handoff_status = 'received'
+  );
 
 -- name: AcknowledgeAgentSwitchTarget :execrows
 UPDATE agent_switches SET
@@ -304,6 +317,7 @@ WHERE id = sqlc.arg(id)
   AND source_generation_id = sqlc.arg(expected_source_generation_id)
   AND target_generation_id = sqlc.arg(expected_target_generation_id)
   AND target_native_session_ref = sqlc.arg(expected_target_native_session_ref)
+  AND error_code = ''
   AND (
       target_runtime_handle_id = ''
       OR target_runtime_handle_id = sqlc.arg(expected_target_runtime_handle_id)

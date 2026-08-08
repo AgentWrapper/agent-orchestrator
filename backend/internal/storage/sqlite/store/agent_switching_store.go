@@ -120,6 +120,7 @@ func (s *Store) UpdateAgentNativeSession(ctx context.Context, rec domain.AgentNa
 // for a session that already has a non-terminal saga returns the active record
 // together with ErrAgentSwitchInProgress.
 func (s *Store) CreateAgentSwitch(ctx context.Context, rec domain.AgentSwitch) (domain.AgentSwitch, bool, error) {
+	rec.SourceTranscriptStatus = normalizeSourceTranscriptStatus(rec.SourceTranscriptStatus)
 	if err := validateAgentSwitch(rec, true); err != nil {
 		return domain.AgentSwitch{}, false, err
 	}
@@ -341,23 +342,23 @@ func (s *Store) RecordAgentHandoff(ctx context.Context, id domain.AgentSwitchID,
 // the conclusive source-stop boundary. When a semantic report was received,
 // its public provenance reference is moved to the same final artifact because
 // that artifact embeds the validated report and becomes the sole retained file.
-func (s *Store) FinalizeAgentSwitchHandoff(ctx context.Context, id domain.AgentSwitchID, sessionID domain.SessionID, sourceGenerationID, targetGenerationID domain.AgentGenerationID, handoffPath, handoffHash string, semanticIncluded bool, updatedAt time.Time) (bool, error) {
+func (s *Store) FinalizeAgentSwitchHandoff(ctx context.Context, id domain.AgentSwitchID, sessionID domain.SessionID, sourceGenerationID, targetGenerationID domain.AgentGenerationID, handoffPath, handoffHash string, semanticIncluded bool, sourceTranscriptStatus domain.AgentSwitchSourceTranscriptStatus, updatedAt time.Time) (bool, error) {
 	if id == "" || sessionID == "" || sourceGenerationID == "" || targetGenerationID == "" || updatedAt.IsZero() {
 		return false, errors.New("finalize agent switch handoff: switch, session, generations, and timestamp are required")
 	}
 	if err := validateFinalHandoffReference(handoffPath, handoffHash); err != nil {
 		return false, fmt.Errorf("finalize agent switch handoff %s: %w", id, err)
 	}
+	if !sourceTranscriptStatus.Captured() {
+		return false, fmt.Errorf("finalize agent switch handoff %s: captured source transcript status is required", id)
+	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	var semanticIncludedValue int64
-	if semanticIncluded {
-		semanticIncludedValue = 1
-	}
 	n, err := s.qw.FinalizeAgentSwitchHandoff(ctx, gen.FinalizeAgentSwitchHandoffParams{
 		FinalHandoffPath: handoffPath, FinalHandoffHash: handoffHash,
-		SemanticIncluded: semanticIncludedValue,
-		UpdatedAt:        updatedAt, ID: id, SessionID: sessionID,
+		SemanticIncluded:       semanticIncluded,
+		SourceTranscriptStatus: sourceTranscriptStatus,
+		UpdatedAt:              updatedAt, ID: id, SessionID: sessionID,
 		SourceGenerationID: sourceGenerationID, TargetGenerationID: targetGenerationID,
 	})
 	if err != nil {
@@ -575,11 +576,16 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 	if !rec.FromHarness.IsKnown() || !rec.TargetHarness.IsKnown() || rec.FromHarness == rec.TargetHarness {
 		return fmt.Errorf("agent switch %s: source and distinct known target harnesses are required", rec.ID)
 	}
-	if !rec.State.Valid() || !rec.TargetStartMode.Valid() || !rec.AgentHandoffStatus.Valid() {
-		return fmt.Errorf("agent switch %s: invalid state, target start mode, or handoff status", rec.ID)
+	if !rec.State.Valid() || !rec.TargetStartMode.Valid() || !rec.AgentHandoffStatus.Valid() || !rec.SourceTranscriptStatus.Valid() {
+		return fmt.Errorf("agent switch %s: invalid state, target start mode, handoff status, or transcript status", rec.ID)
 	}
-	if !rec.ErrorCode.Valid() || (rec.State == domain.AgentSwitchFailed) != (rec.ErrorCode != "") {
-		return fmt.Errorf("agent switch %s: failure state and error code must be present together", rec.ID)
+	if !rec.ErrorCode.Valid() {
+		return fmt.Errorf("agent switch %s: invalid error code %q", rec.ID, rec.ErrorCode)
+	}
+	recoveryRequired := rec.RequiresRecovery()
+	failureCode := rec.State == domain.AgentSwitchFailed && rec.ErrorCode != "" && rec.ErrorCode != domain.AgentSwitchErrorTargetStartUnconfirmed
+	if (rec.State == domain.AgentSwitchFailed) != failureCode || (rec.ErrorCode != "" && !failureCode && !recoveryRequired) {
+		return fmt.Errorf("agent switch %s: error code must describe a terminal failure or the exact target-start recovery condition", rec.ID)
 	}
 	if rec.SourceGenerationID == "" {
 		return fmt.Errorf("agent switch %s: source generation is required", rec.ID)
@@ -595,6 +601,11 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 	if err := validateFinalHandoffReferenceOptional(rec.FinalHandoffPath, rec.FinalHandoffHash); err != nil {
 		return fmt.Errorf("agent switch %s: %w", rec.ID, err)
 	}
+	if rec.SemanticHandoffIncluded &&
+		(rec.AgentHandoffStatus != domain.AgentHandoffReceived || rec.FinalHandoffPath == "" ||
+			rec.AgentHandoffPath != rec.FinalHandoffPath || rec.AgentHandoffHash != rec.FinalHandoffHash) {
+		return fmt.Errorf("agent switch %s: included semantic handoff must be a received report bound to the finalized artifact", rec.ID)
+	}
 	if rec.RequestedAt.IsZero() || rec.UpdatedAt.IsZero() || rec.UpdatedAt.Before(rec.RequestedAt) {
 		return fmt.Errorf("agent switch %s: invalid requested or updated timestamp", rec.ID)
 	}
@@ -608,8 +619,10 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 			rec.TargetStartMode != domain.AgentSwitchTargetStartPending || rec.TargetGenerationID != "" ||
 			rec.TargetRuntimeHandleID != "" || rec.TargetAcknowledgedAt != nil ||
 			rec.AgentHandoffStatus != domain.AgentHandoffNotAttempted ||
+			rec.SemanticHandoffIncluded ||
 			rec.AgentHandoffPath != "" || rec.AgentHandoffHash != "" ||
-			rec.FinalHandoffPath != "" || rec.FinalHandoffHash != "" {
+			rec.FinalHandoffPath != "" || rec.FinalHandoffHash != "" ||
+			(rec.SourceTranscriptStatus != "" && rec.SourceTranscriptStatus != domain.AgentSwitchSourceTranscriptNotAttempted) {
 			return fmt.Errorf("agent switch %s: a new saga must be preparing handoff without target launch or handoff facts", rec.ID)
 		}
 	}
@@ -720,17 +733,19 @@ func agentSwitchToInsert(rec domain.AgentSwitch) gen.InsertAgentSwitchParams {
 		FromHarness:        rec.FromHarness, TargetHarness: rec.TargetHarness,
 		TargetNativeSessionRef: rec.TargetNativeSessionRef,
 		TargetStartMode:        rec.TargetStartMode, State: rec.State,
-		AgentHandoffStatus:    rec.AgentHandoffStatus,
-		AgentHandoffPath:      rec.AgentHandoffPath,
-		AgentHandoffHash:      rec.AgentHandoffHash,
-		FinalHandoffPath:      rec.FinalHandoffPath,
-		FinalHandoffHash:      rec.FinalHandoffHash,
-		SourceGenerationID:    rec.SourceGenerationID,
-		TargetGenerationID:    rec.TargetGenerationID,
-		TargetRuntimeHandleID: rec.TargetRuntimeHandleID,
-		TargetAcknowledgedAt:  timePtrToNull(rec.TargetAcknowledgedAt),
-		ErrorCode:             string(rec.ErrorCode),
-		RequestedAt:           rec.RequestedAt, UpdatedAt: rec.UpdatedAt,
+		AgentHandoffStatus:      rec.AgentHandoffStatus,
+		SemanticHandoffIncluded: rec.SemanticHandoffIncluded,
+		AgentHandoffPath:        rec.AgentHandoffPath,
+		AgentHandoffHash:        rec.AgentHandoffHash,
+		SourceTranscriptStatus:  normalizeSourceTranscriptStatus(rec.SourceTranscriptStatus),
+		FinalHandoffPath:        rec.FinalHandoffPath,
+		FinalHandoffHash:        rec.FinalHandoffHash,
+		SourceGenerationID:      rec.SourceGenerationID,
+		TargetGenerationID:      rec.TargetGenerationID,
+		TargetRuntimeHandleID:   rec.TargetRuntimeHandleID,
+		TargetAcknowledgedAt:    timePtrToNull(rec.TargetAcknowledgedAt),
+		ErrorCode:               string(rec.ErrorCode),
+		RequestedAt:             rec.RequestedAt, UpdatedAt: rec.UpdatedAt,
 	}
 }
 
@@ -741,18 +756,27 @@ func agentSwitchFromGen(row gen.AgentSwitch) domain.AgentSwitch {
 		FromHarness:        row.FromHarness, TargetHarness: row.TargetHarness,
 		TargetNativeSessionRef: cloneNativeSessionID(row.TargetNativeSessionRef),
 		TargetStartMode:        row.TargetStartMode, State: row.State,
-		AgentHandoffStatus:    row.AgentHandoffStatus,
-		AgentHandoffPath:      row.AgentHandoffPath,
-		AgentHandoffHash:      row.AgentHandoffHash,
-		FinalHandoffPath:      row.FinalHandoffPath,
-		FinalHandoffHash:      row.FinalHandoffHash,
-		SourceGenerationID:    row.SourceGenerationID,
-		TargetGenerationID:    row.TargetGenerationID,
-		TargetRuntimeHandleID: row.TargetRuntimeHandleID,
-		TargetAcknowledgedAt:  nullTimeToPtr(row.TargetAcknowledgedAt),
-		ErrorCode:             domain.AgentSwitchErrorCode(row.ErrorCode),
-		RequestedAt:           row.RequestedAt, UpdatedAt: row.UpdatedAt,
+		AgentHandoffStatus:      row.AgentHandoffStatus,
+		SemanticHandoffIncluded: row.SemanticHandoffIncluded,
+		AgentHandoffPath:        row.AgentHandoffPath,
+		AgentHandoffHash:        row.AgentHandoffHash,
+		SourceTranscriptStatus:  row.SourceTranscriptStatus,
+		FinalHandoffPath:        row.FinalHandoffPath,
+		FinalHandoffHash:        row.FinalHandoffHash,
+		SourceGenerationID:      row.SourceGenerationID,
+		TargetGenerationID:      row.TargetGenerationID,
+		TargetRuntimeHandleID:   row.TargetRuntimeHandleID,
+		TargetAcknowledgedAt:    nullTimeToPtr(row.TargetAcknowledgedAt),
+		ErrorCode:               domain.AgentSwitchErrorCode(row.ErrorCode),
+		RequestedAt:             row.RequestedAt, UpdatedAt: row.UpdatedAt,
 	}
+}
+
+func normalizeSourceTranscriptStatus(status domain.AgentSwitchSourceTranscriptStatus) domain.AgentSwitchSourceTranscriptStatus {
+	if status == "" {
+		return domain.AgentSwitchSourceTranscriptNotAttempted
+	}
+	return status
 }
 
 func sameAgentSwitchRequest(a, b domain.AgentSwitch) bool {

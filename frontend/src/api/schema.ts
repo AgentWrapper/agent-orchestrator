@@ -1490,12 +1490,16 @@ export interface components {
         AgentSwitch: {
             /** @enum {string} */
             agentHandoffStatus: "not_attempted" | "requested" | "received" | "unavailable" | "timed_out" | "failed" | "rejected";
-            errorCode?: string;
+            /** @enum {string} */
+            errorCode?: "daemon_restart_pre_stop" | "daemon_restart_post_stop" | "daemon_restart_unrecoverable_target" | "daemon_restart_before_delivery" | "delivery_unconfirmed" | "source_session_terminated" | "source_stop_unconfirmed" | "target_binary_missing" | "target_agent_unauthorized" | "target_start_unconfirmed" | "request_cancelled" | "source_blocked" | "failed_pre_stop" | "failed_post_stop" | "target_ready_failed" | "delivery_failed" | "switch_failed";
             fromHarness: string;
             id: string;
             /** Format: date-time */
             requestedAt: string;
+            semanticHandoffIncluded: boolean;
             sessionId: string;
+            /** @enum {string} */
+            sourceTranscriptStatus?: "not_attempted" | "available" | "unavailable";
             /** @enum {string} */
             state: "preparing_handoff" | "stopping_source" | "source_stopped" | "starting_target" | "target_ready" | "delivering_context" | "completed" | "failed";
             targetHarness: string;

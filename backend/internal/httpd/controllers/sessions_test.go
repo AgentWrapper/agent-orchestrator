@@ -263,12 +263,15 @@ func (f *fakeSessionService) SwitchAgent(_ context.Context, id domain.SessionID,
 		FromHarness: domain.HarnessClaudeCode, TargetHarness: cfg.TargetHarness,
 		TargetNativeSessionRef: &targetRef,
 		TargetStartMode:        domain.AgentSwitchTargetStartFresh, State: domain.AgentSwitchCompleted,
-		AgentHandoffStatus: domain.AgentHandoffReceived,
-		AgentHandoffPath:   "/private/ao/agent-handoff.json", AgentHandoffHash: "private-hash",
+		AgentHandoffStatus:      domain.AgentHandoffReceived,
+		SemanticHandoffIncluded: true,
+		AgentHandoffPath:        "/private/ao/handoff.json", AgentHandoffHash: "private-hash",
+		FinalHandoffPath: "/private/ao/handoff.json", FinalHandoffHash: "private-hash",
 		SourceGenerationID: "private-source-generation", TargetGenerationID: "private-target-generation",
-		TargetRuntimeHandleID: "private-target-runtime-handle",
-		ErrorCode:             "SAFE_ERROR_CODE",
-		RequestedAt:           now, UpdatedAt: now,
+		TargetRuntimeHandleID:  "private-target-runtime-handle",
+		ErrorCode:              domain.AgentSwitchErrorTargetStartUnconfirmed,
+		SourceTranscriptStatus: domain.AgentSwitchSourceTranscriptUnavailable,
+		RequestedAt:            now, UpdatedAt: now,
 	}
 	f.agentSwitches[record.ID] = record
 	return record, nil
@@ -496,8 +499,14 @@ func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 	if switched.Switch.ID != "switch-1" || switched.Switch.TargetHarness != domain.HarnessCodex {
 		t.Fatalf("switch response = %+v", switched.Switch)
 	}
-	if switched.Switch.ErrorCode != "SAFE_ERROR_CODE" {
+	if switched.Switch.ErrorCode != domain.AgentSwitchErrorTargetStartUnconfirmed {
 		t.Fatalf("safe error code = %q", switched.Switch.ErrorCode)
+	}
+	if switched.Switch.SourceTranscriptStatus != domain.AgentSwitchSourceTranscriptUnavailable {
+		t.Fatalf("source transcript status = %q", switched.Switch.SourceTranscriptStatus)
+	}
+	if !switched.Switch.SemanticHandoffIncluded {
+		t.Fatal("semantic handoff inclusion fact was not projected")
 	}
 	if svc.switchConfig.Note != "continue the review" || svc.switchConfig.IdempotencyKey != "retry-1" {
 		t.Fatalf("switch config = %+v", svc.switchConfig)

@@ -205,9 +205,46 @@ func (s AgentHandoffStatus) Valid() bool {
 	}
 }
 
-// AgentSwitchErrorCode is the stable, persisted reason a switch saga failed.
-// Keep this vocabulary typed so recovery and API presentation cannot silently
-// introduce incompatible spellings.
+// AgentSwitchSourceTranscriptStatus records whether AO could safely retain a
+// provider-owned transcript reference (and, when needed, read its bounded
+// tail) for the finalized switch context. It deliberately carries no path or
+// raw filesystem error.
+type AgentSwitchSourceTranscriptStatus string
+
+const (
+	// AgentSwitchSourceTranscriptNotAttempted covers an in-flight or legacy
+	// switch whose final source boundary has not been captured yet.
+	AgentSwitchSourceTranscriptNotAttempted AgentSwitchSourceTranscriptStatus = "not_attempted"
+	// AgentSwitchSourceTranscriptAvailable means the provider transcript was
+	// located and, when fallback context was needed, read successfully.
+	AgentSwitchSourceTranscriptAvailable AgentSwitchSourceTranscriptStatus = "available"
+	// AgentSwitchSourceTranscriptUnavailable means AO safely continued without
+	// the provider transcript, using semantic, terminal, or deterministic facts.
+	AgentSwitchSourceTranscriptUnavailable AgentSwitchSourceTranscriptStatus = "unavailable"
+)
+
+// Valid reports whether the status belongs to the persisted vocabulary. The
+// empty value is accepted for old in-memory fixtures and normalized to
+// not_attempted at the SQLite boundary.
+func (s AgentSwitchSourceTranscriptStatus) Valid() bool {
+	switch s {
+	case "", AgentSwitchSourceTranscriptNotAttempted,
+		AgentSwitchSourceTranscriptAvailable, AgentSwitchSourceTranscriptUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// Captured reports whether AO has completed transcript observation at the
+// final source boundary.
+func (s AgentSwitchSourceTranscriptStatus) Captured() bool {
+	return s == AgentSwitchSourceTranscriptAvailable || s == AgentSwitchSourceTranscriptUnavailable
+}
+
+// AgentSwitchErrorCode is the stable, persisted reason a switch saga failed or
+// requires recovery. Keep this vocabulary typed so recovery and API
+// presentation cannot silently introduce incompatible spellings.
 type AgentSwitchErrorCode string
 
 // Agent switch error codes.
@@ -221,6 +258,7 @@ const (
 	AgentSwitchErrorSourceStopUnconfirmed            AgentSwitchErrorCode = "source_stop_unconfirmed"
 	AgentSwitchErrorTargetBinaryMissing              AgentSwitchErrorCode = "target_binary_missing"
 	AgentSwitchErrorTargetAgentUnauthorized          AgentSwitchErrorCode = "target_agent_unauthorized"
+	AgentSwitchErrorTargetStartUnconfirmed           AgentSwitchErrorCode = "target_start_unconfirmed"
 	AgentSwitchErrorRequestCancelled                 AgentSwitchErrorCode = "request_cancelled"
 	AgentSwitchErrorSourceBlocked                    AgentSwitchErrorCode = "source_blocked"
 	AgentSwitchErrorFailedPreStop                    AgentSwitchErrorCode = "failed_pre_stop"
@@ -237,7 +275,8 @@ func (c AgentSwitchErrorCode) Valid() bool {
 		AgentSwitchErrorDaemonRestartUnrecoverableTarget, AgentSwitchErrorDaemonRestartBeforeDelivery,
 		AgentSwitchErrorDeliveryUnconfirmed, AgentSwitchErrorSourceSessionTerminated,
 		AgentSwitchErrorSourceStopUnconfirmed, AgentSwitchErrorTargetBinaryMissing,
-		AgentSwitchErrorTargetAgentUnauthorized, AgentSwitchErrorRequestCancelled,
+		AgentSwitchErrorTargetAgentUnauthorized, AgentSwitchErrorTargetStartUnconfirmed,
+		AgentSwitchErrorRequestCancelled,
 		AgentSwitchErrorSourceBlocked, AgentSwitchErrorFailedPreStop, AgentSwitchErrorFailedPostStop,
 		AgentSwitchErrorTargetReadyFailed, AgentSwitchErrorDeliveryFailed, AgentSwitchErrorSwitchFailed:
 		return true
@@ -252,27 +291,38 @@ func (c AgentSwitchErrorCode) Valid() bool {
 // only switches and is the durable source used to rebuild hidden continuation
 // instructions when the target native session is restored.
 type AgentSwitch struct {
-	ID                     AgentSwitchID                 `json:"id"`
-	SessionID              SessionID                     `json:"sessionId"`
-	IdempotencyKey         string                        `json:"idempotencyKey"`
-	RequestFingerprint     AgentSwitchRequestFingerprint `json:"-"`
-	FromHarness            AgentHarness                  `json:"fromHarness"`
-	TargetHarness          AgentHarness                  `json:"targetHarness"`
-	TargetNativeSessionRef *AgentNativeSessionID         `json:"targetNativeSessionRef,omitempty"`
-	TargetStartMode        AgentSwitchTargetStartMode    `json:"targetStartMode,omitempty"`
-	State                  AgentSwitchState              `json:"state"`
-	AgentHandoffStatus     AgentHandoffStatus            `json:"agentHandoffStatus"`
-	AgentHandoffPath       string                        `json:"agentHandoffPath,omitempty"`
-	AgentHandoffHash       string                        `json:"agentHandoffHash,omitempty"`
-	FinalHandoffPath       string                        `json:"-"`
-	FinalHandoffHash       string                        `json:"-"`
-	SourceGenerationID     AgentGenerationID             `json:"sourceGenerationId"`
-	TargetGenerationID     AgentGenerationID             `json:"targetGenerationId,omitempty"`
-	TargetRuntimeHandleID  string                        `json:"-"`
-	TargetAcknowledgedAt   *time.Time                    `json:"targetAcknowledgedAt,omitempty"`
-	ErrorCode              AgentSwitchErrorCode          `json:"errorCode,omitempty"`
-	RequestedAt            time.Time                     `json:"requestedAt"`
-	UpdatedAt              time.Time                     `json:"updatedAt"`
+	ID                      AgentSwitchID                     `json:"id"`
+	SessionID               SessionID                         `json:"sessionId"`
+	IdempotencyKey          string                            `json:"idempotencyKey"`
+	RequestFingerprint      AgentSwitchRequestFingerprint     `json:"-"`
+	FromHarness             AgentHarness                      `json:"fromHarness"`
+	TargetHarness           AgentHarness                      `json:"targetHarness"`
+	TargetNativeSessionRef  *AgentNativeSessionID             `json:"targetNativeSessionRef,omitempty"`
+	TargetStartMode         AgentSwitchTargetStartMode        `json:"targetStartMode,omitempty"`
+	State                   AgentSwitchState                  `json:"state"`
+	AgentHandoffStatus      AgentHandoffStatus                `json:"agentHandoffStatus"`
+	SemanticHandoffIncluded bool                              `json:"semanticHandoffIncluded"`
+	SourceTranscriptStatus  AgentSwitchSourceTranscriptStatus `json:"sourceTranscriptStatus,omitempty"`
+	AgentHandoffPath        string                            `json:"agentHandoffPath,omitempty"`
+	AgentHandoffHash        string                            `json:"agentHandoffHash,omitempty"`
+	FinalHandoffPath        string                            `json:"-"`
+	FinalHandoffHash        string                            `json:"-"`
+	SourceGenerationID      AgentGenerationID                 `json:"sourceGenerationId"`
+	TargetGenerationID      AgentGenerationID                 `json:"targetGenerationId,omitempty"`
+	TargetRuntimeHandleID   string                            `json:"-"`
+	TargetAcknowledgedAt    *time.Time                        `json:"targetAcknowledgedAt,omitempty"`
+	ErrorCode               AgentSwitchErrorCode              `json:"errorCode,omitempty"`
+	RequestedAt             time.Time                         `json:"requestedAt"`
+	UpdatedAt               time.Time                         `json:"updatedAt"`
+}
+
+// RequiresRecovery reports the one nonterminal condition currently exposed to
+// clients: target creation may have started, but AO received no durable handle
+// with which to prove or clean up ownership.
+func (s AgentSwitch) RequiresRecovery() bool {
+	return s.State == AgentSwitchStartingTarget &&
+		s.TargetRuntimeHandleID == "" &&
+		s.ErrorCode == AgentSwitchErrorTargetStartUnconfirmed
 }
 
 // AgentSwitchTargetActivation is the narrow command that transfers durable

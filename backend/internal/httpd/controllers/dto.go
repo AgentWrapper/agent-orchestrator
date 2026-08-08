@@ -218,16 +218,18 @@ type SwitchAgentRequest struct {
 // switch saga. Provider context, local artifact paths, retry keys, generation
 // fences, and raw failure details remain daemon-private.
 type AgentSwitchView struct {
-	ID                 domain.AgentSwitchID              `json:"id"`
-	SessionID          domain.SessionID                  `json:"sessionId"`
-	FromHarness        domain.AgentHarness               `json:"fromHarness"`
-	TargetHarness      domain.AgentHarness               `json:"targetHarness"`
-	TargetStartMode    domain.AgentSwitchTargetStartMode `json:"targetStartMode,omitempty" enum:"fresh,resumed"`
-	State              domain.AgentSwitchState           `json:"state" enum:"preparing_handoff,stopping_source,source_stopped,starting_target,target_ready,delivering_context,completed,failed"`
-	AgentHandoffStatus domain.AgentHandoffStatus         `json:"agentHandoffStatus" enum:"not_attempted,requested,received,unavailable,timed_out,failed,rejected"`
-	ErrorCode          string                            `json:"errorCode,omitempty"`
-	RequestedAt        time.Time                         `json:"requestedAt"`
-	UpdatedAt          time.Time                         `json:"updatedAt"`
+	ID                      domain.AgentSwitchID                     `json:"id"`
+	SessionID               domain.SessionID                         `json:"sessionId"`
+	FromHarness             domain.AgentHarness                      `json:"fromHarness"`
+	TargetHarness           domain.AgentHarness                      `json:"targetHarness"`
+	TargetStartMode         domain.AgentSwitchTargetStartMode        `json:"targetStartMode,omitempty" enum:"fresh,resumed"`
+	State                   domain.AgentSwitchState                  `json:"state" enum:"preparing_handoff,stopping_source,source_stopped,starting_target,target_ready,delivering_context,completed,failed"`
+	AgentHandoffStatus      domain.AgentHandoffStatus                `json:"agentHandoffStatus" enum:"not_attempted,requested,received,unavailable,timed_out,failed,rejected"`
+	SemanticHandoffIncluded bool                                     `json:"semanticHandoffIncluded"`
+	SourceTranscriptStatus  domain.AgentSwitchSourceTranscriptStatus `json:"sourceTranscriptStatus,omitempty" enum:"not_attempted,available,unavailable"`
+	ErrorCode               domain.AgentSwitchErrorCode              `json:"errorCode,omitempty" enum:"daemon_restart_pre_stop,daemon_restart_post_stop,daemon_restart_unrecoverable_target,daemon_restart_before_delivery,delivery_unconfirmed,source_session_terminated,source_stop_unconfirmed,target_binary_missing,target_agent_unauthorized,target_start_unconfirmed,request_cancelled,source_blocked,failed_pre_stop,failed_post_stop,target_ready_failed,delivery_failed,switch_failed"`
+	RequestedAt             time.Time                                `json:"requestedAt"`
+	UpdatedAt               time.Time                                `json:"updatedAt"`
 }
 
 // AgentSwitchResponse is the body returned by switch creation, reads, and

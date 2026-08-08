@@ -1607,16 +1607,18 @@ func sessionView(s domain.Session) SessionView {
 
 func agentSwitchView(s domain.AgentSwitch) AgentSwitchView {
 	return AgentSwitchView{
-		ID:                 s.ID,
-		SessionID:          s.SessionID,
-		FromHarness:        s.FromHarness,
-		TargetHarness:      s.TargetHarness,
-		TargetStartMode:    s.TargetStartMode,
-		State:              s.State,
-		AgentHandoffStatus: s.AgentHandoffStatus,
-		ErrorCode:          string(s.ErrorCode),
-		RequestedAt:        s.RequestedAt,
-		UpdatedAt:          s.UpdatedAt,
+		ID:                      s.ID,
+		SessionID:               s.SessionID,
+		FromHarness:             s.FromHarness,
+		TargetHarness:           s.TargetHarness,
+		TargetStartMode:         s.TargetStartMode,
+		State:                   s.State,
+		AgentHandoffStatus:      s.AgentHandoffStatus,
+		SemanticHandoffIncluded: s.SemanticHandoffIncluded,
+		SourceTranscriptStatus:  s.SourceTranscriptStatus,
+		ErrorCode:               s.ErrorCode,
+		RequestedAt:             s.RequestedAt,
+		UpdatedAt:               s.UpdatedAt,
 	}
 }
 

@@ -169,6 +169,9 @@ func TestAgentSwitchIdempotencySingleActiveSagaAndGenerationFences(t *testing.T)
 	if err != nil || !created || stored.ID != switchRec.ID {
 		t.Fatalf("create switch: created=%v stored=%+v err=%v", created, stored, err)
 	}
+	if stored.SourceTranscriptStatus != domain.AgentSwitchSourceTranscriptNotAttempted {
+		t.Fatalf("new switch transcript status = %q, want not_attempted", stored.SourceTranscriptStatus)
+	}
 
 	retry := switchRec
 	retry.ID = "new-retry-id"
@@ -240,6 +243,18 @@ func TestAgentSwitchIdempotencySingleActiveSagaAndGenerationFences(t *testing.T)
 		sw.TargetGenerationID = "target-generation"
 	})
 	advanceAgentSwitchFixture(ctx, t, s, &current, domain.AgentSwitchSourceStopped, now.Add(4*time.Second))
+	finalPath := "/ao/handoffs/switch-1/handoff.json"
+	finalHash := strings.Repeat("b", 64)
+	if finalized, err := s.FinalizeAgentSwitchHandoff(
+		ctx, current.ID, current.SessionID, current.SourceGenerationID, current.TargetGenerationID,
+		finalPath, finalHash, true, domain.AgentSwitchSourceTranscriptUnavailable, now.Add(4500*time.Millisecond),
+	); err != nil || !finalized {
+		t.Fatalf("finalize semantic handoff: finalized=%v err=%v", finalized, err)
+	}
+	current, ok, err = s.GetAgentSwitch(ctx, current.ID)
+	if err != nil || !ok || !current.SemanticHandoffIncluded || current.AgentHandoffPath != finalPath || current.AgentHandoffHash != finalHash {
+		t.Fatalf("semantic inclusion fact = %+v, ok=%v err=%v", current, ok, err)
+	}
 	advanceAgentSwitchFixture(ctx, t, s, &current, domain.AgentSwitchStartingTarget, now.Add(5*time.Second))
 	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &current, domain.AgentSwitchStartingTarget, now.Add(5500*time.Millisecond), func(sw *domain.AgentSwitch) {
 		sw.TargetRuntimeHandleID = "opaque-target-handle"
@@ -275,6 +290,90 @@ func TestAgentSwitchIdempotencySingleActiveSagaAndGenerationFences(t *testing.T)
 	secondSwitch.RequestedAt = secondSwitch.UpdatedAt
 	if _, created, err := s.CreateAgentSwitch(ctx, secondSwitch); err != nil || !created {
 		t.Fatalf("create switch after completion: created=%v err=%v", created, err)
+	}
+}
+
+func TestAgentSwitchTargetStartUnconfirmedMarkerIsNonTerminalAndMonotonic(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedProject(t, s, "switch-recovery")
+	rec := sampleRecord("switch-recovery")
+	now := rec.CreatedAt
+	rec.Metadata.RuntimeHandleID = "source-handle"
+	rec.Metadata.RuntimeLaunchID = "source-runtime"
+	session, err := s.CreateSession(ctx, rec)
+	if err != nil {
+		t.Fatalf("create AO session: %v", err)
+	}
+	target := domain.AgentNativeSession{
+		ID: "recovery-target", AOSessionID: session.ID, Harness: domain.HarnessCodex,
+		NativeSessionID: "codex-recovery", LastGenerationID: "target-generation",
+		CreatedAt: now, LastUsedAt: now,
+	}
+	if _, _, err := s.CreateAgentNativeSession(ctx, target); err != nil {
+		t.Fatalf("create target native session: %v", err)
+	}
+	targetRef := target.ID
+	sw, created, err := s.CreateAgentSwitch(ctx, domain.AgentSwitch{
+		ID: "switch-recovery", SessionID: session.ID, IdempotencyKey: "switch-recovery",
+		RequestFingerprint: domain.ComputeAgentSwitchRequestFingerprint(session.ID, domain.HarnessCodex, ""),
+		FromHarness:        domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		State: domain.AgentSwitchPreparingHandoff, TargetStartMode: domain.AgentSwitchTargetStartPending,
+		AgentHandoffStatus: domain.AgentHandoffNotAttempted, SourceGenerationID: "source-generation",
+		RequestedAt: now, UpdatedAt: now,
+	})
+	if err != nil || !created {
+		t.Fatalf("create switch: created=%v err=%v", created, err)
+	}
+	advanceAgentSwitchFixtureWithMutation(ctx, t, s, &sw, domain.AgentSwitchStoppingSource, now.Add(time.Second), func(sw *domain.AgentSwitch) {
+		sw.TargetNativeSessionRef = &targetRef
+		sw.TargetStartMode = domain.AgentSwitchTargetStartFresh
+		sw.TargetGenerationID = "target-generation"
+	})
+	if ok, err := s.ConfirmAgentSwitchSourceStopped(ctx, domain.AgentSwitchSourceStopConfirmation{
+		SwitchID: sw.ID, SessionID: session.ID, SourceHarness: domain.HarnessClaudeCode,
+		SourceGenerationID: "source-generation", ExpectedSourceRuntimeLaunchID: "source-runtime",
+		TargetGenerationID: "target-generation", StoppedAt: now.Add(2 * time.Second),
+	}); err != nil || !ok {
+		t.Fatalf("confirm source stopped: ok=%v err=%v", ok, err)
+	}
+	sw, _, _ = s.GetAgentSwitch(ctx, sw.ID)
+	advanceAgentSwitchFixture(ctx, t, s, &sw, domain.AgentSwitchStartingTarget, now.Add(3*time.Second))
+
+	sw.ErrorCode = domain.AgentSwitchErrorTargetStartUnconfirmed
+	sw.UpdatedAt = now.Add(4 * time.Second)
+	if ok, err := s.UpdateAgentSwitch(ctx, sw, domain.AgentSwitchStartingTarget, "source-generation", "target-generation"); err != nil || !ok {
+		t.Fatalf("persist recovery marker: ok=%v err=%v", ok, err)
+	}
+	marked, ok, err := s.GetActiveAgentSwitch(ctx, session.ID)
+	if err != nil || !ok || !marked.RequiresRecovery() || marked.State.Terminal() {
+		t.Fatalf("marked switch = %+v, ok=%v err=%v", marked, ok, err)
+	}
+
+	staleClear := marked
+	staleClear.ErrorCode = ""
+	staleClear.UpdatedAt = now.Add(5 * time.Second)
+	if changed, err := s.UpdateAgentSwitch(ctx, staleClear, domain.AgentSwitchStartingTarget, "source-generation", "target-generation"); err != nil || changed {
+		t.Fatalf("stale recovery-marker clear: changed=%v err=%v", changed, err)
+	}
+	invalidHandle := marked
+	invalidHandle.TargetRuntimeHandleID = "target-handle"
+	invalidHandle.UpdatedAt = now.Add(5 * time.Second)
+	if changed, err := s.UpdateAgentSwitch(ctx, invalidHandle, domain.AgentSwitchStartingTarget, "source-generation", "target-generation"); err == nil || changed {
+		t.Fatalf("recovery marker with handle: changed=%v err=%v", changed, err)
+	}
+	if changed, err := s.ActivateAgentSwitchTarget(ctx, domain.AgentSwitchTargetActivation{
+		SwitchID: marked.ID, SessionID: session.ID, SourceHarness: domain.HarnessClaudeCode,
+		SourceGenerationID: "source-generation", ExpectedSourceRuntimeLaunchID: "source-runtime",
+		TargetHarness: domain.HarnessCodex, TargetNativeSessionRef: target.ID,
+		TargetGenerationID: "target-generation", RuntimeHandleID: "target-handle",
+		ActivatedAt: now.Add(6 * time.Second),
+	}); err != nil || changed {
+		t.Fatalf("activate recovery-marked target: changed=%v err=%v", changed, err)
+	}
+	owner, ok, err := s.GetSession(ctx, session.ID)
+	if err != nil || !ok || owner.Harness != domain.HarnessClaudeCode || owner.Activity.State != domain.ActivityExited {
+		t.Fatalf("recovery activation changed source ownership: owner=%+v ok=%v err=%v", owner, ok, err)
 	}
 }
 
@@ -746,12 +845,18 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	finalHash := strings.Repeat("a", 64)
 	if finalized, finalizeErr := s.FinalizeAgentSwitchHandoff(
 		ctx, stored.ID, stored.SessionID, stored.SourceGenerationID, stored.TargetGenerationID,
-		finalPath, finalHash, false, now.Add(2750*time.Millisecond),
+		finalPath, finalHash, true, domain.AgentSwitchSourceTranscriptAvailable, now.Add(2700*time.Millisecond),
+	); finalizeErr != nil || finalized {
+		t.Fatalf("finalize nonexistent semantic handoff: finalized=%v err=%v", finalized, finalizeErr)
+	}
+	if finalized, finalizeErr := s.FinalizeAgentSwitchHandoff(
+		ctx, stored.ID, stored.SessionID, stored.SourceGenerationID, stored.TargetGenerationID,
+		finalPath, finalHash, false, domain.AgentSwitchSourceTranscriptAvailable, now.Add(2750*time.Millisecond),
 	); finalizeErr != nil || !finalized {
 		t.Fatalf("finalize handoff: finalized=%v err=%v", finalized, finalizeErr)
 	}
 	stored, ok, err = s.GetAgentSwitch(ctx, sw.ID)
-	if err != nil || !ok || stored.FinalHandoffPath != finalPath || stored.FinalHandoffHash != finalHash {
+	if err != nil || !ok || stored.FinalHandoffPath != finalPath || stored.FinalHandoffHash != finalHash || stored.SourceTranscriptStatus != domain.AgentSwitchSourceTranscriptAvailable || stored.SemanticHandoffIncluded {
 		t.Fatalf("finalized handoff facts = %+v, ok=%v err=%v", stored, ok, err)
 	}
 	stored.State = domain.AgentSwitchStartingTarget

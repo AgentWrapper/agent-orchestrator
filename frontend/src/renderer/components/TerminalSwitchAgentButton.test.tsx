@@ -47,6 +47,7 @@ function switchRecord(overrides: Partial<AgentSwitch> = {}): AgentSwitch {
 		fromHarness: "claude-code",
 		id: "switch-1",
 		requestedAt: "2026-06-10T00:00:00Z",
+		semanticHandoffIncluded: true,
 		sessionId: "sess-1",
 		state: "starting_target",
 		targetHarness: "codex",
@@ -163,6 +164,83 @@ describe("TerminalSwitchAgentButton", () => {
 		expect(within(screen.getByRole("dialog")).getByRole("status")).toHaveTextContent(
 			"Switching from Claude Code to CodexStarting target agent",
 		);
+	});
+
+	it("shows a static recovery warning when target startup is unconfirmed", async () => {
+		getMock.mockResolvedValue({
+			data: { switches: [switchRecord({ errorCode: "target_start_unconfirmed" })] },
+			error: undefined,
+			response: { status: 200 },
+		});
+		renderControl({
+			...worker,
+			activity: { state: "exited", lastActivityAt: "2026-06-10T00:00:02Z" },
+			status: "exited",
+		});
+
+		const button = await screen.findByRole("button", { name: "Agent switch needs recovery" });
+		expect(button).not.toHaveAttribute("aria-busy");
+		expect(button.querySelector(".lucide-triangle-alert")).toBeInTheDocument();
+		await userEvent.click(button);
+		expect(within(screen.getByRole("dialog")).getByRole("alert")).toHaveTextContent(
+			"AO could not confirm whether the target agent started. Terminal input remains locked to prevent two agents from owning the session.",
+		);
+	});
+
+	it.each([
+		["target_binary_missing", "Target agent is not installed"],
+		["target_agent_unauthorized", "Target agent is not authenticated"],
+		["source_stop_unconfirmed", "Source shutdown unconfirmed"],
+		["daemon_restart_post_stop", "Recovery failed after source shutdown"],
+		["daemon_restart_unrecoverable_target", "Target agent could not be recovered"],
+		["delivery_unconfirmed", "Delivery unconfirmed"],
+		["future_error_code", "Failed"],
+	] as const)("renders an actionable history label for %s", async (errorCode, label) => {
+		getMock.mockResolvedValue({
+			data: { switches: [switchRecord({ errorCode, state: "failed" })] },
+			error: undefined,
+			response: { status: 200 },
+		});
+		renderControl();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
+		expect(within(screen.getByTestId("agent-switch-history")).getByText(label)).toBeInTheDocument();
+	});
+
+	it("marks completed history when AO had to use fallback context", async () => {
+		const degradedSwitch = switchRecord({
+			agentHandoffStatus: "received",
+			semanticHandoffIncluded: false,
+			sourceTranscriptStatus: "unavailable",
+			state: "completed",
+		});
+		getMock.mockResolvedValue({
+			data: { switches: [degradedSwitch] },
+			error: undefined,
+			response: { status: 200 },
+		});
+		renderControl();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
+		expect(within(screen.getByTestId("agent-switch-history")).getByText("Fallback context used")).toBeInTheDocument();
+	});
+
+	it("does not mark completed history when the semantic handoff was included", async () => {
+		const completedSwitch = switchRecord({
+			agentHandoffStatus: "received",
+			semanticHandoffIncluded: true,
+			sourceTranscriptStatus: "unavailable",
+			state: "completed",
+		});
+		getMock.mockResolvedValue({
+			data: { switches: [completedSwitch] },
+			error: undefined,
+			response: { status: 200 },
+		});
+		renderControl();
+
+		await userEvent.click(await screen.findByRole("button", { name: "Switch agent" }));
+		expect(within(screen.getByTestId("agent-switch-history")).queryByText("Fallback context used")).not.toBeInTheDocument();
 	});
 
 	it("reopens the dialog when the daemon rejects the switch", async () => {

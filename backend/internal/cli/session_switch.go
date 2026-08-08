@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -60,16 +61,18 @@ type submitAgentHandoffRequest struct {
 // identifiers, handoff payloads, artifacts, and generation fencing remain
 // private to the daemon.
 type agentSwitchDTO struct {
-	ID                 string    `json:"id"`
-	SessionID          string    `json:"sessionId"`
-	FromHarness        string    `json:"fromHarness"`
-	TargetHarness      string    `json:"targetHarness"`
-	TargetStartMode    string    `json:"targetStartMode,omitempty"`
-	State              string    `json:"state"`
-	AgentHandoffStatus string    `json:"agentHandoffStatus"`
-	ErrorCode          string    `json:"errorCode,omitempty"`
-	RequestedAt        time.Time `json:"requestedAt"`
-	UpdatedAt          time.Time `json:"updatedAt"`
+	ID                      string    `json:"id"`
+	SessionID               string    `json:"sessionId"`
+	FromHarness             string    `json:"fromHarness"`
+	TargetHarness           string    `json:"targetHarness"`
+	TargetStartMode         string    `json:"targetStartMode,omitempty"`
+	State                   string    `json:"state"`
+	AgentHandoffStatus      string    `json:"agentHandoffStatus"`
+	SemanticHandoffIncluded bool      `json:"semanticHandoffIncluded"`
+	SourceTranscriptStatus  string    `json:"sourceTranscriptStatus,omitempty"`
+	ErrorCode               string    `json:"errorCode,omitempty"`
+	RequestedAt             time.Time `json:"requestedAt"`
+	UpdatedAt               time.Time `json:"updatedAt"`
 }
 
 type agentSwitchResponse struct {
@@ -309,6 +312,8 @@ func writeAgentSwitchDetails(cmd *cobra.Command, agentSwitch agentSwitchDTO) err
 		{"target", agentSwitch.TargetHarness},
 		{"state", agentSwitch.State},
 		{"handoff", agentSwitch.AgentHandoffStatus},
+		{"semantic handoff included", strconv.FormatBool(agentSwitch.SemanticHandoffIncluded)},
+		{"source transcript", agentSwitch.SourceTranscriptStatus},
 		{"target start", agentSwitch.TargetStartMode},
 		{"error code", agentSwitch.ErrorCode},
 	}

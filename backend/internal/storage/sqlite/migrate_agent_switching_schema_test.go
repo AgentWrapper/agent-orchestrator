@@ -51,6 +51,41 @@ WHERE id = 'switch-1';
 		t.Fatal("agent_switches accepted a received handoff with a noncanonical SHA-256")
 	}
 
+	var transcriptStatus string
+	if err := db.QueryRow(`
+SELECT source_transcript_status FROM agent_switches WHERE id = 'switch-1';
+`).Scan(&transcriptStatus); err != nil {
+		t.Fatalf("read source transcript status: %v", err)
+	}
+	if transcriptStatus != "not_attempted" {
+		t.Fatalf("source transcript status = %q, want not_attempted", transcriptStatus)
+	}
+	if _, err := db.Exec(`
+UPDATE agent_switches
+SET source_transcript_status = 'maybe', updated_at = ?
+WHERE id = 'switch-1';
+`, now.Add(time.Minute)); err == nil {
+		t.Fatal("agent_switches accepted an invalid source transcript status")
+	}
+	if _, err := db.Exec(`
+UPDATE agent_switches
+SET semantic_handoff_included = 2, updated_at = ?
+WHERE id = 'switch-1';
+`, now.Add(time.Minute)); err == nil {
+		t.Fatal("agent_switches accepted an invalid semantic handoff inclusion fact")
+	}
+	for _, column := range []string{"final_handoff_path", "final_handoff_hash", "source_transcript_status", "semantic_handoff_included"} {
+		var count int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('agent_switches') WHERE name = ?`, column,
+		).Scan(&count); err != nil {
+			t.Fatalf("read agent_switches.%s: %v", column, err)
+		}
+		if count != 1 {
+			t.Fatalf("agent_switches.%s count = %d, want 1", column, count)
+		}
+	}
+
 	var before int
 	if err := db.QueryRow(`
 SELECT count(*)

@@ -189,6 +189,12 @@ sql:
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
               type: "AgentHandoffStatus"
+          - column: "agent_switches.source_transcript_status"
+            go_type:
+              import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"
+              type: "AgentSwitchSourceTranscriptStatus"
+          - column: "agent_switches.semantic_handoff_included"
+            go_type: "bool"
           - column: "agent_switches.source_generation_id"
             go_type:
               import: "github.com/aoagents/agent-orchestrator/backend/internal/domain"

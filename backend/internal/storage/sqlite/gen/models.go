@@ -34,27 +34,29 @@ type AgentNativeSession struct {
 }
 
 type AgentSwitch struct {
-	ID                     domain.AgentSwitchID
-	SessionID              domain.SessionID
-	IdempotencyKey         string
-	RequestFingerprint     domain.AgentSwitchRequestFingerprint
-	FromHarness            domain.AgentHarness
-	TargetHarness          domain.AgentHarness
-	TargetNativeSessionRef *domain.AgentNativeSessionID
-	TargetStartMode        domain.AgentSwitchTargetStartMode
-	State                  domain.AgentSwitchState
-	AgentHandoffStatus     domain.AgentHandoffStatus
-	AgentHandoffPath       string
-	AgentHandoffHash       string
-	SourceGenerationID     domain.AgentGenerationID
-	TargetGenerationID     domain.AgentGenerationID
-	TargetRuntimeHandleID  string
-	TargetAcknowledgedAt   sql.NullTime
-	ErrorCode              string
-	RequestedAt            time.Time
-	UpdatedAt              time.Time
-	FinalHandoffPath       string
-	FinalHandoffHash       string
+	ID                      domain.AgentSwitchID
+	SessionID               domain.SessionID
+	IdempotencyKey          string
+	RequestFingerprint      domain.AgentSwitchRequestFingerprint
+	FromHarness             domain.AgentHarness
+	TargetHarness           domain.AgentHarness
+	TargetNativeSessionRef  *domain.AgentNativeSessionID
+	TargetStartMode         domain.AgentSwitchTargetStartMode
+	State                   domain.AgentSwitchState
+	AgentHandoffStatus      domain.AgentHandoffStatus
+	SourceTranscriptStatus  domain.AgentSwitchSourceTranscriptStatus
+	SemanticHandoffIncluded bool
+	AgentHandoffPath        string
+	AgentHandoffHash        string
+	SourceGenerationID      domain.AgentGenerationID
+	TargetGenerationID      domain.AgentGenerationID
+	TargetRuntimeHandleID   string
+	TargetAcknowledgedAt    sql.NullTime
+	ErrorCode               string
+	RequestedAt             time.Time
+	UpdatedAt               time.Time
+	FinalHandoffPath        string
+	FinalHandoffHash        string
 }
 
 type AppSetting struct {

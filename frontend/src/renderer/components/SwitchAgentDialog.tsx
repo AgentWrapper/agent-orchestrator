@@ -1,4 +1,4 @@
-import { ArrowLeftRight, LoaderCircle, X } from "lucide-react";
+import { ArrowLeftRight, FileWarning, LoaderCircle, TriangleAlert, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useId, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -11,10 +11,12 @@ import {
 } from "../hooks/useSwitchAgent";
 import {
 	findActiveAgentSwitch,
+	findRecoveryRequiredAgentSwitch,
 	isTerminalAgentSwitch,
 	type AgentSwitch,
 	useAgentSwitches,
 } from "../hooks/useAgentSwitches";
+import { agentSwitchErrorLabelKeys, type AgentSwitchErrorCode } from "../i18n/key-maps";
 import { AGENT_LABELS, AGENT_OPTIONS, agentLabel } from "../lib/agent-options";
 import type { WorkspaceSession } from "../types/workspace";
 import { AgentAvatar } from "./AgentAvatar";
@@ -53,6 +55,19 @@ const AGENT_SWITCH_STATE_KEYS = {
 	failed: "switchAgent.state.failed",
 } as const;
 
+function agentSwitchErrorLabelKey(errorCode: string | undefined) {
+	if (!errorCode) return "switchAgent.state.failed" as const;
+	return agentSwitchErrorLabelKeys[errorCode as AgentSwitchErrorCode] ?? "switchAgent.state.failed";
+}
+
+function usedFallbackContext(agentSwitch: AgentSwitch): boolean {
+	return (
+		agentSwitch.state === "completed" &&
+		!agentSwitch.semanticHandoffIncluded &&
+		agentSwitch.sourceTranscriptStatus === "unavailable"
+	);
+}
+
 type SwitchAgentDialogProps = {
 	open: boolean;
 	session: WorkspaceSession;
@@ -79,10 +94,14 @@ export function SwitchAgentDialog({
 	const switchesQuery = useAgentSwitches(session.id);
 	const switches = switchesQuery.data ?? [];
 	const activeSwitch = findActiveAgentSwitch(switches);
+	const recoverySwitch = findRecoveryRequiredAgentSwitch(switches);
 	const pendingInput = switchMutation.input;
-	const switchInProgress = Boolean(activeSwitch || (switchMutation.isPending && pendingInput));
+	const switchInProgress = Boolean(
+		!recoverySwitch && (activeSwitch || (switchMutation.isPending && pendingInput)),
+	);
 	const terminalHistory = switches.filter(isTerminalAgentSwitch).slice(0, 5);
 	const checkingStatus = switchesQuery.isPending;
+	const switchBlocked = Boolean(recoverySwitch || switchInProgress || checkingStatus);
 
 	const resetAttemptAfterEdit = () => {
 		if (!submittedRef.current && !switchMutation.error) return;
@@ -93,7 +112,7 @@ export function SwitchAgentDialog({
 	};
 
 	const submit = () => {
-		if (switchAgent.isPending || switchMutation.isPending || checkingStatus || activeSwitch) return;
+		if (switchAgent.isPending || switchMutation.isPending || checkingStatus || activeSwitch || recoverySwitch) return;
 		submittedRef.current = true;
 		switchAgent.mutate({ session, targetHarness, note, idempotencyKey });
 		onOpenChange(false);
@@ -102,8 +121,8 @@ export function SwitchAgentDialog({
 	const error = switchAgent.error instanceof Error ? switchAgent.error.message : switchMutation.error;
 	const historyError = switchesQuery.error instanceof Error ? switchesQuery.error.message : null;
 	const stateLabel = (agentSwitch: AgentSwitch) => {
-		if (agentSwitch.state === "failed" && agentSwitch.errorCode === "delivery_unconfirmed") {
-			return t("switchAgent.state.deliveryUnconfirmed");
+		if (agentSwitch.state === "failed") {
+			return t(agentSwitchErrorLabelKey(agentSwitch.errorCode));
 		}
 		const translationKey =
 			agentSwitch.state in AGENT_SWITCH_STATE_KEYS
@@ -140,7 +159,23 @@ export function SwitchAgentDialog({
 					</div>
 
 					<div className={settingsDialogBodyClass}>
-						{checkingStatus ? (
+						{recoverySwitch ? (
+							<div
+								aria-label={t("switchAgent.recovery.action")}
+								className="flex items-start gap-2 rounded-md border border-warning/35 bg-warning/5 px-3 py-2.5"
+								role="alert"
+							>
+								<TriangleAlert className="mt-0.5 size-icon-sm shrink-0 text-warning" aria-hidden="true" />
+								<div>
+									<div className="text-control font-medium text-foreground">
+										{t("switchAgent.recovery.title")}
+									</div>
+									<p className="mt-0.5 text-caption leading-4 text-settings-muted">
+										{t("switchAgent.recovery.description")}
+									</p>
+								</div>
+							</div>
+						) : checkingStatus ? (
 							<div className="inline-flex items-center gap-2 text-control text-settings-muted" role="status">
 								<LoaderCircle className="size-icon-sm animate-spin" aria-hidden="true" />
 								{t("switchAgent.checkingStatus")}
@@ -247,12 +282,20 @@ export function SwitchAgentDialog({
 								<ul className="max-h-36 divide-y divide-border/60 overflow-y-auto" data-testid="agent-switch-history">
 									{terminalHistory.map((entry) => (
 										<li className="flex items-center justify-between gap-3 py-1.5 first:pt-0 last:pb-0" key={entry.id}>
-											<span className="truncate text-caption text-foreground/80">
+											<div className="min-w-0">
+												<div className="truncate text-caption text-foreground/80">
 													{t("switchAgent.historyEntry", {
 														source: agentLabel(entry.fromHarness),
 														target: agentLabel(entry.targetHarness),
 													})}
-											</span>
+												</div>
+												{usedFallbackContext(entry) ? (
+													<span className="mt-0.5 inline-flex items-center gap-1 text-micro text-warning/90">
+														<FileWarning className="size-3" aria-hidden="true" />
+														{t("switchAgent.historyFallbackContext")}
+													</span>
+												) : null}
+											</div>
 											<span className="shrink-0 text-micro text-settings-muted">{stateLabel(entry)}</span>
 										</li>
 									))}
@@ -275,10 +318,10 @@ export function SwitchAgentDialog({
 					<div className={settingsDialogFooterClass}>
 						<DialogClose asChild>
 							<button className="settings-footer-button" type="button">
-								{switchInProgress || checkingStatus ? t("switchAgent.closeButton") : t("confirm.cancel")}
+								{switchBlocked ? t("switchAgent.closeButton") : t("confirm.cancel")}
 							</button>
 						</DialogClose>
-						{!switchInProgress && !checkingStatus ? (
+						{!switchBlocked ? (
 							<button
 								className="settings-footer-button settings-footer-button-primary"
 								disabled={switchAgent.isPending}

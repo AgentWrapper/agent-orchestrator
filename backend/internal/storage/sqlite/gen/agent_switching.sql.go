@@ -140,40 +140,49 @@ const finalizeAgentSwitchHandoff = `-- name: FinalizeAgentSwitchHandoff :execrow
 UPDATE agent_switches SET
     final_handoff_path = ?1,
     final_handoff_hash = ?2,
+    source_transcript_status = ?3,
+    semantic_handoff_included = ?4,
     agent_handoff_path = CASE
-        WHEN agent_handoff_status = 'received' AND CAST(?3 AS INTEGER) = 1 THEN ?1
+        WHEN agent_handoff_status = 'received' AND CAST(?4 AS INTEGER) = 1 THEN ?1
         ELSE agent_handoff_path
     END,
     agent_handoff_hash = CASE
-        WHEN agent_handoff_status = 'received' AND CAST(?3 AS INTEGER) = 1 THEN ?2
+        WHEN agent_handoff_status = 'received' AND CAST(?4 AS INTEGER) = 1 THEN ?2
         ELSE agent_handoff_hash
     END,
-    updated_at = ?4
-WHERE id = ?5
-  AND session_id = ?6
+    updated_at = ?5
+WHERE id = ?6
+  AND session_id = ?7
   AND state = 'source_stopped'
-  AND source_generation_id = ?7
-  AND target_generation_id = ?8
+  AND source_generation_id = ?8
+  AND target_generation_id = ?9
   AND target_generation_id <> ''
   AND final_handoff_path = ''
   AND final_handoff_hash = ''
+  AND source_transcript_status = 'not_attempted'
+  AND (
+      CAST(?4 AS INTEGER) = 0
+      OR agent_handoff_status = 'received'
+  )
 `
 
 type FinalizeAgentSwitchHandoffParams struct {
-	FinalHandoffPath   string
-	FinalHandoffHash   string
-	SemanticIncluded   int64
-	UpdatedAt          time.Time
-	ID                 domain.AgentSwitchID
-	SessionID          domain.SessionID
-	SourceGenerationID domain.AgentGenerationID
-	TargetGenerationID domain.AgentGenerationID
+	FinalHandoffPath       string
+	FinalHandoffHash       string
+	SourceTranscriptStatus domain.AgentSwitchSourceTranscriptStatus
+	SemanticIncluded       bool
+	UpdatedAt              time.Time
+	ID                     domain.AgentSwitchID
+	SessionID              domain.SessionID
+	SourceGenerationID     domain.AgentGenerationID
+	TargetGenerationID     domain.AgentGenerationID
 }
 
 func (q *Queries) FinalizeAgentSwitchHandoff(ctx context.Context, arg FinalizeAgentSwitchHandoffParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, finalizeAgentSwitchHandoff,
 		arg.FinalHandoffPath,
 		arg.FinalHandoffHash,
+		arg.SourceTranscriptStatus,
 		arg.SemanticIncluded,
 		arg.UpdatedAt,
 		arg.ID,
@@ -231,7 +240,8 @@ const getActiveAgentSwitch = `-- name: GetActiveAgentSwitch :one
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
@@ -255,6 +265,8 @@ func (q *Queries) GetActiveAgentSwitch(ctx context.Context, sessionID domain.Ses
 		&i.TargetStartMode,
 		&i.State,
 		&i.AgentHandoffStatus,
+		&i.SourceTranscriptStatus,
+		&i.SemanticHandoffIncluded,
 		&i.AgentHandoffPath,
 		&i.AgentHandoffHash,
 		&i.SourceGenerationID,
@@ -299,7 +311,8 @@ const getAgentSwitch = `-- name: GetAgentSwitch :one
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
@@ -322,6 +335,8 @@ func (q *Queries) GetAgentSwitch(ctx context.Context, id domain.AgentSwitchID) (
 		&i.TargetStartMode,
 		&i.State,
 		&i.AgentHandoffStatus,
+		&i.SourceTranscriptStatus,
+		&i.SemanticHandoffIncluded,
 		&i.AgentHandoffPath,
 		&i.AgentHandoffHash,
 		&i.SourceGenerationID,
@@ -341,7 +356,8 @@ const getAgentSwitchByIdempotencyKey = `-- name: GetAgentSwitchByIdempotencyKey 
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
@@ -369,6 +385,8 @@ func (q *Queries) GetAgentSwitchByIdempotencyKey(ctx context.Context, arg GetAge
 		&i.TargetStartMode,
 		&i.State,
 		&i.AgentHandoffStatus,
+		&i.SourceTranscriptStatus,
+		&i.SemanticHandoffIncluded,
 		&i.AgentHandoffPath,
 		&i.AgentHandoffHash,
 		&i.SourceGenerationID,
@@ -428,39 +446,42 @@ INSERT INTO agent_switches (
     id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
     final_handoff_path, final_handoff_hash
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT DO NOTHING
 `
 
 type InsertAgentSwitchParams struct {
-	ID                     domain.AgentSwitchID
-	SessionID              domain.SessionID
-	IdempotencyKey         string
-	RequestFingerprint     domain.AgentSwitchRequestFingerprint
-	FromHarness            domain.AgentHarness
-	TargetHarness          domain.AgentHarness
-	TargetNativeSessionRef *domain.AgentNativeSessionID
-	TargetStartMode        domain.AgentSwitchTargetStartMode
-	State                  domain.AgentSwitchState
-	AgentHandoffStatus     domain.AgentHandoffStatus
-	AgentHandoffPath       string
-	AgentHandoffHash       string
-	SourceGenerationID     domain.AgentGenerationID
-	TargetGenerationID     domain.AgentGenerationID
-	TargetRuntimeHandleID  string
-	TargetAcknowledgedAt   sql.NullTime
-	ErrorCode              string
-	RequestedAt            time.Time
-	UpdatedAt              time.Time
-	FinalHandoffPath       string
-	FinalHandoffHash       string
+	ID                      domain.AgentSwitchID
+	SessionID               domain.SessionID
+	IdempotencyKey          string
+	RequestFingerprint      domain.AgentSwitchRequestFingerprint
+	FromHarness             domain.AgentHarness
+	TargetHarness           domain.AgentHarness
+	TargetNativeSessionRef  *domain.AgentNativeSessionID
+	TargetStartMode         domain.AgentSwitchTargetStartMode
+	State                   domain.AgentSwitchState
+	AgentHandoffStatus      domain.AgentHandoffStatus
+	SourceTranscriptStatus  domain.AgentSwitchSourceTranscriptStatus
+	SemanticHandoffIncluded bool
+	AgentHandoffPath        string
+	AgentHandoffHash        string
+	SourceGenerationID      domain.AgentGenerationID
+	TargetGenerationID      domain.AgentGenerationID
+	TargetRuntimeHandleID   string
+	TargetAcknowledgedAt    sql.NullTime
+	ErrorCode               string
+	RequestedAt             time.Time
+	UpdatedAt               time.Time
+	FinalHandoffPath        string
+	FinalHandoffHash        string
 }
 
 func (q *Queries) InsertAgentSwitch(ctx context.Context, arg InsertAgentSwitchParams) (int64, error) {
@@ -475,6 +496,8 @@ func (q *Queries) InsertAgentSwitch(ctx context.Context, arg InsertAgentSwitchPa
 		arg.TargetStartMode,
 		arg.State,
 		arg.AgentHandoffStatus,
+		arg.SourceTranscriptStatus,
+		arg.SemanticHandoffIncluded,
 		arg.AgentHandoffPath,
 		arg.AgentHandoffHash,
 		arg.SourceGenerationID,
@@ -539,7 +562,8 @@ const listAgentSwitches = `-- name: ListAgentSwitches :many
 SELECT id, session_id, idempotency_key, request_fingerprint,
     from_harness, target_harness,
     target_native_session_ref, target_start_mode,
-    state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
+    state, agent_handoff_status, source_transcript_status, semantic_handoff_included,
+    agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
     requested_at, updated_at,
@@ -569,6 +593,8 @@ func (q *Queries) ListAgentSwitches(ctx context.Context, sessionID domain.Sessio
 			&i.TargetStartMode,
 			&i.State,
 			&i.AgentHandoffStatus,
+			&i.SourceTranscriptStatus,
+			&i.SemanticHandoffIncluded,
 			&i.AgentHandoffPath,
 			&i.AgentHandoffHash,
 			&i.SourceGenerationID,
@@ -673,6 +699,7 @@ WHERE id = ?2
   AND source_generation_id = ?6
   AND target_generation_id = ?7
   AND target_native_session_ref = ?8
+  AND error_code = ''
   AND (
       target_runtime_handle_id = ''
       OR target_runtime_handle_id = ?9
@@ -859,6 +886,7 @@ WHERE id = ?8
   AND state = ?10
   AND source_generation_id = ?11
   AND target_generation_id = ?12
+  AND (error_code = '' OR error_code = ?6)
   AND (
       target_runtime_handle_id = ''
       OR target_runtime_handle_id = ?5
