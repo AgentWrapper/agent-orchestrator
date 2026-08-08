@@ -15,6 +15,7 @@ export type GitRepoScanResult = {
 	hasRemote: boolean;
 	status: "ok" | "error";
 	reason?: string;
+	warning?: string;
 };
 
 export type ImportFolderScanResult = {
@@ -140,8 +141,8 @@ async function scanGitRepo(
 				branch: "HEAD",
 				remote: "",
 				hasRemote: false,
-				status: "error",
-				reason: "Linked worktree children cannot be imported.",
+				status: "ok",
+				warning: "Linked worktree — excluded from import.",
 			};
 		}
 	} catch {
@@ -173,7 +174,6 @@ async function scanGitRepo(
 	const validationReason = scanRepoValidationReason(
 		name,
 		branchResult.status === "fulfilled" && branchResult.value ? branchResult.value : "HEAD",
-		remoteResult.status === "fulfilled" && remoteResult.value.length > 0,
 		bareResult.status === "fulfilled" && bareResult.value === "true",
 		headResult.status === "fulfilled",
 	);
@@ -192,7 +192,6 @@ async function scanGitRepo(
 function scanRepoValidationReason(
 	name: string,
 	branch: string,
-	hasRemote: boolean,
 	isBare: boolean,
 	hasHead: boolean,
 ): string | undefined {
@@ -200,7 +199,6 @@ function scanRepoValidationReason(
 	if (isBare) return "Bare repositories cannot be imported.";
 	if (!hasHead) return "Repository must have at least one commit.";
 	if (branch === "HEAD") return "Repository must have a checked-out branch.";
-	if (!hasRemote) return "Origin remote is required.";
 	return undefined;
 }
 
