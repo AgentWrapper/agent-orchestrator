@@ -17,6 +17,7 @@ import type { DaemonStatus } from "./shared/daemon-status";
 import type { TelemetryBootstrap } from "./shared/telemetry";
 import type { MigrationState } from "./main/app-state";
 import type { UpdateSettings, UpdateStatus } from "./main/update-settings";
+import type { CloudSession } from "./main/cloud-auth";
 import type { UpdateOutcome } from "./shared/update-telemetry";
 import type { UiSettings } from "./main/ui-settings";
 import type { UpdateCheckOptions } from "./main/auto-updater";
@@ -316,6 +317,18 @@ const api = {
 	featureBuilds: {
 		list: () => ipcRenderer.invoke("featureBuilds:list") as Promise<FeatureBuild[]>,
 		getActive: () => ipcRenderer.invoke("featureBuilds:getActive") as Promise<{ pr: number } | null>,
+	},
+	cloud: {
+		getSession: () => ipcRenderer.invoke("cloud:getSession") as Promise<CloudSession | null>,
+		signIn: () => ipcRenderer.invoke("cloud:signIn") as Promise<void>,
+		signOut: () => ipcRenderer.invoke("cloud:signOut") as Promise<void>,
+		onSessionChanged: (listener: (session: CloudSession | null) => void) => {
+			const wrapped = (_event: Electron.IpcRendererEvent, session: CloudSession | null) => listener(session);
+			ipcRenderer.on("cloud:sessionChanged", wrapped);
+			return () => {
+				ipcRenderer.off("cloud:sessionChanged", wrapped);
+			};
+		},
 	},
 };
 

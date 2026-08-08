@@ -1025,5 +1025,10 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "Aufgabe beschreiben (optional)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"shell.signIn": "Anmelden",
+	"shell.signInToAOCloud": "Bei AO Cloud anmelden",
+	"shell.signedInAs": "Angemeldet als {{email}}",
+	"shell.signOut": "Abmelden",
+	"shell.signOutWithEmail": "{{email}} · Abmelden"
 }

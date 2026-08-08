@@ -1025,5 +1025,10 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "작업 설명(선택 사항)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"shell.signIn": "로그인",
+	"shell.signInToAOCloud": "AO Cloud에 로그인",
+	"shell.signedInAs": "{{email}}(으)로 로그인됨",
+	"shell.signOut": "로그아웃",
+	"shell.signOutWithEmail": "{{email}} · 로그아웃"
 }

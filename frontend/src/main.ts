@@ -61,6 +61,11 @@ import {
 } from "./shared/daemon-attach";
 import { shouldReplacePortHolder } from "./shared/daemon-takeover";
 import { buildDaemonEnv, resolveShellEnv, type ShellRunner } from "./shared/shell-env";
+import {
+	handleCloudDeepLink,
+	installCloudIPC,
+	registerCloudProtocol,
+} from "./main/cloud-auth";
 import { DEFAULT_POSTHOG_HOST, DEFAULT_POSTHOG_PROJECT_KEY } from "./shared/posthog-config";
 import { buildTelemetryBootstrap } from "./shared/telemetry";
 import { createBrowserViewHost, type BrowserViewHost } from "./main/browser-view-host";
@@ -176,6 +181,13 @@ protocol.registerSchemesAsPrivileged([
 		privileges: { standard: true, secure: true, supportFetchAPI: true },
 	},
 ]);
+
+// Register ao-app:// as the deep-link protocol for WorkOS auth callbacks.
+// Must run before app.whenReady().
+registerCloudProtocol();
+if (!app.requestSingleInstanceLock()) {
+	app.exit(0);
+}
 
 // Maps app://renderer/<path> to the built renderer in dist/. Paths without a
 // file extension are client-side routes and fall back to index.html (SPA).
@@ -1572,7 +1584,61 @@ ipcMain.on(TRAY_SET_ATTENTION_STATE_CHANNEL, (event, state) => trayLifecycle.han
 
 ipcMain.on(TRAY_RENDERER_READY_CHANNEL, (event) => trayLifecycle.handleRendererReady(event));
 
-// Auto-update only runs for packaged builds reading the GitHub Releases feed
+// Cloud auth IPC — cloud:getSession, cloud:signIn, cloud:signOut.
+// Data dir resolves to ~/.ao (prod) or ~/.ao/dev (dev) matching daemon conventions.
+function cloudDataDir(): string {
+	return isDev
+		? path.join(os.homedir(), ".ao", DEV_STATE_SUBDIR)
+		: path.join(os.homedir(), ".ao");
+}
+
+function notifyRenderersOfCloudSession(session: import("./main/cloud-auth").CloudSession | null): void {
+	for (const wc of webContents.getAllWebContents()) {
+		wc.send("cloud:sessionChanged", session);
+	}
+}
+
+installCloudIPC(cloudDataDir, notifyRenderersOfCloudSession);
+
+function focusCloudWindow(): void {
+	const window = BrowserWindow.getAllWindows()[0];
+	if (!window) return;
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
+}
+
+async function handleCloudDeepLinkAndFocus(url: string): Promise<void> {
+	try {
+		const session = await handleCloudDeepLink(url, cloudDataDir());
+		if (!session) return;
+		notifyRenderersOfCloudSession(session);
+		focusCloudWindow();
+	} catch (error) {
+		console.error("WorkOS callback failed:", error);
+	}
+}
+
+// macOS: the OS sends the ao-app:// URL via the open-url event when the app is
+// already running. If the app is not running, the URL is passed in process.argv
+// on first launch (handled in app.whenReady below).
+app.on("open-url", (event, url) => {
+	event.preventDefault();
+	void handleCloudDeepLinkAndFocus(url);
+});
+
+app.on("second-instance", (_event, argv) => {
+	const deepLink = argv.find((value) => value.startsWith("ao-app://"));
+	if (deepLink) {
+		void handleCloudDeepLinkAndFocus(deepLink);
+		return;
+	}
+	const window = BrowserWindow.getAllWindows()[0];
+	if (!window) return;
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
+});
 // (see forge.config.ts publishers). In dev there is no feed, so it is skipped.
 // A live updater additionally requires a signed + notarized build — see
 // frontend/docs/desktop-release.md.
@@ -1682,6 +1748,13 @@ app.whenReady().then(async () => {
 	createWindow();
 	void startDaemon();
 	initAutoUpdates();
+
+	// Windows/Linux: on first launch, the deep-link URL may arrive as a
+	// process.argv entry (e.g. ao-app://callback?token=...).
+	const deepLinkArg = process.argv.find((a) => a.startsWith("ao-app://"));
+	if (deepLinkArg) {
+		void handleCloudDeepLinkAndFocus(deepLinkArg);
+	}
 
 	app.on("activate", () => {
 		if (BrowserWindow.getAllWindows().length === 0) {

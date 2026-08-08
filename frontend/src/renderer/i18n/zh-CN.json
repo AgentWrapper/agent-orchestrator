@@ -1007,5 +1007,10 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "描述任务（可选）…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"shell.signIn": "登录",
+	"shell.signInToAOCloud": "登录 AO Cloud",
+	"shell.signedInAs": "已登录为 {{email}}",
+	"shell.signOut": "退出登录",
+	"shell.signOutWithEmail": "{{email}} · 退出登录"
 }

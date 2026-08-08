@@ -33,6 +33,12 @@ const config: ForgeConfig = {
 		appBundleId: "dev.agent-orchestrator.desktop",
 		name: "Agent Orchestrator",
 		executableName: EXECUTABLE_NAME,
+		protocols: [
+			{
+				name: "Agent Orchestrator authentication callback",
+				schemes: ["ao-app"],
+			},
+		],
 		appCategoryType: "public.app-category.developer-tools",
 		// App icon. electron-packager appends the per-platform extension
 		// (.icns on macOS, .ico on Windows); Linux menu icons come from the

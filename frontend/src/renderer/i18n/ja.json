@@ -1025,5 +1025,10 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "タスクを説明（任意）…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"shell.signIn": "サインイン",
+	"shell.signInToAOCloud": "AO Cloud にサインイン",
+	"shell.signedInAs": "{{email}} としてサインイン中",
+	"shell.signOut": "サインアウト",
+	"shell.signOutWithEmail": "{{email}} · サインアウト"
 }

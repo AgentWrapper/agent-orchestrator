@@ -1,10 +1,15 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
 	Folder,
 	FolderOpen,
+	LogIn,
+	LogOut,
 	MoreVertical,
 	Pencil,
 	Pin,
@@ -14,6 +19,7 @@ import {
 	Search,
 	Settings,
 	Trash2,
+	User,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -74,6 +80,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
 import { isMacPlatform } from "../lib/platform";
+import { useCloudSession } from "../lib/cloud-session";
 
 // macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
@@ -412,6 +419,7 @@ export function Sidebar({
 					className="sidebar-expanded-chrome relative flex w-full min-w-46.5 flex-col gap-0.5 transition-[opacity,transform] duration-150 ease-out group-data-[collapsible=icon]:pointer-events-none group-data-[collapsible=icon]:-translate-x-2 group-data-[collapsible=icon]:opacity-0"
 				>
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
+					<CloudAccountRow tabIndex={isCollapsed ? -1 : 0} />
 					<button
 						aria-label={t("shell.settings")}
 						className={cn(
@@ -431,6 +439,7 @@ export function Sidebar({
 					className="pointer-events-none absolute inset-x-1.5 bottom-0 top-auto flex min-h-row-md flex-col items-center justify-end gap-1 opacity-0 transition-opacity duration-150 ease-out group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:opacity-100"
 				>
 					<RestartToUpdateRailButton status={updateStatus} tabIndex={isCollapsed ? 0 : -1} />
+					<CloudAccountRailButton tabIndex={isCollapsed ? 0 : -1} />
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
@@ -999,6 +1008,115 @@ function SessionRow({
 				</button>
 			</div>
 		</SidebarMenuSubItem>
+	);
+}
+
+// CloudAccountRow: shown above the Settings button. When unauthenticated it
+// starts the native WorkOS PKCE flow. When authenticated it shows the user's
+// email with a sign-out action in a dropdown.
+function CloudAccountRow({ tabIndex }: { tabIndex: number }) {
+	const { t } = useTranslation();
+	const { session, status, signIn, signOut } = useCloudSession();
+	if (status === "loading") return null;
+
+	if (status === "unauthenticated") {
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={t("shell.signInToAOCloud")}
+						className={cn(
+							NAV_ROW_CLASS,
+							"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+						)}
+						onClick={() => signIn()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<User aria-hidden="true" />
+						<span className="tracking-tight">{t("shell.signIn")}</span>
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right" hidden={tabIndex !== -1}>
+					{t("shell.signInToAOCloud")}
+				</TooltipContent>
+			</Tooltip>
+		);
+	}
+
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger asChild>
+				<button
+					aria-label={t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" })}
+					className={cn(
+						NAV_ROW_CLASS,
+						"flex h-9 w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+					)}
+					tabIndex={tabIndex}
+					type="button"
+				>
+					<User aria-hidden="true" />
+					<span className="min-w-0 flex-1 truncate tracking-tight">
+						{session?.user.email ?? "AO Cloud"}
+					</span>
+				</button>
+			</DropdownMenuTrigger>
+			<DropdownMenuContent side="top" align="start" className="min-w-44">
+				<DropdownMenuItem
+					className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+					onSelect={() => void signOut()}
+				>
+					<LogOut aria-hidden="true" />
+					{t("shell.signOut")}
+				</DropdownMenuItem>
+			</DropdownMenuContent>
+		</DropdownMenu>
+	);
+}
+
+// Icon-rail variant for collapsed sidebar.
+function CloudAccountRailButton({ tabIndex }: { tabIndex: number }) {
+	const { t } = useTranslation();
+	const { session, status, signIn, signOut } = useCloudSession();
+	if (status === "loading") return null;
+
+	if (status === "unauthenticated") {
+		return (
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-label={t("shell.signInToAOCloud")}
+						className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+						onClick={() => signIn()}
+						tabIndex={tabIndex}
+						type="button"
+					>
+						<LogIn aria-hidden="true" />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent side="right">{t("shell.signInToAOCloud")}</TooltipContent>
+			</Tooltip>
+		);
+	}
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					aria-label={t("shell.signedInAs", { email: session?.user.email ?? "AO Cloud" })}
+					className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
+					onClick={() => void signOut()}
+					tabIndex={tabIndex}
+					type="button"
+				>
+					<User aria-hidden="true" />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side="right">
+				{t("shell.signOutWithEmail", { email: session?.user.email ?? "AO Cloud" })}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

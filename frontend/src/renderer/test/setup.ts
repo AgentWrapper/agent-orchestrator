@@ -216,5 +216,11 @@ if (typeof window !== "undefined") {
 			list: async () => [],
 			getActive: async () => null,
 		},
+		cloud: {
+			getSession: async () => null,
+			signIn: async () => undefined,
+			signOut: async () => undefined,
+			onSessionChanged: () => () => undefined,
+		},
 	};
 } // end if (typeof window !== "undefined")
