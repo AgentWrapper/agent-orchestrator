@@ -165,11 +165,16 @@ type AgentModelDiscoveryRequest struct {
 	Env        map[string]string
 }
 
-// AgentModelDiscoverer isolates CLI execution and executable fingerprinting
-// from the core agent service.
+// AgentModelDiscoverer isolates CLI execution and discovery-input
+// fingerprinting from the core agent service.
 type AgentModelDiscoverer interface {
 	Discover(ctx context.Context, request AgentModelDiscoveryRequest) (AgentModelCatalog, error)
-	BinaryVersion(ctx context.Context, binary string) string
+	// CatalogFingerprint summarizes every input a discovery run would read: the
+	// resolved executable plus any configuration the adapter consults. The
+	// service compares it against the cached catalog's fingerprint, so it must
+	// change whenever the catalog those inputs produce would change, and it must
+	// stay cheap enough to compute before deciding to skip discovery.
+	CatalogFingerprint(ctx context.Context, request AgentModelDiscoveryRequest) string
 	Manual(agentID string) AgentModelCatalog
 }
 
@@ -211,6 +216,15 @@ type TerminalActivityDetector interface {
 // hook until the human submits it.
 type EmptyComposerDetector interface {
 	ComposerIsEmpty(output string) bool
+}
+
+// ContinuousTerminalActivityDetector is implemented by adapters whose TUI is
+// the only authoritative source for some activity transitions. These adapters
+// are sampled on every observer tick, including while idle or waiting for
+// input, so terminal state can move in either direction.
+type ContinuousTerminalActivityDetector interface {
+	TerminalActivityDetector
+	ContinuouslyDetectTerminalActivity() bool
 }
 
 // PromptReadinessHints describes when an after-start prompt should be sent.
@@ -367,11 +381,13 @@ type WorkspaceHookConfig struct {
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
-	Config      AgentConfig
-	DataDir     string
-	Kind        domain.SessionKind
-	Permissions PermissionMode
-	Session     SessionRef
+	Config          AgentConfig
+	DataDir         string
+	Kind            domain.SessionKind
+	Permissions     PermissionMode
+	AllowedTools    []string
+	DisallowedTools []string
+	Session         SessionRef
 	// Prompt is an optional new user turn to submit while resuming the native
 	// conversation. Adapters whose CLI accepts a resume-time positional prompt
 	// should append it to the restore command; after-start adapters leave it

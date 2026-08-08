@@ -1172,9 +1172,18 @@ func (m *Manager) capturePRFacts(ctx context.Context, id domain.SessionID) []swi
 	return out
 }
 
+func replaceAgentSwitchWaitContext(parent context.Context, currentCancel context.CancelFunc, timeout time.Duration) (context.Context, context.CancelFunc) {
+	currentCancel()
+	return context.WithTimeout(parent, timeout)
+}
+
 func (m *Manager) collectOptionalAgentHandoff(ctx context.Context, store ports.AgentSwitchStore, rec domain.SessionRecord, agent ports.Agent, sw domain.AgentSwitch, candidatePath string) (domain.AgentSwitch, error) {
-	handoffCtx, cancelHandoff := context.WithTimeout(ctx, m.handoffWait)
-	defer func() { cancelHandoff() }()
+	handoffCtx, cancelCurrentHandoff := context.WithTimeout(ctx, m.handoffWait)
+	defer func() {
+		if cancelCurrentHandoff != nil {
+			cancelCurrentHandoff()
+		}
+	}()
 	steersActiveTurn := func(harness domain.AgentHarness) bool {
 		if harness != rec.Harness {
 			return false
@@ -1355,9 +1364,8 @@ func (m *Manager) collectOptionalAgentHandoff(ctx context.Context, store ports.A
 					}
 
 					m.allowAgentSwitchDecisionInput(rec.ID, sw.ID)
-					cancelHandoff()
 					permissionStartedAt = time.Now()
-					handoffCtx, cancelHandoff = context.WithTimeout(ctx, permissionRemaining)
+					handoffCtx, cancelCurrentHandoff = replaceAgentSwitchWaitContext(ctx, cancelCurrentHandoff, permissionRemaining)
 					permissionPending = true
 				}
 			} else if permissionPending {
@@ -1368,12 +1376,11 @@ func (m *Manager) collectOptionalAgentHandoff(ctx context.Context, store ports.A
 				if permissionRemaining < 0 {
 					permissionRemaining = 0
 				}
-				cancelHandoff()
 				if handoffRemaining <= 0 {
 					settled, settleErr := m.settleOptionalAgentHandoff(ctx, store, sw, domain.AgentHandoffTimedOut)
 					return settled, settleErr
 				}
-				handoffCtx, cancelHandoff = context.WithTimeout(ctx, handoffRemaining)
+				handoffCtx, cancelCurrentHandoff = replaceAgentSwitchWaitContext(ctx, cancelCurrentHandoff, handoffRemaining)
 				permissionPending = false
 				permissionStartedAt = time.Time{}
 			} else if closeErr := m.closeAgentSwitchDecisionInput(handoffCtx, rec.ID, sw.ID); closeErr != nil {

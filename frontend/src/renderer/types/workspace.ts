@@ -1,5 +1,7 @@
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
 
+import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
+
 export type SessionStatus =
 	| "working"
 	| "pr_open"
@@ -131,7 +133,7 @@ export type WorkspaceSession = {
 	issueId?: string;
 	provider: AgentProvider;
 	/** Reviewer selected for this session; absent means use the project default. */
-	reviewerHarness?: "claude-code" | "codex" | "opencode";
+	reviewerHarness?: ReviewerHarnessId;
 	kind?: SessionKind;
 	/**
 	 * Which controller is currently committed for this session. The session

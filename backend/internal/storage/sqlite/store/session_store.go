@@ -277,7 +277,7 @@ func (s *Store) GetSession(ctx context.Context, id domain.SessionID) (domain.Ses
 	if err != nil {
 		return domain.SessionRecord{}, false, fmt.Errorf("get session %s: %w", id, err)
 	}
-	return rowToRecord(row), true, nil
+	return getSessionRowToRecord(row), true, nil
 }
 
 // ListSessions returns every session in a project, ordered by num.
@@ -286,7 +286,7 @@ func (s *Store) ListSessions(ctx context.Context, project domain.ProjectID) ([]d
 	if err != nil {
 		return nil, fmt.Errorf("list sessions for %s: %w", project, err)
 	}
-	return mapSessionRows(rows), nil
+	return mapListSessionsByProjectRows(rows), nil
 }
 
 // ListAllSessions returns every session across all projects.
@@ -295,13 +295,21 @@ func (s *Store) ListAllSessions(ctx context.Context) ([]domain.SessionRecord, er
 	if err != nil {
 		return nil, fmt.Errorf("list all sessions: %w", err)
 	}
-	return mapSessionRows(rows), nil
+	return mapListAllSessionsRows(rows), nil
 }
 
-func mapSessionRows(rows []gen.Session) []domain.SessionRecord {
+func mapListSessionsByProjectRows(rows []gen.Session) []domain.SessionRecord {
 	out := make([]domain.SessionRecord, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, rowToRecord(r))
+		out = append(out, listSessionsByProjectRowToRecord(r))
+	}
+	return out
+}
+
+func mapListAllSessionsRows(rows []gen.Session) []domain.SessionRecord {
+	out := make([]domain.SessionRecord, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, listAllSessionsRowToRecord(r))
 	}
 	return out
 }
@@ -348,6 +356,18 @@ func rowToRecord(row gen.Session) domain.SessionRecord {
 		CreatedAt:         row.CreatedAt,
 		UpdatedAt:         row.UpdatedAt,
 	}
+}
+
+func getSessionRowToRecord(row gen.Session) domain.SessionRecord {
+	return rowToRecord(row)
+}
+
+func listSessionsByProjectRowToRecord(row gen.Session) domain.SessionRecord {
+	return rowToRecord(row)
+}
+
+func listAllSessionsRowToRecord(row gen.Session) domain.SessionRecord {
+	return rowToRecord(row)
 }
 
 func recordToInsert(rec domain.SessionRecord, num int64) gen.InsertSessionParams {

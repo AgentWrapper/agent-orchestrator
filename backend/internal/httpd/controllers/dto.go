@@ -177,18 +177,18 @@ type SpawnSessionRequest struct {
 	// `ao spawn --name` always sets it; other clients (e.g. the desktop new-task
 	// dialog) may omit it and fall back to the session id in the read model.
 	DisplayName string `json:"displayName,omitempty" maxLength:"20"`
-	// Attachments are images pasted or dropped into the task brief. Each carries
+	// Attachments are files pasted or dropped into the task brief. Each carries
 	// its bytes as standard base64 (no data: URL prefix). The daemon writes them
 	// into the session worktree and appends path references to the prompt.
 	Attachments []SpawnAttachmentInput `json:"attachments,omitempty"`
 }
 
-// SpawnAttachmentInput is one image attached to a spawn request.
+// SpawnAttachmentInput is one file attached to a spawn request.
 type SpawnAttachmentInput struct {
 	// MimeType is the browser-reported content type (e.g. "image/png"). Used to
-	// derive the on-disk file extension; only image/* types are accepted.
+	// derive the on-disk file extension. Explicitly blocked types are rejected.
 	MimeType string `json:"mimeType,omitempty"`
-	// Data is the raw image bytes, standard base64-encoded, without any
+	// Data is the raw file bytes, standard base64-encoded, without any
 	// "data:...;base64," prefix.
 	Data string `json:"data"`
 }
@@ -254,15 +254,15 @@ type SubmitAgentHandoffRequest struct {
 	Handoff json.RawMessage `json:"handoff" description:"Structured, source-agent-authored handoff enrichment."`
 }
 
-// StageSessionAttachmentsRequest attaches images to a session that is already
+// StageSessionAttachmentsRequest attaches files to a session that is already
 // running, for a caller that will name the returned paths in its next message.
 type StageSessionAttachmentsRequest struct {
 	// Attachments each carry their bytes as standard base64 (no data: URL prefix).
-	// The same count, size, and raster-only rules as spawn apply.
+	// The same count, size, and blocked-type rules as spawn apply.
 	Attachments []SpawnAttachmentInput `json:"attachments"`
 }
 
-// StageSessionAttachmentsResponse is where the images were written.
+// StageSessionAttachmentsResponse is where the files were written.
 type StageSessionAttachmentsResponse struct {
 	SessionID domain.SessionID `json:"sessionId"`
 	// Paths are worktree-relative and forward-slashed, in the order submitted. They
@@ -327,7 +327,7 @@ type RenameSessionRequest struct {
 // SetSessionReviewerRequest sets the durable reviewer preference for a session.
 // Empty clears the preference and falls back to project configuration.
 type SetSessionReviewerRequest struct {
-	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 }
 
 // SetSessionPreviewRequest is the body of POST /api/v1/sessions/{sessionId}/preview.
@@ -524,9 +524,6 @@ type SendSessionMessageResponse struct {
 
 // DelegateTaskRequest is the body of POST /api/v1/orchestrators/delegate.
 // An omitted agent tells the orchestrator to use the project's worker default.
-// Attachments are intentionally absent from this MVP contract: delegation uses
-// the string-only guarded messenger and cannot safely hand image bytes to a
-// worker that does not exist yet without a durable attachment store.
 type DelegateTaskRequest struct {
 	ProjectID domain.ProjectID    `json:"projectId"`
 	Brief     string              `json:"brief" maxLength:"4096"`
@@ -535,6 +532,11 @@ type DelegateTaskRequest struct {
 	// Mode is omitted for the daemon-owned default. The UI sends tui only when
 	// the user explicitly accepts the fallback after Chat preflight fails.
 	Mode domain.SessionMode `json:"mode,omitempty" enum:"tui,chat"`
+	// Attachments are files pasted, dropped, or picked into the delegated task
+	// brief. Each carries bytes as standard base64 (no data: URL prefix). The
+	// daemon writes them into the spawned worker worktree and appends path
+	// references to the worker prompt.
+	Attachments []SpawnAttachmentInput `json:"attachments,omitempty"`
 }
 
 // DelegateTaskResponse confirms which worker was spawned and, when available,
@@ -784,9 +786,31 @@ type SetActivityResponse struct {
 	State     string           `json:"state"`
 }
 
+// SetReviewActivityRequest is the body of POST /api/v1/reviews/{reviewSessionID}/activity.
+// Reviewer activity does not currently feed worker/Kanban session state.
+// AgentSessionID is the native reviewer conversation id used for reviewer
+// restore.
+type SetReviewActivityRequest struct {
+	State          string `json:"state,omitempty" enum:"active,idle,waiting_input,blocked,exited" description:"Reviewer activity state reported by a hook. Accepted for forward compatibility, not used for session display state."`
+	Event          string `json:"event,omitempty" description:"AO hook sub-command that produced this signal."`
+	AgentSessionID string `json:"agentSessionId,omitempty" description:"Native reviewer session identifier used to resume its transcript."`
+	LaunchID       string `json:"launchId,omitempty" description:"AO process generation that produced the signal."`
+}
+
+// SetReviewActivityResponse is the body of POST /api/v1/reviews/{reviewSessionID}/activity.
+type SetReviewActivityResponse struct {
+	OK              bool   `json:"ok"`
+	ReviewSessionID string `json:"reviewSessionId"`
+}
+
 // OrchestratorIDParam is the {id} path parameter for orchestrator routes.
 type OrchestratorIDParam struct {
 	ID string `path:"id" description:"Orchestrator session identifier, e.g. project-orchestrator."`
+}
+
+// ReviewSessionIDParam is the {reviewSessionID} path parameter for reviewer-owned routes.
+type ReviewSessionIDParam struct {
+	ID string `path:"reviewSessionID" description:"Reviewer session identifier, currently the per-harness review row id."`
 }
 
 // SpawnOrchestratorRequest is the body of POST /api/v1/orchestrators.
@@ -1637,5 +1661,5 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 // it for this pass only, without editing project config, so one session's choice
 // cannot change what another session in the project runs.
 type TriggerReviewRequest struct {
-	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,opencode"`
+	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 }

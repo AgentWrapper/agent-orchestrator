@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
 		selectionListeners: Set<() => void>;
 		_core: {
 			element: { classList: { add: ReturnType<typeof vi.fn>; remove: ReturnType<typeof vi.fn> } };
+			viewport: { scrollBarWidth: number };
 			_selectionService: {
 				enable: ReturnType<typeof vi.fn>;
 				shouldForceSelection: (event: MouseEvent) => boolean;
@@ -52,6 +53,7 @@ vi.mock("@xterm/xterm", () => ({
 		selectionListeners = new Set<() => void>();
 		_core = {
 			element: { classList: { add: vi.fn(), remove: vi.fn() } },
+			viewport: { scrollBarWidth: 15 },
 			_selectionService: {
 				enable: vi.fn(),
 				shouldForceSelection: () => false,
@@ -193,6 +195,12 @@ describe("XtermTerminal", () => {
 		rerender(<XtermTerminal focusRequested theme="dark" />);
 
 		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
+	it("does not reserve width for the hidden terminal scrollbar", () => {
+		render(<XtermTerminal theme="dark" />);
+
+		expect(state.lastTerminal!._core.viewport.scrollBarWidth).toBe(0);
 	});
 
 	it("copies selected terminal text on the terminal copy shortcut", () => {

@@ -37,7 +37,7 @@ func pngBody(count int) string {
 
 func TestStageAttachmentsReturnsTheWorktreePaths(t *testing.T) {
 	svc := newFakeSessionService()
-	svc.stagedPaths = []string{".ao/attachments/image-ab12cd34ef.png"}
+	svc.stagedPaths = []string{".ao/attachments/attachment-ab12cd34ef.png"}
 	srv := stagingServer(t, svc)
 
 	body, status, _ := doRequest(t, srv, http.MethodPost,
@@ -45,7 +45,7 @@ func TestStageAttachmentsReturnsTheWorktreePaths(t *testing.T) {
 	if status != http.StatusCreated {
 		t.Fatalf("status = %d, want 201 (%s)", status, body)
 	}
-	if !containsAll(body, `"sessionId":"ao-1"`, `".ao/attachments/image-ab12cd34ef.png"`) {
+	if !containsAll(body, `"sessionId":"ao-1"`, `".ao/attachments/attachment-ab12cd34ef.png"`) {
 		t.Fatalf("body = %s", body)
 	}
 	if len(svc.staged) != 1 {

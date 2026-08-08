@@ -515,7 +515,7 @@ func newSwitchTestManager(t *testing.T, runtime runtimeController) (*Manager, *s
 	target := &switchTestAgent{configDir: filepath.Join(root, "codex"), available: map[string]ports.NativeSessionAvailability{}}
 	messenger := &fakeMessenger{}
 	lcm := &fakeLCM{store: store.fakeStore}
-	store.fakeStore.agentSwitchStore = store
+	store.agentSwitchStore = store
 	launches := []string{"target-generation"}
 	manager := New(Deps{
 		Runtime:   runtime,

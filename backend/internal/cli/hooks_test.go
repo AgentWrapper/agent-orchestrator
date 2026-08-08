@@ -93,6 +93,109 @@ func TestHooks_ReportsUsageTranscriptMetadata(t *testing.T) {
 	}
 }
 
+func capturedAgentSessionID(t *testing.T, capture *activityCapture) string {
+	t.Helper()
+	var req struct {
+		AgentSessionID string `json:"agentSessionId"`
+	}
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	return req.AgentSessionID
+}
+
+func TestHooks_ReviewerRoutesToReviewActivity(t *testing.T) {
+	t.Setenv("AO_REVIEW_SESSION_ID", "review-7")
+	t.Setenv("AO_REVIEW_WORKER_SESSION_ID", "worker-7")
+	t.Setenv("AO_REVIEW_HARNESS", "codex")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true,"reviewSessionId":"review-7"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"session_id":"codex-native-1"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "session-start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.path != "/api/v1/reviews/review-7/activity" {
+		t.Fatalf("path = %q, want /api/v1/reviews/review-7/activity", capture.path)
+	}
+	if got := capturedAgentSessionID(t, capture); got != "codex-native-1" {
+		t.Fatalf("agentSessionId = %q, want codex-native-1", got)
+	}
+}
+
+func TestHooks_ReviewerActivityOmitsToolCorrelationFields(t *testing.T) {
+	t.Setenv("AO_REVIEW_SESSION_ID", "review-7")
+	t.Setenv("AO_REVIEW_WORKER_SESSION_ID", "worker-7")
+	t.Setenv("AO_REVIEW_HARNESS", "claude-code")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true,"reviewSessionId":"review-7"}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"tool_name":"Bash","tool_use_id":"toolu_42","tool_response":"ok"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "claude-code", "post-tool-use")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.path != "/api/v1/reviews/review-7/activity" {
+		t.Fatalf("path = %q, want /api/v1/reviews/review-7/activity", capture.path)
+	}
+	var req map[string]any
+	if err := json.Unmarshal([]byte(capture.body), &req); err != nil {
+		t.Fatalf("decode body: %v\nbody=%s", err, capture.body)
+	}
+	if _, ok := req["toolName"]; ok {
+		t.Fatalf("reviewer activity included toolName: body=%s", capture.body)
+	}
+	if _, ok := req["toolUseId"]; ok {
+		t.Fatalf("reviewer activity included toolUseId: body=%s", capture.body)
+	}
+}
+
+func TestHooks_ReviewerRoutingTakesPrecedenceOverWorkerSession(t *testing.T) {
+	t.Setenv("AO_REVIEW_SESSION_ID", "review-7")
+	t.Setenv("AO_REVIEW_WORKER_SESSION_ID", "worker-context-only")
+	t.Setenv("AO_SESSION_ID", "worker-7")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"session_id":"codex-native-1"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "session-start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.path != "/api/v1/reviews/review-7/activity" {
+		t.Fatalf("path = %q, want reviewer route", capture.path)
+	}
+}
+
+func TestHooks_ReviewWorkerSessionIDDoesNotRouteWithoutReviewSessionID(t *testing.T) {
+	t.Setenv("AO_REVIEW_WORKER_SESSION_ID", "worker-context-only")
+	t.Setenv("AO_SESSION_ID", "")
+	cfg := setConfigEnv(t)
+	srv, capture := activityServer(t, http.StatusOK, `{"ok":true}`)
+	writeRunFileFor(t, cfg, srv)
+
+	_, errOut, err := executeCLI(t, Deps{
+		In:           strings.NewReader(`{"session_id":"codex-native-1"}`),
+		ProcessAlive: func(int) bool { return true },
+	}, "hooks", "codex", "session-start")
+	if err != nil {
+		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
+	}
+	if capture.hits != 0 {
+		t.Fatalf("review worker context routed unexpectedly: path=%q body=%s", capture.path, capture.body)
+	}
+}
+
 func TestHooks_NotificationReportsBlocked(t *testing.T) {
 	t.Setenv("AO_SESSION_ID", "ao-7")
 	cfg := setConfigEnv(t)

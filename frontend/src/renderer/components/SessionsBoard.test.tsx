@@ -749,7 +749,9 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		const archiveButton = screen.getByRole("button", { name: /archive/i });
+		expect(archiveButton).toHaveClass("h-[46px]", "py-0");
+		await userEvent.click(archiveButton);
 
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		expect(archive).toHaveClass("board-scrollbar", "overflow-y-auto");

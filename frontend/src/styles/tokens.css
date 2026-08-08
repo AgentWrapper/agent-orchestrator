@@ -384,8 +384,8 @@
 	--size-branch-chip: 13rem;
 	--size-inspector-min: 280px;
 	--size-textarea-min: 112px;
-	/* Three 20px actions + two 1px gaps + the 2px right inset. */
-	--size-sidebar-project-actions: 64px;
+	/* Two 20px actions + one 1px gap + the 2px right inset. */
+	--size-sidebar-project-actions: 43px;
 
 	/* Shared inset-panel geometry (welcome board + settings page) */
 	--size-center-panel-inset: 24px;
@@ -415,6 +415,12 @@
 	--shadow-import-modal: 0 0 0 1px var(--border), var(--elevation-md);
 	--size-import-modal-max: 896px;
 	--size-import-folder-dialog: 640px;
+	--size-composer-prompt-min: 112px;
+	--size-composer-start-button: 7.25rem;
+	/* Task composer — inline toolbar values. Quieter than a filled control at rest
+	 * so the task field stays the only thing with visual weight. */
+	--color-bg-composer-chip: color-mix(in oklab, var(--input) 55%, transparent);
+	--color-bg-composer-chip-hover: var(--secondary);
 	/* Shared equal edge inset for modal header/body/footer sections. */
 	--size-modal-padding: var(--space-6);
 	--size-import-modal-padding: var(--space-8);

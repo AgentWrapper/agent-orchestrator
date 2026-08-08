@@ -305,6 +305,7 @@ type Review struct {
 	Harness          domain.ReviewerHarness
 	PRURL            string
 	ReviewerHandleID string
+	AgentSessionID   string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }

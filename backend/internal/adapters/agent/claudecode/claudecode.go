@@ -274,6 +274,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools)
 	if cfg.SystemPromptFile != "" {
 		if err := validateClaudeSystemPromptFile(cfg.SystemPromptFile); err != nil {
 			return nil, false, err
@@ -506,6 +507,12 @@ func claudeConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 // always resolves to the same Claude session.
 func claudeSessionUUID(aoSessionID string) string {
 	return uuid.NewSHA1(claudeSessionNamespace, []byte(aoSessionID)).String()
+}
+
+// SessionUUID maps an AO session id onto the native Claude Code session UUID
+// used by --session-id and --resume.
+func SessionUUID(aoSessionID string) string {
+	return claudeSessionUUID(aoSessionID)
 }
 
 func validateClaudeSystemPromptFile(path string) error {

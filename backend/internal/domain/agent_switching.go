@@ -210,6 +210,7 @@ func (s AgentHandoffStatus) Valid() bool {
 // introduce incompatible spellings.
 type AgentSwitchErrorCode string
 
+// Agent switch error codes.
 const (
 	AgentSwitchErrorDaemonRestartPreStop             AgentSwitchErrorCode = "daemon_restart_pre_stop"
 	AgentSwitchErrorDaemonRestartPostStop            AgentSwitchErrorCode = "daemon_restart_post_stop"

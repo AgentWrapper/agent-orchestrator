@@ -41,11 +41,6 @@ const (
 	maxSwitchNoteLen  = 4096
 	maxIdempotencyKey = 128
 
-	// maxDelegateTaskBodyBytes bounds the LAN-served delegation request before
-	// JSON decoding. It leaves ample room for escaped representations of the
-	// 4 KiB brief and 256-character model while preventing unbounded reads.
-	maxDelegateTaskBodyBytes = 32 << 10
-
 	// Agent-authored handoffs are deliberately bounded. Deterministic AO
 	// context is stored separately and does not need to be repeated here.
 	maxAgentHandoffBodyBytes = 256 << 10
@@ -1160,7 +1155,7 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 		apispec.NotImplemented(w, r, "POST", "/api/v1/orchestrators/delegate")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxDelegateTaskBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, maxSpawnBodyBytes)
 	var in DelegateTaskRequest
 	if err := decodeJSON(r, &in); err != nil {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
@@ -1168,10 +1163,6 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 	}
 	if in.ProjectID == "" {
 		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "PROJECT_ID_REQUIRED", "projectId is required", nil)
-		return
-	}
-	if strings.TrimSpace(in.Brief) == "" {
-		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "TASK_REQUIRED", "Task is required", nil)
 		return
 	}
 	if len(in.Brief) > maxPromptLen {
@@ -1190,6 +1181,11 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 		}
 		in.Mode = mode
 	}
+	attachments, attachErr := decodeSpawnAttachments(in.Attachments)
+	if attachErr != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", attachErr.code, attachErr.message, nil)
+		return
+	}
 
 	out, err := c.Svc.DelegateTask(r.Context(), sessionsvc.DelegateTaskInput{
 		ProjectID:      in.ProjectID,
@@ -1197,6 +1193,7 @@ func (c *SessionsController) delegateTask(w http.ResponseWriter, r *http.Request
 		RequestedAgent: in.Agent,
 		Model:          domain.SanitizeControlChars(strings.TrimSpace(in.Model)),
 		RequestedMode:  in.Mode,
+		Attachments:    attachments,
 	})
 	if err != nil {
 		envelope.WriteError(w, r, err)

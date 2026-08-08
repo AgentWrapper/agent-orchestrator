@@ -4,6 +4,7 @@ import { COMPANY, HERO_SUBHEADLINE, TAGLINE } from "@ao/shared/constants";
 import { Star } from "lucide-react";
 import { useState } from "react";
 import { FaGithub } from "react-icons/fa";
+import { track } from "@/lib/analytics";
 import { DownloadButton } from "../DownloadButton";
 import { ProductDemo } from "./components/ProductDemo";
 
@@ -35,6 +36,9 @@ export function HeroSection({ initialStars }: HeroSectionProps) {
     if (!navigator.clipboard) return;
 
     await navigator.clipboard.writeText(INSTALL_COMMAND);
+    // A copy is download intent that never touches a download button, so without
+    // this the brew path is invisible in the acquisition funnel.
+    track("install_command_copied", { method: "brew" });
     setCopiedCommand(true);
     window.setTimeout(() => setCopiedCommand(false), 1600);
   };
