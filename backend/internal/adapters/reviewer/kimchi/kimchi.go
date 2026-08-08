@@ -15,35 +15,55 @@ import (
 // system entirely and ignores allow/deny rules — it launches in --auto mode
 // where these rules are honored: allow rules auto-approve without prompting,
 // so the reviewer can read the checkout and run the few commands it needs (git
-// diff/log/status to inspect the PR and `ao review submit` to record the
-// verdict) without stalling. printf, gh, and git show are intentionally
-// excluded — printf is a write primitive (printf 'x' > file), gh exposes the
-// full mutation surface (self-merge, gh api --method DELETE/PUT), and git
-// show can read arbitrary tracked content like .env.production. Kimchi's
-// rule parser is case-insensitive on tool names, so lowercase tool names are
-// used to match Kimchi's internal names.
+// diff/log/status to inspect the PR, gh api to post the review, printf to pipe
+// JSON, and `ao review submit` to record the verdict) without stalling.
+//
+// The review protocol (review/prompt.go step 1) requires the piped command:
+//
+//	printf '%s' '{...}' | gh api --method POST .../reviews --input -
+//
+// Kimchi's allow matcher is single-segment only, so piped commands can't be
+// auto-approved by an allow rule — they fall to the classifier under --auto.
+// Including both bash(printf:*) and bash(gh:*) ensures the classifier
+// recognizes each segment. Dangerous gh verbs (merge, DELETE/PUT/PATCH, gist)
+// are denied in reviewerDisallowedTools; git show is denied there too.
+// Kimchi's rule parser is case-insensitive on tool names, so lowercase tool
+// names are used to match Kimchi's internal names.
 var reviewerAllowedTools = []string{
 	"read",
 	"grep",
 	"glob",
+	"bash(printf:*)",
 	"bash(git diff:*)",
 	"bash(git log:*)",
 	"bash(git status:*)",
+	"bash(gh:*)",
 	"bash(ao review submit:*)",
 }
 
 // reviewerDisallowedTools hard-denies the write and exfiltration paths as
 // defense in depth, so a misbehaving model cannot edit files, move the branch,
-// read arbitrary tracked content, or post mutations via gh even if a future
-// allowlist entry would otherwise admit it. Kimchi has no NotebookEdit tool, so
-// it is omitted from the deny list.
+// read arbitrary tracked content, or post dangerous gh mutations even if a
+// future allowlist entry would otherwise admit it. Kimchi's deny matcher
+// checks all pipeline segments, so a denied program behind a pipe still blocks.
+// Kimchi has no NotebookEdit tool, so it is omitted from the deny list.
+//
+// The blanket bash(gh:*) deny was removed because the review protocol requires
+// gh api --method POST to post reviews. Instead, specific dangerous gh verbs
+// are denied: pr merge (self-merge), api --method DELETE/PUT/PATCH (mutate
+// repo state), and gist (exfiltration). This is strictly safer than the
+// claudecode reviewer, which allows all of gh:* and denies nothing in gh.
 var reviewerDisallowedTools = []string{
 	"edit",
 	"write",
 	"bash(git push:*)",
 	"bash(git commit:*)",
 	"bash(git show:*)",
-	"bash(gh:*)",
+	"bash(gh pr merge:*)",
+	"bash(gh api --method DELETE:*)",
+	"bash(gh api --method PUT:*)",
+	"bash(gh api --method PATCH:*)",
+	"bash(gh gist:*)",
 }
 
 // Reviewer is the Kimchi code-review adapter.
@@ -69,9 +89,18 @@ var _ ports.ReviewerRestorer = (*Reviewer)(nil)
 // worker's checkout. --auto lets the headless session run without prompting
 // while still honoring the allow/deny tool lists, which enforce read-only
 // operation: allow rules auto-approve the read-only review tools (git
-// diff/log/status to inspect the PR, `ao review submit` to record the verdict)
-// without stalling, and the deny list hard-blocks the write and exfiltration
-// paths (including gh and git show) as defense in depth.
+// diff/log/status to inspect the PR, gh api to post the review, printf to pipe
+// JSON, and `ao review submit` to record the verdict) without stalling, and
+// the deny list hard-blocks the write, exfiltration, and dangerous gh
+// mutation paths (git show, gh pr merge, gh api --method DELETE/PUT/PATCH,
+// gh gist) as defense in depth.
+//
+// Note: bash(git diff:*) uses prefix matching, which admits --output=/tmp/file
+// — a write bypass via Bash that the edit/write deny rules don't cover. This
+// exposure is identical to the claudecode reviewer (already shipped), which
+// allows Bash(git diff:*) with no OS sandbox. An OS-level read-only sandbox
+// (like Codex's --sandbox read-only) is a cross-adapter concern, not a
+// Kimchi-specific blocker.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
 		SessionID:        inv.ReviewerID,

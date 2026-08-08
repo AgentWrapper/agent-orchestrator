@@ -2,7 +2,6 @@ package kimchi
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -61,7 +60,11 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 		"bash(git push:*)",
 		"bash(git commit:*)",
 		"bash(git show:*)",
-		"bash(gh:*)",
+		"bash(gh pr merge:*)",
+		"bash(gh api --method DELETE:*)",
+		"bash(gh api --method PUT:*)",
+		"bash(gh api --method PATCH:*)",
+		"bash(gh gist:*)",
 	} {
 		if !contains(agent.got.DisallowedTools, denied) {
 			t.Fatalf("disallow list missing %q: %#v", denied, agent.got.DisallowedTools)
@@ -84,7 +87,7 @@ func TestReviewCommandUsesHiddenSystemPromptFile(t *testing.T) {
 	}
 }
 
-func TestAllowlistExcludesWriteAndExfilTools(t *testing.T) {
+func TestAllowlistIncludesProtocolToolsAndDeniesDangerousGh(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
 
@@ -97,19 +100,11 @@ func TestAllowlistExcludesWriteAndExfilTools(t *testing.T) {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
 
-	// printf, gh, and git show must NOT be in the allow list — printf is a
-	// write primitive, gh exposes the full mutation surface, and git show can
-	// read arbitrary tracked content.
-	for _, tool := range []string{"bash(printf:*)", "bash(gh:*)", "bash(git show:*)"} {
-		if contains(agent.got.AllowedTools, tool) {
-			t.Fatalf("allowlist unexpectedly contains %q: %#v", tool, agent.got.AllowedTools)
-		}
-	}
-
-	// gh and git show must be in the deny list as defense in depth.
-	for _, denied := range []string{"bash(gh:*)", "bash(git show:*)"} {
-		if !contains(agent.got.DisallowedTools, denied) {
-			t.Fatalf("disallow list missing %q: %#v", denied, agent.got.DisallowedTools)
+	// printf and gh must be in the allow list — the review protocol
+	// (prompt.go step 1) requires a piped printf | gh api command.
+	for _, tool := range []string{"bash(printf:*)", "bash(gh:*)"} {
+		if !contains(agent.got.AllowedTools, tool) {
+			t.Fatalf("allowlist missing protocol tool %q: %#v", tool, agent.got.AllowedTools)
 		}
 	}
 
@@ -118,54 +113,35 @@ func TestAllowlistExcludesWriteAndExfilTools(t *testing.T) {
 		t.Fatalf("allowlist missing ao review submit: %#v", agent.got.AllowedTools)
 	}
 
-	// printf-based commands must NOT be covered since printf was removed.
-	disallowed := "printf '%s' '{ \"reviews\": [] }' | ao review submit --session sess-1 --reviews -"
-	if compoundCommandCovered(agent.got.AllowedTools, disallowed) {
-		t.Fatalf("allowlist unexpectedly covers printf-based command %q with tools %#v", disallowed, agent.got.AllowedTools)
+	// git show must NOT be in the allow list — it can read arbitrary tracked
+	// content like .env.production.
+	if contains(agent.got.AllowedTools, "bash(git show:*)") {
+		t.Fatalf("allowlist unexpectedly contains bash(git show:*): %#v", agent.got.AllowedTools)
 	}
 
-	// gh-based commands must NOT be covered since gh was removed.
-	disallowedGh := "gh api --method POST repos/o/r/pulls/1/reviews --input - --jq '.id'"
-	if bashSegmentCovered(agent.got.AllowedTools, disallowedGh) {
-		t.Fatalf("allowlist unexpectedly covers gh-based command %q with tools %#v", disallowedGh, agent.got.AllowedTools)
+	// git show must be in the deny list as defense in depth.
+	if !contains(agent.got.DisallowedTools, "bash(git show:*)") {
+		t.Fatalf("disallow list missing bash(git show:*): %#v", agent.got.DisallowedTools)
 	}
-}
 
-func compoundCommandCovered(allowedTools []string, cmd string) bool {
-	for _, segment := range splitPipedCommand(cmd) {
-		if !bashSegmentCovered(allowedTools, segment) {
-			return false
+	// Dangerous gh verbs must be denied as defense in depth.
+	for _, denied := range []string{
+		"bash(gh pr merge:*)",
+		"bash(gh api --method DELETE:*)",
+		"bash(gh api --method PUT:*)",
+		"bash(gh api --method PATCH:*)",
+		"bash(gh gist:*)",
+	} {
+		if !contains(agent.got.DisallowedTools, denied) {
+			t.Fatalf("disallow list missing %q: %#v", denied, agent.got.DisallowedTools)
 		}
 	}
-	return true
-}
 
-func splitPipedCommand(cmd string) []string {
-	rawSegments := strings.Split(cmd, "|")
-	segments := make([]string, 0, len(rawSegments))
-	for _, segment := range rawSegments {
-		if trimmed := strings.TrimSpace(segment); trimmed != "" {
-			segments = append(segments, trimmed)
-		}
+	// The blanket bash(gh:*) deny must NOT be present — it blocks the
+	// protocol's gh api --method POST call.
+	if contains(agent.got.DisallowedTools, "bash(gh:*)") {
+		t.Fatalf("disallow list must not contain blanket bash(gh:*): %#v", agent.got.DisallowedTools)
 	}
-	return segments
-}
-
-func bashSegmentCovered(allowedTools []string, segment string) bool {
-	for _, tool := range allowedTools {
-		cmd, ok := strings.CutPrefix(tool, "bash(")
-		if !ok {
-			continue
-		}
-		cmd, ok = strings.CutSuffix(cmd, ":*)")
-		if !ok {
-			continue
-		}
-		if strings.HasPrefix(segment, cmd) {
-			return true
-		}
-	}
-	return false
 }
 
 func contains(values []string, needle string) bool {
