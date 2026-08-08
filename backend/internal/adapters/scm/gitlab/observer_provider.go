@@ -458,23 +458,23 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 	// source_project_id differs from target_project_id, the MR head branch
 	// lives in a different project; without resolution, HeadRepo would be the
 	// target project and a fork MR with a matching branch name could pass the
-	// guard against the wrong project. No new cache field — the source-project
-	// path is fetched per fork MR per poll. On failure (404, 5xx, timeout) the
-	// error propagates so FetchPullRequests leaves a Fetched=false
-	// placeholder with the error attached (fail closed, do not falsify
-	// HeadRepo).
+	// guard against the wrong project.
+	//
+	// The source-project path is cached across poll cycles with a 5-min TTL
+	// (ticket 05): the path is stable for minutes in practice (it only changes
+	// on group rename or project transfer), so across ~10 poll cycles the
+	// source-project endpoint is hit once instead of 10 times per fork MR. On
+	// failure (404, 5xx, timeout) the error propagates so FetchPullRequests
+	// leaves a Fetched=false placeholder with the error attached (fail closed,
+	// do not falsify HeadRepo). The cache only short-circuits the happy path;
+	// it does not mask failures.
 	if mr.SourceProjectID != 0 && mr.SourceProjectID != mr.TargetProjectID {
-		srcPath := fmt.Sprintf("/projects/%d", mr.SourceProjectID)
-		projResp, err := hc.doGET(ctx, srcPath, nil)
+		path, err := p.fetchSourceProjectCached(ctx, hc, repo.Host, mr.SourceProjectID)
 		if err != nil {
 			return ports.SCMObservation{}, fmt.Errorf("gitlab scm: fetch source project %d: %w", mr.SourceProjectID, err)
 		}
-		var srcProj restProject
-		if err := json.Unmarshal(projResp.Body, &srcProj); err != nil {
-			return ports.SCMObservation{}, fmt.Errorf("gitlab scm: unmarshal source project %d: %w", mr.SourceProjectID, err)
-		}
-		if srcProj.PathWithNamespace != "" {
-			prObs.HeadRepo = srcProj.PathWithNamespace
+		if path != "" {
+			prObs.HeadRepo = path
 		}
 	}
 
@@ -508,6 +508,36 @@ func (p *Provider) fetchSingleMR(ctx context.Context, ref ports.SCMPRRef) (ports
 		Review:       ports.SCMReviewObservation{Decision: string(reviewDecision)},
 		Mergeability: mergeObs,
 	}, nil
+}
+
+// fetchSourceProjectCached resolves a fork MR source project's
+// path_with_namespace, consulting the fork-project cache (5-min TTL, keyed by
+// host+source_project_id) before issuing an HTTP request (ticket 05). On a cache
+// hit, returns the cached path without an HTTP round-trip. On a miss, fetches
+// GET /projects/:source_project_id, caches the path_with_namespace, and returns
+// it.
+//
+// Errors propagate exactly as the uncached fetch did — a 404/5xx/timeout still
+// returns the error so the caller fails closed (Fetched=false with the error
+// attached, preserving the durable-state rule). The cache only short-circuits
+// the happy path; it does not mask failures. A cached empty path is treated as
+// a valid resolution (a project with no path is unusual but not a failure), so
+// an empty path is stored and returned on subsequent hits.
+func (p *Provider) fetchSourceProjectCached(ctx context.Context, hc *Client, host string, sourceProjectID int) (string, error) {
+	if path, ok := p.cache.getForkProject(host, sourceProjectID); ok {
+		return path, nil
+	}
+	srcPath := fmt.Sprintf("/projects/%d", sourceProjectID)
+	projResp, err := hc.doGET(ctx, srcPath, nil)
+	if err != nil {
+		return "", err
+	}
+	var srcProj restProject
+	if err := json.Unmarshal(projResp.Body, &srcProj); err != nil {
+		return "", fmt.Errorf("gitlab scm: unmarshal source project %d: %w", sourceProjectID, err)
+	}
+	p.cache.setForkProject(host, sourceProjectID, srcProj.PathWithNamespace)
+	return srcProj.PathWithNamespace, nil
 }
 
 func (p *Provider) fetchCI(ctx context.Context, repo ports.SCMRepo, headSHA string) (ports.SCMCIObservation, error) {
