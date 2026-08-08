@@ -407,6 +407,8 @@ func (f *fakeSessionService) GetWorkspaceFile(_ context.Context, id domain.Sessi
 	return sessionsvc.WorkspaceFileDetail{SessionID: id, Path: path}, nil
 }
 
+func (f *fakeSessionService) InvalidateWorkspaceCache(_ domain.SessionID) {}
+
 func newSessionTestServer(t *testing.T, svc *fakeSessionService) *httptest.Server {
 	return newSessionTestServerWithPreview(t, svc, nil)
 }
