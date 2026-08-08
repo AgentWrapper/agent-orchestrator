@@ -2528,3 +2528,89 @@ func TestRestMR_DiffRefsBaseSHA_FromListResponse(t *testing.T) {
 		t.Errorf("DiffRefs.StartSHA = %q, want %q", mr.DiffRefs.StartSHA, "parent789")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// AuthenticatedIdentity tests
+// ---------------------------------------------------------------------------
+
+func TestAuthenticatedIdentityCachesHumanUser(t *testing.T) {
+	var calls atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/user" {
+			calls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"username": "alice"})
+			return
+		}
+		http.NotFound(w, r)
+	})
+	_, p := testServer(t, handler)
+
+	first, err := p.AuthenticatedIdentity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := p.AuthenticatedIdentity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != (ports.SCMIdentity{Login: "alice", Human: true}) || second != first {
+		t.Fatalf("identities = %#v, %#v", first, second)
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("GET /user calls = %d, want 1", got)
+	}
+}
+
+func TestAuthenticatedIdentityClassifiesBot(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/user" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"username": "project_42_bot"})
+			return
+		}
+		http.NotFound(w, r)
+	})
+	_, p := testServer(t, handler)
+
+	got, err := p.AuthenticatedIdentity(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (ports.SCMIdentity{Login: "project_42_bot", Human: false}) {
+		t.Fatalf("identity = %#v", got)
+	}
+}
+
+func TestAuthenticatedIdentityAuthErrorNotCached(t *testing.T) {
+	var calls atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v4/user" {
+			calls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
+			return
+		}
+		http.NotFound(w, r)
+	})
+	_, p := testServer(t, handler)
+
+	_, err := p.AuthenticatedIdentity(context.Background())
+	if err == nil {
+		t.Fatal("expected error for 401, got nil")
+	}
+	if !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("expected ErrAuthFailed, got %v", err)
+	}
+
+	// Second call must not return cached result — it should hit the API again.
+	_, err = p.AuthenticatedIdentity(context.Background())
+	if err == nil {
+		t.Fatal("expected error on second call, got nil")
+	}
+	if !errors.Is(err, ErrAuthFailed) {
+		t.Fatalf("expected ErrAuthFailed on second call, got %v", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("GET /user calls = %d, want 2 (no caching on auth failure)", got)
+	}
+}

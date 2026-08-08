@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -71,6 +72,12 @@ type Provider struct {
 	// interface is unchanged. Populated and consulted by FetchPullRequests,
 	// FetchReviewThreads, ListPRsByRepo, and the fork-resolution path.
 	cache *cache
+
+	// identity caches the authenticated account so it is resolved at most
+	// once for the provider's lifetime.
+	identityMu       sync.Mutex
+	identity         ports.SCMIdentity
+	identityResolved bool
 }
 
 // NewProvider creates a GitLab SCM provider. If SkipTokenPreflight is false
@@ -223,6 +230,39 @@ func (p *Provider) clientForRepoErr(repo ports.SCMRepo) (*Client, error) {
 		return nil, fmt.Errorf("gitlab scm: host %q not in allowlist: %w", repo.Host, ErrHostNotAllowed)
 	}
 	return c, nil
+}
+
+// AuthenticatedIdentity returns the account associated with the active GitLab
+// token. Successful results are cached for the provider's lifetime.
+// GitLab has no typed Bot flag like GitHub's user.Type, so human/bot
+// classification reuses the existing isBotAuthor heuristic (project/group
+// bot username patterns, [bot] suffixes, known bot accounts).
+func (p *Provider) AuthenticatedIdentity(ctx context.Context) (ports.SCMIdentity, error) {
+	p.identityMu.Lock()
+	defer p.identityMu.Unlock()
+	if p.identityResolved {
+		return p.identity, nil
+	}
+
+	resp, err := p.client.doGET(ctx, "/user", nil)
+	if err != nil {
+		return ports.SCMIdentity{}, err
+	}
+
+	var user struct {
+		Username string `json:"username"`
+	}
+	if err := json.Unmarshal(resp.Body, &user); err != nil {
+		return ports.SCMIdentity{}, fmt.Errorf("gitlab scm: decode authenticated user: %w", err)
+	}
+
+	login := strings.TrimSpace(user.Username)
+	p.identity = ports.SCMIdentity{
+		Login: login,
+		Human: !isBotAuthor(login),
+	}
+	p.identityResolved = true
+	return p.identity, nil
 }
 
 // SCMCredentialsAvailable reports whether usable GitLab credentials exist.
