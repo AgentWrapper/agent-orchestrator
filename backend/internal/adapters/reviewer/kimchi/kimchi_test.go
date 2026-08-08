@@ -69,6 +69,21 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 	}
 }
 
+func TestReviewCommandUsesHiddenSystemPromptFile(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	if _, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
+		Prompt:           "Start the AO review task.",
+		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+	}); err != nil {
+		t.Fatalf("ReviewCommand: %v", err)
+	}
+	if agent.got.Prompt != "Start the AO review task." || agent.got.SystemPrompt != "" || agent.got.SystemPromptFile != "/ao/prompts/reviewer/system.md" {
+		t.Fatalf("launch config = %+v", agent.got)
+	}
+}
+
 func TestAllowlistExcludesWriteAndExfilTools(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
