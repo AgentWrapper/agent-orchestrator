@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -17,13 +19,63 @@ var (
 	// ErrNotFound is returned when a GitLab API resource does not exist.
 	ErrNotFound = ports.ErrSCMNotFound
 	// ErrRateLimited is returned when GitLab responds with HTTP 429.
+	// Callers needing structured retry hints (Retry-After / RateLimit-Reset)
+	// should use errors.As to extract a *RateLimitError.
 	ErrRateLimited = fmt.Errorf("gitlab scm: rate limited")
 )
+
+// RateLimitError carries the structured backoff hints from a GitLab 429
+// response. GitLab sends Retry-After (seconds) and/or RateLimit-Reset (Unix
+// epoch seconds) headers; AO uses these to apply a provider-level cooldown so
+// the observer does not keep polling every 30s while rate-limited (review
+// finding #4). Callers that only need the category use errors.Is(err,
+// ErrRateLimited); callers needing the exact backoff use errors.As.
+type RateLimitError struct {
+	ResetAt    time.Time
+	RetryAfter time.Duration
+	Message    string
+}
+
+// Error formats the rate-limit error for logs.
+func (e *RateLimitError) Error() string {
+	if e == nil {
+		return ErrRateLimited.Error()
+	}
+	if e.Message != "" {
+		return "gitlab scm: rate limited: " + e.Message
+	}
+	return ErrRateLimited.Error()
+}
+
+// Is lets errors.Is match a *RateLimitError against ErrRateLimited.
+func (e *RateLimitError) Is(target error) bool { return target == ErrRateLimited }
+
+// GetRetryAfter exposes the Retry-After hint for the provider-neutral observer's
+// rateLimitCooldown helper.
+func (e *RateLimitError) GetRetryAfter() time.Duration {
+	if e == nil {
+		return 0
+	}
+	return e.RetryAfter
+}
+
+// GetResetAt exposes the RateLimit-Reset hint for the provider-neutral
+// observer's rateLimitCooldown helper.
+func (e *RateLimitError) GetResetAt() time.Time {
+	if e == nil {
+		return time.Time{}
+	}
+	return e.ResetAt
+}
 
 const (
 	defaultRESTBaseURL = "https://gitlab.com/api/v4"
 	cacheMaxEntries    = 512
 	defaultUserAgent   = "ao-gitlab-scm/1"
+	// defaultHTTPTimeout bounds every REST call so a hung GitLab API endpoint
+	// does not block the observer's polling goroutine indefinitely (review
+	// finding #4). Matches the observer's DefaultTickInterval.
+	defaultHTTPTimeout = 30 * time.Second
 )
 
 // RESTResponse is the normalised result of a GitLab REST call.
@@ -60,7 +112,7 @@ type Client struct {
 func NewClient(opts ClientOptions) *Client {
 	hc := opts.HTTPClient
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = &http.Client{Timeout: defaultHTTPTimeout}
 	}
 	base := opts.RESTBase
 	if base == "" {
@@ -183,6 +235,78 @@ func (c *Client) doGETRaw(ctx context.Context, path string, q url.Values) ([]byt
 	return body, nil
 }
 
+// doGETPaginated performs a GET and follows GitLab's Link: <...>; rel="next"
+// header to fetch all pages, calling handler for each page's body. It caps at
+// maxPaginationPages to prevent runaway pagination on pathological repos
+//. The handler is invoked once per page and receives the
+// raw JSON body of that page.
+const maxPaginationPages = 10
+
+func (c *Client) doGETPaginated(ctx context.Context, path string, q url.Values, handler func(body []byte) error) (bool, error) {
+	if q == nil {
+		q = url.Values{}
+	}
+	if q.Get("per_page") == "" {
+		q.Set("per_page", "100")
+	}
+	nextURL := c.restURL(path, q)
+	for page := 0; page < maxPaginationPages; page++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, http.NoBody)
+		if err != nil {
+			return false, err
+		}
+		if err := c.authorize(ctx, req); err != nil {
+			return false, err
+		}
+		req.Header.Set("User-Agent", c.userAgent)
+		resp, err := c.http.Do(req)
+		if err != nil {
+			return false, err
+		}
+		body, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode == http.StatusNotModified {
+			// 304 on the first page means nothing changed; stop.
+			return false, nil
+		}
+		if resp.StatusCode >= 400 {
+			return false, classifyError(resp, body)
+		}
+		if err := handler(body); err != nil {
+			return false, err
+		}
+		next := parseNextLink(resp.Header.Get("Link"))
+		if next == "" {
+			return false, nil
+		}
+		nextURL = next
+	}
+	// Hit the page cap — response is truncated.
+	return true, nil
+}
+
+// parseNextLink extracts the next-page URL from a GitLab Link header like:
+//   <https://gitlab.com/api/v4/...?page=2>; rel="next", <...>; rel="first"
+func parseNextLink(linkHeader string) string {
+	if linkHeader == "" {
+		return ""
+	}
+	for _, part := range strings.Split(linkHeader, ",") {
+		part = strings.TrimSpace(part)
+		// Each part is <url>; rel="next"
+		if !strings.Contains(part, `rel="next"`) {
+			continue
+		}
+		lt := strings.Index(part, "<")
+		gt := strings.Index(part, ">")
+		if lt < 0 || gt < 0 || gt <= lt {
+			continue
+		}
+		return part[lt+1 : gt]
+	}
+	return ""
+}
+
 func (c *Client) storeCacheEntry(cacheKey, etag string, body []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -227,7 +351,7 @@ func classifyError(resp *http.Response, body []byte) error {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return ErrAuthFailed
 	case http.StatusTooManyRequests:
-		return ErrRateLimited
+		return gitlabRateLimited(resp, body)
 	default:
 		msg := gitlabMessage(body)
 		if msg == "" {
@@ -235,6 +359,26 @@ func classifyError(resp *http.Response, body []byte) error {
 		}
 		return fmt.Errorf("gitlab scm: %s", msg)
 	}
+}
+
+// gitlabRateLimited builds a *RateLimitError from a 429 response, parsing the
+// Retry-After (seconds) and RateLimit-Reset (Unix epoch seconds) headers so the
+// observer can apply a provider-level cooldown instead of polling every 30s
+// . Both headers are optional; GitLab sends Retry-After on
+// 429s and RateLimit-Reset/RateLimit-Remaining on all rate-limited responses.
+func gitlabRateLimited(resp *http.Response, body []byte) error {
+	e := &RateLimitError{Message: gitlabMessage(body)}
+	if reset := resp.Header.Get("RateLimit-Reset"); reset != "" {
+		if sec, err := strconv.ParseInt(reset, 10, 64); err == nil && sec > 0 {
+			e.ResetAt = time.Unix(sec, 0)
+		}
+	}
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		if sec, err := strconv.Atoi(ra); err == nil && sec >= 0 {
+			e.RetryAfter = time.Duration(sec) * time.Second
+		}
+	}
+	return e
 }
 
 func gitlabMessage(body []byte) string {
