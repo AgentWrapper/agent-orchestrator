@@ -53,7 +53,7 @@ func TestApplyObservation_WritesPRChecksAndComments(t *testing.T) {
 	o := ports.PRObservation{
 		Fetched: true, URL: "https://example/pr/1", Number: 1, CI: domain.CIFailing,
 		Checks:   []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
-		Comments: []ports.PRCommentObservation{{ID: "1", Author: "greptileai", Body: "use a constant here"}},
+		Comments: []ports.PRCommentObservation{{ID: "1", Author: "greptileai", Body: "use a constant here", AutoInjectReview: true}},
 	}
 	if err := m.ApplyObservation(context.Background(), "mer-1", o); err != nil {
 		t.Fatal(err)
@@ -66,6 +66,9 @@ func TestApplyObservation_WritesPRChecksAndComments(t *testing.T) {
 	}
 	if len(fw.comments[o.URL]) != 1 || fw.comments[o.URL][0].CreatedAt.IsZero() {
 		t.Fatalf("comments not normalized: %+v", fw.comments)
+	}
+	if !fw.comments[o.URL][0].AutoInjectReview {
+		t.Fatalf("comment injection decision was not persisted: %+v", fw.comments[o.URL][0])
 	}
 	if len(fl.observed) != 1 || fl.observed[0].URL != o.URL {
 		t.Fatalf("PR observation should be forwarded to lifecycle, got %v", fl.observed)

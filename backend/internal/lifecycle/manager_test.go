@@ -18,6 +18,8 @@ var ctx = context.Background()
 type fakeStore struct {
 	sessions   map[domain.SessionID]domain.SessionRecord
 	prs        map[domain.SessionID][]domain.PullRequest
+	reviews    map[string][]domain.PullRequestReview
+	comments   map[string][]domain.PullRequestComment
 	signatures map[string]string
 
 	listPRsErr        error
@@ -26,7 +28,13 @@ type fakeStore struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{sessions: map[domain.SessionID]domain.SessionRecord{}, prs: map[domain.SessionID][]domain.PullRequest{}, signatures: map[string]string{}}
+	return &fakeStore{
+		sessions:   map[domain.SessionID]domain.SessionRecord{},
+		prs:        map[domain.SessionID][]domain.PullRequest{},
+		reviews:    map[string][]domain.PullRequestReview{},
+		comments:   map[string][]domain.PullRequestComment{},
+		signatures: map[string]string{},
+	}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, id domain.SessionID) (domain.SessionRecord, bool, error) {
@@ -39,6 +47,14 @@ func (f *fakeStore) ListPRsBySession(_ context.Context, id domain.SessionID) ([]
 		return nil, f.listPRsErr
 	}
 	return f.prs[id], nil
+}
+
+func (f *fakeStore) ListPRReviews(_ context.Context, prURL string) ([]domain.PullRequestReview, error) {
+	return append([]domain.PullRequestReview(nil), f.reviews[prURL]...), nil
+}
+
+func (f *fakeStore) ListPRComments(_ context.Context, prURL string) ([]domain.PullRequestComment, error) {
+	return append([]domain.PullRequestComment(nil), f.comments[prURL]...), nil
 }
 
 func (f *fakeStore) ListSessions(_ context.Context, project domain.ProjectID) ([]domain.SessionRecord, error) {
@@ -137,7 +153,7 @@ func newManager() (*Manager, *fakeStore, *fakeMessenger) {
 }
 
 func working(id domain.SessionID) domain.SessionRecord {
-	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}}
+	return domain.SessionRecord{ID: id, ProjectID: "mer", Activity: domain.Activity{State: domain.ActivityActive, LastActivityAt: time.Now()}, AutoInjectReview: true}
 }
 
 func TestRuntimeObservation_ConfirmedRuntimeDeathTerminates(t *testing.T) {
@@ -1180,10 +1196,11 @@ func TestFormatCIFailureMessageUsesNonMutatingFence(t *testing.T) {
 func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{
-		{ID: "1", ThreadID: "T1", Author: "alice", File: "foo.go", Line: 12, Body: "fix this", URL: "https://github.com/o/r/pull/1#discussion_r1"},
-		{ID: "2", Author: "bob", Body: "already handled", Resolved: true},
-	}}
+	st.comments["pr1"] = []domain.PullRequestComment{
+		{ID: "1", ThreadID: "T1", Author: "alice", File: "foo.go", Line: 12, Body: "fix this", URL: "https://github.com/o/r/pull/1#discussion_r1", AutoInjectReview: true},
+		{ID: "2", Author: "bob", Body: "already handled", Resolved: true, AutoInjectReview: true},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
@@ -1207,16 +1224,55 @@ func TestPRObservation_ReviewCommentsNudgeAgent(t *testing.T) {
 	}
 }
 
+func TestPRObservation_ReviewFeedbackNotInjectedWhenDisabled(t *testing.T) {
+	m, st, msg := newManager()
+	rec := working("mer-1")
+	st.sessions[rec.ID] = rec
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Author: "alice", Body: "fix this", AutoInjectReview: false}}
+	st.reviews["pr1"] = []domain.PullRequestReview{{ID: "r1", Author: "alice", State: domain.ReviewChangesRequest, Body: "change this too", AutoInjectReview: false}}
+	o := ports.PRObservation{
+		Fetched: true,
+		URL:     "pr1",
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:  domain.ReviewChangesRequest,
+	}
+	if err := m.ApplyPRObservation(ctx, rec.ID, o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 || !strings.Contains(msg.msgs[0], "boom") || strings.Contains(msg.msgs[0], "fix this") {
+		t.Fatalf("messages = %v, want CI only while review feedback is not injected", msg.msgs)
+	}
+}
+
+func TestPRObservation_MixedPersistedCommentDecisions(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.comments["pr1"] = []domain.PullRequestComment{
+		{ID: "1", Author: "alice", Body: "captured while disabled", AutoInjectReview: false},
+		{ID: "2", Author: "alice", Body: "captured while enabled", AutoInjectReview: true},
+	}
+	if err := m.ApplyPRObservation(ctx, "mer-1", ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want only the injectable comment to nudge, got %v", msg.msgs)
+	}
+	if !strings.Contains(msg.msgs[0], "captured while enabled") || strings.Contains(msg.msgs[0], "captured while disabled") {
+		t.Fatalf("nudge did not honor per-comment persisted decisions: %q", msg.msgs[0])
+	}
+}
+
 func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Author: "alice", Body: "fix this", AutoInjectReview: true}}
 	o := ports.PRObservation{
-		Fetched:  true,
-		URL:      "pr1",
-		CI:       domain.CIFailing,
-		Checks:   []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
-		Review:   domain.ReviewChangesRequest,
-		Comments: []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}},
+		Fetched: true,
+		URL:     "pr1",
+		CI:      domain.CIFailing,
+		Checks:  []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
+		Review:  domain.ReviewChangesRequest,
 	}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
@@ -1249,6 +1305,7 @@ func TestPRObservation_CIFailingAndReviewBothNudge(t *testing.T) {
 func TestPRObservation_MergeConflictReadErrorStillSendsCIAndReview(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Author: "alice", Body: "fix this", AutoInjectReview: true}}
 	st.listPRsErr = errors.New("transient store read failure")
 	o := ports.PRObservation{
 		Fetched:      true,
@@ -1256,7 +1313,6 @@ func TestPRObservation_MergeConflictReadErrorStillSendsCIAndReview(t *testing.T)
 		CI:           domain.CIFailing,
 		Checks:       []ports.PRCheckObservation{{Name: "build", CommitHash: "c1", Status: domain.PRCheckFailed, LogTail: "boom"}},
 		Review:       domain.ReviewChangesRequest,
-		Comments:     []ports.PRCommentObservation{{ID: "1", Author: "alice", Body: "fix this"}},
 		Mergeability: domain.MergeConflicting,
 	}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err == nil {
@@ -1317,7 +1373,8 @@ func TestPRObservation_CINudgeSanitizesLogTailControlChars(t *testing.T) {
 func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
 	m, st, msg := newManager()
 	st.sessions["mer-1"] = working("mer-1")
-	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest, Comments: []ports.PRCommentObservation{{ID: "1", Body: "please\x1b]0;pwned\afix this"}}}
+	st.comments["pr1"] = []domain.PullRequestComment{{ID: "1", Body: "please\x1b]0;pwned\afix this", AutoInjectReview: true}}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}
 	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
 		t.Fatal(err)
 	}
@@ -1330,6 +1387,35 @@ func TestPRObservation_ReviewNudgeSanitizesCommentControlChars(t *testing.T) {
 	}
 	if !strings.Contains(got, "please") || !strings.Contains(got, "fix this") {
 		t.Fatalf("review nudge dropped visible text: %q", got)
+	}
+}
+
+func TestPRObservation_ChangesRequestedReviewUsesPersistedBodyAndDecision(t *testing.T) {
+	m, st, msg := newManager()
+	st.sessions["mer-1"] = working("mer-1")
+	st.reviews["pr1"] = []domain.PullRequestReview{
+		{ID: "r1", Author: "alice\x1b]0;pwned\a", State: domain.ReviewChangesRequest, URL: "https://github.com/o/r/pull/1#pullrequestreview-1", Body: "please\x1b[2Jfix this", AutoInjectReview: true},
+		{ID: "r2", Author: "bob", State: domain.ReviewApproved, Body: "approved", AutoInjectReview: true},
+		{ID: "r3", Author: "carol", State: domain.ReviewChangesRequest, Body: "do not inject", AutoInjectReview: false},
+	}
+	o := ports.PRObservation{Fetched: true, URL: "pr1", Review: domain.ReviewChangesRequest}
+	if err := m.ApplyPRObservation(ctx, "mer-1", o); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.msgs) != 1 {
+		t.Fatalf("want one persisted review nudge, got %v", msg.msgs)
+	}
+	got := msg.msgs[0]
+	for _, want := range []string{"@alice", "please", "fix this", "https://github.com/o/r/pull/1#pullrequestreview-1", "Review ID: r1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("review nudge missing %q:\n%s", want, got)
+		}
+	}
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\a') {
+		t.Fatalf("review nudge still carries control bytes: %q", got)
+	}
+	if strings.Contains(got, "approved") || strings.Contains(got, "do not inject") {
+		t.Fatalf("review nudge included an ineligible persisted review: %q", got)
 	}
 }
 
@@ -1797,12 +1883,16 @@ func TestApplyReviewBatchNoopsWhenWorkerCannotBeNudged(t *testing.T) {
 		{
 			name:   "worker waiting input",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
-			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityWaitingInput}},
+			rec: func() domain.SessionRecord {
+				r := working("mer-1")
+				r.Activity.State = domain.ActivityWaitingInput
+				return r
+			}(),
 		},
 		{
 			name:   "worker agent exited",
 			result: ReviewResult{RunID: "run-1", PRURL: "pr1", Verdict: domain.VerdictChangesRequested},
-			rec:    domain.SessionRecord{ID: "mer-1", Activity: domain.Activity{State: domain.ActivityExited}},
+			rec:    func() domain.SessionRecord { r := working("mer-1"); r.Activity.State = domain.ActivityExited; return r }(),
 		},
 	}
 	for _, tt := range tests {
