@@ -54,15 +54,22 @@ func EnsureWorkspaceGitignore(dir string, names ...string) error {
 	return nil
 }
 
+// statRegularFile returns the FileInfo for path if it names an existing regular
+// file (not a directory). Otherwise it returns nil, false.
+func statRegularFile(path string) (os.FileInfo, bool) {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return nil, false
+	}
+	return info, true
+}
+
 // FileExists reports whether path names an existing regular file (not a
 // directory). It does not check the exec bit — callers that need to verify
 // executability should use IsExecutableFile instead.
 func FileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
-		return false
-	}
-	return true
+	_, ok := statRegularFile(path)
+	return ok
 }
 
 // IsExecutableFile reports whether path names an existing regular file (not a
@@ -70,8 +77,8 @@ func FileExists(path string) bool {
 // identically to FileExists because os.Stat does not expose a reliable execute
 // permission; Windows candidates carry explicit .cmd/.exe extensions instead.
 func IsExecutableFile(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil || info.IsDir() {
+	info, ok := statRegularFile(path)
+	if !ok {
 		return false
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {

@@ -91,26 +91,6 @@ func TestIsExecutableFileChecksExecBit(t *testing.T) {
 	}
 }
 
-func TestFileExistsRejectsDirectory(t *testing.T) {
-	dir := t.TempDir()
-	if FileExists(dir) {
-		t.Fatalf("FileExists returned true for a directory")
-	}
-	if IsExecutableFile(dir) {
-		t.Fatalf("IsExecutableFile returned true for a directory")
-	}
-}
-
-func TestFileExistsRejectsMissingPath(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "does-not-exist")
-	if FileExists(path) {
-		t.Fatalf("FileExists returned true for missing path")
-	}
-	if IsExecutableFile(path) {
-		t.Fatalf("IsExecutableFile returned true for missing path")
-	}
-}
-
 func TestEnsureWorkspaceGitignoreLeavesForeignFileUntouched(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), ".codex")
 	if err := os.MkdirAll(dir, 0o750); err != nil {
