@@ -15,15 +15,16 @@ type Summary struct {
 
 // Project is the full read-model returned by GET /api/v1/projects/{id}.
 type Project struct {
-	ID             domain.ProjectID      `json:"id"`
-	Name           string                `json:"name"`
-	Kind           domain.ProjectKind    `json:"kind" enum:"single_repo,workspace,scratch"`
-	Path           string                `json:"path"`
-	Repo           string                `json:"repo"`
-	DefaultBranch  string                `json:"defaultBranch"`
-	Agent          string                `json:"agent,omitempty"`
-	Config         *domain.ProjectConfig `json:"config,omitempty"`
-	WorkspaceRepos []WorkspaceRepo       `json:"workspaceRepos,omitempty"`
+	ID                    domain.ProjectID      `json:"id"`
+	Name                  string                `json:"name"`
+	Kind                  domain.ProjectKind    `json:"kind" enum:"single_repo,workspace,scratch"`
+	Path                  string                `json:"path"`
+	Repo                  string                `json:"repo"`
+	DefaultBranch         string                `json:"defaultBranch"`
+	Agent                 string                `json:"agent,omitempty"`
+	Config                *domain.ProjectConfig `json:"config,omitempty"`
+	WorkspaceRepos        []WorkspaceRepo       `json:"workspaceRepos,omitempty"`
+	SkippedWorkspaceRepos []WorkspaceRepo       `json:"skippedWorkspaceRepos,omitempty"`
 }
 
 // Degraded is returned in place of Project when project config failed to load.
@@ -40,4 +41,5 @@ type WorkspaceRepo struct {
 	Name         string `json:"name"`
 	RelativePath string `json:"relativePath"`
 	Repo         string `json:"repo"`
+	SkipReason   string `json:"skipReason,omitempty"`
 }

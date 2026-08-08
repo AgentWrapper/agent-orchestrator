@@ -1131,29 +1131,57 @@ func TestManager_AddWorkspaceInitializesPlainParent(t *testing.T) {
 	}
 }
 
-func TestManager_AddWorkspaceRejectsUncommittedChild(t *testing.T) {
+// TestManager_AddWorkspaceSkipsUncommittedChild verifies that an unborn child
+// (no commits) is skipped rather than aborting the whole import. A valid child
+// is included so the import does not fail with WORKSPACE_REPOS_REQUIRED.
+func TestManager_AddWorkspaceSkipsUncommittedChild(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
 	parent := t.TempDir()
+	// One valid child so the import succeeds.
+	gitRepoWithCommit(t, filepath.Join(parent, "valid"))
+	// One unborn child (no commit).
 	child := filepath.Join(parent, "cli")
 	if out, err := exec.Command("git", "init", "-b", "main", child).CombinedOutput(); err != nil {
 		t.Fatalf("git init child: %v (%s)", err, out)
 	}
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_CHILD_UNBORN")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with unborn child: %v", err)
+	}
+	if len(proj.WorkspaceRepos) != 1 {
+		t.Fatalf("WorkspaceRepos = %d, want 1 (the valid child)", len(proj.WorkspaceRepos))
+	}
+	if len(proj.SkippedWorkspaceRepos) != 1 {
+		t.Fatalf("SkippedWorkspaceRepos = %d, want 1 (the unborn child)", len(proj.SkippedWorkspaceRepos))
+	}
+	if proj.SkippedWorkspaceRepos[0].SkipReason == "" {
+		t.Fatalf("SkipReason is empty, want a reason")
+	}
 }
 
-func TestManager_AddWorkspaceRejectsChildWithoutOrigin(t *testing.T) {
+func TestManager_AddWorkspaceImportsChildWithoutOrigin(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
 	parent := t.TempDir()
 	gitRepoWithCommitNoOrigin(t, filepath.Join(parent, "api"))
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_CHILD_ORIGIN_REQUIRED")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("ws"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace without origin: %v", err)
+	}
+	if len(proj.WorkspaceRepos) != 1 {
+		t.Fatalf("WorkspaceRepos = %d, want 1 (origin is now optional)", len(proj.WorkspaceRepos))
+	}
+	if proj.WorkspaceRepos[0].Repo != "" {
+		t.Fatalf("Repo = %q, want empty (local-only)", proj.WorkspaceRepos[0].Repo)
+	}
+	if len(proj.SkippedWorkspaceRepos) != 0 {
+		t.Fatalf("SkippedWorkspaceRepos = %d, want 0 (origin-less is not skipped)", len(proj.SkippedWorkspaceRepos))
+	}
 }
 
 // TestManager_AddWorkspaceAdoptsExistingParent verifies that when the parent is
@@ -1296,9 +1324,10 @@ func TestManager_AddWorkspaceAdoptsSeparateGitDirParent(t *testing.T) {
 	}
 }
 
-// TestManager_AddWorkspaceRejectsWorktreeChild verifies that a child whose .git
-// is a file (linked worktree) is rejected.
-func TestManager_AddWorkspaceRejectsWorktreeChild(t *testing.T) {
+// TestManager_AddWorkspaceSkipsWorktreeChild verifies that a child whose .git
+// is a file (linked worktree) is skipped rather than aborting the import. A
+// valid child is included so the import does not fail with WORKSPACE_REPOS_REQUIRED.
+func TestManager_AddWorkspaceSkipsWorktreeChild(t *testing.T) {
 	configureCommitter(t)
 	ctx := context.Background()
 	m := newManager(t)
@@ -1308,6 +1337,8 @@ func TestManager_AddWorkspaceRejectsWorktreeChild(t *testing.T) {
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		t.Fatalf("mkdir parent: %v", err)
 	}
+	// One valid child so the import succeeds.
+	gitRepoWithCommit(t, filepath.Join(parent, "valid"))
 	// An external standalone repo used as the source for a worktree child.
 	extRepo := filepath.Join(base, "ext")
 	gitRepoWithCommit(t, extRepo)
@@ -1318,8 +1349,62 @@ func TestManager_AddWorkspaceRejectsWorktreeChild(t *testing.T) {
 		t.Fatalf("git worktree add child: %v (%s)", err, out)
 	}
 
-	_, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("wc"), AsWorkspace: true})
-	wantCode(t, err, "WORKSPACE_CHILD_IS_WORKTREE")
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("wc"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add workspace with worktree child: %v", err)
+	}
+	if len(proj.WorkspaceRepos) != 1 {
+		t.Fatalf("WorkspaceRepos = %d, want 1 (the valid child)", len(proj.WorkspaceRepos))
+	}
+	if len(proj.SkippedWorkspaceRepos) != 1 {
+		t.Fatalf("SkippedWorkspaceRepos = %d, want 1 (the worktree)", len(proj.SkippedWorkspaceRepos))
+	}
+	if proj.SkippedWorkspaceRepos[0].SkipReason == "" {
+		t.Fatalf("SkipReason is empty, want a reason")
+	}
+}
+
+// TestManager_AddWorkspaceSkipsInvalidChildrenAndImportsValid verifies that a
+// workspace folder with a mix of valid, origin-less, and worktree children
+// imports the valid + origin-less ones and skips the worktree.
+func TestManager_AddWorkspaceSkipsInvalidChildrenAndImportsValid(t *testing.T) {
+	configureCommitter(t)
+	ctx := context.Background()
+	m := newManager(t)
+	parent := t.TempDir()
+	// Two valid repos with origin.
+	gitRepoWithCommit(t, filepath.Join(parent, "api"))
+	gitRepoWithCommit(t, filepath.Join(parent, "web"))
+	// One repo without origin (now valid — imported, not skipped).
+	gitRepoWithCommitNoOrigin(t, filepath.Join(parent, "local"))
+
+	// One worktree child (skipped).
+	base := t.TempDir()
+	extRepo := filepath.Join(base, "ext")
+	gitRepoWithCommit(t, extRepo)
+	wtChild := filepath.Join(parent, "wt-branch")
+	if out, err := exec.Command("git", "-C", extRepo, "worktree", "add", wtChild).CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v (%s)", err, out)
+	}
+
+	proj, err := m.Add(ctx, project.AddInput{Path: parent, ProjectID: ptr("mix"), AsWorkspace: true})
+	if err != nil {
+		t.Fatalf("Add mixed workspace: %v", err)
+	}
+	// 3 registered: api + web + local (origin-less is now valid).
+	if len(proj.WorkspaceRepos) != 3 {
+		t.Fatalf("WorkspaceRepos = %d, want 3 (api + web + local)", len(proj.WorkspaceRepos))
+	}
+	// 1 skipped: the worktree.
+	if len(proj.SkippedWorkspaceRepos) != 1 {
+		t.Fatalf("SkippedWorkspaceRepos = %d, want 1 (the worktree)", len(proj.SkippedWorkspaceRepos))
+	}
+	if proj.SkippedWorkspaceRepos[0].Name != "wt-branch" {
+		t.Fatalf("skipped name = %q, want wt-branch", proj.SkippedWorkspaceRepos[0].Name)
+	}
+	if proj.SkippedWorkspaceRepos[0].SkipReason == "" {
+		t.Fatalf("SkipReason is empty, want a reason")
+	}
 }
 
 // TestManager_AddWorkspaceRejectsReservedChildName verifies that a child repo

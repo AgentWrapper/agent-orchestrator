@@ -28,32 +28,32 @@ var workspaceRootIgnoreDenylist = []string{
 	"temp/",
 }
 
-func prepareWorkspaceProject(ctx context.Context, parent string, projectID domain.ProjectID, registeredAt time.Time) ([]domain.WorkspaceRepoRecord, error) {
+func prepareWorkspaceProject(ctx context.Context, parent string, projectID domain.ProjectID, registeredAt time.Time) ([]domain.WorkspaceRepoRecord, []WorkspaceRepo, error) {
 	if err := validateWorkspaceParent(ctx, parent); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	children, err := detectWorkspaceChildren(ctx, parent, projectID, registeredAt)
+	children, skipped, err := detectWorkspaceChildren(ctx, parent, projectID, registeredAt)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(children) == 0 {
-		return nil, apierr.Invalid("WORKSPACE_REPOS_REQUIRED", "Workspace project must contain at least one direct child git repository", map[string]any{
+		return nil, nil, apierr.Invalid("WORKSPACE_REPOS_REQUIRED", "Workspace project must contain at least one direct child git repository", map[string]any{
 			"suggestedFix": "Create or move child repositories directly under the workspace folder, then retry.",
 		})
 	}
 	if isGitRepo(parent) {
-		if err := adoptWorkspaceParent(ctx, parent, children); err != nil {
-			return nil, err
+		if err := adoptWorkspaceParent(ctx, parent, children, skipped); err != nil {
+			return nil, nil, err
 		}
 	} else {
-		if err := initWorkspaceParent(ctx, parent, children); err != nil {
-			return nil, err
+		if err := initWorkspaceParent(ctx, parent, children, skipped); err != nil {
+			return nil, nil, err
 		}
 	}
 	if err := guardNoGitlinks(ctx, parent); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return children, nil
+	return children, skipped, nil
 }
 
 // validateWorkspaceParent checks that the parent folder is not a linked
@@ -138,12 +138,13 @@ func validateWorkspaceParent(ctx context.Context, parent string) error {
 	return nil
 }
 
-func detectWorkspaceChildren(ctx context.Context, parent string, projectID domain.ProjectID, registeredAt time.Time) ([]domain.WorkspaceRepoRecord, error) {
+func detectWorkspaceChildren(ctx context.Context, parent string, projectID domain.ProjectID, registeredAt time.Time) ([]domain.WorkspaceRepoRecord, []WorkspaceRepo, error) {
 	entries, err := os.ReadDir(parent)
 	if err != nil {
-		return nil, apierr.Invalid("INVALID_PATH", "Workspace path could not be read", nil)
+		return nil, nil, apierr.Invalid("INVALID_PATH", "Workspace path could not be read", nil)
 	}
 	var repos []domain.WorkspaceRepoRecord
+	var skipped []WorkspaceRepo
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -161,7 +162,7 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 		// only a real git repo named __root__ would create a PK collision in
 		// session_worktrees.
 		if name == domain.RootWorkspaceRepoName {
-			return nil, apierr.Invalid("WORKSPACE_CHILD_RESERVED_NAME",
+			return nil, nil, apierr.Invalid("WORKSPACE_CHILD_RESERVED_NAME",
 				"Child repository name is reserved for internal use",
 				map[string]any{
 					"path":         child,
@@ -169,7 +170,13 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 				})
 		}
 		if err := validateWorkspaceChild(ctx, child); err != nil {
-			return nil, err
+			skipped = append(skipped, WorkspaceRepo{
+				Name:         name,
+				RelativePath: filepath.ToSlash(name),
+				Repo:         "",
+				SkipReason:   err.Error(),
+			})
+			continue
 		}
 		repos = append(repos, domain.WorkspaceRepoRecord{
 			ProjectID:     projectID,
@@ -180,7 +187,7 @@ func detectWorkspaceChildren(ctx context.Context, parent string, projectID domai
 		})
 	}
 	sort.Slice(repos, func(i, j int) bool { return repos[i].Name < repos[j].Name })
-	return repos, nil
+	return repos, skipped, nil
 }
 
 func validateWorkspaceChild(ctx context.Context, child string) error {
@@ -213,17 +220,11 @@ func validateWorkspaceChild(ctx context.Context, child string) error {
 			"suggestedFix": "Check out the repository's default branch (for example `main`) and retry.",
 		})
 	}
-	if origin := resolveGitOriginURL(child); origin == "" {
-		return apierr.Invalid("WORKSPACE_CHILD_ORIGIN_REQUIRED", "Workspace child repositories must have an origin remote configured", map[string]any{
-			"path":         child,
-			"suggestedFix": "Run `git remote add origin <url>` in the child repository, then retry.",
-		})
-	}
 	return nil
 }
 
-func adoptWorkspaceParent(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord) error {
-	changed, err := ensureWorkspaceGitignore(parent, repos)
+func adoptWorkspaceParent(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord, skipped []WorkspaceRepo) error {
+	changed, err := ensureWorkspaceGitignore(parent, repos, skipped)
 	if err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_GITIGNORE_FAILED", "Failed to update workspace parent .gitignore", map[string]any{"error": err.Error()})
 	}
@@ -242,7 +243,7 @@ func adoptWorkspaceParent(ctx context.Context, parent string, repos []domain.Wor
 	return nil
 }
 
-func initWorkspaceParent(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord) (retErr error) {
+func initWorkspaceParent(ctx context.Context, parent string, repos []domain.WorkspaceRepoRecord, skipped []WorkspaceRepo) (retErr error) {
 	// Snapshot the original .gitignore so we can restore it on failure.
 	// If the file doesn't exist, originalGitignore is nil.
 	gitignorePath := filepath.Join(parent, ".gitignore")
@@ -267,7 +268,7 @@ func initWorkspaceParent(ctx context.Context, parent string, repos []domain.Work
 		}
 	}()
 
-	if _, err := ensureWorkspaceGitignore(parent, repos); err != nil {
+	if _, err := ensureWorkspaceGitignore(parent, repos, skipped); err != nil {
 		return apierr.Invalid("WORKSPACE_PARENT_GITIGNORE_FAILED", "Failed to write workspace parent .gitignore", map[string]any{"error": err.Error()})
 	}
 	if _, err := gitOutput(ctx, parent, "add", "-A"); err != nil {
@@ -282,7 +283,7 @@ func initWorkspaceParent(ctx context.Context, parent string, repos []domain.Work
 	return nil
 }
 
-func ensureWorkspaceGitignore(parent string, repos []domain.WorkspaceRepoRecord) (bool, error) {
+func ensureWorkspaceGitignore(parent string, repos []domain.WorkspaceRepoRecord, skipped []WorkspaceRepo) (bool, error) {
 	path := filepath.Join(parent, ".gitignore")
 	seen := map[string]bool{}
 	var lines []string
@@ -303,6 +304,9 @@ func ensureWorkspaceGitignore(parent string, repos []domain.WorkspaceRepoRecord)
 	var additions []string
 	for _, repo := range repos {
 		additions = append(additions, "/"+filepath.ToSlash(repo.RelativePath)+"/")
+	}
+	for _, s := range skipped {
+		additions = append(additions, "/"+filepath.ToSlash(s.RelativePath)+"/")
 	}
 	additions = append(additions, workspaceRootIgnoreDenylist...)
 	changed := false
