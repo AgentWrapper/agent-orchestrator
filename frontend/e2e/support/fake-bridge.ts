@@ -213,6 +213,7 @@ export async function installFakeBridge(page: Page, opts: FakeBridgeOptions = {}
 export type FakeWorker = {
 	id: string;
 	title: string;
+	mode?: "chat" | "tui";
 	provider?: string;
 	branch?: string;
 	status?: string;
@@ -287,6 +288,7 @@ export async function installFakeAgent(page: Page, opts: FakeAgentOptions = {}):
 				title: w.title,
 				provider: w.provider ?? "codex",
 				kind: "worker",
+				mode: w.mode ?? "tui",
 				branch: w.branch ?? `session/${w.id}`,
 				status: w.status ?? "working",
 				createdAt: nowIso,
