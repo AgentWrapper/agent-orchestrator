@@ -1549,7 +1549,7 @@ func reviewDecisionPriority(d domain.ReviewDecision) int {
 	}
 }
 
-func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, decision string, hasObs bool, updatedAtProvider time.Time, now time.Time) bool {
+func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, decision string, hasObs bool, updatedAtProvider, now time.Time) bool {
 	if o.Cache.ReviewRefreshFailed[key] {
 		return true
 	}

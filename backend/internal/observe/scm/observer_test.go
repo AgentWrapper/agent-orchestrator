@@ -1524,7 +1524,7 @@ func TestPoll_UpdatedAtProviderTriggersReviewRefresh(t *testing.T) {
 		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "comment"}}}},
 	}
 	provider := &fakeProvider{
-		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}},
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}},
 		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): obsValue},
 		reviews:      map[string]ports.SCMReviewObservation{prKey(testRepo, 1): review},
 	}
@@ -1563,7 +1563,7 @@ func TestPoll_UpdatedAtProviderStaleDoesNotTriggerReviewRefresh(t *testing.T) {
 	store.prs["p-1"] = []domain.PullRequest{local}
 
 	provider := &fakeProvider{
-		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}},
+		repoGuards:   map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo"}},
 		observations: map[string]ports.SCMObservation{prKey(testRepo, 1): obsValue},
 		reviews:      map[string]ports.SCMReviewObservation{prKey(testRepo, 1): {Decision: string(domain.ReviewApproved)}},
 	}
