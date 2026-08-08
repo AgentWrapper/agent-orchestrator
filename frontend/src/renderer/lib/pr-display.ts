@@ -96,25 +96,48 @@ export function prChecksUrl(pr: SessionPRSummary): string | undefined {
 	}
 }
 
+/**
+ * Canonical identity key for deduplication. Reuses the URL normalization
+ * from `prURL` (which normalizes GitHub issues→pull, strips query/fragment,
+ * and handles GitLab MR paths). When the URL is absent or unrecognized
+ * (e.g. API URLs), falls back to `number:${number}` so the enriched summary
+ * still matches the session fact.
+ */
+function canonicalKey(url: string, number: number): string {
+	return canonicalURL(url) || `number:${number}`;
+}
+
+function canonicalURL(rawUrl: string): string | undefined {
+	return prURL({ url: rawUrl, htmlUrl: rawUrl, mergeability: { prUrl: rawUrl } } as SessionPRSummary);
+}
+
 export function sessionPRDisplaySummaries(
 	session: WorkspaceSession,
 	summaries: SessionPRSummary[] = [],
 ): SessionPRSummary[] {
 	// Key by canonical web URL so a GitHub PR #7 and a GitLab MR #7 (or any
 	// same-numbered PRs across providers/repos) both appear instead of one
-	// hiding the other. Summaries with an empty url fall back to a degraded
-	// `number:${number}` key — better than dropping the summary, though two
-	// providers with the same number and no url would still collide. The url is
-	// populated in the normal flow, so this is an edge case.
-	const displayKey = (url: string, number: number): string => url || `number:${number}`;
-	const summariesByUrl = new Map(summaries.map((summary) => [displayKey(summary.url, summary.number), summary]));
+	// hiding the other. The key normalizes known URL shapes (e.g. GitHub
+	// issues/7 → pull/7, query params/fragments stripped) so the same PR
+	// observed under different URL variants collapses to one card.
+	// Non-standard URLs (API URLs, etc.) fall back to `number:${number}` so
+	// the enriched summary still matches the session fact.
+	const summariesByUrl = new Map<string, SessionPRSummary>();
+	for (const s of summaries) {
+		const key = canonicalKey(s.url, s.number);
+		if (!summariesByUrl.has(key)) summariesByUrl.set(key, s);
+	}
 	const seen = new Set<string>();
-	const fromFacts = sortedPRs(session).map((pr) => {
-		seen.add(displayKey(pr.url, pr.number));
-		return summariesByUrl.get(displayKey(pr.url, pr.number)) ?? sessionPRFactToSummary(session, pr);
-	});
-	const summaryOnly = summaries.filter((summary) => !seen.has(displayKey(summary.url, summary.number)));
-	return [...fromFacts, ...summaryOnly].sort(comparePRDisplaySummaries);
+	const fromFactsMap = new Map<string, SessionPRSummary>();
+	for (const pr of sortedPRs(session)) {
+		const key = canonicalKey(pr.url, pr.number);
+		seen.add(key);
+		if (!fromFactsMap.has(key)) {
+			fromFactsMap.set(key, summariesByUrl.get(key) ?? sessionPRFactToSummary(session, pr));
+		}
+	}
+	const summaryOnly = [...summariesByUrl.values()].filter((s) => !seen.has(canonicalKey(s.url, s.number)));
+	return [...fromFactsMap.values(), ...summaryOnly].sort(comparePRDisplaySummaries);
 }
 
 function sessionPRFactToSummary(session: WorkspaceSession, pr: PullRequestFacts): SessionPRSummary {

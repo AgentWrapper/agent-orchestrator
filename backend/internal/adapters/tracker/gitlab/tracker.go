@@ -349,7 +349,7 @@ func parseGitLabID(native string) (projectPath string, iid int, err error) {
 	}
 	projectPath = native[:hash]
 	iidStr := native[hash+1:]
-	if err = validateProjectPath(projectPath); err != nil {
+	if err := validateProjectPath(projectPath); err != nil {
 		return "", 0, err
 	}
 	n, parseErr := strconv.Atoi(iidStr)

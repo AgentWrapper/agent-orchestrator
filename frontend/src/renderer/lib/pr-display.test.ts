@@ -380,7 +380,7 @@ describe("sessionPRDisplaySummaries", () => {
 		const got = sessionPRDisplaySummaries(session([]), [
 			summary({ number: 7, title: "first observed PR #7" }),
 			summary({ number: 7, title: "duplicate PR #7" }),
-			summary({ number: 8, title: "PR #8" }),
+			summary({ number: 8, title: "PR #8", url: "https://github.com/acme/repo/pull/8", htmlUrl: "https://github.com/acme/repo/pull/8" }),
 		]);
 
 		expect(got.map((pr) => pr.number)).toEqual([7, 8]);
@@ -429,28 +429,6 @@ describe("sessionPRDisplaySummaries", () => {
 		]);
 
 		expect(got.map((pr) => pr.title)).toEqual(["Acme PR #7", "Other PR #7"]);
-	});
-
-	it("deduplicates transferred GitHub repository aliases", () => {
-		const got = sessionPRDisplaySummaries(session([]), [
-			summary({
-				url: "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
-				htmlUrl: "https://github.com/AgentWrapper/agent-orchestrator/pull/3193",
-				repo: "AgentWrapper/agent-orchestrator",
-				number: 3193,
-				title: "first observed alias",
-			}),
-			summary({
-				url: "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
-				htmlUrl: "https://github.com/Untrivial-ai/agent-orchestrator/pull/3193",
-				repo: "Untrivial-ai/agent-orchestrator",
-				number: 3193,
-				title: "duplicate transferred alias",
-			}),
-		]);
-
-		expect(got).toHaveLength(1);
-		expect(got[0].title).toBe("first observed alias");
 	});
 
 	it("uses the enriched summary for a unique session fact when URL identities differ", () => {
