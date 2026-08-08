@@ -34,10 +34,10 @@ import type {
 } from "../hooks/useTerminalSession";
 import { aoBridge } from "../lib/bridge";
 import { TERMINAL_FONT_SIZE_DEFAULT } from "../lib/design-tokens";
-import { openLinkInSystemBrowser } from "../lib/external-link-policy";
-import { applyDocumentTheme } from "../lib/theme";
+import { isWebLink, openLinkInSystemBrowser } from "../lib/external-link-policy";
+import { applyDocumentTheme, applyDocumentThemeStyle } from "../lib/theme";
 import { buildTerminalThemes } from "../lib/terminal-themes";
-import type { Theme } from "../stores/ui-store";
+import { useUiStore, type Theme } from "../stores/ui-store";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -207,15 +207,6 @@ type TerminalContextMenuState = {
 	link: string | null;
 };
 
-function isWebLink(uri: string): boolean {
-	try {
-		const { protocol } = new URL(uri);
-		return protocol === "http:" || protocol === "https:";
-	} catch {
-		return false;
-	}
-}
-
 type TerminalContextMenuAction = "copy" | "paste" | "selectAll" | "clear";
 
 type TerminalContextMenuActions = Record<TerminalContextMenuAction, () => void>;
@@ -260,6 +251,7 @@ function removeHiddenScrollbarReservation(term: Terminal): void {
 
 export function XtermTerminal(props: XtermTerminalProps) {
 	const { t } = useTranslation();
+	const themeStyle = useUiStore((state) => state.themeStyle);
 	const hostRef = useRef<HTMLDivElement | null>(null);
 	const termRef = useRef<Terminal | null>(null);
 	const fitRef = useRef<(() => void) | null>(null);
@@ -295,16 +287,17 @@ export function XtermTerminal(props: XtermTerminalProps) {
 	callbacksRef.current = props;
 
 	useEffect(() => {
+		// buildTerminalThemes() reads live CSS vars from :root. Parent shell effects
+		// run after child effects, so sync both independent theme axes here before
+		// reading. Retained terminals subscribe to themeStyle directly and update
+		// their live palette without being torn down or losing scrollback.
+		applyDocumentTheme(props.theme);
+		applyDocumentThemeStyle(themeStyle);
 		const term = termRef.current;
 		if (!term) return;
-		// buildTerminalThemes() reads live CSS vars from :root. Parent shell
-		// applies data-theme in its own effect, and child effects run first, so
-		// sync the document here before reading — otherwise the palette stays on
-		// the previous theme until remount.
-		applyDocumentTheme(props.theme);
 		const { dark, light } = buildTerminalThemes();
 		term.options.theme = props.theme === "dark" ? dark : light;
-	}, [props.theme]);
+	}, [props.theme, themeStyle]);
 
 	useEffect(() => {
 		const term = termRef.current;

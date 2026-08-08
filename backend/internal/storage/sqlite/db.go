@@ -134,6 +134,15 @@ func migrate(db *sql.DB) error {
 	if err := repairRenumberedChatMigrationHistory(db); err != nil {
 		return fmt.Errorf("repair renumbered chat migration history: %w", err)
 	}
+	if err := prepareBurnedSchemaRepairs(db); err != nil {
+		return fmt.Errorf("prepare burned schema repairs: %w", err)
+	}
+	if err := prepareReviewPerHarnessMigration(db); err != nil {
+		return fmt.Errorf("prepare review per-harness migration: %w", err)
+	}
+	if err := prepareBrowserVerifierMigration(db); err != nil {
+		return fmt.Errorf("prepare browser verifier migration: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -142,6 +151,297 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// prepareBrowserVerifierMigration preserves development databases that ran an
+// earlier version of this branch where the verifier was mistakenly added to
+// shipped migration 0048. The restored 0048 no longer owns the column, so mark
+// the new 0081 migration applied when its exact schema effect already exists;
+// otherwise goose applies 0081 normally.
+func prepareBrowserVerifierMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+	var applied int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 81 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied); err != nil {
+		return err
+	}
+	if applied != 0 {
+		return nil
+	}
+	var verifierColumn int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
+	).Scan(&verifierColumn); err != nil {
+		return err
+	}
+	if verifierColumn == 0 {
+		return nil
+	}
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (81, 1)`)
+	return err
+}
+
+func prepareBurnedSchemaRepairs(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+	for _, rc := range schemaRepairs {
+		var applied int
+		if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = ? ORDER BY id DESC LIMIT 1
+), 0)`, rc.version).Scan(&applied); err != nil {
+			return err
+		}
+		if applied == 0 {
+			continue
+		}
+		var tableCount int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, rc.table,
+		).Scan(&tableCount); err != nil {
+			return err
+		}
+		if tableCount == 0 {
+			continue
+		}
+		var columnCount int
+		if err := db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, rc.table, rc.column,
+		).Scan(&columnCount); err != nil {
+			return err
+		}
+		if columnCount > 0 {
+			continue
+		}
+		if _, err := db.Exec(rc.addDDL); err != nil {
+			return err
+		}
+		for _, stmt := range rc.postAdd {
+			if _, err := db.Exec(stmt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// prepareReviewPerHarnessMigration makes the fresh 0080 rebuild executable on
+// field databases that already recorded 0048/0049 as applied without actually
+// running their SQL. Once 0080 has applied, it still repairs the physical review
+// table if it is missing columns or constraints expected by current queries, but
+// does not recreate review_session after the rebuild drops it.
+func prepareReviewPerHarnessMigration(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var gooseTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return tx.Commit()
+	}
+	var applied80 int
+	if err := tx.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 80 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied80); err != nil {
+		return err
+	}
+	var applied48 int
+	if err := tx.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 48 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied48); err != nil {
+		return err
+	}
+	if applied48 == 0 {
+		return tx.Commit()
+	}
+	var reviewTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'review'`,
+	).Scan(&reviewTable); err != nil {
+		return err
+	}
+	if reviewTable == 0 {
+		return tx.Commit()
+	}
+	var agentSessionColumn int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('review') WHERE name = 'agent_session_id'`,
+	).Scan(&agentSessionColumn); err != nil {
+		return err
+	}
+	if agentSessionColumn == 0 {
+		if _, err := tx.Exec(`ALTER TABLE review ADD COLUMN agent_session_id TEXT NOT NULL DEFAULT ''`); err != nil {
+			return err
+		}
+	}
+	if applied80 != 0 {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		return repairReviewPerHarnessShape(db)
+	}
+	var reviewSessionTable int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'review_session'`,
+	).Scan(&reviewSessionTable); err != nil {
+		return err
+	}
+	if reviewSessionTable == 0 {
+		if _, err := tx.Exec(`
+CREATE TABLE review_session (
+    session_id         TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    project_id         TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    harness            TEXT NOT NULL,
+    reviewer_handle_id TEXT NOT NULL DEFAULT '',
+    agent_session_id   TEXT NOT NULL DEFAULT '',
+    created_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, harness)
+)`); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func repairReviewPerHarnessShape(db *sql.DB) error {
+	ok, err := reviewHasSessionHarnessUnique(db)
+	if err != nil || ok {
+		return err
+	}
+	if _, err := db.Exec(`PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer func() { _, _ = db.Exec(`PRAGMA foreign_keys=ON`) }()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`
+CREATE TABLE review_repair (
+    id                 TEXT PRIMARY KEY,
+    session_id         TEXT NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+    project_id         TEXT NOT NULL REFERENCES projects (id),
+    harness            TEXT NOT NULL,
+    pr_url             TEXT NOT NULL DEFAULT '',
+    reviewer_handle_id TEXT NOT NULL DEFAULT '',
+    agent_session_id   TEXT NOT NULL DEFAULT '',
+    created_at         TIMESTAMP NOT NULL,
+    updated_at         TIMESTAMP NOT NULL,
+    UNIQUE(session_id, harness)
+)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+INSERT INTO review_repair (
+    id, session_id, project_id, harness, pr_url, reviewer_handle_id,
+    agent_session_id, created_at, updated_at
+)
+SELECT
+    id, session_id, project_id, harness, pr_url, reviewer_handle_id,
+    agent_session_id, created_at, updated_at
+FROM review`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DROP TABLE review`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`ALTER TABLE review_repair RENAME TO review`); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func reviewHasSessionHarnessUnique(db *sql.DB) (bool, error) {
+	rows, err := db.Query(`PRAGMA index_list('review')`)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	uniqueIndexes := []string{}
+	for rows.Next() {
+		var seq int
+		var name, origin string
+		var unique, partial int
+		if err := rows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
+			return false, err
+		}
+		if unique == 0 {
+			continue
+		}
+		uniqueIndexes = append(uniqueIndexes, name)
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	for _, name := range uniqueIndexes {
+		if indexColumnsMatch(db, name, []string{"session_id", "harness"}) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func indexColumnsMatch(db *sql.DB, indexName string, want []string) bool {
+	rows, err := db.Query(`PRAGMA index_info(` + quoteSQLiteIdent(indexName) + `)`)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = rows.Close() }()
+	got := make([]string, 0, len(want))
+	for rows.Next() {
+		var seqno, cid int
+		var name string
+		if err := rows.Scan(&seqno, &cid, &name); err != nil {
+			return false
+		}
+		got = append(got, name)
+	}
+	if rows.Err() != nil || len(got) != len(want) {
+		return false
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func quoteSQLiteIdent(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // repairRenumberedChatMigrationHistory preserves databases opened by this
@@ -245,22 +545,23 @@ SELECT COALESCE((
 // column was just added, so healthy databases — where those statements would
 // clobber live data — are never touched.
 //
-// Any new migration numbered up to 0046 whose schema the generated queries
-// depend on MUST add an entry here, or the burned field profiles skip it and
-// regress to the 500s this exists to prevent.
+// Any migration whose schema the generated queries depend on MUST add an entry
+// here when a burned field profile can skip it, or the session list can regress
+// to the 500s this exists to prevent.
 var schemaRepairs = []struct {
+	version int64
 	table   string
 	column  string
 	addDDL  string
 	postAdd []string
 }{
 	// 0040_add_session_diff_base.sql
-	{table: "sessions", column: "diff_base_sha",
+	{version: 40, table: "sessions", column: "diff_base_sha",
 		addDDL: `ALTER TABLE sessions ADD COLUMN diff_base_sha TEXT NOT NULL DEFAULT ''`},
-	{table: "sessions", column: "diff_base_ref",
+	{version: 40, table: "sessions", column: "diff_base_ref",
 		addDDL: `ALTER TABLE sessions ADD COLUMN diff_base_ref TEXT NOT NULL DEFAULT ''`},
 	// 0041_notification_resolution.sql
-	{table: "notifications", column: "resolved_at",
+	{version: 41, table: "notifications", column: "resolved_at",
 		addDDL: `ALTER TABLE notifications ADD COLUMN resolved_at TIMESTAMP`,
 		postAdd: []string{
 			`UPDATE notifications SET resolved_at = created_at WHERE status = 'read'`,
@@ -272,7 +573,7 @@ var schemaRepairs = []struct {
     ON notifications(resolved_at, created_at DESC, id DESC)`,
 		}},
 	// 0042_review_run_unique_per_harness.sql
-	{table: "sessions", column: "reviewer_harness",
+	{version: 42, table: "sessions", column: "reviewer_harness",
 		addDDL: `ALTER TABLE sessions ADD COLUMN reviewer_harness TEXT NOT NULL DEFAULT ''`,
 		postAdd: []string{
 			`DROP INDEX IF EXISTS idx_review_run_session_pr_sha`,
@@ -285,9 +586,9 @@ var schemaRepairs = []struct {
 	// 0043_add_session_pinned.sql. The trigger replay hangs off pinned_at, the
 	// second of the two columns: it references both, and SQLite resolves a
 	// trigger body at CREATE time, so it cannot run until both exist.
-	{table: "sessions", column: "is_pinned",
+	{version: 43, table: "sessions", column: "is_pinned",
 		addDDL: `ALTER TABLE sessions ADD COLUMN is_pinned BOOLEAN NOT NULL DEFAULT 0`},
-	{table: "sessions", column: "pinned_at",
+	{version: 43, table: "sessions", column: "pinned_at",
 		addDDL: `ALTER TABLE sessions ADD COLUMN pinned_at DATETIME`,
 		postAdd: []string{
 			`DROP TRIGGER IF EXISTS sessions_cdc_update`,
@@ -317,12 +618,16 @@ BEGIN
             'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
         ),
         NEW.updated_at);
-END`,
+			END`,
 		}},
+	// 0081_browser_capability_verifier.sql. Keep the generated session queries
+	// healthy even if a field database has already burned this migration number.
+	{version: 81, table: "sessions", column: "browser_capability_verifier",
+		addDDL: `ALTER TABLE sessions ADD COLUMN browser_capability_verifier TEXT NOT NULL DEFAULT ''`},
 	// A pre-renumbered chat-mode branch created conversations before the
 	// current_session_id controller binding existed, then later builds recorded
 	// 0052 as applied. Generated chat queries require the column on startup.
-	{table: "conversations", column: "current_session_id",
+	{version: 66, table: "conversations", column: "current_session_id",
 		addDDL: `ALTER TABLE conversations ADD COLUMN current_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL`,
 		postAdd: []string{
 			`UPDATE conversations SET current_session_id = session_id WHERE current_session_id IS NULL AND session_id IS NOT NULL`,

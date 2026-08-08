@@ -6,7 +6,12 @@ import { memo, useEffect, useState } from "react";
 import type { components } from "../../api/schema";
 import { agentsQueryKey, agentsQueryOptions, refreshAgents } from "../hooks/useAgentsQuery";
 import { AGENT_OPTIONS } from "../lib/agent-options";
-import { agentLabelCompare, buildRankedAgentOptions } from "../lib/agent-select-options";
+import {
+	agentLabelCompare,
+	buildRankedAgentOptions,
+	DEFAULT_AGENT_PRIORITY,
+	DEFAULT_AGENT_PRIORITY_RANK,
+} from "../lib/agent-select-options";
 import { cn } from "../lib/utils";
 import { AgentAvatar } from "./AgentAvatar";
 import { FieldDefaultHint } from "./FieldDefaultHint";
@@ -31,11 +36,6 @@ export type CreateProjectAgentSelection = {
 };
 
 const EMPTY_INTAKE: IntakeForm = { enabled: false, repo: "", assignee: "" };
-const DEFAULT_AGENT_PRIORITY = ["claude-code", "codex", "cursor", "opencode", "aider"] as const;
-const DEFAULT_AGENT_PRIORITY_RANK = new Map<string, number>(
-	DEFAULT_AGENT_PRIORITY.map((agent, index) => [agent, index]),
-);
-
 type CreateProjectAgentSheetProps = {
 	error?: string | null;
 	isCreating: boolean;

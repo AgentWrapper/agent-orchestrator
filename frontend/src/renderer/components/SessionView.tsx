@@ -1,7 +1,9 @@
+import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { PanelImperativeHandle, PanelSize } from "react-resizable-panels";
+import type { components } from "../../api/schema";
 import { BrowserPanelView, useBrowserAnnotationQueue } from "./BrowserPanel";
 import { CenterPane } from "./CenterPane";
 import { SessionChatSurface } from "./chat/SessionChatSurface";
@@ -28,7 +30,7 @@ import {
 } from "../hooks/useSessionInterfaceTransition";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { useWindowFullScreen } from "../hooks/useWindowFullScreen";
-import { apiErrorMessage } from "../lib/api-client";
+import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { hidesShellTopbar } from "../lib/platform";
 import { useShell } from "../lib/shell-context";
 import { cn } from "../lib/utils";
@@ -42,6 +44,9 @@ const INSPECTOR_MAX_PERCENT = 45;
 const inspectorSplitStorageKey = "ao.inspector.split";
 const shellTopbarHiddenByPlatform = hidesShellTopbar();
 
+type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
+type ReviewerTerminalTarget = { handleId: string; harness: string };
+
 function initialSplitPercent(): number {
 	const raw = typeof window === "undefined" ? null : window.localStorage?.getItem(inspectorSplitStorageKey);
 	const parsed = raw === null ? Number.NaN : Number(raw);
@@ -54,6 +59,19 @@ function previewRevealKey(previewUrl?: string, previewRevision?: number): string
 	if (!target) return "";
 	if (typeof previewRevision === "number") return `revision:${previewRevision}`;
 	return `url:${target}`;
+}
+
+function browserIsVisible(sessionId: string, browserPoppedOut: boolean): boolean {
+	if (browserPoppedOut) return true;
+	const current = useUiStore.getState().inspectorSessions[sessionId];
+	return (current?.isOpen ?? true) && (current?.view ?? "summary") === "browser";
+}
+
+function reviewerTerminalFromReviews(data?: ReviewsResponse): ReviewerTerminalTarget | undefined {
+	const handleId = data?.reviewerHandleId?.trim();
+	if (!handleId) return undefined;
+	const latest = data?.reviews?.find((review) => review.latestRun)?.latestRun;
+	return { handleId, harness: data?.reviewerHarness || latest?.harness || "codex" };
 }
 
 type SessionViewProps = {
@@ -88,19 +106,40 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const toggleInspector = useUiStore((state) => state.toggleInspector);
 	const setInspectorViewForSession = useUiStore((state) => state.setInspectorView);
 	const markInspectorPreviewSeen = useUiStore((state) => state.markInspectorPreviewSeen);
+	const setBrowserContentRevealed = useUiStore((state) => state.setBrowserContentRevealed);
 	const setBrowserUnseen = useUiStore((state) => state.setBrowserUnseen);
 	const { daemonStatus } = useShell();
 	const inspectorRef = useRef<PanelImperativeHandle | null>(null);
 	const inspectorSeparatorRef = useRef<HTMLDivElement | null>(null);
 	const [terminalTarget, setTerminalTarget] = useState<TerminalTarget>({ kind: "worker" });
-	const [browserPoppedOut, setBrowserPoppedOut] = useState(false);
+	const [browserPopOutState, setBrowserPopOutState] = useState({ sessionId, poppedOut: false });
 	const [filesPoppedOut, setFilesPoppedOut] = useState(false);
+	const browserPoppedOut = browserPopOutState.sessionId === sessionId && browserPopOutState.poppedOut;
 	const [interfaceSwitchDialogOpen, setInterfaceSwitchDialogOpen] = useState(false);
 	const [dismissedTransitionID, setDismissedTransitionID] = useState("");
 	const isNativeFullScreen = useWindowFullScreen();
 
 	const session = workspaces.flatMap((workspace) => workspace.sessions).find((s) => s.id === sessionId);
 	const interfaceSwitch = useSessionInterfaceTransition(session?.id);
+	const reviewerQuery = useQuery({
+		queryKey: ["session-reviews", sessionId],
+		enabled: Boolean(
+			window.ao && session && sessionIsActive(session) && !isOrchestratorSession(session) && session.prs.length > 0,
+		),
+		refetchInterval: (query) => {
+			const data = query.state.data as ReviewsResponse | undefined;
+			return data?.reviews?.some((review) => review.status === "running") ? 2500 : false;
+		},
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET("/api/v1/sessions/{sessionId}/reviews", {
+				params: { path: { sessionId } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, "Unable to load reviews"));
+			return data ?? ({ reviewerHandleId: "", reviews: [], runs: [] } satisfies ReviewsResponse);
+		},
+	});
+	const availableReviewerTerminal = reviewerTerminalFromReviews(reviewerQuery.data);
+	const reviewerTerminal = session && sessionIsActive(session) ? availableReviewerTerminal : undefined;
 
 	// Shell terminals opened inside a session live beside its pane as extra tabs,
 	// scoped to the session on screen so each session has its own shell set.
@@ -200,6 +239,10 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setActiveShellTerminal(null);
 		setTerminalTarget({ kind: "worker" });
 	}, [setActiveShellTerminal]);
+	const selectReviewerTerminal = useCallback((target: ReviewerTerminalTarget) => {
+		setActiveShellTerminal(null);
+		setTerminalTarget({ kind: "reviewer", handleId: target.handleId, harness: target.harness, sessionId });
+	}, [sessionId, setActiveShellTerminal]);
 
 	// The shell layout owns opening (it is mounted on every route, so the button
 	// and ⌘T / Ctrl+T work everywhere); this view only follows the result. When a new
@@ -236,6 +279,14 @@ export function SessionView({ sessionId }: SessionViewProps) {
 				: current,
 		);
 	}, [shellTerminals]);
+	useEffect(() => {
+		setTerminalTarget((current) =>
+			current.kind === "reviewer" &&
+			(!availableReviewerTerminal || availableReviewerTerminal.handleId !== current.handleId)
+				? { kind: "worker" }
+				: current,
+		);
+	}, [availableReviewerTerminal]);
 	const isOrchestrator = session ? isOrchestratorSession(session) : false;
 	// Orchestrators get the full workspace width; only workers need the inspector rail.
 	const hasInspector = Boolean(session && !isOrchestrator);
@@ -314,11 +365,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	const browserSlotVisible = Boolean(
 		session && hasInspector && (browserPoppedOut || (isInspectorOpen && inspectorView === "browser")),
 	);
+	const terminated = session ? !sessionIsActive(session) : false;
 	const browserView = useBrowserView({
 		sessionId,
 		active: browserSlotVisible,
 		poppedOut: browserPoppedOut,
-		terminated: session ? !sessionIsActive(session) : false,
+		terminated,
 		previewUrl,
 		previewRevision,
 	});
@@ -326,10 +378,16 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		sessionId: session?.id,
 		navUrl: browserView.navState.url,
 	});
+	const browserUrl = browserView.navState.url.trim();
+	// A terminated session's `previewUrl` is a stale DB fact; useBrowserView
+	// suppresses and destroys the live preview for it, so it must not count as
+	// content here either — otherwise a merged/terminated session with an old
+	// preview auto-opens Browser onto a view the hook has already torn down.
+	const hasBrowserContent = !terminated && Boolean(previewUrl || browserUrl);
 
 	useLayoutEffect(() => {
 		setTerminalTarget({ kind: "worker" });
-		setBrowserPoppedOut(false);
+		setBrowserPopOutState({ sessionId, poppedOut: false });
 		setFilesPoppedOut(false);
 	}, [sessionId]);
 
@@ -351,7 +409,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 	}, [clearVisibleTerminalKind, routedTerminalTarget.kind, sessionId, setVisibleTerminalKind]);
 
 	const handleOpenFiles = useCallback(() => {
-		setBrowserPoppedOut(false);
+		setBrowserPopOutState({ sessionId, poppedOut: false });
 		setFilesPoppedOut(false);
 		setInspectorViewForSession(sessionId, "files");
 		setInspectorOpenForSession(sessionId, true);
@@ -359,7 +417,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 
 	const handleToggleFilesPopOut = useCallback(
 		(next: boolean) => {
-			if (next) setBrowserPoppedOut(false);
+			if (next) setBrowserPopOutState({ sessionId, poppedOut: false });
 			setFilesPoppedOut(next);
 			setInspectorViewForSession(sessionId, "files");
 			setInspectorOpenForSession(sessionId, true);
@@ -367,18 +425,46 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		[sessionId, setInspectorOpenForSession, setInspectorViewForSession],
 	);
 
-	const handleToggleBrowserPopOut = useCallback((next: boolean) => {
-		if (next) setFilesPoppedOut(false);
-		setBrowserPoppedOut(next);
-	}, []);
+	const handleToggleBrowserPopOut = useCallback(
+		(next: boolean) => {
+			if (next) setFilesPoppedOut(false);
+			setBrowserPopOutState({ sessionId, poppedOut: next });
+		},
+		[sessionId],
+	);
 
-	// `ao preview` sets session.previewUrl (streamed over CDC); badge the inspector
-	// rail's Browser tab so the user can open it when they choose — we never steal
-	// focus by opening the rail ourselves. A left-click on a terminal link opens the
-	// tab explicitly (see TerminalPane) and is exempt from the badge because the tab
-	// is already the active view by the time the CDC echo arrives. Navigation alone
-	// must not badge an already-present preview target, so the first observed preview
-	// key for each session is baselined as "seen"; only a later revision/URL badges.
+	// Reveal the first real content in each non-empty browser lifecycle. Once the
+	// user leaves Browser, subsequent work respects that choice and uses the
+	// unseen indicator instead of repeatedly stealing the active inspector tab.
+	// previewRevision intentionally retriggers the empty branch so an explicit
+	// clear consumes unseen activity even when the browser was already empty.
+	useEffect(() => {
+		if (!hasInspector) return;
+		const current = useUiStore.getState().inspectorSessions[sessionId];
+		if (!hasBrowserContent) {
+			if (current?.browserContentRevealed) setBrowserContentRevealed(sessionId, false);
+			else if (current?.browserUnseen) setBrowserUnseen(sessionId, false);
+			return;
+		}
+		if (current?.browserContentRevealed) return;
+		setBrowserContentRevealed(sessionId, true);
+		setInspectorViewForSession(sessionId, "browser");
+		setInspectorOpenForSession(sessionId, true);
+	}, [
+		hasBrowserContent,
+		hasInspector,
+		previewRevision,
+		sessionId,
+		setBrowserContentRevealed,
+		setBrowserUnseen,
+		setInspectorOpenForSession,
+		setInspectorViewForSession,
+		terminated,
+	]);
+
+	// `ao preview` is authoritative browser work, including a same-URL rerun
+	// whose revision advances. The first target is handled by the lifecycle
+	// effect above; later targets glow only while Browser is not visible.
 	useEffect(() => {
 		if (!hasInspector) return;
 		const previewKey = previewRevealKey(previewUrl, previewRevision);
@@ -390,13 +476,12 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		if (seenKey === previewKey) return;
 		markInspectorPreviewSeen(sessionId, previewKey);
 		if (!previewKey) return;
-		// Already looking at the Browser tab? Nothing to badge.
-		if (isInspectorOpen && inspectorView === "browser") return;
-		setBrowserUnseen(sessionId, true);
+		const current = useUiStore.getState().inspectorSessions[sessionId];
+		const viewingBrowser = browserIsVisible(sessionId, browserPoppedOut);
+		if (current?.browserContentRevealed && !viewingBrowser) setBrowserUnseen(sessionId, true);
 	}, [
+		browserPoppedOut,
 		hasInspector,
-		inspectorView,
-		isInspectorOpen,
 		markInspectorPreviewSeen,
 		previewRevision,
 		previewUrl,
@@ -404,14 +489,32 @@ export function SessionView({ sessionId }: SessionViewProps) {
 		setBrowserUnseen,
 	]);
 
-	// Keep the badge honest: clear it whenever the Browser tab is the open, active
-	// view (covers opening the rail while already parked on Browser, which
-	// setInspectorView's own clear does not see).
+	// Agent browser commands are genuine browser activity even when they do not
+	// navigate (fill, click, snapshot, etc.) or land on an empty target — e.g. a
+	// command that runs before any page has loaded. When Browser is hidden,
+	// surface that activity as unseen rather than reopening the tab; gating this
+	// on hasBrowserContent/browserContentRevealed missed exactly that case.
 	useEffect(() => {
-		if (hasInspector && isInspectorOpen && inspectorView === "browser") {
+		if (!hasInspector || terminated || !browserView.agentBrowserActive) return;
+		if (!browserIsVisible(sessionId, browserPoppedOut)) setBrowserUnseen(sessionId, true);
+	}, [
+		browserPoppedOut,
+		browserView.agentBrowserActive,
+		hasInspector,
+		inspectorView,
+		isInspectorOpen,
+		sessionId,
+		setBrowserUnseen,
+		terminated,
+	]);
+
+	// Opening Browser consumes the pending activity indicator, including the
+	// case where the inspector was collapsed while already parked on Browser.
+	useEffect(() => {
+		if (hasInspector && browserIsVisible(sessionId, browserPoppedOut)) {
 			setBrowserUnseen(sessionId, false);
 		}
-	}, [hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
+	}, [browserPoppedOut, hasInspector, inspectorView, isInspectorOpen, sessionId, setBrowserUnseen]);
 
 	// Computed when the inspector panel mounts and frozen while it stays
 	// mounted: rrp re-registers the panel (a layout effect keyed on defaultSize,
@@ -529,7 +632,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 			<ResizablePanelGroup className="session-split min-h-0 flex-1" id="session-workspace" orientation="horizontal">
 				{/* react-resizable-panels v4: bare numbers are PIXELS; percentages must
             be strings. Numeric sizes here once clamped the inspector to 45px. */}
-				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%">
+				{/* RRP's inner panel defaults to overflow:auto. Nothing scrolls at pane level,
+				    so clip the chat rail's active marker instead of creating a horizontal scrollbar. */}
+				<ResizablePanel defaultSize="72%" id="terminal" minSize="45%" style={{ overflow: "hidden" }}>
 					<div className="relative h-full min-h-0">
 						{/* The committed mode owns the agent surface. Auxiliary shell and
 						    reviewer targets remain terminal surfaces in either mode. */}
@@ -554,8 +659,9 @@ export function SessionView({ sessionId }: SessionViewProps) {
 								onNewShellTerminal={addShellTerminal}
 								onRenameShellTerminal={renameShellTerminalByHandle}
 								onSelectSessionTerminal={selectSessionTerminal}
+								onSelectReviewerTerminal={selectReviewerTerminal}
 								onSelectShellTerminal={selectShellTerminal}
-								onSelectWorkerTerminal={selectSessionTerminal}
+								reviewerTerminal={reviewerTerminal}
 								session={session}
 								shellTerminals={shellTerminals}
 								terminalTarget={routedTerminalTarget}
@@ -602,14 +708,7 @@ export function SessionView({ sessionId }: SessionViewProps) {
 									}
 									isInspectorVisible={isInspectorOpen}
 									onOpenFiles={handleOpenFiles}
-								onOpenReviewerTerminal={({ handleId, harness }) =>
-									setTerminalTarget({
-										kind: "reviewer",
-											handleId,
-											harness,
-											sessionId,
-										})
-									}
+									onOpenReviewerTerminal={selectReviewerTerminal}
 									onToggleBrowserPopOut={handleToggleBrowserPopOut}
 									onViewChange={(next: InspectorView) => setInspectorViewForSession(sessionId, next)}
 									view={inspectorView}

@@ -160,6 +160,17 @@ describe("GlobalSettingsForm", () => {
 		expect(screen.getByRole("button", { name: "Report a problem" })).toBeInTheDocument();
 	});
 
+	it("gives settings link rows internal padding and rounded borders", async () => {
+		renderForm();
+
+		const connectMobile = await screen.findByRole("button", { name: "Connect Mobile" });
+		const keyboardShortcuts = screen.getByRole("button", { name: "Keyboard shortcuts" });
+
+		for (const row of [connectMobile, keyboardShortcuts]) {
+			expect(row).toHaveClass("settings-row-bar", "settings-link-row");
+		}
+	});
+
 	it("switches General settings labels to Simplified Chinese and persists locale", async () => {
 		const user = userEvent.setup();
 		renderForm();

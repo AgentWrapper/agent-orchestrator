@@ -550,7 +550,8 @@ func isToolUseEvent(event string) bool {
 // dialog is gone: a prompt cannot be submitted while a dialog holds the
 // composer, and a turn cannot end (or the session exit) with one on screen.
 func isTurnBoundaryEvent(event string) bool {
-	return event == "user-prompt-submit" || event == "stop" || event == "session-end" || event == "process-exited"
+	return event == "user-prompt-submit" || event == "stop" || event == "session-end" ||
+		event == "process-exited" || event == "chat.controller.stopped"
 }
 
 // applyToolPrecedenceLocked folds an event-tagged activity signal through the
@@ -1007,6 +1008,7 @@ func mergeMetadata(base, in domain.SessionMetadata) domain.SessionMetadata {
 	base.RuntimeLaunchID = in.RuntimeLaunchID
 	set(&base.AgentSessionID, in.AgentSessionID)
 	set(&base.Prompt, in.Prompt)
+	set(&base.BrowserCapabilityVerifier, in.BrowserCapabilityVerifier)
 	// The chat controller's resume handle. Without this a restart has no thread to
 	// resume and the conversation is stranded — the provider still holds it, but
 	// AO no longer knows its id.

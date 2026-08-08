@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/httpd/apierr"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
@@ -147,6 +149,12 @@ type Service struct {
 	runBackground       func(func())
 	orchestratorLocksMu sync.Mutex
 	orchestratorLocks   map[domain.ProjectID]*sync.Mutex
+	workspaceCache      *workspaceCache
+	// workspaceGroup coalesces concurrent cache-miss compare/status lookups
+	// for the same (session, root): "Expand All" on many files fires that
+	// many GetWorkspaceFile calls at once, and without this each one would
+	// independently spawn its own git subprocesses for identical work.
+	workspaceGroup singleflight.Group
 	// signalCapable reports whether a harness has a hook pipeline that can
 	// deliver activity signals at all. Only capable harnesses are eligible for
 	// the no_signal downgrade: a hook-less harness staying silent forever is
@@ -197,6 +205,7 @@ func NewWithDeps(d Deps) *Service {
 	if s.clock == nil {
 		s.clock = time.Now
 	}
+	s.workspaceCache = newWorkspaceCache(workspaceCacheTTL, s.clock)
 	return s
 }
 

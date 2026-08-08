@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
@@ -28,6 +29,13 @@ const (
 	// ReviewCancelInterrupt sends the terminal interrupt key sequence to the
 	// reviewer process while preserving the terminal pane.
 	ReviewCancelInterrupt ReviewCancelMode = "interrupt"
+	// ReviewCancelMessage sends an in-band message to the reviewer process. Use
+	// this for harnesses where Ctrl-C exits the TUI instead of cancelling only
+	// the active turn.
+	ReviewCancelMessage ReviewCancelMode = "message"
+	// ReviewCancelInput sends raw terminal input to the reviewer process without
+	// appending Enter. Use this for TUI keybindings such as Escape.
+	ReviewCancelInput ReviewCancelMode = "input"
 )
 
 // ReviewCancelSpec is the adapter-selected cancellation behavior for a running
@@ -35,12 +43,36 @@ const (
 type ReviewCancelSpec struct {
 	Mode       ReviewCancelMode
 	Interrupts int
+	Message    string
+	Input      string
+	Inputs     []string
+	InputDelay time.Duration
 }
 
 // ReviewerCanceller is implemented by reviewer adapters that explicitly define
 // how their running CLI should be cancelled.
 type ReviewerCanceller interface {
 	ReviewCancel(ctx context.Context) (ReviewCancelSpec, error)
+}
+
+// ReviewerRestorer is implemented by prompt-driven reviewers that can resume a
+// native agent conversation after AO recreates the terminal pane.
+type ReviewerRestorer interface {
+	ReviewRestoreCommand(ctx context.Context, inv ReviewInvocation) (cmd ReviewCommandSpec, ok bool, err error)
+}
+
+// ReviewerReusePolicy is implemented by interactive reviewer adapters that
+// need a fresh TUI for each task because request-scoped context is fixed at
+// process launch. Returning false forces a fresh launch for every pass.
+type ReviewerReusePolicy interface {
+	ReviewProcessReusable() bool
+}
+
+// ReviewerPromptReadinessProvider lets an interactive reviewer describe when
+// its terminal prompt is ready for InitialMessage injection. Reviewers without
+// this capability receive a conservative startup delay from the launcher.
+type ReviewerPromptReadinessProvider interface {
+	ReviewPromptReadinessHints(ctx context.Context) (PromptReadinessHints, error)
 }
 
 // ReviewInvocation describes one review pass for a reviewer to act on. All ids
@@ -55,6 +87,9 @@ type ReviewInvocation struct {
 	RunID string
 	// WorkerSessionID is the worker whose PR is under review.
 	WorkerSessionID domain.SessionID
+	// AgentSessionID is the reviewer's native agent conversation id, used only
+	// to resume a destroyed/recreated reviewer terminal.
+	AgentSessionID string
 	// PRURL is the pull request to review.
 	PRURL string
 	// TargetSHA is the PR head commit under review.
@@ -66,6 +101,9 @@ type ReviewInvocation struct {
 	ReviewIndex int
 	// WorkspacePath is the worker's checkout the reviewer reads.
 	WorkspacePath string
+	// DataDir is AO's owned state root. Reviewer prelaunch hooks may use it for
+	// profile installation but must not write outside AO/workspace boundaries.
+	DataDir string
 	// Prompt and SystemPrompt are the review instructions AO authored centrally,
 	// mirroring the worker's LaunchConfig.Prompt / SystemPrompt split: SystemPrompt
 	// carries the standing reviewer role, Prompt the per-pass task. A prompt-driven
@@ -95,11 +133,20 @@ type ReviewTask struct {
 	TargetSHA string
 }
 
-// ReviewCommandSpec is how to launch a reviewer: the argv and any extra env the
-// adapter needs. AO supplies the workspace and review-tracking env around it.
+// ReviewCommandSpec is how to launch a reviewer: the argv, any extra env, and
+// any launch-time native session id the adapter can determine. AO supplies the
+// workspace and review-tracking env around it.
 type ReviewCommandSpec struct {
-	Argv []string
-	Env  map[string]string
+	Argv           []string
+	Env            map[string]string
+	AgentSessionID string
+	// InitialMessage is injected after the process starts. Interactive-only
+	// reviewers use this instead of placing a task on the command line.
+	InitialMessage string
+	// WorkingDirectory overrides the worker checkout as the process working
+	// directory. Secure interactive reviewers use an AO-owned neutral directory;
+	// this routing field is not itself a process sandbox.
+	WorkingDirectory string
 }
 
 // ReviewerResolver maps a reviewer harness onto its adapter. ok=false means no

@@ -195,25 +195,79 @@ func TestReviewUpsertReusesRowAndRunRoundTrip(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("upsert review: %v", err)
 	}
-	// Second upsert with the same session reuses the row (session_id UNIQUE),
-	// refreshing harness/pr_url/reviewer_handle_id but keeping the original id.
+	// A different harness gets its own row for the same worker session.
 	if err := s.UpsertReview(ctx, domain.Review{
 		ID: "rev-2", SessionID: rec.ID, ProjectID: rec.ProjectID,
 		Harness: domain.ReviewerHarness("greptile"), PRURL: "https://example/pr/2",
 		ReviewerHandleID: "review-mer-1b",
 		CreatedAt:        now, UpdatedAt: now.Add(time.Second),
 	}); err != nil {
-		t.Fatalf("upsert review (reuse): %v", err)
+		t.Fatalf("upsert review (second harness): %v", err)
 	}
-	got, ok, err := s.GetReviewBySession(ctx, rec.ID)
+	got, ok, err := s.GetReviewBySessionAndHarness(ctx, rec.ID, domain.ReviewerClaudeCode)
 	if err != nil || !ok {
-		t.Fatalf("get review: ok=%v err=%v", ok, err)
+		t.Fatalf("get claude review: ok=%v err=%v", ok, err)
 	}
 	if got.ID != "rev-1" {
-		t.Fatalf("upsert created a new row, want reuse: id=%q", got.ID)
+		t.Fatalf("claude review id = %q, want rev-1", got.ID)
+	}
+	got, ok, err = s.GetReviewBySessionAndHarness(ctx, rec.ID, domain.ReviewerHarness("greptile"))
+	if err != nil || !ok {
+		t.Fatalf("get greptile review: ok=%v err=%v", ok, err)
+	}
+	if got.ID != "rev-2" {
+		t.Fatalf("greptile review id = %q, want rev-2", got.ID)
 	}
 	if got.Harness != domain.ReviewerHarness("greptile") || got.PRURL != "https://example/pr/2" || got.ReviewerHandleID != "review-mer-1b" {
-		t.Fatalf("upsert did not refresh fields: %+v", got)
+		t.Fatalf("second harness fields: %+v", got)
+	}
+	// A same-harness upsert reuses that row and records the native session id.
+	if err := s.UpsertReview(ctx, domain.Review{
+		ID: "rev-3", SessionID: rec.ID, ProjectID: rec.ProjectID,
+		Harness: domain.ReviewerHarness("greptile"), PRURL: "https://example/pr/2",
+		ReviewerHandleID: "review-mer-1b",
+		AgentSessionID:   "reviewer-native-1",
+		CreatedAt:        now, UpdatedAt: now.Add(2 * time.Second),
+	}); err != nil {
+		t.Fatalf("upsert review (agent session): %v", err)
+	}
+	got, ok, err = s.GetReviewBySessionAndHarness(ctx, rec.ID, domain.ReviewerHarness("greptile"))
+	if err != nil || !ok {
+		t.Fatalf("get review after agent session update: ok=%v err=%v", ok, err)
+	}
+	if got.ID != "rev-2" {
+		t.Fatalf("same-harness upsert changed row id = %q, want rev-2", got.ID)
+	}
+	if got.AgentSessionID != "reviewer-native-1" {
+		t.Fatalf("agent session id = %q, want reviewer-native-1", got.AgentSessionID)
+	}
+	updated, err := s.UpdateReviewAgentSessionID(ctx, "rev-1", "claude-native-1")
+	if err != nil || !updated {
+		t.Fatalf("update claude native session: updated=%v err=%v", updated, err)
+	}
+	got, ok, err = s.GetReviewBySessionAndHarness(ctx, rec.ID, domain.ReviewerClaudeCode)
+	if err != nil || !ok {
+		t.Fatalf("get claude review after native update: ok=%v err=%v", ok, err)
+	}
+	if got.AgentSessionID != "claude-native-1" {
+		t.Fatalf("claude agent session id = %q, want claude-native-1", got.AgentSessionID)
+	}
+	got, ok, err = s.GetReviewBySessionAndHarness(ctx, rec.ID, domain.ReviewerHarness("greptile"))
+	if err != nil || !ok {
+		t.Fatalf("get greptile review after claude update: ok=%v err=%v", ok, err)
+	}
+	if got.AgentSessionID != "reviewer-native-1" {
+		t.Fatalf("greptile agent session id = %q, want reviewer-native-1", got.AgentSessionID)
+	}
+	if err := s.ClearReviewerHandle(ctx, rec.ID); err != nil {
+		t.Fatalf("clear reviewer handle: %v", err)
+	}
+	got, ok, err = s.GetReviewBySessionAndHarness(ctx, rec.ID, domain.ReviewerHarness("greptile"))
+	if err != nil || !ok {
+		t.Fatalf("get review after clear: ok=%v err=%v", ok, err)
+	}
+	if got.ReviewerHandleID != "" {
+		t.Fatalf("reviewer handle after clear = %q, want empty", got.ReviewerHandleID)
 	}
 
 	// A run inserts running and updates to complete/changes_requested.

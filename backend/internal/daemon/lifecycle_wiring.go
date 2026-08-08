@@ -131,6 +131,9 @@ type sessionLifecycle interface {
 	SetShellTerminalCloser(closer sessionmanager.ShellTerminalCloser)
 	// SetTerminalInputGate prevents mux input from racing a TUI-to-Chat handoff.
 	SetTerminalInputGate(gate sessionmanager.TerminalInputGate)
+	// SetReviewerTerminator late-binds worker lifecycle teardown to the review
+	// service, which is built alongside the controller-facing service below.
+	SetReviewerTerminator(terminator sessionmanager.ReviewerTerminator)
 }
 
 // sessionLifecycleMessenger adapts sessionLifecycle to ports.AgentMessenger so
@@ -233,11 +236,12 @@ func startSession(ctx context.Context, cfg config.Config, runtime runtimeselect.
 		Sessions: store,
 		PRs:      store,
 		Projects: store,
-		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir),
+		Launcher: reviewcore.NewLauncher(reviewers, runtime, cfg.DataDir, reviewcore.WithAgentAuth(reviewerAgentAuth{agents: agents})),
 	})
 	reviewSvc := reviewsvc.New(reviewEngine, store,
 		reviewsvc.WithLifecycleReducer(lcm),
 		reviewsvc.WithTelemetry(telemetry))
+	mgr.SetReviewerTerminator(reviewSvc)
 	return sessionSvc, reviewSvc, mgr, nil
 }
 
@@ -349,6 +353,26 @@ func (a agentRegistry) Agent(harness domain.AgentHarness) (ports.Agent, bool) {
 	return agent, ok
 }
 
+type reviewerAgentAuth struct {
+	agents ports.AgentResolver
+}
+
+func (r reviewerAgentAuth) AuthStatus(ctx context.Context, harness domain.ReviewerHarness) (ports.AgentAuthStatus, bool, error) {
+	if r.agents == nil {
+		return "", false, nil
+	}
+	agent, ok := r.agents.Agent(domain.AgentHarness(harness))
+	if !ok {
+		return "", false, nil
+	}
+	checker, ok := agent.(ports.AgentAuthChecker)
+	if !ok {
+		return "", false, nil
+	}
+	status, err := checker.AuthStatus(ctx)
+	return status, true, err
+}
+
 // buildAgentResolver constructs the per-session agent resolver the Session
 // Manager consumes (sessionmanager.Deps.Agents): a registry of the shipped
 // adapters. It still validates AO_AGENT at startup for compatibility with the
@@ -430,6 +454,15 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		SystemPrompt:           cfg.SystemPrompt,
 		AdditionalDirectories:  cfg.AdditionalDirectories,
 		ProviderConversationID: cfg.ProviderConversationID,
+		ControllerReady: func(out chatsvc.StartResult) error {
+			if cfg.ControllerReady == nil {
+				return nil
+			}
+			return cfg.ControllerReady(sessionmanager.ChatStarted{
+				ProviderConversationID: out.ProviderConversationID,
+				ControllerGeneration:   out.ControllerGeneration,
+			})
+		},
 	})
 	if err != nil {
 		return sessionmanager.ChatStarted{}, err
@@ -454,6 +487,10 @@ func (c chatLauncher) RelayChatTurnWithID(
 	text, clientMessageID string,
 ) (string, error) {
 	return c.svc.RelayChatTurnWithID(ctx, id, text, clientMessageID)
+}
+
+func (c chatLauncher) HasLiveChatController(id domain.SessionID) bool {
+	return c.svc.HasLiveChatController(id)
 }
 
 // PrepareChatHandoff closes Chat intake and waits for the controller to become
