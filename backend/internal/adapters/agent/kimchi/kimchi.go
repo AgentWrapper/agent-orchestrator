@@ -76,6 +76,16 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 
+// permissionConfigEnum lists the permission modes the "permissions" config key
+// accepts. It mirrors the ports.PermissionMode constants so a project's stored
+// config validates against the same vocabulary the launch command maps.
+var permissionConfigEnum = []string{
+	string(ports.PermissionModeDefault),
+	string(ports.PermissionModeAcceptEdits),
+	string(ports.PermissionModeAuto),
+	string(ports.PermissionModeBypassPermissions),
+}
+
 // Manifest returns the adapter's static metadata.
 func (p *Plugin) Manifest() adapters.Manifest {
 	return adapters.Manifest{
@@ -100,6 +110,12 @@ func (p *Plugin) GetConfigSpec(ctx context.Context) (ports.ConfigSpec, error) {
 				Key:         "model",
 				Type:        ports.ConfigFieldString,
 				Description: "Model override passed to `kimchi --model`.",
+			},
+			{
+				Key:         "permissions",
+				Type:        ports.ConfigFieldEnum,
+				Description: "Starting permission mode.",
+				Enum:        permissionConfigEnum,
 			},
 		},
 	}, nil

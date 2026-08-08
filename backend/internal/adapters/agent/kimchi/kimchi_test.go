@@ -45,6 +45,31 @@ func TestGetConfigSpecAdvertisesModelField(t *testing.T) {
 	t.Fatalf("GetConfigSpec does not advertise a model field: %#v", spec.Fields)
 }
 
+func TestGetConfigSpecAdvertisesPermissionsField(t *testing.T) {
+	spec, err := (&Plugin{}).GetConfigSpec(context.Background())
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	for _, f := range spec.Fields {
+		if f.Key == "permissions" {
+			if f.Type != ports.ConfigFieldEnum {
+				t.Fatalf("permissions field type = %v, want %v", f.Type, ports.ConfigFieldEnum)
+			}
+			want := []string{
+				string(ports.PermissionModeDefault),
+				string(ports.PermissionModeAcceptEdits),
+				string(ports.PermissionModeAuto),
+				string(ports.PermissionModeBypassPermissions),
+			}
+			if !reflect.DeepEqual(f.Enum, want) {
+				t.Fatalf("permissions enum = %#v, want %#v", f.Enum, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("GetConfigSpec does not advertise a permissions field: %#v", spec.Fields)
+}
+
 func TestGetPromptDeliveryStrategy(t *testing.T) {
 	s, err := (&Plugin{}).GetPromptDeliveryStrategy(context.Background(), ports.LaunchConfig{})
 	if err != nil {
