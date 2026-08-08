@@ -85,12 +85,25 @@ func New() *Plugin {
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.SubmitActivitySignaler = (*Plugin)(nil)
+var _ ports.BlockedActivitySignaler = (*Plugin)(nil)
 
 // EmitsSubmitActivity signals that Kimchi fires a user-prompt-submit hook
 // under AO's launch, so Activity.State can flip to active after a prompt is
 // accepted. This engages the session manager's confirm loop for Kimchi
 // sessions. See ports.SubmitActivitySignaler.
 func (p *Plugin) EmitsSubmitActivity() bool { return true }
+
+// EmitsBlockedActivity signals that Kimchi installs the full pre/post-tool-use
+// hook trio (PreToolUse + PostToolUse + PostToolUseFail) and maps
+// Notification(permission_prompt) to ActivityBlocked. The permission_prompt
+// notification payload carries tool_use_id, which the lifecycle correlator
+// matches against the inflight map populated by PreToolUse — the same
+// mechanism Claude Code uses, just with the blocked signal arriving via a
+// Notification event rather than a separate permission-request hook. The
+// correlator keys on the signal's State and ToolUseID, not the event name,
+// so a blocked permission dialog is cleared when the approved tool's
+// PostToolUse fires. See ports.BlockedActivitySignaler.
+func (p *Plugin) EmitsBlockedActivity() bool { return true }
 
 // permissionConfigEnum lists the permission modes the "permissions" config key
 // accepts. It mirrors the ports.PermissionMode constants so a project's stored
