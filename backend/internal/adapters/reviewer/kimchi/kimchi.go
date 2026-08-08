@@ -48,6 +48,13 @@ var reviewerAllowedTools = []string{
 // checks all pipeline segments, so a denied program behind a pipe still blocks.
 // Kimchi has no NotebookEdit tool, so it is omitted from the deny list.
 //
+// Deny-before-allow ordering: Kimchi's evaluateRules (in
+// src/extensions/permissions/rules.ts) checks deny rules before allow rules
+// within each source level (session > cli > local > project > user > builtin),
+// so the deny list below IS effective despite the allow list above — a denied
+// tool is always blocked regardless of allow rules. This ordering was verified
+// directly from Kimchi source.
+//
 // The blanket bash(gh:*) deny was removed because the review protocol requires
 // gh api --method POST to post reviews. Instead, specific dangerous gh verbs
 // are denied: pr merge (self-merge), api --method DELETE/PUT/PATCH (mutate
@@ -99,7 +106,8 @@ var _ ports.ReviewerRestorer = (*Reviewer)(nil)
 // — a write bypass via Bash that the edit/write deny rules don't cover. This
 // exposure is identical to the claudecode reviewer (already shipped), which
 // allows Bash(git diff:*) with no OS sandbox. An OS-level read-only sandbox
-// (like Codex's --sandbox read-only) is a cross-adapter concern, not a
+// (like Codex's --sandbox read-only) is a cross-adapter concern tracked by
+// ADR 0002 (docs/adr/0002-secure-interactive-reviewer-gateway.md), not a
 // Kimchi-specific blocker.
 func (r *Reviewer) ReviewCommand(ctx context.Context, inv ports.ReviewInvocation) (ports.ReviewCommandSpec, error) {
 	argv, err := r.agent.GetLaunchCommand(ctx, ports.LaunchConfig{
