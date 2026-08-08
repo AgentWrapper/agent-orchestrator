@@ -177,6 +177,11 @@ func TestPostHogSinkStampsDefaultAgentAndTenure(t *testing.T) {
 	if got["tenure"] != string(TenureFirstDay) {
 		t.Errorf("tenure = %v, want d0", got["tenure"])
 	}
+	// The classifier: every daemon/CLI event must carry client="cli" so a
+	// shared event like ao.app.active splits by client across desktop/mobile/cli.
+	if got["client"] != "cli" {
+		t.Errorf("client = %v, want cli", got["client"])
+	}
 	for _, key := range []string{"install_age_days", "active_days"} {
 		if _, ok := got[key]; !ok {
 			t.Errorf("%s missing from the payload", key)

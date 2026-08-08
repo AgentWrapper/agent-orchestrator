@@ -520,6 +520,11 @@ describe("daily active heartbeat", () => {
 		expect(versionChannelFrom("unknown")).toBe("unknown");
 	});
 
+	it("classifies the desktop app with client=desktop on every event", () => {
+		const ctx = buildTelemetryContext("0.11.3", "darwin", "stable");
+		expect(ctx.client).toBe("desktop");
+	});
+
 	it("carries intent and reality as separate context properties", () => {
 		const ctx = buildTelemetryContext("0.11.3", "darwin", "nightly");
 		// opted into nightly, still running a stable binary: the gap is the signal.

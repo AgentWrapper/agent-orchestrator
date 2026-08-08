@@ -326,6 +326,10 @@ func (s *PostHogSink) properties(ev ports.TelemetryEvent) map[string]any {
 		"source":                   ev.Source,
 		"level":                    string(ev.Level),
 		"telemetry_schema_version": remoteTelemetrySchemaVersion,
+		// Classifies this install as the CLI/daemon on every event, matching the
+		// desktop renderer (client="desktop") and mobile (client="mobile"), so a
+		// shared event like ao.app.active splits by one property across surfaces.
+		"client": "cli",
 		// The distinct ID is a random install ID with no person data behind it,
 		// so skip PostHog person-profile processing: identified events bill at
 		// several times the anonymous rate and the profiles would hold nothing.
