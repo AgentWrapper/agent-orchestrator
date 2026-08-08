@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -27,7 +28,7 @@ func (f *fakeProvider) RepoPRListGuard(_ context.Context, _ ports.SCMRepo, etag 
 	return ports.SCMGuardResult{ETag: "etag-" + f.key, NotModified: etag == "etag-"+f.key}, nil
 }
 
-func (f *fakeProvider) ListOpenPRsByRepo(_ context.Context, _ ports.SCMRepo) ([]ports.SCMPRObservation, error) {
+func (f *fakeProvider) ListPRsByRepo(_ context.Context, _ ports.SCMRepo, _ time.Time) ([]ports.SCMPRObservation, error) {
 	return []ports.SCMPRObservation{{Number: 1, State: "open"}}, nil
 }
 

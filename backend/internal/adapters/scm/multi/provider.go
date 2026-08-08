@@ -7,6 +7,7 @@ package multi
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 
@@ -67,13 +68,13 @@ func (m *Provider) RepoPRListGuard(ctx context.Context, repo ports.SCMRepo, etag
 	return p.RepoPRListGuard(ctx, repo, etag)
 }
 
-// ListOpenPRsByRepo delegates to the sub-provider matching repo.Provider.
-func (m *Provider) ListOpenPRsByRepo(ctx context.Context, repo ports.SCMRepo) ([]ports.SCMPRObservation, error) {
+// ListPRsByRepo delegates to the sub-provider matching repo.Provider.
+func (m *Provider) ListPRsByRepo(ctx context.Context, repo ports.SCMRepo, updatedAfter time.Time) ([]ports.SCMPRObservation, error) {
 	p, err := m.resolve(repo.Provider)
 	if err != nil {
 		return nil, err
 	}
-	return p.ListOpenPRsByRepo(ctx, repo)
+	return p.ListPRsByRepo(ctx, repo, updatedAfter)
 }
 
 // CommitChecksGuard delegates to the sub-provider matching repo.Provider.

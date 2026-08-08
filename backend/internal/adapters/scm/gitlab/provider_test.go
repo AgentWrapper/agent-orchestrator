@@ -76,6 +76,25 @@ func TestParseRepository(t *testing.T) {
 			remote: "myorg/myrepo",
 			ok:     false,
 		},
+		// Nested GitLab namespaces: group/subgroup/repo
+		{
+			name:   "ssh nested namespace",
+			remote: "git@gitlab.com:group/subgroup/repo.git",
+			want:   ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "group/subgroup", Name: "repo", Repo: "group/subgroup/repo"},
+			ok:     true,
+		},
+		{
+			name:   "https nested namespace",
+			remote: "https://gitlab.com/group/subgroup/repo.git",
+			want:   ports.SCMRepo{Provider: "gitlab", Host: "gitlab.com", Owner: "group/subgroup", Name: "repo", Repo: "group/subgroup/repo"},
+			ok:     true,
+		},
+		{
+			name:   "ssh self-managed nested namespace",
+			remote: "git@gitlab.mycompany.com:eng/team/widget.git",
+			want:   ports.SCMRepo{Provider: "gitlab", Host: "gitlab.mycompany.com", Owner: "eng/team", Name: "widget", Repo: "eng/team/widget"},
+			ok:     true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -149,7 +168,7 @@ func TestRepoPRListGuard(t *testing.T) {
 	}
 }
 
-func TestListOpenPRsByRepo(t *testing.T) {
+func TestListPRsByRepo(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v4/projects/myorg%2Fmyrepo/merge_requests", func(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +207,7 @@ func TestListOpenPRsByRepo(t *testing.T) {
 	_, p := testServer(t, mux)
 	repo := ports.SCMRepo{Provider: "gitlab", Owner: "myorg", Name: "myrepo", Repo: "myorg/myrepo"}
 
-	prs, err := p.ListOpenPRsByRepo(context.Background(), repo)
+	prs, err := p.ListPRsByRepo(context.Background(), repo, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
