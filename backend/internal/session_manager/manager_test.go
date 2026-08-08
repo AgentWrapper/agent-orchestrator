@@ -223,6 +223,9 @@ type fakeRuntime struct {
 	outputs            []string
 	outputCalls        int
 	outputErr          error
+	interruptErr       error
+	interrupts         []string
+	onInterrupt        func(ports.RuntimeHandle)
 	// aliveByHandle maps a RuntimeHandle.ID to its liveness; missing = false.
 	aliveByHandle           map[string]bool
 	aliveErr                error
@@ -230,6 +233,14 @@ type fakeRuntime struct {
 	supervisedAliveOverride *bool
 	supervisedSequence      []bool
 	destroyedIDs            []string
+}
+
+func (r *fakeRuntime) Interrupt(_ context.Context, handle ports.RuntimeHandle) error {
+	r.interrupts = append(r.interrupts, handle.ID)
+	if r.onInterrupt != nil {
+		r.onInterrupt(handle)
+	}
+	return r.interruptErr
 }
 
 type fakePreviewLifecycle struct {

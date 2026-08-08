@@ -110,7 +110,7 @@ func TestSwitchAgentRouteOutlivesGenericRequestTimeout(t *testing.T) {
 }
 
 func TestSwitchAgentRoutePreservesLongerConfiguredTimeout(t *testing.T) {
-	configuredTimeout := 4 * time.Minute
+	configuredTimeout := 8 * time.Minute
 	svc := &timeoutProbeSessionService{
 		genericBudget: make(chan time.Duration, 1),
 		switchBudget:  make(chan time.Duration, 1),

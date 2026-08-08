@@ -615,6 +615,7 @@
 	"switchAgent.noteLabel": "Note (optional)",
 	"switchAgent.notePlaceholder": "Add context for the next agent",
 	"switchAgent.progressTitle": "Switching from {{source}} to {{target}}",
+	"switchAgent.permissionRequired": "The source agent requires a permission decision. Review the terminal prompt to continue the handoff.",
 	"switchAgent.state.completed": "Completed",
 	"switchAgent.state.deliveringContext": "Delivering context",
 	"switchAgent.state.failed": "Failed",

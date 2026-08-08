@@ -31,7 +31,7 @@ var _ sessionguard.InputLease = (*Manager)(nil)
 func (m *Manager) AcquireSessionInput(id domain.SessionID) (release func(), ok bool) {
 	id = domain.SessionID(strings.TrimSpace(string(id)))
 	m.agentOpMu.Lock()
-	if m.agentOperationActiveLocked(id) {
+	if m.agentOperationActiveLocked(id) && !m.agentSwitchDecisionInputAllowedLocked(id) {
 		m.agentOpMu.Unlock()
 		return nil, false
 	}
@@ -83,6 +83,12 @@ func (m *Manager) agentOperationActiveLocked(id domain.SessionID) bool {
 	return ok
 }
 
+func (m *Manager) agentSwitchDecisionInputAllowedLocked(id domain.SessionID) bool {
+	_, switching := m.switching[id]
+	_, allowed := m.switchDecisionInput[id]
+	return switching && allowed
+}
+
 // beginAgentOperation closes input admission before waiting for already-issued
 // leases. Because both actions share agentOpMu, a pane write is either fully
 // admitted before the operation (and drained) or rejected after it; there is
@@ -127,12 +133,47 @@ func (m *Manager) endAgentOperation(id domain.SessionID, kind agentOperationKind
 	case agentOperationSwitch:
 		delete(m.switching, id)
 		delete(m.retainedSwitches, id)
+		delete(m.switchDecisionInput, id)
 	case agentOperationResume:
 		delete(m.resuming, id)
 	default:
 		if current, ok := m.mutating[id]; ok && current == kind {
 			delete(m.mutating, id)
 		}
+	}
+}
+
+func (m *Manager) allowAgentSwitchDecisionInput(id domain.SessionID, switchID domain.AgentSwitchID) {
+	m.agentOpMu.Lock()
+	defer m.agentOpMu.Unlock()
+	if _, switching := m.switching[id]; !switching {
+		return
+	}
+	if m.switchDecisionInput == nil {
+		m.switchDecisionInput = make(map[domain.SessionID]domain.AgentSwitchID)
+	}
+	m.switchDecisionInput[id] = switchID
+}
+
+// closeAgentSwitchDecisionInput closes the temporary permission lane and waits
+// for an already-admitted keystroke write to finish before source teardown.
+func (m *Manager) closeAgentSwitchDecisionInput(ctx context.Context, id domain.SessionID, switchID domain.AgentSwitchID) error {
+	m.agentOpMu.Lock()
+	if current, ok := m.switchDecisionInput[id]; !ok || current != switchID {
+		m.agentOpMu.Unlock()
+		return nil
+	}
+	delete(m.switchDecisionInput, id)
+	drained := m.inputDrained[id]
+	m.agentOpMu.Unlock()
+	if drained == nil {
+		return nil
+	}
+	select {
+	case <-drained:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

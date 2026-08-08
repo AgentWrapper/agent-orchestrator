@@ -528,6 +528,7 @@ func TestSessionsAPI_AgentSwitchLifecycle(t *testing.T) {
 	if handoff["summary"] != "tests pass" {
 		t.Fatalf("recorded handoff = %#v", handoff)
 	}
+
 }
 
 func assertAgentSwitchResponseRedacted(t *testing.T, body []byte) {

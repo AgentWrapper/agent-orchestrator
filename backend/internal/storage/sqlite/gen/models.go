@@ -53,6 +53,8 @@ type AgentSwitch struct {
 	ErrorCode              string
 	RequestedAt            time.Time
 	UpdatedAt              time.Time
+	FinalHandoffPath       string
+	FinalHandoffHash       string
 }
 
 type AppSetting struct {

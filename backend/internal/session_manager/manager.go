@@ -302,6 +302,9 @@ type Manager struct {
 	agentOpMu   sync.Mutex
 	resuming    map[domain.SessionID]struct{}
 	switching   map[domain.SessionID]struct{}
+	// switchDecisionInput opens a narrow human-only terminal lane while the
+	// source is blocked on permission during a mandatory switch.
+	switchDecisionInput map[domain.SessionID]domain.AgentSwitchID
 	// retainedSwitches marks switch gates intentionally kept closed after an
 	// ambiguous external side effect (for example a target runtime that could
 	// not be removed). A later reconciliation pass may reclaim exactly these
@@ -313,6 +316,10 @@ type Manager struct {
 	// handoffWait bounds optional source-agent enrichment. Deterministic AO
 	// context is sufficient, so expiry never prevents the actual switch.
 	handoffWait time.Duration
+	// switchPermissionDecisionWait is a separate human-response budget used only
+	// while the source agent is blocked on a permission prompt. The semantic
+	// handoff budget is paused while this budget is active.
+	switchPermissionDecisionWait time.Duration
 	// switchTargetStartWait bounds proof that the newly-created supervised
 	// provider generation is actually alive before durable ownership transfers.
 	switchTargetStartWait time.Duration
@@ -490,33 +497,35 @@ type Deps struct {
 // time.Now when Deps.Clock is nil.
 func New(d Deps) *Manager {
 	m := &Manager{
-		runtime:               d.Runtime,
-		agents:                d.Agents,
-		workspace:             d.Workspace,
-		store:                 d.Store,
-		defaults:              d.Defaults,
-		chat:                  d.Chat,
-		lcm:                   d.Lifecycle,
-		preview:               d.Preview,
-		browser:               d.Browser,
-		browserCapabilities:   d.BrowserCapabilities,
-		dataDir:               d.DataDir,
-		clock:                 d.Clock,
-		openTranscriptFile:    os.Open,
-		lookPath:              d.LookPath,
-		executable:            d.Executable,
-		newLaunchID:           d.NewLaunchID,
-		resuming:              make(map[domain.SessionID]struct{}),
-		switching:             make(map[domain.SessionID]struct{}),
-		retainedSwitches:      make(map[domain.SessionID]struct{}),
-		mutating:              make(map[domain.SessionID]agentOperationKind),
-		inputLeases:           make(map[domain.SessionID]int),
-		inputDrained:          make(map[domain.SessionID]chan struct{}),
-		handoffWait:           60 * time.Second,
-		switchTargetStartWait: 3 * time.Second,
+		runtime:                      d.Runtime,
+		agents:                       d.Agents,
+		workspace:                    d.Workspace,
+		store:                        d.Store,
+		defaults:                     d.Defaults,
+		chat:                         d.Chat,
+		lcm:                          d.Lifecycle,
+		preview:                      d.Preview,
+		browser:                      d.Browser,
+		browserCapabilities:          d.BrowserCapabilities,
+		dataDir:                      d.DataDir,
+		clock:                        d.Clock,
+		openTranscriptFile:           os.Open,
+		lookPath:                     d.LookPath,
+		executable:                   d.Executable,
+		newLaunchID:                  d.NewLaunchID,
+		resuming:                     make(map[domain.SessionID]struct{}),
+		switching:                    make(map[domain.SessionID]struct{}),
+		switchDecisionInput:          make(map[domain.SessionID]domain.AgentSwitchID),
+		retainedSwitches:             make(map[domain.SessionID]struct{}),
+		mutating:                     make(map[domain.SessionID]agentOperationKind),
+		inputLeases:                  make(map[domain.SessionID]int),
+		inputDrained:                 make(map[domain.SessionID]chan struct{}),
+		handoffWait:                  60 * time.Second,
+		switchPermissionDecisionWait: 2 * time.Minute,
+		switchTargetStartWait:        3 * time.Second,
 		// Provider startup, including slow MCP initialization, can delay the
 		// prompt-submit hook even though the continuation is correctly buffered.
-		// Keep the acknowledgement wait below the CLI's four-minute switch timeout
+		// Keep the acknowledgement wait below the CLI's seven-minute switch timeout
 		// while leaving enough headroom to avoid a false delivery failure.
 		switchDeliveryAckWait:  150 * time.Second,
 		transitions:            make(map[domain.SessionID]*interfaceTransitionRun),
@@ -1515,11 +1524,15 @@ func (m *Manager) relaunchSessionWithPolicy(ctx context.Context, operation strin
 	if !ok {
 		return RestoreResult{}, fmt.Errorf("%s %s: no agent adapter for harness %q", operation, rec.ID, rec.Harness)
 	}
-	// The system prompt is derived, not persisted: recompute it so a restored
-	// session keeps its standing instructions across the relaunch.
+	// Recompute standing instructions, then reapply the durable finalized inbound
+	// handoff for this exact native conversation when one exists.
 	systemPrompt, err := m.buildSystemPrompt(ctx, rec.Kind, rec.ProjectID)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("%s %s: system prompt: %w", operation, rec.ID, err)
+	}
+	systemPrompt, err = m.systemPromptForNativeRestore(ctx, rec, systemPrompt)
+	if err != nil {
+		return RestoreResult{}, fmt.Errorf("%s %s: switched continuation: %w", operation, rec.ID, err)
 	}
 	systemPromptFile, err := m.prepareSystemPromptFile(rec.ID, rec.Harness, systemPrompt)
 	if err != nil {

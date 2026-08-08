@@ -25,19 +25,6 @@ import (
 const (
 	defaultTimeout    = 5 * time.Second
 	defaultChunkBytes = 16 * 1024
-	// tmuxCommandMessageBytes is the largest packed argv accepted by tmux's
-	// MSG_COMMAND transport. tmux defines MAX_IMSGSIZE as 16 KiB and reserves
-	// four bytes for struct msg_command, leaving 16,380 bytes for every
-	// NUL-terminated argument passed to `tmux new-session` together. Crossing
-	// this boundary makes the client fail synchronously with "command too long".
-	tmuxCommandMessageBytes = 16*1024 - 4
-	// tmuxInlinePromptReserveBytes leaves room for the provider's prompt
-	// separator/flag and protects against small tmux argv or wrapper changes.
-	// It is charged in addition to the exact prompt-free new-session argv.
-	tmuxInlinePromptReserveBytes = 512
-	// shellQuote turns one apostrophe into four bytes ('\''), which is the
-	// largest possible expansion of any one input byte.
-	tmuxShellQuoteWorstCaseExpansion = 4
 	// defaultEnterDelay mirrors conpty's ptyInputEnterDelay: a pause after pasting
 	// a non-empty message, before the trailing Enter, so a large multiline paste
 	// does not absorb the Enter and leave the prompt unsubmitted (issue #2342).
@@ -85,7 +72,6 @@ type Runtime struct {
 
 var _ ports.Runtime = (*Runtime)(nil)
 var _ ports.Attacher = (*Runtime)(nil)
-var _ ports.InlinePromptBudgeter = (*Runtime)(nil)
 
 type runner interface {
 	Run(ctx context.Context, env []string, name string, args ...string) ([]byte, error)
@@ -295,50 +281,6 @@ func New(opts Options) *Runtime {
 		runner:       execRunner{},
 		reapSessions: killSessionsByPID,
 	}
-}
-
-// MaxInlinePromptBytes returns the maximum UTF-8 prompt size that can be
-// appended to cfg.Argv without overflowing tmux's command-message transport.
-//
-// The limit is not merely the size of the shell command: tmux serializes every
-// argument to `new-session`, including the session id, workspace, shell, and
-// the generated launch command, into one fixed-size message. The future prompt
-// is also shell-quoted by buildLaunchCommand. Since an arbitrary prompt may be
-// entirely apostrophes, each input byte is charged at shellQuote's worst-case
-// four-byte expansion. Callers can therefore compact or reject a continuation
-// before stopping the source agent instead of discovering "command too long"
-// only after the source terminal is gone.
-func (r *Runtime) MaxInlinePromptBytes(cfg ports.RuntimeConfig) (int, error) {
-	id, err := tmuxSessionName(cfg.SessionID)
-	if err != nil {
-		return 0, err
-	}
-	if cfg.WorkspacePath == "" {
-		return 0, errors.New("tmux runtime: workspace path is required")
-	}
-	if len(cfg.Argv) == 0 {
-		return 0, errors.New("tmux runtime: launch command is required")
-	}
-	if err := validateEnvKeys(cfg.Env); err != nil {
-		return 0, err
-	}
-
-	launchCmd := buildLaunchCommand(cfg)
-	used := packedArgvBytes(newSessionArgs(id, cfg.WorkspacePath, r.shell, launchCmd))
-	remaining := tmuxCommandMessageBytes - used - tmuxInlinePromptReserveBytes
-	// shellQuote adds a leading and trailing quote even for an empty argument.
-	if remaining <= 2 {
-		return 0, nil
-	}
-	return (remaining - 2) / tmuxShellQuoteWorstCaseExpansion, nil
-}
-
-func packedArgvBytes(argv []string) int {
-	bytes := 0
-	for _, arg := range argv {
-		bytes += len(arg) + 1 // tmux packs each argument with its terminating NUL.
-	}
-	return bytes
 }
 
 // Create starts a new tmux session in the workspace, running the agent's

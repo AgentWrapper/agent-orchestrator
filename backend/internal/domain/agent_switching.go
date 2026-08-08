@@ -205,9 +205,11 @@ func (s AgentHandoffStatus) Valid() bool {
 	}
 }
 
-// AgentSwitch is one durable switch saga. Dynamic deterministic continuation
-// context is assembled in memory, while an optional source-authored handoff is
-// retained separately with explicit provenance.
+// AgentSwitch is one durable switch saga. The optional source-authored handoff
+// is tracked independently from the AO-finalized handoff that was actually
+// delivered to the target. The finalized artifact also exists for fallback-
+// only switches and is the durable source used to rebuild hidden continuation
+// instructions when the target native session is restored.
 type AgentSwitch struct {
 	ID                     AgentSwitchID                 `json:"id"`
 	SessionID              SessionID                     `json:"sessionId"`
@@ -221,6 +223,8 @@ type AgentSwitch struct {
 	AgentHandoffStatus     AgentHandoffStatus            `json:"agentHandoffStatus"`
 	AgentHandoffPath       string                        `json:"agentHandoffPath,omitempty"`
 	AgentHandoffHash       string                        `json:"agentHandoffHash,omitempty"`
+	FinalHandoffPath       string                        `json:"-"`
+	FinalHandoffHash       string                        `json:"-"`
 	SourceGenerationID     AgentGenerationID             `json:"sourceGenerationId"`
 	TargetGenerationID     AgentGenerationID             `json:"targetGenerationId,omitempty"`
 	TargetRuntimeHandleID  string                        `json:"-"`

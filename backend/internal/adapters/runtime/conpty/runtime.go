@@ -7,28 +7,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"sync"
 	"time"
-	"unicode/utf16"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/runtime/conpty/ptyregistry"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
-const (
-	runtimeLaunchIDEnv = "AO_RUNTIME_LAUNCH_ID"
-	// CreateProcessW includes the terminating NUL in its 32,767 UTF-16-unit
-	// command-line limit. Keep additional headroom for Go's command assembly
-	// and the provider's prompt separator.
-	windowsCommandLineUTF16Limit  = 32767
-	windowsCommandLineSafetyUnits = 512
-)
+const runtimeLaunchIDEnv = "AO_RUNTIME_LAUNCH_ID"
 
 // Ensure Runtime satisfies the port at compile time (Attach in attach.go).
 var _ ports.Runtime = (*Runtime)(nil)
-var _ ports.InlinePromptBudgeter = (*Runtime)(nil)
 
 // validSessionID matches agent-orchestrator's assertValidSessionId.
 var validSessionID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -209,43 +199,6 @@ func (r *Runtime) IsExactSupervisedProcessAlive(ctx context.Context, handle port
 		return false, errors.New("conpty: exact supervisor session and launch are required")
 	}
 	return r.IsSupervisedProcessAlive(ctx, handle, ref)
-}
-
-// MaxInlinePromptBytes returns a conservative UTF-8 byte budget for one prompt
-// appended to cfg.Argv. ConPTY starts an outer `ao pty-host` with CreateProcess;
-// unlike tmux, that makes the complete supervisor, provider flags, standing
-// instructions, and prompt share Windows' small command-line limit. Existing
-// args and the future prompt are charged at their worst-case Windows quoting
-// expansion. UTF-8 byte length is never smaller than the corresponding UTF-16
-// unit count, so the returned byte budget is safe for Unicode prompts too.
-func (r *Runtime) MaxInlinePromptBytes(cfg ports.RuntimeConfig) (int, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return 0, fmt.Errorf("conpty: resolve executable for inline prompt budget: %w", err)
-	}
-	_, argv := stripEnvAssignments(cfg.Argv)
-	args := make([]string, 0, 4+len(argv))
-	args = append(args, executable, "pty-host", string(cfg.SessionID), cfg.WorkspacePath)
-	args = append(args, argv...)
-
-	used := 1 + windowsCommandLineSafetyUnits // terminating NUL plus headroom
-	for _, arg := range args {
-		used += worstCaseWindowsQuotedUnits(arg)
-	}
-	remaining := windowsCommandLineUTF16Limit - used
-	if remaining <= 32 {
-		return 0, nil
-	}
-	// The provider adds a `--`-style separator, then Go may quote and escape
-	// every prompt unit. Charge two command-line units per UTF-8 byte.
-	return (remaining - 32) / 2, nil
-}
-
-func worstCaseWindowsQuotedUnits(value string) int {
-	units := len(utf16.Encode([]rune(value)))
-	// Two units per input unit covers escaping every backslash/quote; the extra
-	// three cover surrounding quotes and the separating space.
-	return 2*units + 3
 }
 
 // SendMessage chunks message and writes it to the pty-host followed by Enter.

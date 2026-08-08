@@ -26,6 +26,7 @@ type AgentSwitchStore interface {
 	UpdateAgentSwitch(ctx context.Context, rec domain.AgentSwitch, expectedState domain.AgentSwitchState, expectedSourceGenerationID, expectedTargetGenerationID domain.AgentGenerationID) (bool, error)
 	FailAgentSwitchIfUnacknowledged(ctx context.Context, rec domain.AgentSwitch) (bool, error)
 	RecordAgentHandoff(ctx context.Context, id domain.AgentSwitchID, sourceGenerationID domain.AgentGenerationID, status domain.AgentHandoffStatus, handoffPath, handoffHash string, updatedAt time.Time) (bool, error)
+	FinalizeAgentSwitchHandoff(ctx context.Context, id domain.AgentSwitchID, sessionID domain.SessionID, sourceGenerationID, targetGenerationID domain.AgentGenerationID, handoffPath, handoffHash string, semanticIncluded bool, updatedAt time.Time) (bool, error)
 	ConfirmAgentSwitchSourceStopped(ctx context.Context, confirmation domain.AgentSwitchSourceStopConfirmation) (bool, error)
 	AcknowledgeAgentSwitchTarget(ctx context.Context, id domain.AgentSwitchID, sessionID domain.SessionID, targetGenerationID domain.AgentGenerationID, acknowledgedAt time.Time) (bool, error)
 	ActivateAgentSwitchTarget(ctx context.Context, activation domain.AgentSwitchTargetActivation) (bool, error)

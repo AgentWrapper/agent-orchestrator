@@ -17,6 +17,7 @@ const shortcutMocks = vi.hoisted(() => ({
 }));
 
 const agentSwitchMocks = vi.hoisted(() => ({
+	refetch: vi.fn(),
 	switches: [] as AgentSwitch[],
 	mutation: {
 		error: null as string | null,
@@ -28,7 +29,7 @@ const agentSwitchMocks = vi.hoisted(() => ({
 vi.mock("../hooks/useAgentSwitches", () => ({
 	findActiveAgentSwitch: (switches: AgentSwitch[]) =>
 		switches.find((agentSwitch) => agentSwitch.state !== "completed" && agentSwitch.state !== "failed"),
-	useAgentSwitches: () => ({ data: agentSwitchMocks.switches }),
+	useAgentSwitches: () => ({ data: agentSwitchMocks.switches, refetch: agentSwitchMocks.refetch }),
 }));
 
 vi.mock("../hooks/useSwitchAgent", () => ({
@@ -71,7 +72,9 @@ vi.mock("../lib/bridge", () => ({
 
 // The terminal body pulls in xterm/SSE machinery irrelevant to the header under test.
 vi.mock("./TerminalPane", () => ({
-	TerminalPane: () => <div>terminal body</div>,
+	TerminalPane: ({ focusRequested }: { focusRequested?: boolean }) => (
+		<div data-focus-requested={focusRequested ? "true" : "false"}>terminal body</div>
+	),
 }));
 
 const worker = {
@@ -102,6 +105,8 @@ beforeEach(() => {
 	shortcutMocks.previousTabListener = undefined;
 	shortcutMocks.closeableStates.length = 0;
 	agentSwitchMocks.switches.length = 0;
+	agentSwitchMocks.refetch.mockReset();
+	agentSwitchMocks.refetch.mockResolvedValue(undefined);
 	agentSwitchMocks.mutation.error = null;
 	agentSwitchMocks.mutation.input = undefined;
 	agentSwitchMocks.mutation.isPending = false;
@@ -141,7 +146,36 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByTestId("terminal-interaction-surface")).toHaveAttribute("inert");
 		expect(within(overlay).getByText("Claude Code")).toBeInTheDocument();
 		expect(within(overlay).getByText("Codex")).toBeInTheDocument();
-		expect(document.activeElement).toBe(overlay);
+		expect(document.activeElement).toBe(screen.getByTestId("agent-switch-terminal-overlay"));
+	});
+
+	it("reopens terminal input when the source handoff needs a permission decision", () => {
+		agentSwitchMocks.switches.push({
+			agentHandoffStatus: "requested",
+			fromHarness: "claude-code",
+			id: "switch-2",
+			requestedAt: "2026-06-10T00:00:00Z",
+			sessionId: worker.id,
+			state: "preparing_handoff",
+			targetHarness: "codex",
+			updatedAt: "2026-06-10T00:00:01Z",
+		});
+
+		renderCenterPane({
+			session: {
+				...worker,
+				activity: { state: "waiting_input", lastActivityAt: "2026-06-10T00:00:02Z" },
+			},
+		});
+
+		expect(screen.getByTestId("terminal-interaction-surface")).not.toHaveAttribute("inert");
+		expect(screen.getByText("terminal body")).toHaveAttribute("data-focus-requested", "true");
+		expect(
+			screen.getByText(
+				"The source agent requires a permission decision. Review the terminal prompt to continue the handoff.",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Cancel switch" })).not.toBeInTheDocument();
 	});
 
 	it("renders only this session's own tab, never a sibling session", () => {

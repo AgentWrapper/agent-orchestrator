@@ -226,6 +226,26 @@ func (s *switchTestStore) RecordAgentHandoff(_ context.Context, id domain.AgentS
 	return true, nil
 }
 
+func (s *switchTestStore) FinalizeAgentSwitchHandoff(_ context.Context, id domain.AgentSwitchID, sessionID domain.SessionID, source, target domain.AgentGenerationID, path, hash string, semanticIncluded bool, at time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, ok := s.switches[id]
+	if !ok || rec.SessionID != sessionID || rec.State != domain.AgentSwitchSourceStopped ||
+		rec.SourceGenerationID != source || rec.TargetGenerationID != target ||
+		rec.FinalHandoffPath != "" || rec.FinalHandoffHash != "" {
+		return false, nil
+	}
+	rec.FinalHandoffPath = path
+	rec.FinalHandoffHash = hash
+	if rec.AgentHandoffStatus == domain.AgentHandoffReceived && semanticIncluded {
+		rec.AgentHandoffPath = path
+		rec.AgentHandoffHash = hash
+	}
+	rec.UpdatedAt = at
+	s.switches[id] = rec
+	return true, nil
+}
+
 func (s *switchTestStore) ConfirmAgentSwitchSourceStopped(ctx context.Context, confirmation domain.AgentSwitchSourceStopConfirmation) (bool, error) {
 	if s.confirmHook != nil {
 		s.confirmHook(ctx)
@@ -314,29 +334,27 @@ func (s *switchTestStore) ActivateAgentSwitchTarget(_ context.Context, activatio
 
 type switchTestAgent struct {
 	fakeAgent
-	configDir        string
-	available        map[string]ports.NativeSessionAvailability
-	authStatus       ports.AgentAuthStatus
-	authErr          error
-	locateTranscript func(ports.NativeSessionRef) (string, bool, error)
-	onHooks          func()
-	hookCalls        int
-	cleanupCalls     int
-	composerEmpty    func(string) bool
-	nativeIDCounter  int
-	launchPrompt     string
-	restorePrompt    string
+	configDir           string
+	available           map[string]ports.NativeSessionAvailability
+	authStatus          ports.AgentAuthStatus
+	authErr             error
+	locateTranscript    func(ports.NativeSessionRef) (string, bool, error)
+	onHooks             func()
+	hookCalls           int
+	cleanupCalls        int
+	composerEmpty       func(string) bool
+	nativeIDCounter     int
+	launchPrompt        string
+	restorePrompt       string
+	launchSystemPrompt  string
+	restoreSystemPrompt string
+	launchSystemFile    string
+	restoreSystemFile   string
 }
 
 type switchReleaseLCM struct {
 	lifecycleRecorder
 	onRelease func(domain.SessionID, string)
-}
-
-type switchInlineBudgetRuntime struct {
-	*fakeRestartRuntime
-	budget int
-	err    error
 }
 
 type switchCreateErrorRuntime struct {
@@ -354,10 +372,6 @@ func (r *switchCreateErrorRuntime) Create(_ context.Context, cfg ports.RuntimeCo
 func (r *switchCreateErrorRuntime) IsExactSupervisedProcessAlive(ctx context.Context, handle ports.RuntimeHandle, ref ports.SupervisedProcessRef) (bool, error) {
 	r.exactProbeHandles = append(r.exactProbeHandles, handle.ID)
 	return r.fakeRestartRuntime.IsExactSupervisedProcessAlive(ctx, handle, ref)
-}
-
-func (r *switchInlineBudgetRuntime) MaxInlinePromptBytes(ports.RuntimeConfig) (int, error) {
-	return r.budget, r.err
 }
 
 func (l *switchReleaseLCM) ReleaseLaunch(id domain.SessionID, launchID string) {
@@ -437,6 +451,8 @@ func (a *switchTestAgent) LocateTranscript(_ context.Context, ref ports.NativeSe
 
 func (a *switchTestAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfig) ([]string, error) {
 	a.launchPrompt = cfg.Prompt
+	a.launchSystemPrompt = cfg.SystemPrompt
+	a.launchSystemFile = cfg.SystemPromptFile
 	return []string{"agent", "fresh", cfg.Prompt}, nil
 }
 
@@ -446,6 +462,8 @@ func (a *switchTestAgent) GetRestoreCommand(_ context.Context, cfg ports.Restore
 		return nil, false, nil
 	}
 	a.restorePrompt = cfg.Prompt
+	a.restoreSystemPrompt = cfg.SystemPrompt
+	a.restoreSystemFile = cfg.SystemPromptFile
 	return []string{"agent", "resume", id, cfg.Prompt}, true, nil
 }
 
@@ -639,13 +657,14 @@ func TestBuildTargetContinuationMessageIncludesDeterministicContextAndFallbackTa
 func TestBuildTargetContinuationMessageUsesSemanticHandoffWithoutTranscriptExcerpt(t *testing.T) {
 	sw := domain.AgentSwitch{
 		ID: "switch-1", SessionID: "proj-1", FromHarness: domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
-		AgentHandoffStatus: domain.AgentHandoffReceived, AgentHandoffPath: "/ao/handoffs/proj-1/switch-1/agent-handoff.json",
 	}
 	message := buildTargetContinuationMessage(sw, deterministicSwitchContext{
 		OriginalTask: "finish switching", LatestUserPrompt: "keep it small", LatestAssistantUpdate: "storage is done",
+		SemanticHandoff: json.RawMessage(`{"schemaVersion":1,"goal":"finish switching","progressSummary":"semantic storage is done"}`),
 	}, &switchTranscriptFact{Path: "/provider/session.jsonl", Tail: "TRANSCRIPT_SENTINEL"})
 	for _, want := range []string{
-		sw.AgentHandoffPath,
+		"ao-semantic-handoff",
+		"semantic storage is done",
 		"/provider/session.jsonl",
 		"finish switching",
 		"keep it small",
@@ -733,102 +752,34 @@ func TestBuildTargetContinuationMessageHasCompleteDeliveryByteCeiling(t *testing
 	if len(message) > handoffContinuationMaxBytes {
 		t.Fatalf("continuation bytes = %d, want <= %d", len(message), handoffContinuationMaxBytes)
 	}
-	if !strings.Contains(message, "excerpt omitted because the complete continuation exceeded") || !strings.HasSuffix(message, "</ao-continuation>") {
+	if !strings.Contains(message, "excerpt omitted because the complete hidden continuation exceeded") || !strings.HasSuffix(message, "</ao-continuation>") {
 		t.Fatalf("bounded continuation lost its omission notice or closing protocol tag:\n%s", message)
 	}
 }
 
-func TestBuildTargetContinuationMessageReportsRuntimeBudgetWhenOnlyExcerptIsClipped(t *testing.T) {
-	const budget = 8 << 10
-	message := buildTargetContinuationMessageWithLimit(
-		domain.AgentSwitch{
-			ID: "switch-runtime-budget", SessionID: "proj-1", FromHarness: domain.HarnessCodex,
-			TargetHarness: domain.HarnessClaudeCode, AgentHandoffStatus: domain.AgentHandoffUnavailable,
-		},
-		deterministicSwitchContext{
-			OriginalTask:          "finish the task",
-			LatestUserPrompt:      "continue safely",
-			LatestAssistantUpdate: "the source is ready to switch",
-			Workspaces:            []switchWorkspaceFact{{Path: "/workspace-retained"}},
-		},
-		&switchTranscriptFact{Path: "/provider/session.jsonl", Tail: strings.Repeat("oversized-transcript-data", 10_000)},
-		budget,
-	)
-	if len(message) > budget {
-		t.Fatalf("continuation bytes = %d, want <= %d", len(message), budget)
-	}
-	for _, want := range []string{
-		"recent source excerpt omitted because the complete continuation did not fit",
-		"target runtime's safe launch-transport budget of 8 KiB (AO's global ceiling is 96 KiB)",
-		"ao-workspace-facts",
-		"/workspace-retained",
-	} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("clipped continuation missing %q:\n%s", want, message)
-		}
-	}
-	if strings.Contains(message, "AO's 8192-byte delivery limit") {
-		t.Fatalf("clipped continuation retained misleading AO-limit attribution:\n%s", message)
-	}
-}
-
-func TestBuildTargetContinuationMessageFitsConservativeInlineLaunchBudget(t *testing.T) {
-	const budget = 854
-	hugePercentPath := "/provider/" + strings.Repeat("%very-long/", 4000) + "session.jsonl"
-	message := buildTargetContinuationMessageWithLimit(
-		domain.AgentSwitch{
-			ID: "switch-windows", SessionID: "proj-1", FromHarness: domain.HarnessClaudeCode,
-			TargetHarness: domain.HarnessCodex, AgentHandoffStatus: domain.AgentHandoffReceived,
-			AgentHandoffPath: hugePercentPath, AgentHandoffHash: strings.Repeat("a", 64),
-		},
-		deterministicSwitchContext{
-			OriginalTask:          strings.Repeat("original % task\n", 4000),
-			LatestUserPrompt:      "keep this latest user direction",
-			LatestAssistantUpdate: "latest assistant update",
-			SourceTranscriptPath:  hugePercentPath,
-			Workspaces:            []switchWorkspaceFact{{Path: strings.Repeat("workspace", 8000)}},
-		},
-		&switchTranscriptFact{Path: hugePercentPath, Tail: strings.Repeat("history", 20_000)},
-		budget,
-	)
-	if len(message) > budget {
-		t.Fatalf("inline continuation bytes = %d, want <= %d", len(message), budget)
-	}
-	for _, want := range []string{"<ao-continuation", "keep this latest user direction", "latest assistant update", "</ao-continuation>"} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("compact inline continuation omitted %q:\n%s", want, message)
-		}
-	}
-}
-
-func TestBuildTargetContinuationMessagePrioritizesReceivedHandoffReferences(t *testing.T) {
-	const budget = 780
-	handoffPath := "/Users/example/.ao/dev/data/handoffs/session-1/switch-00000000-0000-0000-0000-000000000000/agent-handoff.json"
+func TestBuildTargetContinuationMessageEmbedsReceivedSemanticHandoff(t *testing.T) {
 	transcriptPath := "/Users/example/.claude/projects/-Users-example-workspace/00000000-0000-0000-0000-000000000000.jsonl"
-	hash := strings.Repeat("a", 64)
-	message := buildTargetContinuationMessageWithLimit(
+	message := buildTargetContinuationMessage(
 		domain.AgentSwitch{
 			ID: "switch-00000000-0000-0000-0000-000000000000", SessionID: "session-1",
 			FromHarness: domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
-			AgentHandoffStatus: domain.AgentHandoffReceived, AgentHandoffPath: handoffPath,
-			AgentHandoffHash: hash,
 		},
 		deterministicSwitchContext{
-			OriginalTask:          strings.Repeat("large original task ", 2_000),
-			LatestUserPrompt:      strings.Repeat("large latest user direction ", 2_000),
-			LatestAssistantUpdate: strings.Repeat("large latest assistant update ", 2_000),
+			OriginalTask:          "finish switching",
+			LatestUserPrompt:      "preserve context",
+			LatestAssistantUpdate: "ready for handoff",
+			SemanticHandoff:       json.RawMessage(`{"schemaVersion":1,"goal":"finish the feature","progressSummary":"storage is wired"}`),
 			SourceTranscriptPath:  transcriptPath,
 		},
 		&switchTranscriptFact{Path: transcriptPath},
-		budget,
 	)
-	if len(message) > budget {
-		t.Fatalf("continuation bytes = %d, want <= %d", len(message), budget)
-	}
-	for _, want := range []string{handoffPath, hash, transcriptPath, "newest two complete user/assistant messages"} {
+	for _, want := range []string{"ao-semantic-handoff", "finish the feature", "storage is wired", transcriptPath, "newest two complete conversational messages"} {
 		if !strings.Contains(message, want) {
-			t.Fatalf("references-first continuation omitted %q:\n%s", want, message)
+			t.Fatalf("semantic continuation omitted %q:\n%s", want, message)
 		}
+	}
+	if strings.Contains(message, "ao-source-transcript-tail") {
+		t.Fatalf("semantic continuation unexpectedly included transcript fallback:\n%s", message)
 	}
 }
 
@@ -882,21 +833,9 @@ func TestBuildTargetContinuationMessageReportsEffectiveCompactionLimit(t *testin
 		dontWant   string
 	}{
 		{
-			name:       "runtime transport budget",
-			limit:      8 << 10,
-			wantNotice: "target runtime's safe launch-transport budget of 8 KiB (AO's global ceiling is 96 KiB)",
-			dontWant:   "exceeded AO's 96 KiB",
-		},
-		{
-			name:       "runtime non-KiB transport budget",
-			limit:      7777,
-			wantNotice: "target runtime's safe launch-transport budget of 7777 bytes (AO's global ceiling is 96 KiB)",
-			dontWant:   "exceeded AO's 96 KiB",
-		},
-		{
 			name:       "global ceiling",
 			limit:      handoffContinuationMaxBytes,
-			wantNotice: "exceeded AO's 96 KiB global delivery ceiling",
+			wantNotice: "full hidden continuation exceeded AO's 96 KiB context ceiling",
 		},
 	}
 	for _, tt := range tests {
@@ -1193,21 +1132,27 @@ func TestSwitchAgentFreshPreservesAOIdentityAndDeliversArtifact(t *testing.T) {
 		providerAfterInfo.Mode() != providerFinalInfo.Mode() {
 		t.Fatalf("AO rewrote provider transcript metadata while capturing it: before=%+v after=%+v", providerFinalInfo, providerAfterInfo)
 	}
-	if !strings.Contains(target.launchPrompt, "<ao-continuation") ||
-		!strings.Contains(target.launchPrompt, resolvedFinalTranscriptPath) ||
-		!strings.Contains(target.launchPrompt, "FINAL_SOURCE_RECORD") ||
-		!strings.Contains(target.launchPrompt, "implement the feature") ||
-		!strings.Contains(target.launchPrompt, "please keep the API small") ||
-		!strings.Contains(target.launchPrompt, "implementation is half complete") ||
-		!strings.Contains(target.launchPrompt, "preserve the unfinished test") ||
-		!strings.Contains(target.launchPrompt, "main.go") {
-		t.Fatalf("launch continuation = %q", target.launchPrompt)
+	if !strings.Contains(target.launchSystemPrompt, "<ao-continuation") ||
+		!strings.Contains(target.launchSystemPrompt, resolvedFinalTranscriptPath) ||
+		!strings.Contains(target.launchSystemPrompt, "FINAL_SOURCE_RECORD") ||
+		!strings.Contains(target.launchSystemPrompt, "implement the feature") ||
+		!strings.Contains(target.launchSystemPrompt, "please keep the API small") ||
+		!strings.Contains(target.launchSystemPrompt, "implementation is half complete") ||
+		!strings.Contains(target.launchSystemPrompt, "preserve the unfinished test") ||
+		!strings.Contains(target.launchSystemPrompt, "main.go") {
+		t.Fatalf("hidden continuation = %q", target.launchSystemPrompt)
+	}
+	if target.launchPrompt != aoTargetActivationPrompt || target.launchSystemFile == "" {
+		t.Fatalf("target delivery prompt=%q systemFile=%q", target.launchPrompt, target.launchSystemFile)
 	}
 	if sw.AgentHandoffPath != "" || sw.AgentHandoffHash != "" {
 		t.Fatalf("unavailable semantic handoff unexpectedly retained a file: path=%q hash=%q", sw.AgentHandoffPath, sw.AgentHandoffHash)
 	}
 	handoffDir := filepath.Join(manager.dataDir, "handoffs", "proj-1", string(sw.ID))
-	for _, obsolete := range []string{"prepared.md", "prepared.json", "handoff.md", "handoff.json", "agent-handoff.json", "agent-handoff-candidate.json"} {
+	if sw.FinalHandoffPath == "" || sw.FinalHandoffHash == "" {
+		t.Fatalf("finalized handoff was not retained: %+v", sw)
+	}
+	for _, obsolete := range []string{"prepared.md", "prepared.json", "handoff.md", "agent-handoff.json", "agent-handoff-candidate.json"} {
 		if _, statErr := os.Stat(filepath.Join(handoffDir, obsolete)); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("unexpected retained handoff file %s: %v", obsolete, statErr)
 		}
@@ -1217,9 +1162,8 @@ func TestSwitchAgentFreshPreservesAOIdentityAndDeliversArtifact(t *testing.T) {
 	}
 }
 
-func TestSwitchAgentBindsInCommandContinuationBeforeReleasingLaunchHooks(t *testing.T) {
-	baseRuntime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{aliveByHandle: map[string]bool{"proj-1": true}}}
-	runtime := &switchInlineBudgetRuntime{fakeRestartRuntime: baseRuntime, budget: 854}
+func TestSwitchAgentBindsHiddenContinuationBeforeReleasingLaunchHooks(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{aliveByHandle: map[string]bool{"proj-1": true}}}
 	manager, store, messenger := newSwitchTestManager(t, runtime)
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
 	manager.lcm.(*switchReleaseLCM).onRelease = func(id domain.SessionID, launchID string) {
@@ -1246,42 +1190,53 @@ func TestSwitchAgentBindsInCommandContinuationBeforeReleasingLaunchHooks(t *test
 	if sw.State != domain.AgentSwitchCompleted {
 		t.Fatalf("switch state = %q, want completed", sw.State)
 	}
-	if !strings.Contains(target.launchPrompt, "<ao-continuation") || !strings.HasSuffix(target.launchPrompt, "</ao-continuation>") {
-		t.Fatalf("launch prompt does not contain AO continuation: %q", target.launchPrompt)
+	if !strings.Contains(target.launchSystemPrompt, "<ao-continuation") || !strings.HasSuffix(target.launchSystemPrompt, "</ao-continuation>") {
+		t.Fatalf("hidden system prompt does not contain AO continuation: %q", target.launchSystemPrompt)
 	}
-	if len(target.launchPrompt) > runtime.budget {
-		t.Fatalf("launch prompt bytes = %d, want <= runtime budget %d", len(target.launchPrompt), runtime.budget)
+	if target.launchPrompt != aoTargetActivationPrompt {
+		t.Fatalf("visible target prompt = %q, want activation only", target.launchPrompt)
 	}
 	if got := countSwitchContinuations(messenger.msgs); got != 0 {
 		t.Fatalf("in-command continuation was also pasted into the TUI %d times: %#v", got, messenger.msgs)
 	}
 }
 
-func TestSwitchAgentRejectsUnsafeInlinePromptBudgetBeforeStoppingSource(t *testing.T) {
-	baseRuntime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{aliveByHandle: map[string]bool{"proj-1": true}}}
-	minimumBytes := minimumTargetContinuationBytes(domain.AgentSwitch{
-		ID:            "switch-00000000-0000-0000-0000-000000000000",
-		FromHarness:   domain.HarnessClaudeCode,
-		TargetHarness: domain.HarnessCodex,
-	})
-	runtime := &switchInlineBudgetRuntime{fakeRestartRuntime: baseRuntime, budget: minimumBytes - 1}
-	manager, store, _ := newSwitchTestManager(t, runtime)
+func TestSystemPromptForNativeRestoreReappliesFinalizedInboundHandoff(t *testing.T) {
+	manager, store, _ := newSwitchTestManager(t, &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}})
+	rec := store.sessions["proj-1"]
+	rec.Harness = domain.HarnessCodex
+	rec.Metadata.AgentSessionID = "codex-native-1"
+	native := domain.AgentNativeSession{
+		ID: "native-target", AOSessionID: rec.ID, Harness: rec.Harness,
+		ConfigDir: t.TempDir(), NativeSessionID: rec.Metadata.AgentSessionID,
+		LastGenerationID: "target-generation", CreatedAt: time.Now().UTC(), LastUsedAt: time.Now().UTC(),
+	}
+	store.native[native.ID] = native
+	nativeRef := native.ID
+	sw := domain.AgentSwitch{
+		ID: "switch-restore-context", SessionID: rec.ID,
+		FromHarness: domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+		TargetNativeSessionRef: &nativeRef, State: domain.AgentSwitchCompleted,
+	}
+	if _, _, err := manager.prepareAgentHandoffPaths(sw.SessionID, string(sw.ID)); err != nil {
+		t.Fatal(err)
+	}
+	written, err := manager.writeFinalizedHandoffFile(sw, `<ao-continuation>persisted hidden context</ao-continuation>`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw.FinalHandoffPath = written.Path
+	sw.FinalHandoffHash = written.Hash
+	store.switches[sw.ID] = sw
 
-	sw, err := manager.SwitchAgent(context.Background(), "proj-1", SwitchAgentConfig{
-		TargetHarness:  domain.HarnessCodex,
-		IdempotencyKey: "unsafe-inline-budget",
-	})
-	if err == nil || !strings.Contains(err.Error(), "inline prompt budget") {
-		t.Fatalf("switch error = %v, want inline prompt budget failure", err)
+	got, err := manager.systemPromptForNativeRestore(context.Background(), rec, "base instructions")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if sw.State != domain.AgentSwitchFailed {
-		t.Fatalf("switch state = %q, want failed", sw.State)
-	}
-	if runtime.destroyed != 0 || runtime.created != 0 {
-		t.Fatalf("source/target runtime mutation = destroyed %d created %d, want 0/0", runtime.destroyed, runtime.created)
-	}
-	if got := store.sessions["proj-1"].Harness; got != domain.HarnessClaudeCode {
-		t.Fatalf("source owner changed after preflight failure: %q", got)
+	for _, want := range []string{"base instructions", aoAgentContinuationProtocol, "persisted hidden context"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("restored system prompt omitted %q:\n%s", want, got)
+		}
 	}
 }
 
@@ -1373,8 +1328,8 @@ func TestSwitchAgentTranscriptReadFailureUsesSingleTerminalFallback(t *testing.T
 		t.Fatal(err)
 	}
 	if sw.State != domain.AgentSwitchCompleted ||
-		strings.Count(target.launchPrompt, terminalSentinel) != 1 || strings.Contains(target.launchPrompt, path) {
-		t.Fatalf("transcript read failure did not fall back exactly once without advertising its path: switch=%+v continuation=%q", sw, target.launchPrompt)
+		strings.Count(target.launchSystemPrompt, terminalSentinel) != 1 || strings.Contains(target.launchSystemPrompt, path) {
+		t.Fatalf("transcript read failure did not fall back exactly once without advertising its path: switch=%+v continuation=%q", sw, target.launchSystemPrompt)
 	}
 	if sw.AgentHandoffPath != "" || sw.AgentHandoffHash != "" {
 		t.Fatalf("transcript-read fallback unexpectedly retained semantic handoff: %+v", sw)
@@ -1410,7 +1365,7 @@ func TestSwitchAgentResumesVerifiedPriorNativeSession(t *testing.T) {
 	if sw.TargetStartMode != domain.AgentSwitchTargetStartResumed {
 		t.Fatalf("target mode = %q, want resumed", sw.TargetStartMode)
 	}
-	if got := strings.Join(runtime.lastCfg.Argv, " "); !strings.Contains(got, "-- agent resume codex-prior ") || !strings.Contains(target.restorePrompt, "<ao-continuation") {
+	if got := strings.Join(runtime.lastCfg.Argv, " "); !strings.Contains(got, "-- agent resume codex-prior ") || !strings.Contains(target.restoreSystemPrompt, "<ao-continuation") || target.restorePrompt != aoTargetActivationPrompt {
 		t.Fatalf("target argv = %q", got)
 	}
 	if store.native["native-prior"].LastGenerationID != "target-generation" {
@@ -1433,7 +1388,7 @@ func TestSwitchAgentUnknownResumeEvidenceStartsFresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sw.TargetStartMode != domain.AgentSwitchTargetStartFresh || !strings.Contains(strings.Join(runtime.lastCfg.Argv, " "), "-- agent fresh ") || !strings.Contains(target.launchPrompt, "<ao-continuation") {
+	if sw.TargetStartMode != domain.AgentSwitchTargetStartFresh || !strings.Contains(strings.Join(runtime.lastCfg.Argv, " "), "-- agent fresh ") || !strings.Contains(target.launchSystemPrompt, "<ao-continuation") || target.launchPrompt != aoTargetActivationPrompt {
 		t.Fatalf("unknown evidence should start fresh: mode=%q argv=%q", sw.TargetStartMode, strings.Join(runtime.lastCfg.Argv, " "))
 	}
 }
@@ -1518,33 +1473,33 @@ func TestSwitchAgentIncludesAvailableSourceAuthoredHandoff(t *testing.T) {
 	if sw.AgentHandoffStatus != domain.AgentHandoffReceived {
 		t.Fatalf("semantic handoff status = %q", sw.AgentHandoffStatus)
 	}
-	if filepath.Base(sw.AgentHandoffPath) != "agent-handoff.json" || sw.AgentHandoffHash == "" {
+	if filepath.Base(sw.AgentHandoffPath) != "handoff.json" || sw.AgentHandoffHash == "" || sw.FinalHandoffPath != sw.AgentHandoffPath || sw.FinalHandoffHash != sw.AgentHandoffHash {
 		t.Fatalf("semantic handoff location = path %q hash %q", sw.AgentHandoffPath, sw.AgentHandoffHash)
 	}
 	body, err := os.ReadFile(sw.AgentHandoffPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "wired storage") || !strings.Contains(string(body), `"schemaVersion":1`) {
-		t.Fatalf("semantic file omitted source report:\n%s", body)
+	if !strings.Contains(string(body), "wired storage") || !strings.Contains(string(body), `"schemaVersion": 1`) {
+		t.Fatalf("finalized handoff omitted source report:\n%s", body)
 	}
 	for _, deterministic := range []string{"preserve storage semantics", "implement the feature", "please keep the API small", "implementation is half complete", "main.go"} {
-		if strings.Contains(string(body), deterministic) {
-			t.Fatalf("semantic file duplicated deterministic context %q:\n%s", deterministic, body)
+		if !strings.Contains(string(body), deterministic) {
+			t.Fatalf("finalized handoff omitted deterministic context %q:\n%s", deterministic, body)
 		}
 	}
 	if len(messenger.msgs) != 1 || !strings.HasPrefix(strings.TrimSpace(messenger.msgs[0]), "<ao-handoff-request") {
 		t.Fatalf("message sequence = %#v", messenger.msgs)
 	}
-	for _, want := range []string{sw.AgentHandoffPath, "preserve storage semantics", "implement the feature", "please keep the API small", "implementation is half complete", "main.go"} {
-		if !strings.Contains(target.launchPrompt, want) {
-			t.Fatalf("continuation omitted %q:\n%s", want, target.launchPrompt)
+	for _, want := range []string{"wired storage", "preserve storage semantics", "implement the feature", "please keep the API small", "implementation is half complete", "main.go"} {
+		if !strings.Contains(target.launchSystemPrompt, want) {
+			t.Fatalf("continuation omitted %q:\n%s", want, target.launchSystemPrompt)
 		}
 	}
-	if strings.Contains(target.launchPrompt, "wired storage") || strings.Contains(target.launchPrompt, "ao-source-transcript-tail") {
-		t.Fatalf("continuation should reference, not duplicate, the semantic report or transcript fallback:\n%s", target.launchPrompt)
+	if strings.Contains(target.launchSystemPrompt, "ao-source-transcript-tail") || target.launchPrompt != aoTargetActivationPrompt {
+		t.Fatalf("semantic continuation used a transcript fallback or leaked visibly: system=%s prompt=%q", target.launchSystemPrompt, target.launchPrompt)
 	}
-	for _, obsolete := range []string{"prepared.md", "prepared.json", "handoff.md", "handoff.json", "agent-handoff-candidate.json"} {
+	for _, obsolete := range []string{"prepared.md", "prepared.json", "handoff.md", "agent-handoff.json", "agent-handoff-candidate.json"} {
 		if _, statErr := os.Stat(filepath.Join(filepath.Dir(sw.AgentHandoffPath), obsolete)); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("unexpected retained handoff file %s: %v", obsolete, statErr)
 		}
@@ -1614,15 +1569,15 @@ func TestSwitchAgentSourceSummaryTimeoutStillDeliversDeterministicHandoff(t *tes
 	if sw.State != domain.AgentSwitchCompleted || sw.AgentHandoffStatus != domain.AgentHandoffTimedOut {
 		t.Fatalf("switch = state %q summary %q, want completed/timed_out", sw.State, sw.AgentHandoffStatus)
 	}
-	if len(messenger.msgs) != 1 || !strings.HasPrefix(strings.TrimSpace(messenger.msgs[0]), "<ao-handoff-request") || !strings.HasPrefix(strings.TrimSpace(target.launchPrompt), "<ao-continuation") {
+	if len(messenger.msgs) != 1 || !strings.HasPrefix(strings.TrimSpace(messenger.msgs[0]), "<ao-handoff-request") || !strings.Contains(target.launchSystemPrompt, "<ao-continuation") {
 		t.Fatalf("message sequence = %#v", messenger.msgs)
 	}
 	if sw.AgentHandoffPath != "" || sw.AgentHandoffHash != "" {
 		t.Fatalf("timeout fallback unexpectedly retained semantic file: %+v", sw)
 	}
 	for _, want := range []string{"implement the feature", "please keep the API small", "implementation is half complete", "ao-workspace-facts"} {
-		if !strings.Contains(target.launchPrompt, want) {
-			t.Fatalf("timeout fallback continuation omitted %q:\n%s", want, target.launchPrompt)
+		if !strings.Contains(target.launchSystemPrompt, want) {
+			t.Fatalf("timeout fallback continuation omitted %q:\n%s", want, target.launchSystemPrompt)
 		}
 	}
 }
@@ -1651,8 +1606,8 @@ func TestSwitchAgentSkipsSemanticHandoffWhenSourceComposerContainsDraft(t *testi
 			t.Fatalf("AO wrote a handoff request into a non-empty composer: %#v", messenger.msgs)
 		}
 	}
-	if !strings.HasPrefix(strings.TrimSpace(target.launchPrompt), "<ao-continuation") {
-		t.Fatalf("target launch omitted continuation: %q", target.launchPrompt)
+	if !strings.Contains(target.launchSystemPrompt, "<ao-continuation") || target.launchPrompt != aoTargetActivationPrompt {
+		t.Fatalf("target launch omitted hidden continuation or activation: system=%q prompt=%q", target.launchSystemPrompt, target.launchPrompt)
 	}
 }
 
@@ -1679,8 +1634,8 @@ func TestSwitchAgentSourceSemanticSendFailureStillUsesDeterministicFallback(t *t
 	if sw.State != domain.AgentSwitchCompleted || sw.AgentHandoffStatus != domain.AgentHandoffFailed {
 		t.Fatalf("switch = state %q handoff %q, want completed/failed", sw.State, sw.AgentHandoffStatus)
 	}
-	continuation := target.launchPrompt
-	if !strings.HasPrefix(strings.TrimSpace(continuation), "<ao-continuation") {
+	continuation := target.launchSystemPrompt
+	if !strings.Contains(continuation, "<ao-continuation") {
 		t.Fatalf("target launch omitted continuation: %q", continuation)
 	}
 	for _, want := range []string{"Optional source-authored semantic handoff: unavailable", "FINAL SOURCE TERMINAL CONTEXT", "please keep the API small"} {
@@ -1709,8 +1664,8 @@ func TestSwitchAgentSemanticPollingFailureStillUsesDeterministicFallback(t *test
 	if sw.State != domain.AgentSwitchCompleted || sw.AgentHandoffStatus != domain.AgentHandoffFailed {
 		t.Fatalf("switch = state %q handoff %q, want completed/failed", sw.State, sw.AgentHandoffStatus)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(target.launchPrompt), "<ao-continuation") {
-		t.Fatalf("target launch omitted continuation: %q", target.launchPrompt)
+	if !strings.Contains(target.launchSystemPrompt, "<ao-continuation") {
+		t.Fatalf("target launch omitted continuation: %q", target.launchSystemPrompt)
 	}
 }
 
@@ -1762,8 +1717,8 @@ func TestSwitchAgentSettlesAmbiguousSemanticRequestPersistenceToFallback(t *test
 					t.Fatalf("ambiguous persistence duplicated semantic request: %#v", messenger.msgs)
 				}
 			}
-			if !strings.HasPrefix(strings.TrimSpace(target.launchPrompt), "<ao-continuation") {
-				t.Fatalf("target launch omitted continuation: %q", target.launchPrompt)
+			if !strings.Contains(target.launchSystemPrompt, "<ao-continuation") {
+				t.Fatalf("target launch omitted continuation: %q", target.launchSystemPrompt)
 			}
 		})
 	}
@@ -1793,10 +1748,113 @@ func TestSwitchAgentGatesSendDuringReplacement(t *testing.T) {
 	}
 }
 
+func TestSwitchAgentUsesSeparatePermissionDecisionWindow(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, store, messenger := newSwitchTestManager(t, runtime)
+	manager.handoffWait = 3 * switchPollInterval
+	manager.switchPermissionDecisionWait = 2 * time.Second
+	rec := store.sessions["proj-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now().UTC()}
+	store.sessions[rec.ID] = rec
+	messenger.onSend = func(id domain.SessionID, message string) {
+		if strings.HasPrefix(strings.TrimSpace(message), "<ao-handoff-request") {
+			current := store.sessions[rec.ID]
+			current.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: time.Now().UTC()}
+			store.sessions[rec.ID] = current
+			return
+		}
+		ackSwitchContinuation(store, id, message)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := manager.SwitchAgent(context.Background(), rec.ID, SwitchAgentConfig{
+			TargetHarness: domain.HarnessCodex, IdempotencyKey: "permission-during-handoff",
+		})
+		done <- err
+	}()
+
+	var active domain.AgentSwitch
+	eventuallySessionInput(t, time.Second, func() bool {
+		candidate, found, err := store.GetActiveAgentSwitch(context.Background(), rec.ID)
+		if err != nil || !found || candidate.AgentHandoffStatus != domain.AgentHandoffRequested {
+			return false
+		}
+		active = candidate
+		release, allowed := manager.AcquireSessionInput(rec.ID)
+		if allowed {
+			release()
+		}
+		return allowed
+	})
+
+	// The semantic window would expire during this wait if permission time were
+	// still charged against it. The switch must remain pending for the human.
+	time.Sleep(manager.handoffWait + switchPollInterval)
+	select {
+	case err := <-done:
+		t.Fatalf("switch finished before the separate permission window: %v", err)
+	default:
+	}
+
+	if _, err := manager.SubmitAgentHandoff(context.Background(), rec.ID, active.ID, active.SourceGenerationID,
+		json.RawMessage(`{"schemaVersion":1,"goal":"Finish switching","progressSummary":"Permission was answered."}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSwitchAgentPermissionDecisionTimeoutUsesFallback(t *testing.T) {
+	runtime := &fakeRestartRuntime{fakeRuntime: &fakeRuntime{}}
+	manager, store, messenger := newSwitchTestManager(t, runtime)
+	manager.handoffWait = 5 * time.Second
+	manager.switchPermissionDecisionWait = 2 * switchPollInterval
+	rec := store.sessions["proj-1"]
+	rec.Activity = domain.Activity{State: domain.ActivityIdle, LastActivityAt: time.Now().UTC()}
+	store.sessions[rec.ID] = rec
+	messenger.onSend = func(id domain.SessionID, message string) {
+		if strings.HasPrefix(strings.TrimSpace(message), "<ao-handoff-request") {
+			current := store.sessions[rec.ID]
+			current.Activity = domain.Activity{State: domain.ActivityWaitingInput, LastActivityAt: time.Now().UTC()}
+			store.sessions[rec.ID] = current
+			return
+		}
+		ackSwitchContinuation(store, id, message)
+	}
+
+	started := time.Now()
+	sw, err := manager.SwitchAgent(context.Background(), rec.ID, SwitchAgentConfig{
+		TargetHarness: domain.HarnessCodex, IdempotencyKey: "permission-timeout-fallback",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed < manager.switchPermissionDecisionWait {
+		t.Fatalf("switch waited %s, want at least the %s permission window", elapsed, manager.switchPermissionDecisionWait)
+	}
+	if sw.State != domain.AgentSwitchCompleted || sw.AgentHandoffStatus != domain.AgentHandoffTimedOut {
+		t.Fatalf("switch = state %q handoff %q, want completed/timed_out", sw.State, sw.AgentHandoffStatus)
+	}
+	release, allowed := manager.AcquireSessionInput(rec.ID)
+	if !allowed {
+		t.Fatal("terminal input remained closed after permission timeout fallback completed")
+	}
+	release()
+}
+
 func TestSwitchDeliveryAcknowledgementWindowCoversSlowTargetStartup(t *testing.T) {
 	manager := New(Deps{})
 	if got, want := manager.switchDeliveryAckWait, 150*time.Second; got != want {
 		t.Fatalf("switch delivery acknowledgement wait = %s, want %s", got, want)
+	}
+}
+
+func TestSwitchPermissionDecisionWindowAllowsHumanResponse(t *testing.T) {
+	manager := New(Deps{})
+	if got, want := manager.switchPermissionDecisionWait, 2*time.Minute; got != want {
+		t.Fatalf("switch permission decision wait = %s, want %s", got, want)
 	}
 }
 
@@ -1876,8 +1934,8 @@ func TestSwitchAgentRequiresTargetDeliveryAcknowledgement(t *testing.T) {
 		t.Fatalf("durable owner = %q, want target despite ambiguous delivery", got)
 	}
 	target := manager.agents.(switchTestAgents)[domain.HarnessCodex].(*switchTestAgent)
-	if !strings.Contains(target.launchPrompt, "<ao-continuation") {
-		t.Fatalf("launch continuation = %q", target.launchPrompt)
+	if !strings.Contains(target.launchSystemPrompt, "<ao-continuation") || target.launchPrompt != aoTargetActivationPrompt {
+		t.Fatalf("target delivery system=%q prompt=%q", target.launchSystemPrompt, target.launchPrompt)
 	}
 	for _, message := range messenger.msgs {
 		if message == "" {
@@ -2429,7 +2487,7 @@ func TestSwitchAgentRefreshesLatestAssistantUpdateAfterSourceHandoff(t *testing.
 	if _, err := manager.SwitchAgent(context.Background(), rec.ID, SwitchAgentConfig{TargetHarness: domain.HarnessCodex, IdempotencyKey: "latest-assistant"}); err != nil {
 		t.Fatal(err)
 	}
-	continuation := target.launchPrompt
+	continuation := target.launchSystemPrompt
 	if !strings.Contains(continuation, "final update produced at the handoff boundary") || strings.Contains(continuation, "stale update before handoff") {
 		t.Fatalf("continuation did not use the post-handoff assistant update:\n%s", continuation)
 	}
@@ -2507,7 +2565,7 @@ func TestSwitchAgentRefreshesLateSourceNativeIdentityAtStopBoundary(t *testing.T
 	if retained.NativeSessionID != "late-source-native" || retained.TranscriptPath != expectedTranscriptPath {
 		t.Fatalf("late source native metadata was not retained: %+v", retained)
 	}
-	continuation := target.launchPrompt
+	continuation := target.launchSystemPrompt
 	if !strings.Contains(continuation, expectedTranscriptPath) {
 		t.Fatalf("continuation omitted final source transcript path:\n%s", continuation)
 	}
@@ -2547,7 +2605,7 @@ func TestSwitchAgentFallsBackWhenReceivedSemanticFileIsChangedBeforeSourceStop(t
 	if sw.AgentHandoffStatus != domain.AgentHandoffReceived {
 		t.Fatalf("durable provenance status = %q, want received", sw.AgentHandoffStatus)
 	}
-	continuation := target.launchPrompt
+	continuation := target.launchSystemPrompt
 	if strings.Contains(continuation, sw.AgentHandoffPath) || !strings.Contains(continuation, "Optional source-authored semantic handoff: unavailable") || !strings.Contains(continuation, "LATEST TERMINAL FALLBACK") {
 		t.Fatalf("changed semantic file did not trigger deterministic fallback:\n%s", continuation)
 	}

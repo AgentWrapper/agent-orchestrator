@@ -247,6 +247,7 @@ func TestHookConversationFactsExcludesAOCoordinationUserTurns(t *testing.T) {
 		"<ao-handoff-request switch-id=\"switch-1\">\nprepare context",
 		"<ao-continuation>\ncontinue the session",
 		"<ao-continuation switch-id=\"switch-1\">\ncontinue the session",
+		"AO transferred the previous agent's context in hidden system instructions. Continue the unfinished action.",
 	} {
 		got := hookConversationFacts([]byte(`{"prompt":` + mustJSONString(t, prompt) + `,"lastAssistantMessage":"ok"}`))
 		if got.LatestUserPrompt != "" {

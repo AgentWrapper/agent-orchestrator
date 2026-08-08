@@ -742,6 +742,18 @@ func TestAgentSwitchSourceStopAndTargetActivationAreAtomicAndNarrow(t *testing.T
 	if err != nil || !ok || stored.State != domain.AgentSwitchSourceStopped {
 		t.Fatalf("switch after source stop = %+v, ok=%v err=%v", stored, ok, err)
 	}
+	finalPath := "/ao/handoffs/switch-source-stop/handoff.json"
+	finalHash := strings.Repeat("a", 64)
+	if finalized, finalizeErr := s.FinalizeAgentSwitchHandoff(
+		ctx, stored.ID, stored.SessionID, stored.SourceGenerationID, stored.TargetGenerationID,
+		finalPath, finalHash, false, now.Add(2750*time.Millisecond),
+	); finalizeErr != nil || !finalized {
+		t.Fatalf("finalize handoff: finalized=%v err=%v", finalized, finalizeErr)
+	}
+	stored, ok, err = s.GetAgentSwitch(ctx, sw.ID)
+	if err != nil || !ok || stored.FinalHandoffPath != finalPath || stored.FinalHandoffHash != finalHash {
+		t.Fatalf("finalized handoff facts = %+v, ok=%v err=%v", stored, ok, err)
+	}
 	stored.State = domain.AgentSwitchStartingTarget
 	stored.UpdatedAt = now.Add(3 * time.Second)
 	if ok, err := s.UpdateAgentSwitch(ctx, stored, domain.AgentSwitchSourceStopped, "source-switch-generation", "target-generation"); err != nil || !ok {

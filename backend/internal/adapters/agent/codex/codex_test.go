@@ -207,13 +207,14 @@ func TestProbeNativeSessionUnknownWithoutConfigDir(t *testing.T) {
 func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	workspace := canonicalTempDir(t)
+	systemFile := filepath.Join("tmp", "prompt with spaces.md")
 
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
 		Permissions:      ports.PermissionModeBypassPermissions,
 		Prompt:           "-fix this",
 		SessionID:        "session-123",
-		SystemPromptFile: filepath.Join("tmp", "prompt with spaces.md"),
-		SystemPrompt:     "inline wins",
+		SystemPromptFile: systemFile,
+		SystemPrompt:     "inline fallback",
 		WorkspacePath:    workspace,
 	})
 	if err != nil {
@@ -233,7 +234,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
-		"-c", "developer_instructions="+codexTOMLConfigString("inline wins"),
+		"-c", "model_instructions_file="+systemFile,
 		"--", "-fix this",
 	)
 	if !reflect.DeepEqual(cmd, want) {
@@ -241,7 +242,7 @@ func TestGetLaunchCommandBuildsCrossPlatformArgv(t *testing.T) {
 	}
 }
 
-func TestGetLaunchCommandUsesSystemPromptFileFallback(t *testing.T) {
+func TestGetLaunchCommandUsesSystemPromptFile(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
 	cmd, err := plugin.GetLaunchCommand(context.Background(), ports.LaunchConfig{
@@ -702,12 +703,13 @@ func TestUninstallHooksRemovesLegacyCodexHooks(t *testing.T) {
 func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	workspace := canonicalTempDir(t)
+	systemFile := filepath.Join("tmp", "restore system.md")
 
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{
 		Permissions:      ports.PermissionModeAuto,
 		Prompt:           "continue from AO",
-		SystemPrompt:     "restore inline wins",
-		SystemPromptFile: filepath.Join("tmp", "restore system.md"),
+		SystemPrompt:     "restore inline fallback",
+		SystemPromptFile: systemFile,
 		Session: ports.SessionRef{
 			ID:            "session-123",
 			Metadata:      map[string]string{ports.MetadataKeyAgentSessionID: "thread-123"},
@@ -735,7 +737,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 	want = append(want,
 		"-c", `projects={`+codexTOMLConfigString(workspace)+`={trust_level="trusted"}}`,
-		"-c", "developer_instructions="+codexTOMLConfigString("restore inline wins"),
+		"-c", "model_instructions_file="+systemFile,
 		"thread-123",
 		"--", "continue from AO",
 	)
@@ -744,7 +746,7 @@ func TestGetRestoreCommandReadsAgentSessionID(t *testing.T) {
 	}
 }
 
-func TestGetRestoreCommandUsesSystemPromptFileFallback(t *testing.T) {
+func TestGetRestoreCommandUsesSystemPromptFile(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "codex"}
 	promptFile := filepath.Join(t.TempDir(), "system.md")
 	cmd, ok, err := plugin.GetRestoreCommand(context.Background(), ports.RestoreConfig{

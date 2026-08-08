@@ -33,11 +33,12 @@ type sessionHandoffSubmitOptions struct {
 	json               bool
 }
 
-// Switching can synchronously spend up to three minutes in the daemon while
-// collecting an optional source handoff, starting the target, and confirming
-// continuation delivery. Keep this scoped to switch-agent so ordinary CLI
-// requests retain their existing timeout behavior.
-const switchAgentCommandTimeout = 4 * time.Minute
+// Switching can synchronously spend up to six minutes in the daemon while
+// collecting an optional source handoff, waiting for a human permission
+// decision, starting the target, and confirming continuation delivery. Keep
+// this scoped to switch-agent so ordinary CLI requests retain their existing
+// timeout behavior.
+const switchAgentCommandTimeout = 7 * time.Minute
 
 // switchAgentRequest mirrors the daemon's request body for
 // POST /api/v1/sessions/{id}/switch-agent. Keeping the wire type here avoids

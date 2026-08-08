@@ -94,16 +94,6 @@ type StyledTerminalOutputReader interface {
 	GetStyledOutput(ctx context.Context, handle RuntimeHandle, lines int) (string, error)
 }
 
-// InlinePromptBudgeter is an optional runtime capability for providers that
-// place a complete prompt in their launch argv. It returns the maximum UTF-8
-// prompt bytes that can be added to the supplied prompt-free RuntimeConfig
-// without exceeding the runtime's process-launch transport. A non-positive
-// result means no safe inline prompt fits. Tmux uses this to respect its fixed
-// command-message size; ConPTY uses it to respect CreateProcess limits.
-type InlinePromptBudgeter interface {
-	MaxInlinePromptBytes(cfg RuntimeConfig) (int, error)
-}
-
 // RuntimeRestarter is an optional runtime capability for replacing the process
 // inside an existing terminal session. Implementations should preserve the
 // handle when possible so attached clients do not need a new terminal identity.

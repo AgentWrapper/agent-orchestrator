@@ -27,34 +27,6 @@ func livePID() int { return os.Getpid() }
 // ponytail: PID 2147483647 (MaxInt32) is never a real process; signal-0 returns ESRCH.
 func deadPID() int { return 2147483647 }
 
-func TestMaxInlinePromptBytesRespectsCreateProcessCommandLineLimit(t *testing.T) {
-	runtime := New(Options{})
-	base := ports.RuntimeConfig{
-		SessionID:     "session-1",
-		WorkspacePath: `C:\worktree`,
-		Argv:          []string{"ao.exe", "agent-process", "supervise", "--", "codex.exe", "resume", "thread-1"},
-	}
-	budget, err := runtime.MaxInlinePromptBytes(base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if budget < minimumInlineContinuationBytesForTest {
-		t.Fatalf("ordinary inline prompt budget = %d, want at least %d", budget, minimumInlineContinuationBytesForTest)
-	}
-
-	large := base
-	large.Argv = append(append([]string(nil), base.Argv...), strings.Repeat("standing instructions ", 900))
-	largeBudget, err := runtime.MaxInlinePromptBytes(large)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if largeBudget >= budget {
-		t.Fatalf("large argv budget = %d, want less than ordinary budget %d", largeBudget, budget)
-	}
-}
-
-const minimumInlineContinuationBytesForTest = 8 << 10
-
 func TestRuntimeDoesNotAdvertiseStyledRenderedTerminalOutput(t *testing.T) {
 	var runtime any = New(Options{})
 	if _, ok := runtime.(ports.StyledTerminalOutputReader); ok {

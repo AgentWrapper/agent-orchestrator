@@ -18,11 +18,11 @@ import (
 	reviewsvc "github.com/aoagents/agent-orchestrator/backend/internal/service/review"
 )
 
-// The synchronous switch budget covers one 60s optional source handoff, target
-// process/readiness checks, composer confirmation retries, and the final 30s
-// generation acknowledgement, with headroom for teardown and durable writes.
-// Cancellation after the source-stop boundary is deliberately avoided.
-const minimumSwitchAgentRequestTimeout = 3 * time.Minute
+// The synchronous switch budget covers one 60s optional source handoff, a
+// separate 2m human permission-decision window, target process/readiness checks,
+// composer confirmation retries, and the final 150s generation acknowledgement,
+// with headroom for teardown and durable writes.
+const minimumSwitchAgentRequestTimeout = 6 * time.Minute
 
 // APIDeps bundles every service the API layer's controllers depend on.
 type APIDeps struct {

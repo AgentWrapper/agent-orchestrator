@@ -187,6 +187,14 @@ describe("XtermTerminal", () => {
 		expect(state.lastTerminal!.options.minimumContrastRatio).toBe(1);
 	});
 
+	it("focuses the terminal when human input is requested", async () => {
+		const { rerender } = render(<XtermTerminal theme="dark" />);
+
+		rerender(<XtermTerminal focusRequested theme="dark" />);
+
+		await waitFor(() => expect(state.lastTerminal!.focus).toHaveBeenCalled());
+	});
+
 	it("copies selected terminal text on the terminal copy shortcut", () => {
 		render(<XtermTerminal theme="dark" />);
 		state.lastTerminal!.selection = "copied selection";

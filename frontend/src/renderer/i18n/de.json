@@ -600,6 +600,7 @@
 	"switchAgent.noteLabel": "Hinweis (optional)",
 	"switchAgent.notePlaceholder": "Kontext für den nächsten Agenten hinzufügen",
 	"switchAgent.progressTitle": "Wechsel von {{source}} zu {{target}}",
+	"switchAgent.permissionRequired": "Der Quell-Agent benötigt eine Berechtigungsentscheidung. Prüfen Sie die Terminalabfrage, um die Übergabe fortzusetzen.",
 	"switchAgent.state.completed": "Abgeschlossen",
 	"switchAgent.state.deliveringContext": "Kontext wird übergeben",
 	"switchAgent.state.failed": "Fehlgeschlagen",

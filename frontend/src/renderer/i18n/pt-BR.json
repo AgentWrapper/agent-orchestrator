@@ -609,6 +609,7 @@
 	"switchAgent.noteLabel": "Observação (opcional)",
 	"switchAgent.notePlaceholder": "Adicione contexto para o próximo agente",
 	"switchAgent.progressTitle": "Trocando de {{source}} para {{target}}",
+	"switchAgent.permissionRequired": "O agente de origem requer uma decisão de permissão. Verifique a solicitação no terminal para continuar a transferência.",
 	"switchAgent.state.completed": "Concluída",
 	"switchAgent.state.deliveringContext": "Repassando o contexto",
 	"switchAgent.state.failed": "Falhou",

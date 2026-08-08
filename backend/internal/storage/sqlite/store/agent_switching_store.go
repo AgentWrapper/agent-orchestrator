@@ -337,6 +337,35 @@ func (s *Store) RecordAgentHandoff(ctx context.Context, id domain.AgentSwitchID,
 	return n > 0, nil
 }
 
+// FinalizeAgentSwitchHandoff binds the exact AO-owned hidden continuation to
+// the conclusive source-stop boundary. When a semantic report was received,
+// its public provenance reference is moved to the same final artifact because
+// that artifact embeds the validated report and becomes the sole retained file.
+func (s *Store) FinalizeAgentSwitchHandoff(ctx context.Context, id domain.AgentSwitchID, sessionID domain.SessionID, sourceGenerationID, targetGenerationID domain.AgentGenerationID, handoffPath, handoffHash string, semanticIncluded bool, updatedAt time.Time) (bool, error) {
+	if id == "" || sessionID == "" || sourceGenerationID == "" || targetGenerationID == "" || updatedAt.IsZero() {
+		return false, errors.New("finalize agent switch handoff: switch, session, generations, and timestamp are required")
+	}
+	if err := validateFinalHandoffReference(handoffPath, handoffHash); err != nil {
+		return false, fmt.Errorf("finalize agent switch handoff %s: %w", id, err)
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	var semanticIncludedValue int64
+	if semanticIncluded {
+		semanticIncludedValue = 1
+	}
+	n, err := s.qw.FinalizeAgentSwitchHandoff(ctx, gen.FinalizeAgentSwitchHandoffParams{
+		FinalHandoffPath: handoffPath, FinalHandoffHash: handoffHash,
+		SemanticIncluded: semanticIncludedValue,
+		UpdatedAt:        updatedAt, ID: id, SessionID: sessionID,
+		SourceGenerationID: sourceGenerationID, TargetGenerationID: targetGenerationID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("finalize agent switch handoff %s: %w", id, err)
+	}
+	return n > 0, nil
+}
+
 // ConfirmAgentSwitchSourceStopped records the conclusive source-process
 // boundary. It changes only session activity/updated_at, retaining the source
 // owner and runtime generation until target activation. The session mutation
@@ -560,6 +589,9 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 	if err := validateAgentHandoffReference(rec.AgentHandoffStatus, rec.AgentHandoffPath, rec.AgentHandoffHash); err != nil {
 		return fmt.Errorf("agent switch %s: %w", rec.ID, err)
 	}
+	if err := validateFinalHandoffReferenceOptional(rec.FinalHandoffPath, rec.FinalHandoffHash); err != nil {
+		return fmt.Errorf("agent switch %s: %w", rec.ID, err)
+	}
 	if rec.RequestedAt.IsZero() || rec.UpdatedAt.IsZero() || rec.UpdatedAt.Before(rec.RequestedAt) {
 		return fmt.Errorf("agent switch %s: invalid requested or updated timestamp", rec.ID)
 	}
@@ -573,7 +605,8 @@ func validateAgentSwitch(rec domain.AgentSwitch, create bool) error {
 			rec.TargetStartMode != domain.AgentSwitchTargetStartPending || rec.TargetGenerationID != "" ||
 			rec.TargetRuntimeHandleID != "" || rec.TargetAcknowledgedAt != nil ||
 			rec.AgentHandoffStatus != domain.AgentHandoffNotAttempted ||
-			rec.AgentHandoffPath != "" || rec.AgentHandoffHash != "" {
+			rec.AgentHandoffPath != "" || rec.AgentHandoffHash != "" ||
+			rec.FinalHandoffPath != "" || rec.FinalHandoffHash != "" {
 			return fmt.Errorf("agent switch %s: a new saga must be preparing handoff without target launch or handoff facts", rec.ID)
 		}
 	}
@@ -620,6 +653,23 @@ func validateAgentHandoffReference(status domain.AgentHandoffStatus, path, hash 
 		return errors.New("agent handoff path and hash require received status")
 	}
 	return nil
+}
+
+func validateFinalHandoffReference(path, hash string) error {
+	if strings.TrimSpace(path) == "" || path != strings.TrimSpace(path) {
+		return errors.New("finalized handoff requires a nonempty path without surrounding whitespace")
+	}
+	if hash != strings.TrimSpace(hash) || !validSHA256Hex(hash) {
+		return errors.New("finalized handoff hash must be exactly 64 lowercase hexadecimal characters")
+	}
+	return nil
+}
+
+func validateFinalHandoffReferenceOptional(path, hash string) error {
+	if path == "" && hash == "" {
+		return nil
+	}
+	return validateFinalHandoffReference(path, hash)
 }
 
 func validSHA256Hex(value string) bool {
@@ -670,6 +720,8 @@ func agentSwitchToInsert(rec domain.AgentSwitch) gen.InsertAgentSwitchParams {
 		AgentHandoffStatus:    rec.AgentHandoffStatus,
 		AgentHandoffPath:      rec.AgentHandoffPath,
 		AgentHandoffHash:      rec.AgentHandoffHash,
+		FinalHandoffPath:      rec.FinalHandoffPath,
+		FinalHandoffHash:      rec.FinalHandoffHash,
 		SourceGenerationID:    rec.SourceGenerationID,
 		TargetGenerationID:    rec.TargetGenerationID,
 		TargetRuntimeHandleID: rec.TargetRuntimeHandleID,
@@ -689,6 +741,8 @@ func agentSwitchFromGen(row gen.AgentSwitch) domain.AgentSwitch {
 		AgentHandoffStatus:    row.AgentHandoffStatus,
 		AgentHandoffPath:      row.AgentHandoffPath,
 		AgentHandoffHash:      row.AgentHandoffHash,
+		FinalHandoffPath:      row.FinalHandoffPath,
+		FinalHandoffHash:      row.FinalHandoffHash,
 		SourceGenerationID:    row.SourceGenerationID,
 		TargetGenerationID:    row.TargetGenerationID,
 		TargetRuntimeHandleID: row.TargetRuntimeHandleID,

@@ -198,7 +198,9 @@ func firstHookValue(values ...string) string {
 
 func isAOCoordinationMessage(value string) bool {
 	value = strings.TrimSpace(value)
-	return strings.HasPrefix(value, "<ao-handoff-request") || strings.HasPrefix(value, "<ao-continuation")
+	return strings.HasPrefix(value, "<ao-handoff-request") ||
+		strings.HasPrefix(value, "<ao-continuation") ||
+		strings.HasPrefix(value, "AO transferred the previous agent's context in hidden system instructions.")
 }
 
 func isAOHandoffRequest(value string) bool {

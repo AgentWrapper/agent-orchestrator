@@ -50,9 +50,10 @@ INSERT INTO agent_switches (
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
-    requested_at, updated_at
+    requested_at, updated_at,
+    final_handoff_path, final_handoff_hash
 ) VALUES (
-    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )
 ON CONFLICT DO NOTHING;
 
@@ -63,7 +64,8 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
-    requested_at, updated_at
+    requested_at, updated_at,
+    final_handoff_path, final_handoff_hash
 FROM agent_switches
 WHERE id = ?;
 
@@ -74,7 +76,8 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
-    requested_at, updated_at
+    requested_at, updated_at,
+    final_handoff_path, final_handoff_hash
 FROM agent_switches
 WHERE session_id = ? AND idempotency_key = ?;
 
@@ -85,7 +88,8 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
-    requested_at, updated_at
+    requested_at, updated_at,
+    final_handoff_path, final_handoff_hash
 FROM agent_switches
 WHERE session_id = ?
   AND state NOT IN ('completed', 'failed');
@@ -97,7 +101,8 @@ SELECT id, session_id, idempotency_key, request_fingerprint,
     state, agent_handoff_status, agent_handoff_path, agent_handoff_hash,
     source_generation_id, target_generation_id, target_runtime_handle_id,
     target_acknowledged_at, error_code,
-    requested_at, updated_at
+    requested_at, updated_at,
+    final_handoff_path, final_handoff_hash
 FROM agent_switches
 WHERE session_id = ?
 ORDER BY requested_at DESC, id DESC;
@@ -170,6 +175,28 @@ WHERE id = sqlc.arg(id)
   AND source_generation_id = sqlc.arg(source_generation_id)
   AND state = 'preparing_handoff'
   AND agent_handoff_status = 'requested';
+
+-- name: FinalizeAgentSwitchHandoff :execrows
+UPDATE agent_switches SET
+    final_handoff_path = sqlc.arg(final_handoff_path),
+    final_handoff_hash = sqlc.arg(final_handoff_hash),
+    agent_handoff_path = CASE
+        WHEN agent_handoff_status = 'received' AND CAST(sqlc.arg(semantic_included) AS INTEGER) = 1 THEN sqlc.arg(final_handoff_path)
+        ELSE agent_handoff_path
+    END,
+    agent_handoff_hash = CASE
+        WHEN agent_handoff_status = 'received' AND CAST(sqlc.arg(semantic_included) AS INTEGER) = 1 THEN sqlc.arg(final_handoff_hash)
+        ELSE agent_handoff_hash
+    END,
+    updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id)
+  AND session_id = sqlc.arg(session_id)
+  AND state = 'source_stopped'
+  AND source_generation_id = sqlc.arg(source_generation_id)
+  AND target_generation_id = sqlc.arg(target_generation_id)
+  AND target_generation_id <> ''
+  AND final_handoff_path = ''
+  AND final_handoff_hash = '';
 
 -- name: AcknowledgeAgentSwitchTarget :execrows
 UPDATE agent_switches SET

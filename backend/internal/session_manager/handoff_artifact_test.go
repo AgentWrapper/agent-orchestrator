@@ -310,6 +310,31 @@ func TestWriteAgentHandoffFileConcurrentDifferentSubmissionsNeverReplaceWinner(t
 	}
 }
 
+func TestWriteFinalizedHandoffFilePersistsExactContinuation(t *testing.T) {
+	m := &Manager{dataDir: t.TempDir()}
+	sw := domain.AgentSwitch{
+		ID: "switch-final", SessionID: "demo-1",
+		FromHarness: domain.HarnessClaudeCode, TargetHarness: domain.HarnessCodex,
+	}
+	if _, _, err := m.prepareAgentHandoffPaths(sw.SessionID, string(sw.ID)); err != nil {
+		t.Fatal(err)
+	}
+	continuation := `<ao-continuation switch-id="switch-final">hidden context</ao-continuation>`
+	written, err := m.writeFinalizedHandoffFile(sw, continuation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw.FinalHandoffPath = written.Path
+	sw.FinalHandoffHash = written.Hash
+	artifact, ok := m.readVerifiedFinalizedHandoff(sw)
+	if !ok {
+		t.Fatal("fresh finalized handoff did not verify")
+	}
+	if artifact.Continuation != continuation || filepath.Base(written.Path) != "handoff.json" {
+		t.Fatalf("finalized handoff = %#v path=%q", artifact, written.Path)
+	}
+}
+
 func TestCleanupAgentHandoffArtifactsRetainsOnlyVerifiedFinal(t *testing.T) {
 	m := &Manager{dataDir: t.TempDir()}
 	body := json.RawMessage(`{"schemaVersion":1,"goal":"finish switching","progressSummary":"ready for delivery"}`)
@@ -345,7 +370,7 @@ func TestCleanupAgentHandoffArtifactsRetainsOnlyVerifiedFinal(t *testing.T) {
 	}
 }
 
-func TestVerifyAgentHandoffForDeliveryRejectsChangedFinalFile(t *testing.T) {
+func TestReadVerifiedAgentHandoffForDeliveryRejectsChangedSemanticFile(t *testing.T) {
 	m := &Manager{dataDir: t.TempDir()}
 	body := json.RawMessage(`{"schemaVersion":1,"goal":"finish switching","progressSummary":"ready for delivery"}`)
 	written, err := m.writeAgentHandoffFile("demo-1", "switch-verify", body)
@@ -356,13 +381,13 @@ func TestVerifyAgentHandoffForDeliveryRejectsChangedFinalFile(t *testing.T) {
 		ID: "switch-verify", SessionID: "demo-1", AgentHandoffStatus: domain.AgentHandoffReceived,
 		AgentHandoffPath: written.Path, AgentHandoffHash: written.Hash,
 	}
-	if !m.verifyAgentHandoffForDelivery(sw) {
+	if _, ok := m.readVerifiedAgentHandoffForDelivery(sw); !ok {
 		t.Fatal("fresh AO-owned semantic handoff did not verify")
 	}
 	if err := os.WriteFile(written.Path, []byte(`{"schemaVersion":1,"goal":"replaced","progressSummary":"tampered"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if m.verifyAgentHandoffForDelivery(sw) {
+	if _, ok := m.readVerifiedAgentHandoffForDelivery(sw); ok {
 		t.Fatal("changed semantic handoff still verified against the durable digest")
 	}
 	if err := m.cleanupAgentHandoffArtifacts(sw); err != nil {

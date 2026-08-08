@@ -89,13 +89,19 @@ export function CenterPane({
 	const isSidebarOpen = useUiStore((state) => state.isSidebarOpen);
 	const tabOverflowWatch = `${session?.id ?? ""}|${shellTerminals.map((terminal) => terminal.handleId).join("|")}`;
 	const tabsOverflow = useOverflowScroll<HTMLDivElement>(tabOverflowWatch);
-	const agentSwitches = useAgentSwitches(session?.id ?? "").data ?? [];
+	const agentSwitchesQuery = useAgentSwitches(session?.id ?? "");
+	const agentSwitches = agentSwitchesQuery.data ?? [];
 	const activeAgentSwitch = findActiveAgentSwitch(agentSwitches);
 	const switchMutation = useSwitchAgentState(session?.id ?? "");
 	const switchSource = activeAgentSwitch?.fromHarness ?? switchMutation.input?.session.provider;
 	const switchTarget = activeAgentSwitch?.targetHarness ?? switchMutation.input?.targetHarness;
 	const isSwitchingAgent = Boolean(
 		(activeAgentSwitch || switchMutation.isPending) && switchSource && switchTarget,
+	);
+	const switchPermissionRequired = Boolean(
+		activeAgentSwitch?.state === "preparing_handoff" &&
+			activeAgentSwitch.agentHandoffStatus === "requested" &&
+			(session?.activity?.state === "blocked" || session?.activity?.state === "waiting_input"),
 	);
 	const target = terminalTarget ?? { kind: "worker" };
 	const sessionTabLabel = session
@@ -125,6 +131,13 @@ export function CenterPane({
 		},
 		[onSelectSessionTerminal, onSelectShellTerminal, shellTerminals, target],
 	);
+
+	useEffect(() => {
+		if (!switchMutation.isPending || activeAgentSwitch) return;
+		void agentSwitchesQuery.refetch();
+		const timer = window.setInterval(() => void agentSwitchesQuery.refetch(), 500);
+		return () => window.clearInterval(timer);
+	}, [activeAgentSwitch, agentSwitchesQuery.refetch, switchMutation.isPending]);
 
 	useEffect(() => {
 		const handleFullscreenChange = () => setIsFullscreen(document.fullscreenElement === paneRef.current);
@@ -398,11 +411,12 @@ export function CenterPane({
 				<div
 					className="h-full min-h-0"
 					data-testid="terminal-interaction-surface"
-					inert={isSwitchingAgent ? true : undefined}
+					inert={isSwitchingAgent && !switchPermissionRequired ? true : undefined}
 				>
 					<TerminalPane
 						daemonReady={daemonReady}
 						fontSize={fontSize}
+						focusRequested={switchPermissionRequired && target.kind === "worker"}
 						inputDisabled={agentInputDisabled && target.kind === "worker"}
 						session={session}
 						terminalTarget={target}
@@ -410,14 +424,28 @@ export function CenterPane({
 					/>
 				</div>
 				{isSwitchingAgent && switchSource && switchTarget ? (
-					<AgentSwitchTerminalOverlay source={switchSource} target={switchTarget} />
+					<AgentSwitchTerminalOverlay
+						permissionRequired={switchPermissionRequired}
+						source={switchSource}
+						target={switchTarget}
+					/>
 				) : null}
 			</div>
 		</div>
 	);
 }
 
-function AgentSwitchTerminalOverlay({ source, target }: { source: string; target: string }) {
+type AgentSwitchTerminalOverlayProps = {
+	permissionRequired: boolean;
+	source: string;
+	target: string;
+};
+
+function AgentSwitchTerminalOverlay({
+	permissionRequired,
+	source,
+	target,
+}: AgentSwitchTerminalOverlayProps) {
 	const { t } = useTranslation();
 	const overlayRef = useRef<HTMLDivElement | null>(null);
 	const title = t("switchAgent.progressTitle", {
@@ -426,20 +454,31 @@ function AgentSwitchTerminalOverlay({ source, target }: { source: string; target
 	});
 
 	useEffect(() => {
-		overlayRef.current?.focus({ preventScroll: true });
-	}, [source, target]);
+		if (!permissionRequired) overlayRef.current?.focus({ preventScroll: true });
+	}, [permissionRequired, source, target]);
 
 	return (
 		<div
 			ref={overlayRef}
 			aria-label={title}
-			aria-live="polite"
-			className="absolute inset-0 z-20 flex cursor-wait items-center justify-center bg-terminal/95 backdrop-blur-[3px]"
+			className={cn(
+				"absolute inset-0 z-20 flex items-center justify-center",
+				permissionRequired
+					? "pointer-events-none bg-terminal/25"
+					: "cursor-wait bg-terminal/95 backdrop-blur-[3px]",
+			)}
 			data-testid="agent-switch-terminal-overlay"
-			role="status"
 			tabIndex={-1}
 		>
-			<div className="flex flex-col items-center gap-5 px-6 text-center">
+			<div
+				aria-label={title}
+				aria-live="polite"
+				className={cn(
+					"flex flex-col items-center gap-5 px-6 text-center",
+					permissionRequired && "absolute inset-x-0 top-4 gap-2",
+				)}
+				role="status"
+			>
 				<div className="flex items-center gap-5 sm:gap-7">
 					<SwitchingAgentMark harness={source} />
 					<div aria-hidden="true" className="flex items-center gap-2 text-accent">
@@ -451,6 +490,11 @@ function AgentSwitchTerminalOverlay({ source, target }: { source: string; target
 					<SwitchingAgentMark harness={target} />
 				</div>
 				<p className="font-mono text-control font-medium text-foreground">{title}</p>
+				{permissionRequired ? (
+					<p className="rounded-md border border-warning/40 bg-surface/95 px-3 py-2 text-caption text-foreground shadow-lg">
+						{t("switchAgent.permissionRequired")}
+					</p>
+				) : null}
 			</div>
 		</div>
 	);

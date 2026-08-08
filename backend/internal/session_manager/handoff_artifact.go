@@ -27,6 +27,7 @@ const (
 	transcriptOmittedMarker    = "[... earlier provider transcript content omitted ...]"
 	transcriptPartialMarker    = "[... newest provider transcript record exceeded AO's excerpt limit; showing its bounded suffix ...]"
 	transcriptIncompleteMarker = "[... incomplete final provider transcript record omitted ...]"
+	finalizedHandoffMaxBytes   = 256 << 10
 )
 
 var (
@@ -76,6 +77,7 @@ type deterministicSwitchContext struct {
 	OriginalTask          string
 	LatestUserPrompt      string
 	LatestAssistantUpdate string
+	SemanticHandoff       json.RawMessage
 	SourceTranscriptPath  string
 	TerminalTail          string
 	Workspaces            []switchWorkspaceFact
@@ -86,6 +88,19 @@ type deterministicSwitchContext struct {
 type writtenAgentHandoff struct {
 	Path string
 	Hash string
+}
+
+// finalizedAgentHandoff is the one permanent, AO-owned context snapshot for a
+// completed switch. Continuation is the exact bounded historical context added
+// to the target's hidden system instructions. Keeping that exact text makes a
+// later native restore deterministic without retaining a second conversation.
+type finalizedAgentHandoff struct {
+	SchemaVersion int                  `json:"schemaVersion"`
+	SwitchID      domain.AgentSwitchID `json:"switchId"`
+	SessionID     domain.SessionID     `json:"sessionId"`
+	FromHarness   domain.AgentHarness  `json:"fromAgent"`
+	TargetHarness domain.AgentHarness  `json:"targetAgent"`
+	Continuation  string               `json:"continuation"`
 }
 
 func normalizeTerminalTail(output string) string {
@@ -260,9 +275,9 @@ func handoffPathComponent(value string) bool {
 }
 
 // prepareAgentHandoffPaths creates the private per-switch directory and returns
-// the source-writable candidate and AO-owned final semantic-handoff paths. The
-// candidate is temporary; at most agent-handoff.json remains after the source
-// process has stopped.
+// the source-writable candidate and AO-owned accepted semantic-handoff paths.
+// Both are temporary inputs to AO's finalized handoff; handoff.json is the sole
+// permanent artifact after a successful switch.
 func (m *Manager) prepareAgentHandoffPaths(sessionID domain.SessionID, switchID string) (candidatePath, finalPath string, err error) {
 	dir, err := m.handoffDirectory(sessionID, switchID)
 	if err != nil {
@@ -284,6 +299,14 @@ func (m *Manager) prepareAgentHandoffPaths(sessionID domain.SessionID, switchID 
 		return "", "", err
 	}
 	return filepath.Join(dir, "agent-handoff-candidate.json"), filepath.Join(dir, "agent-handoff.json"), nil
+}
+
+func (m *Manager) finalizedHandoffPath(sessionID domain.SessionID, switchID string) (string, error) {
+	dir, err := m.handoffDirectory(sessionID, switchID)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "handoff.json"), nil
 }
 
 func ensurePrivateHandoffDirectory(path string) error {
@@ -325,10 +348,9 @@ func validateHandoffDirectoryChain(dir string) error {
 	return nil
 }
 
-// writeAgentHandoffFile persists the validated source-authored semantic report
-// as the sole long-lived handoff file. Deterministic AO facts are deliberately
-// not duplicated here; they are constructed after source stop and delivered in
-// the target continuation.
+// writeAgentHandoffFile temporarily persists the validated source-authored
+// semantic report. After source stop AO embeds it in handoff.json and removes
+// this intermediate file.
 func (m *Manager) writeAgentHandoffFile(sessionID domain.SessionID, switchID string, body json.RawMessage) (writtenAgentHandoff, error) {
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 || !json.Valid(trimmed) || trimmed[0] != '{' {
@@ -348,10 +370,56 @@ func (m *Manager) writeAgentHandoffFile(sessionID domain.SessionID, switchID str
 	return writtenAgentHandoff{Path: finalPath, Hash: agentHandoffContentHash(trimmed)}, nil
 }
 
+func (m *Manager) writeFinalizedHandoffFile(sw domain.AgentSwitch, continuation string) (writtenAgentHandoff, error) {
+	continuation = strings.TrimSpace(continuation)
+	if continuation == "" || len(continuation) > handoffContinuationMaxBytes {
+		return writtenAgentHandoff{}, errors.New("agent switch: finalized continuation is empty or exceeds its limit")
+	}
+	artifact := finalizedAgentHandoff{
+		SchemaVersion: 1,
+		SwitchID:      sw.ID,
+		SessionID:     sw.SessionID,
+		FromHarness:   sw.FromHarness,
+		TargetHarness: sw.TargetHarness,
+		Continuation:  continuation,
+	}
+	body, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return writtenAgentHandoff{}, fmt.Errorf("agent switch: encode finalized handoff: %w", err)
+	}
+	body = append(body, '\n')
+	if len(body) > finalizedHandoffMaxBytes {
+		return writtenAgentHandoff{}, errors.New("agent switch: encoded finalized handoff exceeds its limit")
+	}
+	path, err := m.finalizedHandoffPath(sw.SessionID, string(sw.ID))
+	if err != nil {
+		return writtenAgentHandoff{}, err
+	}
+	if err := validateHandoffDirectoryChain(filepath.Dir(path)); err != nil {
+		return writtenAgentHandoff{}, err
+	}
+	if err := writeAtomicImmutableFile(path, body); err != nil {
+		return writtenAgentHandoff{}, err
+	}
+	return writtenAgentHandoff{Path: path, Hash: contentHash(body)}, nil
+}
+
 func agentHandoffContentHash(canonical json.RawMessage) string {
 	bodyWithNewline := append(append([]byte(nil), bytes.TrimSpace(canonical)...), '\n')
-	hash := sha256.Sum256(bodyWithNewline)
+	return contentHash(bodyWithNewline)
+}
+
+func contentHash(body []byte) string {
+	hash := sha256.Sum256(body)
 	return hex.EncodeToString(hash[:])
+}
+
+func validContentHash(value string) bool {
+	if len(value) != sha256.Size*2 || value != strings.ToLower(value) {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size
 }
 
 func writeAtomicImmutableFile(path string, body []byte) error {
@@ -453,35 +521,71 @@ func readRegularFileWithoutSymlink(path string, limit int64) ([]byte, bool, erro
 	return body, true, nil
 }
 
-// verifyAgentHandoffForDelivery reopens the AO-owned final file after the
+// readVerifiedAgentHandoffForDelivery reopens the AO-owned semantic file after the
 // source process has stopped and proves it still matches the durable digest.
 // Durable status remains provenance; callers use this result only to decide
 // whether semantic context is safe and available for this target delivery.
-func (m *Manager) verifyAgentHandoffForDelivery(sw domain.AgentSwitch) bool {
+func (m *Manager) readVerifiedAgentHandoffForDelivery(sw domain.AgentSwitch) (json.RawMessage, bool) {
 	if sw.AgentHandoffStatus != domain.AgentHandoffReceived || len(sw.AgentHandoffHash) != sha256.Size*2 {
-		return false
+		return nil, false
 	}
 	decoded, err := hex.DecodeString(sw.AgentHandoffHash)
 	if err != nil || len(decoded) != sha256.Size || sw.AgentHandoffHash != strings.ToLower(sw.AgentHandoffHash) {
-		return false
+		return nil, false
 	}
 	dir, err := m.handoffDirectory(sw.SessionID, string(sw.ID))
 	if err != nil {
-		return false
+		return nil, false
 	}
 	expectedPath := filepath.Join(dir, "agent-handoff.json")
 	if filepath.Clean(sw.AgentHandoffPath) != filepath.Clean(expectedPath) {
-		return false
+		return nil, false
 	}
 	if err := validateHandoffDirectoryChain(dir); err != nil {
-		return false
+		return nil, false
 	}
 	body, found, err := readRegularFileWithoutSymlink(expectedPath, sourceSemanticHandoffMaxBytes+2)
 	if err != nil || !found || len(body) == 0 || len(body) > sourceSemanticHandoffMaxBytes+1 {
-		return false
+		return nil, false
 	}
 	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:]) == sw.AgentHandoffHash
+	if hex.EncodeToString(sum[:]) != sw.AgentHandoffHash {
+		return nil, false
+	}
+	trimmed := bytes.TrimSpace(body)
+	if !json.Valid(trimmed) || len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, false
+	}
+	return append(json.RawMessage(nil), trimmed...), true
+}
+
+func (m *Manager) readVerifiedFinalizedHandoff(sw domain.AgentSwitch) (finalizedAgentHandoff, bool) {
+	if !validContentHash(sw.FinalHandoffHash) {
+		return finalizedAgentHandoff{}, false
+	}
+	expectedPath, err := m.finalizedHandoffPath(sw.SessionID, string(sw.ID))
+	if err != nil || filepath.Clean(sw.FinalHandoffPath) != filepath.Clean(expectedPath) {
+		return finalizedAgentHandoff{}, false
+	}
+	if err := validateHandoffDirectoryChain(filepath.Dir(expectedPath)); err != nil {
+		return finalizedAgentHandoff{}, false
+	}
+	body, found, err := readRegularFileWithoutSymlink(expectedPath, finalizedHandoffMaxBytes+1)
+	if err != nil || !found || len(body) == 0 || len(body) > finalizedHandoffMaxBytes {
+		return finalizedAgentHandoff{}, false
+	}
+	if contentHash(body) != sw.FinalHandoffHash {
+		return finalizedAgentHandoff{}, false
+	}
+	var artifact finalizedAgentHandoff
+	if err := json.Unmarshal(body, &artifact); err != nil ||
+		artifact.SchemaVersion != 1 || artifact.SwitchID != sw.ID ||
+		artifact.SessionID != sw.SessionID || artifact.FromHarness != sw.FromHarness ||
+		artifact.TargetHarness != sw.TargetHarness || strings.TrimSpace(artifact.Continuation) == "" ||
+		len(artifact.Continuation) > handoffContinuationMaxBytes {
+		return finalizedAgentHandoff{}, false
+	}
+	return artifact, true
 }
 
 // cleanupAgentHandoffArtifacts removes temporary or unowned files derived
@@ -508,11 +612,15 @@ func (m *Manager) cleanupAgentHandoffArtifacts(sw domain.AgentSwitch) error {
 	if err != nil {
 		return err
 	}
-	keepFinal := m.verifyAgentHandoffForDelivery(sw)
+	_, keepFinal := m.readVerifiedFinalizedHandoff(sw)
+	_, keepSemantic := m.readVerifiedAgentHandoffForDelivery(sw)
 	var errs []error
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == "agent-handoff.json" && keepFinal {
+		if name == "handoff.json" && keepFinal {
+			continue
+		}
+		if !keepFinal && name == "agent-handoff.json" && keepSemantic {
 			continue
 		}
 		// The switch directory is private and switch-unique. Once the source has

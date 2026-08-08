@@ -122,7 +122,7 @@ func TestSessionSwitchAgentOutlivesSharedHTTPClientTimeout(t *testing.T) {
 		t.Fatalf("switch timeout = %s, must exceed shared HTTP client timeout %s", switchAgentCommandTimeout, sharedTimeout)
 	}
 
-	// Scale the production 2s-versus-4m relationship down so this regression
+	// Scale the production 2s-versus-7m relationship down so this regression
 	// test proves the switch request does not inherit the shared client timeout
 	// without adding multiple seconds to every CLI test run.
 	const (

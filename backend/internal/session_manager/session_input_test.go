@@ -21,12 +21,13 @@ func (m *Manager) SessionInputAllowed(sessionID string) bool {
 
 func newInputLeaseTestManager() *Manager {
 	return &Manager{
-		resuming:         make(map[domain.SessionID]struct{}),
-		switching:        make(map[domain.SessionID]struct{}),
-		retainedSwitches: make(map[domain.SessionID]struct{}),
-		mutating:         make(map[domain.SessionID]agentOperationKind),
-		inputLeases:      make(map[domain.SessionID]int),
-		inputDrained:     make(map[domain.SessionID]chan struct{}),
+		resuming:            make(map[domain.SessionID]struct{}),
+		switching:           make(map[domain.SessionID]struct{}),
+		switchDecisionInput: make(map[domain.SessionID]domain.AgentSwitchID),
+		retainedSwitches:    make(map[domain.SessionID]struct{}),
+		mutating:            make(map[domain.SessionID]agentOperationKind),
+		inputLeases:         make(map[domain.SessionID]int),
+		inputDrained:        make(map[domain.SessionID]chan struct{}),
 	}
 }
 
@@ -66,6 +67,37 @@ func TestAgentOperationClosesAdmissionThenDrainsExistingInput(t *testing.T) {
 		t.Fatal("input gate did not reopen after operation")
 	}
 	releaseAfter()
+}
+
+func TestAgentSwitchDecisionInputIsNarrowAndDrained(t *testing.T) {
+	m := newInputLeaseTestManager()
+	id := domain.SessionID("worker-1")
+	switchID := domain.AgentSwitchID("switch-1")
+	if err := m.beginAgentOperation(context.Background(), id, agentOperationSwitch); err != nil {
+		t.Fatal(err)
+	}
+	m.allowAgentSwitchDecisionInput(id, switchID)
+
+	release, admitted := m.AcquireSessionInput(id)
+	if !admitted {
+		t.Fatal("human permission input was not admitted")
+	}
+	closed := make(chan error, 1)
+	go func() {
+		closed <- m.closeAgentSwitchDecisionInput(context.Background(), id, switchID)
+	}()
+	select {
+	case err := <-closed:
+		t.Fatalf("permission lane closed before admitted input drained: %v", err)
+	default:
+	}
+	release()
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if _, admitted := m.AcquireSessionInput(id); admitted {
+		t.Fatal("ordinary input remained open after permission lane closed")
+	}
 }
 
 func TestAgentOperationDrainHonorsContextAndReopensAdmission(t *testing.T) {

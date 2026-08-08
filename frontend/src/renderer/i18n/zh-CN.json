@@ -611,6 +611,7 @@
 	"switchAgent.noteLabel": "备注（可选）",
 	"switchAgent.notePlaceholder": "为下一个代理添加上下文",
 	"switchAgent.progressTitle": "正在从 {{source}} 切换到 {{target}}",
+	"switchAgent.permissionRequired": "源代理需要权限确认。请查看终端提示以继续交接。",
 	"switchAgent.state.completed": "已完成",
 	"switchAgent.state.deliveringContext": "正在传递上下文",
 	"switchAgent.state.failed": "失败",

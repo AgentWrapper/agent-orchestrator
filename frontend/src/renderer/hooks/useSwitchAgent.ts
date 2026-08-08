@@ -52,7 +52,9 @@ export function useSwitchAgentState(sessionId: string) {
 
 	return {
 		error:
-			!pending && latest?.status === "error" && latest.error instanceof Error
+			!pending &&
+			latest?.status === "error" &&
+			latest.error instanceof Error
 				? latest.error.message
 				: null,
 		input: pending?.input,

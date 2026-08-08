@@ -600,6 +600,7 @@
 	"switchAgent.noteLabel": "メモ（任意）",
 	"switchAgent.notePlaceholder": "次のエージェント向けのコンテキストを追加",
 	"switchAgent.progressTitle": "{{source}} から {{target}} に切り替え中",
+	"switchAgent.permissionRequired": "切り替え元のエージェントで権限の判断が必要です。引き継ぎを続行するには、ターミナルの確認画面を確認してください。",
 	"switchAgent.state.completed": "完了",
 	"switchAgent.state.deliveringContext": "コンテキストを引き渡し中",
 	"switchAgent.state.failed": "失敗",
