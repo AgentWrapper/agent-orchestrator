@@ -4517,6 +4517,8 @@ components:
           - chat
           - tui
           type: string
+        model:
+          type: string
         pinnedAt:
           format: date-time
           type:
@@ -6927,6 +6929,9 @@ components:
           enum:
           - chat
           - tui
+          type: string
+        model:
+          maxLength: 256
           type: string
         projectId:
           type: string
