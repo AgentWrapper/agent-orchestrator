@@ -41,7 +41,6 @@ import {
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { sameContent, useStableList } from "../../lib/stable-list";
-import { aoBridge } from "../../lib/bridge";
 import { getApiBaseUrl, subscribeApiBaseUrl } from "../../lib/api-client";
 import type { SessionKind } from "../../types/workspace";
 import { AgentAvatar } from "../AgentAvatar";
@@ -293,12 +292,8 @@ export function ChatWorkspace({
 		return () => observer.disconnect();
 	}, []);
 
-	const triggerChatZoom = useCallback((direction: "in" | "out") => {
-		const action = direction === "in" ? "view.zoomIn" : "view.zoomOut";
-		setChatFontSize((current) => clampChatFontSize(current + (direction === "in" ? 1 : -1)));
-		void aoBridge.menu.action(action).catch((error) => {
-			console.warn("Unable to change chat zoom", error);
-		});
+	const updateChatFontSize = useCallback((delta: number) => {
+		setChatFontSize((current) => clampChatFontSize(current + delta));
 	}, []);
 
 	const toggleFullscreen = useCallback(async () => {
@@ -339,8 +334,8 @@ export function ChatWorkspace({
 				openingShell={openingShell}
 				shellError={shellError}
 				fontSize={chatFontSize}
-				onDecreaseFontSize={() => triggerChatZoom("out")}
-				onIncreaseFontSize={() => triggerChatZoom("in")}
+				onDecreaseFontSize={() => updateChatFontSize(-1)}
+				onIncreaseFontSize={() => updateChatFontSize(1)}
 				isFullscreen={isFullscreen}
 				onToggleFullscreen={() => void toggleFullscreen()}
 				topbarBounds={topbarBounds}
