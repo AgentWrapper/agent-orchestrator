@@ -55,10 +55,21 @@ func EnsureWorkspaceGitignore(dir string, names ...string) error {
 }
 
 // FileExists reports whether path names an existing regular file (not a
-// directory) that is executable on Unix. On Windows the exec-bit check is
-// skipped because os.Stat does not expose a reliable execute permission;
-// Windows candidates carry explicit .cmd/.exe extensions instead.
+// directory). It does not check the exec bit — callers that need to verify
+// executability should use IsExecutableFile instead.
 func FileExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return true
+}
+
+// IsExecutableFile reports whether path names an existing regular file (not a
+// directory) whose owner exec bit is set on Unix. On Windows it behaves
+// identically to FileExists because os.Stat does not expose a reliable execute
+// permission; Windows candidates carry explicit .cmd/.exe extensions instead.
+func IsExecutableFile(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		return false

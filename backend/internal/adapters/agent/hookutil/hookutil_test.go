@@ -51,7 +51,26 @@ func TestEnsureWorkspaceGitignoreIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestFileExistsRejectsNonExecutable(t *testing.T) {
+func TestFileExistsIgnoresExecBit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-binary")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// FileExists must return true for a non-executable regular file — Cline
+	// uses it as a do-not-clobber guard for existing user hook files.
+	if !FileExists(path) {
+		t.Fatalf("FileExists returned false for non-executable regular file")
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if !FileExists(path) {
+		t.Fatalf("FileExists returned false for executable regular file")
+	}
+}
+
+func TestIsExecutableFileChecksExecBit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("exec-bit check is skipped on Windows")
 	}
@@ -60,14 +79,35 @@ func TestFileExistsRejectsNonExecutable(t *testing.T) {
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if FileExists(path) {
-		t.Fatalf("FileExists returned true for non-executable file")
+	// IsExecutableFile must return false for a non-executable regular file.
+	if IsExecutableFile(path) {
+		t.Fatalf("IsExecutableFile returned true for non-executable file")
 	}
 	if err := os.Chmod(path, 0o755); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
-	if !FileExists(path) {
-		t.Fatalf("FileExists returned false for executable file")
+	if !IsExecutableFile(path) {
+		t.Fatalf("IsExecutableFile returned false for executable file")
+	}
+}
+
+func TestFileExistsRejectsDirectory(t *testing.T) {
+	dir := t.TempDir()
+	if FileExists(dir) {
+		t.Fatalf("FileExists returned true for a directory")
+	}
+	if IsExecutableFile(dir) {
+		t.Fatalf("IsExecutableFile returned true for a directory")
+	}
+}
+
+func TestFileExistsRejectsMissingPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist")
+	if FileExists(path) {
+		t.Fatalf("FileExists returned true for missing path")
+	}
+	if IsExecutableFile(path) {
+		t.Fatalf("IsExecutableFile returned true for missing path")
 	}
 }
 
