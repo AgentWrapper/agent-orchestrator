@@ -189,3 +189,58 @@ func TestFetchPullRequests_PropagatesError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+// TestFetchPullRequests_OneProviderFailsOthersSucceed verifies that when one
+// provider fails, the other provider's successful observations are still
+// returned and no error suppresses them. A GitLab timeout
+// must not discard successful GitHub observations.
+func TestFetchPullRequests_OneProviderFailsOthersSucceed(t *testing.T) {
+	gh := &fakeProvider{key: "github", parseOK: true}
+	gl := &fakeProvider{key: "gitlab", parseOK: true, fetchErr: errors.New("gitlab timeout")}
+	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
+
+	refs := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "github"}, Number: 10},
+		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 20},
+	}
+	obs, err := m.FetchPullRequests(context.Background(), refs)
+	if err != nil {
+		t.Fatalf("error = %v, want nil (one provider failure must not suppress the other)", err)
+	}
+	if len(obs) != 2 {
+		t.Fatalf("got %d observations, want 2", len(obs))
+	}
+	// GitHub observation must be present and correct despite GitLab failure.
+	if !obs[0].Fetched || obs[0].Provider != "github" || obs[0].PR.Number != 10 {
+		t.Errorf("obs[0] = %+v, want github/10 Fetched=true", obs[0])
+	}
+	// GitLab slot: the failing provider should leave a Fetched=false placeholder
+	// so the observer can reject it without advancing durable state.
+	if obs[1].Fetched {
+		t.Errorf("obs[1].Fetched = true, want false for failed gitlab fetch")
+	}
+	if gh.fetchCallCount != 1 {
+		t.Errorf("github.FetchPullRequests called %d times, want 1", gh.fetchCallCount)
+	}
+	if gl.fetchCallCount != 1 {
+		t.Errorf("gitlab.FetchPullRequests called %d times, want 1", gl.fetchCallCount)
+	}
+}
+
+// TestFetchPullRequests_AllProvidersFail verifies that when ALL providers fail,
+// an error is returned so the observer can mark repos as failed (review
+// finding #5).
+func TestFetchPullRequests_AllProvidersFail(t *testing.T) {
+	gh := &fakeProvider{key: "github", parseOK: true, fetchErr: errors.New("github down")}
+	gl := &fakeProvider{key: "gitlab", parseOK: true, fetchErr: errors.New("gitlab down")}
+	m := New(NamedProvider{Key: "github", Provider: gh}, NamedProvider{Key: "gitlab", Provider: gl})
+
+	refs := []ports.SCMPRRef{
+		{Repo: ports.SCMRepo{Provider: "github"}, Number: 10},
+		{Repo: ports.SCMRepo{Provider: "gitlab"}, Number: 20},
+	}
+	_, err := m.FetchPullRequests(context.Background(), refs)
+	if err == nil {
+		t.Fatal("expected error when all providers fail")
+	}
+}
