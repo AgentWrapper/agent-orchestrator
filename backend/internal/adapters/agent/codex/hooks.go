@@ -60,6 +60,7 @@ type codexHookEntry struct {
 // codexHookSpec describes one hook AO delivers via launch-command config.
 type codexHookSpec struct {
 	Event   string
+	Matcher string
 	Command string
 }
 
@@ -70,6 +71,8 @@ var codexManagedHooks = []codexHookSpec{
 	{Event: "SessionStart", Command: codexHookCommandPrefix + "session-start"},
 	{Event: "UserPromptSubmit", Command: codexHookCommandPrefix + "user-prompt-submit"},
 	{Event: "PermissionRequest", Command: codexHookCommandPrefix + "permission-request"},
+	{Event: "PreToolUse", Matcher: `^request_user_input$`, Command: codexHookCommandPrefix + "pre-tool-use"},
+	{Event: "PostToolUse", Matcher: `^request_user_input$`, Command: codexHookCommandPrefix + "post-tool-use"},
 	{Event: "Stop", Command: codexHookCommandPrefix + "stop"},
 }
 
@@ -77,8 +80,12 @@ var codexManagedHooks = []codexHookSpec{
 // session-flag config, one flag per managed event.
 func appendSessionHookFlags(cmd *[]string) {
 	for _, spec := range codexManagedHooks {
-		flag := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s,timeout=%d}]}]`,
-			spec.Event, codexTOMLBasicString(spec.Command), codexHookTimeout)
+		matcher := ""
+		if spec.Matcher != "" {
+			matcher = "matcher=" + codexTOMLBasicString(spec.Matcher) + ","
+		}
+		flag := fmt.Sprintf(`hooks.%s=[{%shooks=[{type="command",command=%s,timeout=%d}]}]`,
+			spec.Event, matcher, codexTOMLBasicString(spec.Command), codexHookTimeout)
 		*cmd = append(*cmd, "-c", flag)
 	}
 }
