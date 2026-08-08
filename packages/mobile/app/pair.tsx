@@ -21,6 +21,8 @@ import { connectSheetRoute } from "../lib/sheetResult";
 import { useApp } from "../lib/store";
 import { Button, NumberedStep } from "../lib/ui";
 import { useTheme, useThemedStyles } from "../lib/ThemeProvider";
+import { MOBILE_EVENTS } from "../lib/telemetry/events";
+import { mobileTelemetry } from "../lib/telemetry/runtime";
 
 export default function PairScreen() {
 	const t = useTheme();
@@ -98,6 +100,8 @@ export default function PairScreen() {
 		try {
 			await pingServer(target);
 			await saveConfig(target);
+			mobileTelemetry()?.capture(MOBILE_EVENTS.paired, { method: "qr", from_onboarding: fromOnboarding });
+			if (fromOnboarding) mobileTelemetry()?.capture(MOBILE_EVENTS.onboardingCompleted);
 			haptics.success();
 			await finish();
 		} catch (e) {

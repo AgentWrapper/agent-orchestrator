@@ -13,6 +13,8 @@ import type { Theme } from "./theme";
 import { haptics } from "./haptics";
 import { Button, SHEET_SCROLL_CONTENT, SheetHeader, SheetScreen } from "./ui";
 import { useTheme, useThemedStyles } from "./ThemeProvider";
+import { MOBILE_EVENTS } from "./telemetry/events";
+import { mobileTelemetry } from "./telemetry/runtime";
 
 // The typing fallback behind the QR scanner: Tailscale users and anyone whose
 // desktop isn't in front of them. Deliberately narrower than the Settings form —
@@ -49,6 +51,7 @@ export function ManualConnectSheet({ onConnected }: { onConnected: () => void })
 			// with no further input from them.
 			await pingServer(target);
 			await saveConfig(target);
+			mobileTelemetry()?.capture(MOBILE_EVENTS.paired, { method: "manual" });
 			haptics.success();
 			onConnected();
 		} catch (e) {

@@ -3,6 +3,7 @@ import { StatusBar } from "expo-status-bar";
 import { Platform } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { OnboardingGate } from "../lib/OnboardingGate";
+import { TelemetryManager } from "../lib/TelemetryManager";
 import { PushManager } from "../lib/PushManager";
 import { AppProvider } from "../lib/store";
 import { ThemeProvider, useTheme, useThemeState } from "../lib/ThemeProvider";
@@ -65,6 +66,7 @@ function Shell() {
 		<>
 			{/* Light content on a dark app, dark content on a light one. */}
 			<StatusBar style={scheme === "dark" ? "light" : "dark"} />
+			<TelemetryManager />
 			<PushManager />
 			<OnboardingGate />
 			<Stack
