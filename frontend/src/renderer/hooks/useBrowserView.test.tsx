@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetConsumedPreviewTriggersForTest, useBrowserView, type BrowserNavState } from "./useBrowserView";
 
@@ -196,80 +197,25 @@ describe("useBrowserView", () => {
 		expect(result.current.agentBrowserActive).toBe(false);
 	});
 
-	it("holds a captured frame while selecting a tab so the native handoff does not flash", async () => {
+	it("switches tabs without placing the outgoing tab over the selected tab", async () => {
 		const bridge = setupBridge();
-		const slot = createSlot();
 		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
 		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
 		act(() =>
 			bridge.emit({
 				viewId: "42:sess-1",
 				url: "http://localhost:3000/",
-				title: "",
+				title: "First tab",
 				canGoBack: false,
 				canGoForward: false,
 				isLoading: false,
 			}),
 		);
-		act(() => result.current.slotRef(slot));
 
-		vi.useFakeTimers();
-		try {
-			await act(async () => {
-				await result.current.selectTab("t2");
-			});
+		await act(() => result.current.selectTab("t2"));
 
-			expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
-			expect(result.current.visualTransition).toMatchObject({
-				kind: "tab-switch",
-				snapshotUrl: "data:image/jpeg;base64,snapshot",
-			});
-
-			act(() => {
-				vi.advanceTimersByTime(260);
-			});
-			expect(result.current.visualTransition).toBeNull();
-		} finally {
-			vi.useRealTimers();
-		}
-	});
-
-	it("does not block tab switching on a slow transition capture", async () => {
-		const bridge = setupBridge();
-		const slot = createSlot();
-		bridge.capture.mockImplementation(
-			() => new Promise((resolve) => window.setTimeout(() => resolve("data:image/jpeg;base64,late"), 10_000)),
-		);
-		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
-		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
-		act(() =>
-			bridge.emit({
-				viewId: "42:sess-1",
-				url: "http://localhost:3000/",
-				title: "",
-				canGoBack: false,
-				canGoForward: false,
-				isLoading: false,
-			}),
-		);
-		act(() => result.current.slotRef(slot));
-
-		vi.useFakeTimers();
-		try {
-			let switchPromise: Promise<void> | undefined;
-			await act(async () => {
-				switchPromise = result.current.selectTab("t2");
-				await vi.advanceTimersByTimeAsync(180);
-			});
-
-			expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
-			expect(bridge.selectTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
-			await act(async () => {
-				await switchPromise;
-			});
-		} finally {
-			vi.useRealTimers();
-		}
+		expect(bridge.selectTab).toHaveBeenCalledWith({ viewId: "42:sess-1", tabId: "t2" });
+		expect(bridge.capture).not.toHaveBeenCalled();
 	});
 
 	it("remeasures the live native view while moving between panel and maximized browser slots", async () => {
@@ -313,7 +259,6 @@ describe("useBrowserView", () => {
 		);
 		expect(bridge.capture).not.toHaveBeenCalled();
 		expect(bridge.setBounds.mock.calls.some(([payload]) => payload.parked)).toBe(false);
-		expect(result.current.visualTransition).toBeNull();
 	});
 
 	it("primes a browser frame before opening renderer overlays above the native view", async () => {
@@ -337,6 +282,75 @@ describe("useBrowserView", () => {
 
 		expect(bridge.capture).toHaveBeenCalledWith("42:sess-1");
 		expect(result.current.mirrorUrl).toBe("data:image/jpeg;base64,snapshot");
+	});
+
+	it("explicitly finishes a prepared overlay and restores the live view", async () => {
+		const bridge = setupBridge();
+		const slot = createSlot();
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "First tab",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+		act(() => result.current.slotRef(slot));
+		await act(() => result.current.prepareForOverlay());
+		expect(result.current.mirrorUrl).toBe("data:image/jpeg;base64,snapshot");
+
+		bridge.setBounds.mockClear();
+		act(() => {
+			(result.current as typeof result.current & { finishOverlay?: () => void }).finishOverlay?.();
+		});
+
+		expect(result.current.mirrorUrl).toBe("");
+		await waitFor(() =>
+			expect(bridge.setBounds).toHaveBeenCalledWith({
+				viewId: "42:sess-1",
+				rect: { x: 12, y: 34, width: 320, height: 240 },
+				visible: true,
+			}),
+		);
+	});
+
+	it("ignores a prepared frame that resolves after the overlay finishes", async () => {
+		let resolveCapture!: (frame: string) => void;
+		const bridge = setupBridge();
+		bridge.capture.mockImplementationOnce(
+			() =>
+				new Promise<string>((resolve) => {
+					resolveCapture = resolve;
+				}),
+		);
+		const { result } = renderHook(() => useBrowserView({ sessionId: "sess-1", active: true, poppedOut: false }));
+		await waitFor(() => expect(result.current.viewId).toBe("42:sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "First tab",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+
+		let pending!: Promise<void>;
+		act(() => {
+			pending = result.current.prepareForOverlay();
+		});
+		act(() => result.current.finishOverlay());
+		await act(async () => {
+			resolveCapture("data:image/jpeg;base64,late-snapshot");
+			await pending;
+		});
+
+		expect(result.current.mirrorUrl).toBe("");
 	});
 
 	it("clamps the native view to its resizable-panel column when the slot overspills", async () => {
@@ -751,6 +765,48 @@ describe("useBrowserView", () => {
 		);
 		expect(result.current.navState.url).toBe("http://localhost:5173/");
 		expect(result.current.navState.title).toBe("Local app");
+	});
+
+	it("never exposes a departed session's leftover navState, even transiently, once sessionId changes", async () => {
+		// `navState` is component state, not derived from `sessionId` — without a
+		// synchronous ownership guard, the hook returns the PREVIOUS session's
+		// stale url for one render before its own reset effect lands. A
+		// consumer that decides whether to auto-open a browser tab from
+		// `navState.url` (e.g. SessionView) could read that stale render and
+		// wrongly treat a departed session's leftover URL as this session's own
+		// content. An effect that observes every committed render, not just the
+		// final settled one, is the only way to catch a transient wrong value —
+		// checking `result.current` after `rerender` proves nothing here, since
+		// testing-library's `act` flushes any reset effect before returning.
+		const bridge = setupBridge();
+		const observedUrls: string[] = [];
+		function useProbe(sid: string) {
+			const view = useBrowserView({ sessionId: sid, active: true, poppedOut: false });
+			useEffect(() => {
+				observedUrls.push(view.navState.url);
+			});
+			return view;
+		}
+		const { rerender } = renderHook(({ sessionId }) => useProbe(sessionId), {
+			initialProps: { sessionId: "sess-1" },
+		});
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-1"));
+		act(() =>
+			bridge.emit({
+				viewId: "42:sess-1",
+				url: "http://localhost:3000/",
+				title: "",
+				canGoBack: false,
+				canGoForward: false,
+				isLoading: false,
+			}),
+		);
+
+		observedUrls.length = 0;
+		rerender({ sessionId: "sess-2" });
+		await waitFor(() => expect(bridge.ensure).toHaveBeenCalledWith("sess-2"));
+
+		expect(observedUrls).not.toContain("http://localhost:3000/");
 	});
 
 	it("navigates on each preview revision, including a same-URL re-run, and ignores replays", async () => {

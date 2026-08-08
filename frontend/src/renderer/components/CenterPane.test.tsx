@@ -9,6 +9,8 @@ import { TooltipProvider } from "./ui/tooltip";
 
 const shortcutMocks = vi.hoisted(() => ({
 	closeListener: undefined as (() => void) | undefined,
+	nextTabListener: undefined as (() => void) | undefined,
+	previousTabListener: undefined as (() => void) | undefined,
 	closeableStates: [] as boolean[],
 }));
 
@@ -22,6 +24,18 @@ vi.mock("../lib/bridge", () => ({
 					if (shortcutMocks.closeListener === listener) shortcutMocks.closeListener = undefined;
 				};
 		},
+			onPreviousTabShortcut: (listener: () => void) => {
+				shortcutMocks.previousTabListener = listener;
+				return () => {
+					if (shortcutMocks.previousTabListener === listener) shortcutMocks.previousTabListener = undefined;
+				};
+			},
+			onNextTabShortcut: (listener: () => void) => {
+				shortcutMocks.nextTabListener = listener;
+				return () => {
+					if (shortcutMocks.nextTabListener === listener) shortcutMocks.nextTabListener = undefined;
+				};
+			},
 		},
 	},
 }));
@@ -55,6 +69,8 @@ function renderCenterPane(props: Partial<ComponentProps<typeof CenterPane>> = {}
 
 beforeEach(() => {
 	shortcutMocks.closeListener = undefined;
+	shortcutMocks.nextTabListener = undefined;
+	shortcutMocks.previousTabListener = undefined;
 	shortcutMocks.closeableStates.length = 0;
 });
 
@@ -98,6 +114,7 @@ describe("CenterPane toolbar session label", () => {
 			session: worker,
 			shellTerminals: [shell],
 			terminalTarget: {
+				generation: shell.createdAt,
 				kind: "shell",
 				handleId: shell.handleId,
 				title: shell.title,
@@ -131,7 +148,12 @@ describe("CenterPane toolbar session label", () => {
 		renderCenterPane({
 			session: worker,
 			shellTerminals: [shell],
-			terminalTarget: { kind: "shell", handleId: shell.handleId, title: shell.title },
+			terminalTarget: {
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				title: shell.title,
+			},
 			onCloseShellTerminal,
 		});
 
@@ -147,18 +169,71 @@ describe("CenterPane toolbar session label", () => {
 		expect(onCloseShellTerminal).not.toHaveBeenCalled();
 	});
 
+	it("cycles from the session terminal to its next shell tab", () => {
+		const [shell] = makeShells(1);
+		const onSelectShellTerminal = vi.fn();
+		renderCenterPane({ session: worker, shellTerminals: [shell], onSelectShellTerminal });
+
+		act(() => shortcutMocks.nextTabListener?.());
+		expect(onSelectShellTerminal).toHaveBeenCalledWith(shell.handleId);
+	});
+
+	it("wraps from a shell tab to the session terminal", () => {
+		const [shell] = makeShells(1);
+		const onSelectSessionTerminal = vi.fn();
+		renderCenterPane({
+			session: worker,
+			shellTerminals: [shell],
+			terminalTarget: { generation: shell.createdAt, kind: "shell", handleId: shell.handleId, title: shell.title },
+			onSelectSessionTerminal,
+		});
+
+		act(() => shortcutMocks.nextTabListener?.());
+		expect(onSelectSessionTerminal).toHaveBeenCalledOnce();
+	});
+
 	it("enables the global close shortcut only while a closeable shell is active", () => {
 		const [shell] = makeShells(1);
 		const view = renderCenterPane({
 			session: worker,
 			shellTerminals: [shell],
-			terminalTarget: { kind: "shell", handleId: shell.handleId, title: shell.title },
+			terminalTarget: {
+				generation: shell.createdAt,
+				kind: "shell",
+				handleId: shell.handleId,
+				title: shell.title,
+			},
 			onCloseShellTerminal: vi.fn(),
 		});
 
 		expect(shortcutMocks.closeableStates.at(-1)).toBe(true);
 		view.unmount();
 		expect(shortcutMocks.closeableStates.at(-1)).toBe(false);
+	});
+
+	it("shows reviewer as its own active harness tab", () => {
+		renderCenterPane({
+			session: worker,
+			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			terminalTarget: { kind: "reviewer", handleId: "review-sess-1", harness: "codex", sessionId: worker.id },
+		});
+
+		expect(screen.getByRole("tab", { name: "Reviewer" })).toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("tab", { name: /^do the thing/ })).not.toHaveAttribute("aria-current", "true");
+		expect(screen.getByRole("tab", { name: "Reviewer" }).querySelector("img")).toHaveAttribute("src");
+		expect(screen.queryByRole("button", { name: "Back to agent" })).not.toBeInTheDocument();
+	});
+
+	it("opens reviewer from the tab strip when a reviewer handle exists", () => {
+		const onSelectReviewerTerminal = vi.fn();
+		renderCenterPane({
+			session: worker,
+			reviewerTerminal: { handleId: "review-sess-1", harness: "codex" },
+			onSelectReviewerTerminal,
+		});
+
+		fireEvent.click(screen.getByRole("tab", { name: "Reviewer" }));
+		expect(onSelectReviewerTerminal).toHaveBeenCalledWith({ handleId: "review-sess-1", harness: "codex" });
 	});
 
 	// The button used to open a dropdown that also listed every session across
@@ -206,13 +281,12 @@ describe("CenterPane toolbar session label", () => {
 		expect(screen.getByText("No session")).toBeInTheDocument();
 	});
 
-	it("uses the padded session topbar height for the terminal header", () => {
+	it("uses the inspector tab height for the terminal header", () => {
 		renderCenterPane({ session: worker });
 
 		const tablist = screen.getByRole("tablist", { name: "Open terminals" });
-		const header = tablist.closest(".h-session-topbar");
-		expect(header).toHaveClass("h-session-topbar");
-		expect(screen.getByTestId("session-workspace-topbar")).toHaveClass("py-1");
+		const header = tablist.closest(".h-inspector-tabs");
+		expect(header).toHaveClass("h-inspector-tabs");
 		expect(tablist.parentElement).toHaveClass("h-full");
 	});
 
@@ -231,7 +305,9 @@ describe("CenterPane toolbar session label", () => {
 		expect(terminalRegion).toContainElement(screen.getByRole("button", { name: "New terminal" }));
 		expect(terminalRegion).toContainElement(screen.getByRole("toolbar", { name: "Terminal display controls" }));
 		expect(terminalRegion).not.toContainElement(screen.getByTestId("session-action-region"));
-		expect(screen.getByTestId("session-action-region")).toContainElement(
+		const actionRegion = screen.getByTestId("session-action-region");
+		expect(actionRegion).not.toHaveClass("border-l");
+		expect(actionRegion).toContainElement(
 			screen.getByRole("button", { name: "Session action" }),
 		);
 	});

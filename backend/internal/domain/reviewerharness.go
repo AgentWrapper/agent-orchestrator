@@ -12,8 +12,29 @@ type ReviewerHarness string
 const (
 	ReviewerClaudeCode ReviewerHarness = "claude-code"
 	ReviewerCodex      ReviewerHarness = "codex"
-	ReviewerGreptile   ReviewerHarness = "greptile"
+	ReviewerCopilot    ReviewerHarness = "copilot"
+	ReviewerCursor     ReviewerHarness = "cursor"
+	ReviewerKiloCode   ReviewerHarness = "kilocode"
 	ReviewerOpenCode   ReviewerHarness = "opencode"
+	ReviewerKiro       ReviewerHarness = "kiro"
+	ReviewerPi         ReviewerHarness = "pi"
+	ReviewerQwen       ReviewerHarness = "qwen"
+	ReviewerAgy        ReviewerHarness = "agy"
+	ReviewerContinue   ReviewerHarness = "continue"
+	ReviewerGoose      ReviewerHarness = "goose"
+	ReviewerVibe       ReviewerHarness = "vibe"
+	ReviewerDevin      ReviewerHarness = "devin"
+	ReviewerDroid      ReviewerHarness = "droid"
+	ReviewerKimi       ReviewerHarness = "kimi"
+	ReviewerMuse       ReviewerHarness = "muse"
+	ReviewerAmp        ReviewerHarness = "amp"
+	ReviewerAider      ReviewerHarness = "aider"
+	ReviewerGrok       ReviewerHarness = "grok"
+	ReviewerGreptile   ReviewerHarness = "greptile"
+	ReviewerCrush      ReviewerHarness = "crush"
+	ReviewerAuggie     ReviewerHarness = "auggie"
+	ReviewerCline      ReviewerHarness = "cline"
+	ReviewerAutohand   ReviewerHarness = "autohand"
 )
 
 // AllReviewerHarnesses is the canonical set used to validate a configured
@@ -21,8 +42,29 @@ const (
 var AllReviewerHarnesses = []ReviewerHarness{
 	ReviewerClaudeCode,
 	ReviewerCodex,
-	ReviewerGreptile,
+	ReviewerCopilot,
+	ReviewerCursor,
+	ReviewerKiloCode,
 	ReviewerOpenCode,
+	ReviewerKiro,
+	ReviewerPi,
+	ReviewerQwen,
+	ReviewerAgy,
+	ReviewerContinue,
+	ReviewerGoose,
+	ReviewerVibe,
+	ReviewerDevin,
+	ReviewerDroid,
+	ReviewerKimi,
+	ReviewerMuse,
+	ReviewerAmp,
+	ReviewerAider,
+	ReviewerGrok,
+	ReviewerGreptile,
+	ReviewerCrush,
+	ReviewerAuggie,
+	ReviewerCline,
+	ReviewerAutohand,
 }
 
 // IsKnown reports whether h is one of the supported reviewer harnesses.

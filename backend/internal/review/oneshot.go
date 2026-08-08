@@ -29,9 +29,9 @@ type oneShotJob struct {
 
 type oneShotExecutor func(ctx context.Context, workspacePath string, command ports.ReviewCommandSpec) (stdout, stderr []byte, err error)
 
-func (l *agentLauncher) startOneShot(spec LaunchSpec, reviewer ports.OneShotReviewer) (string, error) {
+func (l *agentLauncher) startOneShot(spec LaunchSpec, reviewer ports.OneShotReviewer) (LaunchResult, error) {
 	if l.onComplete == nil {
-		return "", fmt.Errorf("one-shot reviewer completion handler is not configured")
+		return LaunchResult{}, fmt.Errorf("one-shot reviewer completion handler is not configured")
 	}
 	handleID := reviewerHandleID(spec.WorkerID)
 	jobCtx, job := l.registerOneShotJob(handleID)
@@ -43,7 +43,7 @@ func (l *agentLauncher) startOneShot(spec LaunchSpec, reviewer ports.OneShotRevi
 	}
 
 	go l.runOneShotBatch(jobCtx, handleID, job.id, spec, reviewer)
-	return handleID, nil
+	return LaunchResult{HandleID: handleID}, nil
 }
 
 func (l *agentLauncher) registerOneShotJob(handleID string) (context.Context, oneShotJob) {
@@ -59,7 +59,7 @@ func (l *agentLauncher) registerOneShotJob(handleID string) (context.Context, on
 	return jobCtx, job
 }
 
-func (l *agentLauncher) startTerminalOneShot(ctx context.Context, handleID string, jobID uint64, spec LaunchSpec, reviewer ports.TerminalOneShotReviewer) (string, error) {
+func (l *agentLauncher) startTerminalOneShot(ctx context.Context, handleID string, jobID uint64, spec LaunchSpec, reviewer ports.TerminalOneShotReviewer) (LaunchResult, error) {
 	tasks := spec.ReviewQueue
 	if len(tasks) == 0 {
 		tasks = []ports.ReviewTask{{
@@ -72,29 +72,29 @@ func (l *agentLauncher) startTerminalOneShot(ctx context.Context, handleID strin
 	requestPath, err := terminalRequestPath(l.dataDir, spec, jobID)
 	if err != nil {
 		l.abortOneShot(handleID, jobID)
-		return "", err
+		return LaunchResult{}, err
 	}
 	command, err := reviewer.PrepareTerminalRequest(requestPath, tasks)
 	if err != nil {
 		l.abortOneShot(handleID, jobID)
-		return "", fmt.Errorf("prepare reviewer terminal: %w", err)
+		return LaunchResult{}, fmt.Errorf("prepare reviewer terminal: %w", err)
 	}
 	// The stable handle is also the terminal identity. Replacing a stale pane
 	// before Create keeps a harness switch from leaving the old review visible.
 	if err := l.runtime.Destroy(ctx, ports.RuntimeHandle{ID: handleID}); err != nil {
 		l.abortOneShot(handleID, jobID)
-		return "", fmt.Errorf("reviewer terminal replace stale pane: %w", err)
+		return LaunchResult{}, fmt.Errorf("reviewer terminal replace stale pane: %w", err)
 	}
 	handle, err := l.runtime.Create(ctx, ports.RuntimeConfig{
 		SessionID:        domain.SessionID(handleID),
 		WorkspacePath:    spec.WorkspacePath,
 		Argv:             command.Argv,
-		Env:              pinnedEnv(command.Env),
+		Env:              l.runtimeEnv(ctx, spec, command.Argv, command.Env),
 		TerminalBehavior: ports.TerminalOutputOnly,
 	})
 	if err != nil {
 		l.abortOneShot(handleID, jobID)
-		return "", fmt.Errorf("reviewer terminal: %w", err)
+		return LaunchResult{}, fmt.Errorf("reviewer terminal: %w", err)
 	}
 	l.jobsMu.Lock()
 	if current, ok := l.jobs[handleID]; ok && current.id == jobID {
@@ -104,7 +104,7 @@ func (l *agentLauncher) startTerminalOneShot(ctx context.Context, handleID strin
 	}
 	l.jobsMu.Unlock()
 	go l.runTerminalBatch(ctx, handleID, jobID, spec, reviewer, reviewer.TerminalResultPath(requestPath), tasks, time.Now().Add(oneShotResultWaitLimit))
-	return handle.ID, nil
+	return LaunchResult{HandleID: handle.ID}, nil
 }
 
 func (l *agentLauncher) runTerminalBatch(ctx context.Context, handleID string, jobID uint64, spec LaunchSpec, reviewer ports.TerminalOneShotReviewer, resultPath string, tasks []ports.ReviewTask, deadlineAt time.Time) {

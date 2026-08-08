@@ -33,6 +33,10 @@ import {
 	type AttentionZoneView,
 } from "../lib/session-presentation";
 import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import {
+	useSessionUsageSummaries,
+	type SessionUsageSummary,
+} from "../hooks/useSessionUsageSummaries";
 import { useRestoreSession } from "../hooks/useRestoreSession";
 import {
 	clearTerminateSessionState,
@@ -46,10 +50,11 @@ import { OrchestratorIcon } from "./icons";
 import { OrchestratorActivityIndicator } from "./OrchestratorActivityIndicator";
 import { AgentAvatar } from "./AgentAvatar";
 import { TopbarButton, TopbarKillError, topbarProjectLabelClass } from "./TopbarButton";
-import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { isChatPreflightError, spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { restartProjectOrchestrator } from "../lib/restart-orchestrator";
 import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
 import { formatTimeCompact } from "../lib/format-time";
+import { formatTokenCount } from "../lib/format-token-count";
 import { aoBridge } from "../lib/bridge";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
 import { cn } from "../lib/utils";
@@ -69,6 +74,8 @@ type SessionsBoardProps = {
 // Live merged sessions remain in-flow. A terminated runtime is archived even
 // when its SCM outcome remains `merged`.
 type Column = AttentionZoneView;
+type UsageBySession = ReadonlyMap<string, SessionUsageSummary>;
+const emptyUsageBySession: UsageBySession = new Map();
 
 function isArchivedSession(session: WorkspaceSession): boolean {
 	return session.isTerminated === true || session.status === "terminated";
@@ -86,6 +93,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const restoreSessionById = useRestoreSession();
 	const workspaceQuery = useWorkspaceQuery();
 	const shell = useShellMaybe();
+	const usageBySession = useSessionUsageSummaries(projectId).data ?? emptyUsageBySession;
 	// Evaluated at render so platform mocks in tests can flip the in-panel chrome.
 	const boardActionsInPanel = usesBoardActionsInPanel();
 	/** Bell lives in the board action row when the shell topbar does not host it. */
@@ -100,6 +108,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const orchestratorActivityLabel = orchestrator ? getAgentActivityView(orchestrator.activity, t).label : undefined;
 	const [isSpawning, setIsSpawning] = useState(false);
 	const [spawnError, setSpawnError] = useState<string | null>(null);
+	const [canCreateAsTui, setCanCreateAsTui] = useState(false);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const orchestratorStartupError = useUiStore((state) =>
 		projectId ? (state.orchestratorStartupErrors[projectId] ?? null) : null,
@@ -113,7 +122,10 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 	const visibleSpawnError = spawnError ?? orchestratorStartupError;
 	// The board instance survives project-to-project navigation (same route,
 	// new param), so a spawn failure must not follow the user to another board.
-	useEffect(() => setSpawnError(null), [projectId]);
+	useEffect(() => {
+		setSpawnError(null);
+		setCanCreateAsTui(false);
+	}, [projectId]);
 	const previousProjectIdRef = useRef(projectId);
 	useEffect(() => {
 		const previousProjectId = previousProjectIdRef.current;
@@ -203,7 +215,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 	};
 
-	const openOrchestrator = async () => {
+	const openOrchestrator = async (mode?: "tui") => {
 		if (!projectId || isProjectRestarting) return;
 		if (orchestrator) {
 			void navigate({
@@ -214,15 +226,16 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 		}
 		if (!hasConfiguredOrchestratorAgent(workspace)) {
 			if (workspace) {
-				void navigate({ to: "/projects/$projectId/settings", params: { projectId } });
+				useUiStore.getState().openProjectSettings(projectId);
 			}
 			return;
 		}
 		setSpawnError(null);
+		setCanCreateAsTui(false);
 		setOrchestratorStartupError(projectId, null);
 		setIsSpawning(true);
 		try {
-			const sessionId = await spawnOrchestrator(projectId, "board");
+			const sessionId = await spawnOrchestrator(projectId, "board", false, mode);
 			await queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 			setOrchestratorStartupError(projectId, null);
 			void navigate({
@@ -234,6 +247,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 			// conflict) is the only actionable signal the user gets.
 			console.error("Failed to spawn orchestrator:", err);
 			setSpawnError(err instanceof Error ? err.message : t("shell.couldNotSpawn"));
+			setCanCreateAsTui(isChatPreflightError(err));
 		} finally {
 			setIsSpawning(false);
 		}
@@ -257,6 +271,11 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 					{visibleSpawnError}
 				</TopbarKillError>
 			)}
+			{visibleSpawnError && canCreateAsTui && !showProjectEmpty ? (
+				<TopbarButton disabled={isSpawning || isProjectRestarting} onClick={() => void openOrchestrator("tui")}>
+					{t("newTask.createAsTui")}
+				</TopbarButton>
+			) : null}
 			<TopbarButton
 				aria-label={t("shell.newTask")}
 				disabled={isProjectRestarting}
@@ -340,6 +359,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 						isProjectRestarting={isProjectRestarting}
 						onNewTask={() => projectId && requestNewTask(projectId)}
 						onOpenOrchestrator={() => void openOrchestrator()}
+						onOpenOrchestratorAsTui={canCreateAsTui ? () => void openOrchestrator("tui") : undefined}
 						spawnError={visibleSpawnError}
 					/>
 				) : (
@@ -359,6 +379,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									sessions={byZone.get(col.zone) ?? []}
 									onOpen={openSession}
 									onTerminate={(session) => terminateSession.mutate(session)}
+									usageBySession={usageBySession}
 								/>
 							))}
 						</div>
@@ -368,16 +389,13 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 
 			{archived.length > 0 && (
 				<div className="shrink-0 border-t border-border-strong px-3">
-					{/* agent-orchestrator's archive bar (Dashboard.tsx + globals.css):
-					    a full-width chevron + label + count toggle row. The button is
-					    37px (not the 35.5px its text-control implies) because the
-					    unlayered `button { font: inherit }` in styles.css outranks
-					    Tailwind's layered text utilities, leaving it at 14px/21px. */}
+					{/* The 46px control gives the compact archive bar a slightly taller
+					    target while preserving the bar's surrounding row height. */}
 					<div className={cn("flex items-center gap-2", archiveExpanded ? "min-h-11" : "min-h-row-md")}>
 						<button
 							aria-expanded={archiveExpanded}
 							aria-label={t("shell.archiveSessionsAria", { count: archived.length })}
-							className="group flex min-w-0 items-center gap-2 py-2 text-muted-foreground transition-colors hover:text-foreground"
+							className="group flex h-[46px] min-w-0 items-center gap-2 py-0 text-muted-foreground transition-colors hover:text-foreground"
 							onClick={() => setArchiveExpanded((v) => !v)}
 							type="button"
 						>
@@ -412,6 +430,7 @@ export function SessionsBoard({ projectId }: SessionsBoardProps) {
 									restoreError={restoreErrors[s.id]}
 									isRestoring={restoringSessionId === s.id}
 									isRestoreDisabled={restoringSessionId !== undefined}
+									usage={usageBySession.get(s.id)}
 								/>
 							))}
 						</div>
@@ -439,15 +458,43 @@ function BoardColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
-	if (col.zone === "working") return <WorkLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
-	if (col.zone === "merge") return <MergeLaneColumn sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
-	return <ZoneColumn col={col} sessions={sessions} onOpen={onOpen} onTerminate={onTerminate} />;
+	if (col.zone === "working") {
+		return (
+			<WorkLaneColumn
+				sessions={sessions}
+				onOpen={onOpen}
+				onTerminate={onTerminate}
+				usageBySession={usageBySession}
+			/>
+		);
+	}
+	if (col.zone === "merge") {
+		return (
+			<MergeLaneColumn
+				sessions={sessions}
+				onOpen={onOpen}
+				onTerminate={onTerminate}
+				usageBySession={usageBySession}
+			/>
+		);
+	}
+	return (
+		<ZoneColumn
+			col={col}
+			sessions={sessions}
+			onOpen={onOpen}
+			onTerminate={onTerminate}
+			usageBySession={usageBySession}
+		/>
+	);
 }
 
 function ZoneColumn({
@@ -455,11 +502,13 @@ function ZoneColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	col: Column;
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	return (
@@ -490,6 +539,7 @@ function ZoneColumn({
 							session={session}
 							onOpen={() => onOpen(session)}
 							onTerminate={() => onTerminate(session)}
+							usage={usageBySession.get(session.id)}
 						/>
 					))}
 				</div>
@@ -558,10 +608,12 @@ function WorkLaneColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	const tones = splitLaneTones(t);
@@ -578,6 +630,7 @@ function WorkLaneColumn({
 			secondaryTone={tones.working}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
+			usageBySession={usageBySession}
 		/>
 	);
 }
@@ -586,10 +639,12 @@ function MergeLaneColumn({
 	sessions,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	const tones = splitLaneTones(t);
@@ -610,6 +665,7 @@ function MergeLaneColumn({
 			secondaryTone={tones.merged}
 			onOpen={onOpen}
 			onTerminate={onTerminate}
+			usageBySession={usageBySession}
 		/>
 	);
 }
@@ -623,6 +679,7 @@ function SplitLaneColumn({
 	secondaryTone,
 	onOpen,
 	onTerminate,
+	usageBySession,
 }: {
 	ariaLabel: string;
 	zone: Extract<AttentionZone, "working" | "merge">;
@@ -632,6 +689,7 @@ function SplitLaneColumn({
 	secondaryTone: SplitLaneTone;
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate: (s: WorkspaceSession) => void;
+	usageBySession: UsageBySession;
 }) {
 	const { t } = useTranslation();
 	const showPrimary = primarySessions.length > 0;
@@ -677,6 +735,7 @@ function SplitLaneColumn({
 										session={session}
 										onOpen={() => onOpen(session)}
 										onTerminate={() => onTerminate(session)}
+										usage={usageBySession.get(session.id)}
 									/>
 								))}
 							</div>
@@ -689,6 +748,7 @@ function SplitLaneColumn({
 							tone={secondaryTone}
 							onOpen={onOpen}
 							onTerminate={onTerminate}
+							usageBySession={usageBySession}
 						/>
 					) : null}
 				</div>
@@ -721,12 +781,14 @@ function SecondaryLaneSection({
 	onTerminate,
 	standalone,
 	tone,
+	usageBySession,
 }: {
 	sessions: WorkspaceSession[];
 	onOpen: (s: WorkspaceSession) => void;
 	onTerminate?: (s: WorkspaceSession) => void;
 	standalone: boolean;
 	tone: SplitLaneTone;
+	usageBySession: UsageBySession;
 }) {
 	return (
 		<div
@@ -750,6 +812,7 @@ function SecondaryLaneSection({
 						session={session}
 						onOpen={() => onOpen(session)}
 						onTerminate={onTerminate ? () => onTerminate(session) : undefined}
+						usage={usageBySession.get(session.id)}
 					/>
 				))}
 			</div>
@@ -761,6 +824,7 @@ function SessionCard({
 	session,
 	onOpen,
 	onTerminate,
+	usage,
 	interactive = true,
 	action,
 	branchAction,
@@ -769,6 +833,7 @@ function SessionCard({
 	session: WorkspaceSession;
 	onOpen?: () => void;
 	onTerminate?: () => void;
+	usage?: SessionUsageSummary;
 	interactive?: boolean;
 	action?: ReactNode;
 	branchAction?: ReactNode;
@@ -890,12 +955,13 @@ function SessionCard({
 						/>
 						{badge.label}
 					</span>
-					<span
-						className="shrink-0 whitespace-nowrap font-mono text-2xs text-passive"
-						title={t("shell.updatedAt", { time: session.updatedAt })}
-					>
-						{formatTimeCompact(session.updatedAt)}
-					</span>
+					<div className="ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap font-mono text-2xs text-passive">
+						<SessionUsageMetric usage={usage} />
+						{usage && usage.totalTokens > 0 ? <span aria-hidden="true">·</span> : null}
+						<span title={t("shell.updatedAt", { time: session.updatedAt })}>
+							{formatTimeCompact(session.updatedAt)}
+						</span>
+					</div>
 				</div>
 				{prSummaries.length > 0 && (
 					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-2xs text-passive">
@@ -929,12 +995,14 @@ function ArchiveSessionItem({
 	restoreError,
 	isRestoring,
 	isRestoreDisabled,
+	usage,
 }: {
 	session: WorkspaceSession;
 	restoreAction: (event: MouseEvent<HTMLButtonElement>) => void;
 	restoreError?: string;
 	isRestoring: boolean;
 	isRestoreDisabled: boolean;
+	usage?: SessionUsageSummary;
 }) {
 	const branch = session.branch || "";
 	const restoreButton = (
@@ -953,7 +1021,29 @@ function ArchiveSessionItem({
 			footer={<ArchiveRestoreError message={restoreError} />}
 			interactive={false}
 			session={session}
+			usage={usage}
 		/>
+	);
+}
+
+function SessionUsageMetric({ usage }: { usage?: SessionUsageSummary }) {
+	const { t } = useTranslation();
+	if (!usage || usage.totalTokens <= 0) return null;
+	const tooltip = t("shell.usageTokens", {
+		count: usage.totalTokens.toLocaleString("en-US"),
+	});
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<span
+					aria-label={tooltip}
+					className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap font-mono text-2xs text-muted-foreground"
+				>
+					{formatTokenCount(usage.totalTokens)}
+				</span>
+			</TooltipTrigger>
+			<TooltipContent side="top">{tooltip}</TooltipContent>
+		</Tooltip>
 	);
 }
 
@@ -1083,7 +1173,7 @@ function groupPRsByLifecycle(prs: SessionPRSummary[]): BoardPRGroup[] {
 
 function prLifecycleStatus(pr: SessionPRSummary): BoardPRLifecycleStatus {
 	if (pr.state === "draft") return { label: "draft", className: "text-passive" };
-	if (pr.state === "merged") return { label: "merged", className: "text-accent" };
+	if (pr.state === "merged") return { label: "merged", className: "text-status-merged" };
 	if (pr.state === "closed") return { label: "closed", className: "text-error" };
 	return { label: "open", className: "text-success" };
 }

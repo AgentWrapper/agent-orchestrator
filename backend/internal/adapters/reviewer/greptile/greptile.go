@@ -26,6 +26,7 @@ var _ ports.OneShotReviewer = Adapter{}
 var _ ports.TerminalOneShotReviewer = Adapter{}
 var _ ports.ReviewerCanceller = Adapter{}
 var _ ports.ReviewerBinaryResolver = Adapter{}
+var _ ports.ReviewerReusePolicy = Adapter{}
 
 // New returns a Greptile CLI reviewer adapter.
 func New() Adapter { return Adapter{} }
@@ -66,6 +67,9 @@ func (Adapter) ReviewCommand(_ context.Context, inv ports.ReviewInvocation) (por
 func (Adapter) ReviewMessage(context.Context, ports.ReviewInvocation) (string, error) {
 	return "", errors.New("greptile is a one-shot reviewer and does not accept review messages")
 }
+
+// ReviewProcessReusable reports that every Greptile pass is a fresh CLI run.
+func (Adapter) ReviewProcessReusable() bool { return false }
 
 // ReviewCancel lets AO interrupt the display-only terminal after a daemon
 // restart, when the in-memory one-shot job map is no longer available.

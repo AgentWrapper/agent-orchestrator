@@ -41,10 +41,29 @@ const (
 // native payload when present. All four are optional: an old daemon decodes
 // the body leniently and simply ignores them.
 type setActivityAPIRequest struct {
+	State          string             `json:"state,omitempty"`
+	Event          string             `json:"event,omitempty"`
+	ToolName       string             `json:"toolName,omitempty"`
+	ToolUseID      string             `json:"toolUseId,omitempty"`
+	AgentSessionID string             `json:"agentSessionId,omitempty"`
+	LaunchID       string             `json:"launchId,omitempty"`
+	Usage          *usageHookMetadata `json:"usage,omitempty"`
+}
+
+type usageHookMetadata struct {
+	Harness                string `json:"harness"`
+	TranscriptPath         string `json:"transcriptPath,omitempty"`
+	ModelID                string `json:"modelId,omitempty"`
+	SubagentID             string `json:"subagentId,omitempty"`
+	SubagentTranscriptPath string `json:"subagentTranscriptPath,omitempty"`
+}
+
+// setReviewActivityAPIRequest mirrors POST /api/v1/reviews/{id}/activity.
+// Reviewer hooks only persist reviewer-owned restore metadata for now; they do
+// not feed worker lifecycle/tool-flight state.
+type setReviewActivityAPIRequest struct {
 	State          string `json:"state,omitempty"`
 	Event          string `json:"event,omitempty"`
-	ToolName       string `json:"toolName,omitempty"`
-	ToolUseID      string `json:"toolUseId,omitempty"`
 	AgentSessionID string `json:"agentSessionId,omitempty"`
 	LaunchID       string `json:"launchId,omitempty"`
 }
@@ -103,6 +122,33 @@ func hookAgentSessionID(payload []byte) string {
 	return id
 }
 
+func hookUsageMetadata(agent string, payload []byte) *usageHookMetadata {
+	harness := domain.AgentHarness(agent)
+	if harness != domain.HarnessClaudeCode && harness != domain.HarnessCodex {
+		return nil
+	}
+	var native struct {
+		TranscriptPath         string `json:"transcript_path"`
+		Model                  string `json:"model"`
+		SubagentID             string `json:"agent_id"`
+		SubagentTranscriptPath string `json:"agent_transcript_path"`
+	}
+	if json.Unmarshal(payload, &native) != nil {
+		return nil
+	}
+	meta := &usageHookMetadata{
+		Harness:                agent,
+		TranscriptPath:         strings.TrimSpace(native.TranscriptPath),
+		ModelID:                strings.TrimSpace(native.Model),
+		SubagentID:             strings.TrimSpace(native.SubagentID),
+		SubagentTranscriptPath: strings.TrimSpace(native.SubagentTranscriptPath),
+	}
+	if meta.TranscriptPath == "" && meta.SubagentTranscriptPath == "" && meta.ModelID == "" {
+		return nil
+	}
+	return meta
+}
+
 type sessionStartHookOutput struct {
 	HookSpecificOutput struct {
 		HookEventName     string `json:"hookEventName"`
@@ -131,6 +177,13 @@ func newHooksCommand(ctx *commandContext) *cobra.Command {
 }
 
 func (c *commandContext) runHook(ctx context.Context, agent, event string) error {
+	reviewSessionID := strings.TrimSpace(os.Getenv("AO_REVIEW_SESSION_ID"))
+	if reviewSessionID != "" {
+		if !sessionIDPattern.MatchString(reviewSessionID) {
+			return nil
+		}
+		return c.runReviewHook(ctx, agent, event, reviewSessionID)
+	}
 	sessionID := strings.TrimSpace(os.Getenv("AO_SESSION_ID"))
 	if !sessionIDPattern.MatchString(sessionID) {
 		// Not an AO-managed session (unset/empty), or an id we won't put in a
@@ -154,7 +207,8 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 	if activitydispatch.SupportsHarness(domain.AgentHarness(agent)) {
 		agentSessionID = hookAgentSessionID(payload)
 	}
-	if !hasActivity && agentSessionID == "" {
+	usage := hookUsageMetadata(agent, payload)
+	if !hasActivity && agentSessionID == "" && usage == nil {
 		// Unknown agent, or an event carrying neither activity nor resumable
 		// session metadata: report nothing.
 		return nil
@@ -168,6 +222,7 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		ToolUseID:      toolUseID,
 		AgentSessionID: agentSessionID,
 		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+		Usage:          usage,
 	}
 	if hasActivity {
 		req.State = string(state)
@@ -176,6 +231,34 @@ func (c *commandContext) runHook(ctx context.Context, agent, event string) error
 		// Surface the failure for diagnosis, but exit 0: a failed activity
 		// report must not disrupt the agent.
 		c.reportHookFailure(agent, event, sessionID, err)
+	}
+	return nil
+}
+
+func (c *commandContext) runReviewHook(ctx context.Context, agent, event, reviewSessionID string) error {
+	payload, err := io.ReadAll(c.deps.In)
+	if err != nil {
+		c.reportHookFailure(agent, event, reviewSessionID, fmt.Errorf("read stdin: %w", err))
+	}
+	state, hasActivity := activitydispatch.Derive(agent, event, payload)
+	agentSessionID := ""
+	if activitydispatch.SupportsHarness(domain.AgentHarness(agent)) {
+		agentSessionID = hookAgentSessionID(payload)
+	}
+	if !hasActivity && agentSessionID == "" {
+		return nil
+	}
+	path := "reviews/" + url.PathEscape(reviewSessionID) + "/activity"
+	req := setReviewActivityAPIRequest{
+		Event:          event,
+		AgentSessionID: agentSessionID,
+		LaunchID:       validLaunchID(os.Getenv("AO_RUNTIME_LAUNCH_ID")),
+	}
+	if hasActivity {
+		req.State = string(state)
+	}
+	if err := c.postJSON(ctx, path, req, nil); err != nil {
+		c.reportHookFailure(agent, event, reviewSessionID, err)
 	}
 	return nil
 }

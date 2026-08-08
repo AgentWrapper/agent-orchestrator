@@ -5,11 +5,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
 import { appI18n } from "../i18n";
 
-const { navigateMock, notificationShowMock, postMock, workspaceQueryMock, boardActionsInPanelMock } = vi.hoisted(() => ({
+const {
+	navigateMock,
+	notificationShowMock,
+	postMock,
+	workspaceQueryMock,
+	usageQueryMock,
+	boardActionsInPanelMock,
+} = vi.hoisted(() => ({
 	navigateMock: vi.fn(),
 	notificationShowMock: vi.fn(),
 	postMock: vi.fn(),
 	workspaceQueryMock: vi.fn(),
+	usageQueryMock: vi.fn(),
 	boardActionsInPanelMock: vi.fn(() => false),
 }));
 
@@ -20,6 +28,10 @@ vi.mock("@tanstack/react-router", () => ({
 vi.mock("../hooks/useWorkspaceQuery", () => ({
 	workspaceQueryKey: ["workspaces"],
 	useWorkspaceQuery: workspaceQueryMock,
+}));
+
+vi.mock("../hooks/useSessionUsageSummaries", () => ({
+	useSessionUsageSummaries: usageQueryMock,
 }));
 
 vi.mock("../lib/api-client", () => ({
@@ -71,6 +83,7 @@ beforeEach(() => {
 	notificationShowMock.mockReset().mockResolvedValue(undefined);
 	postMock.mockReset().mockResolvedValue({ data: {} });
 	workspaceQueryMock.mockReset().mockReturnValue({ data: [], isError: false });
+	usageQueryMock.mockReset().mockReturnValue({ data: new Map() });
 	window.localStorage.removeItem("ao.board.archive.layout");
 	boardActionsInPanelMock.mockReset().mockReturnValue(false);
 });
@@ -252,6 +265,62 @@ describe("SessionsBoard", () => {
 		expect(terminateButton.querySelector("svg")).toHaveClass("lucide-trash-2");
 		expect(within(idleCard).getByText("Idle").parentElement).toHaveClass("flex", "justify-between");
 		expect(within(idleCard).getByText("brand-font-pipeline")).toHaveClass("font-semibold", "line-clamp-2");
+	});
+
+	it("shows compact token usage on active and archived cards and hides empty totals", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					boardSession({ id: "s-active", title: "active worker", status: "idle" }),
+					boardSession({ id: "s-empty", title: "empty worker", status: "idle" }),
+					terminatedSession(),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		usageQueryMock.mockReturnValue({
+			data: new Map([
+				[
+					"s-active",
+					{
+						sessionId: "s-active",
+						totalTokens: 12_400,
+						incomplete: false,
+					},
+				],
+				[
+					"s-empty",
+					{
+						sessionId: "s-empty",
+						totalTokens: 0,
+						incomplete: false,
+					},
+				],
+				[
+					"s-dead",
+					{
+						sessionId: "s-dead",
+						totalTokens: 2_000,
+						incomplete: true,
+					},
+				],
+			]),
+		});
+
+		renderBoard("p1");
+
+		const activeUsage = screen.getByText("12.4K tok");
+		expect(activeUsage).toHaveAttribute("aria-label", "12,400 tokens");
+		expect(screen.queryByText("0 tok")).not.toBeInTheDocument();
+		expect(usageQueryMock).toHaveBeenCalledWith("p1");
+		await userEvent.hover(activeUsage);
+		expect((await screen.findAllByText("12,400 tokens")).length).toBeGreaterThan(0);
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		const archive = screen.getByRole("list", { name: "Archived sessions" });
+		const archivedUsage = within(archive).getByText("2K tok");
+		expect(archivedUsage).toHaveAttribute("aria-label", "2,000 tokens");
 	});
 
 	it("pulses the shared activity indicator on an actively working session card", () => {
@@ -680,7 +749,9 @@ describe("SessionsBoard", () => {
 
 		renderBoard("p1");
 
-		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		const archiveButton = screen.getByRole("button", { name: /archive/i });
+		expect(archiveButton).toHaveClass("h-[46px]", "py-0");
+		await userEvent.click(archiveButton);
 
 		const archive = screen.getByRole("list", { name: "Archived sessions" });
 		expect(archive).toHaveClass("board-scrollbar", "overflow-y-auto");
@@ -696,6 +767,7 @@ describe("SessionsBoard", () => {
 		expect(screen.getByText("github:INT-17")).toBeInTheDocument();
 		const prStatus = screen.getByLabelText("#42 merged");
 		expect(prStatus).toHaveTextContent("PR#42merged");
+		expect(within(prStatus).getByText("merged")).toHaveClass("text-status-merged");
 		const openPrStatus = screen.getByLabelText("#41 open");
 		expect(openPrStatus.parentElement).toBe(prStatus.parentElement);
 		expect(prStatus.parentElement).toHaveClass("flex-wrap");

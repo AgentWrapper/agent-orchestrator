@@ -139,6 +139,46 @@ describe("prCardPresentation", () => {
 			breathe: true,
 		});
 	});
+
+	it("shows running checks instead of an internal provider blocker", () => {
+		const presentation = prCardPresentation(
+			summary({
+				ci: { state: "pending", failingChecks: [] },
+				mergeability: {
+					state: "unstable",
+					reasons: ["blocked_by_provider"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary).toMatchObject({
+			key: "ci",
+			label: "Checks running",
+			href: "https://github.com/acme/repo/pull/7/checks",
+			breathe: true,
+		});
+		expect(presentation.supporting).toEqual([]);
+	});
+
+	it("uses customer-facing copy for an unexplained merge blocker", () => {
+		const presentation = prCardPresentation(
+			summary({
+				mergeability: {
+					state: "blocked",
+					reasons: ["blocked_by_provider"],
+					prUrl: "https://github.com/acme/repo/pull/7",
+				},
+			}),
+		);
+
+		expect(presentation.primary).toMatchObject({
+			key: "merge",
+			label: "Merge unavailable",
+			detail: "GitHub currently reports this pull request can't be merged.",
+			links: [],
+		});
+	});
 });
 
 describe("prBrowserUrl", () => {

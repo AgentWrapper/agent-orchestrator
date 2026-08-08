@@ -18,6 +18,7 @@ import { isMacPlatform } from "../../lib/platform";
 import { aoBridge } from "../../lib/bridge";
 import { cn } from "../../lib/utils";
 import { useKeybindingsStore } from "../../stores/keybindings-store";
+import { Button } from "../ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -461,12 +462,12 @@ export function KeyboardShortcutsSettingsDialog({
 						{confirmResetAll ? (
 							<>
 								<span className="mr-auto text-caption text-settings-muted">{t("shortcut.resetAllConfirm")}</span>
-								<button type="button" className="settings-footer-button" onClick={() => setConfirmResetAll(false)}>
+								<Button type="button" variant="footer" onClick={() => setConfirmResetAll(false)}>
 									{t("confirm.cancel")}
-								</button>
-								<button
+								</Button>
+								<Button
 									type="button"
-									className="settings-footer-button border-transparent bg-settings-accent text-white"
+									variant="footer-primary"
 									onClick={() => {
 										void resetAll().then(() => {
 											setConfirmResetAll(false);
@@ -475,18 +476,19 @@ export function KeyboardShortcutsSettingsDialog({
 									}}
 								>
 									{t("shortcut.resetAll")}
-								</button>
+								</Button>
 							</>
 						) : (
-							<button
+							<Button
 								type="button"
-								className="settings-footer-button mr-auto"
+								variant="footer"
+								className="mr-auto"
 								disabled={Object.keys(overrides).length === 0}
 								onClick={() => setConfirmResetAll(true)}
 							>
 								<RotateCcw className="size-icon-base" aria-hidden="true" />
 								{t("shortcut.resetAll")}
-							</button>
+							</Button>
 						)}
 					</div>
 

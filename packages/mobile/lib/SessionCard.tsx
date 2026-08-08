@@ -16,8 +16,8 @@ import { cardShell, cardShellPressed, Dot } from "./ui";
 // time, PR line, and identifiers.
 //
 // The whole card is the tap target. A session card has exactly one destination
-// — its terminal — so the card being the button is honest; PRCard uses explicit
-// IconButtons because it has two. The previous version drew a `terminal` glyph
+// — its mode-aware session surface — so the card being the button is honest;
+// PRCard uses explicit IconButtons because it has two. The previous version drew a `terminal` glyph
 // that looked like a control and did nothing.
 export function SessionCard({
 	session,

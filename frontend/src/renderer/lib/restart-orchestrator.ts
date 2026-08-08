@@ -1,6 +1,8 @@
 import type { QueryClient } from "@tanstack/react-query";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
-import { spawnOrchestrator } from "./spawn-orchestrator";
+import type { SessionMode } from "../types/conversation";
+import { OrchestratorSpawnError, spawnOrchestrator } from "./spawn-orchestrator";
+import type { OrchestratorReplacementFailure } from "../stores/ui-store";
 
 type NavigateToSession = (options: {
 	to: "/projects/$projectId/sessions/$sessionId";
@@ -12,8 +14,9 @@ type RestartProjectOrchestratorOptions = {
 	queryClient: QueryClient;
 	navigate: NavigateToSession;
 	setProjectRestarting: (projectId: string, restarting: boolean) => void;
-	setOrchestratorReplacementError: (projectId: string, message: string | null) => void;
+	setOrchestratorReplacementError: (projectId: string, failure: OrchestratorReplacementFailure | null) => void;
 	onError?: (error: unknown) => void;
+	mode?: SessionMode;
 };
 
 async function refreshWorkspaceState(queryClient: QueryClient) {
@@ -32,11 +35,12 @@ export async function restartProjectOrchestrator({
 	setProjectRestarting,
 	setOrchestratorReplacementError,
 	onError,
+	mode,
 }: RestartProjectOrchestratorOptions) {
 	setProjectRestarting(projectId, true);
 	setOrchestratorReplacementError(projectId, null);
 	try {
-		const sessionId = await spawnOrchestrator(projectId, "restart", true);
+		const sessionId = await spawnOrchestrator(projectId, "restart", true, mode);
 		await refreshWorkspaceState(queryClient);
 		void navigate({
 			to: "/projects/$projectId/sessions/$sessionId",
@@ -44,10 +48,12 @@ export async function restartProjectOrchestrator({
 		});
 	} catch (error) {
 		await refreshWorkspaceState(queryClient);
-		setOrchestratorReplacementError(
-			projectId,
-			error instanceof Error ? error.message : "Could not replace orchestrator",
-		);
+		setOrchestratorReplacementError(projectId, {
+			message: error instanceof Error ? error.message : "Could not replace orchestrator",
+			...(error instanceof OrchestratorSpawnError
+				? { code: error.code, requestId: error.requestId }
+				: {}),
+		});
 		onError?.(error);
 	} finally {
 		setProjectRestarting(projectId, false);

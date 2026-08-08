@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import * as Popover from "@radix-ui/react-popover";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +9,7 @@ import { useUiStore } from "../stores/ui-store";
 const navigateMock = vi.hoisted(() => vi.fn());
 const spawnMock = vi.hoisted(() => vi.fn());
 const choosePathMock = vi.hoisted(() => vi.fn());
+const restoreMock = vi.hoisted(() => vi.fn());
 
 const ctx = vi.hoisted(() => {
 	const workspaces: WorkspaceSummary[] = [
@@ -105,9 +107,41 @@ vi.mock("../lib/shell-context", () => ({
 
 vi.mock("../lib/spawn-orchestrator", () => ({ spawnOrchestrator: spawnMock }));
 
-vi.mock("./NewTaskDialog", () => ({
-	NewTaskDialog: ({ open, projectId }: { open: boolean; projectId?: string }) =>
-		open ? <div data-testid="new-task-dialog">new task {projectId}</div> : null,
+vi.mock("../hooks/useRestoreSession", () => ({ useRestoreSession: () => restoreMock }));
+
+function StubNestedLayer() {
+	const [open, setOpen] = useState(false);
+	return (
+		<Popover.Root open={open} onOpenChange={setOpen}>
+			<Popover.Trigger>stub-open-layer</Popover.Trigger>
+			<Popover.Portal>
+				<Popover.Content>nested layer</Popover.Content>
+			</Popover.Portal>
+		</Popover.Root>
+	);
+}
+
+vi.mock("./TaskComposer", () => ({
+	TaskComposer: (props: {
+		projectId?: string;
+		onCreated: (id: string) => void;
+		onDirtyChange?: (dirty: boolean) => void;
+		onSubmittingChange?: (submitting: boolean) => void;
+	}) => (
+		<div data-testid="task-composer">
+			<span>composer {props.projectId}</span>
+			<StubNestedLayer />
+			<button type="button" onClick={() => props.onDirtyChange?.(true)}>
+				stub-dirty
+			</button>
+			<button type="button" onClick={() => props.onSubmittingChange?.(true)}>
+				stub-submit-start
+			</button>
+			<button type="button" onClick={() => props.onCreated("new-session")}>
+				stub-create
+			</button>
+		</div>
+	),
 }));
 
 vi.mock("./CreateProjectFlow", () => ({
@@ -119,17 +153,27 @@ import { CommandPalette } from "./CommandPalette";
 
 function renderPalette() {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-	return render(
+	const wrap = () => (
 		<QueryClientProvider client={queryClient}>
 			<CommandPalette />
-		</QueryClientProvider>,
+		</QueryClientProvider>
 	);
+	const result = render(wrap());
+	return { ...result, rerenderPalette: () => result.rerender(wrap()) };
 }
 
 function pressKey(init: KeyboardEventInit): KeyboardEvent {
 	const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
 	act(() => {
 		window.dispatchEvent(event);
+	});
+	return event;
+}
+
+function pressEscape(init: KeyboardEventInit = {}): KeyboardEvent {
+	const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, ...init });
+	act(() => {
+		document.body.dispatchEvent(event);
 	});
 	return event;
 }
@@ -154,12 +198,15 @@ beforeEach(() => {
 	navigateMock.mockReset();
 	spawnMock.mockReset();
 	choosePathMock.mockReset();
+	restoreMock.mockReset();
+	restoreMock.mockResolvedValue({ status: "success" });
 	act(() => {
 		useUiStore.setState({
 			isCommandPaletteOpen: false,
 			themePreference: "dark",
 			resolvedTheme: "dark",
 			restartingProjectIds: new Set(),
+			settingsModal: null,
 		});
 	});
 });
@@ -261,8 +308,8 @@ describe("CommandPalette shortcut (macOS)", () => {
 	});
 });
 
-describe("CommandPalette search + Enter", () => {
-	it("jumps to a session by typing a query and pressing Enter", async () => {
+describe("CommandPalette drill-in + Enter", () => {
+	it("opens a session's actions panel, then jumps with a second Enter", async () => {
 		ctx.params = {};
 		renderPalette();
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
@@ -274,6 +321,14 @@ describe("CommandPalette search + Enter", () => {
 			expect(selected?.textContent).toContain("ship banner");
 		});
 		fireEvent.keyDown(input, { key: "Enter" });
+
+		const actionsInput = await screen.findByPlaceholderText(/search actions/i);
+		expect(navigateMock).not.toHaveBeenCalled();
+		await waitFor(() => {
+			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+			expect(selected?.textContent).toContain("Jump to session");
+		});
+		fireEvent.keyDown(actionsInput, { key: "Enter" });
 
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
@@ -306,8 +361,6 @@ describe("CommandPalette search + Enter", () => {
 		act(() => useUiStore.getState().setCommandPaletteOpen(true));
 		const input = await screen.findByPlaceholderText(/search projects/i);
 
-		expect(screen.queryByText("archived cleanup")).toBeNull();
-
 		fireEvent.change(input, { target: { value: "archived" } });
 		await waitFor(() => {
 			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
@@ -315,10 +368,93 @@ describe("CommandPalette search + Enter", () => {
 		});
 		fireEvent.keyDown(input, { key: "Enter" });
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/sessions/$sessionId",
-			params: { projectId: "proj-1", sessionId: "w-archived" },
+		await screen.findByPlaceholderText(/search actions/i);
+		expect(screen.getByText("Resume agent")).toBeInTheDocument();
+		expect(screen.getByText("Jump to session")).toBeInTheDocument();
+
+		pressEscape();
+		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+	});
+
+	it("does not offer Resume for a live worker", async () => {
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+
+		fireEvent.change(input, { target: { value: "flake" } });
+		await waitFor(() => {
+			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+			expect(selected?.textContent).toContain("fix flake");
 		});
+		fireEvent.keyDown(input, { key: "Enter" });
+
+		await screen.findByPlaceholderText(/search actions/i);
+		expect(screen.queryByText("Resume agent")).toBeNull();
+		expect(screen.getByText("Copy branch name")).toBeInTheDocument();
+	});
+
+	it("dispatches restore when Resume is selected and closes the palette on success", async () => {
+		restoreMock.mockResolvedValue({ status: "success" });
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "archived" } });
+		await waitFor(() => {
+			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+			expect(selected?.textContent).toContain("archived cleanup");
+		});
+		fireEvent.keyDown(input, { key: "Enter" });
+		await screen.findByPlaceholderText(/search actions/i);
+
+		fireEvent.click(screen.getByText("Resume agent"));
+		await waitFor(() => expect(restoreMock).toHaveBeenCalledWith("w-archived"));
+		await waitFor(() =>
+			expect(navigateMock).toHaveBeenCalledWith({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: "proj-1", sessionId: "w-archived" },
+			}),
+		);
+		await waitFor(() => expect(paletteInput()).toBeNull());
+	});
+
+	it("restates a not-resumable refusal instead of echoing the daemon envelope", async () => {
+		restoreMock.mockResolvedValue({ status: "not_resumable", message: "SESSION_NOT_RESUMABLE" });
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "archived" } });
+		await waitFor(() => {
+			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+			expect(selected?.textContent).toContain("archived cleanup");
+		});
+		fireEvent.keyDown(input, { key: "Enter" });
+		await screen.findByPlaceholderText(/search actions/i);
+
+		fireEvent.click(screen.getByText("Resume agent"));
+		expect(await screen.findByRole("alert")).toHaveTextContent(/no saved agent session or prompt/i);
+		expect(navigateMock).not.toHaveBeenCalled();
+	});
+
+	it("surfaces an inline error and stays open when resume is rejected", async () => {
+		restoreMock.mockResolvedValue({ status: "error", message: "Session is not restorable" });
+		ctx.params = {};
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "archived" } });
+		await waitFor(() => {
+			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+			expect(selected?.textContent).toContain("archived cleanup");
+		});
+		fireEvent.keyDown(input, { key: "Enter" });
+		await screen.findByPlaceholderText(/search actions/i);
+
+		fireEvent.click(screen.getByText("Resume agent"));
+		expect(await screen.findByRole("alert")).toHaveTextContent("not restorable");
+		expect(useUiStore.getState().isCommandPaletteOpen).toBe(true);
 	});
 });
 
@@ -358,10 +494,8 @@ describe("CommandPalette actions", () => {
 		await screen.findByPlaceholderText(/search projects/i);
 		fireEvent.click(screen.getByText("Open orchestrator"));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-2" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-2" });
+		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnMock).not.toHaveBeenCalled();
 		await waitFor(() => expect(paletteInput()).toBeNull());
 	});
@@ -433,5 +567,161 @@ describe("CommandPalette actions", () => {
 		fireEvent.click(screen.getByText("New project"));
 		await waitFor(() => expect(choosePathMock).toHaveBeenCalledTimes(1));
 		await waitFor(() => expect(paletteInput()).toBeNull());
+	});
+});
+
+describe("CommandPalette back navigation", () => {
+	async function drillIntoTest() {
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		const input = await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.change(input, { target: { value: "archived" } });
+		await waitFor(() => {
+			const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+			expect(selected?.textContent).toContain("archived cleanup");
+		});
+		fireEvent.keyDown(input, { key: "Enter" });
+		return screen.findByPlaceholderText(/search actions/i);
+	}
+
+	it("pops to root on Backspace at an empty query", async () => {
+		ctx.params = {};
+		const actionsInput = await drillIntoTest();
+		fireEvent.keyDown(actionsInput, { key: "Backspace" });
+		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+	});
+
+	it("blocks a duplicate resume while one is in flight", async () => {
+		restoreMock.mockReturnValueOnce(new Promise<never>(() => {}));
+		ctx.params = {};
+		await drillIntoTest();
+		fireEvent.click(screen.getByText("Resume agent"));
+		expect(restoreMock).toHaveBeenCalledTimes(1);
+		fireEvent.click(screen.getByText("Resume agent"));
+		expect(restoreMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("still dismisses while a command hangs, and drops the late result", async () => {
+		let reject: (err: Error) => void = () => undefined;
+		restoreMock.mockReturnValueOnce(new Promise<never>((_resolve, r) => (reject = r)));
+		ctx.params = {};
+		await drillIntoTest();
+		fireEvent.click(screen.getByText("Resume agent"));
+
+		pressEscape();
+		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+
+		await act(async () => {
+			reject(new Error("daemon went away"));
+			await Promise.resolve();
+		});
+		expect(screen.queryByRole("alert")).toBeNull();
+	});
+
+	it("lets an IME consume Escape instead of popping the view", async () => {
+		ctx.params = {};
+		await drillIntoTest();
+		const composing = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+		Object.defineProperty(composing, "isComposing", { value: true });
+		act(() => {
+			document.body.dispatchEvent(composing);
+		});
+		expect(screen.getByPlaceholderText(/search actions/i)).toBeInTheDocument();
+		pressEscape();
+		expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+	});
+
+	it("auto-pops to root when the scoped session disappears", async () => {
+		ctx.params = {};
+		const original = ctx.workspaces;
+		try {
+			const { rerenderPalette } = renderPalette();
+			act(() => useUiStore.getState().setCommandPaletteOpen(true));
+			const input = await screen.findByPlaceholderText(/search projects/i);
+			fireEvent.change(input, { target: { value: "archived" } });
+			await waitFor(() => {
+				const selected = document.querySelector('[cmdk-item][data-selected="true"]');
+				expect(selected?.textContent).toContain("archived cleanup");
+			});
+			fireEvent.keyDown(input, { key: "Enter" });
+			await screen.findByPlaceholderText(/search actions/i);
+
+			ctx.workspaces = original.map((w) => ({ ...w, sessions: w.sessions.filter((s) => s.id !== "w-archived") }));
+			act(() => rerenderPalette());
+
+			expect(await screen.findByPlaceholderText(/search projects/i)).toBeInTheDocument();
+			expect(await screen.findByRole("alert")).toHaveTextContent(/no longer available/i);
+		} finally {
+			ctx.workspaces = original;
+		}
+	});
+});
+
+describe("CommandPalette inline task composer", () => {
+	async function openComposer() {
+		ctx.params = { projectId: "proj-1" };
+		renderPalette();
+		act(() => useUiStore.getState().setCommandPaletteOpen(true));
+		await screen.findByPlaceholderText(/search projects/i);
+		fireEvent.click(screen.getByText("New task"));
+		return screen.findByTestId("task-composer");
+	}
+
+	it("opens the composer inline instead of a dialog", async () => {
+		await openComposer();
+		expect(screen.getByTestId("task-composer")).toHaveTextContent("proj-1");
+		expect(screen.queryByTestId("new-task-dialog")).toBeNull();
+	});
+
+	it("navigates to the created session and closes on success", async () => {
+		await openComposer();
+		fireEvent.click(screen.getByText("stub-create"));
+		await waitFor(() =>
+			expect(navigateMock).toHaveBeenCalledWith({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: "proj-1", sessionId: "new-session" },
+			}),
+		);
+		await waitFor(() => expect(paletteInput()).toBeNull());
+	});
+
+	it("lets a layer opened inside the composer take Escape first", async () => {
+		await openComposer();
+		fireEvent.click(screen.getByText("stub-dirty"));
+		fireEvent.click(screen.getByText("stub-open-layer"));
+		expect(await screen.findByText("nested layer")).toBeInTheDocument();
+
+		pressEscape();
+		await waitFor(() => expect(screen.queryByText("nested layer")).toBeNull());
+		expect(screen.queryByText(/discard this draft/i)).toBeNull();
+		expect(screen.getByTestId("task-composer")).toBeInTheDocument();
+
+		pressEscape();
+		expect(await screen.findByText(/discard this draft/i)).toBeInTheDocument();
+	});
+
+	it("confirms before discarding a dirty draft", async () => {
+		await openComposer();
+		fireEvent.click(screen.getByText("stub-dirty"));
+		pressEscape();
+		expect(await screen.findByText(/discard this draft/i)).toBeInTheDocument();
+		expect(screen.getByTestId("task-composer")).toBeInTheDocument();
+	});
+
+	it("blocks dismissal while a create is in flight, then navigates on completion", async () => {
+		await openComposer();
+		fireEvent.click(screen.getByText("stub-dirty"));
+		fireEvent.click(screen.getByText("stub-submit-start"));
+		pressEscape();
+		expect(screen.queryByText(/discard this draft/i)).toBeNull();
+		expect(screen.getByTestId("task-composer")).toBeInTheDocument();
+		expect(navigateMock).not.toHaveBeenCalled();
+		fireEvent.click(screen.getByText("stub-create"));
+		await waitFor(() =>
+			expect(navigateMock).toHaveBeenCalledWith({
+				to: "/projects/$projectId/sessions/$sessionId",
+				params: { projectId: "proj-1", sessionId: "new-session" },
+			}),
+		);
 	});
 });

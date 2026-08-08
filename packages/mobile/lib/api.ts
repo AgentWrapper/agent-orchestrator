@@ -1,7 +1,9 @@
-import { authHeaders, httpBase, type ServerConfig } from "./config";
+import { authHeaders, httpBase, normalizeServerHost, type ServerConfig } from "./config";
 import type { AttentionLevel } from "./theme";
 
 // ---- Types (subset of AO's DashboardSession we use on the phone) ------------
+
+export type SessionMode = "chat" | "tui";
 
 export type DashboardPR = {
 	number: number;
@@ -37,6 +39,8 @@ export type DashboardSession = {
 	// Which agent CLI drives this session (claude-code, codex, …). Parsed off the
 	// wire but discarded until the orchestrator tab needed it for brand marks.
 	harness?: string | null;
+	/** Controller currently committed for this AO session. */
+	mode: SessionMode;
 	branch: string | null;
 	issueId: string | null;
 	issueUrl?: string | null;
@@ -67,6 +71,7 @@ export type OrchestratorLink = {
 	activity?: string | null;
 	/** Agent CLI driving this orchestrator — drives its brand mark. */
 	harness?: string | null;
+	mode: SessionMode;
 	updatedAt?: string | null;
 	runtimeState?: string | null;
 	hasRuntime?: boolean;
@@ -122,6 +127,7 @@ type WireSession = {
 	issueId?: string;
 	kind?: string; // worker | orchestrator
 	harness?: string;
+	mode?: SessionMode;
 	displayName?: string;
 	activity?: unknown;
 	isTerminated?: boolean;
@@ -190,6 +196,7 @@ function mapSession(s: WireSession): DashboardSession {
 		status: s.status ?? null,
 		activity: activityString(s.activity),
 		harness: s.harness ?? null,
+		mode: s.mode === "chat" ? "chat" : "tui",
 		branch: s.branch ?? null,
 		issueId: s.issueId ?? null,
 		issueTitle: null,
@@ -213,6 +220,7 @@ function mapOrchestrator(s: WireSession, projectName: string): OrchestratorLink 
 		status: s.status ?? null,
 		activity: activityString(s.activity),
 		harness: s.harness ?? null,
+		mode: s.mode === "chat" ? "chat" : "tui",
 		updatedAt: s.updatedAt ?? null,
 		hasRuntime: !s.isTerminated,
 		isTerminal: !!s.isTerminated,
@@ -237,18 +245,21 @@ export class ApiError extends Error {
 		// Carried separately from `message` so callers can branch on the exact
 		// condition instead of pattern-matching human-facing prose.
 		readonly code?: string,
+		// Correlates a client-visible failure with daemon logs. The daemon's error
+		// envelope guarantees this field, so mobile must not discard it.
+		readonly requestId?: string,
 	) {
 		super(message);
 		this.name = "ApiError";
 	}
 }
 
-async function req(cfg: ServerConfig, path: string, init?: RequestInit): Promise<Response> {
+async function req(cfg: ServerConfig, path: string, init?: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
 	const url = `${httpBase(cfg)}${path}`;
 	// Without a timeout a sleeping/unreachable host (common over Tailscale) hangs
 	// the call for the OS TCP timeout (~75-120s), freezing Kill/send and the poll.
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	let res: Response;
 	try {
 		res = await fetch(url, {
@@ -268,16 +279,28 @@ async function req(cfg: ServerConfig, path: string, init?: RequestInit): Promise
 		// The daemon returns a locked JSON envelope: { error, code, message, requestId }.
 		let detail = "";
 		let code: string | undefined;
+		let requestId: string | undefined;
 		try {
 			const body = await res.json();
 			detail = body?.message ?? body?.error ?? "";
 			code = typeof body?.code === "string" ? body.code : undefined;
+			requestId = typeof body?.requestId === "string" ? body.requestId : undefined;
 		} catch {
 			/* ignore */
 		}
-		throw new ApiError(res.status, `${res.status} ${res.statusText}${detail ? ` - ${detail}` : ""}`, code);
+		throw new ApiError(
+			res.status,
+			`${res.status} ${res.statusText}${detail ? ` - ${detail}` : ""}`,
+			code,
+			requestId,
+		);
 	}
 	return res;
+}
+
+/** Shared authenticated JSON request boundary for focused mobile feature modules. */
+export function apiRequest(cfg: ServerConfig, path: string, init?: RequestInit, timeoutMs?: number): Promise<Response> {
+	return req(cfg, path, init, timeoutMs);
 }
 
 // ---- Reads ------------------------------------------------------------------
@@ -346,15 +369,35 @@ export async function getSessions(cfg: ServerConfig, _projectId?: string): Promi
 // "no preview". We build the URL from our own base (httpBase honors the TLS
 // toggle) rather than the daemon's `previewUrl`, which hardcodes http:// + its
 // request host and would break over a TLS tunnel (e.g. tailscale serve).
-export async function getPreview(cfg: ServerConfig, id: string): Promise<{ entry: string; url: string } | null> {
+export async function getPreview(cfg: ServerConfig, id: string, preferredURL?: string): Promise<{ entry: string; url: string; authenticated: boolean } | null> {
 	const res = await req(cfg, `${API}/sessions/${encodeURIComponent(id)}/preview`);
 	const data = await res.json();
 	const entry = typeof data?.entry === "string" ? data.entry.trim() : "";
-	if (!entry) return null;
-	// Mirror the daemon's files route: /preview/files/<entry>, each segment escaped.
-	const escaped = entry.split("/").map(encodeURIComponent).join("/");
-	const url = `${httpBase(cfg)}${API}/sessions/${encodeURIComponent(id)}/preview/files/${escaped}`;
-	return { entry, url };
+	if (entry) {
+		// Mirror the daemon's files route: /preview/files/<entry>, each segment escaped.
+		const escaped = entry.split("/").map(encodeURIComponent).join("/");
+		const url = `${httpBase(cfg)}${API}/sessions/${encodeURIComponent(id)}/preview/files/${escaped}`;
+		return { entry, url, authenticated: true };
+	}
+	const external = mobileReachablePreviewURL(preferredURL, cfg.host);
+	return external ? { entry: external.hostname, url: external.href, authenticated: false } : null;
+}
+
+/** Rewrite host-loopback previews for the phone without ever forwarding AO auth. */
+export function mobileReachablePreviewURL(raw: string | undefined, aoHost: string): URL | undefined {
+	if (!raw) return undefined;
+	try {
+		const url = new URL(raw);
+		if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+		if (["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname)) {
+			const host = normalizeServerHost(aoHost);
+			if (!host) return undefined;
+			url.hostname = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+		}
+		return url;
+	} catch {
+		return undefined;
+	}
 }
 
 // ---- Agent catalog ----------------------------------------------------------
@@ -370,6 +413,20 @@ export type AgentCatalog = {
 	installed: AgentInfo[];
 	authorized: AgentInfo[];
 };
+
+export type AOSettings = {
+	defaultSessionMode: SessionMode;
+	chatHarnesses: string[];
+};
+
+export async function getSettings(cfg: ServerConfig): Promise<AOSettings> {
+	const res = await req(cfg, `${API}/settings`);
+	const data = await res.json();
+	return {
+		defaultSessionMode: data?.defaultSessionMode === "tui" ? "tui" : "chat",
+		chatHarnesses: Array.isArray(data?.chatHarnesses) ? data.chatHarnesses.filter((value: unknown): value is string => typeof value === "string") : [],
+	};
+}
 
 export async function getAgents(cfg: ServerConfig): Promise<AgentCatalog> {
 	const res = await req(cfg, `${API}/agents`);
@@ -525,6 +582,11 @@ export async function restoreSession(cfg: ServerConfig, id: string): Promise<voi
 	await req(cfg, `${API}/sessions/${encodeURIComponent(id)}/restore`, { method: "POST" });
 }
 
+/** Restart a stopped agent/controller without restoring a terminated AO session. */
+export async function resumeSessionAgent(cfg: ServerConfig, id: string): Promise<void> {
+	await req(cfg, `${API}/sessions/${encodeURIComponent(id)}/resume-agent`, { method: "POST" });
+}
+
 export async function sendMessage(cfg: ServerConfig, id: string, message: string): Promise<void> {
 	await req(cfg, `${API}/sessions/${encodeURIComponent(id)}/send`, {
 		method: "POST",
@@ -534,7 +596,7 @@ export async function sendMessage(cfg: ServerConfig, id: string, message: string
 
 export async function spawnSession(
 	cfg: ServerConfig,
-	opts: { projectId: string; prompt?: string; issueId?: string; harness?: string },
+	opts: { projectId: string; prompt?: string; issueId?: string; harness?: string; mode?: SessionMode },
 ): Promise<DashboardSession> {
 	const res = await req(cfg, `${API}/sessions`, {
 		method: "POST",
@@ -545,6 +607,10 @@ export async function spawnSession(
 			// The daemon needs an agent harness unless the project configures a
 			// default worker.agent; the spawn screen lets the user pick one.
 			harness: opts.harness || undefined,
+			// Mobile is Chat-first. Callers may deliberately request TUI for a harness
+			// that cannot expose a structured controller, but omission must never make
+			// the phone depend on a desktop preference it cannot see.
+			mode: opts.mode ?? "chat",
 			kind: "worker",
 		}),
 	});
@@ -556,10 +622,11 @@ export async function launchOrchestrator(
 	cfg: ServerConfig,
 	projectId: string,
 	clean = false,
+	mode: SessionMode = "chat",
 ): Promise<OrchestratorLink> {
 	const res = await req(cfg, `${API}/orchestrators`, {
 		method: "POST",
-		body: JSON.stringify({ projectId, clean }),
+		body: JSON.stringify({ projectId, clean, mode }),
 	});
 	const data = await res.json();
 	const o = data?.orchestrator ?? {};
@@ -567,8 +634,11 @@ export async function launchOrchestrator(
 		id: o.id,
 		projectId: o.projectId ?? projectId,
 		projectName: o.projectName ?? projectId,
+		// Legacy mobile presentation field: here this means "the orchestrator is
+		// active", not that a Chat session owns a tmux runtime handle.
 		hasRuntime: true,
 		isTerminal: false,
+		mode: o.mode === "tui" ? "tui" : o.mode === "chat" ? "chat" : mode,
 	};
 }
 

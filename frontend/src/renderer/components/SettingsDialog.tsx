@@ -96,19 +96,19 @@ export function SettingsDialog() {
 
 					{/* Main area — same bg as the app page */}
 					<div className="flex min-w-0 flex-1 flex-col bg-popover">
-						<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-14 shrink-0 flex-row items-center justify-between border-b border-(--color-border-settings-dialog-header) px-6")}>
+						<DialogHeader className={cn(settingsDialogHeaderClass, "flex h-auto shrink-0 flex-row items-center justify-between")}>
 							<DialogTitle className="text-sm font-semibold text-foreground">{activeLabel}</DialogTitle>
 							<DialogDescription className="sr-only">
 								{isProjectSettings ? t("settings.project.dialogDescription") : t("settings.dialogDescription", { section: activeLabel.toLowerCase() })}
 							</DialogDescription>
 							<DialogClose
 								aria-label={t("settings.close")}
-								className="grid size-8 place-items-center rounded-md text-muted-foreground transition-[background-color,color] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+								className="settings-close-button"
 							>
 								<X aria-hidden="true" className="size-4" />
 							</DialogClose>
 						</DialogHeader>
-						<div className={cn(settingsDialogBodyClass, "flex-1 overflow-y-auto px-6 pt-5")}>
+						<div className={cn(settingsDialogBodyClass, "flex-1")}>
 							{displaySettings?.scope === "project" ? (
 								<ProjectSettingsForm projectId={displaySettings.projectId} section={activeProjectSection} />
 							) : (

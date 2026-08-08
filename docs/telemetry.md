@@ -18,6 +18,14 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
 - Renderer exceptions, reduced to error name and coarse context
 - Daemon operational events: CLI invocation, session spawn/failure, waiting-input
   transitions, HTTP 5xx, and daemon panics
+- Code review outcomes: `ao.review.triggered`, `ao.review.submitted`,
+  `ao.review.cancelled`, and `ao.review.trigger_failed`. These carry the reviewer
+  `harness`, the `verdict` (`approved` / `changes_requested`), how long the pass
+  took, whether the review reached the provider, and a coarse `error_kind` on
+  failure. The review body is never sent: it is reviewer prose about a user's
+  source code. The PR URL and target SHA are also withheld, because both identify
+  the repository. `ao.review.submitted` fires only on the real running-to-complete
+  transition, so a reviewer retrying a submit cannot double-count a verdict
 - Desktop update outcomes: `ao.renderer.update_failed`,
   `ao.renderer.update_downloaded`, and `ao.renderer.update_unsupported`. These
   carry a coarse `error_category`, the `phase` (`check` or `download`), whether
@@ -34,6 +42,12 @@ ingestion drop rules, see [posthog-cost-controls.md](posthog-cost-controls.md).
   silent-failure case these exist to diagnose. Owning it in main also makes
   `phase` and `to_version` authoritative, since only main knows which operation
   was running and what it was fetching
+- Agent inventory: `ao.renderer.agents_available`, reported once per app launch
+  with `installed_count`, `authorized_count`, `supported_count`, and a sorted list
+  of authorized agent ids. Agent ids are a fixed vocabulary from AO's own
+  registry, never user input. This exists because `ao.session.spawned` only shows
+  which harness *ran*, so an install with six authorized agents that always picks
+  one was indistinguishable from an install that only had that one
 - AO version context (`app_version` / `ao_version`), platform, and build mode
 
 PostHog session recording is disabled in the client via

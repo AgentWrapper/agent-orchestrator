@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { aoBridge } from "../lib/bridge";
 import type { NotificationDTO, NotificationListStatus } from "../lib/notifications";
 import { useUiStore } from "../stores/ui-store";
 import { NotificationCenter, NotificationRuntime } from "./NotificationCenter";
@@ -34,8 +35,8 @@ const allNotifications: NotificationDTO[] = [
 		projectId: "proj-1",
 		prUrl: "https://github.com/acme/app/pull/67",
 		type: "ready_to_merge",
-		title: "PR #67 is ready to merge",
-		body: "Checkout flow has no known blocking CI or review feedback.",
+		title: "Fix checkout totals · PR #67",
+		body: "PR from session Checkout flow is ready to merge. CI passed with no blocking review feedback.",
 		status: "unread",
 		createdAt: "2026-07-21T11:00:00Z",
 		target: { kind: "pr", sessionId: "sess-2", prUrl: "https://github.com/acme/app/pull/67" },
@@ -69,7 +70,9 @@ const allNotifications: NotificationDTO[] = [
 		sessionId: "sess-dead",
 		projectId: "proj-1",
 		prUrl: "",
-		type: "pr_merged",
+		// needs_input: an agent is genuinely paused waiting on this session, so a
+		// terminated backing session should still require restore before opening.
+		type: "needs_input",
 		title: "PR #9 merged",
 		body: "The agent session has ended.",
 		status: "read",
@@ -171,11 +174,12 @@ beforeEach(() => {
 		data: [
 			{
 				id: "proj-1",
+				name: "acme/app",
 				sessions: [
-					{ id: "sess-1", isTerminated: false, status: "needs_input" },
-					{ id: "sess-2", isTerminated: false, status: "ready_to_merge" },
-					{ id: "sess-4", isTerminated: false, status: "needs_input" },
-					{ id: "sess-dead", isTerminated: true, status: "terminated" },
+					{ id: "sess-1", isTerminated: false, status: "needs_input", title: "Checkout flow" },
+					{ id: "sess-2", isTerminated: false, status: "ready_to_merge", title: "Checkout flow" },
+					{ id: "sess-4", isTerminated: false, status: "needs_input", title: "Docs sweep" },
+					{ id: "sess-dead", isTerminated: true, status: "terminated", title: "Old PR" },
 				],
 			},
 		],
@@ -280,7 +284,7 @@ describe("NotificationCenter", () => {
 
 		const rows = panel.getAllByRole("listitem");
 		expect(rows.map((row) => row.textContent)).toEqual([
-			expect.stringContaining("PR #67 is ready to merge"),
+			expect.stringContaining("Fix checkout totals · PR #67"),
 			expect.stringContaining("Checkout flow needs input"),
 			expect.stringContaining("Docs sweep needs input"),
 			expect.stringContaining("PR #9 merged"),
@@ -299,7 +303,7 @@ describe("NotificationCenter", () => {
 		expect(screen.queryByRole("button", { name: "Mark notification read" })).not.toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input")).toBeInTheDocument();
 		expect(screen.getByText("Checkout flow needs input").className).toContain("font-medium");
-		expect(screen.getByRole("link", { name: "PR #67 is ready to merge" }).className).toContain("font-medium");
+		expect(screen.getByLabelText("Fix checkout totals · PR #67").className).toContain("font-medium");
 		expect(screen.getByText("Docs sweep needs input").className).not.toContain("font-medium");
 	});
 
@@ -472,24 +476,70 @@ describe("NotificationCenter", () => {
 		});
 	});
 
-	// A PR row navigates to the session like any other, but its title stays a
-	// real link so the PR itself is still one click away.
-	it("opens the PR from its title and the session from the surrounding row", async () => {
+	it("opens the session from the non-link portion of a PR row title", async () => {
 		renderNotificationCenter();
 		await clickOpen();
 
-		const titleLink = screen.getByRole("link", { name: "PR #67 is ready to merge" });
-		expect(titleLink).toHaveAttribute("href", "https://github.com/acme/app/pull/67");
-		await userEvent.click(titleLink);
-		expect(window.open).toHaveBeenCalledWith("https://github.com/acme/app/pull/67", "_blank", "noopener,noreferrer");
-		expect(navigateMock).not.toHaveBeenCalled();
-
-		await clickOpen();
-		await userEvent.click(screen.getByText("Checkout flow has no known blocking CI or review feedback."));
+		await userEvent.click(screen.getByLabelText("Fix checkout totals · PR #67"));
+		expect(window.open).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "proj-1", sessionId: "sess-2" },
 		});
+	});
+
+	it("opens the linked PR number in the system browser without opening the session", async () => {
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderNotificationCenter();
+		await clickOpen();
+
+		await userEvent.click(screen.getByRole("link", { name: "Open PR #67" }));
+
+		expect(openExternal).toHaveBeenCalledWith("https://github.com/acme/app/pull/67");
+		expect(navigateMock).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
+	it("shows the PR title prominently and does not repeat the session name in metadata", async () => {
+		renderNotificationCenter();
+		await clickOpen();
+
+		const title = screen.getByLabelText("Fix checkout totals · PR #67");
+		const row = title.closest('[role="listitem"]');
+		expect(row).not.toBeNull();
+		expect(row).toHaveTextContent("acme/app");
+		expect(row?.textContent?.match(/Checkout flow/g)).toHaveLength(1);
+	});
+
+	it("normalizes legacy ready notifications without rewriting stored history", async () => {
+		const legacyReady = {
+			...allNotifications[0],
+			title: "Checkout flow is ready to merge",
+			body: "CI passed with no blocking review feedback.",
+		};
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) => ({
+			...notificationQueryResult(status),
+			data: {
+				pageParams: [""],
+				pages: [
+					{
+						notifications: [legacyReady],
+						unreadCount: 1,
+						unresolvedCount: 1,
+					},
+				],
+			},
+		}));
+		renderNotificationCenter();
+		await clickOpen();
+
+		expect(screen.getByLabelText("PR #67 is ready to merge")).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"PR from session Checkout flow is ready to merge. CI passed with no blocking review feedback.",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByText("Checkout flow is ready to merge")).not.toBeInTheDocument();
 	});
 
 	it("opens the session with the keyboard from a focused row", async () => {
@@ -518,6 +568,53 @@ describe("NotificationCenter", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Restore session" }));
 		await waitFor(() => expect(restoreSessionMock).toHaveBeenCalledWith("sess-dead"));
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId/sessions/$sessionId",
+			params: { projectId: "proj-1", sessionId: "sess-dead" },
+		});
+	});
+
+	// A PR outcome describes work that already finished — there's no paused
+	// agent to resume, so a terminated session behind one should stay directly
+	// viewable instead of gated behind restore.
+	it("opens a terminated session directly for a PR-outcome notification, with no restore option", async () => {
+		notificationQueryMock.mockImplementation((status: NotificationListStatus) =>
+			status === "all"
+				? {
+						...notificationQueryResult(status),
+						data: {
+							pageParams: [""],
+							pages: [
+								{
+									notifications: [
+										{
+											id: "ntf_dead_pr",
+											sessionId: "sess-dead",
+											projectId: "proj-1",
+											prUrl: "https://github.com/acme/app/pull/9",
+											type: "pr_merged",
+											title: "PR #9 merged",
+											body: "The agent session has ended.",
+											status: "read",
+											createdAt: "2026-07-19T09:00:00Z",
+											target: { kind: "session", sessionId: "sess-dead" },
+										},
+									],
+									unreadCount: 0,
+									unresolvedCount: 0,
+								},
+							],
+						},
+					}
+				: notificationQueryResult(status),
+		);
+		renderNotificationCenter();
+		await clickOpen();
+
+		expect(screen.queryByRole("button", { name: "Restore session" })).not.toBeInTheDocument();
+
+		await userEvent.click(screen.getByText("The agent session has ended."));
+		expect(restoreSessionMock).not.toHaveBeenCalled();
 		expect(navigateMock).toHaveBeenCalledWith({
 			to: "/projects/$projectId/sessions/$sessionId",
 			params: { projectId: "proj-1", sessionId: "sess-dead" },

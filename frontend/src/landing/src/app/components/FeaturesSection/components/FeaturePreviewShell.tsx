@@ -16,6 +16,14 @@ export const featurePreviewTokens = {
 	"--preview-border": "oklch(1 0 0 / 7%)",
 	"--preview-border-strong": "oklch(1 0 0 / 4%)",
 	"--preview-ring": "oklch(0.552 0.016 285.938)",
+	"--preview-divider": "oklch(1 0 0 / 4%)",
+	"--preview-input": "oklch(1 0 0 / 4%)",
+	"--preview-sidebar": "oklch(0.155 0.005 285.823)",
+	"--preview-sidebar-foreground": "oklch(0.985 0 0)",
+	"--preview-sidebar-accent": "oklch(0.274 0.006 286.033)",
+	"--preview-sidebar-hover": "color-mix(in oklch, oklch(0.985 0 0) 4%, transparent)",
+	"--preview-passive": "oklch(0.442 0.017 285.786)",
+	"--preview-raised": "oklch(0.274 0.006 286.033)",
 } as CSSProperties;
 
 export const previewStatus = {
@@ -39,7 +47,7 @@ export function FeaturePreviewShell({
 }) {
 	return (
 		<div
-			className={`mx-auto w-full min-w-0 max-w-[570px] overflow-hidden rounded-[20px] border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)] ${className}`}
+			className={`mx-auto w-full min-w-0 max-w-[570px] select-none overflow-hidden rounded-[20px] border border-[var(--preview-border)] bg-[var(--preview-background)] font-sans text-[var(--preview-foreground)] antialiased shadow-[0_24px_64px_-20px_rgba(0,0,0,0.8)] ${className}`}
 			style={featurePreviewTokens}
 		>
 			<div className="flex h-9 items-center border-b border-[var(--preview-border)] bg-[var(--preview-background)] px-3">
@@ -54,7 +62,7 @@ export function FeaturePreviewShell({
 						{title}
 					</span>
 				</div>
-				{trailing ? <div className="ml-auto hidden shrink-0 min-[420px]:block">{trailing}</div> : null}
+				{trailing ? <div className="ml-auto min-w-0 shrink-0">{trailing}</div> : null}
 			</div>
 			{children}
 		</div>

@@ -26,6 +26,7 @@ const LOGOS: Record<string, number> = {
 	kilocode: require("../assets/agents/kilocode.png"),
 	kimi: require("../assets/agents/kimi.png"),
 	kiro: require("../assets/agents/kiro.png"),
+	muse: require("../assets/agents/muse.png"),
 	opencode: require("../assets/agents/opencode.png"),
 	pi: require("../assets/agents/pi.png"),
 	qwen: require("../assets/agents/qwen.png"),

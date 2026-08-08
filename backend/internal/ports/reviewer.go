@@ -24,16 +24,13 @@ type Reviewer interface {
 }
 
 // ReviewerBinaryResolver is the optional capability a reviewer adapter exposes
-// when its CLI binary can be checked without launching a review. The result is
-// advisory UI metadata; the review launch remains the authoritative check.
+// when its CLI binary can be checked without launching a review.
 type ReviewerBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
-// ErrReviewerNotAuthenticated is returned when a reviewer auth probe
-// conclusively reports that the CLI is signed out or its credentials are
-// invalid. Probe failures that cannot distinguish auth from connectivity stay
-// advisory and do not use this sentinel.
+// ErrReviewerNotAuthenticated marks a conclusive reviewer authentication
+// failure. Indeterminate probe failures must not use this sentinel.
 var ErrReviewerNotAuthenticated = errors.New("reviewer: not authenticated")
 
 // ReviewerAuthChecker is the optional capability a reviewer adapter exposes
@@ -42,19 +39,14 @@ type ReviewerAuthChecker interface {
 	AuthStatus(ctx context.Context) (AgentAuthStatus, error)
 }
 
-// OneShotReviewer is a non-interactive reviewer that exits after emitting one
-// machine-readable result. The review launcher owns its subprocess lifecycle
-// and feeds the normalized result back through AO's existing review service.
-// Interactive reviewers deliberately do not implement this interface.
+// OneShotReviewer exits after emitting one machine-readable review result.
 type OneShotReviewer interface {
 	Reviewer
 	ParseReviewResult(output []byte) (ReviewResult, error)
 }
 
-// TerminalOneShotReviewer is a one-shot reviewer that can run through AO's
-// display-only terminal runner. The runner keeps the review visible in the
-// same terminal surface as interactive reviewers while the daemon still
-// receives structured results from a small result file.
+// TerminalOneShotReviewer displays a one-shot review in an AO terminal while
+// returning its structured result through an AO-owned sidecar.
 type TerminalOneShotReviewer interface {
 	OneShotReviewer
 	PrepareTerminalRequest(path string, tasks []ReviewTask) (ReviewCommandSpec, error)
@@ -62,16 +54,12 @@ type TerminalOneShotReviewer interface {
 	ParseTerminalResult(output []byte) (TerminalReviewResult, error)
 }
 
-// TerminalReviewRequestReader is an optional capability for durable
-// output-only reviewers. It lets the launcher recover an AO-owned request
-// after a daemon restart without coupling the generic review package to a
-// reviewer's private JSON schema.
+// TerminalReviewRequestReader normalizes a durable reviewer request so the
+// launcher can recover it after a daemon restart.
 type TerminalReviewRequestReader interface {
 	ReadTerminalRequest(path string) (TerminalReviewRequest, error)
 }
 
-// TerminalReviewRequest is the normalized subset of a reviewer's private
-// request file needed for restart recovery.
 type TerminalReviewRequest struct {
 	Version    int
 	WorkerID   domain.SessionID
@@ -83,14 +71,12 @@ type TerminalReviewRequest struct {
 	Tasks      []ReviewTask
 }
 
-// ReviewResult is the reviewer-neutral result of a one-shot review.
 type ReviewResult struct {
 	Verdict  domain.ReviewVerdict
 	Body     string
 	Comments []ReviewComment
 }
 
-// ReviewComment is a normalized inline finding emitted by a reviewer.
 type ReviewComment struct {
 	Path          string
 	StartLine     int
@@ -102,15 +88,11 @@ type ReviewComment struct {
 	SecurityIssue bool
 }
 
-// TerminalReviewResult is the durable result written by a display-only
-// one-shot reviewer terminal. Results are written incrementally, so Complete
-// is the only field the daemon uses to decide that the whole batch finished.
 type TerminalReviewResult struct {
 	Complete bool
 	Results  []TerminalReviewItem
 }
 
-// TerminalReviewItem is one queued review result, or one queued failure.
 type TerminalReviewItem struct {
 	RunID     string
 	PRURL     string
@@ -128,6 +110,13 @@ const (
 	// ReviewCancelInterrupt sends the terminal interrupt key sequence to the
 	// reviewer process while preserving the terminal pane.
 	ReviewCancelInterrupt ReviewCancelMode = "interrupt"
+	// ReviewCancelMessage sends an in-band message to the reviewer process. Use
+	// this for harnesses where Ctrl-C exits the TUI instead of cancelling only
+	// the active turn.
+	ReviewCancelMessage ReviewCancelMode = "message"
+	// ReviewCancelInput sends raw terminal input to the reviewer process without
+	// appending Enter. Use this for TUI keybindings such as Escape.
+	ReviewCancelInput ReviewCancelMode = "input"
 )
 
 // ReviewCancelSpec is the adapter-selected cancellation behavior for a running
@@ -135,12 +124,36 @@ const (
 type ReviewCancelSpec struct {
 	Mode       ReviewCancelMode
 	Interrupts int
+	Message    string
+	Input      string
+	Inputs     []string
+	InputDelay time.Duration
 }
 
 // ReviewerCanceller is implemented by reviewer adapters that explicitly define
 // how their running CLI should be cancelled.
 type ReviewerCanceller interface {
 	ReviewCancel(ctx context.Context) (ReviewCancelSpec, error)
+}
+
+// ReviewerRestorer is implemented by prompt-driven reviewers that can resume a
+// native agent conversation after AO recreates the terminal pane.
+type ReviewerRestorer interface {
+	ReviewRestoreCommand(ctx context.Context, inv ReviewInvocation) (cmd ReviewCommandSpec, ok bool, err error)
+}
+
+// ReviewerReusePolicy is implemented by interactive reviewer adapters that
+// need a fresh TUI for each task because request-scoped context is fixed at
+// process launch. Returning false forces a fresh launch for every pass.
+type ReviewerReusePolicy interface {
+	ReviewProcessReusable() bool
+}
+
+// ReviewerPromptReadinessProvider lets an interactive reviewer describe when
+// its terminal prompt is ready for InitialMessage injection. Reviewers without
+// this capability receive a conservative startup delay from the launcher.
+type ReviewerPromptReadinessProvider interface {
+	ReviewPromptReadinessHints(ctx context.Context) (PromptReadinessHints, error)
 }
 
 // ReviewInvocation describes one review pass for a reviewer to act on. All ids
@@ -155,6 +168,9 @@ type ReviewInvocation struct {
 	RunID string
 	// WorkerSessionID is the worker whose PR is under review.
 	WorkerSessionID domain.SessionID
+	// AgentSessionID is the reviewer's native agent conversation id, used only
+	// to resume a destroyed/recreated reviewer terminal.
+	AgentSessionID string
 	// PRURL is the pull request to review.
 	PRURL string
 	// TargetSHA is the PR head commit under review.
@@ -166,6 +182,9 @@ type ReviewInvocation struct {
 	ReviewIndex int
 	// WorkspacePath is the worker's checkout the reviewer reads.
 	WorkspacePath string
+	// DataDir is AO's owned state root. Reviewer prelaunch hooks may use it for
+	// profile installation but must not write outside AO/workspace boundaries.
+	DataDir string
 	// Prompt and SystemPrompt are the review instructions AO authored centrally,
 	// mirroring the worker's LaunchConfig.Prompt / SystemPrompt split: SystemPrompt
 	// carries the standing reviewer role, Prompt the per-pass task. A prompt-driven
@@ -197,11 +216,20 @@ type ReviewTask struct {
 	WorkspacePath string
 }
 
-// ReviewCommandSpec is how to launch a reviewer: the argv and any extra env the
-// adapter needs. AO supplies the workspace and review-tracking env around it.
+// ReviewCommandSpec is how to launch a reviewer: the argv, any extra env, and
+// any launch-time native session id the adapter can determine. AO supplies the
+// workspace and review-tracking env around it.
 type ReviewCommandSpec struct {
-	Argv []string
-	Env  map[string]string
+	Argv           []string
+	Env            map[string]string
+	AgentSessionID string
+	// InitialMessage is injected after the process starts. Interactive-only
+	// reviewers use this instead of placing a task on the command line.
+	InitialMessage string
+	// WorkingDirectory overrides the worker checkout as the process working
+	// directory. Secure interactive reviewers use an AO-owned neutral directory;
+	// this routing field is not itself a process sandbox.
+	WorkingDirectory string
 }
 
 // ReviewerResolver maps a reviewer harness onto its adapter. ok=false means no

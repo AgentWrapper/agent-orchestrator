@@ -1,14 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import type { TFunction } from "i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
 	ArrowUpRight,
 	ChevronDown,
 	ChevronRight,
 	Files as FilesIcon,
 	GitPullRequest,
+	GitMerge,
+	Info,
 	Play,
 	Terminal,
 	Trash2,
@@ -20,12 +24,17 @@ import { apiClient, apiErrorMessage } from "../lib/api-client";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
 import { formatTimeCompact } from "../lib/format-time";
 import { AgentAvatar } from "./AgentAvatar";
-import { useSessionScmSummary, type SessionPRSummary } from "../hooks/useSessionScmSummary";
+import {
+	sessionScmSummaryQueryKey,
+	useSessionScmSummary,
+	type SessionPRSummary,
+} from "../hooks/useSessionScmSummary";
+import { useSessionUsage, type SessionUsage } from "../hooks/useSessionUsage";
 import { useSessionWorkspaceFilesChangedCount } from "../hooks/useSessionWorkspaceFiles";
 import { clearTerminateSessionState, useTerminateSession } from "../hooks/useTerminateSession";
-import { prBrowserUrl, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { prBrowserUrl, prCardPresentation, sessionPRDisplaySummaries } from "../lib/pr-display";
+import { formatTokenCount } from "../lib/format-token-count";
 import type { WorkspaceSession, WorkspaceSummary } from "../types/workspace";
-import { reviewerTerminalInteraction, type ReviewerTerminalTarget } from "../types/terminal";
 import { findProjectOrchestrator, sortedPRs } from "../types/workspace";
 import { getAgentActivityView, getSessionTimelinePillView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
@@ -40,14 +49,16 @@ import { SessionTerminationPopover } from "./SessionTerminationPopover";
 import { ReviewerSelect } from "./ReviewerSelect";
 import { agentsQueryOptions } from "../hooks/useAgentsQuery";
 import { Switch } from "./ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { appI18n } from "../i18n";
 import type { MessageKey } from "../i18n";
+import { usesPreviewWorkspaceData as usePreviewData } from "../lib/preview-mode";
 
 type ProjectConfig = components["schemas"]["ProjectConfig"];
 type PRReviewState = components["schemas"]["PRReviewState"];
 type ReviewsResponse = components["schemas"]["ListReviewsResponse"];
 type ReviewRunFacts = components["schemas"]["ReviewRun"];
-type OpenReviewerTerminal = (target: ReviewerTerminalTarget) => void;
+type OpenReviewerTerminal = (target: { handleId: string; harness: string }) => void;
 
 export type InspectorView = "summary" | "browser" | "files";
 
@@ -84,12 +95,10 @@ const VIEW_DEFS: { id: InspectorView; labelKey: "inspector.summary" | "inspector
 	},
 ];
 
-const usePreviewData = import.meta.env.VITE_NO_ELECTRON === "1";
-
 const prStateTone: Record<SessionPRSummary["state"], string> = {
 	open: "border-border-strong bg-overlay text-muted-foreground",
 	draft: "border-status-in-review/35 bg-status-in-review/10 text-status-in-review",
-	merged: "border-accent/40 bg-accent-weak text-accent",
+	merged: "border-border-strong bg-overlay text-success",
 	closed: "border-error/40 bg-error/10 text-error",
 };
 
@@ -204,9 +213,11 @@ export function SessionInspector({
 						<span className="relative inline-flex shrink-0 [&_svg]:size-icon-md">
 							{entry.icon}
 							{entry.id === "browser" && browserUnseen ? (
-								<span aria-hidden="true" className="absolute -right-1 -top-1 inline-flex size-dot-sm">
-									{/* Pinging halo + solid core: a glowing beacon that draws the eye to
-									    a link that arrived in the terminal, cleared once the tab opens. */}
+								<span
+									aria-hidden="true"
+									className="absolute -right-1 -top-1 inline-flex size-dot-sm"
+									data-testid="browser-unseen-indicator"
+								>
 									<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
 									<span className="relative inline-flex size-dot-sm rounded-full bg-primary ring-2 ring-background" />
 								</span>
@@ -295,6 +306,14 @@ function SummaryView({
 }) {
 	const { t } = useTranslation();
 	const query = useSessionScmSummary(session.id);
+	const developerMode = useUiStore((state) => state.developerMode);
+	const usageQuery = useSessionUsage(session.id, developerMode);
+	const showUsage =
+		developerMode &&
+		!usageQuery.isLoading &&
+		!usageQuery.isError &&
+		hasMeaningfulSessionUsage(usageQuery.data);
+	const showUsageError = developerMode && usageQuery.isError;
 	const prSummaries = sessionPRDisplaySummaries(session, query.data);
 	const prSectionTitle = prSummaries.length > 1 ? t("inspector.pullRequests", { count: prSummaries.length }) : t("inspector.pullRequest");
 	const hasPRs = prSummaries.length > 0;
@@ -306,7 +325,7 @@ function SummaryView({
 				<div className="flex flex-col gap-1.5">
 					{hasPRs ? (
 						prSummaries.map((pr) => (
-							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} />
+							<PRSummaryCard key={pr.url || pr.htmlUrl || pr.number} pr={pr} sessionId={session.id} />
 						))
 					) : (
 						<p className={inspectorEmptyClass}>{t("inspector.noPROpened")}</p>
@@ -322,8 +341,313 @@ function SummaryView({
 				<ActivityTimeline prs={prSummaries} session={session} />
 				<ResumeAgentControl session={session} />
 			</Section>
+
+			{showUsageError ? (
+				<Section title={t("inspector.usage.title")}>
+					<p className={inspectorEmptyClass} role="alert">
+						{t("inspector.usage.totalTokensUnavailable")}
+					</p>
+				</Section>
+			) : showUsage && usageQuery.data ? (
+				<Section title={t("inspector.usage.title")}>
+					<UsageCostTelemetry usage={usageQuery.data} />
+				</Section>
+			) : null}
 		</div>
 	);
+}
+
+function UsageCostTelemetry({ usage }: { usage: SessionUsage }) {
+	const { t } = useTranslation();
+	const totalTokens = usageTokenTotal(usage.totals);
+	const exactTotal = totalTokens?.toLocaleString("en-US");
+
+	return (
+		<div>
+			<div className="grid grid-cols-2 gap-4">
+				<div className="min-w-0">
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalTokens")}</p>
+					<p
+						aria-label={
+							totalTokens === null
+								? t("inspector.usage.totalTokensUnavailable")
+								: t("inspector.usage.totalTokensAria", { count: exactTotal })
+						}
+						className="mt-0.5 truncate font-mono text-md-sm font-medium text-settings-label"
+						title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+					>
+						{totalTokens === null ? t("inspector.usage.noUsageYet") : formatTelemetryTokenValue(totalTokens)}
+					</p>
+				</div>
+				<div className="min-w-0 text-right">
+					<p className="text-2xs text-settings-muted">{t("inspector.usage.totalCost")}</p>
+					<p
+						className="mt-0.5 truncate text-sm-md text-settings-muted"
+						title={t("inspector.usage.costComingSoon")}
+					>
+						{t("inspector.usage.comingSoon")}
+					</p>
+				</div>
+			</div>
+
+			<div className="mt-3">
+				<div
+					className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-2.5 py-2.5"
+					data-testid="session-usage-metrics"
+				>
+					<UsageMetrics totals={usage.totals} />
+				</div>
+			</div>
+
+			{usage.harnesses.length > 0 ? (
+				<div className="mt-3 border-t border-(--color-border-settings-input) pt-2">
+					<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+						<span>{t("inspector.usage.agent")}</span>
+						<span className="text-right">{t("inspector.usage.tokens")}</span>
+						<span className="text-right">{t("inspector.usage.cost")}</span>
+					</div>
+					{usage.harnesses.map((harness, index) => (
+						<UsageProviderRow
+							harness={harness}
+							key={`${harness.harness}:${index}`}
+						/>
+					))}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function UsageProviderRow({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+	const harnessName = formatHarnessName(harness.harness);
+
+	return (
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.providerDetails", { name: harnessName })}
+			name={harnessName}
+			nameClassName="text-sm-md"
+			regionLabel={t("inspector.usage.providerPeek", { name: harnessName })}
+			totals={harness.totals}
+		>
+			<ProviderUsageDetails harness={harness} />
+		</UsageDisclosureRow>
+	);
+}
+
+function ProviderUsageDetails({ harness }: { harness: SessionUsage["harnesses"][number] }) {
+	const { t } = useTranslation();
+
+	return (
+		<>
+			<div className="pb-2">
+				<UsageMetrics totals={harness.totals} />
+			</div>
+
+			<div className="border-t border-(--color-border-settings-input) pt-2">
+				<div className="grid grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 px-1 pb-1 text-2xs text-settings-muted">
+					<span>{t("inspector.usage.models", { count: harness.models.length })}</span>
+					<span className="text-right">{t("inspector.usage.tokens")}</span>
+					<span className="text-right">{t("inspector.usage.cost")}</span>
+				</div>
+				{harness.models.length > 0 ? (
+					harness.models.map((model, index) => (
+						<UsageModelRow key={`${model.modelId}:${index}`} model={model} />
+					))
+				) : (
+					<p className="px-1 py-2 text-2xs text-settings-muted">{t("inspector.usage.noModelTelemetry")}</p>
+				)}
+			</div>
+		</>
+	);
+}
+
+function UsageModelRow({
+	model,
+}: {
+	model: SessionUsage["harnesses"][number]["models"][number];
+}) {
+	const { t } = useTranslation();
+	const modelName = model.modelId;
+
+	return (
+		<UsageDisclosureRow
+			detailsLabel={t("inspector.usage.modelDetails", { name: modelName })}
+			name={modelName}
+			nameClassName="font-mono text-2xs"
+			regionLabel={t("inspector.usage.modelPeek", { name: modelName })}
+			totals={model.totals}
+		>
+			<UsageMetrics totals={model.totals} />
+		</UsageDisclosureRow>
+	);
+}
+
+function UsageDisclosureRow({
+	children,
+	detailsLabel,
+	name,
+	nameClassName,
+	regionLabel,
+	totals,
+}: {
+	children: ReactNode;
+	detailsLabel: string;
+	name: string;
+	nameClassName: string;
+	regionLabel: string;
+	totals: SessionUsage["totals"];
+}) {
+	const { t } = useTranslation();
+	const [open, setOpen] = useState(false);
+	const detailID = useId();
+	const totalTokens = usageTokenTotal(totals);
+	const exactTotal = totalTokens?.toLocaleString("en-US");
+
+	return (
+		<div>
+			<button
+				aria-controls={detailID}
+				aria-expanded={open}
+				aria-label={detailsLabel}
+				className="grid w-full grid-cols-[minmax(0,1fr)_4.5rem_5.5rem] items-center gap-2 rounded-md px-1 py-2 text-left outline-none transition-colors hover:bg-interactive-hover focus-visible:bg-interactive-hover focus-visible:ring-1 focus-visible:ring-ring"
+				onClick={() => setOpen((current) => !current)}
+				type="button"
+			>
+				<span className={`flex min-w-0 items-center gap-1 text-settings-label ${nameClassName}`}>
+					{open ? (
+						<ChevronDown aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					) : (
+						<ChevronRight aria-hidden="true" className="size-3 shrink-0 text-settings-muted" />
+					)}
+					<span className="truncate">{name}</span>
+				</span>
+				<span
+					className="text-right font-mono text-2xs text-settings-label"
+					title={totalTokens === null ? undefined : t("inspector.usage.tokensExact", { count: exactTotal })}
+				>
+					{totalTokens === null ? "—" : formatTelemetryTokenValue(totalTokens)}
+				</span>
+				<UsageCostPlaceholder />
+			</button>
+			{open ? (
+				<div
+					aria-label={regionLabel}
+					className="mx-1 mb-2 border-l border-(--color-border-settings-input) py-1.5 pl-2.5"
+					id={detailID}
+					role="region"
+				>
+					{children}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function UsageCostPlaceholder() {
+	const { t } = useTranslation();
+	const label = t("inspector.usage.metricUnavailable", { label: t("inspector.usage.cost") });
+	return (
+		<span aria-label={label} className="text-right font-mono text-2xs text-settings-muted" title={label}>
+			—
+		</span>
+	);
+}
+
+function UsageMetrics({ totals }: { totals: SessionUsage["totals"] }) {
+	const { t } = useTranslation();
+	return (
+		<dl className="grid grid-cols-2 gap-x-4 gap-y-2 @max-[300px]/inspector:grid-cols-1">
+			<UsageMetric label={t("inspector.usage.inputTokens")} metric={totals.inputTokens} />
+			<UsageMetric label={t("inspector.usage.outputTokens")} metric={totals.outputTokens} />
+			<UsageMetric label={t("inspector.usage.cacheReadTokens")} metric={totals.cacheReadTokens} />
+			<UsageMetric label={t("inspector.usage.cacheWriteTokens")} metric={totals.cacheWriteTokens} />
+			<UsageMetric label={t("inspector.usage.reasoningTokens")} metric={totals.reasoningTokens} />
+			<UsageMetric label={t("inspector.usage.uncachedInputTokens")} metric={totals.uncachedInputTokens} />
+		</dl>
+	);
+}
+
+function UsageMetric({
+	label,
+	metric,
+}: {
+	label: string;
+	metric: SessionUsage["totals"]["inputTokens"];
+}) {
+	const { t } = useTranslation();
+	const exactValue = metric?.toLocaleString("en-US");
+	const accessibleLabel =
+		metric === null
+			? t("inspector.usage.metricUnavailable", { label })
+			: t("inspector.usage.metricAria", { label, count: exactValue });
+	return (
+		<div className="min-w-0">
+			<dt className="truncate text-2xs text-settings-muted">{label}</dt>
+			<dd
+				aria-label={accessibleLabel}
+				className="mt-0.5 truncate font-mono text-sm-md text-settings-label"
+				title={
+					metric === null
+						? t("inspector.usage.metricUnavailable", { label })
+						: t("inspector.usage.tokensExact", { count: exactValue })
+				}
+			>
+				{metric === null ? "—" : formatTelemetryTokenValue(metric)}
+			</dd>
+		</div>
+	);
+}
+
+const usageMetricKeys = [
+	"inputTokens",
+	"uncachedInputTokens",
+	"cacheReadTokens",
+	"cacheWriteTokens",
+	"outputTokens",
+	"reasoningTokens",
+] as const;
+
+function usageScopes(usage: SessionUsage): SessionUsage["totals"][] {
+	return [
+		usage.totals,
+		...usage.harnesses.flatMap((harness) => [
+			harness.totals,
+			...harness.models.map((model) => model.totals),
+		]),
+	];
+}
+
+function hasMeaningfulSessionUsage(usage?: SessionUsage): usage is SessionUsage {
+	if (!usage) return false;
+	return usageScopes(usage).some((totals) =>
+		usageMetricKeys.some((key) => (totals[key] ?? 0) > 0),
+	);
+}
+
+function formatTelemetryTokenValue(totalTokens: number): string {
+	return formatTokenCount(totalTokens).replace(/ tok$/, "");
+}
+
+function usageTokenTotal(totals: SessionUsage["totals"]): number | null {
+	if (totals.inputTokens === null && totals.outputTokens === null) return null;
+	return (totals.inputTokens ?? 0) + (totals.outputTokens ?? 0);
+}
+
+function formatHarnessName(harness: string): string {
+	const knownNames: Record<string, string> = {
+		"claude-code": "Claude",
+		claude: "Claude",
+		codex: "Codex",
+		glm: "GLM",
+		kimi: "Kimi",
+	};
+	if (knownNames[harness]) return knownNames[harness];
+	return harness
+		.split(/[-_]/)
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(" ");
 }
 
 function ResumeAgentControl({ session }: { session: WorkspaceSession }) {
@@ -489,8 +813,32 @@ function updateSessionMergePolicy(
 	}));
 }
 
-function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
+function PRSummaryCard({ pr, sessionId }: { pr: SessionPRSummary; sessionId: string }) {
 	const { t } = useTranslation();
+	const queryClient = useQueryClient();
+	const presentation = prCardPresentation(pr);
+	const canMerge =
+		pr.state === "open" &&
+		presentation.primary.key === "merge" &&
+		presentation.primary.tone === "success" &&
+		Boolean(pr.url && pr.headSha);
+	const mergePr = useMutation({
+		mutationFn: async () => {
+			if (usePreviewData) return;
+			const { error } = await apiClient.POST("/api/v1/prs/{id}/merge", {
+				params: { path: { id: String(pr.number) } },
+				body: { prUrl: pr.url, expectedHeadSha: pr.headSha },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("pr.merge.failed", { number: pr.number })));
+		},
+		onSuccess: async () => {
+			await Promise.all([
+				queryClient.invalidateQueries({ queryKey: sessionScmSummaryQueryKey(sessionId) }),
+				queryClient.invalidateQueries({ queryKey: workspaceQueryKey }),
+			]);
+		},
+	});
+	const mergeError = mergePr.error instanceof Error ? mergePr.error.message : null;
 	return (
 		<article className="rounded-lg border border-(--color-border-settings-input) bg-(--color-bg-settings-input) px-3 py-2.5">
 			{pr.title ? (
@@ -523,7 +871,38 @@ function PRSummaryCard({ pr }: { pr: SessionPRSummary }) {
 				</Badge>
 			</div>
 			<PRSummaryMeta className="mt-1.5" pr={pr} />
-			<PRCardStatusSummary className="mt-2" pr={pr} />
+			{pr.state !== "merged" ? (
+				<>
+					<PRCardStatusSummary
+						action={
+							canMerge ? (
+								<Button
+									aria-label={t("pr.merge.actionFor", { number: pr.number })}
+									className="gap-1 px-2"
+									disabled={mergePr.isPending}
+									onClick={() => mergePr.mutate()}
+									size="sm"
+									type="button"
+								>
+									{mergePr.isPending ? (
+										<Loader2 className="size-icon-sm animate-spin" aria-hidden="true" />
+									) : (
+										<GitMerge className="size-icon-sm" aria-hidden="true" />
+									)}
+									{mergePr.isPending ? t("pr.merge.merging") : t("pr.merge.action")}
+								</Button>
+							) : undefined
+						}
+						className="mt-2"
+						pr={pr}
+					/>
+					{mergeError ? (
+						<p className="mt-2 text-2xs leading-normal text-error" role="status">
+							{mergeError}
+						</p>
+					) : null}
+				</>
+			) : null}
 		</article>
 	);
 }
@@ -736,7 +1115,12 @@ function scmTimelineStates(session: WorkspaceSession): ScmTimelineState[] {
 /** Reviewer harness the daemon accepts, typed from the generated schema. */
 type ReviewerHarness = NonNullable<components["schemas"]["TriggerReviewRequest"]["harness"]>;
 type AgentInfo = components["schemas"]["AgentInfo"];
-type AgentCatalog = { supported?: AgentInfo[]; installed?: AgentInfo[]; authorized?: AgentInfo[]; reviewerInstalled?: AgentInfo[] };
+type AgentCatalog = {
+	supported?: AgentInfo[];
+	installed?: AgentInfo[];
+	authorized?: AgentInfo[];
+	reviewerInstalled?: AgentInfo[];
+};
 
 function ReviewsSection({
 	session,
@@ -749,6 +1133,11 @@ function ReviewsSection({
 	const hasPr = sortedPRs(session).length > 0;
 	const queryClient = useQueryClient();
 	const [reviewNotice, setReviewNotice] = useState<string | null>(null);
+	useEffect(() => {
+		if (!reviewNotice) return;
+		const timer = window.setTimeout(() => setReviewNotice(null), 10_000);
+		return () => window.clearTimeout(timer);
+	}, [reviewNotice]);
 	const reviewsQuery = useQuery({
 		queryKey: ["session-reviews", session.id],
 		enabled: hasPr,
@@ -790,13 +1179,15 @@ function ReviewsSection({
 	}, [session.id, session.reviewerHarness]);
 	const saveReviewer = useMutation({
 		mutationFn: async (harness: ReviewerHarness | "") => {
-			const { error } = await apiClient.PUT("/api/v1/sessions/{sessionId}/reviewer", {
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/switch", {
 				params: { path: { sessionId: session.id } },
 				body: { harness: harness || undefined },
 			});
 			if (error) throw new Error(apiErrorMessage(error, "Unable to save reviewer"));
+			if (data) queryClient.setQueryData(["session-reviews", session.id], data);
 		},
 		onSuccess: () => {
+			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
@@ -824,17 +1215,12 @@ function ReviewsSection({
 			}
 			if (data?.reviewerHandleId) {
 				const harness = started.latestRun.harness || "reviewer";
-				onOpenReviewerTerminal?.({
-					kind: "reviewer",
-					handleId: data.reviewerHandleId,
-					harness,
-					interaction: reviewerTerminalInteraction(harness),
-				});
+				onOpenReviewerTerminal?.({ handleId: data.reviewerHandleId, harness });
 			}
 		},
 		onError: () => {
 			// Trigger persists failed preflight runs before returning an API error.
-			// Refresh here so the review row does not remain stuck at "Not run".
+			// Refresh so the row reflects that durable failure immediately.
 			void queryClient.invalidateQueries({ queryKey: ["session-reviews", session.id] });
 		},
 	});
@@ -851,6 +1237,20 @@ function ReviewsSection({
 			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
 		},
 	});
+	const killReview = useMutation({
+		mutationFn: async () => {
+			const { data, error } = await apiClient.POST("/api/v1/sessions/{sessionId}/reviews/kill", {
+				params: { path: { sessionId: session.id } },
+			});
+			if (error) throw new Error(apiErrorMessage(error, t("inspector.unableKillReviewSession")));
+			return data;
+		},
+		onSuccess: (data) => {
+			setReviewNotice(null);
+			if (data) queryClient.setQueryData(["session-reviews", session.id], data);
+			void queryClient.invalidateQueries({ queryKey: workspaceQueryKey });
+		},
+	});
 	const reviewStates = reviewsQuery.data?.reviews ?? [];
 	const scmSummary = useSessionScmSummary(session.id);
 	const prSummaries = sessionPRDisplaySummaries(session, scmSummary.data);
@@ -860,28 +1260,25 @@ function ReviewsSection({
 			((pr.review?.reviews?.length ?? 0) > 0 ||
 				(pr.review?.unresolvedBy ?? []).some((reviewer) => reviewer.count > 0)),
 	);
-	const unresolvedTotal = prSummaries
-		.filter((pr) => pr.state === "open")
-		.reduce((total, pr) => total + (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0), 0);
-	const githubReviewCount = githubReviews.reduce((n, pr) => n + (pr.review?.reviews?.length ?? 0), 0);
 
 	return (
 		<div>
-			{/* One panel, two sources, in the order they happen: AO's own reviewer runs
-			    first, then whatever humans and bots leave on the PR. Tabs hid one
-			    behind the other when the point is to read them together. */}
+			{/* Running a review is an action; reading them is a list. The action stays
+			    on top, then one list carrying both sources keyed by PR. */}
 				<ReviewPanel
 					config={projectConfigQuery.data}
-					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? saveReviewer.error}
+					error={reviewsQuery.error ?? triggerReview.error ?? cancelReview.error ?? killReview.error ?? saveReviewer.error}
 				isLoading={reviewsQuery.isLoading}
 				isCancelling={cancelReview.isPending}
+				isKilling={killReview.isPending}
+				isSwitchingReviewer={saveReviewer.isPending}
 				isTriggering={triggerReview.isPending}
 				onOpenTerminal={onOpenReviewerTerminal}
 				onCancel={() => cancelReview.mutate()}
+				onKill={() => killReview.mutate()}
 				onTrigger={() => triggerReview.mutate()}
 				reviewerHandleId={reviewsQuery.data?.reviewerHandleId ?? ""}
 				reviewStates={reviewStates}
-				runs={reviewsQuery.data?.runs ?? []}
 					notice={reviewNotice}
 					agentCatalog={agentsQuery.data}
 					reviewerOverride={reviewerOverride}
@@ -891,16 +1288,124 @@ function ReviewsSection({
 					}}
 					session={session}
 				/>
-			<Section
-				surface
-				title={`${t("inspector.reviewsOnPR")}${githubReviewCount > 0 ? ` (${githubReviewCount})` : ""}`}
-			>
-				<GithubReviewPanel
-					isLoading={scmSummary.isLoading}
-					prs={githubReviews}
-					unresolvedTotal={unresolvedTotal}
-				/>
+			<MergedReviewsSection
+				githubPRs={githubReviews}
+				isLoading={scmSummary.isLoading}
+				reviewStates={reviewStates}
+				runs={reviewsQuery.data?.runs ?? []}
+				session={session}
+			/>
+		</div>
+	);
+}
+
+/**
+ * AO's own reviewer passes and the reviews humans and bots left on GitHub, in
+ * one list keyed by PR. They were two sections, which made the same PR appear
+ * twice and left the reader joining them up by number; a review is a review,
+ * and what matters is who wrote it. Each group inside a PR names its source —
+ * "AO codex" against the agent that ran, "On GitHub" for everyone else.
+ */
+function MergedReviewsSection({
+	githubPRs,
+	isLoading,
+	reviewStates,
+	runs,
+	session,
+}: {
+	githubPRs: SessionPRSummary[];
+	isLoading: boolean;
+	reviewStates: PRReviewState[];
+	runs: ReviewRunFacts[];
+	session: WorkspaceSession;
+}) {
+	const { t } = useTranslation();
+	const openReviewStates = openReviewStatesFor(session, reviewStates);
+	const runsByPR = runsByPRFrom(openReviewStates, runs);
+	const aoStates = triggeredReviewStatesFrom(openReviewStates, runs);
+
+	// Union by PR number, newest PR first. A PR can appear on either side alone.
+	const byNumber = new Map<number, { ao?: PRReviewState; github?: SessionPRSummary }>();
+	for (const state of aoStates) {
+		byNumber.set(state.prNumber, { ...byNumber.get(state.prNumber), ao: state });
+	}
+	for (const pr of githubPRs) {
+		byNumber.set(pr.number, { ...byNumber.get(pr.number), github: pr });
+	}
+	const rows = [...byNumber.entries()].sort(([a], [b]) => b - a);
+
+	if (isLoading && rows.length === 0) {
+		return (
+			<Section surface title={t("inspector.reviews")}>
+				<p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>
 			</Section>
+		);
+	}
+	if (rows.length === 0) return null;
+
+	return (
+		<Section surface title={t("inspector.reviews")}>
+			<div className="flex flex-col divide-y divide-border">
+				{rows.map(([number, { ao, github }]) => {
+					const entries = github?.review?.reviews ?? [];
+					const unresolved = (github?.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0);
+					const meta = [
+						ao ? aoReviewMeta(ao) : `#${number}`,
+						unresolved > 0 ? t("inspector.unresolvedCount", { count: unresolved }) : null,
+					]
+						.filter(Boolean)
+						.join(" · ");
+					return (
+						<ReviewDisclosure
+							collapsible
+							defaultOpen={false}
+							key={number}
+							meta={meta}
+							title={(ao?.title ?? github?.title)?.trim() || `PR #${number}`}
+							verdict={ao ? reviewVerdict(ao) : undefined}
+						>
+							{ao ? (
+								<div className="flex min-w-0 flex-col gap-2.5">
+									{/* Names the side, not the agent. A PR's passes can come from
+									    different reviewers, so one harness on the group caption is
+									    wrong as often as it is right, and every run row below already
+									    carries its own agent name and avatar. */}
+									<ReviewSourceLabel>{t("inspector.reviewBySource.ao")}</ReviewSourceLabel>
+									<ReviewerRuns reviewState={ao} runs={runsByPR.get(ao.prUrl) ?? []} />
+								</div>
+							) : null}
+							{entries.length > 0 ? (
+								<div className="flex min-w-0 flex-col gap-2.5">
+									<ReviewSourceLabel>{t("inspector.reviewBySource.github")}</ReviewSourceLabel>
+									{entries.map((entry) => (
+										<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
+									))}
+								</div>
+							) : null}
+						</ReviewDisclosure>
+					);
+				})}
+			</div>
+		</Section>
+	);
+}
+
+/**
+ * Heading for one source's reviews inside a PR row.
+ *
+ * A bare caption sat on the same visual plane as the rows beneath it, so it
+ * read as one more line of text and the two groups ran together. It now takes
+ * the Section heading's own weight and colour, and a rule carries it to the
+ * edge — enough to bracket the group without spending the vertical space a
+ * real section header would cost inside an already-nested row.
+ */
+function ReviewSourceLabel({ children }: { children: ReactNode }) {
+	return (
+		<div className="flex min-w-0 items-center gap-2">
+			<span className="shrink-0 text-2xs font-bold uppercase tracking-settings-section text-settings-muted">
+				{children}
+			</span>
+			<span aria-hidden="true" className="h-px min-w-0 flex-1 bg-border" />
 		</div>
 	);
 }
@@ -998,8 +1503,8 @@ function mockReviewsResponse(session: WorkspaceSession): ReviewsResponse {
 							batchId: `demo-batch-${session.id}`,
 							body:
 								pr.review === "approved"
-									? "Demo review approved. The implementation is ready for the README screenshot flow."
-									: "Demo review found polish feedback for the terminal presentation.",
+									? "Demo review **approved** the README screenshot flow.\n\n- Layout is stable\n- Browser preview opens cleanly"
+									: "Demo review found **polish feedback** for the terminal presentation.\n\n- Tighten toolbar density\n- Recheck contrast",
 							createdAt: reviewedAt,
 							githubReviewId: `${pr.number}01`,
 							harness: "codex",
@@ -1128,11 +1633,12 @@ function ReviewPanel({
 	session,
 	config,
 	reviewStates,
-	runs,
 	reviewerHandleId,
 	isLoading,
 	isTriggering,
 	isCancelling,
+	isKilling,
+	isSwitchingReviewer,
 	error,
 	notice,
 	agentCatalog,
@@ -1140,16 +1646,18 @@ function ReviewPanel({
 	onReviewerOverrideChange,
 	onTrigger,
 	onCancel,
+	onKill,
 	onOpenTerminal,
 }: {
 	session: WorkspaceSession;
 	config?: ProjectConfig;
 	reviewStates: PRReviewState[];
-	runs: ReviewRunFacts[];
 	reviewerHandleId: string;
 	isLoading: boolean;
 	isTriggering: boolean;
 	isCancelling: boolean;
+	isKilling: boolean;
+	isSwitchingReviewer: boolean;
 	error: unknown;
 	notice: string | null;
 	agentCatalog?: AgentCatalog;
@@ -1157,6 +1665,7 @@ function ReviewPanel({
 	onReviewerOverrideChange: (next: ReviewerHarness | "") => void;
 	onTrigger: () => void;
 	onCancel: () => void;
+	onKill: () => void;
 	onOpenTerminal?: OpenReviewerTerminal;
 }) {
 	const { t } = useTranslation();
@@ -1167,12 +1676,7 @@ function ReviewPanel({
 		return <p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>;
 	}
 
-	const openPRURLs = new Set(
-		sortedPRs(session)
-			.filter((pr) => pr.state === "open")
-			.map((pr) => pr.url),
-	);
-	const openReviewStates = reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
+	const openReviewStates = openReviewStatesFor(session, reviewStates);
 	// Whichever PR happens to come first is not the reviewer to name. With one PR
 	// reviewed earlier by claude-code and another running under codex, taking the
 	// first run reported the wrong agent as the one working. Prefer the run
@@ -1186,58 +1690,63 @@ function ReviewPanel({
 	const harness = latest?.harness || config?.reviewers?.[0]?.harness || "claude-code";
 	const projectDefaultLabel = t("newTask.projectDefault");
 	const terminalEnabled = Boolean(reviewerHandleId && onOpenTerminal);
+	const openTerminalLabel = harness === "greptile" ? t("inspector.viewOutput") : t("inspector.openTerminal");
+	const hasReviewerSession = reviewerHandleId.trim() !== "";
 	const reviewRunning = openReviewStates.some((reviewState) => reviewState.status === "running");
 	const reviewHasRun = reviewRunning || Boolean(latest);
 	const runAction = reviewSessionRunAction(openReviewStates, isTriggering);
 	const openReviewerTerminal = () => {
 		if (!terminalEnabled) return;
-		onOpenTerminal?.({
-			kind: "reviewer",
-			handleId: reviewerHandleId,
-			harness,
-			interaction: reviewerTerminalInteraction(harness),
-		});
+		onOpenTerminal?.({ handleId: reviewerHandleId, harness });
 	};
-	// Every recorded pass per PR, so each reviewer keeps its own tab. Falls back
-	// to the state's own runs against a daemon that predates the runs field.
-	const runsByPR = new Map<string, ReviewRunFacts[]>();
-	for (const run of runs.filter(
-		(run) => (run.status === "complete" || run.status === "delivered") && Boolean(run.body?.trim()),
-	)) {
-		runsByPR.set(run.prUrl, [...(runsByPR.get(run.prUrl) ?? []), run]);
-	}
-	if (runs.length === 0) {
-		for (const state of openReviewStates) {
-			const fallback = [state.latestRun, state.previousRun].filter(
-				(run): run is ReviewRunFacts =>
-					Boolean(run) &&
-					(run!.status === "complete" || run!.status === "delivered") &&
-					Boolean(run!.body?.trim()),
-			);
-			if (fallback.length > 0) runsByPR.set(state.prUrl, fallback);
-		}
-	}
 	const runDisabled =
 		isTriggering ||
+		isKilling ||
+		isSwitchingReviewer ||
 		openReviewStates.length === 0 ||
 		openReviewStates.every((reviewState) => reviewState.status === "ineligible");
+	const primaryReviewActionLabel = reviewRunning
+		? isCancelling
+			? t("inspector.review.cancelling")
+			: t("inspector.review.cancel")
+		: runAction;
+	const killDisabled = isKilling || isTriggering || isSwitchingReviewer || !hasReviewerSession;
 
 	return (
 		<div className="mb-2.5 flex flex-col">
-			<Section surface title={t("inspector.review.run")}>
-				{error ? (
-					<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
-						{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
+				<Section surface title={t("inspector.review.run")}>
+					{error ? (
+						<p className="m-0 rounded-md border border-error/28 bg-error/8 px-2.5 py-2 text-sm-md leading-normal text-error">
+							{apiErrorMessage(error, t("inspector.reviewRequestFailed"))}
 					</p>
 				) : null}
 				{/* Neutral, not success: a notice is the trigger declining to run and
 				    saying why, so nothing has succeeded. Green reads as "the review ran"
 				    at a glance, and DESIGN.md reserves it for the success/mergeable
-				    signal. The error variant above keeps red for actual failures. */}
+				    signal. The error variant above keeps red for actual failures.
+
+				    Two lines of boxed prose was a lot of permanent rail for one
+				    sentence the user only needs once. The short form confirms the
+				    click landed; the sentence itself is a hover/focus away. */}
 				{notice ? (
-					<p className="m-0 rounded-md border border-border bg-raised px-2.5 py-2 text-sm-md leading-normal text-muted-foreground">
-						{notice}
-					</p>
+					<TooltipProvider>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<button
+									aria-label={notice}
+									className="mb-2 flex max-w-full shrink-0 items-start gap-1 self-start rounded-sm text-left text-2xs font-medium leading-normal text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+									type="button"
+								>
+									<Info aria-hidden="true" className="mt-px size-icon-2xs shrink-0" />
+									{/* Wraps rather than truncates: this is a sentence now, and
+									    clipping it mid-word would hide the part that identifies
+									    which commit is meant. The rest still rides the tooltip. */}
+									<span className="min-w-0">{t("inspector.reviewAlreadyRanShort")}</span>
+								</button>
+							</TooltipTrigger>
+							<TooltipContent className="max-w-56 leading-normal">{notice}</TooltipContent>
+						</Tooltip>
+					</TooltipProvider>
 				) : null}
 				<div className="review-run-controls-container min-w-0">
 					<div className="review-run-controls flex min-w-0 items-center gap-1.5">
@@ -1247,12 +1756,12 @@ function ReviewPanel({
 							defaultHarness={harness}
 							defaultOptionLabel={harness ? `${projectDefaultLabel} (${reviewerDisplayName(harness)})` : projectDefaultLabel}
 							defaultTriggerLabel={reviewerDisplayName(harness) || projectDefaultLabel}
-							disabled={reviewRunning}
+							disabled={reviewRunning || isKilling || isSwitchingReviewer || isTriggering || isCancelling}
 							installed={agentCatalog?.installed}
 							reviewerInstalled={agentCatalog?.reviewerInstalled}
 							onChange={(next) => onReviewerOverrideChange(next as ReviewerHarness | "")}
 							supported={agentCatalog?.supported}
-							triggerClassName="review-run-agent-select h-control-md w-36 shrink-0 text-xs"
+							triggerClassName="review-run-agent-select h-control-md w-36 min-w-24 max-w-36 shrink text-xs"
 							value={reviewerOverride}
 						/>
 						{(reviewerOverride || harness) === "greptile" ? (
@@ -1260,124 +1769,105 @@ function ReviewPanel({
 								{t("inspector.review.nonInteractiveOneShot")}
 							</span>
 						) : null}
-						<div className="flex shrink-0 items-center gap-1.5">
+						<div className="review-run-actions ml-auto flex shrink-0 items-center gap-1.5">
 							<Button
+								aria-label={primaryReviewActionLabel}
 								className="shrink-0 gap-1 px-1.5 [&_svg]:size-icon-sm"
-								disabled={reviewRunning ? isCancelling : runDisabled}
+								disabled={reviewRunning ? isCancelling || isKilling || isSwitchingReviewer : runDisabled}
 								onClick={reviewRunning ? onCancel : onTrigger}
 								size="sm"
+								title={primaryReviewActionLabel}
 								type="button"
 								variant={reviewRunning ? "ghost" : reviewHasRun ? "secondary" : "primary"}
 							>
 								{reviewRunning ? <X aria-hidden="true" /> : <Play aria-hidden="true" />}
-								{reviewRunning
-									? isCancelling
-										? t("inspector.review.cancelling")
-										: t("inspector.review.cancel")
-									: runAction}
+								<span className="review-run-action-label">{primaryReviewActionLabel}</span>
 							</Button>
+							{hasReviewerSession ? (
+								<Button
+									aria-label={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+									className="h-control-md w-control-md shrink-0 p-0 text-error [&_svg]:size-icon-sm"
+									disabled={killDisabled}
+									onClick={onKill}
+									size="sm"
+									title={isKilling ? t("inspector.review.killingSession") : t("inspector.review.killSession")}
+									type="button"
+									variant="ghost"
+								>
+									<Trash2 aria-hidden="true" />
+								</Button>
+							) : null}
 							{reviewHasRun ? (
 								<Button
+									aria-label={openTerminalLabel}
 									className="shrink-0 gap-1.5 [&_svg]:size-icon-sm"
 									disabled={!terminalEnabled}
 									onClick={openReviewerTerminal}
 									size="sm"
+									title={openTerminalLabel}
 									type="button"
 									variant="ghost"
 								>
 									<Terminal aria-hidden="true" />
-									{harness === "greptile" ? t("inspector.viewOutput") : t("inspector.openTerminal")}
+									<span className="review-run-action-label">
+										{openTerminalLabel}
+									</span>
 								</Button>
 							) : null}
 						</div>
 					</div>
-				</div>
+					</div>
 				{reviewRunning ? (
 					<div className="mt-3 flex items-center gap-2 border-t border-border pt-3">
-						<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
+							<Loader2 aria-hidden="true" className="size-icon-sm shrink-0 animate-spin text-muted-foreground" />
 						<span className="min-w-0 flex-1 truncate text-2xs font-medium text-muted-foreground">
-							{isCancelling
-								? t("inspector.review.cancelling")
-								: `Review in progress · ${reviewerDisplayName(harness)}`}
+							{isCancelling ? t("inspector.review.cancelling") : `Review in progress · ${harness}`}
 						</span>
 					</div>
 				) : null}
 			</Section>
-			<Section surface title={t("inspector.aoCodeReviews")}>
-				<div className="flex flex-col divide-y divide-border">
-					{openReviewStates.length === 0 ? (
-						<p className={cn(inspectorEmptyClass, "py-1")}>{t("inspector.noOpenPRsToReview")}</p>
-					) : (
-					openReviewStates.map((reviewState) => (
-						<ReviewDisclosure
-							key={`${reviewState.prUrl}:${reviewState.targetSha}`}
-							collapsible
-							defaultOpen={false}
-							meta={aoReviewMeta(reviewState)}
-							verdict={reviewVerdict(reviewState)}
-							title={reviewState.title?.trim() || `PR #${reviewState.prNumber}`}
-						>
-								<ReviewerRuns
-									reviewState={reviewState}
-									runs={runsByPR.get(reviewState.prUrl) ?? []}
-								/>
-							</ReviewDisclosure>
-					))
-					)}
-				</div>
-			</Section>
-		</div>
-	);
-}
-
-/**
- * Reviews left on the PR by humans and bots, as opposed to AO's own runs.
- *
- */
-function GithubReviewPanel({
-	prs,
-	unresolvedTotal,
-	isLoading,
-}: {
-	prs: SessionPRSummary[];
-	unresolvedTotal: number;
-	isLoading: boolean;
-}) {
-	const { t } = useTranslation();
-	if (isLoading) {
-		return <p className={inspectorEmptyClass}>{t("inspector.loadingReviews")}</p>;
-	}
-	if (prs.length === 0) {
-		return <p className={inspectorEmptyClass}>{t("inspector.noOneReviewedYet")}</p>;
-	}
-
-	return (
-		<div className="flex flex-col gap-3">
-			<div className="flex flex-col divide-y divide-border">
-				{prs.map((pr) => {
-					const entries = pr.review?.reviews ?? [];
-					const unresolved = (pr.review?.unresolvedBy ?? []).reduce((n, r) => n + r.count, 0);
-					return (
-						<ReviewDisclosure
-							key={pr.number}
-							collapsible
-							defaultOpen={false}
-							meta={`#${pr.number}${unresolved > 0 ? ` · ${unresolved} unresolved` : ""}`}
-							title={pr.title?.trim() || `PR #${pr.number}`}
-						>
-							{entries.map((entry) => (
-								<GithubReviewRow entry={entry} key={`${entry.reviewerId}:${entry.submittedAt}`} />
-							))}
-						</ReviewDisclosure>
-					);
-				})}
-			</div>
-			{unresolvedTotal === 0 ? <p className={inspectorEmptyClass}>{t("inspector.noUnresolvedThreads")}</p> : null}
 		</div>
 	);
 }
 
 type GithubReviewEntry = NonNullable<NonNullable<SessionPRSummary["review"]>["reviews"]>[number];
+
+function reviewerDisplayName(harness: string): string {
+	return harness === "greptile" ? "Greptile CLI" : harness;
+}
+
+function ReviewMarkdownBody({ body, clamped, testId }: { body: string; clamped: boolean; testId: string }) {
+	return (
+		<div
+			className={cn(
+				"min-w-0 break-words text-2xs leading-relaxed text-muted-foreground",
+				"[&_a]:font-medium [&_a]:text-foreground [&_a]:underline [&_a]:underline-offset-2",
+				"[&_code]:rounded [&_code]:bg-muted/55 [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-foreground",
+				"[&_li]:my-0.5 [&_ol]:my-1.5 [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:my-1.5 [&_pre]:my-2",
+				"[&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:border [&_pre]:border-border [&_pre]:bg-muted/35 [&_pre]:p-2",
+				"[&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_strong]:text-foreground [&_table]:my-2 [&_table]:w-full",
+				"[&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1",
+				"[&_th]:border [&_th]:border-border [&_th]:px-2 [&_th]:py-1 [&_th]:text-foreground",
+				"[&_ul]:my-1.5 [&_ul]:list-disc [&_ul]:pl-4 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+				clamped && "line-clamp-4",
+			)}
+			data-testid={testId}
+		>
+			<ReactMarkdown
+				components={{
+					a: ({ href, children }) => (
+						<a href={href} target="_blank" rel="noopener noreferrer">
+							{children}
+						</a>
+					),
+				}}
+				remarkPlugins={[remarkGfm]}
+			>
+				{body}
+			</ReactMarkdown>
+		</div>
+	);
+}
 
 function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 	const { t } = useTranslation();
@@ -1396,15 +1886,7 @@ function GithubReviewRow({ entry }: { entry: GithubReviewEntry }) {
 				</span>
 			</div>
 			{body ? (
-				<p
-					className={cn(
-						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
-						clamped && !expanded && "line-clamp-4",
-					)}
-					data-testid="github-review-summary"
-				>
-					{body}
-				</p>
+				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="github-review-summary" />
 			) : null}
 			{clamped || entry.reviewUrl ? (
 				<span className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-micro text-passive">
@@ -1519,7 +2001,7 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 			<span className="flex min-w-0 items-center gap-2">
 				<span className="inline-flex min-w-0 items-center gap-1 text-micro font-medium text-muted-foreground">
 					<AgentAvatar className="size-icon-sm shrink-0" decorative provider={run.harness || "reviewer"} />
-					<span className="truncate">{reviewerDisplayName(run.harness || "reviewer")}</span>
+					<span className="truncate">{run.harness || "reviewer"}</span>
 				</span>
 				<span className="ml-auto inline-flex shrink-0 items-center gap-1.5 text-micro text-passive">
 					{isEarlier ? <span>{t("inspector.earlierPass")}</span> : null}
@@ -1527,15 +2009,7 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 				</span>
 			</span>
 			{body ? (
-				<p
-					className={cn(
-						"m-0 whitespace-pre-wrap break-words text-2xs leading-relaxed text-muted-foreground",
-						clamped && !expanded && "line-clamp-4",
-					)}
-					data-testid="review-run-summary"
-				>
-					{body}
-				</p>
+				<ReviewMarkdownBody body={body} clamped={clamped && !expanded} testId="review-run-summary" />
 			) : null}
 			{/* One tertiary group, not two competing labels. Below the body's size so
 			    they read as controls rather than sitting in the reading flow, and
@@ -1569,8 +2043,53 @@ function ReviewRunRow({ run, prUrl, isEarlier }: { run: ReviewRunFacts; prUrl: s
 	);
 }
 
-function reviewerDisplayName(harness: string): string {
-	return harness === "greptile" ? "Greptile CLI" : harness;
+/* The reviews view is assembled from two queries that live in different
+   components, so the derivations both need are module-level rather than
+   recomputed (and allowed to drift) in each. */
+
+/** Review states for PRs this session still has open. */
+function openReviewStatesFor(session: WorkspaceSession, reviewStates: PRReviewState[]): PRReviewState[] {
+	const openPRURLs = new Set(
+		sortedPRs(session)
+			.filter((pr) => pr.state === "open")
+			.map((pr) => pr.url),
+	);
+	return reviewStates.filter((reviewState) => openPRURLs.has(reviewState.prUrl));
+}
+
+/** Every recorded reviewer pass per PR, so each reviewer keeps its own tab.
+ *  Falls back to the state's own runs against a daemon predating the runs field. */
+function runsByPRFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[]): Map<string, ReviewRunFacts[]> {
+	const byPR = new Map<string, ReviewRunFacts[]>();
+	for (const run of runs.filter(
+		(run) => (run.status === "complete" || run.status === "delivered") && Boolean(run.body?.trim()),
+	)) {
+		byPR.set(run.prUrl, [...(byPR.get(run.prUrl) ?? []), run]);
+	}
+	if (runs.length === 0) {
+		for (const state of openReviewStates) {
+			const fallback = [state.latestRun, state.previousRun].filter(
+				(run): run is ReviewRunFacts =>
+					Boolean(run) &&
+					(run!.status === "complete" || run!.status === "delivered") &&
+					Boolean(run!.body?.trim()),
+			);
+			if (fallback.length > 0) byPR.set(state.prUrl, fallback);
+		}
+	}
+	return byPR;
+}
+
+/** The PRs AO has actually reviewed, or been asked to. */
+function triggeredReviewStatesFrom(openReviewStates: PRReviewState[], runs: ReviewRunFacts[]): PRReviewState[] {
+	return openReviewStates.filter(
+		(reviewState) =>
+			Boolean(reviewState.latestRun) ||
+			Boolean(reviewState.previousRun) ||
+			runs.some((run) => run.prUrl === reviewState.prUrl) ||
+			reviewState.status === "up_to_date" ||
+			reviewState.status === "changes_requested",
+	);
 }
 
 function aoReviewMeta(reviewState: PRReviewState): string {
