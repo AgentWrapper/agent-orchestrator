@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -54,11 +55,18 @@ func EnsureWorkspaceGitignore(dir string, names ...string) error {
 }
 
 // FileExists reports whether path names an existing regular file (not a
-// directory). Adapters use it when probing well-known install locations for an
-// agent binary.
+// directory) that is executable on Unix. On Windows the exec-bit check is
+// skipped because os.Stat does not expose a reliable execute permission;
+// Windows candidates carry explicit .cmd/.exe extensions instead.
 func FileExists(path string) bool {
 	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
+		return false
+	}
+	return true
 }
 
 // AtomicWriteFile writes data to path via a temp file in the same directory

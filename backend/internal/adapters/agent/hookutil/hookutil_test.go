@@ -3,6 +3,7 @@ package hookutil
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -47,6 +48,26 @@ func TestEnsureWorkspaceGitignoreIsIdempotent(t *testing.T) {
 	}
 	if string(first) != string(second) {
 		t.Fatalf("rewrite changed content:\nfirst:  %q\nsecond: %q", first, second)
+	}
+}
+
+func TestFileExistsRejectsNonExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("exec-bit check is skipped on Windows")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake-binary")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if FileExists(path) {
+		t.Fatalf("FileExists returned true for non-executable file")
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if !FileExists(path) {
+		t.Fatalf("FileExists returned false for executable file")
 	}
 }
 
