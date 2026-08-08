@@ -162,7 +162,16 @@ func (s *Service) enrichClaimReviews(ctx context.Context, ref ports.SCMPRRef, ob
 		if errors.Is(err, ports.ErrSCMNotFound) {
 			return ports.ReviewWritePreserve, ErrPRNotFound
 		}
-		return ports.ReviewWritePreserve, fmt.Errorf("%w: %w", ErrSCMUnavailable, err)
+		// Review thread fetch failed but the PR itself was observed — proceed
+		// with ReviewWritePreserve so the claim still succeeds.  Review
+		// threads will be retried on the next observer poll.
+		if s.logger != nil {
+			s.logger.Warn("claim: review thread fetch failed, proceeding without threads",
+				"pr", ref.URL,
+				"error", err,
+			)
+		}
+		return ports.ReviewWritePreserve, nil
 	}
 	if review.Decision != "" {
 		obs.Review.Decision = review.Decision

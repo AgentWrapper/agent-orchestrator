@@ -2139,15 +2139,21 @@ func TestDelegateTaskPassesAttachmentsToSpawnConfig(t *testing.T) {
 }
 
 type fakePRClaimer struct {
-	out errorFreeClaimOutcome
-	err error
+	out        errorFreeClaimOutcome
+	err        error
+	gotMode    ports.ReviewWriteMode
+	gotThreads []domain.PullRequestReviewThread
+	called     bool
 }
 
 type errorFreeClaimOutcome struct {
 	ports.ClaimOutcome
 }
 
-func (f fakePRClaimer) ClaimPR(context.Context, domain.PullRequest, []domain.PullRequestCheck, []domain.PullRequestReview, []domain.PullRequestReviewThread, []domain.PullRequestComment, ports.ReviewWriteMode, bool) (ports.ClaimOutcome, error) {
+func (f *fakePRClaimer) ClaimPR(_ context.Context, _ domain.PullRequest, _ []domain.PullRequestCheck, _ []domain.PullRequestReview, threads []domain.PullRequestReviewThread, _ []domain.PullRequestComment, mode ports.ReviewWriteMode, _ bool) (ports.ClaimOutcome, error) {
+	f.gotMode = mode
+	f.gotThreads = threads
+	f.called = true
 	return f.out.ClaimOutcome, f.err
 }
 
@@ -2203,7 +2209,7 @@ func TestClaimPRRejectsScratchProject(t *testing.T) {
 	st.projects["scratch"] = domain.ProjectRecord{ID: "scratch", Kind: domain.ProjectKindScratch}
 	svc := NewWithDeps(Deps{
 		Store:     st,
-		PRClaimer: fakePRClaimer{},
+		PRClaimer: &fakePRClaimer{},
 		SCM: fakeSCM{
 			obs: ports.SCMObservation{
 				Fetched:  true,
@@ -2237,9 +2243,9 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 		want error
 	}{
 		{"missing scm", NewWithDeps(Deps{Store: st}), ErrSCMUnavailable},
-		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
-		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
-		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
+		{"not found", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{fetchErr: ports.ErrSCMNotFound}}), ErrPRNotFound},
+		{"closed", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7, Closed: true}}}}), ErrPRNotOpen},
+		{"active owner", NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{err: ports.PRClaimedByActiveSessionError{Owner: "mer-2"}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}}), ports.ErrPRClaimedByActiveSession},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2251,7 +2257,7 @@ func TestClaimPRMapsObserverAndStoreErrors(t *testing.T) {
 	}
 
 	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, CI: domain.CIPassing, UpdatedAt: now}
-	svc := NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{PreviousOwner: "mer-2"}}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}})
+	svc := NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{PreviousOwner: "mer-2"}}}, SCM: fakeSCM{obs: ports.SCMObservation{Fetched: true, Provider: "github", Host: "github.com", Repo: "acme/repo", PR: ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7}}}})
 	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{AllowTakeover: true})
 	if err != nil {
 		t.Fatal(err)
@@ -2274,13 +2280,81 @@ func TestClaimPRGitLabMR(t *testing.T) {
 		Repo:     "castai/ctxd",
 		PR:       ports.SCMPRObservation{URL: "https://gitlab.com/castai/ctxd/-/merge_requests/9", Number: 9},
 	}
-	svc := NewWithDeps(Deps{Store: st, PRClaimer: fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}, SCM: fakeSCM{obs: obs}})
+	svc := NewWithDeps(Deps{Store: st, PRClaimer: &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}, SCM: fakeSCM{obs: obs}})
 	res, err := svc.ClaimPR(context.Background(), "gl-1", "https://gitlab.com/castai/ctxd/-/merge_requests/9", ClaimPROptions{AllowTakeover: true})
 	if err != nil {
 		t.Fatalf("claim gitlab MR: %v", err)
 	}
 	if len(res.PRs) != 1 || res.PRs[0].URL != "https://gitlab.com/castai/ctxd/-/merge_requests/9" {
 		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRReviewFetchFailureProceedsWithPreserve(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	st.pr["mer-1"] = domain.PRFacts{URL: "https://github.com/acme/repo/pull/7", Number: 7, CI: domain.CIPassing, UpdatedAt: time.Date(2026, 6, 4, 12, 0, 0, 0, time.UTC)}
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "github",
+		Host:     "github.com",
+		Repo:     "acme/repo",
+		PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+	}
+	claimer := &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: claimer,
+		SCM: fakeSCM{
+			obs:       obs,
+			reviewErr: errors.New("review API down"),
+		},
+	})
+	res, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{})
+	if err != nil {
+		t.Fatalf("claim should succeed when FetchReviewThreads fails: %v", err)
+	}
+	if !claimer.called {
+		t.Fatalf("ClaimPR was not called")
+	}
+	if claimer.gotMode != ports.ReviewWritePreserve {
+		t.Fatalf("review mode = %v, want ReviewWritePreserve", claimer.gotMode)
+	}
+	if len(claimer.gotThreads) != 0 {
+		t.Fatalf("no threads should be persisted on fetch failure, got %#v", claimer.gotThreads)
+	}
+	if len(res.PRs) != 1 || res.PRs[0].URL != "https://github.com/acme/repo/pull/7" {
+		t.Fatalf("claim result = %+v", res)
+	}
+}
+
+func TestClaimPRReviewFetchNotFoundErrors(t *testing.T) {
+	st := newFakeStore()
+	st.sessions["mer-1"] = domain.SessionRecord{ID: "mer-1", ProjectID: "mer", Kind: domain.KindWorker, Metadata: domain.SessionMetadata{WorkspacePath: "/ws"}}
+	st.projects["mer"] = domain.ProjectRecord{ID: "mer", RepoOriginURL: "https://github.com/acme/repo"}
+	obs := ports.SCMObservation{
+		Fetched:  true,
+		Provider: "github",
+		Host:     "github.com",
+		Repo:     "acme/repo",
+		PR:       ports.SCMPRObservation{URL: "https://github.com/acme/repo/pull/7", Number: 7},
+	}
+	claimer := &fakePRClaimer{out: errorFreeClaimOutcome{ports.ClaimOutcome{}}}
+	svc := NewWithDeps(Deps{
+		Store:     st,
+		PRClaimer: claimer,
+		SCM: fakeSCM{
+			obs:       obs,
+			reviewErr: ports.ErrSCMNotFound,
+		},
+	})
+	_, err := svc.ClaimPR(context.Background(), "mer-1", "7", ClaimPROptions{})
+	if !errors.Is(err, ErrPRNotFound) {
+		t.Fatalf("err = %v, want ErrPRNotFound", err)
+	}
+	if claimer.called {
+		t.Fatalf("ClaimPR should not be called when PR was deleted")
 	}
 }
 

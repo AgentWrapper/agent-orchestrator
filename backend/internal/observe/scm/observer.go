@@ -1531,6 +1531,9 @@ func (o *Observer) needsReviewRefresh(key string, local domain.PullRequest, deci
 	if local.ReviewHash == "" {
 		return true
 	}
+	if local.ReviewObservedAt.IsZero() {
+		return true
+	}
 	if decision == string(domain.ReviewChangesRequest) {
 		last := o.Cache.LastReviewPollAt[key]
 		return last.IsZero() || now.Sub(last) >= o.reviewInterval

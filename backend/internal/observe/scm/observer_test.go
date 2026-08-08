@@ -47,6 +47,7 @@ type fakeWrite struct {
 	pr         domain.PullRequest
 	checks     []domain.PullRequestCheck
 	reviews    []domain.PullRequestReview
+	threads    []domain.PullRequestReviewThread
 	comments   []domain.PullRequestComment
 	reviewMode ports.ReviewWriteMode
 }
@@ -112,7 +113,7 @@ func (s *fakeStore) WriteSCMObservation(_ context.Context, pr domain.PullRequest
 	if s.writeErr != nil {
 		return s.writeErr
 	}
-	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), reviews: append([]domain.PullRequestReview(nil), reviews...), comments: append([]domain.PullRequestComment(nil), comments...), reviewMode: reviewMode})
+	s.writes = append(s.writes, fakeWrite{pr: pr, checks: append([]domain.PullRequestCheck(nil), checks...), reviews: append([]domain.PullRequestReview(nil), reviews...), threads: append([]domain.PullRequestReviewThread(nil), threads...), comments: append([]domain.PullRequestComment(nil), comments...), reviewMode: reviewMode})
 	return nil
 }
 
@@ -333,6 +334,9 @@ func testObs(num int) ports.SCMObservation {
 func knownPR(num int) domain.PullRequest {
 	obs := testObs(num)
 	pr, _, _, _, _ := domainFromObservation("p-1", obs, domain.PullRequest{}, persistenceOptions{}, time.Unix(1, 0).UTC())
+	// A known PR has been previously observed — simulate a prior review fetch
+	// so needsReviewRefresh does not fire solely because ReviewObservedAt is zero.
+	pr.ReviewObservedAt = time.Unix(2, 0).UTC()
 	return pr
 }
 
@@ -1406,6 +1410,42 @@ func TestPoll_SuccessfulReviewRefreshClearsRetryCacheSlot(t *testing.T) {
 		if key == prKey(testRepo, 1) {
 			t.Fatalf("successful review refresh should remove retry order slot, got %#v", obs.Cache.reviewFailedOrder)
 		}
+	}
+}
+
+func TestPoll_ReviewObservedAtZeroTriggersReviewRefresh(t *testing.T) {
+	store := testStoreWithSession()
+	local := knownPR(1)
+	local.Review = domain.ReviewApproved
+	local.ReviewHash = "some-hash"  // non-empty but review_observed_at is zero
+	local.ReviewObservedAt = time.Time{} // review threads were never fetched
+	store.prs["p-1"] = []domain.PullRequest{local}
+	review := ports.SCMReviewObservation{
+		Decision: string(domain.ReviewApproved),
+		Threads:  []ports.SCMReviewThreadObservation{{ID: "t1", Path: "f.go", Line: 2, Comments: []ports.SCMReviewCommentObservation{{ID: "c1", Author: "ann", Body: "fix"}}}},
+	}
+	provider := &fakeProvider{
+		repoGuards: map[string]ports.SCMGuardResult{prKey(testRepo, 0): {ETag: "repo", NotModified: true}},
+		reviews:    map[string]ports.SCMReviewObservation{prKey(testRepo, 1): review},
+	}
+	now := time.Unix(400, 0).UTC()
+	obs := newTestObserver(store, provider, nil, now)
+	obs.Cache.RepoPRListETag[prKey(testRepo, 0)] = "repo"
+	if err := obs.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provider.reviewCalls != 1 {
+		t.Fatalf("reviewCalls = %d, want 1 (should trigger FetchReviewThreads when review_observed_at is zero)", provider.reviewCalls)
+	}
+	if len(store.writes) == 0 {
+		t.Fatalf("expected a write after review refresh")
+	}
+	write := store.writes[len(store.writes)-1]
+	if !write.pr.ReviewObservedAt.Equal(now) {
+		t.Fatalf("ReviewObservedAt = %s, want %s", write.pr.ReviewObservedAt, now)
+	}
+	if len(write.threads) != 1 || write.threads[0].ThreadID != "t1" {
+		t.Fatalf("expected review thread t1 persisted, got %#v", write.threads)
 	}
 }
 
