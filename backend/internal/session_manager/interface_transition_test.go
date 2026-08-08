@@ -244,7 +244,13 @@ func (c *transitionChat) PreflightChat(ctx context.Context, _ domain.AgentHarnes
 func (c *transitionChat) StartChat(_ context.Context, cfg ChatStart) (ChatStarted, error) {
 	c.start = cfg
 	*c.log = append(*c.log, "start:chat")
-	return ChatStarted{ProviderConversationID: cfg.ProviderConversationID, ControllerGeneration: "chat-generation"}, nil
+	started := ChatStarted{ProviderConversationID: cfg.ProviderConversationID, ControllerGeneration: "chat-generation"}
+	if cfg.ControllerReady != nil {
+		if err := cfg.ControllerReady(started); err != nil {
+			return ChatStarted{}, err
+		}
+	}
+	return started, nil
 }
 func (*transitionChat) StartChatTurn(context.Context, domain.SessionID, string) (string, error) {
 	return "", nil

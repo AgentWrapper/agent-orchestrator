@@ -441,6 +441,15 @@ func (c chatLauncher) StartChat(ctx context.Context, cfg sessionmanager.ChatStar
 		SystemPrompt:           cfg.SystemPrompt,
 		AdditionalDirectories:  cfg.AdditionalDirectories,
 		ProviderConversationID: cfg.ProviderConversationID,
+		ControllerReady: func(out chatsvc.StartResult) error {
+			if cfg.ControllerReady == nil {
+				return nil
+			}
+			return cfg.ControllerReady(sessionmanager.ChatStarted{
+				ProviderConversationID: out.ProviderConversationID,
+				ControllerGeneration:   out.ControllerGeneration,
+			})
+		},
 	})
 	if err != nil {
 		return sessionmanager.ChatStarted{}, err

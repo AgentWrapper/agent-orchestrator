@@ -977,6 +977,51 @@ func TestControllerStreamClosureReportsSessionExited(t *testing.T) {
 	t.Fatalf("controller stream ended without an exited lifecycle signal: %+v", h.activity.snapshot())
 }
 
+func TestControllerReadyRunsBeforeStreamProjection(t *testing.T) {
+	st := openStore(t)
+	conv := newFakeConversation()
+	if err := conv.Close(); err != nil {
+		t.Fatalf("close provider stream: %v", err)
+	}
+	activity := &recordingActivity{}
+	ready := false
+	svc := chatsvc.New(chatsvc.Options{
+		Store: st, Sessions: st,
+		Drivers:  fakeRegistry{driver: fakeDriver{conv: conv}},
+		Activity: activity,
+		Log:      slog.New(slog.DiscardHandler),
+		NewID:    func() string { return "controller-ready-id" },
+	})
+
+	controller, err := svc.Start(context.Background(), chatsvc.StartConfig{
+		SessionID: testSession, ProjectID: testProject, Harness: domain.HarnessCodex,
+		WorkspacePath: t.TempDir(),
+		ControllerReady: func(started chatsvc.StartResult) error {
+			if signals := activity.snapshot(); len(signals) != 0 {
+				t.Fatalf("provider events projected before controller-ready commit: %+v", signals)
+			}
+			if started.ProviderConversationID == "" || started.ControllerGeneration == "" {
+				t.Fatalf("controller-ready result = %+v", started)
+			}
+			ready = true
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	controller.Wait()
+	if !ready {
+		t.Fatal("controller-ready callback was not called")
+	}
+	for _, signal := range activity.snapshot() {
+		if signal.State == domain.ActivityExited && signal.Event == "chat.controller.stopped" {
+			return
+		}
+	}
+	t.Fatalf("stream closure was not projected after controller-ready: %+v", activity.snapshot())
+}
+
 // Dispatch reads the persisted mode. A TUI session must be refused even if a
 // controller somehow exists, because the mode is the authority.
 func TestSendRefusedForTUISession(t *testing.T) {

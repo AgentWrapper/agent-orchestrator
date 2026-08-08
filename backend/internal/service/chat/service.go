@@ -131,6 +131,28 @@ type StartConfig struct {
 	MCPServers            []ports.ChatMCPServerConfig
 	// ProviderConversationID resumes an existing provider conversation when set.
 	ProviderConversationID string
+	// ControllerReady commits the controller's durable generation before event
+	// consumption starts. A controller that exits immediately must report after
+	// the launch has been marked live, so its exited signal cannot be overwritten
+	// by a later launch-completion write.
+	ControllerReady func(StartResult) error
+}
+
+func controllerStartResult(controller *Controller) StartResult {
+	return StartResult{
+		ProviderConversationID: controller.ProviderConversationID(),
+		ControllerGeneration:   controller.Generation(),
+	}
+}
+
+func notifyControllerReady(cfg StartConfig, controller *Controller) error {
+	if cfg.ControllerReady == nil {
+		return nil
+	}
+	if err := cfg.ControllerReady(controllerStartResult(controller)); err != nil {
+		return fmt.Errorf("commit chat controller: %w", err)
+	}
+	return nil
 }
 
 // settleOrphanedWork closes out anything a previous controller left behind.
@@ -311,6 +333,10 @@ func (s *Service) Start(ctx context.Context, cfg StartConfig) (*Controller, erro
 			_ = conv.Close()
 			return nil, err
 		}
+	}
+	if err := notifyControllerReady(cfg, controller); err != nil {
+		_ = conv.Close()
+		return nil, err
 	}
 	s.mu.Lock()
 	s.controllers[cfg.SessionID] = controller
@@ -728,10 +754,7 @@ func (s *Service) StartChat(ctx context.Context, cfg StartRequest) (StartResult,
 	if err != nil {
 		return StartResult{}, err
 	}
-	return StartResult{
-		ProviderConversationID: controller.ProviderConversationID(),
-		ControllerGeneration:   controller.Generation(),
-	}, nil
+	return controllerStartResult(controller), nil
 }
 
 // StartRequest mirrors session_manager.ChatStart. Duplicated rather than
@@ -751,6 +774,9 @@ type StartRequest struct {
 	MCPServers            []ports.ChatMCPServerConfig
 	// ProviderConversationID resumes a stored conversation. Empty starts fresh.
 	ProviderConversationID string
+	// ControllerReady runs after the provider and generation exist but before
+	// live event projection starts.
+	ControllerReady func(StartResult) error
 }
 
 // StartResult is the durable outcome of a launch.
