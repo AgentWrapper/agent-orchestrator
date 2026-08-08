@@ -108,11 +108,18 @@ func cliRepoFromURL(raw string) (host, owner, name string, err error) {
 		}
 		host = rest[:colonIdx]
 		path := rest[colonIdx+1:]
-		parts := strings.SplitN(strings.TrimSuffix(path, ".git"), "/", 2)
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		parts := strings.Split(strings.TrimSuffix(path, ".git"), "/")
+		if len(parts) < 2 {
 			return "", "", "", errors.New("bad repo")
 		}
-		return host, parts[0], parts[1], nil
+		for _, seg := range parts {
+			if seg == "" {
+				return "", "", "", errors.New("bad repo")
+			}
+		}
+		name = parts[len(parts)-1]
+		owner = strings.Join(parts[:len(parts)-1], "/")
+		return host, owner, name, nil
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -120,10 +127,17 @@ func cliRepoFromURL(raw string) (host, owner, name string, err error) {
 	}
 	host = u.Hostname()
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+	if len(parts) < 2 {
 		return "", "", "", errors.New("bad repo")
 	}
-	return host, parts[0], strings.TrimSuffix(parts[1], ".git"), nil
+	for _, seg := range parts {
+		if seg == "" {
+			return "", "", "", errors.New("bad repo")
+		}
+	}
+	name = strings.TrimSuffix(parts[len(parts)-1], ".git")
+	owner = strings.Join(parts[:len(parts)-1], "/")
+	return host, owner, name, nil
 }
 
 func isCLIGitHubHost(host string) bool {
