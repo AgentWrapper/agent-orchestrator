@@ -255,12 +255,20 @@ type SubmitActivitySignaler interface {
 // loop unable to tell an unsubmitted draft from a pending permission dialog,
 // so an Enter meant to resubmit the draft could instead answer the dialog.
 //
-// Only claude-code satisfies this today: it installs the pre/post-tool-use
-// trio that lets lifecycle correlate the approved tool's post with the dialog
-// and clear blocked before the turn ends. codex maps permission-request to
-// waiting_input and opts out (no tool trio → blocked could not be cleared).
-// Adapters that later gain a correlatable blocked signal implement this
-// interface to opt in.
+// Two adapters satisfy this today:
+//
+//   - claude-code installs the pre/post-tool-use trio that lets lifecycle
+//     correlate the approved tool's post with the dialog and clear blocked
+//     before the turn ends.
+//   - kimchi installs the same trio and maps Notification(permission_prompt)
+//     to ActivityBlocked. Unlike claude-code, kimchi has no separate
+//     permission-request hook — the blocked signal arrives via a Notification
+//     event whose payload carries tool_use_id, which the lifecycle correlator
+//     matches against the inflight map populated by PreToolUse.
+//
+// codex maps permission-request to waiting_input and opts out (no tool trio →
+// blocked could not be cleared). Adapters that later gain a correlatable
+// blocked signal implement this interface to opt in.
 type BlockedActivitySignaler interface {
 	EmitsBlockedActivity() bool
 }

@@ -4540,7 +4540,6 @@ components:
           - copilot
           - cursor
           - kilocode
-          - kimchi
           - opencode
           - kiro
           - pi
@@ -4552,6 +4551,7 @@ components:
           - devin
           - droid
           - kimi
+          - kimchi
           - muse
           - amp
           - aider
@@ -6792,7 +6792,6 @@ components:
           - copilot
           - cursor
           - kilocode
-          - kimchi
           - opencode
           - kiro
           - pi
@@ -6804,6 +6803,7 @@ components:
           - devin
           - droid
           - kimi
+          - kimchi
           - muse
           - amp
           - aider
@@ -7085,7 +7085,6 @@ components:
           - copilot
           - cursor
           - kilocode
-          - kimchi
           - opencode
           - kiro
           - pi
@@ -7097,6 +7096,7 @@ components:
           - devin
           - droid
           - kimi
+          - kimchi
           - muse
           - amp
           - aider

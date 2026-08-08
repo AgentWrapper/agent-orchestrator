@@ -29,6 +29,15 @@
 // flags or subcommands. The `kimchi setup` subcommand is an interactive API
 // key wizard, not a per-directory trust gate. Therefore no PreLaunch
 // implementation is needed; AO worktree spawns will not hang on a trust dialog.
+//
+// ActiveTurnSteer: Kimchi has a programmatic steering mechanism
+// (pi.sendMessage with deliverAs:"steer") used by internal extensions to inject
+// guidance into the active turn. However, AO writes to the tmux pane as
+// terminal keystrokes, which go through the TUI editor's default submit path —
+// those messages queue for the next turn, they do not steer the current one.
+// Only the programmatic API can steer; terminal input cannot. Therefore
+// SteersActiveTurn is not implemented, matching Claude Code and Pi. Enabling it
+// would require AO to use pi.sendMessage directly instead of terminal input.
 package kimchi
 
 import (
