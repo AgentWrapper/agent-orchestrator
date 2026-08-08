@@ -32,6 +32,17 @@ type wsConn interface {
 const (
 	defaultHeartbeat   = 15 * time.Second
 	defaultWriteBuffer = 1024
+
+	// defaultInputGraceWindow is how long a freshly launched pane's typed input
+	// is held back after its first successful attach. tmux forwards bytes to
+	// the pane's foreground process the instant attach succeeds, whether or not
+	// that process has actually entered raw mode yet — a full-screen TUI agent
+	// (Claude Code, Codex, ...) can take a moment after launch to do so, during
+	// which fast typing lands as raw, echoed text in the scrollback instead of
+	// the agent's input box. The window only ever starts once, on the pane's
+	// first successful publish (see inputGate); reattaching to an
+	// already-running pane never adds a delay.
+	defaultInputGraceWindow = 500 * time.Millisecond
 )
 
 // Manager serves WebSocket clients, opening one attach Stream per opened pane
@@ -58,12 +69,64 @@ type Manager struct {
 	sharedMu sync.Mutex
 	shared   map[string]*sharedTerm
 
+	// inputGraceWindow is how long a fresh pane's input is held (see
+	// defaultInputGraceWindow); zero disables the hold entirely. gatesMu guards
+	// gates, the per-id shared one-shot gate (see inputGate) — populated the
+	// first time this Manager ever sees an id and kept for the Manager's whole
+	// lifetime (deliberately not time-pruned: an id's gate records that the
+	// pane already had its one-time grace period, and a pane can legitimately
+	// stay open far longer than the grace window itself).
+	inputGraceWindow time.Duration
+	gatesMu          sync.Mutex
+	gates            map[string]*inputGate
+
 	// inputMu makes BeginInputDrain atomic with pane writes. Once a drain returns,
 	// every write that began before it has finished and every later write is
 	// refused until the matching release runs.
 	inputMu      sync.Mutex
 	inputBlocked map[string]int
 	lastInputAt  map[string]time.Time
+}
+
+// inputGate is a shared, one-shot "pane is old enough to trust with input"
+// signal: every attachment for a given pane id (across reattaches and
+// multiple clients) waits on the SAME gate, but only the first successful
+// attach actually starts its timer (see start). That means a slow Attach or a
+// failed-then-retried attach never lets the hold expire before the pane is
+// even up, and a reattach or a second client never restarts or re-adds delay.
+type inputGate struct {
+	once sync.Once
+	ch   chan struct{}
+}
+
+func newInputGate() *inputGate {
+	return &inputGate{ch: make(chan struct{})}
+}
+
+// start arms the gate's timer; only the very first call has any effect. d<=0
+// opens the gate immediately (grace window disabled).
+func (g *inputGate) start(d time.Duration) {
+	g.once.Do(func() {
+		if d <= 0 {
+			close(g.ch)
+			return
+		}
+		time.AfterFunc(d, func() { close(g.ch) })
+	})
+}
+
+// wait blocks until the gate opens or ctx ends, whichever comes first, and
+// reports which one happened: true only means the gate itself opened. A
+// caller must treat false (ctx ended first) as "abandon" — never as "proceed
+// anyway" — since cancellation during this wait means shutdown (or this
+// attachment closing) started before the pane was ever trusted with input.
+func (g *inputGate) wait(ctx context.Context) bool {
+	select {
+	case <-g.ch:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // sharedTerm tracks every client currently viewing one terminal id (one PTY) so
@@ -92,6 +155,12 @@ type Option func(*Manager)
 // WithHeartbeat overrides the ping interval.
 func WithHeartbeat(d time.Duration) Option { return func(m *Manager) { m.heartbeat = d } }
 
+// WithInputGraceWindow overrides how long a freshly launched pane's input is
+// held after attach (see defaultInputGraceWindow); zero disables it.
+func WithInputGraceWindow(d time.Duration) Option {
+	return func(m *Manager) { m.inputGraceWindow = d }
+}
+
 // NewManager builds a Manager. src opens attach Streams; events feeds the session
 // channel (may be nil to disable it). A nil logger falls back to slog.Default.
 func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option) *Manager {
@@ -100,16 +169,17 @@ func NewManager(src Source, events EventSource, log *slog.Logger, opts ...Option
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{
-		src:          src,
-		events:       events,
-		log:          log,
-		heartbeat:    defaultHeartbeat,
-		ctx:          ctx,
-		cancel:       cancel,
-		attachments:  map[*attachment]struct{}{},
-		shared:       map[string]*sharedTerm{},
-		inputBlocked: map[string]int{},
-		lastInputAt:  map[string]time.Time{},
+		src:              src,
+		events:           events,
+		log:              log,
+		heartbeat:        defaultHeartbeat,
+		ctx:              ctx,
+		cancel:           cancel,
+		attachments:      map[*attachment]struct{}{},
+		shared:           map[string]*sharedTerm{},
+		inputGraceWindow: defaultInputGraceWindow,
+		inputBlocked:     map[string]int{},
+		lastInputAt:      map[string]time.Time{},
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -187,6 +257,62 @@ func (m *Manager) forget(a *attachment) {
 	m.mu.Lock()
 	delete(m.attachments, a)
 	m.mu.Unlock()
+}
+
+// inputGateFor returns the gate id was armed with, or nil if it was never
+// armed. Holding input is OPT-IN per agent launch (see ArmInputGate): a pane
+// nobody armed — a standalone shell, or a long-running pane this process only
+// learned about by attaching to it — is never delayed, since there is no
+// agent TUI mid-startup to protect it from. Every attachment for an armed id
+// shares that one gate and its single timer.
+func (m *Manager) inputGateFor(id string) *inputGate {
+	m.gatesMu.Lock()
+	defer m.gatesMu.Unlock()
+	return m.gates[id]
+}
+
+// ArmInputGate holds id's typed input until a fresh grace window elapses,
+// because a new agent process is starting in that pane. Call it once per
+// agent launch — both a first spawn and a resume/restart that reuses the same
+// runtime handle (see ports.RuntimeRestarter) — since the launch, not the
+// pane, is what needs protecting: the previous process's gate is already open
+// and would let the replacement TUI's first keystrokes race raw-mode entry.
+//
+// Arming re-blocks the clients ALREADY attached to the pane, not just the
+// next one to open. A tmux restart keeps its clients attached, so those
+// attachments never reattach and would otherwise sail through on the
+// inputReady they earned from the process that just exited.
+//
+// Panes that are never armed (standalone shells) keep accepting input
+// immediately; see inputGateFor.
+func (m *Manager) ArmInputGate(id string) {
+	if m.inputGraceWindow <= 0 {
+		return
+	}
+	gate := newInputGate()
+	m.gatesMu.Lock()
+	if m.gates == nil {
+		m.gates = map[string]*inputGate{}
+	}
+	m.gates[id] = gate
+	m.gatesMu.Unlock()
+
+	// Snapshot the live viewers under the lock, then re-arm outside it:
+	// rearmInput starts a timer and spawns a waiter, neither of which should
+	// run while the shared-terminal arbiter's lock is held.
+	m.sharedMu.Lock()
+	var live []*attachment
+	if s := m.shared[id]; s != nil {
+		live = make([]*attachment, 0, len(s.members))
+		for _, mem := range s.members {
+			live = append(live, mem.att)
+		}
+	}
+	m.sharedMu.Unlock()
+
+	for _, att := range live {
+		att.rearmInput(m.ctx, gate, m.inputGraceWindow)
+	}
 }
 
 // joinTerminal registers a client (its connection + attach Stream + requested
@@ -428,6 +554,11 @@ func (c *connState) openTerminal(id string, rows, cols uint16, role string) {
 			c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgExited})
 		},
 		c.mgr.log)
+	// nil unless this pane's agent launch armed a gate (see ArmInputGate);
+	// unarmed panes — standalone shells, already-running panes this process
+	// merely attached to — accept input immediately.
+	a.inputGate = c.mgr.inputGateFor(id)
+	a.inputGraceWindow = c.mgr.inputGraceWindow
 	if err := c.mgr.track(a); err != nil {
 		c.enqueue(serverMsg{Ch: chTerminal, ID: id, Type: msgError, Error: err.Error()})
 		return

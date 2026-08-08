@@ -65,6 +65,20 @@ type attachment struct {
 	opened       bool
 	inputReady   bool
 	pendingInput [][]byte
+	// draining is true while a releaseInput loop is actively dequeuing and
+	// writing pendingInput. A second caller (e.g. a reattach's own setPTY)
+	// finds it true and does not start a competing loop — the active loop
+	// already re-reads a.pty fresh before every write, so it naturally hands
+	// remaining input to whatever Stream ends up current.
+	draining bool
+
+	// inputGate, when set by the Manager before run() starts, delays flipping
+	// inputReady until the pane's shared gate opens (see setPTY) — giving a
+	// just-launched agent's TUI time to reach raw mode before trusting
+	// keystrokes to it. nil disables the hold entirely (e.g. attachments built
+	// directly in tests, bypassing Manager).
+	inputGate        *inputGate
+	inputGraceWindow time.Duration
 }
 
 func newAttachment(id string, handle ports.RuntimeHandle, src Source, onOpen func(), onData func([]byte), onExit func(), log *slog.Logger) *attachment {
@@ -153,7 +167,7 @@ func (a *attachment) run(ctx context.Context) {
 			continue
 		}
 
-		if !a.setPTY(p) {
+		if !a.setPTY(ctx, p) {
 			_ = p.Close()
 			return
 		}
@@ -271,7 +285,16 @@ func (a *attachment) size() (rows, cols uint16) {
 // requested size onto it (see resize) — the attach already started at the size
 // read in run, but a resize frame can land between that read and registration
 // here; the replay (Resize) converges the late case.
-func (a *attachment) setPTY(p ports.Stream) bool {
+//
+// It returns as soon as the Stream is published so run's copyOut starts
+// reading output immediately — the pane's boot output (attach handshake,
+// repaint) must never wait on the input hold below. Releasing buffered input
+// happens on a separate goroutine gated on inputGate, which is shared across
+// every attach of this pane (see Manager.inputGateFor): the gate's timer only
+// ever starts on the pane's first successful publish, not on this attempt's
+// open request, so a slow Attach or a failed-then-retried attach never lets
+// the hold expire early or double-count.
+func (a *attachment) setPTY(ctx context.Context, p ports.Stream) bool {
 	a.mu.Lock()
 	if a.closed || a.exited {
 		a.mu.Unlock()
@@ -285,6 +308,8 @@ func (a *attachment) setPTY(p ports.Stream) bool {
 		a.opened = true
 	}
 	onOpen := a.onOpen
+	gate := a.inputGate
+	window := a.inputGraceWindow
 	a.mu.Unlock()
 	if rows > 0 && cols > 0 {
 		_ = p.Resize(rows, cols)
@@ -293,23 +318,126 @@ func (a *attachment) setPTY(p ports.Stream) bool {
 		onOpen()
 	}
 
+	if gate == nil {
+		a.releaseInput(ctx)
+		return true
+	}
+	gate.start(window)
+	go a.releaseInputWhenGateOpens(ctx, gate)
+	return true
+}
+
+// rearmInput re-blocks this ALREADY-ATTACHED client behind a fresh gate,
+// because a new agent process has just been launched into the pane it is
+// still attached to. A tmux restart replaces the process inside the pane
+// without disturbing its attached clients, so no reattach — and therefore no
+// setPTY — will happen for this attachment: swapping the gate alone would
+// leave inputReady true and let the replacement TUI's first keystrokes race
+// raw-mode entry exactly as before. The timer is started here rather than
+// deferred to setPTY for the same reason: with a live PTY there is no later
+// publish to start it, and an unarmed gate would block input forever.
+//
+// With no PTY yet (the pane's first launch, armed before any client attached)
+// this only records the gate; setPTY starts it on the first successful
+// publish, so a slow attach cannot burn the window before the pane is up.
+func (a *attachment) rearmInput(ctx context.Context, gate *inputGate, window time.Duration) {
+	a.mu.Lock()
+	if a.closed || a.exited {
+		a.mu.Unlock()
+		return
+	}
+	a.inputGate = gate
+	a.inputGraceWindow = window
+	a.inputReady = false
+	pty := a.pty
+	a.mu.Unlock()
+
+	if pty == nil {
+		return
+	}
+	gate.start(window)
+	go a.releaseInputWhenGateOpens(ctx, gate)
+}
+
+// releaseInputWhenGateOpens waits for the pane's shared gate to open. If ctx
+// ends first (daemon shutdown, attachment closed) — wait reports which one
+// actually happened — buffered input is abandoned rather than flushed: a
+// waiter racing Manager.Close must never forward keystrokes after shutdown
+// has started, even though Close cancels the context before it marks every
+// attachment closed.
+func (a *attachment) releaseInputWhenGateOpens(ctx context.Context, gate *inputGate) {
+	if !gate.wait(ctx) {
+		return
+	}
+	a.releaseInput(ctx)
+}
+
+// releaseInput drains pendingInput to whatever Stream is currently attached,
+// re-reading a.pty fresh before every single write rather than holding one
+// Stream reference for the whole drain. That is what makes a Stream swap
+// mid-drain (a reattach racing this release) safe: a chunk that fails against
+// a Stream this attachment has since moved on from is requeued — not lost, not
+// misdelivered — for whichever Stream is current on the next iteration, and a
+// genuine write failure against the STILL-current Stream closes it so run's
+// blocked copyOut unblocks and the attach loop actually exits instead of
+// hanging on a pane this drain has already given up on.
+//
+// draining (see the field doc) ensures only one such loop runs per attachment
+// at a time; a second caller (a fresh setPTY racing this drain) simply returns
+// and trusts the active loop to deliver to whatever Stream ends up current.
+func (a *attachment) releaseInput(ctx context.Context) {
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		a.mu.Lock()
-		pending := append([][]byte(nil), a.pendingInput...)
-		a.pendingInput = nil
-		if len(pending) == 0 {
+		if a.closed || a.exited || a.draining {
+			a.mu.Unlock()
+			return
+		}
+		pty := a.pty
+		if pty == nil {
+			a.mu.Unlock()
+			return
+		}
+		if len(a.pendingInput) == 0 {
 			a.inputReady = true
 			a.mu.Unlock()
-			return true
+			return
 		}
+		chunk := a.pendingInput[0]
+		a.pendingInput = a.pendingInput[1:]
+		a.draining = true
 		a.mu.Unlock()
 
-		for _, chunk := range pending {
-			if _, err := p.Write(chunk); err != nil {
-				a.fail("flush pending input: " + err.Error())
-				return false
+		_, err := pty.Write(chunk)
+
+		a.mu.Lock()
+		a.draining = false
+		stillCurrent := a.pty == pty
+		cancel := a.cancel
+		if err != nil && stillCurrent {
+			a.mu.Unlock()
+			a.fail("flush pending input: " + err.Error())
+			// Cancel run's own loop BEFORE closing the Stream: closing is what
+			// wakes copyOut's blocked Read, and run only stops there if ctx is
+			// already done by then (shouldStop) — markExited alone only fires
+			// onExit, it does not stop run's loop, so without the cancel it
+			// would treat this like an ordinary dropped-but-reattachable Stream
+			// and try again.
+			if cancel != nil {
+				cancel()
 			}
+			_ = pty.Close()
+			return
 		}
+		if err != nil {
+			// pty was swapped out from under this write (a reattach raced the
+			// drain): the chunk never reached the new Stream, so hand it back
+			// to the front of the queue for whichever Stream is current now.
+			a.pendingInput = append([][]byte{chunk}, a.pendingInput...)
+		}
+		a.mu.Unlock()
 	}
 }
 

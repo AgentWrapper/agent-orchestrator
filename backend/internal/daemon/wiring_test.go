@@ -622,6 +622,8 @@ type fakeSessionLifecycle struct {
 
 func (f *fakeSessionLifecycle) Send(context.Context, domain.SessionID, string) error { return nil }
 
+func (f *fakeSessionLifecycle) SetInputGateArmer(_ sessionmanager.InputGateArmer) {}
+
 func (f *fakeSessionLifecycle) Kill(_ context.Context, _ domain.SessionID) (bool, error) {
 	return false, nil
 }

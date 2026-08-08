@@ -248,6 +248,10 @@ func Run() error {
 	sessMgr.SetTerminalInputGate(termMgr)
 	lifecycleMessenger.Bind(sessMgr)
 	lcStack.LCM.SetCompletionTerminator(sessMgr)
+	// Lets a resume/restart that reuses a runtime handle reset that pane's
+	// input-grace-period gate (see terminal.Manager.ResetInputGate) instead of
+	// inheriting the exited process's already-open gate.
+	sessMgr.SetInputGateArmer(termMgr)
 	projectSvc := projectsvc.NewWithDeps(projectsvc.Deps{Store: store, Sessions: sessionSvc, DefaultHarness: domain.AgentHarness(cfg.Agent), Telemetry: telemetrySink})
 	if err := seedScratchProjectOnBoot(ctx, cfg, projectSvc); err != nil {
 		stop()

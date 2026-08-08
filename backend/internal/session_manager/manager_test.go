@@ -1090,6 +1090,38 @@ func TestResumeAgent_RestartsRuntimeWithManagedGeneration(t *testing.T) {
 	}
 }
 
+// fakeInputGateArmer records every ArmInputGate call so a test can assert a
+// launch tells the terminal layer to hold that pane's input while the new
+// agent process reaches raw mode.
+type fakeInputGateArmer struct {
+	armedIDs []string
+}
+
+func (f *fakeInputGateArmer) ArmInputGate(id string) {
+	f.armedIDs = append(f.armedIDs, id)
+}
+
+// A resume that reuses the runtime handle (tmux Restart, exercised by
+// TestResumeAgent_RestartsRuntimeWithManagedGeneration above) must arm that
+// handle's input gate afresh: the open gate belongs to the process that just
+// exited, and without this the replacement TUI's early keystrokes would race
+// raw-mode entry all over again on every resume (issue #3023 recurring).
+func TestResumeAgent_ArmsInputGateForReplacementProcess(t *testing.T) {
+	baseRuntime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
+	runtime := &fakeRestartRuntime{fakeRuntime: baseRuntime}
+	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
+	m, _, _ := newExitedResumeManager(t, runtime, agent)
+	armer := &fakeInputGateArmer{}
+	m.SetInputGateArmer(armer)
+
+	if _, err := m.ResumeAgentWithMode(ctx, "mer-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(armer.armedIDs, []string{"tmux-mer-1"}) {
+		t.Fatalf("input gate arms = %v, want exactly [tmux-mer-1]", armer.armedIDs)
+	}
+}
+
 func TestResumeAgent_FallsBackToRuntimeRecreateWithoutRestartCapability(t *testing.T) {
 	runtime := &fakeRuntime{aliveByHandle: map[string]bool{"tmux-mer-1": true}}
 	agent := supervisedLaunchAgent{launchArgvAgent{argv: []string{"codex", "resume", "agent-x"}}}
@@ -1226,6 +1258,23 @@ func TestSpawn_AssignsIDAndGoesIdle(t *testing.T) {
 	}
 	if st.sessions["mer-1"].Metadata.RuntimeHandleID != "h1" {
 		t.Fatal("handle not folded")
+	}
+}
+
+// Holding input is opt-in per launch, so a FRESH spawn has to arm its pane's
+// gate too — not just a resume. Without this the terminal mux never holds
+// anything for a brand new session and the whole guard silently does nothing,
+// which is precisely the case issue #3023 reported.
+func TestSpawn_ArmsInputGateForNewPane(t *testing.T) {
+	m, _, _, _ := newManager()
+	armer := &fakeInputGateArmer{}
+	m.SetInputGateArmer(armer)
+
+	if _, _, _, err := m.Spawn(ctx, ports.SpawnConfig{ProjectID: "mer", Kind: domain.KindWorker, Harness: domain.HarnessClaudeCode, Prompt: "do it"}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(armer.armedIDs, []string{"h1"}) {
+		t.Fatalf("input gate arms = %v, want exactly [h1] (the freshly created handle)", armer.armedIDs)
 	}
 }
 
