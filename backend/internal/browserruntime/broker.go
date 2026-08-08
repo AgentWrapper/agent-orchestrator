@@ -290,8 +290,10 @@ func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) erro
 	if err := conn.SetWriteDeadline(deadline); err != nil {
 		return err
 	}
+	interruptDone := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() {
 		_ = conn.SetWriteDeadline(time.Now())
+		close(interruptDone)
 	})
 	frame, err := json.Marshal(msg)
 	if err == nil && len(frame)+1 > maxRuntimeFrameBytes {
@@ -309,8 +311,17 @@ func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) erro
 			frame = frame[written:]
 		}
 	}
-	stop()
+	writeComplete := err == nil && len(frame) == 0
+	if !stop() {
+		<-interruptDone
+	}
 	_ = conn.SetWriteDeadline(time.Time{})
+	// Once the complete frame reached the runtime, let Execute observe a
+	// simultaneous cancellation and send the matching cancel frame. Returning
+	// ctx.Err here would make the delivered command impossible to cancel.
+	if writeComplete {
+		return nil
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
