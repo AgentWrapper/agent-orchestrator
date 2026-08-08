@@ -1,3 +1,4 @@
+import type { components } from "../../api/schema";
 import { attentionZone as presentationAttentionZone } from "../lib/session-presentation";
 
 import type { ReviewerHarnessId } from "../lib/reviewer-harnesses";
@@ -39,6 +40,50 @@ const sessionStatuses = new Set<SessionStatus>([
 export function toSessionStatus(status?: string, isTerminated = false): SessionStatus {
 	if (status && sessionStatuses.has(status as SessionStatus)) return status as SessionStatus;
 	return isTerminated ? "terminated" : "unknown";
+}
+
+// CleanupDisposition is the session-level rollup of a terminated session's
+// runtime + workspace release, mirroring the backend's workspace_disposition.
+export type CleanupDisposition = "pending" | "removed" | "preserved_dirty" | "failed" | "not_applicable";
+
+const cleanupDispositions = new Set<CleanupDisposition>([
+	"pending",
+	"removed",
+	"preserved_dirty",
+	"failed",
+	"not_applicable",
+]);
+
+// SessionCleanup is the client view of a terminated session's terminal-resource
+// cleanup facts. Present only for a terminated session that has a facts row.
+export type SessionCleanup = {
+	disposition: CleanupDisposition;
+	runtimeReleasedAt?: string;
+	attemptCount?: number;
+	nextAttemptAt?: string;
+	failureCode?: string;
+};
+
+// toSessionCleanup maps the API cleanup facts onto the client shape, or undefined
+// when the session has none (a live or not-yet-finalized session). Validates
+// workspaceDisposition against the closed value set rather than trusting the
+// wire string outright — the generated type already narrows it, but a stale
+// client talking to a newer daemon could still see an unrecognized value cross
+// the network boundary. An unrecognized value falls back to "pending" (the
+// safe "reconciler hasn't converged yet, no action" reading) rather than
+// forwarding a disposition the renderer's switch statements don't handle.
+export function toSessionCleanup(cleanup?: components["schemas"]["SessionCleanupView"]): SessionCleanup | undefined {
+	if (!cleanup) return undefined;
+	const disposition = cleanupDispositions.has(cleanup.workspaceDisposition as CleanupDisposition)
+		? (cleanup.workspaceDisposition as CleanupDisposition)
+		: "pending";
+	return {
+		disposition,
+		runtimeReleasedAt: cleanup.runtimeReleasedAt ?? undefined,
+		attemptCount: cleanup.attemptCount,
+		nextAttemptAt: cleanup.nextAttemptAt ?? undefined,
+		failureCode: cleanup.failureCode,
+	};
 }
 
 export type SessionActivityState = "active" | "idle" | "waiting_input" | "blocked" | "exited" | "unknown";
@@ -145,10 +190,17 @@ export type WorkspaceSession = {
 	status: SessionStatus;
 	/** Stack-aware PR context derived by the daemon independently of runtime activity. */
 	scmStatus?: SessionStatus;
-	/** Durable runtime fact from the daemon; independent of the derived SCM-aware status. */
+	/**
+	 * Raw terminal fact from the daemon, independent of the derived status: a
+	 * merged session is terminated but has status "merged", so cleanup affordances
+	 * gate on this rather than status === "terminated". Optional only so existing
+	 * fixtures need not set it; the daemon mapping always populates it.
+	 */
 	isTerminated?: boolean;
 	/** User preference to tear down this session when its PR set completes through a merge. */
 	terminateOnPrMerge?: boolean;
+	/** Terminal-resource cleanup state; present only for a terminated session with a facts row. */
+	cleanup?: SessionCleanup;
 	/** ISO timestamp from the daemon — used for relative time in the inspector. */
 	createdAt?: string;
 	/** ISO timestamp from the daemon. */

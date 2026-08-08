@@ -11,6 +11,7 @@ import {
 	toAgentProvider,
 	toProjectKind,
 	toSessionActivity,
+	toSessionCleanup,
 	toSessionStatus,
 	type WorkspaceSummary,
 } from "../types/workspace";
@@ -100,6 +101,7 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						scmStatus,
 						isTerminated: session.isTerminated,
 						terminateOnPrMerge: session.terminateOnPrMerge ?? false,
+						cleanup: toSessionCleanup(session.cleanup),
 						createdAt: session.createdAt,
 						updatedAt: session.updatedAt,
 						activity,

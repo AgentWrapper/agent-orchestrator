@@ -1240,6 +1240,114 @@ describe("SessionsBoard", () => {
 		expect(await screen.findByRole("alert")).toHaveTextContent("Failed to terminate session (500)");
 		expect(screen.getByRole("button", { name: "Terminate merged worker" })).toBeEnabled();
 	});
+
+	it("retries cleanup for a preserved-dirty session and refreshes workspace data", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession({ cleanup: { disposition: "preserved_dirty" } })])],
+			isError: false,
+			isSuccess: true,
+		});
+		const queryClient = renderBoard("p1");
+		const invalidate = vi.spyOn(queryClient, "invalidateQueries").mockResolvedValue(undefined);
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		expect(screen.getByText("Worktree kept — uncommitted changes")).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Try cleanup again for dead worker" }));
+
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/cleanup", {
+				params: { path: { sessionId: "s-dead" } },
+			}),
+		);
+		expect(invalidate).toHaveBeenCalledWith({ queryKey: ["workspaces"] });
+	});
+
+	it("offers Retry cleanup for a failed (exhausted) session", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession({ cleanup: { disposition: "failed" } })])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		expect(screen.getByText("Cleanup failed")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Retry cleanup for dead worker" })).toBeInTheDocument();
+	});
+
+	it("shows cleaning-up progress with no retry action while cleanup is pending", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession({ cleanup: { disposition: "pending" } })])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		expect(screen.getByText("Cleaning up…")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /cleanup/i })).not.toBeInTheDocument();
+	});
+
+	// A terminated session with no cleanup facts row at all (the reconciler
+	// hasn't attempted or persisted anything for it yet — the boot/newly-terminal
+	// case) must render the same pending indicator as an explicit "pending"
+	// disposition, not disappear entirely.
+	it("shows cleaning-up progress for a terminated session with no cleanup facts yet", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession()])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		expect(screen.getByText("Cleaning up…")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /cleanup/i })).not.toBeInTheDocument();
+	});
+
+	it("surfaces the cleanup affordance for a MERGED (but terminated) session", async () => {
+		// The gate is the raw isTerminated fact, not status === "terminated": a
+		// merged session is terminated and must still offer cleanup recovery.
+		workspaceQueryMock.mockReturnValue({
+			data: [
+				workspaceWithSessions([
+					terminatedSession({
+						id: "s-merged",
+						title: "merged worker",
+						status: "merged",
+						cleanup: { disposition: "preserved_dirty" },
+					}),
+				]),
+			],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		// The archive row offers both actions for a merged session: restore (unrelated
+		// to cleanup) and the cleanup recovery this test targets.
+		expect(screen.getByRole("button", { name: "Restore merged worker" })).toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Try cleanup again for merged worker" }));
+		await waitFor(() =>
+			expect(postMock).toHaveBeenCalledWith("/api/v1/sessions/{sessionId}/cleanup", {
+				params: { path: { sessionId: "s-merged" } },
+			}),
+		);
+	});
+
+	it("shows no cleanup row for a removed (fully-reclaimed) session", async () => {
+		workspaceQueryMock.mockReturnValue({
+			data: [workspaceWithSessions([terminatedSession({ cleanup: { disposition: "removed" } })])],
+			isError: false,
+			isSuccess: true,
+		});
+		renderBoard("p1");
+
+		await userEvent.click(screen.getByRole("button", { name: /archive/i }));
+		expect(screen.queryByRole("button", { name: /cleanup/i })).not.toBeInTheDocument();
+		expect(screen.queryByText(/Cleaning up|Worktree kept|Cleanup failed/)).not.toBeInTheDocument();
+	});
 });
 
 function workspaceWithSessions(sessions: WorkspaceSession[]): WorkspaceSummary {

@@ -9,6 +9,7 @@ import {
 	sessionNeedsAttention,
 	toAgentProvider,
 	toSessionActivity,
+	toSessionCleanup,
 	toSessionStatus,
 	openPRs,
 	mergedPRCount,
@@ -91,6 +92,25 @@ describe("toSessionActivity", () => {
 	it("returns undefined for a missing activity", () => {
 		expect(toSessionActivity(undefined)).toBeUndefined();
 		expect(toSessionActivity(null)).toBeUndefined();
+	});
+});
+
+describe("toSessionCleanup", () => {
+	it.each(["pending", "removed", "preserved_dirty", "failed", "not_applicable"] as const)(
+		"passes through the known disposition %s",
+		(workspaceDisposition) => {
+			expect(toSessionCleanup({ workspaceDisposition })?.disposition).toBe(workspaceDisposition);
+		},
+	);
+
+	it("falls back to pending for an unrecognized disposition", () => {
+		// @ts-expect-error exercising a wire value outside the generated union (a
+		// stale client talking to a newer daemon)
+		expect(toSessionCleanup({ workspaceDisposition: "bogus" })?.disposition).toBe("pending");
+	});
+
+	it("returns undefined for a missing cleanup", () => {
+		expect(toSessionCleanup(undefined)).toBeUndefined();
 	});
 });
 
