@@ -82,6 +82,13 @@ func (c *commandContext) runStart(ctx context.Context, cmd *cobra.Command, opts 
 	out := cmd.OutOrStdout()
 	res := startResult{}
 
+	// Settle the tmux prerequisite here, while there is still a terminal to
+	// prompt on: the daemon lives inside the desktop app, where the only
+	// feedback channel is a spawn-time error dialog. This only ever warns, so
+	// launching the app never depends on it. Prompts and install output go to
+	// stderr so stdout stays pure JSON under --json.
+	c.ensureTmux(ctx, runtime.GOOS, cmd.InOrStdin(), cmd.ErrOrStderr())
+
 	appPath := c.resolveApp()
 	res.Resolved = appPath != ""
 

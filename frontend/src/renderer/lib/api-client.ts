@@ -71,6 +71,8 @@ const ROUTE_TEMPLATES = [
 	"/api/v1/notifications/read-all",
 	"/api/v1/notifications/stream",
 	"/api/v1/orchestrators",
+	"/api/v1/prerequisites",
+	"/api/v1/prerequisites/tmux/install",
 	"/api/v1/orchestrators/{id}",
 	"/api/v1/projects",
 	"/api/v1/projects/{id}",

@@ -1025,5 +1025,12 @@
 	"newTask.task": "Task",
 	"newTask.taskPlaceholder": "Aufgabe beschreiben (optional)…",
 	"newTask.model": "Model",
-	"newTask.taskRequired": "Task is required."
+	"newTask.taskRequired": "Task is required.",
+	"prereq.tmux.body": "tmux wird für Agent-Sitzungen benötigt und ist nicht installiert.",
+	"prereq.install": "tmux installieren",
+	"prereq.installing": "Wird installiert…",
+	"prereq.copyCommand": "Befehl kopieren",
+	"prereq.copied": "Kopiert",
+	"prereq.recheck": "Erneut prüfen",
+	"prereq.installFailed": "tmux konnte nicht installiert werden"
 }

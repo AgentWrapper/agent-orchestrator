@@ -81,6 +81,8 @@ func Build() ([]byte, error) {
 			"Connect Mobile LAN bridge control (loopback/desktop only)"),
 		*(&openapi31.Tag{Name: "browser"}).WithDescription(
 			"Target-isolated desktop browser runtime (loopback only)"),
+		*(&openapi31.Tag{Name: "prerequisites"}).WithDescription(
+			"Host prerequisites for the session runtimes, and installing them"),
 	}
 
 	for _, op := range operations() {
@@ -422,6 +424,7 @@ func operations() []operation {
 	ops = append(ops, mobileOperations()...)
 	ops = append(ops, browserOperations()...)
 	ops = append(ops, shellTerminalOperations()...)
+	ops = append(ops, prerequisiteOperations()...)
 	return ops
 }
 
@@ -750,6 +753,30 @@ func shellTerminalOperations() []operation {
 				{http.StatusNoContent, nil},
 				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusNotFound, envelope.APIError{}},
+				{http.StatusInternalServerError, envelope.APIError{}},
+				{http.StatusNotImplemented, envelope.APIError{}},
+			},
+		},
+	}
+}
+
+// prerequisiteOperations declares the host-prerequisite surface the desktop app
+// polls at launch, so a missing tmux is visible before the first spawn fails.
+func prerequisiteOperations() []operation {
+	return []operation{
+		{
+			method: http.MethodGet, path: "/api/v1/prerequisites", id: "listPrerequisites", tag: "prerequisites",
+			summary: "Report host prerequisites for the session runtimes",
+			resps: []respUnit{
+				{http.StatusOK, controllers.ListPrerequisitesResponse{}},
+			},
+		},
+		{
+			method: http.MethodPost, path: "/api/v1/prerequisites/tmux/install", id: "installTmuxPrerequisite", tag: "prerequisites",
+			summary: "Install tmux, where it can be done without a password prompt",
+			resps: []respUnit{
+				{http.StatusOK, controllers.InstallPrerequisiteResponse{}},
+				{http.StatusBadRequest, envelope.APIError{}},
 				{http.StatusInternalServerError, envelope.APIError{}},
 				{http.StatusNotImplemented, envelope.APIError{}},
 			},

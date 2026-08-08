@@ -892,6 +892,50 @@ paths:
       summary: Start a worker task and ask the orchestrator to title it
       tags:
       - sessions
+  /api/v1/prerequisites:
+    get:
+      operationId: listPrerequisites
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersListPrerequisitesResponse'
+          description: OK
+      summary: Report host prerequisites for the session runtimes
+      tags:
+      - prerequisites
+  /api/v1/prerequisites/tmux/install:
+    post:
+      operationId: installTmuxPrerequisite
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControllersInstallPrerequisiteResponse'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Bad Request
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIError'
+          description: Not Implemented
+      summary: Install tmux, where it can be done without a password prompt
+      tags:
+      - prerequisites
   /api/v1/projects:
     get:
       operationId: listProjects
@@ -4489,6 +4533,35 @@ components:
         disabled:
           type: boolean
       type: object
+    ControllersInstallPrerequisiteResponse:
+      properties:
+        prerequisite:
+          $ref: '#/components/schemas/ControllersPrerequisiteStatus'
+      required:
+      - prerequisite
+      type: object
+    ControllersListPrerequisitesResponse:
+      properties:
+        tmux:
+          $ref: '#/components/schemas/ControllersPrerequisiteStatus'
+      required:
+      - tmux
+      type: object
+    ControllersPrerequisiteStatus:
+      properties:
+        installCommand:
+          type: string
+        installable:
+          type: boolean
+        name:
+          type: string
+        satisfied:
+          type: boolean
+      required:
+      - name
+      - satisfied
+      - installable
+      type: object
     ControllersSessionView:
       properties:
         activity:
@@ -7371,3 +7444,5 @@ tags:
   name: mobile
 - description: Target-isolated desktop browser runtime (loopback only)
   name: browser
+- description: Host prerequisites for the session runtimes, and installing them
+  name: prerequisites

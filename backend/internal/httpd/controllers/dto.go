@@ -1608,3 +1608,26 @@ func capabilityNames(caps ports.ChatCapabilities) []string {
 type TriggerReviewRequest struct {
 	Harness domain.ReviewerHarness `json:"harness,omitempty" enum:"claude-code,codex,copilot,cursor,kilocode,opencode,kiro,pi,qwen,agy,continue,goose,vibe,devin,droid,kimi,muse,amp,aider,grok,crush,auggie,cline,autohand"`
 }
+
+// PrerequisiteStatus is one host prerequisite for the session runtimes.
+type PrerequisiteStatus struct {
+	Name      string `json:"name"`
+	Satisfied bool   `json:"satisfied"`
+	// InstallCommand is the exact line that installs it, ready to be shown or
+	// copied. Empty when it is already satisfied or nothing known can install it.
+	InstallCommand string `json:"installCommand,omitempty"`
+	// Installable reports whether the app can run InstallCommand itself. False
+	// when the command needs root, since the daemon has no terminal to answer a
+	// password prompt on.
+	Installable bool `json:"installable"`
+}
+
+// ListPrerequisitesResponse is the body of GET /api/v1/prerequisites.
+type ListPrerequisitesResponse struct {
+	Tmux PrerequisiteStatus `json:"tmux"`
+}
+
+// InstallPrerequisiteResponse is the body of POST /api/v1/prerequisites/tmux/install (200).
+type InstallPrerequisiteResponse struct {
+	Prerequisite PrerequisiteStatus `json:"prerequisite"`
+}
