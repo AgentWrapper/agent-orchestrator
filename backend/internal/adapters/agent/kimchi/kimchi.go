@@ -207,16 +207,17 @@ func (p *Plugin) GetLaunchCommand(ctx context.Context, cfg ports.LaunchConfig) (
 // GetRestoreCommand rebuilds the argv to resume an existing Kimchi session
 // when a native session id is available in metadata.
 //
-// Final argv shape: kimchi [--auto|--yolo] [--append-system-prompt <text>] --session <id>.
+// Final argv shape: kimchi [--auto|--yolo] [--allow-tool <rules>] [--deny-tool <rules>] [--append-system-prompt <text>] --session <id>.
 // Re-applying the permission mode is a behavioral fix, not just a contract gap:
 // Kimchi's default mode fails closed (cannot auto-approve anything) in headless
 // contexts, so dropping the mode would regress a resumed orchestrator. The
 // system prompt is re-applied because Kimchi rebuilds the prompt from the
 // current flags on resume (it is not stored in the transcript), so standing
 // instructions must be re-appended or a restored orchestrator loses its role.
-// --session <id> is appended last. RestoreConfig does not carry
-// AllowedTools/DisallowedTools, so allow/deny re-application on resume is out
-// of scope.
+// Tool allow/deny rules are re-applied because RestoreConfig carries them and
+// a worker session launched with tool restrictions would otherwise lose those
+// restrictions on resume, matching Claude Code's restore behavior.
+// --session <id> is appended last.
 func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig) (cmd []string, ok bool, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
@@ -232,6 +233,9 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	}
 	cmd = []string{binary}
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	if err := appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools); err != nil {
+		return nil, false, err
+	}
 
 	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
 	if err != nil {

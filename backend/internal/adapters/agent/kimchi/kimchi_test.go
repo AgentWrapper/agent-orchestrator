@@ -450,6 +450,64 @@ func TestGetRestoreCommandWithPermissions(t *testing.T) {
 	}
 }
 
+func TestGetRestoreCommandEmitsToolAllowlist(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimchi"}
+
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-1"},
+		},
+		AllowedTools:    []string{"read", "grep", "bash(git diff:*)"},
+		DisallowedTools: []string{"edit", "write", "bash(git push:*)"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+
+	// Kimchi's permission loader splits --allow-tool/--deny-tool values by
+	// comma (splitFlag), and repeated flags overwrite (last-wins), so the
+	// adapter must emit a single comma-joined value per flag — not one pair
+	// per rule — to avoid the deny list collapsing to a single entry.
+	if !containsSubsequence(cmd, []string{"--allow-tool", "read,grep,bash(git diff:*)"}) {
+		t.Fatalf("missing single comma-joined --allow-tool; got %#v", cmd)
+	}
+	if !containsSubsequence(cmd, []string{"--deny-tool", "edit,write,bash(git push:*)"}) {
+		t.Fatalf("missing single comma-joined --deny-tool; got %#v", cmd)
+	}
+	if n := countFlagOccurrences(cmd, "--allow-tool"); n != 1 {
+		t.Fatalf("--allow-tool appears %d times, want 1; got %#v", n, cmd)
+	}
+	if n := countFlagOccurrences(cmd, "--deny-tool"); n != 1 {
+		t.Fatalf("--deny-tool appears %d times, want 1; got %#v", n, cmd)
+	}
+	// Tool flags must appear before --session, which is appended last.
+	if !containsSubsequence(cmd, []string{"--deny-tool", "edit,write,bash(git push:*)", "--session", "sess-1"}) {
+		t.Fatalf("tool flags must precede --session; got %#v", cmd)
+	}
+}
+
+func TestGetRestoreCommandOmitsToolFlagsWhenUnset(t *testing.T) {
+	p := &Plugin{resolvedBinary: "kimchi"}
+
+	cmd, ok, err := p.GetRestoreCommand(context.Background(), ports.RestoreConfig{
+		Session: ports.SessionRef{
+			Metadata: map[string]string{ports.MetadataKeyAgentSessionID: "sess-1"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("ok=false, want true")
+	}
+	if containsString(cmd, "--allow-tool") || containsString(cmd, "--deny-tool") {
+		t.Fatalf("unrestricted restore should emit no tool flags; got %#v", cmd)
+	}
+}
+
 func TestGetRestoreCommandWithSystemPromptFile(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "system.md")
