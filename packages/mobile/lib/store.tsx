@@ -1,8 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-	collectPRs,
-	getProjects,
+	ApiError,
+	getNotifications,
 	getSessions,
 	killSession,
 	launchOrchestrator as apiLaunchOrchestrator,
@@ -15,8 +15,11 @@ import {
 	type DashboardStats,
 	type OrchestratorLink,
 	type ProjectInfo,
+	type SessionMode,
 } from "./api";
 import { isConfigured, loadConfig, type ServerConfig } from "./config";
+import { shouldKeepPolling } from "./connectionError";
+import { collectPRs } from "./prView";
 
 const ACTIVE_PROJECT_KEY = "ao.activeProject";
 const POLL_INTERVAL_MS = 8000;
@@ -24,6 +27,19 @@ const POLL_INTERVAL_MS = 8000;
 // Board-level connection state is derived from the REST poll. The session screen
 // tracks its own terminal mux connection separately.
 export type ConnStatus = "closed" | "connecting" | "open";
+
+// An options object rather than four optional positionals: `spawn(a, b, c, d)`
+// with every argument optional and same-typed is where call-site mistakes live.
+export type SpawnOptions = {
+	/** Falls back to the active project, or the only project. */
+	projectId?: string;
+	prompt?: string;
+	/** The task name. Becomes the session's title — see sessionTitle. */
+	issueId?: string;
+	harness?: string;
+	/** Mobile defaults to Chat; TUI remains an explicit compatibility choice. */
+	mode?: SessionMode;
+};
 
 type AppState = {
 	config: ServerConfig | null;
@@ -35,14 +51,18 @@ type AppState = {
 	stats: DashboardStats;
 	activeProjectId: string; // 'all' or a projectId
 	connection: ConnStatus;
+	/** Unread notification count, for the board's bell badge. 0 when unknown. */
+	notificationsUnread: number;
 	loading: boolean;
 	error: string | null;
+	// HTTP status behind `error`, or null when the server was never reached.
+	errorStatus: number | null;
 	// actions
 	reloadConfig: () => Promise<void>;
 	refresh: () => Promise<void>;
 	setActiveProject: (id: string) => void;
-	spawn: (prompt?: string, projectId?: string, harness?: string) => Promise<DashboardSession>;
-	launchConductor: (projectId: string, clean?: boolean) => Promise<OrchestratorLink>;
+	spawn: (opts: SpawnOptions) => Promise<DashboardSession>;
+	launchConductor: (projectId: string, clean?: boolean, mode?: SessionMode) => Promise<OrchestratorLink>;
 	merge: (pr: DashboardPR) => Promise<void>;
 	kill: (id: string) => Promise<void>;
 	restore: (id: string) => Promise<void>;
@@ -83,8 +103,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const [stats, setStats] = useState<DashboardStats>({});
 	const [activeProjectId, setActiveProjectId] = useState<string>("all");
 	const [connection, setConnection] = useState<ConnStatus>("closed");
+	const [notificationsUnread, setNotificationsUnread] = useState(0);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const [errorStatus, setErrorStatus] = useState<number | null>(null);
 
 	const cfgRef = useRef<ServerConfig | null>(null);
 
@@ -115,26 +137,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
 		const c = cfgRef.current;
 		if (!c || !isConfigured(c)) {
 			setConnection("closed");
+			setNotificationsUnread(0);
 			setLoading(false);
 			return false;
 		}
 		try {
-			const [projs, sess] = await Promise.all([getProjects(c).catch(() => [] as ProjectInfo[]), getSessions(c, "all")]);
-			setProjects(projs);
+			// getSessions returns projects, so don't fetch /projects again alongside
+			// it — that duplicate doubled the auth attempts spent per failing tick.
+			const sess = await getSessions(c, "all");
+			setProjects(sess.projects);
 			setSessions(sess.sessions);
 			setOrchestrators(sess.orchestrators);
 			setOrchestratorId(sess.orchestratorId);
 			setStats(sess.stats);
 			setError(null);
+			setErrorStatus(null);
 			setConnection("open");
+			// Badge count for the board's bell. Deliberately after the session fetch
+			// and separately caught: an older daemon without /notifications must not
+			// knock the board offline. limit:1 because we only read unreadCount.
+			try {
+				const page = await getNotifications(c, { status: "unread", limit: 1 });
+				setNotificationsUnread(page.unreadCount);
+			} catch {
+				setNotificationsUnread(0);
+			}
 			return true;
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : "Failed to load";
 			setError(msg);
+			// Keep the HTTP status alongside the raw message so screens can render
+			// human copy via describeConnectionFailure instead of surfacing strings
+			// like "401 - missing or invalid connection password". Null means the
+			// server was never reached (DNS failure, refused, timeout).
+			const status = e instanceof ApiError ? e.status : undefined;
+			setErrorStatus(status ?? null);
 			setConnection("closed");
 			// Auth failures are not transient — don't keep polling into a lockout.
 			// Network/other errors are transient, so keep polling for recovery.
-			return !(msg.startsWith("401") || msg.startsWith("429"));
+			// Decided from the status, not the message text: see shouldKeepPolling.
+			return shouldKeepPolling(status);
 		} finally {
 			setLoading(false);
 		}
@@ -174,11 +216,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	}, [activeProjectId, projects]);
 
 	const spawn = useCallback(
-		async (prompt?: string, projectId?: string, harness?: string) => {
+	async ({ projectId, prompt, issueId, harness, mode }: SpawnOptions) => {
 			const c = cfgRef.current;
 			const proj = projectId ?? targetProject();
 			if (!c || !proj) throw new Error("Pick a project first");
-			const session = await spawnSession(c, { projectId: proj, prompt, harness });
+			const session = await spawnSession(c, { projectId: proj, prompt, issueId, harness, mode: mode ?? "chat" });
 			await fetchAll();
 			return session;
 		},
@@ -186,9 +228,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	);
 
 	const launchConductor = useCallback(
-		async (projectId: string, clean = false) => {
+		async (projectId: string, clean = false, mode: SessionMode = "chat") => {
 			const c = cfgRef.current!;
-			const link = await apiLaunchOrchestrator(c, projectId, clean);
+			const link = await apiLaunchOrchestrator(c, projectId, clean, mode);
 			await fetchAll();
 			return link;
 		},
@@ -222,6 +264,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 	const send = useCallback(async (id: string, message: string) => {
 		await sendMessage(cfgRef.current!, id, message);
 	}, []);
+	const refresh = useCallback(async () => {
+		await fetchAll();
+	}, [fetchAll]);
 
 	// Memoized so the provider doesn't hand every useApp() consumer a brand-new
 	// object (causing re-renders) on each render. Re-renders now track real state changes.
@@ -236,12 +281,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			stats,
 			activeProjectId,
 			connection,
+			notificationsUnread,
 			loading,
 			error,
+			errorStatus,
 			reloadConfig,
-			refresh: async () => {
-				await fetchAll();
-			},
+			refresh,
 			setActiveProject,
 			spawn,
 			launchConductor,
@@ -259,10 +304,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 			stats,
 			activeProjectId,
 			connection,
+			notificationsUnread,
 			loading,
 			error,
+			errorStatus,
 			reloadConfig,
-			fetchAll,
+			refresh,
 			setActiveProject,
 			spawn,
 			launchConductor,

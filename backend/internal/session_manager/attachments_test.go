@@ -1,26 +1,28 @@
 package sessionmanager
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
 
 func TestWriteSpawnAttachments(t *testing.T) {
 	dir := t.TempDir()
 	refs, err := writeSpawnAttachments(dir, []ports.SpawnAttachment{
-		{Ext: ".png", Data: []byte("first")},
-		{Ext: ".jpg", Data: []byte("second")},
+		{Ext: ".html", Data: []byte("first")},
+		{Ext: ".png", Data: []byte("second")},
 		{Ext: "", Data: []byte("third")},
 	})
 	if err != nil {
 		t.Fatalf("writeSpawnAttachments: %v", err)
 	}
 
-	want := []string{".ao/attachments/image-1.png", ".ao/attachments/image-2.jpg", ".ao/attachments/image-3.bin"}
+	want := []string{".ao/attachments/attachment-1.html", ".ao/attachments/attachment-2.png", ".ao/attachments/attachment-3.bin"}
 	if len(refs) != len(want) {
 		t.Fatalf("refs = %v, want %v", refs, want)
 	}
@@ -38,24 +40,53 @@ func TestWriteSpawnAttachments(t *testing.T) {
 	}
 }
 
+func TestStageAttachmentsUsesNeutralFileNames(t *testing.T) {
+	dir := t.TempDir()
+	st := newFakeStore()
+	st.sessions["ao-1"] = domain.SessionRecord{
+		ID:       "ao-1",
+		Metadata: domain.SessionMetadata{WorkspacePath: dir},
+	}
+	m := New(Deps{Store: st, Workspace: &fakeWorkspace{}})
+
+	refs, err := m.StageAttachments(context.Background(), "ao-1", []ports.SpawnAttachment{
+		{Ext: ".html", Data: []byte("<main>hi</main>")},
+	})
+	if err != nil {
+		t.Fatalf("StageAttachments: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("refs = %v, want one", refs)
+	}
+	if !strings.HasPrefix(refs[0], ".ao/attachments/attachment-") || !strings.HasSuffix(refs[0], ".html") {
+		t.Fatalf("ref = %q, want neutral attachment name with .html extension", refs[0])
+	}
+	if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(refs[0]))); err != nil {
+		t.Fatalf("staged attachment missing on disk: %v", err)
+	}
+}
+
 func TestAppendAttachmentReferences(t *testing.T) {
 	t.Run("appends after a brief", func(t *testing.T) {
-		got := appendAttachmentReferences("Fix the button", []string{".ao/attachments/image-1.png"})
+		got := appendAttachmentReferences("Fix the button", []string{".ao/attachments/attachment-1.html"})
 		if !strings.HasPrefix(got, "Fix the button\n\n") {
 			t.Errorf("brief not preserved: %q", got)
 		}
-		if !strings.Contains(got, "- .ao/attachments/image-1.png") {
+		if !strings.Contains(got, "- .ao/attachments/attachment-1.html") {
 			t.Errorf("missing reference: %q", got)
 		}
 	})
 
 	t.Run("handles empty brief", func(t *testing.T) {
-		got := appendAttachmentReferences("", []string{".ao/attachments/image-1.png"})
+		got := appendAttachmentReferences("", []string{".ao/attachments/attachment-1.html"})
 		if strings.HasPrefix(got, "\n") {
 			t.Errorf("leading blank line for empty brief: %q", got)
 		}
-		if !strings.Contains(got, "Attached images") {
+		if !strings.Contains(got, "Attached files") {
 			t.Errorf("missing header: %q", got)
+		}
+		if strings.Contains(got, "Attached images") {
+			t.Errorf("header still describes attachments as images: %q", got)
 		}
 	})
 

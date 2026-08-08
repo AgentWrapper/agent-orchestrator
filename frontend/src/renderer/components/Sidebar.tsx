@@ -1,20 +1,22 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import {
 	ChevronRight,
 	Folder,
 	FolderOpen,
-	LayoutDashboard,
 	MoreVertical,
 	Pencil,
 	Pin,
+	PinOff,
 	Plus,
 	RefreshCw,
 	Search,
 	Settings,
 	Trash2,
 } from "lucide-react";
-import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { UpdateStatus } from "../../main/update-settings";
 import {
 	hasConfiguredOrchestratorAgent,
@@ -23,15 +25,24 @@ import {
 	type WorkspaceSummary,
 	workerSessions,
 } from "../types/workspace";
-import { getSessionDotView } from "../lib/session-presentation";
+import { getAgentActivityView } from "../lib/session-presentation";
 import { aoBridge } from "../lib/bridge";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { workspaceQueryKey } from "../hooks/useWorkspaceQuery";
+import { usePinSession, useUnpinSession } from "../hooks/usePinSession";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
 import { renameSession } from "../lib/rename-session";
+import { useTerminateSession } from "../hooks/useTerminateSession";
 import { useResizable } from "../hooks/useResizable";
 import { useShellMaybe } from "../lib/shell-context";
 import { useUpdateStatus } from "../hooks/useUpdateStatus";
+import {
+	ContextMenu,
+	ContextMenuContent,
+	ContextMenuItem,
+	ContextMenuSeparator,
+	ContextMenuTrigger,
+} from "./ui/context-menu";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -58,24 +69,23 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { OrchestratorIcon } from "./icons";
 import aoLogo from "../../../assets/ao-logo.svg";
 import { cn } from "../lib/utils";
-import { useUiStore } from "../stores/ui-store";
+import { useUiStore } from "../stores/ui-store"
 import { ConfirmDialog } from "./ConfirmDialog";
 import { CreateProjectFlow, type CreateProjectInput } from "./CreateProjectFlow";
 import { ResizeHandle } from "./ResizeHandle";
-import { isLinuxPlatform, isMacPlatform } from "../lib/platform";
+import { isMacPlatform } from "../lib/platform";
 
-// macOS + Linux paint framed chrome: the fixed TitlebarNav cluster carries the
+// macOS paints framed chrome: the fixed TitlebarNav cluster carries the
 // sidebar toggle + history arrows above this surface. Windows hangs the sidebar
 // under its custom titlebar.
 const isMac = isMacPlatform();
-const isLinux = isLinuxPlatform();
 const noDragStyle = isMac ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties) : undefined;
 
-// Shared styling for the per-project hover action buttons (dashboard,
-// orchestrator, kebab): a 20px square icon button that tints on hover, matching
-// the old SidebarMenuAction footprint.
+// Shared styling for the per-project hover action buttons (orchestrator, kebab):
+// a 20px square icon button that tints on hover, matching the old
+// SidebarMenuAction footprint.
 const HOVER_ACTION_CLASS =
-	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors hover:bg-interactive-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-interactive-hover data-[state=open]:text-foreground [&_svg]:size-icon-lg";
+	"grid size-5 shrink-0 place-items-center rounded-md text-passive transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-[state=open]:text-foreground [&_svg]:size-icon-lg";
 
 // Shared nav-row chrome (Codex-style): inset pill hover/selected, 14px type, no accent bar.
 const NAV_ROW_CLASS =
@@ -91,7 +101,6 @@ const MAX_DISPLAY_NAME_LEN = 20;
 export const SIDEBAR_DEFAULT_WIDTH = 240;
 export const SIDEBAR_MIN_WIDTH = 200;
 export const SIDEBAR_MAX_WIDTH = 420;
-export const SIDEBAR_COLLAPSE_THRESHOLD = SIDEBAR_MIN_WIDTH;
 
 type SidebarProps = {
 	/** Hide the sidebar's right edge stroke on the welcome board inset chrome. */
@@ -100,7 +109,7 @@ type SidebarProps = {
 	isOverlay?: boolean;
 	underTopbar?: boolean;
 	/** Chrome height to clear when underTopbar is set. Defaults to --size-toolbar. */
-	topbarOffset?: "toolbar" | "titlebar" | "trafficLights";
+	topbarOffset?: "toolbar" | "titlebar" | "trafficLights" | "session";
 	onPreviewLeave?: () => void;
 	workspaceError?: string;
 	workspaces: WorkspaceSummary[];
@@ -113,6 +122,8 @@ type SidebarProps = {
 // route params, and clicks navigate rather than mutate a store.
 function useSelection() {
 	const navigate = useNavigate();
+	const openGlobalSettings = useUiStore((state) => state.openGlobalSettings);
+	const openProjectSettings = useUiStore((state) => state.openProjectSettings);
 	const params = useParams({ strict: false }) as { projectId?: string; sessionId?: string };
 	const pathname = useRouterState({ select: (state) => state.location.pathname });
 	return {
@@ -120,19 +131,27 @@ function useSelection() {
 		activeProjectId: params.projectId,
 		activeSessionId: params.sessionId,
 		goHome: () => void navigate({ to: "/" }),
-		goGlobalSettings: () => void navigate({ to: "/settings" }),
-		goSettings: (projectId: string) => void navigate({ to: "/projects/$projectId/settings", params: { projectId } }),
+		// Settings is a modal — open it in place so the current page (session
+		// terminal, board, etc.) stays underneath.
+		goGlobalSettings: () => openGlobalSettings(),
+		goSettings: (projectId: string) => openProjectSettings(projectId),
 		goProject: (projectId: string) => void navigate({ to: "/projects/$projectId", params: { projectId } }),
 		goSession: (projectId: string, sessionId: string) =>
 			void navigate({ to: "/projects/$projectId/sessions/$sessionId", params: { projectId, sessionId } }),
 	};
 }
 
-// Activity controls motion; live PR context controls an active session's
-// color. Idle activity remains visible as a static gray dot.
-function SessionDot({ session }: { session: WorkspaceSession }) {
-	const dot = getSessionDotView(session);
-	return <span aria-hidden="true" className={cn("mt-px h-1.5 w-1.5 shrink-0 rounded-full", dot.className)} />;
+// Agent activity is the shared source for both color and motion. PR and CI
+// state is presented on cards and board lanes instead of repainting this dot.
+function SessionStatusDot({ session }: { session: WorkspaceSession }) {
+	const activity = getAgentActivityView(session.activity);
+	return (
+		<span
+			aria-hidden="true"
+			className={cn("size-2 shrink-0 rounded-full", activity.indicatorClassName)}
+			data-session-status=""
+		/>
+	);
 }
 
 // Built on shadcn's sidebar primitives (components/ui/sidebar): the provider in
@@ -151,6 +170,7 @@ export function Sidebar({
 	onInitializeProject,
 	onRemoveProject,
 }: SidebarProps) {
+	const { t } = useTranslation();
 	const selection = useSelection();
 	const { state, setOpen } = useSidebar();
 	const isCollapsed = state === "collapsed";
@@ -163,21 +183,12 @@ export function Sidebar({
 	const commandPaletteEnabled = useCommandPaletteEnabled();
 	const setCommandPaletteOpen = useUiStore((s) => s.setCommandPaletteOpen);
 
-	useEffect(() => {
-		if (isCollapsed) {
-			setExpandedChromeVisible(false);
-			return;
-		}
-
-		const reducedMotion =
-			typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-		if (reducedMotion) {
+	useLayoutEffect(() => {
+		// Offcanvas: the panel slides off-screen on collapse — no need to hide content.
+		// Reveal immediately on expand so there's no fade-in delay.
+		if (!isCollapsed) {
 			setExpandedChromeVisible(true);
-			return;
 		}
-
-		const timer = window.setTimeout(() => setExpandedChromeVisible(true), 160);
-		return () => window.clearTimeout(timer);
 	}, [isCollapsed]);
 
 	// Disclosure state: projects are expanded by default; a project id present in
@@ -189,9 +200,8 @@ export function Sidebar({
 			next.has(id) ? next.delete(id) : next.add(id);
 			return next;
 		});
-	// Section disclosure: Pinned / Projects headers collapse their bodies.
+	// Section disclosure: Pinned header collapses its body. Projects stays open.
 	const [pinnedOpen, setPinnedOpen] = useState(true);
-	const [projectsOpen, setProjectsOpen] = useState(true);
 	// Fetch the running app version to derive the build channel. Channel is
 	// identity: derived from the version string, not the update-channel setting
 	// (the setting can be changed mid-session; the binary cannot).
@@ -204,7 +214,9 @@ export function Sidebar({
 
 	// agent-orchestrator's sidebar resize: drag the right edge (200-420px,
 	// persisted), double-click to reset to 240px. Drives --ao-sidebar-w on :root,
-	// which the provider forwards into shadcn's --sidebar-width.
+	// which the provider forwards into shadcn's --sidebar-width. Dragging clamps
+	// at SIDEBAR_MIN_WIDTH — collapsing stays on the explicit toggle (⌘B /
+	// titlebar button), never on a drag.
 	const {
 		onPointerDown: onResizePointerDown,
 		onCollapsedPointerDown: onCollapsedResizePointerDown,
@@ -216,10 +228,17 @@ export function Sidebar({
 		min: SIDEBAR_MIN_WIDTH,
 		max: SIDEBAR_MAX_WIDTH,
 		edge: "right",
-		collapseBelow: SIDEBAR_COLLAPSE_THRESHOLD,
-		onCollapse: () => setOpen(false),
 		onExpand: () => setOpen(true),
 	});
+
+	const pinnedSessions = workspaces
+		.flatMap((w) => workerSessions(w.sessions))
+		.filter((s) => s.isPinned && s.isTerminated !== true)
+		.sort((a, b) => {
+			const aTime = a.pinnedAt ? new Date(a.pinnedAt).getTime() : 0;
+			const bTime = b.pinnedAt ? new Date(b.pinnedAt).getTime() : 0;
+			return bTime - aTime;
+		});
 
 	return (
 		// Pinned sidebars start below shell chrome. Hover previews paint a
@@ -232,6 +251,7 @@ export function Sidebar({
 			onPointerLeave={onPreviewLeave}
 			overlay={isOverlay}
 			className={cn(
+				"sidebar-focusless",
 				hideEdgeBorder ? "border-transparent" : "border-r-0 group-data-[side=left]:border-r-0",
 				isOverlay && "z-sidebar-preview shadow-2xl",
 				isOverlay || !underTopbar
@@ -241,7 +261,7 @@ export function Sidebar({
 		>
 			<SidebarHeader
 				className={cn(
-					"gap-0 p-0 px-2 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
+					"gap-0 p-0 px-3 pt-2 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pt-2",
 					isOverlay && underTopbar && "pt-(--sidebar-chrome-offset)!",
 				)}
 			>
@@ -249,14 +269,14 @@ export function Sidebar({
             36px board button wrapping the 22px accent mark. */}
 				<div
 					className={cn(
-						"flex shrink-0 items-center gap-1.5 px-1.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
+						"flex shrink-0 items-center gap-1.5 px-0.5 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:pb-2",
 						commandPaletteEnabled ? "pb-2" : "pb-3",
 					)}
 				>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
-								aria-label="Orchestrator board"
+								aria-label={t("shell.orchestratorBoard")}
 								className={cn(
 									"grid h-5.5 w-5.5 shrink-0 place-items-center",
 									"group-data-[collapsible=icon]:size-control-board group-data-[collapsible=icon]:rounded-lg",
@@ -271,7 +291,7 @@ export function Sidebar({
 							</button>
 						</TooltipTrigger>
 						<TooltipContent side="right" hidden={state !== "collapsed"}>
-							Orchestrator board
+							{t("shell.orchestratorBoard")}
 						</TooltipContent>
 					</Tooltip>
 					<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-sm font-bold leading-tight tracking-tight-lg text-foreground group-data-[collapsible=icon]:hidden">
@@ -279,7 +299,7 @@ export function Sidebar({
 					</span>
 					{isNightly && (
 						<span className="sidebar-expanded-chrome shrink-0 rounded-full bg-purple-subtle px-1.5 py-0.5 text-micro font-semibold leading-none text-purple-accent group-data-[collapsible=icon]:hidden">
-							nightly
+							{t("shell.nightly")}
 						</span>
 					)}
 				</div>
@@ -297,31 +317,41 @@ export function Sidebar({
 					</SidebarGroup>
 				) : null}
 
-				{/* Pinned — collapsible; body empty until pin functionality lands. */}
-				<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
-					<SectionDisclosure
-						icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
-						label="Pinned"
-						open={pinnedOpen}
-						onToggle={() => setPinnedOpen((v) => !v)}
-						className="mb-1"
-					/>
-					{pinnedOpen ? <div className="pb-2" /> : null}
-				</div>
+				{/* Pinned — collapsible; hidden when empty. */}
+				{pinnedSessions.length > 0 && (
+					<div className="sidebar-expanded-chrome flex shrink-0 flex-col group-data-[collapsible=icon]:hidden">
+						<SectionDisclosure
+							icon={<Pin strokeWidth={1.75} aria-hidden="true" />}
+							label={t("shell.pinned")}
+							open={pinnedOpen}
+							onToggle={() => setPinnedOpen((v) => !v)}
+							className="mb-1"
+						/>
+						{pinnedOpen ? (
+							<SidebarMenuSub
+								className="sidebar-expanded-chrome mx-0 ml-0 translate-x-0 gap-0.5 border-l-0 px-0 py-0.5 mb-2"
+								data-testid="pinned-session-list"
+							>
+								{pinnedSessions.map((session) => (
+									<SessionRow
+										key={session.id}
+										session={session}
+										active={selection.activeSessionId === session.id}
+										indented={false}
+										onOpen={() => selection.goSession(session.workspaceId, session.id)}
+									/>
+								))}
+							</SidebarMenuSub>
+						) : null}
+					</div>
+				)}
 
-				{/* Projects — collapsible section; + sits inside the same hover pill. */}
+				{/* Projects — always open; + sits inside the same hover pill. */}
 				<div className="sidebar-expanded-chrome flex shrink-0 pb-1.5 group-data-[collapsible=icon]:hidden">
 					<SectionDisclosure
-						icon={
-							projectsOpen ? (
-								<FolderOpen strokeWidth={1.75} aria-hidden="true" />
-							) : (
-								<Folder strokeWidth={1.75} aria-hidden="true" />
-							)
-						}
-						label="Projects"
-						open={projectsOpen}
-						onToggle={() => setProjectsOpen((v) => !v)}
+						icon={<FolderOpen strokeWidth={1.75} aria-hidden="true" />}
+						label={t("shell.projects")}
+						collapsible={false}
 						trailing={
 							<CreateProjectButton
 								hideTrigger={workspaces.length === 0}
@@ -333,49 +363,41 @@ export function Sidebar({
 				</div>
 			</div>
 
-			<SidebarContent className="scrollbar-none gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
-				{/* Collapsed-rail still lists projects even when the expanded
-				    Projects section is closed — the rail has no section chrome. */}
-				{(projectsOpen || isCollapsed) && (
-					<SidebarGroup className="p-0">
-						{/* Tree (project-sidebar__tree) */}
-						<SidebarGroupContent>
-							{workspaceError ? (
-								<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
-									<p className="text-sm text-foreground">Could not load projects.</p>
-									<p className="mt-1 text-caption text-passive">{workspaceError}</p>
-								</div>
-							) : workspaces.length === 0 ? null : (
-								<SidebarMenu className="gap-0.5 group-data-[collapsible=icon]:gap-1">
-									{workspaces.map((workspace) => (
-										<ProjectItem
-											key={workspace.id}
-											workspace={workspace}
-											expanded={!collapsedIds.has(workspace.id)}
-											selection={selection}
-											onToggle={() => toggleCollapsed(workspace.id)}
-											onRemoveProject={onRemoveProject}
-										/>
-									))}
-									{isCollapsed && <CreateProjectListItem />}
-								</SidebarMenu>
-							)}
-						</SidebarGroupContent>
-					</SidebarGroup>
-				)}
+			<SidebarContent className="gap-0 px-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-1.5">
+				<SidebarGroup className="p-0">
+					{/* Tree (project-sidebar__tree) */}
+					<SidebarGroupContent>
+						{workspaceError ? (
+							<div className="sidebar-expanded-chrome px-2.5 py-3 group-data-[collapsible=icon]:hidden">
+								<p className="text-sm text-foreground">{t("shell.couldNotLoadProjects")}</p>
+								<p className="mt-1 text-caption text-passive">{workspaceError}</p>
+							</div>
+						) : workspaces.length === 0 ? null : (
+							<SidebarMenu className="gap-0.5 rounded-lg overflow-hidden group-data-[collapsible=icon]:gap-1 group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:overflow-visible">
+								{workspaces.map((workspace) => (
+									<ProjectItem
+										key={workspace.id}
+										workspace={workspace}
+										expanded={!collapsedIds.has(workspace.id)}
+										selection={selection}
+										onToggle={() => toggleCollapsed(workspace.id)}
+										onRemoveProject={onRemoveProject}
+									/>
+								))}
+								{isCollapsed && <CreateProjectListItem />}
+							</SidebarMenu>
+						)}
+					</SidebarGroupContent>
+				</SidebarGroup>
 			</SidebarContent>
 
 			{/* Footer — Settings opens the global settings page directly.
-			    Top hairline matches the board Archive `border-t border-border-strong`.
-			    Row height matches Archive (`h-row-md`). Bottom margin is the shell
-			    inset minus 1px so the hairline meets Archive (the +1 surface-border
-			    compensation overshoots on mac/linux). */}
+			    Its hairline and row height match the board Archive bar. On macOS
+			    the sidebar is already height-clamped beside the inset center surface. */}
 			<SidebarFooter
 				className={cn(
-					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 pb-0 pt-0 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:pb-0 group-data-[collapsible=icon]:pt-1.5",
-					isMac || isLinux
-						? "mb-[calc(var(--size-center-panel-inset-mac)-1px)]"
-						: "mb-[calc(var(--size-center-panel-bottom-inset)-1px)]",
+					"relative mt-auto gap-0 overflow-hidden border-t border-border-strong px-2 !py-2 transition-[padding] duration-200 ease-linear group-data-[collapsible=icon]:min-h-16 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:border-t-0 group-data-[collapsible=icon]:px-1.5 group-data-[collapsible=icon]:!pb-0 group-data-[collapsible=icon]:!pt-1.5",
+					isMac ? "mb-px" : "mb-[calc(var(--size-center-panel-bottom-inset)+1px)]",
 				)}
 			>
 				{/* Always-present daemon status mirror for the smoke suite: no visible
@@ -391,17 +413,17 @@ export function Sidebar({
 				>
 					<RestartToUpdateRow status={updateStatus} tabIndex={isCollapsed ? -1 : 0} />
 					<button
-						aria-label="Settings"
+						aria-label={t("shell.settings")}
 						className={cn(
 							NAV_ROW_CLASS,
-							"flex h-row-md w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
+							"flex h-[42px] w-full items-center text-left [&_svg]:size-icon-md [&_svg]:shrink-0",
 						)}
 						onClick={() => selection.goGlobalSettings()}
 						tabIndex={isCollapsed ? -1 : 0}
 						type="button"
 					>
 						<Settings aria-hidden="true" />
-						<span className="tracking-tight">Settings</span>
+						<span className="tracking-tight">{t("shell.settings")}</span>
 					</button>
 				</div>
 				<div
@@ -412,7 +434,7 @@ export function Sidebar({
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<button
-								aria-label="Settings"
+								aria-label={t("shell.settings")}
 								className="grid size-control-board place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground [&_svg]:size-icon-base"
 								onClick={() => selection.goGlobalSettings()}
 								tabIndex={isCollapsed ? 0 : -1}
@@ -421,7 +443,7 @@ export function Sidebar({
 								<Settings aria-hidden="true" />
 							</button>
 						</TooltipTrigger>
-						<TooltipContent side="right">Settings</TooltipContent>
+						<TooltipContent side="right">{t("shell.settings")}</TooltipContent>
 					</Tooltip>
 				</div>
 			</SidebarFooter>
@@ -434,7 +456,7 @@ export function Sidebar({
 				style={noDragStyle}
 			/>
 			<SidebarRail
-				aria-label="Expand sidebar"
+				aria-label={t("shell.expandSidebar")}
 				className="group-data-[state=expanded]:hidden hover:after:bg-transparent"
 				onClick={() => setOpen(true)}
 				onPointerDown={onCollapsedResizePointerDown}
@@ -458,12 +480,31 @@ function ProjectItem({
 	onToggle: () => void;
 	onRemoveProject: (projectId: string) => Promise<void>;
 }) {
-	const projectActive = selection.activeProjectId === workspace.id && !selection.activeSessionId;
+	const { t } = useTranslation();
+	const prefersReducedMotion = useReducedMotion();
+	const activeProjectMatches = selection.activeProjectId === workspace.id;
+	const dashboardActive = activeProjectMatches && !selection.activeSessionId;
+	const orchestratorActive =
+		activeProjectMatches &&
+		workspace.sessions.some(
+			(session) => session.id === selection.activeSessionId && session.kind === "orchestrator",
+		);
+	const projectActive = dashboardActive || orchestratorActive;
 	const queryClient = useQueryClient();
 	const [removeError, setRemoveError] = useState<string | null>(null);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
 	const [isSpawning, setIsSpawning] = useState(false);
+	const [projectPressed, setProjectPressed] = useState(false);
+	const [rowHovered, setRowHovered] = useState(false);
+	// Skip enter animation on first mount — sessions arrive async and we don't
+	// want them to slide in on every sidebar load. Only animate on subsequent
+	// expand/collapse toggles.
+	const [animReady, setAnimReady] = useState(false);
+	useEffect(() => {
+		const id = requestAnimationFrame(() => setAnimReady(true));
+		return () => cancelAnimationFrame(id);
+	}, []);
 	const restartingProjectIds = useUiStore((state) => state.restartingProjectIds);
 	const isProjectRestarting = restartingProjectIds.has(workspace.id);
 	const requestNewTask = useUiStore((state) => state.requestNewTask);
@@ -477,8 +518,11 @@ function ProjectItem({
 
 	// Mirrors ShellTopbar's launcher: attach to the running orchestrator, or
 	// spawn one via the daemon and follow it once the workspace refetches.
+	// Expand a collapsed project so opening the orchestrator also reveals its
+	// session list — otherwise the tree stays shut while you're inside it.
 	const openOrchestrator = async () => {
 		if (isProjectRestarting) return;
+		if (!expanded) onToggle();
 		if (orchestrator) {
 			selection.goSession(workspace.id, orchestrator.id);
 			return;
@@ -499,11 +543,15 @@ function ProjectItem({
 		}
 	};
 
+	// Expanded + already on the project board → collapse. Expanded + on a
+	// session (orchestrator or worker) → board. Collapsed → expand + board.
+	// Do not treat orchestratorActive like the board: the project row is the
+	// one-click path back from the orchestrator button.
 	const onProjectClick = () => {
 		if (!expanded) {
 			onToggle();
 			selection.goProject(workspace.id);
-		} else if (projectActive) {
+		} else if (dashboardActive) {
 			onToggle();
 		} else {
 			selection.goProject(workspace.id);
@@ -516,6 +564,12 @@ function ProjectItem({
 	const onFolderClick = (event: MouseEvent) => {
 		event.stopPropagation();
 		onToggle();
+	};
+
+	const onProjectKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+		if (event.key !== "Enter" && event.key !== " ") return;
+		event.preventDefault();
+		onProjectClick();
 	};
 
 	const removeProject = () => {
@@ -533,7 +587,7 @@ function ProjectItem({
 		try {
 			await onRemoveProject(workspace.id);
 		} catch (err) {
-			const message = err instanceof Error ? err.message : "Could not remove project";
+			const message = err instanceof Error ? err.message : t("shell.couldNotRemoveProject");
 			setRemoveError(message);
 		} finally {
 			setIsRemoving(false);
@@ -541,168 +595,272 @@ function ProjectItem({
 	};
 
 	return (
-		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
-			{/* project-sidebar__proj-row */}
-			<SidebarMenuButton
-				aria-current={projectActive ? "page" : undefined}
-				aria-expanded={expanded}
-				isActive={projectActive}
-				onClick={onProjectClick}
-				tooltip={workspace.name}
-				className={cn(
-					NAV_ROW_CLASS,
-					// Always reserve room for the action cluster (dashboard,
-					// orchestrator, kebab) — icons are always visible, not hover-gated.
-					"pr-sidebar-project-actions [&_svg]:size-icon-md",
-					// Icon rail: the old 36px letter tile.
-					"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
-				)}
-			>
-				<span
-					aria-hidden="true"
-					className="shrink-0 group-data-[collapsible=icon]:hidden"
-					data-project-folder=""
-					onClick={onFolderClick}
-				>
-					{expanded ? (
-						<FolderOpen strokeWidth={1.75} aria-hidden="true" />
-					) : (
-						<Folder strokeWidth={1.75} aria-hidden="true" />
-					)}
-				</span>
-				<span className="hidden group-data-[collapsible=icon]:block">{workspace.name.charAt(0).toUpperCase()}</span>
-				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate group-data-[collapsible=icon]:hidden">
-					{workspace.name}
-				</span>
-			</SidebarMenuButton>
-			{/* Per-project actions: dashboard board, orchestrator, and a kebab
-			menu. Always visible (not hover-gated) to avoid CSS :hover group
-			propagation issues in Electron's Chromium. Hidden in the icon rail. */}
-			<div
-				className={cn(
-					"sidebar-expanded-chrome absolute top-0 right-1.5 z-chrome flex h-9 items-center gap-px",
-					"group-data-[collapsible=icon]:hidden",
-				)}
-			>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<button
-							aria-label={`Open ${workspace.name} dashboard`}
-							className={HOVER_ACTION_CLASS}
-							onClick={() => selection.goProject(workspace.id)}
-							type="button"
-						>
-							<LayoutDashboard aria-hidden="true" />
-						</button>
-					</TooltipTrigger>
-					<TooltipContent>Dashboard</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<button
-							aria-label={orchestrator ? `Open ${workspace.name} orchestrator` : `Spawn ${workspace.name} orchestrator`}
-							className={HOVER_ACTION_CLASS}
-							disabled={isSpawning || isProjectRestarting}
-							onClick={() => void openOrchestrator()}
-							type="button"
-						>
-							<OrchestratorIcon aria-hidden="true" />
-						</button>
-					</TooltipTrigger>
-					<TooltipContent>
-						{isProjectRestarting
-							? "Restarting…"
-							: isSpawning
-								? "Spawning…"
-								: orchestrator
-									? "Orchestrator"
-									: "Spawn orchestrator"}
-					</TooltipContent>
-				</Tooltip>
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<button aria-label={`Project actions for ${workspace.name}`} className={HOVER_ACTION_CLASS} type="button">
-							<MoreVertical aria-hidden="true" />
-						</button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent side="right" align="start" className="min-w-44">
-						<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
-							<Plus aria-hidden="true" />
-							New session
-						</DropdownMenuItem>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
-							<Settings aria-hidden="true" />
-							Project settings
-						</DropdownMenuItem>
-						<DropdownMenuSeparator />
-						<DropdownMenuItem
-							className="text-destructive focus:text-destructive [&_svg]:text-destructive"
-							disabled={isRemoving}
-							onSelect={() => void removeProject()}
-						>
-							<Trash2 aria-hidden="true" />
-							Remove project
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			</div>
-			{isRemoving ? (
-				<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-muted-foreground" role="status">
-					Removing {workspace.name}…
-				</div>
-			) : removeError ? (
-				<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-destructive" role="alert">
-					{removeError}
-				</div>
-			) : null}
-			{/* project-sidebar__sessions: indented under the project parent so worker
-          sessions read as children without adding a persistent guide rail. */}
-			{expanded && sessions.length > 0 && (
-				<SidebarMenuSub className="sidebar-expanded-chrome mx-0 ml-2 translate-x-0 gap-0.5 border-l-0 px-0 py-0.5">
-					{sessions.map((session) => (
-						<SessionRow
-							key={session.id}
-							session={session}
-							active={selection.activeSessionId === session.id}
-							onOpen={() => selection.goSession(workspace.id, session.id)}
-						/>
-					))}
-				</SidebarMenuSub>
+		<ContextMenu>
+		<ContextMenuTrigger asChild>
+		<SidebarMenuItem
+			className="group-data-[collapsible=icon]:mb-0"
+			onMouseEnter={() => setRowHovered(true)}
+			onMouseLeave={() => setRowHovered(false)}
+		>
+		{/* The whole visual row scales when its navigation surface is pressed.
+		    Action-button presses stop before reaching this boundary. */}
+		<div
+			className={cn(
+				"relative transition-[transform] duration-[100ms] ease-out",
+				projectPressed && "scale-[0.98]",
 			)}
-			<ConfirmDialog
-				open={confirmOpen}
-				onOpenChange={setConfirmOpen}
-				title={`Remove project`}
-				description={
-					<>
-						<p className="text-sm font-medium text-foreground">
-							This will remove <strong>{workspace.name}</strong> from AO
-						</p>
-						<p className="mt-1 text-xs text-muted-foreground">
-							This stops its live sessions and removes it from the sidebar, but keeps the repository folder and stored
-							history on disk.
-						</p>
-					</>
-				}
-				confirmLabel="Remove"
-				destructive
-				onConfirm={handleConfirmRemove}
-			/>
+			data-project-press=""
+			onPointerCancel={() => setProjectPressed(false)}
+			onPointerDown={() => setProjectPressed(true)}
+			onPointerLeave={() => setProjectPressed(false)}
+			onPointerUp={() => setProjectPressed(false)}
+		>
+		<div>
+		{/* project-sidebar__proj-row */}
+	<SidebarMenuButton
+		aria-current={dashboardActive ? "page" : undefined}
+		aria-expanded={expanded}
+		isActive={projectActive}
+		tooltip={workspace.name}
+		onClick={onProjectClick}
+		onKeyDown={onProjectKeyDown}
+		className={cn(
+			NAV_ROW_CLASS,
+			// gap-2 matches SectionDisclosure so project icons/labels share the
+			// Projects header's left edge (NAV_ROW defaults to gap-2.5).
+			"gap-2 pr-sidebar-project-actions [&_svg]:size-icon-md",
+			"group-data-[collapsible=icon]:size-control-board! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:p-0! group-data-[collapsible=icon]:font-semibold",
+		)}
+	>
+		{/* Expanded sidebar: visual folder/chevron icon (decorative — toggle button is a sibling).
+		    size-icon-md matches the Projects section row; an 18px centered box was
+		    optically indenting these icons relative to the header. */}
+		<span
+			aria-hidden="true"
+			className="relative inline-flex size-icon-md shrink-0 translate-y-px items-center justify-center text-muted-foreground group-data-[collapsible=icon]:hidden"
+			data-project-folder-visual=""
+		>
+			{rowHovered ? (
+				<motion.span
+					animate={{ rotate: expanded ? 90 : 0 }}
+					initial={false}
+					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
+					className="inline-flex size-icon-md items-center justify-center"
+				>
+					<ChevronRight strokeWidth={1.75} />
+				</motion.span>
+			) : expanded ? (
+				<FolderOpen strokeWidth={1.75} />
+			) : (
+				<Folder strokeWidth={1.75} />
+			)}
+		</span>
+		{/* Collapsed icon rail: folder icon */}
+		<span
+			aria-hidden="true"
+			className="hidden group-data-[collapsible=icon]:inline-flex size-8 items-center justify-center text-muted-foreground"
+		>
+			{expanded ? (
+				<FolderOpen className="size-5" strokeWidth={1.75} />
+			) : (
+				<Folder className="size-5" strokeWidth={1.75} />
+			)}
+		</span>
+		<span
+			className="sidebar-expanded-chrome min-w-0 flex-1 translate-y-px truncate group-data-[collapsible=icon]:hidden"
+			data-project-label=""
+		>
+			{workspace.name}
+		</span>
+	</SidebarMenuButton>
+	{/* Folder disclosure toggle: sibling of the nav button, absolutely positioned over
+	    the icon area so it intercepts clicks there without nesting buttons. */}
+	<button
+		aria-label={t("shell.toggleProject", { name: workspace.name })}
+		aria-expanded={expanded}
+		className="absolute inset-y-0 left-0 z-10 w-9 group-data-[collapsible=icon]:hidden focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm"
+		data-project-folder=""
+		onClick={onFolderClick}
+		type="button"
+	/>
+		</div>
+		{/* Per-project actions: orchestrator and kebab menu. Inside the scaled visual
+		row, but outside its navigation surface so their own presses stay independent.
+		Always visible (not hover-gated) to avoid CSS :hover group propagation in Chromium. */}
+		<div
+			className={cn(
+				"sidebar-expanded-chrome absolute top-0 right-0.5 z-chrome flex h-control-form items-center gap-px",
+				"group-data-[collapsible=icon]:hidden",
+			)}
+			data-project-actions=""
+			onClick={(event) => event.stopPropagation()}
+			onPointerDown={(event) => event.stopPropagation()}
+		>
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<button
+						aria-current={orchestratorActive ? "page" : undefined}
+						aria-label={
+							orchestrator
+								? t("shell.openProjectOrchestrator", { name: workspace.name })
+								: t("shell.spawnProjectOrchestrator", { name: workspace.name })
+						}
+						className={cn(HOVER_ACTION_CLASS, orchestratorActive && "text-foreground")}
+						disabled={isSpawning || isProjectRestarting}
+						onClick={() => void openOrchestrator()}
+						type="button"
+					>
+						<OrchestratorIcon aria-hidden="true" strokeWidth={orchestratorActive ? 2.5 : 2} />
+					</button>
+				</TooltipTrigger>
+				<TooltipContent>
+					{isProjectRestarting
+						? t("shell.restarting")
+						: isSpawning
+							? t("shell.spawning")
+							: orchestrator
+								? t("shell.orchestrator")
+								: t("shell.spawnOrchestratorLower")}
+				</TooltipContent>
+			</Tooltip>
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<button aria-label={t("shell.projectActions", { name: workspace.name })} className={HOVER_ACTION_CLASS} type="button">
+						<MoreVertical aria-hidden="true" />
+					</button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent side="right" align="start" className="min-w-44">
+					<DropdownMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
+						<Plus aria-hidden="true" />
+						{t("shell.newSession")}
+					</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+						<Settings aria-hidden="true" />
+						{t("shell.projectSettings")}
+					</DropdownMenuItem>
+					<DropdownMenuSeparator />
+					<DropdownMenuItem
+						className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+						disabled={isRemoving}
+						onSelect={() => void removeProject()}
+					>
+						<Trash2 aria-hidden="true" />
+						{t("shell.removeProjectTitle")}
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</div>
+		</div>{/* end outer relative */}
+		{isRemoving ? (
+			<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-muted-foreground" role="status">
+				{t("shell.removingNamed", { name: workspace.name })}
+			</div>
+		) : removeError ? (
+			<div className="sidebar-expanded-chrome px-5 py-1 text-2xs text-destructive" role="alert">
+				{removeError}
+			</div>
+		) : null}
+		{/* project-sidebar__sessions: indented under the project parent so worker
+          sessions read as children without adding a persistent guide rail. */}
+		<AnimatePresence initial={false}>
+			{expanded && sessions.length > 0 && (
+				<motion.div
+					key="sessions"
+					initial={animReady ? { height: 0 } : false}
+					animate={{ height: "auto" }}
+					exit={{ height: 0 }}
+					transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
+					style={{ overflow: "hidden" }}
+					className="sidebar-expanded-chrome"
+				>
+					<motion.div
+						initial={animReady ? { y: -12, opacity: 0 } : false}
+						animate={{ y: 0, opacity: 1 }}
+						exit={{ y: -12, opacity: 0 }}
+						transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.14, ease: [0.25, 0.46, 0.45, 0.94] }}
+					>
+						<SidebarMenuSub className="mx-0 ml-3.5 translate-x-0 gap-px border-l-0 px-0 py-1">
+							{sessions.map((session) => (
+								<SessionRow
+									key={session.id}
+									session={session}
+									active={selection.activeSessionId === session.id}
+									onOpen={() => selection.goSession(workspace.id, session.id)}
+								/>
+							))}
+						</SidebarMenuSub>
+					</motion.div>
+				</motion.div>
+			)}
+		</AnimatePresence>
+		<ConfirmDialog
+			open={confirmOpen}
+			onOpenChange={setConfirmOpen}
+			title={t("shell.removeProjectTitle")}
+			description={
+				<>
+					<p className="text-sm font-medium text-foreground">
+						{t("shell.removeProjectLead", { name: workspace.name })}
+					</p>
+					<p className="mt-1 text-xs text-muted-foreground">{t("shell.removeProjectBody")}</p>
+				</>
+			}
+			confirmLabel={t("shell.remove")}
+			destructive
+			onConfirm={handleConfirmRemove}
+		/>
 		</SidebarMenuItem>
+		</ContextMenuTrigger>
+		<ContextMenuContent className="min-w-44">
+			<ContextMenuItem disabled={isProjectRestarting} onSelect={() => requestNewTask(workspace.id)}>
+				<Plus aria-hidden="true" />
+				{t("shell.newSession")}
+			</ContextMenuItem>
+			<ContextMenuSeparator />
+			<ContextMenuItem onSelect={() => selection.goSettings(workspace.id)}>
+				<Settings aria-hidden="true" />
+				{t("shell.projectSettings")}
+			</ContextMenuItem>
+			<ContextMenuSeparator />
+			<ContextMenuItem
+				className="text-destructive focus:text-destructive [&_svg]:text-destructive"
+				disabled={isRemoving}
+				onSelect={() => void removeProject()}
+			>
+				<Trash2 aria-hidden="true" />
+				{t("shell.removeProjectTitle")}
+			</ContextMenuItem>
+		</ContextMenuContent>
+		</ContextMenu>
 	);
 }
 
 // One worker-session row. Reads as a link by default; a hover-revealed pencil
 // flips the label into an inline input (Enter/blur saves, Escape cancels) that
 // persists through the daemon rename endpoint, so the new name survives reload.
-function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; active: boolean; onOpen: () => void }) {
-	const queryClient = useQueryClient();
+function SessionRow({
+	session,
+	active,
+	indented = true,
+	onOpen,
+}: {
+	session: WorkspaceSession;
+	active: boolean;
+	indented?: boolean;
+	onOpen: () => void;
+}) {
+	const { t } = useTranslation();
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState(session.title);
 	// Escape must not be swallowed by the blur-to-save path: the keydown handler
 	// blurs the input, so it flags a cancel here for onBlur to honour.
 	const cancelledRef = useRef(false);
+
+	const queryClient = useQueryClient();
+	const { mutate: pinSession } = usePinSession();
+	const { mutate: unpinSession } = useUnpinSession();
+	const { mutate: terminateSession, isPending: isKilling } = useTerminateSession();
 
 	const startEditing = () => {
 		setDraft(session.title);
@@ -728,11 +886,11 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 
 	if (isEditing) {
 		return (
-			<SidebarMenuSubItem className="pl-7">
-				<div className="relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0">
-					<SessionDot session={session} />
+			<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
+				<div className="relative flex h-8 w-full items-center gap-1.5 rounded-lg px-2.5 py-0">
+					<SessionStatusDot session={session} />
 					<input
-						aria-label={`Rename ${session.title}`}
+						aria-label={t("shell.renameSession", { title: session.title })}
 						autoFocus
 						className="min-w-0 flex-1 rounded-xs border border-accent bg-transparent px-1 py-px text-sm text-foreground outline-none focus-visible:ring-1 focus-visible:ring-accent"
 						maxLength={MAX_DISPLAY_NAME_LEN}
@@ -757,39 +915,89 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 	}
 
 	return (
-		<SidebarMenuSubItem className="pl-7">
-			<button
-				aria-current={active ? "page" : undefined}
-				aria-label={`Open ${session.title}`}
+		<SidebarMenuSubItem className={cn(indented && "pl-4.5")}>
+			<div
 				className={cn(
-					"relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 py-0 pr-7 text-left text-sm outline-hidden transition-[background-color,color]",
-					"hover:bg-interactive-hover hover:text-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+					"group/session-row flex h-8 w-full items-center rounded-lg transition-[background-color,color]",
+					"hover:bg-interactive-hover hover:text-foreground focus-within:bg-interactive-hover",
 					active && "bg-interactive-active text-foreground",
 				)}
-				onClick={onOpen}
-				type="button"
+				data-session-row=""
 			>
-				<SessionDot session={session} />
-				<span className="min-w-0 flex-1">
-					<span className={cn("block truncate", active ? "text-foreground" : "text-muted-foreground")}>
-						{session.title}
-					</span>
-				</span>
-			</button>
-			{/* Pencil reveals on row hover/focus (named group on SidebarMenuSubItem);
-			it sits beside the row button rather than nested inside it. */}
-			<button
-				aria-label={`Rename ${session.title}`}
-				className={cn(
-					HOVER_ACTION_CLASS,
-					"absolute top-1/2 right-1 -translate-y-1/2 opacity-0",
-					"group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100",
-				)}
-				onClick={startEditing}
-				type="button"
-			>
-				<Pencil aria-hidden="true" />
-			</button>
+				{/* Scale wrapper — only around the open button so action buttons don't trigger press animation */}
+				<div className="flex min-w-0 flex-1 transition-[transform] duration-[100ms] ease-out active:scale-[0.97]">
+					<button
+						aria-current={active ? "page" : undefined}
+						aria-label={t("shell.openSession", { title: session.title })}
+						className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg px-2.5 py-0 text-left text-sm outline-hidden focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+						onClick={onOpen}
+						type="button"
+					>
+						<SessionStatusDot session={session} />
+						<span className="min-w-0 flex-1">
+							<span
+								className={cn(
+									"block truncate transition-colors",
+									active ? "text-foreground" : "text-muted-foreground group-hover/session-row:text-foreground",
+								)}
+							>
+								{session.title}
+							</span>
+						</span>
+					</button>
+				</div>{/* end scale wrapper */}
+				{/* Pin, rename, kill: outside scale wrapper so clicking them doesn't trigger press animation */}
+				<button
+					aria-label={session.isPinned ? t("shell.unpinSession") : t("shell.pinSession")}
+					className={cn(
+						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
+						"transition-[width,margin,background-color,color,opacity] hover:bg-interactive-hover hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
+						"group-hover/session-row:w-5 group-hover/session-row:opacity-100",
+						"group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
+						session.isPinned && "text-foreground",
+					)}
+					onClick={(e) => {
+						e.stopPropagation();
+						session.isPinned ? unpinSession(session) : pinSession(session);
+					}}
+					type="button"
+				>
+					{session.isPinned ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+				</button>
+				<button
+					aria-label={t("shell.renameSession", { title: session.title })}
+					className={cn(
+						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
+						"transition-[width,margin,background-color,color,opacity] hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
+						"group-hover/session-row:mr-0.5 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
+						"group-focus-within/session-row:mr-0.5 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
+					)}
+					onClick={(e) => {
+						e.stopPropagation();
+						startEditing();
+					}}
+					type="button"
+				>
+					<Pencil aria-hidden="true" />
+				</button>
+				<button
+					aria-label={t("shell.killSession")}
+					className={cn(
+						"grid h-5 w-0 shrink-0 place-items-center overflow-hidden rounded-md text-passive opacity-0",
+						"transition-[width,margin,background-color,color,opacity] hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50 [&_svg]:size-3!",
+						"group-hover/session-row:mr-1 group-hover/session-row:w-5 group-hover/session-row:opacity-100",
+						"group-focus-within/session-row:mr-1 group-focus-within/session-row:w-5 group-focus-within/session-row:opacity-100",
+					)}
+				disabled={isKilling}
+				onClick={(e) => {
+					e.stopPropagation();
+					terminateSession(session);
+				}}
+					type="button"
+				>
+					<Trash2 aria-hidden="true" />
+				</button>
+			</div>
 		</SidebarMenuSubItem>
 	);
 }
@@ -800,11 +1008,16 @@ function SessionRow({ session, active, onOpen }: { session: WorkspaceSession; ac
 // the row itself is the prompt, so no confirmation dialog. Renders nothing in
 // every other update state.
 function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+	const { t } = useTranslation();
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
 		<button
-			aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
+			aria-label={
+				status.version
+					? t("shell.restartInstallUpdateVersion", { version: status.version })
+					: t("shell.restartInstallUpdate")
+			}
 			className={cn(
 				"flex w-full items-center gap-2.5 rounded-lg p-2.5 text-left text-control font-medium transition-colors",
 				escalated
@@ -817,10 +1030,10 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 		>
 			<RefreshCw aria-hidden="true" className="size-icon-lg shrink-0" />
 			<span className="min-w-0 flex-1">
-				<span className="block truncate tracking-tight">Restart to update</span>
+				<span className="block truncate tracking-tight">{t("shell.restartToUpdate")}</span>
 				{status.version && (
 					<span className={cn("block truncate text-caption font-normal", escalated ? "text-working" : "text-passive")}>
-						v{status.version} ready
+						{t("shell.versionReady", { version: status.version })}
 					</span>
 				)}
 			</span>
@@ -835,13 +1048,18 @@ function RestartToUpdateRow({ status, tabIndex }: { status: UpdateStatus; tabInd
 // Icon-rail variant of RestartToUpdateRow for the collapsed sidebar: icon-only
 // with the two-line copy in the tooltip.
 function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus; tabIndex: number }) {
+	const { t } = useTranslation();
 	if (status.state !== "downloaded") return null;
 	const escalated = status.escalated === true;
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
 				<button
-					aria-label={`Restart to install update${status.version ? ` v${status.version}` : ""}`}
+					aria-label={
+						status.version
+							? t("shell.restartInstallUpdateVersion", { version: status.version })
+							: t("shell.restartInstallUpdate")
+					}
 					className={cn(
 						"grid size-9 place-items-center rounded-lg transition-colors [&_svg]:size-4",
 						escalated
@@ -856,7 +1074,8 @@ function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus;
 				</button>
 			</TooltipTrigger>
 			<TooltipContent side="right">
-				Restart to update{status.version ? ` · v${status.version} ready` : ""}
+				{t("shell.restartToUpdate")}
+				{status.version ? ` · ${t("shell.versionReady", { version: status.version })}` : ""}
 			</TooltipContent>
 		</Tooltip>
 	);
@@ -865,30 +1084,46 @@ function RestartToUpdateRailButton({ status, tabIndex }: { status: UpdateStatus;
 function SectionDisclosure({
 	icon,
 	label,
-	open,
+	open = true,
 	onToggle,
 	className,
 	trailing,
+	collapsible = true,
 }: {
 	icon: ReactNode;
 	label: string;
-	open: boolean;
-	onToggle: () => void;
+	open?: boolean;
+	onToggle?: () => void;
 	className?: string;
 	/** Optional trailing control (e.g. Projects "+") — stays inside the hover pill. */
 	trailing?: ReactNode;
+	/** When false, render a static label row with no chevron or toggle. */
+	collapsible?: boolean;
 }) {
 	const labelRow = (
 		<>
 			{icon}
 			<span className="truncate">{label}</span>
-			<ChevronRight
-				aria-hidden="true"
-				className={cn("size-3.5! shrink-0 transition-transform duration-150", open && "rotate-90")}
-				strokeWidth={2}
-			/>
+			{collapsible ? (
+				<ChevronRight
+					aria-hidden="true"
+					className={cn("size-3.5! shrink-0 transition-transform duration-150", open && "rotate-90")}
+					strokeWidth={2}
+				/>
+			) : null}
 		</>
 	);
+
+	if (!collapsible) {
+		return (
+			<div className={cn(SECTION_ROW_CLASS, trailing && "pr-1", className)}>
+				<div className="flex min-w-0 flex-1 items-center gap-2">
+					{labelRow}
+				</div>
+				{trailing}
+			</div>
+		);
+	}
 
 	if (trailing) {
 		return (
@@ -921,12 +1156,13 @@ function SectionDisclosure({
 }
 
 function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
+	const { t } = useTranslation();
 	const { state } = useSidebar();
 	const isCollapsed = state === "collapsed";
 	return (
 		<SidebarMenuItem className="group-data-[collapsible=icon]:mb-0">
 			<SidebarMenuButton
-				aria-label="Search"
+				aria-label={t("shell.search")}
 				onClick={() => {
 					// Open on the microtask after this click rather than inside it: mounting
 					// the palette dialog while this button's tooltip layer is still tearing
@@ -934,7 +1170,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 					// "defers opening" test pins the deferral so it is not dropped as noise.
 					queueMicrotask(onOpen);
 				}}
-				tooltip={isCollapsed ? "Search" : undefined}
+				tooltip={isCollapsed ? t("shell.search") : undefined}
 				className={cn(
 					// Filled search trigger (Cursor-style): icon + label.
 					"h-8 gap-2 rounded-lg bg-muted px-2.5 text-sm font-normal text-muted-foreground",
@@ -944,7 +1180,7 @@ function SidebarSearchButton({ onOpen }: { onOpen: () => void }) {
 			>
 				<Search strokeWidth={1.75} aria-hidden="true" />
 				<span className="sidebar-expanded-chrome min-w-0 flex-1 truncate text-left leading-none group-data-[collapsible=icon]:hidden">
-					Search
+					{t("shell.search")}
 				</span>
 			</SidebarMenuButton>
 		</SidebarMenuItem>
@@ -956,6 +1192,7 @@ function CreateProjectButton({
 	onCreateProject,
 	onInitializeProject,
 }: Pick<SidebarProps, "onCreateProject" | "onInitializeProject"> & { hideTrigger?: boolean }) {
+	const { t } = useTranslation();
 	// Single CreateProjectFlow owner for the sidebar: the header "+" stays mounted
 	// (CSS-hidden when collapsed or on the empty start page) so it can own
 	// openSignal for ⌘N on every shell route. The collapsed rail button below
@@ -972,7 +1209,7 @@ function CreateProjectButton({
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<button
-							aria-label="New project"
+							aria-label={t("shell.newProject")}
 							className={cn(
 								// No own hover fill — lives inside the Projects section hover pill.
 								"grid size-icon-xl shrink-0 place-items-center rounded-sm text-passive transition-colors hover:text-foreground",
@@ -993,13 +1230,14 @@ function CreateProjectButton({
 }
 
 function CreateProjectListItem() {
+	const { t } = useTranslation();
 	const requestCreateProject = useUiStore((state) => state.requestCreateProject);
 	return (
 		<SidebarMenuItem className="mb-px group-data-[collapsible=icon]:mb-0">
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<button
-						aria-label="New project"
+						aria-label={t("shell.newProject")}
 						className="grid h-control-board w-full place-items-center rounded-lg text-passive transition-colors hover:bg-interactive-hover hover:text-muted-foreground"
 						onClick={() => requestCreateProject()}
 						type="button"
@@ -1007,7 +1245,7 @@ function CreateProjectListItem() {
 						<Plus className="size-icon-sm" aria-hidden="true" />
 					</button>
 				</TooltipTrigger>
-				<TooltipContent side="right">New project</TooltipContent>
+				<TooltipContent side="right">{t("shell.newProject")}</TooltipContent>
 			</Tooltip>
 		</SidebarMenuItem>
 	);

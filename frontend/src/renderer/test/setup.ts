@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import "../i18n";
 
 // Guard: src/main/** tests run in the Node.js environment (no DOM). vitest still
 // routes setupFiles here, so only install the DOM stubs when a DOM exists.
@@ -64,9 +65,13 @@ if (typeof window !== "undefined") {
 			onNewSessionShortcut: () => () => undefined,
 			onKeyboardShortcutsHelp: () => () => undefined,
 			onNewShellTerminalShortcut: () => () => undefined,
+			onCloseShellTerminalShortcut: () => () => undefined,
+			setCloseShellTerminalShortcutEnabled: () => undefined,
 			onOpenSettingsShortcut: () => () => undefined,
 			onPreviousSessionShortcut: () => () => undefined,
 			onNextSessionShortcut: () => () => undefined,
+			onPreviousTabShortcut: () => () => undefined,
+			onNextTabShortcut: () => () => undefined,
 			onFocusTerminalShortcut: () => () => undefined,
 		},
 		terminal: {
@@ -171,7 +176,13 @@ if (typeof window !== "undefined") {
 		},
 		notifications: {
 			show: async () => undefined,
+			setBadge: async () => undefined,
+			devBounce: async () => undefined,
 			onClick: () => () => undefined,
+		},
+		tray: {
+			setAttentionState: () => undefined,
+			onOpenSession: () => () => undefined,
 		},
 		appState: {
 			getMigration: async () => ({ status: "pending" }),
@@ -180,6 +191,12 @@ if (typeof window !== "undefined") {
 		updateSettings: {
 			get: async () => ({ enabled: false, channel: "latest", nightlyAck: false, feature: null }),
 			set: async () => undefined,
+		},
+		uiSettings: {
+			get: async () => ({ locale: "en" as const }),
+			set: async (settings: { locale: string }) => ({
+				locale: settings.locale as "en",
+			}),
 		},
 		keybindings: {
 			get: async () => ({}),
@@ -193,6 +210,7 @@ if (typeof window !== "undefined") {
 			download: async () => undefined,
 			install: async () => undefined,
 			onStatus: () => () => undefined,
+		onTelemetry: () => () => undefined,
 		},
 		featureBuilds: {
 			list: async () => [],

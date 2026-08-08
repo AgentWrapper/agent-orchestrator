@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 )
@@ -12,7 +13,10 @@ import (
 // builds, so the test asserts the reviewer's tool policy without needing the
 // real claude binary on PATH.
 type captureAgent struct {
-	got ports.LaunchConfig
+	got        ports.LaunchConfig
+	gotRestore ports.RestoreConfig
+	hooks      []ports.WorkspaceHookConfig
+	prelaunch  []ports.LaunchConfig
 }
 
 func (a *captureAgent) GetConfigSpec(context.Context) (ports.ConfigSpec, error) {
@@ -25,9 +29,24 @@ func (a *captureAgent) GetLaunchCommand(_ context.Context, cfg ports.LaunchConfi
 func (a *captureAgent) GetPromptDeliveryStrategy(context.Context, ports.LaunchConfig) (ports.PromptDeliveryStrategy, error) {
 	return ports.PromptDeliveryInCommand, nil
 }
-func (a *captureAgent) GetAgentHooks(context.Context, ports.WorkspaceHookConfig) error { return nil }
-func (a *captureAgent) GetRestoreCommand(context.Context, ports.RestoreConfig) ([]string, bool, error) {
-	return nil, false, nil
+func (a *captureAgent) GetAgentHooks(_ context.Context, cfg ports.WorkspaceHookConfig) error {
+	a.hooks = append(a.hooks, cfg)
+	return nil
+}
+func (a *captureAgent) PreLaunch(_ context.Context, cfg ports.LaunchConfig) error {
+	a.prelaunch = append(a.prelaunch, cfg)
+	return nil
+}
+func (a *captureAgent) GetRestoreCommand(_ context.Context, cfg ports.RestoreConfig) ([]string, bool, error) {
+	a.gotRestore = cfg
+	id := cfg.Session.Metadata[ports.MetadataKeyAgentSessionID]
+	if id == "" {
+		id = cfg.Session.ID
+	}
+	if id == "" {
+		return nil, false, nil
+	}
+	return []string{"claude", "--resume", id}, true, nil
 }
 func (a *captureAgent) SessionInfo(context.Context, ports.SessionRef) (ports.SessionInfo, bool, error) {
 	return ports.SessionInfo{}, false, nil
@@ -37,12 +56,13 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 	agent := &captureAgent{}
 	r := &Reviewer{agent: agent}
 
-	if _, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
+	spec, err := r.ReviewCommand(context.Background(), ports.ReviewInvocation{
 		ReviewerID:    "review-w1",
 		WorkspacePath: "/ws/w1",
 		Prompt:        "review it",
 		SystemPrompt:  "you are a reviewer",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("ReviewCommand: %v", err)
 	}
 
@@ -52,6 +72,12 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 	if agent.got.Permissions != ports.PermissionModeAuto {
 		t.Fatalf("reviewer must launch in auto permission mode; got %q", agent.got.Permissions)
 	}
+	if agent.got.SessionID == "" {
+		t.Fatal("reviewer must pin the persisted Claude session id")
+	}
+	if spec.AgentSessionID != agent.got.SessionID {
+		t.Fatalf("persisted agent session id = %q, launched session id = %q", spec.AgentSessionID, agent.got.SessionID)
+	}
 	if !contains(agent.got.AllowedTools, "Read") || !contains(agent.got.AllowedTools, "Bash(ao review submit:*)") {
 		t.Fatalf("allowlist missing read-only review tools: %#v", agent.got.AllowedTools)
 	}
@@ -59,6 +85,24 @@ func TestReviewCommandLaunchesReadOnlyOffBypass(t *testing.T) {
 		if !contains(agent.got.DisallowedTools, denied) {
 			t.Fatalf("disallow list missing %q: %#v", denied, agent.got.DisallowedTools)
 		}
+	}
+}
+
+func TestPreLaunchInstallsSelectedReviewerHooksAndTrustsWorkspace(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	if err := r.PreLaunch(context.Background(), ports.ReviewInvocation{
+		ReviewerID:    "review-w1",
+		WorkspacePath: "/ws/w1",
+	}); err != nil {
+		t.Fatalf("PreLaunch: %v", err)
+	}
+	if len(agent.hooks) != 1 || agent.hooks[0].WorkspacePath != "/ws/w1" {
+		t.Fatalf("hooks = %#v, want selected reviewer hook install for /ws/w1", agent.hooks)
+	}
+	if len(agent.prelaunch) != 1 || agent.prelaunch[0].WorkspacePath != "/ws/w1" || agent.prelaunch[0].SessionID == "" {
+		t.Fatalf("prelaunch = %#v, want trusted workspace with pinned session id", agent.prelaunch)
 	}
 }
 
@@ -106,6 +150,78 @@ func TestReviewCommandUsesHiddenSystemPromptFile(t *testing.T) {
 	}
 	if agent.got.Prompt != "Start the AO review task." || agent.got.SystemPrompt != "" || agent.got.SystemPromptFile != "/ao/prompts/reviewer/system.md" {
 		t.Fatalf("launch config = %+v", agent.got)
+	}
+}
+
+func TestReviewRestoreCommandUsesNativeSessionIDAndReadOnlyPolicy(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	got, ok, err := r.ReviewRestoreCommand(context.Background(), ports.ReviewInvocation{
+		ReviewerID:       "review-w1",
+		AgentSessionID:   "claude-native-1",
+		WorkspacePath:    "/ws/w1",
+		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+	})
+	if err != nil {
+		t.Fatalf("ReviewRestoreCommand: %v", err)
+	}
+	if !ok {
+		t.Fatal("ReviewRestoreCommand ok = false, want true")
+	}
+	if strings.Join(got.Argv, " ") != "claude --resume claude-native-1" {
+		t.Fatalf("argv = %#v", got.Argv)
+	}
+	if agent.gotRestore.Session.Metadata[ports.MetadataKeyAgentSessionID] != "claude-native-1" {
+		t.Fatalf("restore metadata = %#v", agent.gotRestore.Session.Metadata)
+	}
+	if agent.gotRestore.Permissions != ports.PermissionModeAuto {
+		t.Fatalf("restore permissions = %q, want auto", agent.gotRestore.Permissions)
+	}
+	if !contains(agent.gotRestore.AllowedTools, "Read") || !contains(agent.gotRestore.DisallowedTools, "Write") {
+		t.Fatalf("restore tool policy allowed=%#v disallowed=%#v", agent.gotRestore.AllowedTools, agent.gotRestore.DisallowedTools)
+	}
+}
+
+func TestReviewRestoreCommandAllowsAdapterFallbackWithoutNativeSessionID(t *testing.T) {
+	agent := &captureAgent{}
+	r := &Reviewer{agent: agent}
+
+	got, ok, err := r.ReviewRestoreCommand(context.Background(), ports.ReviewInvocation{
+		ReviewerID:       "review-w1",
+		WorkspacePath:    "/ws/w1",
+		SystemPromptFile: "/ao/prompts/reviewer/system.md",
+	})
+	if err != nil {
+		t.Fatalf("ReviewRestoreCommand: %v", err)
+	}
+	if !ok {
+		t.Fatal("ReviewRestoreCommand ok = false, want true")
+	}
+	if strings.Join(got.Argv, " ") != "claude --resume review-w1" {
+		t.Fatalf("argv = %#v", got.Argv)
+	}
+	if agent.gotRestore.Session.ID != "review-w1" {
+		t.Fatalf("restore session id = %q, want review-w1", agent.gotRestore.Session.ID)
+	}
+	if _, ok := agent.gotRestore.Session.Metadata[ports.MetadataKeyAgentSessionID]; ok {
+		t.Fatalf("restore metadata should not invent native id: %#v", agent.gotRestore.Session.Metadata)
+	}
+}
+
+func TestReviewCancelSendsDoubleEscapeInput(t *testing.T) {
+	spec, err := (&Reviewer{}).ReviewCancel(context.Background())
+	if err != nil {
+		t.Fatalf("ReviewCancel: %v", err)
+	}
+	if spec.Mode != ports.ReviewCancelInput {
+		t.Fatalf("cancel mode = %q, want %q", spec.Mode, ports.ReviewCancelInput)
+	}
+	if len(spec.Inputs) != 2 || spec.Inputs[0] != "\x1b" || spec.Inputs[1] != "\x1b" {
+		t.Fatalf("inputs = %#v, want double escape", spec.Inputs)
+	}
+	if spec.InputDelay != 150*time.Millisecond {
+		t.Fatalf("input delay = %s, want 150ms", spec.InputDelay)
 	}
 }
 

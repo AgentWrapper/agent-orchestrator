@@ -1,6 +1,5 @@
 import { COMPANY } from "@ao/shared/constants";
 import { FAQ_ITEMS } from "@/app/components/FAQSection/constants";
-import { getBlogPosts } from "./blog";
 import { getComparisonPages } from "./compare";
 import { getDocPage, getDocsNav, type DocsNavItem } from "./docs";
 
@@ -22,7 +21,7 @@ export function buildLlmsHeader(): string[] {
 	return [
 		`# ${COMPANY.NAME}`,
 		"",
-		"> Run 10+ parallel coding agents on your machine",
+		"> Open-source desktop application and local CLI (`ao`) to run 10+ parallel AI coding agents in isolated Git worktrees without file conflicts or API proxying.",
 		"",
 		`${COMPANY.NAME} is an open-source desktop application that lets developers run multiple AI coding agents in parallel, each in its own isolated Git worktree. It works with any CLI-based agent including Claude Code, OpenCode, and OpenAI Codex. Agents can work on different branches or features simultaneously without conflicts. ${COMPANY.NAME} is free, does not proxy API calls, and supports macOS, Windows, and Linux.`,
 	];
@@ -124,7 +123,6 @@ export function buildDocumentationSection(): string[] {
 }
 
 export function buildLlmsTxt(): string {
-	const posts = getBlogPosts();
 	const comparisons = getComparisonPages();
 	const baseUrl = COMPANY.MARKETING_URL;
 
@@ -134,12 +132,9 @@ export function buildLlmsTxt(): string {
 		...buildWhenToUseSection({ referenceDocumentationSection: true }),
 		"",
 		...buildDeveloperResourcesSection({ includeDocumentationLinks: false }),
+		`- [Full LLM context](${baseUrl}/llms-full.txt): combined AO overview, developer resources, comparisons, and FAQ`,
 		"",
 		...buildDocumentationSection(),
-		"",
-		"## Blog",
-		"",
-		...posts.map((post) => `- [${post.title}](${baseUrl}/blog/${post.slug}/)`),
 		"",
 		"## Comparisons",
 		"",

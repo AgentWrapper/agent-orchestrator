@@ -71,6 +71,113 @@ type AgentBinaryResolver interface {
 	ResolveBinary(ctx context.Context) (path string, err error)
 }
 
+// AgentInterfaceHandoff is an OPTIONAL capability for a TUI adapter whose
+// native resume identity is also understood by its structured Chat driver.
+// Merely supporting GetRestoreCommand is not enough: some harnesses expose a
+// different identifier through their TUI and protocol surfaces.
+type AgentInterfaceHandoff interface {
+	NativeConversationID(
+		ctx context.Context,
+		session SessionRef,
+		currentMode domain.SessionMode,
+		providerConversationID string,
+	) (id string, ok bool, err error)
+}
+
+// AgentInterfaceHandoffHistoryProbe is an OPTIONAL refinement for adapters
+// that reserve a native conversation id before the provider has persisted any
+// history. A missing history record means an interface transition may safely
+// start the target fresh: there is no provider context to carry. Without this
+// capability, Session Manager conservatively treats every declared id as an
+// existing conversation and requires a native resume.
+type AgentInterfaceHandoffHistoryProbe interface {
+	NativeConversationExists(
+		ctx context.Context,
+		session SessionRef,
+		nativeConversationID string,
+		env map[string]string,
+	) (bool, error)
+}
+
+// ModelSelectionMode tells clients how to render an agent's model control.
+type ModelSelectionMode string
+
+const (
+	// ModelSelectionCatalog renders a searchable list with a custom-id escape hatch.
+	ModelSelectionCatalog ModelSelectionMode = "catalog"
+	// ModelSelectionText renders a free-form model id input.
+	ModelSelectionText ModelSelectionMode = "text"
+	// ModelSelectionModeList renders an agent-owned mode list rather than model ids.
+	ModelSelectionModeList ModelSelectionMode = "mode"
+)
+
+// AgentModelInfo is one model or mode that an adapter reports as selectable.
+type AgentModelInfo struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Provider  string `json:"provider,omitempty"`
+	IsDefault bool   `json:"isDefault,omitempty"`
+}
+
+// AgentModelCatalog is AO's normalized model-picker response.
+type AgentModelCatalog struct {
+	AgentID       string             `json:"agentId"`
+	SelectionMode ModelSelectionMode `json:"selectionMode" enum:"catalog,text,mode"`
+	Models        []AgentModelInfo   `json:"models"`
+	AllowCustom   bool               `json:"allowCustom"`
+	Source        string             `json:"source"`
+	// BinaryVersion is the legacy wire name for AO's non-sensitive executable
+	// and configuration metadata fingerprint.
+	BinaryVersion string    `json:"binaryVersion,omitempty"`
+	FetchedAt     time.Time `json:"fetchedAt"`
+	ValidatedAt   time.Time `json:"validatedAt,omitempty"`
+	// RefreshRecommended tells cache-first clients to revalidate in the
+	// background while continuing to display the cached catalog.
+	RefreshRecommended bool   `json:"refreshRecommended,omitempty"`
+	Stale              bool   `json:"stale"`
+	Warning            string `json:"warning,omitempty"`
+}
+
+// CachedAgentModelCatalog is the persistence record used by the model-catalog
+// service. CatalogJSON contains a serialized AgentModelCatalog.
+type CachedAgentModelCatalog struct {
+	AgentID       string
+	ProjectID     string
+	BinaryVersion string // Legacy field name for the discovery-input metadata fingerprint.
+	CatalogJSON   string
+	Source        string
+	FetchedAt     time.Time
+}
+
+// AgentModelCatalogCache persists normalized model catalogs across daemon
+// restarts. Implementations must treat agent+project as the logical key.
+type AgentModelCatalogCache interface {
+	GetAgentModelCatalog(ctx context.Context, agentID, projectID string) (CachedAgentModelCatalog, bool, error)
+	UpsertAgentModelCatalog(ctx context.Context, record CachedAgentModelCatalog) error
+}
+
+// AgentModelDiscoveryRequest describes one bounded, adapter-defined model
+// discovery attempt. Args remain owned by the concrete discovery adapter.
+type AgentModelDiscoveryRequest struct {
+	AgentID    string
+	Binary     string
+	WorkingDir string
+	Env        map[string]string
+}
+
+// AgentModelDiscoverer isolates CLI execution and discovery-input
+// fingerprinting from the core agent service.
+type AgentModelDiscoverer interface {
+	Discover(ctx context.Context, request AgentModelDiscoveryRequest) (AgentModelCatalog, error)
+	// CatalogFingerprint summarizes every input a discovery run would read: the
+	// resolved executable plus any configuration the adapter consults. The
+	// service compares it against the cached catalog's fingerprint, so it must
+	// change whenever the catalog those inputs produce would change, and it must
+	// stay cheap enough to compute before deciding to skip discovery.
+	CatalogFingerprint(ctx context.Context, request AgentModelDiscoveryRequest) string
+	Manual(agentID string) AgentModelCatalog
+}
+
 // AgentExitDetectionMode describes how AO learns that an agent CLI process
 // ended while its terminal runtime remains alive.
 type AgentExitDetectionMode string
@@ -97,6 +204,15 @@ type AgentPromptReadinessProvider interface {
 // TerminalActivityDetector derives activity only from authoritative terminal UI markers.
 type TerminalActivityDetector interface {
 	DetectTerminalActivity(output string) (domain.ActivityState, bool)
+}
+
+// ContinuousTerminalActivityDetector is implemented by adapters whose TUI is
+// the only authoritative source for some activity transitions. These adapters
+// are sampled on every observer tick, including while idle or waiting for
+// input, so terminal state can move in either direction.
+type ContinuousTerminalActivityDetector interface {
+	TerminalActivityDetector
+	ContinuouslyDetectTerminalActivity() bool
 }
 
 // PromptReadinessHints describes when an after-start prompt should be sent.
@@ -244,11 +360,13 @@ type WorkspaceHookConfig struct {
 
 // RestoreConfig carries inputs needed to continue an existing native agent session.
 type RestoreConfig struct {
-	Config      AgentConfig
-	DataDir     string
-	Kind        domain.SessionKind
-	Permissions PermissionMode
-	Session     SessionRef
+	Config          AgentConfig
+	DataDir         string
+	Kind            domain.SessionKind
+	Permissions     PermissionMode
+	AllowedTools    []string
+	DisallowedTools []string
+	Session         SessionRef
 	// SystemPrompt carries the session's standing instructions (e.g. the
 	// orchestrator role). Agent CLIs rebuild their system prompt from flags on
 	// resume — it is not part of the transcript — so adapters whose CLI has a

@@ -32,6 +32,7 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/agentbase"
 	"github.com/aoagents/agent-orchestrator/backend/internal/adapters/agent/binaryutil"
+	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
 	aoprocess "github.com/aoagents/agent-orchestrator/backend/internal/process"
 )
@@ -77,6 +78,8 @@ func (p *Plugin) EmitsBlockedActivity() bool { return true }
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
 var _ ports.AgentAuthChecker = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoff = (*Plugin)(nil)
+var _ ports.AgentInterfaceHandoffHistoryProbe = (*Plugin)(nil)
 
 // Manifest returns the adapter's static self-description.
 func (p *Plugin) Manifest() adapters.Manifest {
@@ -246,6 +249,7 @@ func (p *Plugin) GetRestoreCommand(ctx context.Context, cfg ports.RestoreConfig)
 	cmd = make([]string, 0, 7)
 	cmd = append(cmd, binary)
 	appendPermissionFlags(&cmd, cfg.Permissions)
+	appendToolFlags(&cmd, cfg.AllowedTools, cfg.DisallowedTools)
 	systemPrompt, err := resolveRestoreSystemPrompt(cfg)
 	if err != nil {
 		return nil, false, err
@@ -272,6 +276,96 @@ func (p *Plugin) SessionInfo(ctx context.Context, session ports.SessionRef) (por
 	}
 	info, ok := agentbase.StandardSessionInfo(session)
 	return info, ok, nil
+}
+
+// NativeConversationID bridges Claude Code's terminal and ACP surfaces. Both
+// use the same native Claude session UUID. AO terminal sessions pin a
+// deterministic UUID, while Chat persists the id returned by claude-agent-acp.
+func (p *Plugin) NativeConversationID(
+	ctx context.Context,
+	session ports.SessionRef,
+	currentMode domain.SessionMode,
+	providerConversationID string,
+) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	if currentMode == domain.SessionModeChat {
+		id := strings.TrimSpace(providerConversationID)
+		return id, id != "", nil
+	}
+	id := strings.TrimSpace(session.Metadata[ports.MetadataKeyAgentSessionID])
+	if id == "" && session.ID != "" {
+		id = claudeSessionUUID(session.ID)
+	}
+	return id, id != "", nil
+}
+
+// NativeConversationExists distinguishes Claude's reserved session UUID from
+// a conversation that Claude has actually persisted. Claude Code accepts
+// --session-id before the first prompt, but does not create its JSONL transcript
+// until the conversation has content. Passing that reserved-but-empty UUID to
+// either `claude --resume` or ACP session/load returns "No conversation found".
+//
+// The Agent SDK documents local transcripts at
+// ~/.claude/projects/<project-key>/<session-id>.jsonl (or beneath
+// CLAUDE_CONFIG_DIR). We only test for a non-empty top-level transcript; AO does
+// not parse or project provider files here.
+func (p *Plugin) NativeConversationExists(
+	ctx context.Context,
+	_ ports.SessionRef,
+	nativeConversationID string,
+	env map[string]string,
+) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	id := strings.TrimSpace(nativeConversationID)
+	if !isUUID(id) {
+		return false, nil
+	}
+	configDir := strings.TrimSpace(env["CLAUDE_CONFIG_DIR"])
+	if configDir == "" {
+		configDir = strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR"))
+	}
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false, fmt.Errorf("claude-code: resolve transcript root: %w", err)
+		}
+		configDir = filepath.Join(home, ".claude")
+	}
+	projectsDir := filepath.Join(configDir, "projects")
+	projects, err := os.ReadDir(projectsDir)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claude-code: read transcript root %s: %w", projectsDir, err)
+	}
+	for _, project := range projects {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		if !project.IsDir() {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(projectsDir, project.Name(), id+".jsonl"))
+		switch {
+		case err == nil && info.Mode().IsRegular() && info.Size() > 0:
+			return true, nil
+		case err == nil, os.IsNotExist(err):
+			continue
+		default:
+			return false, fmt.Errorf("claude-code: inspect transcript for %s: %w", id, err)
+		}
+	}
+	return false, nil
+}
+
+func isUUID(value string) bool {
+	_, err := uuid.Parse(value)
+	return err == nil
 }
 
 // AuthStatus checks Claude Code's local authentication state without starting a
@@ -383,6 +477,12 @@ func claudeConfigAuthStatus(path string) (ports.AgentAuthStatus, bool, error) {
 // always resolves to the same Claude session.
 func claudeSessionUUID(aoSessionID string) string {
 	return uuid.NewSHA1(claudeSessionNamespace, []byte(aoSessionID)).String()
+}
+
+// SessionUUID maps an AO session id onto the native Claude Code session UUID
+// used by --session-id and --resume.
+func SessionUUID(aoSessionID string) string {
+	return claudeSessionUUID(aoSessionID)
 }
 
 // resolveSystemPrompt returns the system prompt text to append, preferring

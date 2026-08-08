@@ -3,22 +3,45 @@ package review
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 	"github.com/aoagents/agent-orchestrator/backend/internal/lifecycle"
+	"github.com/aoagents/agent-orchestrator/backend/internal/ports"
+	reviewcore "github.com/aoagents/agent-orchestrator/backend/internal/review"
 )
 
 type fakeStore struct {
 	run       domain.ReviewRun
 	ok        bool
+	review    domain.Review
+	reviewOK  bool
 	batchRuns []domain.ReviewRun
 	prs       []domain.PullRequest
 
-	updateCalls int
-	markCalls   int
-	markedIDs   []string
+	updateCalls        int
+	agentSessionUpdate int
+	markCalls          int
+	markedIDs          []string
+}
+
+func (f *fakeStore) GetReviewByID(_ context.Context, id string) (domain.Review, bool, error) {
+	if f.reviewOK && f.review.ID == id {
+		return f.review, true, nil
+	}
+	return domain.Review{}, false, nil
+}
+
+func (f *fakeStore) UpdateReviewAgentSessionID(_ context.Context, id, agentSessionID string) (bool, error) {
+	if !f.reviewOK || f.review.ID != id {
+		return false, nil
+	}
+	f.agentSessionUpdate++
+	f.review.AgentSessionID = agentSessionID
+	return true, nil
 }
 
 func (f *fakeStore) GetReviewRun(_ context.Context, id string) (domain.ReviewRun, bool, error) {
@@ -94,17 +117,9 @@ func (f *fakeStore) ListPRsBySession(context.Context, domain.SessionID) ([]domai
 type fakeReducer struct {
 	outcome    lifecycle.ReviewDeliveryOutcome
 	err        error
-	calls      int
 	batchCalls int
-	got        lifecycle.ReviewResult
 	gotBatchID string
 	gotBatch   []lifecycle.ReviewResult
-}
-
-func (f *fakeReducer) ApplyReviewResult(_ context.Context, _ domain.SessionID, result lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
-	f.calls++
-	f.got = result
-	return f.outcome, f.err
 }
 
 func (f *fakeReducer) ApplyReviewBatch(_ context.Context, _ domain.SessionID, batchID string, results []lifecycle.ReviewResult) (lifecycle.ReviewDeliveryOutcome, error) {
@@ -116,7 +131,11 @@ func (f *fakeReducer) ApplyReviewBatch(_ context.Context, _ domain.SessionID, ba
 
 func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
-	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
+	}
 	reducer := &fakeReducer{outcome: lifecycle.ReviewDeliverySent}
 	svc := New(nil, st, WithLifecycleReducer(reducer), WithClock(func() time.Time { return now }))
 
@@ -124,14 +143,44 @@ func TestSubmitPersistsThenAppliesThenStampsDelivered(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Submit: %v", err)
 	}
-	if st.updateCalls != 1 || reducer.calls != 1 || st.markCalls != 1 {
-		t.Fatalf("calls update/reducer/mark = %d/%d/%d", st.updateCalls, reducer.calls, st.markCalls)
+	if st.updateCalls != 1 || reducer.batchCalls != 1 || st.markCalls != 1 {
+		t.Fatalf("calls update/reducer/mark = %d/%d/%d", st.updateCalls, reducer.batchCalls, st.markCalls)
 	}
-	if reducer.got.Verdict != domain.VerdictChangesRequested || reducer.got.Body != "fix it" || reducer.got.GithubReviewID != "987" {
-		t.Fatalf("reducer saw wrong result: %+v", reducer.got)
+	if reducer.gotBatch[0].Verdict != domain.VerdictChangesRequested || reducer.gotBatch[0].Body != "fix it" || reducer.gotBatch[0].GithubReviewID != "987" {
+		t.Fatalf("reducer saw wrong result: %+v", reducer.gotBatch)
 	}
 	if run.Status != domain.ReviewRunDelivered || run.DeliveredAt == nil || !run.DeliveredAt.Equal(now) {
 		t.Fatalf("run not stamped delivered: %+v", run)
+	}
+}
+
+func TestApplyReviewActivitySignalPersistsNativeReviewerSessionID(t *testing.T) {
+	st := &fakeStore{
+		reviewOK: true,
+		review:   domain.Review{ID: "review-1", SessionID: "worker-1", Harness: domain.ReviewerOpenCode, AgentSessionID: "old-native"},
+	}
+	svc := New(nil, st)
+
+	if err := svc.ApplyReviewActivitySignal(context.Background(), "review-1", ActivitySignal{
+		Event:          "session-start",
+		AgentSessionID: "opencode-native-2",
+	}); err != nil {
+		t.Fatalf("ApplyReviewActivitySignal: %v", err)
+	}
+	if st.agentSessionUpdate != 1 || st.review.AgentSessionID != "opencode-native-2" {
+		t.Fatalf("agent session update calls=%d review=%+v", st.agentSessionUpdate, st.review)
+	}
+	if st.review.SessionID != "worker-1" {
+		t.Fatalf("worker session id changed: %+v", st.review)
+	}
+}
+
+func TestApplyReviewActivitySignalRequiresExistingReviewSession(t *testing.T) {
+	svc := New(nil, &fakeStore{})
+
+	err := svc.ApplyReviewActivitySignal(context.Background(), "missing-review", ActivitySignal{AgentSessionID: "native-1"})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
 
@@ -229,7 +278,11 @@ func TestSubmitBatchApprovedOnlySendsNothing(t *testing.T) {
 
 func TestSubmitDeliveryFailureLeavesCompletedUndeliveredForRetry(t *testing.T) {
 	sendErr := errors.New("dead pane")
-	st := &fakeStore{ok: true, run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning}}
+	st := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "mer-1", BatchID: "batch-1", PRURL: "pr1", TargetSHA: "sha1", Status: domain.ReviewRunRunning},
+		prs: []domain.PullRequest{{URL: "pr1", HeadSHA: "sha1"}},
+	}
 	reducer := &fakeReducer{err: sendErr}
 	svc := New(nil, st, WithLifecycleReducer(reducer))
 
@@ -245,8 +298,8 @@ func TestSubmitDeliveryFailureLeavesCompletedUndeliveredForRetry(t *testing.T) {
 	if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, "fix it", "987"); err != nil {
 		t.Fatalf("retry Submit: %v", err)
 	}
-	if st.updateCalls != 1 || reducer.calls != 2 || st.run.Status != domain.ReviewRunDelivered || st.run.DeliveredAt == nil {
-		t.Fatalf("retry should not rewrite result and should stamp delivery: update=%d reducer=%d run=%+v", st.updateCalls, reducer.calls, st.run)
+	if st.updateCalls != 1 || reducer.batchCalls != 2 || st.run.Status != domain.ReviewRunDelivered || st.run.DeliveredAt == nil {
+		t.Fatalf("retry should not rewrite result and should stamp delivery: update=%d reducer=%d run=%+v", st.updateCalls, reducer.batchCalls, st.run)
 	}
 }
 
@@ -272,9 +325,173 @@ func TestSubmitCompletedRetryRejectsDifferentRecordedFields(t *testing.T) {
 			if _, err := svc.Submit(context.Background(), "mer-1", "run-1", domain.VerdictChangesRequested, tt.body, tt.githubReviewID); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("err = %v, want ErrInvalid", err)
 			}
-			if st.updateCalls != 0 || st.markCalls != 0 || reducer.calls != 0 {
-				t.Fatalf("mismatched retry should not rewrite or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.calls)
+			if st.updateCalls != 0 || st.markCalls != 0 || reducer.batchCalls != 0 {
+				t.Fatalf("mismatched retry should not rewrite or deliver: update=%d mark=%d reducer=%d", st.updateCalls, st.markCalls, reducer.batchCalls)
 			}
 		})
+	}
+}
+
+// recordingSink captures what the review service reports.
+type recordingSink struct{ events []ports.TelemetryEvent }
+
+func (r *recordingSink) Emit(_ context.Context, ev ports.TelemetryEvent) {
+	r.events = append(r.events, ev)
+}
+func (r *recordingSink) Close(context.Context) error { return nil }
+
+func (r *recordingSink) named(name string) []ports.TelemetryEvent {
+	var out []ports.TelemetryEvent
+	for _, ev := range r.events {
+		if ev.Name == name {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// Code review shipped with no telemetry at all, so there was no way to tell
+// whether reviewers approve or request changes. This pins the outcome event.
+func TestSubmitReportsReviewOutcome(t *testing.T) {
+	created := time.Date(2026, 8, 4, 10, 0, 0, 0, time.UTC)
+	store := &fakeStore{
+		ok: true,
+		run: domain.ReviewRun{
+			ID: "run-1", SessionID: "worker-1", Status: domain.ReviewRunRunning,
+			Harness: "claude-code", CreatedAt: created,
+			PRURL: "https://github.com/acme/secret-repo/pull/7", TargetSHA: "deadbeefcafe",
+		},
+	}
+	sink := &recordingSink{}
+	svc := New(nil, store,
+		WithTelemetry(sink),
+		WithClock(func() time.Time { return created.Add(90 * time.Second) }),
+	)
+
+	if _, err := svc.Submit(context.Background(), "worker-1", "run-1",
+		domain.VerdictChangesRequested, "please rename this", "gh-review-42"); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	got := sink.named("ao.review.submitted")
+	if len(got) != 1 {
+		t.Fatalf("ao.review.submitted count = %d, want 1", len(got))
+	}
+	p := got[0].Payload
+	if p["verdict"] != string(domain.VerdictChangesRequested) {
+		t.Fatalf("verdict = %#v, want changes_requested", p["verdict"])
+	}
+	if p["harness"] != "claude-code" {
+		t.Fatalf("harness = %#v, want claude-code", p["harness"])
+	}
+	if p["duration_ms"] != int64(90_000) {
+		t.Fatalf("duration_ms = %#v, want 90000", p["duration_ms"])
+	}
+	if p["posted_to_provider"] != true {
+		t.Fatalf("posted_to_provider = %#v, want true", p["posted_to_provider"])
+	}
+	if got[0].SessionID == nil || *got[0].SessionID != "worker-1" {
+		t.Fatalf("SessionID = %#v, want worker-1", got[0].SessionID)
+	}
+}
+
+// The review body is reviewer prose about someone's source code, and the PR URL
+// and SHA identify the repository. None may ever reach the payload, regardless of
+// what the daemon's remote allowlist would strip later.
+func TestSubmitNeverReportsReviewProseOrRepoIdentifiers(t *testing.T) {
+	store := &fakeStore{
+		ok: true,
+		run: domain.ReviewRun{
+			ID: "run-1", SessionID: "worker-1", Status: domain.ReviewRunRunning,
+			Harness: "codex", CreatedAt: time.Now().UTC(),
+			PRURL: "https://github.com/acme/secret-repo/pull/7", TargetSHA: "deadbeefcafe",
+		},
+	}
+	sink := &recordingSink{}
+	svc := New(nil, store, WithTelemetry(sink))
+
+	body := "leaks credentials in src/config/prod.ts"
+	if _, err := svc.Submit(context.Background(), "worker-1", "run-1",
+		domain.VerdictChangesRequested, body, ""); err != nil {
+		t.Fatalf("Submit: %v", err)
+	}
+
+	for _, ev := range sink.events {
+		for key, value := range ev.Payload {
+			text, ok := value.(string)
+			if !ok {
+				continue
+			}
+			for _, forbidden := range []string{body, "secret-repo", "deadbeefcafe", "prod.ts", "github.com"} {
+				if strings.Contains(text, forbidden) {
+					t.Fatalf("payload %q leaked %q: %q", key, forbidden, text)
+				}
+			}
+		}
+		if _, ok := ev.Payload["body"]; ok {
+			t.Fatalf("payload carries a body key: %#v", ev.Payload)
+		}
+	}
+	if p := sink.named("ao.review.submitted")[0].Payload; p["posted_to_provider"] != false {
+		t.Fatalf("posted_to_provider = %#v, want false when nothing was posted", p["posted_to_provider"])
+	}
+}
+
+// Re-submitting an already-complete run is idempotent in the store, so it must be
+// idempotent in telemetry too, or a retrying reviewer would double-count verdicts.
+func TestResubmitDoesNotDoubleReport(t *testing.T) {
+	store := &fakeStore{
+		ok: true,
+		run: domain.ReviewRun{
+			ID: "run-1", SessionID: "worker-1", Status: domain.ReviewRunRunning,
+			Harness: "opencode", CreatedAt: time.Now().UTC(),
+		},
+	}
+	sink := &recordingSink{}
+	svc := New(nil, store, WithTelemetry(sink))
+
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Submit(context.Background(), "worker-1", "run-1",
+			domain.VerdictApproved, "", ""); err != nil {
+			t.Fatalf("Submit %d: %v", i, err)
+		}
+	}
+	if got := len(sink.named("ao.review.submitted")); got != 1 {
+		t.Fatalf("ao.review.submitted count = %d, want 1 across three submits", got)
+	}
+}
+
+// Every existing caller constructs the service without a sink, so an unwired
+// service must stay silent rather than panic.
+func TestServiceWithoutTelemetrySinkStaysSilent(t *testing.T) {
+	store := &fakeStore{
+		ok:  true,
+		run: domain.ReviewRun{ID: "run-1", SessionID: "worker-1", Status: domain.ReviewRunRunning},
+	}
+	svc := New(nil, store)
+	if _, err := svc.Submit(context.Background(), "worker-1", "run-1", domain.VerdictApproved, "", ""); err != nil {
+		t.Fatalf("Submit without a sink: %v", err)
+	}
+}
+
+// reviewErrorKind must distinguish the engine's sentinels. They are wrapped with
+// %w and only become *apierr.Error at the HTTP boundary, so the generic
+// classifier would report every trigger failure as "internal" and the
+// trigger_failed event's error_kind could never say why.
+func TestReviewErrorKindClassifiesEngineSentinels(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"invalid", fmt.Errorf("%w: no PR", reviewcore.ErrInvalid), "invalid"},
+		{"not_found", fmt.Errorf("%w: worker gone", reviewcore.ErrNotFound), "not_found"},
+		{"agent_unavailable", fmt.Errorf("%w", ports.ErrAgentBinaryNotFound), "agent_unavailable"},
+		{"fallback_internal", errors.New("something unexpected"), "internal"},
+	}
+	for _, c := range cases {
+		if got := reviewErrorKind(c.err); got != c.want {
+			t.Errorf("%s: reviewErrorKind = %q, want %q", c.name, got, c.want)
+		}
 	}
 }

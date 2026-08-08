@@ -4,24 +4,24 @@ import { FeatureDemo } from "./components/FeatureDemo";
 import { DelegationDemo } from "./components/DelegationDemo/DelegationDemo";
 import { FeedbackLoopDemo } from "./components/FeedbackLoopDemo/FeedbackLoopDemo";
 import { FleetBoardDemo } from "./components/FleetBoardDemo/FleetBoardDemo";
-import { HarnessCoverageDemo } from "./components/HarnessCoverageDemo/HarnessCoverageDemo";
 import { MobileAppDemo } from "./components/MobileAppDemo/MobileAppDemo";
+import { ProjectAgentsDemo } from "./components/ProjectAgentsDemo/ProjectAgentsDemo";
 import { FEATURES } from "./constants";
 
 const DEMO_COMPONENTS = [
 	DelegationDemo,
 	FleetBoardDemo,
 	FeedbackLoopDemo,
-	HarnessCoverageDemo,
+	ProjectAgentsDemo,
 	MobileAppDemo,
 ];
 
 const FEATURE_BACKGROUNDS = [
-	"/feature3.png",
-	"/feature.png",
-	"/feature4.png",
-	"/feature2.png",
-	"/feature3.png",
+	"/optimized/feature3.webp",
+	"/optimized/feature.webp",
+	"/optimized/feature4.webp",
+	"/optimized/feature2.webp",
+	"/optimized/feature3.webp",
 ] as const;
 
 export function FeaturesSection() {
@@ -65,6 +65,7 @@ export function FeaturesSection() {
 										backgroundImage={
 											FEATURE_BACKGROUNDS[index % FEATURE_BACKGROUNDS.length]
 										}
+										preload
 									>
 										{DemoComponent && <DemoComponent />}
 									</FeatureDemo>

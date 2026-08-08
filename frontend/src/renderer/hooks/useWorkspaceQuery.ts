@@ -3,6 +3,7 @@ import type { components } from "../../api/schema";
 import { apiClient, hasTrustedApiBaseUrl } from "../lib/api-client";
 import { mockWorkspaces } from "../lib/mock-data";
 import { usesPreviewWorkspaceData } from "../lib/preview-mode";
+import { toReviewerHarnessId } from "../lib/reviewer-harnesses";
 import { captureRendererEvent } from "../lib/telemetry";
 import {
 	type PRState,
@@ -88,7 +89,12 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						title: session.displayName ?? session.issueId ?? session.id,
 						issueId: session.issueId,
 						provider: toAgentProvider(session.harness),
+						reviewerHarness: toReviewerHarnessId(session.reviewerHarness),
 						kind: session.kind === "orchestrator" ? "orchestrator" : session.kind === "worker" ? "worker" : undefined,
+						// Carried through verbatim: the session surface must render from
+						// the mode this session was created with, not from whatever the
+						// current default happens to be.
+						mode: session.mode === "chat" ? "chat" : "tui",
 						branch: session.branch || undefined,
 						status,
 						scmStatus,
@@ -99,6 +105,8 @@ async function fetchWorkspaces(): Promise<WorkspaceSummary[]> {
 						activity,
 						previewUrl: session.previewUrl,
 						previewRevision: session.previewRevision,
+						isPinned: session.isPinned ?? false,
+						pinnedAt: session.pinnedAt ?? undefined,
 						prs: (session.prs ?? []).map(toPullRequestFacts),
 					};
 				}),

@@ -4,9 +4,23 @@ import {
 	SHORTCUT_CATEGORIES,
 	shortcutBindingKeys,
 } from "../../shared/shortcuts";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
+import { shortcutCategoryLabelKeys, shortcutLabelKeys } from "../i18n/key-maps";
+import type { AppShortcutId, ShortcutCategory } from "../../shared/shortcuts";
 import { useCommandPaletteEnabled } from "../hooks/useCommandPaletteEnabled";
 import { useKeybindingsStore } from "../stores/keybindings-store";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Button } from "./ui/button";
+
+function shortcutLabel(id: AppShortcutId, t: TFunction): string {
+	return t(shortcutLabelKeys[id]);
+}
+
+function shortcutCategoryLabel(category: ShortcutCategory, t: TFunction): string {
+	return t(shortcutCategoryLabelKeys[category]);
+}
+
 
 type KeyboardShortcutsDialogProps = {
 	open: boolean;
@@ -28,6 +42,7 @@ export function KeyboardShortcutsDialog({
 	onCustomize,
 	isMac = isMacPlatform(),
 }: KeyboardShortcutsDialogProps) {
+	const { t } = useTranslation();
 	const isCommandPaletteEnabled = useCommandPaletteEnabled();
 	const overrides = useKeybindingsStore((state) => state.overrides);
 	const availableShortcuts = APP_SHORTCUTS.filter(
@@ -36,27 +51,27 @@ export function KeyboardShortcutsDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-h-[min(680px,calc(100svh-32px))] max-w-xl gap-0 overflow-hidden border-border bg-popover p-0 text-popover-foreground">
-				<DialogHeader className="border-b border-border px-5 py-4">
-					<DialogTitle className="text-[15px]">Keyboard shortcuts</DialogTitle>
-					<DialogDescription className="text-xs">
-						Move around Agent Orchestrator without leaving the keyboard.
+			<DialogContent className="max-h-[min(680px,calc(100svh-32px))] max-w-xl gap-0 overflow-hidden border-[var(--color-border-settings-dialog)] bg-popover p-0 text-popover-foreground shadow-[var(--shadow-settings-dialog)] sm:rounded-(--radius-settings-dialog-lg)">
+				<DialogHeader className="border-b border-[var(--color-border-settings-dialog-header)] p-(--size-modal-padding)">
+					<DialogTitle className="settings-dialog-title">{t("shortcut.dialogTitle")}</DialogTitle>
+					<DialogDescription className="text-xs text-settings-muted">
+						{t("shortcut.dialogDescription")}
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="overflow-y-auto px-5 py-2">
+				<div className="overflow-y-auto px-(--size-modal-padding) py-2">
 					{SHORTCUT_CATEGORIES.map((category) => {
 						const shortcuts = availableShortcuts.filter((shortcut) => shortcut.category === category);
 						if (shortcuts.length === 0) return null;
 						return (
-							<section className="border-b border-border py-4 last:border-b-0" key={category}>
+							<section className="border-b border-border py-4 last:border-b-0" key={shortcutCategoryLabel(category, t)}>
 								<h2 className="mb-2 font-mono text-micro font-semibold uppercase tracking-wide-lg text-passive">
-									{category}
+									{shortcutCategoryLabel(category, t)}
 								</h2>
 								<div className="flex flex-col">
 									{shortcuts.map((shortcut) => (
 										<div className="flex min-h-11 items-center justify-between gap-5 py-1.5" key={shortcut.id}>
-											<p className="min-w-0 text-control font-medium text-foreground">{shortcut.label}</p>
+											<p className="min-w-0 text-control font-medium text-foreground">{shortcutLabel(shortcut.id, t)}</p>
 											<div className="flex shrink-0 flex-col items-end gap-1">
 												{effectiveShortcutBindings(shortcut.id, isMac, overrides).map((binding, bindingIndex) => {
 													const keys = shortcutBindingKeys(binding, isMac);
@@ -86,14 +101,10 @@ export function KeyboardShortcutsDialog({
 					})}
 				</div>
 				{onCustomize ? (
-					<div className="flex justify-end border-t border-border px-5 py-3">
-						<button
-							type="button"
-							className="rounded-md bg-accent px-3 py-2 text-control font-medium text-accent-foreground transition-opacity hover:opacity-90"
-							onClick={onCustomize}
-						>
-							Customize
-						</button>
+					<div className="flex justify-end border-t border-[var(--color-border-settings-dialog-header)] p-(--size-modal-padding)">
+						<Button type="button" variant="footer-primary" onClick={onCustomize}>
+							{t("shortcut.customize")}
+						</Button>
 					</div>
 				) : null}
 			</DialogContent>

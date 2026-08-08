@@ -687,7 +687,7 @@ func TestGetAgentHooksInstallsCopilotHooks(t *testing.T) {
 	}
 }
 
-func TestGetAgentHooksInstallsSessionCopilotAgent(t *testing.T) {
+func TestInstallAgentProfileInstallsSessionCopilotAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {
@@ -735,6 +735,75 @@ func TestGetAgentHooksInstallsSessionCopilotAgent(t *testing.T) {
 	}
 }
 
+func TestInstallAgentProfileDoesNotInstallLifecycleHooks(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+	workspace := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	systemPromptFile := filepath.Join(t.TempDir(), "system.md")
+	if err := os.WriteFile(systemPromptFile, []byte("review without modifying files\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.InstallAgentProfile(context.Background(), ports.WorkspaceHookConfig{
+		DataDir:          t.TempDir(),
+		SessionID:        "review-sess-1",
+		SystemPromptFile: systemPromptFile,
+		WorkspacePath:    workspace,
+	})
+	if err != nil {
+		t.Fatalf("InstallAgentProfile: %v", err)
+	}
+	profilePath := filepath.Join(workspace, ".github", "agents", "ao-review-sess-1.agent.md")
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "review without modifying files") {
+		t.Fatalf("hidden system prompt missing from profile:\n%s", data)
+	}
+	if _, err := os.Stat(copilotHooksPath(workspace)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("profile-only install created lifecycle hooks: %v", err)
+	}
+	exclude, err := os.ReadFile(filepath.Join(workspace, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(exclude), "/.github/agents/ao-review-sess-1.agent.md\n") {
+		t.Fatalf("profile is not git-excluded:\n%s", exclude)
+	}
+}
+
+func TestInstallAgentProfilePreservesUserOwnedProfile(t *testing.T) {
+	plugin := &Plugin{resolvedBinary: "copilot"}
+	workspace := t.TempDir()
+	profilePath := filepath.Join(workspace, ".github", "agents", "ao-review-sess-1.agent.md")
+	if err := os.MkdirAll(filepath.Dir(profilePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const userProfile = "---\nname: user-owned\n---\nkeep me\n"
+	if err := os.WriteFile(profilePath, []byte(userProfile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := plugin.InstallAgentProfile(context.Background(), ports.WorkspaceHookConfig{
+		SessionID:     "review-sess-1",
+		SystemPrompt:  "AO replacement",
+		WorkspacePath: workspace,
+	})
+	if err != nil {
+		t.Fatalf("InstallAgentProfile: %v", err)
+	}
+	data, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != userProfile {
+		t.Fatalf("user-owned profile changed:\n%s", data)
+	}
+}
+
 func TestGetAgentHooksIgnoresSessionCopilotAgentInLinkedWorktreeCommonExclude(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	dir := t.TempDir()
@@ -776,7 +845,7 @@ func TestGetAgentHooksIgnoresSessionCopilotAgentInLinkedWorktreeCommonExclude(t 
 	}
 }
 
-func TestGetAgentHooksUpdatesManagedSessionCopilotAgent(t *testing.T) {
+func TestInstallAgentProfileUpdatesManagedSessionCopilotAgent(t *testing.T) {
 	plugin := &Plugin{resolvedBinary: "copilot"}
 	workspace := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workspace, ".git", "info"), 0o755); err != nil {
@@ -784,11 +853,11 @@ func TestGetAgentHooksUpdatesManagedSessionCopilotAgent(t *testing.T) {
 	}
 
 	cfg := ports.WorkspaceHookConfig{DataDir: t.TempDir(), SessionID: "sess-1", SystemPrompt: "old rules", WorkspacePath: workspace}
-	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+	if err := plugin.InstallAgentProfile(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 	cfg.SystemPrompt = "new rules"
-	if err := plugin.GetAgentHooks(context.Background(), cfg); err != nil {
+	if err := plugin.InstallAgentProfile(context.Background(), cfg); err != nil {
 		t.Fatal(err)
 	}
 

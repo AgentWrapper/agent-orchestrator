@@ -34,6 +34,8 @@ const (
 	ListUnread = domain.NotificationListUnread
 	// ListAll returns both read and unread notifications.
 	ListAll = domain.NotificationListAll
+	// ListUnresolved returns notifications whose underlying issue is still open.
+	ListUnresolved = domain.NotificationListUnresolved
 )
 
 // ListFilter controls paginated notification history.
@@ -47,5 +49,9 @@ type ListFilter struct {
 type ListPage struct {
 	Notifications []Notification
 	NextCursor    string
-	UnreadCount   int
+	// UnreadCount is the unseen badge count; UnresolvedCount is how many issues
+	// are still open. They are independent: a notification the user has already
+	// seen stays counted as unresolved until AO closes it.
+	UnreadCount     int
+	UnresolvedCount int
 }

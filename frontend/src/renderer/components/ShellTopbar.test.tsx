@@ -92,11 +92,11 @@ function sessionWith(overrides: Partial<WorkspaceSession> = {}): WorkspaceSessio
 	};
 }
 
-function renderTopbar(session: WorkspaceSession) {
-	return renderTopbarSessions([session], session.id);
+function renderTopbar(session: WorkspaceSession, embedded = false) {
+	return renderTopbarSessions([session], session.id, embedded);
 }
 
-function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string) {
+function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string, embedded = false) {
 	const data: WorkspaceSummary[] = [
 		{
 			id: sessions[0].workspaceId,
@@ -112,7 +112,7 @@ function renderTopbarSessions(sessions: WorkspaceSession[], sessionId: string) {
 	const queryClient = new QueryClient();
 	const topbar = () => (
 		<QueryClientProvider client={queryClient}>
-			<ShellTopbar />
+			<ShellTopbar embedded={embedded} />
 		</QueryClientProvider>
 	);
 	const result = render(topbar());
@@ -158,10 +158,19 @@ beforeEach(() => {
 	postMock.mockResolvedValue({ data: { ok: true, sessionId: "sess-1" }, error: undefined });
 	useWorkspaceQueryMock.mockReset();
 	useWorkspaceQueryMock.mockReturnValue({ data: [], isError: false, isLoading: false });
-	useUiStore.setState({ inspectorSessions: {} });
+	useUiStore.setState({ inspectorSessions: {}, settingsModal: null });
 });
 
 describe("ShellTopbar status pill", () => {
+	it("renders only session actions when embedded in the terminal bar", () => {
+		renderTopbar(sessionWith(), true);
+
+		expect(screen.queryByText("ao/sess-1")).not.toBeInTheDocument();
+		expect(screen.queryByText("Working")).not.toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Kill session" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Open orchestrator" })).toBeInTheDocument();
+	});
+
 	it.each([
 		["active", "Working"],
 		["idle", "Idle"],
@@ -230,12 +239,26 @@ describe("ShellTopbar orchestrator actions", () => {
 		if (!pulses) expect(indicator).not.toHaveClass("animate-status-pulse");
 	});
 
-	it("marks Kanban as the primary action on orchestrator sessions", () => {
+	it("opens the board from the project name on orchestrator sessions", async () => {
+		renderTopbar(orchestrator, true);
+
+		expect(screen.queryByText("Kanban")).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole("button", { name: "Open Kanban" }));
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId",
+			params: { projectId: "proj-1" },
+		});
+	});
+
+	it("opens the board from the project-name crumb on the full orchestrator topbar", async () => {
 		renderTopbar(orchestrator);
 
-		expect(screen.getByRole("button", { name: "Open Kanban" })).toHaveClass("bg-accent-strong");
 		expect(screen.getByRole("button", { name: "New task" })).toHaveClass("bg-raised");
-		expect(screen.getByRole("button", { name: "New task" })).not.toHaveClass("bg-accent-strong");
+		await userEvent.click(screen.getByRole("button", { name: "Open Kanban" }));
+		expect(navigateMock).toHaveBeenCalledWith({
+			to: "/projects/$projectId",
+			params: { projectId: "proj-1" },
+		});
 	});
 
 	it("opens project settings instead of spawning when no orchestrator agent is configured", async () => {
@@ -261,10 +284,8 @@ describe("ShellTopbar orchestrator actions", () => {
 
 		await userEvent.click(screen.getByRole("button", { name: "Open orchestrator" }));
 
-		expect(navigateMock).toHaveBeenCalledWith({
-			to: "/projects/$projectId/settings",
-			params: { projectId: "proj-1" },
-		});
+		expect(useUiStore.getState().settingsModal).toEqual({ scope: "project", projectId: "proj-1" });
+		expect(navigateMock).not.toHaveBeenCalled();
 		expect(spawnMock).not.toHaveBeenCalled();
 	});
 

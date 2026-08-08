@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -19,7 +20,13 @@ import (
 // attach its terminal over /mux (empty when no reviewer has run).
 type ListReviewsResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	ReviewerHarness  domain.ReviewerHarness     `json:"reviewerHarness,omitempty"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	// Runs is every recorded pass for this session, newest first. Reviews only
+	// carries the current and previous run per PR, which cannot answer "what did
+	// the other reviewer say" once a third pass has run — so the client cannot
+	// show one summary across reviewers without this.
+	Runs []domain.ReviewRun `json:"runs"`
 }
 
 // ReviewRunResponse is the body of submit (200). It carries the run plus the
@@ -35,6 +42,7 @@ type ReviewRunResponse struct {
 type TriggerReviewResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	Runs             []domain.ReviewRun         `json:"runs"`
 	// Created is true when a new review pass was started (HTTP 201) and false
 	// when an existing run for the same commit was reused (HTTP 200).
 	Created bool `json:"created" description:"True when a new review pass was started; false when an existing run for the same commit was reused."`
@@ -45,6 +53,22 @@ type TriggerReviewResponse struct {
 type CancelReviewResponse struct {
 	ReviewerHandleID string                     `json:"reviewerHandleId"`
 	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+}
+
+// RestoreReviewResponse is the body of reviewer session restore (200).
+type RestoreReviewResponse struct {
+	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	ReviewerHarness  domain.ReviewerHarness     `json:"reviewerHarness,omitempty"`
+	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	Runs             []domain.ReviewRun         `json:"runs"`
+}
+
+// KillReviewResponse is the body of reviewer session kill (200).
+type KillReviewResponse struct {
+	ReviewerHandleID string                     `json:"reviewerHandleId"`
+	ReviewerHarness  domain.ReviewerHarness     `json:"reviewerHarness,omitempty"`
+	Reviews          []reviewcore.PRReviewState `json:"reviews"`
+	Runs             []domain.ReviewRun         `json:"runs"`
 }
 
 // SubmitReviewItem is one review result in a batched submit request.
@@ -71,10 +95,48 @@ type ReviewsController struct {
 
 // Register mounts the review routes on the supplied router.
 func (c *ReviewsController) Register(r chi.Router) {
+	r.Post("/reviews/{reviewSessionID}/activity", c.activity)
 	r.Get("/sessions/{sessionId}/reviews", c.list)
 	r.Post("/sessions/{sessionId}/reviews/trigger", c.trigger)
 	r.Post("/sessions/{sessionId}/reviews/cancel", c.cancel)
+	r.Post("/sessions/{sessionId}/reviews/kill", c.kill)
+	r.Post("/sessions/{sessionId}/reviews/restore", c.restore)
+	r.Post("/sessions/{sessionId}/reviews/switch", c.switchReviewer)
 	r.Post("/sessions/{sessionId}/reviews/submit", c.submit)
+}
+
+func (c *ReviewsController) activity(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/reviews/{reviewSessionID}/activity")
+		return
+	}
+	reviewSessionID := strings.TrimSpace(chi.URLParam(r, "reviewSessionID"))
+	if reviewSessionID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "REVIEW_ACTIVITY_INVALID", "Review session id is required", nil)
+		return
+	}
+	var in SetReviewActivityRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	agentSessionID := capActivityMeta(domain.SanitizeControlChars(strings.TrimSpace(in.AgentSessionID)))
+	if strings.TrimSpace(in.State) == "" && agentSessionID == "" {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "REVIEW_ACTIVITY_OR_SESSION_ID_REQUIRED", "Reviewer activity state or agent session ID is required", nil)
+		return
+	}
+	if err := c.Svc.ApplyReviewActivitySignal(r.Context(), reviewSessionID, reviewsvc.ActivitySignal{
+		Event:          capActivityMeta(domain.SanitizeControlChars(in.Event)),
+		AgentSessionID: agentSessionID,
+	}); err != nil {
+		if errors.Is(err, reviewsvc.ErrNotFound) {
+			envelope.WriteAPIError(w, r, http.StatusNotFound, "not_found", "REVIEW_NOT_FOUND", "Unknown review session", nil)
+			return
+		}
+		writeReviewError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, SetReviewActivityResponse{OK: true, ReviewSessionID: reviewSessionID})
 }
 
 func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +153,11 @@ func (c *ReviewsController) list(w http.ResponseWriter, r *http.Request) {
 	if reviews == nil {
 		reviews = []reviewcore.PRReviewState{}
 	}
-	envelope.WriteJSON(w, http.StatusOK, ListReviewsResponse{ReviewerHandleID: res.ReviewerHandleID, Reviews: reviews})
+	runs := res.Runs
+	if runs == nil {
+		runs = []domain.ReviewRun{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, reviewsResponse(res, reviews, runs))
 }
 
 func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +165,13 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/trigger")
 		return
 	}
-	res, err := c.Svc.Trigger(r.Context(), sessionID(r))
+	// Body is optional: omitting it runs under the project's configured reviewer.
+	var in TriggerReviewRequest
+	if err := decodeJSON(r, &in); err != nil && !isEmptyBody(err) {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	res, err := c.Svc.Trigger(r.Context(), sessionID(r), in.Harness)
 	if err != nil {
 		writeReviewError(w, r, err)
 		return
@@ -114,9 +186,14 @@ func (c *ReviewsController) trigger(w http.ResponseWriter, r *http.Request) {
 	if reviews == nil {
 		reviews = []reviewcore.PRReviewState{}
 	}
+	runs := res.Runs
+	if runs == nil {
+		runs = []domain.ReviewRun{}
+	}
 	envelope.WriteJSON(w, status, TriggerReviewResponse{
 		ReviewerHandleID: res.ReviewerHandleID,
 		Reviews:          reviews,
+		Runs:             runs,
 		Created:          res.Created,
 	})
 }
@@ -139,6 +216,97 @@ func (c *ReviewsController) cancel(w http.ResponseWriter, r *http.Request) {
 		ReviewerHandleID: res.ReviewerHandleID,
 		Reviews:          reviews,
 	})
+}
+
+func (c *ReviewsController) kill(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/kill")
+		return
+	}
+	workerID := sessionID(r)
+	if err := c.Svc.TerminateReviewer(r.Context(), workerID, "cancelled because reviewer session was killed"); err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	res, err := c.Svc.List(r.Context(), workerID)
+	if err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	reviews := res.Reviews
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
+	}
+	runs := res.Runs
+	if runs == nil {
+		runs = []domain.ReviewRun{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, KillReviewResponse{ReviewerHandleID: res.ReviewerHandleID, ReviewerHarness: res.ReviewerHarness, Reviews: reviews, Runs: runs})
+}
+
+func (c *ReviewsController) restore(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/restore")
+		return
+	}
+	workerID := sessionID(r)
+	if err := c.Svc.RestoreReviewer(r.Context(), workerID); err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	res, err := c.Svc.List(r.Context(), workerID)
+	if err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	reviews := res.Reviews
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
+	}
+	runs := res.Runs
+	if runs == nil {
+		runs = []domain.ReviewRun{}
+	}
+	envelope.WriteJSON(w, http.StatusOK, RestoreReviewResponse{ReviewerHandleID: res.ReviewerHandleID, ReviewerHarness: res.ReviewerHarness, Reviews: reviews, Runs: runs})
+}
+
+func (c *ReviewsController) switchReviewer(w http.ResponseWriter, r *http.Request) {
+	if c.Svc == nil {
+		apispec.NotImplemented(w, r, "POST", "/api/v1/sessions/{sessionId}/reviews/switch")
+		return
+	}
+	var in SetSessionReviewerRequest
+	if err := decodeJSON(r, &in); err != nil {
+		envelope.WriteAPIError(w, r, http.StatusBadRequest, "bad_request", "INVALID_JSON", "Invalid JSON body", nil)
+		return
+	}
+	res, err := c.Svc.SwitchReviewer(r.Context(), sessionID(r), in.Harness)
+	if err != nil {
+		writeReviewError(w, r, err)
+		return
+	}
+	envelope.WriteJSON(w, http.StatusOK, reviewsResponse(res, nil, nil))
+}
+
+func reviewsResponse(res reviewcore.SessionReviews, reviews []reviewcore.PRReviewState, runs []domain.ReviewRun) ListReviewsResponse {
+	if reviews == nil {
+		reviews = res.Reviews
+	}
+	if reviews == nil {
+		reviews = []reviewcore.PRReviewState{}
+	}
+	if runs == nil {
+		runs = res.Runs
+	}
+	if runs == nil {
+		runs = []domain.ReviewRun{}
+	}
+	return ListReviewsResponse{
+		ReviewerHandleID: res.ReviewerHandleID,
+		ReviewerHarness:  res.ReviewerHarness,
+		Reviews:          reviews,
+		Runs:             runs,
+	}
 }
 
 func (c *ReviewsController) submit(w http.ResponseWriter, r *http.Request) {

@@ -6,11 +6,15 @@ import (
 	"github.com/aoagents/agent-orchestrator/backend/internal/domain"
 )
 
-// Every deriver key must be a known harness name: SupportsHarness equates the
-// two, so a token that drifts from its harness constant would silently report
-// the harness as hook-less.
+// Every deriver key must be a known harness name except fake, whose deriver is
+// retained for test fixtures and historical callbacks even though the harness is
+// no longer user-selectable. SupportsHarness equates tokens and harnesses, so any
+// other drift would silently report a hooked harness as hook-less.
 func TestDeriverTokensAreKnownHarnesses(t *testing.T) {
 	for token := range Derivers {
+		if token == string(domain.HarnessFake) {
+			continue
+		}
 		if !domain.AgentHarness(token).IsKnown() {
 			t.Errorf("deriver token %q is not a known AgentHarness", token)
 		}
@@ -18,7 +22,7 @@ func TestDeriverTokensAreKnownHarnesses(t *testing.T) {
 }
 
 func TestSupportsHarness(t *testing.T) {
-	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessGrok, domain.HarnessOpenCode, domain.HarnessKimi, domain.HarnessVibe} {
+	for _, h := range []domain.AgentHarness{domain.HarnessCodex, domain.HarnessClaudeCode, domain.HarnessGrok, domain.HarnessMuse, domain.HarnessOpenCode, domain.HarnessKimi, domain.HarnessVibe} {
 		if !SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = false, want true", h)
 		}
@@ -29,6 +33,28 @@ func TestSupportsHarness(t *testing.T) {
 		if SupportsHarness(h) {
 			t.Errorf("SupportsHarness(%q) = true, want false", h)
 		}
+	}
+}
+
+func TestMuseDerivesManagedHookActivity(t *testing.T) {
+	tests := []struct {
+		event string
+		want  domain.ActivityState
+	}{
+		{"user-prompt-submit", domain.ActivityActive},
+		{"permission-request", domain.ActivityBlocked},
+		{"stop", domain.ActivityIdle},
+	}
+	for _, tt := range tests {
+		t.Run(tt.event, func(t *testing.T) {
+			got, ok := Derive("muse", tt.event, []byte(`{}`))
+			if !ok || got != tt.want {
+				t.Fatalf("Derive(muse, %q) = (%q, %v), want (%q, true)", tt.event, got, ok, tt.want)
+			}
+		})
+	}
+	if got, ok := Derive("muse", "session-start", []byte(`{}`)); ok {
+		t.Fatalf("Derive(muse, session-start) = (%q, true), want metadata-only", got)
 	}
 }
 

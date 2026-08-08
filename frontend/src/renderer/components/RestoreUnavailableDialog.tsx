@@ -1,12 +1,19 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { useNavigate } from "@tanstack/react-router";
-import { Loader2 } from "lucide-react";
+import { Loader2, X } from "lucide-react";
 import { useState } from "react";
-import { Button } from "./ui/button";
+import { useTranslation } from "react-i18next";
 import { useWorkspaceQuery } from "../hooks/useWorkspaceQuery";
 import { spawnOrchestrator } from "../lib/spawn-orchestrator";
+import { useUiStore } from "../stores/ui-store";
 import { hasConfiguredOrchestratorAgent, isOrchestratorSession } from "../types/workspace";
 import type { WorkspaceSession } from "../types/workspace";
+import { Button } from "./ui/button";
+import {
+	settingsDialogBodyClass,
+	settingsDialogContentClass,
+	settingsDialogFooterClass,
+	settingsDialogHeaderClass,
+} from "./ui/dialog";
 
 type RestoreUnavailableDialogProps = {
 	open: boolean;
@@ -16,7 +23,7 @@ type RestoreUnavailableDialogProps = {
 };
 
 export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecreated }: RestoreUnavailableDialogProps) {
-	const navigate = useNavigate();
+	const { t } = useTranslation();
 	const workspaceQuery = useWorkspaceQuery();
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState<string | undefined>();
@@ -29,10 +36,7 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 		if (checkingProject) return;
 		if (!hasOrchestratorAgent) {
 			onOpenChange(false);
-			void navigate({
-				to: "/projects/$projectId/settings",
-				params: { projectId: session.workspaceId },
-			});
+			useUiStore.getState().openProjectSettings(session.workspaceId);
 			return;
 		}
 		setBusy(true);
@@ -42,7 +46,7 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 			onOpenChange(false);
 			onRecreated(id);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to create orchestrator");
+			setError(err instanceof Error ? err.message : t("restoreUnavailable.createFailed"));
 		} finally {
 			setBusy(false);
 		}
@@ -51,29 +55,49 @@ export function RestoreUnavailableDialog({ open, session, onOpenChange, onRecrea
 	return (
 		<Dialog.Root open={open} onOpenChange={onOpenChange}>
 			<Dialog.Portal>
-				<Dialog.Overlay className="dialog-overlay" />
-				<Dialog.Content className="fixed left-1/2 top-1/2 z-overlay w-dialog-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-surface p-5 shadow-lg">
-					<Dialog.Title className="text-sm font-medium text-foreground">Session can no longer be restored</Dialog.Title>
-					<Dialog.Description className="mt-2 text-control text-muted-foreground">
-						{orchestrator
-							? "This orchestrator has no saved agent session to resume. You can create a new orchestrator while AO preserves any workspace data it cannot safely clean."
-							: "This session has no saved agent session or prompt to resume from."}
-					</Dialog.Description>
-					{error && <div className="mt-3 text-xs text-destructive">{error}</div>}
-					<div className="mt-4 flex justify-end gap-2">
-						<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
-							{orchestrator ? "Cancel" : "Close"}
+				<Dialog.Overlay className="dialog-overlay data-[state=open]:animate-overlay-in" />
+				<Dialog.Content
+					className={`${settingsDialogContentClass} fixed left-1/2 top-1/2 w-dialog-md -translate-x-1/2 -translate-y-1/2 data-[state=open]:animate-modal-in`}
+				>
+					<button
+						type="button"
+						className="settings-dialog-close-button settings-close-button"
+						aria-label={t("common.close")}
+						disabled={busy}
+						onClick={() => onOpenChange(false)}
+					>
+						<X className="size-5" aria-hidden="true" />
+					</button>
+					<div className={settingsDialogHeaderClass}>
+						<Dialog.Title className="settings-dialog-title">{t("restoreUnavailable.title")}</Dialog.Title>
+						<Dialog.Description className="text-control text-settings-muted">
+							{orchestrator ? t("restoreUnavailable.orchestratorBody") : t("restoreUnavailable.sessionBody")}
+						</Dialog.Description>
+					</div>
+					{error ? (
+						<div className={settingsDialogBodyClass}>
+							<p className="text-xs text-destructive">{error}</p>
+						</div>
+					) : null}
+					<div className={settingsDialogFooterClass}>
+						<Button type="button" variant="footer" onClick={() => onOpenChange(false)} disabled={busy}>
+							{orchestrator ? t("confirm.cancel") : t("restoreUnavailable.close")}
 						</Button>
-						{orchestrator && (
-							<Button onClick={recreate} disabled={busy || checkingProject}>
-								{busy && <Loader2 className="mr-2 size-icon-base animate-spin" />}
+						{orchestrator ? (
+							<Button
+								type="button"
+								variant="footer-primary"
+								onClick={recreate}
+								disabled={busy || checkingProject}
+							>
+								{busy ? <Loader2 className="size-icon-base animate-spin" aria-hidden="true" /> : null}
 								{checkingProject
-									? "Checking project…"
+									? t("restoreUnavailable.checkingProject")
 									: hasOrchestratorAgent
-										? "Create new orchestrator"
-										: "Configure orchestrator agent"}
+										? t("restoreUnavailable.createOrchestrator")
+										: t("restoreUnavailable.configureOrchestrator")}
 							</Button>
-						)}
+						) : null}
 					</div>
 				</Dialog.Content>
 			</Dialog.Portal>

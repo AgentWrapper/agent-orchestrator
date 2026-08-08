@@ -269,6 +269,38 @@ func TestSendMessage_DeliversChunkedTextAndEnter(t *testing.T) {
 	}
 }
 
+func TestSendInputDeliversEscapeByte(t *testing.T) {
+	isolateRegistry(t)
+	hosts := map[string]*inProcHost{}
+	rt := New(Options{Spawner: fakeSpawnerFor(t, hosts, livePID())})
+	handle, err := rt.Create(context.Background(), ports.RuntimeConfig{
+		SessionID: "sess-escape", WorkspacePath: "/tmp/w", Argv: []string{"sh"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	h := hosts["sess-escape"]
+	defer h.cleanup(t)
+
+	if err := rt.SendInput(context.Background(), handle, "\x1b"); err != nil {
+		t.Fatalf("SendInput: %v", err)
+	}
+	inputC := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 8)
+		n, _ := h.pty.inR.Read(buf)
+		inputC <- append([]byte(nil), buf[:n]...)
+	}()
+	select {
+	case got := <-inputC:
+		if string(got) != "\x1b" {
+			t.Fatalf("input = %q, want Escape", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Escape input")
+	}
+}
+
 // TestSendMessage_LargeMessageChunked verifies a message > 512 runes is
 // delivered correctly (host receives full text + "\r").
 func TestSendMessage_LargeMessageChunked(t *testing.T) {

@@ -68,7 +68,7 @@ func TestProjectSetConfig_TrackerIntakeJSON(t *testing.T) {
 
 	_, errOut, err := executeCLI(t, Deps{
 		ProcessAlive: func(int) bool { return true },
-	}, "project", "set-config", "demo", "--config-json", `{"trackerIntake":{"enabled":true,"provider":"github","assignee":"alice"}}`)
+	}, "project", "set-config", "demo", "--config-json", `{"worker":{"agent":"amp","agentConfig":{"mode":"ultra"}},"trackerIntake":{"enabled":true,"provider":"github","assignee":"alice"}}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v\nstderr=%s", err, errOut)
 	}
@@ -78,6 +78,9 @@ func TestProjectSetConfig_TrackerIntakeJSON(t *testing.T) {
 	}
 	if !got.Config.TrackerIntake.Enabled || got.Config.TrackerIntake.Provider != "github" || got.Config.TrackerIntake.Assignee != "alice" {
 		t.Fatalf("tracker intake request = %#v", got.Config.TrackerIntake)
+	}
+	if got.Config.Worker.Agent != "amp" || got.Config.Worker.AgentConfig.Mode != "ultra" {
+		t.Fatalf("worker config = %#v, want preserved amp ultra mode", got.Config.Worker)
 	}
 }
 
@@ -179,7 +182,7 @@ func TestProjectGet_Success(t *testing.T) {
 
 func TestProjectGet_JSON(t *testing.T) {
 	cfg := setConfigEnv(t)
-	srv, capture := projectServer(t, http.StatusOK, `{"status":"degraded","project":{"id":"demo","name":"Demo","path":"/repo/demo","resolveError":"config missing"}}`)
+	srv, capture := projectServer(t, http.StatusOK, `{"status":"degraded","project":{"id":"demo","name":"Demo","path":"/repo/demo","resolveError":"config missing","config":{"worker":{"agent":"amp","agentConfig":{"mode":"high"}}}}}`)
 	writeRunFileFor(t, cfg, srv)
 
 	out, errOut, err := executeCLI(t, Deps{
@@ -197,6 +200,9 @@ func TestProjectGet_JSON(t *testing.T) {
 	}
 	if got.Status != "degraded" || got.Project.ID != "demo" || got.Project.ResolveError != "config missing" {
 		t.Fatalf("get json = %#v, want degraded demo with resolve error", got)
+	}
+	if got.Project.Config == nil || got.Project.Config.Worker.AgentConfig.Mode != "high" {
+		t.Fatalf("get json worker config = %#v, want preserved amp high mode", got.Project.Config)
 	}
 }
 

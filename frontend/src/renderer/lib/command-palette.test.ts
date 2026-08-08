@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildCommands,
+	buildSessionActions,
 	filterCommands,
 	groupCommands,
 	displayGroups,
+	findSession,
+	visibleForQuery,
+	MAX_ATTENTION_SEARCH_RESULTS,
 	MAX_ITEMS_PER_GROUP,
 	MAX_SEARCH_RESULTS,
 	type CommandItem,
 } from "./command-palette";
 import type { PullRequestFacts, WorkspaceSession, WorkspaceSummary } from "../types/workspace";
+import { appI18n } from "../i18n";
 
 function session(overrides: Partial<WorkspaceSession> & { id: string }): WorkspaceSession {
 	return {
@@ -57,7 +62,25 @@ function workspaces(): WorkspaceSummary[] {
 
 const byId = (items: CommandItem[]) => new Map(items.map((item) => [item.id, item]));
 
+describe("findSession", () => {
+	it("returns the workspace and session together", () => {
+		const result = findSession(workspaces(), "w-pr");
+
+		expect(result?.workspace.id).toBe("proj-1");
+		expect(result?.session.id).toBe("w-pr");
+		expect(findSession(workspaces(), "missing")).toBeUndefined();
+	});
+});
+
 describe("buildCommands grouping", () => {
+	it("uses the translator supplied by the reactive caller", () => {
+		const items = buildCommands(
+			{ workspaces: workspaces(), currentProjectId: "proj-1" },
+			appI18n.getFixedT("zh-CN"),
+		);
+		expect(byId(items).get("current-new-task")?.title).toBe("新建任务");
+	});
+
 	it("puts current-scoped actions in the Current group when the project is valid", () => {
 		const items = buildCommands({ workspaces: workspaces(), currentProjectId: "proj-1", currentSessionId: "w-pr" });
 		const map = byId(items);
@@ -97,6 +120,13 @@ describe("buildCommands grouping", () => {
 		expect(byId(synthetic).has("current-copy-branch")).toBe(false);
 		const orch = buildCommands({ workspaces: workspaces(), currentSessionId: "orch" });
 		expect(byId(orch).has("current-copy-branch")).toBe(false);
+	});
+
+	it("recognises an orchestrator by its id suffix, not just its kind", () => {
+		const rows = workspaces();
+		rows[0].sessions.push(session({ id: "proj-1-orchestrator", title: "legacy orch", branch: "main" }));
+		const items = buildCommands({ workspaces: rows, currentSessionId: "proj-1-orchestrator" });
+		expect(byId(items).has("current-copy-branch")).toBe(false);
 	});
 });
 
@@ -221,6 +251,18 @@ describe("result caps", () => {
 		expect(total).toBe(MAX_SEARCH_RESULTS);
 	});
 
+	it("keeps the combined attention + results count within MAX_SEARCH_RESULTS", () => {
+		const attentionSessions = Array.from({ length: 25 }, (_, i) =>
+			session({ id: `deploy-hot-${i}`, title: `deploy hot ${i}`, status: "needs_input" }),
+		);
+		const workspaces: WorkspaceSummary[] = [
+			{ id: "deploy", name: "deploy proj", path: "/repos/deploy", type: "main", sessions: attentionSessions },
+		];
+		const groups = displayGroups(buildCommands({ workspaces }), "deploy");
+		const total = groups.reduce((n, g) => n + g.items.length, 0);
+		expect(total).toBeLessThanOrEqual(MAX_SEARCH_RESULTS);
+	});
+
 	it("keeps search hits under category headings, best-matching category first", () => {
 		const workspaces: WorkspaceSummary[] = [
 			{
@@ -247,6 +289,21 @@ describe("result caps", () => {
 		expect(rendered.length).toBeLessThanOrEqual(MAX_SEARCH_RESULTS);
 	});
 
+	it("floats attention matches into their own category during search", () => {
+		const workspaces: WorkspaceSummary[] = [
+			{
+				id: "alpha",
+				name: "alpha",
+				path: "/repos/alpha",
+				type: "main",
+				sessions: [session({ id: "s-attn", title: "fix alpha bug", status: "needs_input" })],
+			},
+		];
+		const groups = displayGroups(buildCommands({ workspaces }), "alpha");
+		expect(groups.map((g) => g.id)).toContain("attention");
+		expect(groups.find((g) => g.id === "attention")?.items.map((item) => item.id)).toContain("attention:s-attn");
+	});
+
 	it("falls back to the default category order when categories match equally well", () => {
 		// "app" is the project title (1000) and a keyword-only hit (500) on the
 		// attention, session and PR rows, so those three keep their declared order.
@@ -255,7 +312,82 @@ describe("result caps", () => {
 		expect(ids.indexOf("attention")).toBeLessThan(ids.indexOf("sessions"));
 		expect(ids.indexOf("sessions")).toBeLessThan(ids.indexOf("prs"));
 	});
+
+	it("keeps a lower-scoring attention match visible past the ordinary-result cap", () => {
+		const manyPrs = Array.from({ length: 30 }, (_, i) => pr(i + 1));
+		const workspaces: WorkspaceSummary[] = [
+			{
+				id: "proj-deploy",
+				name: "proj-deploy",
+				path: "/repos/deploy",
+				type: "main",
+				sessions: [
+					session({ id: "hot", title: "zzz deploy", status: "needs_input" }),
+					session({ id: "pr-host", title: "deploy stack", status: "pr_open", prs: manyPrs }),
+				],
+			},
+		];
+		const groups = displayGroups(buildCommands({ workspaces }), "deploy");
+		const attention = groups.find((g) => g.id === "attention");
+		expect(attention?.items.map((item) => item.id)).toContain("attention:hot");
+	});
+
+	it("never lets a flood of attention matches crowd out an exact non-attention match", () => {
+		const floodedWorkspace: WorkspaceSummary = {
+			id: "proj-deploy",
+			name: "proj-deploy",
+			path: "/repos/deploy",
+			type: "main",
+			sessions: Array.from({ length: MAX_SEARCH_RESULTS }, (_, i) =>
+				session({ id: `hot-${i}`, title: `zzz deploy ${i}`, status: "needs_input" }),
+			),
+		};
+		const exactMatchWorkspace: WorkspaceSummary = {
+			id: "deploy",
+			name: "deploy",
+			path: "/repos/deploy-exact",
+			type: "main",
+			sessions: [],
+		};
+		const items = buildCommands({ workspaces: [floodedWorkspace, exactMatchWorkspace] });
+		const attentionMatches = items.filter(
+			(item) => item.group === "attention" && item.title.toLowerCase().includes("deploy"),
+		);
+		expect(attentionMatches.length).toBeGreaterThanOrEqual(MAX_SEARCH_RESULTS);
+
+		const visible = visibleForQuery(items, "deploy");
+		expect(visible.slice(0, MAX_ATTENTION_SEARCH_RESULTS).every(isAttentionInZone)).toBe(true);
+		expect(visible).toContainEqual(expect.objectContaining({ id: "project:deploy" }));
+		expect(visible.findIndex((item) => item.id === "project:deploy")).toBeLessThan(MAX_SEARCH_RESULTS);
+	});
+
+	it("still surfaces the exact match when every attention title also prefix-matches (tied score)", () => {
+		const floodedWorkspace: WorkspaceSummary = {
+			id: "proj-1",
+			name: "proj-1",
+			path: "/repos/proj-1",
+			type: "main",
+			sessions: Array.from({ length: MAX_SEARCH_RESULTS }, (_, i) =>
+				session({ id: `hot-${i}`, title: `deploy pipeline ${i}`, status: "needs_input" }),
+			),
+		};
+		const exactMatchWorkspace: WorkspaceSummary = {
+			id: "deploy",
+			name: "deploy",
+			path: "/repos/deploy-exact",
+			type: "main",
+			sessions: [],
+		};
+		const items = buildCommands({ workspaces: [floodedWorkspace, exactMatchWorkspace] });
+		const visible = visibleForQuery(items, "deploy");
+		expect(visible).toContainEqual(expect.objectContaining({ id: "project:deploy" }));
+		expect(visible.filter((item) => !isAttentionInZone(item))).not.toHaveLength(0);
+	});
 });
+
+function isAttentionInZone(item: CommandItem): boolean {
+	return item.zone === "action" || item.zone === "merge";
+}
 
 describe("filterCommands / matchScore", () => {
 	it("ranks a title prefix above a keyword-only hit", () => {
@@ -278,5 +410,63 @@ describe("groupCommands", () => {
 		const order = grouped.map((g) => g.id);
 		expect(order).toEqual(["current", "attention", "projects", "sessions", "prs", "global"]);
 		expect(grouped.every((g) => g.items.length > 0)).toBe(true);
+	});
+});
+
+describe("session rows open the actions panel", () => {
+	it("emits open-session-actions for session rows while PR rows stay navigate", () => {
+		const items = buildCommands({ workspaces: workspaces() });
+		const map = byId(items);
+		expect(map.get("attention:w-merge")?.action).toEqual({ kind: "open-session-actions", sessionId: "w-merge" });
+		expect(map.get("pr:w-pr:42")?.action?.kind).toBe("navigate");
+		expect(map.get("project:proj-1")?.action?.kind).toBe("navigate");
+	});
+});
+
+const workspace: WorkspaceSummary = { id: "proj-1", name: "app", path: "/repos/app", type: "main", sessions: [] };
+const actionKinds = (items: CommandItem[]) => items.map((item) => item.action?.kind ?? "none");
+
+describe("buildSessionActions", () => {
+	it("offers Jump then Copy branch for a live worker", () => {
+		const items = buildSessionActions(workspace, session({ id: "live", status: "working" }));
+		expect(items.map((i) => i.title)).toEqual(["Jump to session", "Copy branch name"]);
+		expect(items[0].action).toEqual({
+			kind: "navigate",
+			target: { to: "/projects/$projectId/sessions/$sessionId", params: { projectId: "proj-1", sessionId: "live" } },
+		});
+	});
+
+	it("adds Resume only for a terminated worker", () => {
+		const terminated = buildSessionActions(workspace, session({ id: "gone", status: "terminated" }));
+		expect(terminated.find((i) => i.action?.kind === "resume-session")?.action).toEqual({
+			kind: "resume-session",
+			projectId: "proj-1",
+			sessionId: "gone",
+		});
+		for (const status of ["working", "needs_input", "no_signal", "mergeable"] as const) {
+			const items = buildSessionActions(workspace, session({ id: `s-${status}`, status }));
+			expect(items.some((i) => i.action?.kind === "resume-session")).toBe(false);
+		}
+	});
+
+	it("offers Resume for a durably terminated session whose derived status is not 'terminated'", () => {
+		const items = buildSessionActions(
+			workspace,
+			session({ id: "archived-merged", status: "merged", isTerminated: true }),
+		);
+		expect(items.some((i) => i.action?.kind === "resume-session")).toBe(true);
+	});
+
+	it("never offers Resume or Copy branch for an orchestrator", () => {
+		const items = buildSessionActions(
+			workspace,
+			session({ id: "proj-1-orchestrator", kind: "orchestrator", status: "terminated", branch: "main" }),
+		);
+		expect(actionKinds(items)).toEqual(["navigate"]);
+	});
+
+	it("omits Copy branch for a synthetic branch", () => {
+		const items = buildSessionActions(workspace, session({ id: "syn", branch: "session/syn" }));
+		expect(items.some((i) => i.action?.kind === "copy-branch")).toBe(false);
 	});
 });
