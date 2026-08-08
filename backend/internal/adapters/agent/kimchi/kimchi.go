@@ -75,6 +75,13 @@ func New() *Plugin {
 
 var _ adapters.Adapter = (*Plugin)(nil)
 var _ ports.Agent = (*Plugin)(nil)
+var _ ports.SubmitActivitySignaler = (*Plugin)(nil)
+
+// EmitsSubmitActivity signals that Kimchi fires a user-prompt-submit hook
+// under AO's launch, so Activity.State can flip to active after a prompt is
+// accepted. This engages the session manager's confirm loop for Kimchi
+// sessions. See ports.SubmitActivitySignaler.
+func (p *Plugin) EmitsSubmitActivity() bool { return true }
 
 // permissionConfigEnum lists the permission modes the "permissions" config key
 // accepts. It mirrors the ports.PermissionMode constants so a project's stored

@@ -697,6 +697,13 @@ func TestResolveKimchiBinaryContextCanceled(t *testing.T) {
 	}
 }
 
+func TestEmitsSubmitActivity(t *testing.T) {
+	p := &Plugin{}
+	if !p.EmitsSubmitActivity() {
+		t.Fatal("EmitsSubmitActivity() = false, want true")
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

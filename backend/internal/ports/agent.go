@@ -233,37 +233,35 @@ type AgentResolver interface {
 	Agent(harness domain.AgentHarness) (Agent, bool)
 }
 
-// ActivitySignaler is an OPTIONAL capability an Agent adapter may implement to
-// describe which durable activity signals its harness actually produces under
-// AO's headless launch. The Session Manager gates best-effort post-send
-// confirmation on it — see the two methods.
+// SubmitActivitySignaler is an OPTIONAL capability an Agent adapter may
+// implement to report whether its harness emits a prompt-submit signal (one
+// that flips Activity.State to active). Without it the confirm loop could
+// never observe active and would only burn its budget on spurious Enter
+// nudges.
 //
-// EmitsSubmitActivity reports whether the harness emits a prompt-submit signal
-// (one that flips Activity.State to active). Without it the confirm loop could
-// never observe active and would only burn its budget on spurious Enter nudges.
+// This is one half of the confirm-loop gate; the session manager also requires
+// BlockedActivitySignaler before it will nudge — see harnessNudgeSafe.
+type SubmitActivitySignaler interface {
+	EmitsSubmitActivity() bool
+}
+
+// BlockedActivitySignaler is an OPTIONAL capability an Agent adapter may
+// implement to report whether its harness emits a decision-pause signal (a
+// permission/approval prompt that flips Activity.State to blocked) AND can
+// clear that state before the turn ends — which requires the pre/post-tool-
+// use trio so lifecycle can correlate the approved tool's post with the dialog
+// that blocked the session. The Enter-only nudge is only SAFE when this is
+// true: a harness that submits but cannot report blocked leaves the confirm
+// loop unable to tell an unsubmitted draft from a pending permission dialog,
+// so an Enter meant to resubmit the draft could instead answer the dialog.
 //
-// EmitsBlockedActivity reports whether the harness emits a decision-pause
-// signal (a permission/approval prompt that flips Activity.State to blocked)
-// AND can clear that state before the turn ends — which requires the
-// pre/post-tool-use trio so lifecycle can correlate the approved tool's post
-// with the dialog that blocked the session. The Enter-only nudge is only SAFE
-// when this is true: a harness that submits but cannot report blocked leaves
-// the confirm loop unable to tell an unsubmitted draft from a pending
-// permission dialog, so an Enter meant to resubmit the draft could instead
-// answer the dialog. confirmActive therefore requires BOTH signals before it
-// will nudge.
-//
-// Only claude-code satisfies both halves: it installs the pre/post-tool-use
+// Only claude-code satisfies this today: it installs the pre/post-tool-use
 // trio that lets lifecycle correlate the approved tool's post with the dialog
 // and clear blocked before the turn ends. codex maps permission-request to
 // waiting_input and opts out (no tool trio → blocked could not be cleared).
-// Every other harness simply does not implement this interface; it maps its
-// permission signal to waiting_input via the shared deriver and gets the
-// paste settle delay but no confirm loop. Adapters that later gain a
-// correlatable blocked signal implement this interface to opt in; see the
-// fork/archive/blocked-mappings branch for the prior 13-harness mapping set.
-type ActivitySignaler interface {
-	EmitsSubmitActivity() bool
+// Adapters that later gain a correlatable blocked signal implement this
+// interface to opt in.
+type BlockedActivitySignaler interface {
 	EmitsBlockedActivity() bool
 }
 

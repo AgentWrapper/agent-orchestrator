@@ -6229,7 +6229,7 @@ func TestReconcileReap_TerminatedAndDeadTmuxLeftAlone(t *testing.T) {
 
 // signalingAgent is a fakeAgent that advertises BOTH a prompt-submit and a
 // blocked activity signal, so Manager.Send runs confirmActive for its harness
-// (see ports.ActivitySignaler).
+// (see ports.SubmitActivitySignaler and ports.BlockedActivitySignaler).
 type signalingAgent struct{ fakeAgent }
 
 func (signalingAgent) EmitsSubmitActivity() bool  { return true }
@@ -6269,7 +6269,7 @@ func newSendTestManager(t *testing.T, agent ports.Agent, messenger ports.AgentMe
 }
 
 func TestSend_SkipsConfirmForHooklessHarness(t *testing.T) {
-	// A harness whose adapter does NOT implement ActivitySignaler (plain
+	// A harness whose adapter does NOT implement the activity-signal interfaces (plain
 	// fakeAgent) must skip confirmActive entirely: one Send, no nudges, and the
 	// call returns immediately without polling.
 	st := newFakeStore()
