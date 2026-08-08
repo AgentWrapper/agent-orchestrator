@@ -291,13 +291,25 @@ func (b *Broker) write(ctx context.Context, conn net.Conn, msg wireMessage) erro
 	}
 	stop()
 	_ = conn.SetWriteDeadline(time.Time{})
+	if err == nil {
+		// The write completed. Even if the context fired concurrently
+		// (context.AfterFunc may have run after the write but before stop),
+		// report success so Execute reaches its select and can send a
+		// cancel frame for the command. Returning ctx.Err() here would
+		// cause Execute to bail out of the error path without writing the
+		// cancel frame, hanging any test/client waiting to read it.
+		return nil
+	}
+	// The write failed. Surface a context error when applicable rather than
+	// a raw i/o timeout. The write deadline (derived from the context
+	// deadline) and the context's own timer are independent — the write
+	// deadline can fire microseconds before the context timer, so ctx.Err()
+	// may still be nil when we reach here.
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if err != nil {
-		if requested, ok := ctx.Deadline(); ok && !time.Now().Before(requested) {
-			return context.DeadlineExceeded
-		}
+	if requested, ok := ctx.Deadline(); ok && !time.Now().Before(requested) {
+		return context.DeadlineExceeded
 	}
 	return err
 }

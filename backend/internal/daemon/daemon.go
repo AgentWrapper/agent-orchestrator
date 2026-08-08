@@ -320,12 +320,14 @@ func Run() error {
 		})
 		lcStack.LCM.SetUsageFinalizer(usageCollector)
 	}
-	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, log)
+	lcStack.scmDone = startSCMObserver(ctx, store, lcStack.LCM, cfg.GitLab, log)
 	var prActions prsvc.ActionManager
-	if mergeProvider, mergeErr := newGitHubSCMProvider(log); mergeErr != nil {
-		logSCMProviderDisabled(log, mergeErr)
+	prReader := newMultiSCMProvider(cfg.GitLab, log)
+	prMerger := newMultiSCMMerger(cfg.GitLab, log)
+	if prReader != nil && prMerger != nil {
+		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: prMerger, Reader: prReader})
 	} else {
-		prActions = prsvc.NewActionService(prsvc.ActionDeps{Store: store, Merger: mergeProvider, Reader: mergeProvider})
+		log.Warn("pr action service disabled: no usable SCM provider")
 	}
 	// Push-device registry: persisted phones that receive OS push notifications.
 	// A load failure must not block boot — degrade to no push rather than refusing

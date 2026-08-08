@@ -703,6 +703,47 @@ func (r *selectableRuntime) SendMessage(context.Context, ports.RuntimeHandle, st
 	return nil
 }
 
+// TestWiring_NewMultiTracker_NeverTypedNilWhenNoGitHubToken verifies the
+// typed-nil guard from issue #2685 at the multi-tracker wiring level. When
+// the GitHub tracker fails to construct (no token), newMultiTracker must
+// return either a true nil interface (when GitLab also has no token) or a
+// non-nil, usable ports.Tracker (when GitLab has a token via glab CLI). In
+// neither case may it return a typed-nil (non-nil interface wrapping a nil
+// pointer), which would bypass the session service's `tracker == nil` guard.
+func TestWiring_NewMultiTracker_NeverTypedNilWhenNoGitHubToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tracker := newMultiTracker(config.GitLabConfig{}, log)
+	// The key assertion: tracker is either truly nil or truly non-nil — never
+	// a typed-nil. Go's interface == nil check covers both cases correctly here
+	// because newMultiTracker returns a bare nil or a *trackermulti.Tracker.
+	if tracker == nil {
+		// Both trackers failed: expected when no glab CLI is available.
+		return
+	}
+	// If GitLab succeeded via glab CLI, the tracker must be usable (not a
+	// typed-nil that panics on first call). A Preflight call should not panic.
+	_ = tracker.Preflight(context.Background())
+}
+
+// TestWiring_NewMultiTracker_ReturnsNonNilWhenGitHubHasToken verifies the
+// degrade-gracefully pattern: when only the GitHub tracker can construct
+// (GitLab token missing), the multi-tracker still returns a non-nil
+// ports.Tracker that serves GitHub issue lookups.
+func TestWiring_NewMultiTracker_ReturnsNonNilWhenGitHubHasToken(t *testing.T) {
+	t.Setenv("AO_GITHUB_TOKEN", "gh-test-token")
+	t.Setenv("AO_GITLAB_TOKEN", "")
+	t.Setenv("GITLAB_TOKEN", "")
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tracker := newMultiTracker(config.GitLabConfig{}, log)
+	if tracker == nil {
+		t.Fatal("newMultiTracker = nil, want non-nil when GitHub token is available")
+	}
+}
+
 func writeFakeExecutable(t *testing.T, path string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {

@@ -174,6 +174,8 @@ func prPipelineStatus(pr domain.PRFacts) domain.SessionStatus {
 		return domain.StatusChangesRequested
 	case pr.Mergeability == domain.MergeMergeable:
 		return domain.StatusMergeable
+	case pr.Mergeability == domain.MergeBlocked:
+		return domain.StatusPROpen
 	case pr.Review == domain.ReviewApproved:
 		return domain.StatusApproved
 	case pr.Review == domain.ReviewRequired:

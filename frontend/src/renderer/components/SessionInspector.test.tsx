@@ -820,10 +820,17 @@ describe("SessionInspector Activity section", () => {
 
 		renderWithQuery(
 			<SessionInspector
-				session={session([pr(8, "draft"), pr(7, "open"), pr(6, "merged")], {
-					status: "merged",
-					activity: { state: "idle", lastActivityAt: "2026-06-15T11:50:00Z" },
-				})}
+				session={session(
+					[
+						pr(8, "draft", { url: `https://api.github.com/repos/acme/repo/pulls/8` }),
+						pr(7, "open", { url: `https://api.github.com/repos/acme/repo/pulls/7` }),
+						pr(6, "merged", { url: `https://api.github.com/repos/acme/repo/pulls/6` }),
+					],
+					{
+						status: "merged",
+						activity: { state: "idle", lastActivityAt: "2026-06-15T11:50:00Z" },
+					},
+				)}
 			/>,
 		);
 
