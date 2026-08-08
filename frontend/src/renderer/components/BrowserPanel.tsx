@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
 	ArrowLeft,
 	ArrowRight,
+	Bug,
 	Check,
 	Globe2,
 	Layers3,
@@ -26,7 +27,7 @@ import {
 	DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { cn } from "../lib/utils";
-import { appI18n, type MessageKey } from "../i18n";
+import { appI18n } from "../i18n";
 
 type BrowserPanelProps = {
 	session: WorkspaceSession;
@@ -229,8 +230,7 @@ export function BrowserPanelView({
 	const {
 		viewId,
 		navState,
-		mirrorUrl,
-		mirrorStream,
+		mirrorFrame,
 		slotRef,
 		navigate,
 		goBack,
@@ -242,20 +242,24 @@ export function BrowserPanelView({
 		tabNotice,
 		selectTab,
 		closeTab,
+		devtoolsState = { viewId: "", open: false, activeTabId: "" },
+		openDevTools = async () => undefined,
+		closeDevTools = async () => undefined,
 		prepareForOverlay,
+		visualTransition,
 		finishOverlay,
-		agentBrowserActive,
-		agentBrowserActivity,
 		annotationMode,
 		setAnnotationMode,
 	} = browserView;
 	const [urlInput, setUrlInput] = useState(navState.url);
 	const { beginPicking, cancelPicking, enqueue, error, failPicking, queuedCount, retryQueued, status } =
 		annotationQueue;
-	const showStaticPreview = !window.ao?.browser && navState.url !== "";
+	const hasNativeBrowser = Boolean(window.ao?.browser);
+	const showStaticPreview = !hasNativeBrowser && navState.url !== "";
 	const canAnnotate = Boolean(window.ao?.browser && viewId && navState.url);
 	const canPopOut = poppedOut || Boolean(navState.url);
 	const canRetryAnnotation = status === "error" && queuedCount > 0;
+	const canUseDevTools = hasNativeBrowser && Boolean(viewId);
 	const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
 	const tabsMenuWarmupRef = useRef<Promise<void> | null>(null);
 
@@ -377,14 +381,11 @@ export function BrowserPanelView({
 						: status === "error"
 							? error
 							: "";
-	const agentStatusLabel = agentActivityLabel(agentBrowserActivity, agentBrowserActive);
-
 	return (
 		<div
 			className={cn(
 				"browser-panel flex h-full min-h-browser-min flex-col overflow-hidden rounded-lg border border-border bg-background",
 				poppedOut && "browser-panel--popped-out",
-				agentStatusLabel && "browser-panel--agent-active",
 			)}
 			data-testid="browser-panel"
 			role="tabpanel"
@@ -456,10 +457,6 @@ export function BrowserPanelView({
 					>
 						{annotationStatusLabel}
 					</span>
-				) : agentStatusLabel ? (
-					<span className="browser-panel__annotation-status" role="status" aria-live="polite">
-						{agentStatusLabel}
-					</span>
 				) : null}
 					<div className="browser-panel__url-wrap relative min-w-0 flex-1">
 						<Globe2
@@ -484,7 +481,10 @@ export function BrowserPanelView({
 					<DropdownMenuTrigger asChild>
 						<Button
 							aria-label={t("browser.tabsAria", { count: tabs.length })}
-							className={cn("browser-panel__tabs-trigger gap-1 px-2", tabs.length > 1 && "bg-accent-weak text-accent")}
+							className={cn(
+								"browser-panel__tabs-trigger gap-1 px-2 text-muted-foreground",
+								tabs.length > 1 && "bg-accent-weak",
+							)}
 							disabled={tabs.length === 0}
 							onKeyDown={handleTabsTriggerKeyDown}
 							onPointerDown={handleTabsTriggerPointerDown}
@@ -494,11 +494,16 @@ export function BrowserPanelView({
 							type="button"
 							variant="ghost"
 						>
-							<Layers3 aria-hidden="true" className="size-icon-base" />
-							<span className="font-mono text-caption">{tabs.length}</span>
+							<Layers3 aria-hidden="true" className="size-icon-base text-muted-foreground" />
+							<span className="font-mono text-caption text-foreground">{tabs.length}</span>
 						</Button>
 					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end" className="w-72" sideOffset={8}>
+					<DropdownMenuContent
+						align="end"
+						className="w-72"
+						data-browser-native-overlay="true"
+						sideOffset={8}
+					>
 						<DropdownMenuLabel>{t("browser.tabs")}</DropdownMenuLabel>
 						{tabs.map((tab) => {
 							const label = browserTabLabel(tab.title, tab.url);
@@ -510,10 +515,12 @@ export function BrowserPanelView({
 										textValue={`${label.title} ${label.subtitle}`}
 									>
 										<span className="flex size-4 shrink-0 items-center justify-center">
-											{tab.id === activeTabId ? <Check aria-hidden="true" className="text-accent" /> : null}
+											{tab.id === activeTabId ? <Check aria-hidden="true" className="text-foreground" /> : null}
 										</span>
 										<span className="min-w-0 flex-1">
-											<span className="block truncate text-xs text-foreground">{label.title}</span>
+											<span className="flex min-w-0 items-center gap-1.5">
+												<span className="min-w-0 flex-1 truncate text-xs text-foreground">{label.title}</span>
+											</span>
 											<span className="block truncate font-mono text-caption text-passive">{label.subtitle}</span>
 										</span>
 									</DropdownMenuItem>
@@ -531,6 +538,18 @@ export function BrowserPanelView({
 						})}
 					</DropdownMenuContent>
 				</DropdownMenu>
+				<Button
+					aria-label={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
+					className={cn(devtoolsState.open && "bg-accent-weak text-accent")}
+					disabled={!canUseDevTools}
+					onClick={() => void (devtoolsState.open ? closeDevTools() : openDevTools())}
+					size="icon-sm"
+					title={t(devtoolsState.open ? "browser.closeDevTools" : "browser.openDevTools")}
+					type="button"
+					variant="ghost"
+				>
+					<Bug aria-hidden="true" className="size-icon-base" />
+				</Button>
 				<Button
 					aria-label={poppedOut ? t("browser.returnToPanel") : t("browser.popOut")}
 					disabled={!canPopOut}
@@ -554,11 +573,30 @@ export function BrowserPanelView({
 				className="browser-panel__viewport relative min-h-0 flex-1 overflow-hidden bg-background"
 				data-testid="browser-viewport"
 			>
-				<div className="absolute inset-0 min-h-px min-w-px" ref={slotRef} />
-				{mirrorStream ? (
-					<MirrorVideo stream={mirrorStream} />
-				) : mirrorUrl ? (
-					<img alt="" className="absolute inset-0 h-full w-full object-fill" src={mirrorUrl} />
+				<div className="browser-panel__slot absolute inset-0 min-h-px min-w-px" ref={slotRef} />
+				{mirrorFrame ? (
+					<img
+						alt=""
+						className="absolute left-0 top-0 max-w-none"
+						data-testid="browser-mirror-frame"
+						src={mirrorFrame.dataUrl}
+						style={{
+							height: mirrorFrame.cssHeight,
+							left: mirrorFrame.cssLeft,
+							objectFit: "fill",
+							objectPosition: "top left",
+							top: mirrorFrame.cssTop,
+							width: mirrorFrame.cssWidth,
+						}}
+					/>
+				) : null}
+				{visualTransition ? (
+					<img
+						alt=""
+						className="browser-panel__transition-frame"
+						data-testid="browser-transition-frame"
+						src={visualTransition.snapshotUrl}
+					/>
 				) : null}
 				{showStaticPreview ? <StaticPreview url={navState.url} /> : null}
 				{navState.url === "" ? (
@@ -582,52 +620,6 @@ export function BrowserPanelView({
 	);
 }
 
-function agentActivityLabel(activity: BrowserViewModel["agentBrowserActivity"], active: boolean): string {
-	if (!active && !activity?.active) return "";
-	const action = activity?.active ? activity.action : "";
-	if (!action) return appI18n.t("browser.agentUsing");
-	return appI18n.t("browser.agentAction", { verb: browserActionVerb(action) });
-}
-
-function browserActionVerb(action: string): string {
-	const key = ((): MessageKey => {
-		switch (action) {
-			case "click":
-				return "browser.verb.click";
-			case "fill":
-			case "type":
-				return "browser.verb.type";
-			case "press":
-				return "browser.verb.press";
-			case "hover":
-				return "browser.verb.hover";
-			case "scroll":
-				return "browser.verb.scroll";
-			case "open":
-				return "browser.verb.open";
-			case "wait":
-				return "browser.verb.wait";
-			case "snapshot":
-				return "browser.verb.read";
-			case "highlight":
-				return "browser.verb.highlight";
-			case "unhighlight":
-				return "browser.verb.clearHighlight";
-			case "tab-new":
-				return "browser.verb.openTab";
-			case "tab-select":
-				return "browser.verb.switchTab";
-			case "tab-close":
-				return "browser.verb.closeTab";
-			case "tabs":
-				return "browser.verb.checkTabs";
-			default:
-				return "browser.verb.using";
-		}
-	})();
-	return appI18n.t(key);
-}
-
 function browserTabLabel(title: string, url: string): { title: string; subtitle: string } {
 	const cleanTitle = title.trim();
 	if (!url) return { title: cleanTitle || appI18n.t("browser.newTab"), subtitle: appI18n.t("browser.blankPage") };
@@ -638,18 +630,6 @@ function browserTabLabel(title: string, url: string): { title: string; subtitle:
 	} catch {
 		return { title: cleanTitle || url, subtitle: url };
 	}
-}
-
-function MirrorVideo({ stream }: { stream: MediaStream }) {
-	const attach = useCallback(
-		(node: HTMLVideoElement | null) => {
-			if (node && node.srcObject !== stream) {
-				node.srcObject = stream;
-			}
-		},
-		[stream],
-	);
-	return <video autoPlay className="absolute inset-0 h-full w-full object-cover" muted playsInline ref={attach} />;
 }
 
 function StaticPreview({ url }: { url: string }) {

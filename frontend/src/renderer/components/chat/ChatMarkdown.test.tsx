@@ -1,10 +1,19 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
-import { ChatMarkdown } from "./ChatMarkdown";
+import { describe, expect, it, vi } from "vitest";
+import { aoBridge } from "../../lib/bridge";
+import { ChatLinkProvider, ChatMarkdown } from "./ChatMarkdown";
 
 // The point of these is that the SYNTAX stops being visible. Every case here is a
 // shape agents actually emit, and the assertion is that structure replaced markup.
+
+function renderWithLinkHandler(text: string, onLinkOpen: (url: string) => void) {
+	return render(
+		<ChatLinkProvider onLinkOpen={onLinkOpen}>
+			<ChatMarkdown text={text} />
+		</ChatLinkProvider>,
+	);
+}
 
 describe("ChatMarkdown", () => {
 	it("renders headings as headings rather than literal hashes", () => {
@@ -107,6 +116,44 @@ describe("ChatMarkdown", () => {
 		expect(link.getAttribute("rel")).toContain("noreferrer");
 	});
 
+	it("routes a plain web-link click to the AO Browser handler", async () => {
+		const user = userEvent.setup();
+		const onLinkOpen = vi.fn();
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderWithLinkHandler("see [the issue](https://example.com/i/1)", onLinkOpen);
+
+		await user.click(screen.getByRole("link", { name: "the issue" }));
+
+		expect(onLinkOpen).toHaveBeenCalledWith("https://example.com/i/1");
+		expect(openExternal).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
+	it("opens a web link in the system browser on Option/Alt-click", () => {
+		const onLinkOpen = vi.fn();
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderWithLinkHandler("see [the issue](https://example.com/i/1)", onLinkOpen);
+
+		fireEvent.click(screen.getByRole("link", { name: "the issue" }), { altKey: true });
+
+		expect(openExternal).toHaveBeenCalledWith("https://example.com/i/1");
+		expect(onLinkOpen).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
+	it("opens non-web links in the system browser", async () => {
+		const user = userEvent.setup();
+		const onLinkOpen = vi.fn();
+		const openExternal = vi.spyOn(aoBridge.app, "openExternal").mockResolvedValue(undefined);
+		renderWithLinkHandler("[Email support](mailto:support@example.com)", onLinkOpen);
+
+		await user.click(screen.getByRole("link", { name: "Email support" }));
+
+		expect(openExternal).toHaveBeenCalledWith("mailto:support@example.com");
+		expect(onLinkOpen).not.toHaveBeenCalled();
+		openExternal.mockRestore();
+	});
+
 	it("renders bold, strikethrough and blockquotes", () => {
 		render(<ChatMarkdown text={"**bold** and ~~gone~~\n\n> quoted"} />);
 		expect(screen.getByText("bold").tagName).toBe("STRONG");
@@ -116,7 +163,7 @@ describe("ChatMarkdown", () => {
 
 	it("renders an unterminated fence as a code block, because streaming text arrives mid-fence", () => {
 		render(<ChatMarkdown text={"```ts\nconst x = 1;"} />);
-		expect(screen.getByText("const x = 1;")).toBeInTheDocument();
+		expect(document.querySelector("pre code")).toHaveTextContent("const x = 1;");
 		expect(document.body.textContent).not.toContain("```");
 	});
 

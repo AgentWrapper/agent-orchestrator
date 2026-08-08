@@ -266,6 +266,22 @@ func TestListReturnsInitialSupportedInventoryWithoutProbing(t *testing.T) {
 	}
 }
 
+func TestDefaultCatalogDisplaysPrimeAgent(t *testing.T) {
+	got, err := New().List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, info := range got.Supported {
+		if info.ID == "prime-agent" {
+			if info.Label != "Prime Agent" {
+				t.Fatalf("prime-agent label = %q, want Prime Agent", info.Label)
+			}
+			return
+		}
+	}
+	t.Fatal("default catalog does not contain prime-agent")
+}
+
 func TestRefreshReportsInstalledAgentsAndIgnoresDetectorErrors(t *testing.T) {
 	svc := NewWithAgents([]agentregistry.HarnessAgent{
 		harnessAgent("codex", "Codex", nil),

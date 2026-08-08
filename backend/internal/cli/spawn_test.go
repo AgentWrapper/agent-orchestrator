@@ -18,6 +18,16 @@ func authorizedAgentsJSON(agent string) string {
 	return `{"supported":[` + info + `],"installed":[` + info + `],"authorized":[` + info + `]}`
 }
 
+func TestSpawnHelpListsPrimeAgentHarness(t *testing.T) {
+	out, errOut, err := executeCLI(t, Deps{}, "spawn", "--help")
+	if err != nil {
+		t.Fatalf("spawn --help: %v\nstderr: %s", err, errOut)
+	}
+	if !strings.Contains(out, "prime-agent") {
+		t.Fatalf("spawn help does not list prime-agent:\n%s", out)
+	}
+}
+
 // TestSpawnCommand_MissingProjectContext asserts `ao spawn` gives a project
 // setup hint when neither --project, AO_PROJECT_ID, nor cwd can resolve one.
 func TestSpawnCommand_MissingProjectContext(t *testing.T) {

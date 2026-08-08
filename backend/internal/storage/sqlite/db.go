@@ -140,6 +140,9 @@ func migrate(db *sql.DB) error {
 	if err := prepareReviewPerHarnessMigration(db); err != nil {
 		return fmt.Errorf("prepare review per-harness migration: %w", err)
 	}
+	if err := prepareBrowserVerifierMigration(db); err != nil {
+		return fmt.Errorf("prepare browser verifier migration: %w", err)
+	}
 	// Builds can advance a database past a migration that is added or
 	// renumbered later (notably across fast-moving Nightly releases). Apply
 	// those embedded migrations instead of permanently wedging daemon startup
@@ -148,6 +151,45 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 	return reconcileSchema(db)
+}
+
+// prepareBrowserVerifierMigration preserves development databases that ran an
+// earlier version of this branch where the verifier was mistakenly added to
+// shipped migration 0048. The restored 0048 no longer owns the column, so mark
+// the new 0081 migration applied when its exact schema effect already exists;
+// otherwise goose applies 0081 normally.
+func prepareBrowserVerifierMigration(db *sql.DB) error {
+	var gooseTable int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'goose_db_version'`,
+	).Scan(&gooseTable); err != nil {
+		return err
+	}
+	if gooseTable == 0 {
+		return nil
+	}
+	var applied int
+	if err := db.QueryRow(`
+SELECT COALESCE((
+    SELECT is_applied FROM goose_db_version
+    WHERE version_id = 81 ORDER BY id DESC LIMIT 1
+), 0)`).Scan(&applied); err != nil {
+		return err
+	}
+	if applied != 0 {
+		return nil
+	}
+	var verifierColumn int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'browser_capability_verifier'`,
+	).Scan(&verifierColumn); err != nil {
+		return err
+	}
+	if verifierColumn == 0 {
+		return nil
+	}
+	_, err := db.Exec(`INSERT INTO goose_db_version (version_id, is_applied) VALUES (81, 1)`)
+	return err
 }
 
 func prepareBurnedSchemaRepairs(db *sql.DB) error {
@@ -503,9 +545,9 @@ SELECT COALESCE((
 // column was just added, so healthy databases — where those statements would
 // clobber live data — are never touched.
 //
-// Any new migration numbered up to 0046 whose schema the generated queries
-// depend on MUST add an entry here, or the burned field profiles skip it and
-// regress to the 500s this exists to prevent.
+// Any migration whose schema the generated queries depend on MUST add an entry
+// here when a burned field profile can skip it, or the session list can regress
+// to the 500s this exists to prevent.
 var schemaRepairs = []struct {
 	version int64
 	table   string
@@ -576,11 +618,15 @@ BEGIN
             'isPinned', json(CASE WHEN NEW.is_pinned THEN 'true' ELSE 'false' END)
         ),
         NEW.updated_at);
-END`,
+			END`,
 		}},
-	// 0081_add_session_model.sql
-	{version: 81, table: "sessions", column: "model",
+	// 0083_add_session_model.sql
+	{version: 83, table: "sessions", column: "model",
 		addDDL: `ALTER TABLE sessions ADD COLUMN model TEXT NOT NULL DEFAULT ''`},
+	// 0081_browser_capability_verifier.sql. Keep the generated session queries
+	// healthy even if a field database has already burned this migration number.
+	{version: 81, table: "sessions", column: "browser_capability_verifier",
+		addDDL: `ALTER TABLE sessions ADD COLUMN browser_capability_verifier TEXT NOT NULL DEFAULT ''`},
 	// A pre-renumbered chat-mode branch created conversations before the
 	// current_session_id controller binding existed, then later builds recorded
 	// 0052 as applied. Generated chat queries require the column on startup.

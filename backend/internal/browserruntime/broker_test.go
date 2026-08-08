@@ -7,9 +7,39 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+func TestReadRuntimeToken(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   string
+		failed bool
+	}{
+		{name: "newline-delimited", input: "secret-token\n", want: "secret-token"},
+		{name: "eof-delimited", input: "secret-token", want: "secret-token"},
+		{name: "empty", input: "\n", failed: true},
+		{name: "too-long", input: strings.Repeat("x", 257), failed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ReadRuntimeToken(strings.NewReader(tt.input))
+			if tt.failed {
+				if err == nil {
+					t.Fatalf("ReadRuntimeToken(%q) succeeded", tt.input)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Fatalf("ReadRuntimeToken(%q) = %q, %v; want %q", tt.input, got, err, tt.want)
+			}
+		})
+	}
+}
 
 func TestBrokerExecuteRoundTrip(t *testing.T) {
 	broker := New(slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -171,41 +201,41 @@ func TestBrokerRejectsInvalidRuntimeToken(t *testing.T) {
 
 func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 	broker := New(nil)
-	ctx, stop := context.WithCancel(context.Background())
-	defer stop()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	go func() { _ = broker.Serve(ctx, ln) }()
-	conn, err := net.Dial("tcp", ln.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = conn.Close() }()
-	enc, dec := json.NewEncoder(conn), json.NewDecoder(conn)
-	_ = enc.Encode(wireMessage{Type: "hello", Version: ProtocolVersion})
-	waitConnected(t, broker)
+	brokerConn, runtimeConn := net.Pipe()
+	pausedConn := newPauseAfterFirstWriteConn(brokerConn)
+	t.Cleanup(func() {
+		pausedConn.release()
+		_ = brokerConn.Close()
+		_ = runtimeConn.Close()
+	})
+	broker.mu.Lock()
+	broker.conn = pausedConn
+	broker.connectedAt = time.Now().UTC()
+	broker.mu.Unlock()
+	dec := json.NewDecoder(runtimeConn)
 
 	requestCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := broker.Execute(requestCtx, "session-1", "wait", nil)
 		errCh <- err
 	}()
 	var command wireMessage
-	_ = conn.SetReadDeadline(time.Now().Add(browserRuntimeTestTimeout()))
+	_ = runtimeConn.SetReadDeadline(time.Now().Add(browserRuntimeTestTimeout()))
 	if err := dec.Decode(&command); err != nil {
 		t.Fatal(err)
 	}
+	<-pausedConn.firstWriteDone
 	waitPendingRequest(t, broker, command.RequestID)
 	cancel()
+	pausedConn.release()
 	var cancelMessage wireMessage
-	_ = conn.SetReadDeadline(time.Now().Add(browserRuntimeTestTimeout()))
+	_ = runtimeConn.SetReadDeadline(time.Now().Add(browserRuntimeTestTimeout()))
 	if err := dec.Decode(&cancelMessage); err != nil {
 		t.Fatal(err)
 	}
-	_ = conn.SetReadDeadline(time.Time{})
+	_ = runtimeConn.SetReadDeadline(time.Time{})
 	if cancelMessage.Type != "cancel" || cancelMessage.RequestID != command.RequestID {
 		t.Fatalf("cancel message = %#v, command = %#v", cancelMessage, command)
 	}
@@ -217,6 +247,35 @@ func TestBrokerCancellationSendsCancelFrame(t *testing.T) {
 	case <-time.After(browserRuntimeTestTimeout()):
 		t.Fatal("Execute did not return after request cancellation")
 	}
+}
+
+type pauseAfterFirstWriteConn struct {
+	net.Conn
+	firstWriteDone chan struct{}
+	releaseWrite   chan struct{}
+	pauseOnce      sync.Once
+	releaseOnce    sync.Once
+}
+
+func newPauseAfterFirstWriteConn(conn net.Conn) *pauseAfterFirstWriteConn {
+	return &pauseAfterFirstWriteConn{
+		Conn:           conn,
+		firstWriteDone: make(chan struct{}),
+		releaseWrite:   make(chan struct{}),
+	}
+}
+
+func (c *pauseAfterFirstWriteConn) Write(frame []byte) (int, error) {
+	written, err := c.Conn.Write(frame)
+	c.pauseOnce.Do(func() {
+		close(c.firstWriteDone)
+		<-c.releaseWrite
+	})
+	return written, err
+}
+
+func (c *pauseAfterFirstWriteConn) release() {
+	c.releaseOnce.Do(func() { close(c.releaseWrite) })
 }
 
 func TestBrokerWriteObservesContext(t *testing.T) {

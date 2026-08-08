@@ -1,4 +1,5 @@
 import {
+	memo,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -7,8 +8,10 @@ import {
 	type KeyboardEvent,
 	type MouseEvent,
 	type ReactNode,
+	type RefObject,
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import {
@@ -34,7 +37,9 @@ import {
 	type WorkspaceCompareMode,
 	type WorkspaceFileSummary,
 } from "../hooks/useSessionWorkspaceFiles";
+import { useParsedDiff } from "../hooks/useParsedDiff";
 import { cn } from "../lib/utils";
+import type { DiffRow, DiffRowKind, DiffSegment } from "../lib/diff-parser";
 import type { DiffSelectionLine } from "../../shared/diff-selection";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "./ui/accordion";
 import { subscribeWorkspaceFileChanges } from "../lib/workspace-file-events";
@@ -556,10 +561,13 @@ function ReviewDiffBody({
 	wrap: boolean;
 }) {
 	const { t } = useTranslation();
+	const { rows, pending } = useParsedDiff(detail.diff);
 	if (detail.binary) {
 		return <PanelMessage compact>{t("files.binaryUnavailable")}</PanelMessage>;
 	}
-	const rows = parseUnifiedDiff(detail.diff);
+	if (pending) {
+		return <PanelMessage compact>{t("files.loadingDiff")}</PanelMessage>;
+	}
 	if (rows.length === 0) {
 		return <PanelMessage compact>{emptyDiffMessage(detail.compareMode, t)}</PanelMessage>;
 	}
@@ -577,170 +585,6 @@ function ReviewDiffBody({
 			wrap={wrap}
 		/>
 	);
-}
-
-type DiffRowKind = "context" | "add" | "del" | "hunk";
-
-type DiffSegment = { text: string; changed: boolean };
-
-type DiffRow = {
-	kind: DiffRowKind;
-	oldNo: number | null;
-	newNo: number | null;
-	text: string;
-	// hunk rows only: the enclosing function/section context after the @@ range.
-	section?: string;
-	// add/del rows only: intra-line word-level highlight of what changed.
-	segments?: DiffSegment[];
-};
-
-// Git file-header lines carry no reviewable content, so they are hidden — the
-// panel reads like a diff instead of a raw `git diff` dump. Matched by prefix
-// after line endings are normalized, so it behaves the same on every OS.
-const gitHeaderPrefixes = [
-	"diff --git ",
-	"index ",
-	"old mode ",
-	"new mode ",
-	"new file mode ",
-	"deleted file mode ",
-	"similarity index ",
-	"dissimilarity index ",
-	"rename from ",
-	"rename to ",
-	"copy from ",
-	"copy to ",
-	"--- ",
-	"+++ ",
-];
-
-const hunkHeaderPattern = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
-
-// parseUnifiedDiff turns a raw `git diff` string into typed rows with real
-// per-side line numbers. Line endings are normalized first (Windows \r\n and
-// classic-Mac \r as well as Unix \n) so numbering and marker detection are
-// identical across operating systems.
-function parseUnifiedDiff(raw: string): DiffRow[] {
-	if (!raw) return [];
-	const lines = raw.replace(/\r\n?/g, "\n").split("\n");
-	if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
-	const rows: DiffRow[] = [];
-	let oldNo = 0;
-	let newNo = 0;
-	let inHunk = false;
-	for (const line of lines) {
-		if (gitHeaderPrefixes.some((prefix) => line.startsWith(prefix))) continue;
-		if (line.startsWith("@@")) {
-			const hunk = hunkHeaderPattern.exec(line);
-			oldNo = hunk ? Number(hunk[1]) : 1;
-			newNo = hunk ? Number(hunk[2]) : 1;
-			inHunk = true;
-			const sectionStart = line.indexOf("@@", 2);
-			const range = sectionStart >= 0 ? line.slice(0, sectionStart + 2) : line;
-			const section = sectionStart >= 0 ? line.slice(sectionStart + 2).trim() : "";
-			rows.push({ kind: "hunk", oldNo: null, newNo: null, text: range, section: section || undefined });
-			continue;
-		}
-		if (!inHunk) continue;
-		if (line.startsWith("\\")) continue; // "\ No newline at end of file"
-		const marker = line[0];
-		const text = line.slice(1);
-		if (marker === "+") {
-			rows.push({ kind: "add", oldNo: null, newNo, text });
-			newNo += 1;
-		} else if (marker === "-") {
-			rows.push({ kind: "del", oldNo, newNo: null, text });
-			oldNo += 1;
-		} else {
-			rows.push({ kind: "context", oldNo, newNo, text });
-			oldNo += 1;
-			newNo += 1;
-		}
-	}
-	annotateIntraLine(rows);
-	return rows;
-}
-
-// Longest line length still worth an intra-line (word-level) diff. The LCS is
-// O(tokens^2), so very long lines are left as whole-line highlights.
-const maxIntraLineChars = 400;
-
-// annotateIntraLine pairs each run of deleted lines with the equal-length run of
-// added lines that immediately follows it (a line-for-line replacement) and
-// marks the exact tokens that changed within each pair, so the UI can highlight
-// what actually changed instead of tinting the whole line.
-function annotateIntraLine(rows: DiffRow[]): void {
-	let i = 0;
-	while (i < rows.length) {
-		if (rows[i].kind !== "del") {
-			i += 1;
-			continue;
-		}
-		let delEnd = i;
-		while (delEnd < rows.length && rows[delEnd].kind === "del") delEnd += 1;
-		let addEnd = delEnd;
-		while (addEnd < rows.length && rows[addEnd].kind === "add") addEnd += 1;
-		const dels = delEnd - i;
-		const adds = addEnd - delEnd;
-		if (dels > 0 && dels === adds) {
-			for (let k = 0; k < dels; k += 1) {
-				const del = rows[i + k];
-				const add = rows[delEnd + k];
-				if (del.text.length > maxIntraLineChars || add.text.length > maxIntraLineChars) continue;
-				const { oldSegments, newSegments } = intraLineSegments(del.text, add.text);
-				del.segments = oldSegments;
-				add.segments = newSegments;
-			}
-		}
-		i = addEnd > i ? addEnd : i + 1;
-	}
-}
-
-function tokenizeLine(value: string): string[] {
-	return value.match(/\s+|[A-Za-z0-9_]+|[^\sA-Za-z0-9_]/g) ?? [];
-}
-
-function pushSegment(segments: DiffSegment[], text: string, changed: boolean): void {
-	const last = segments[segments.length - 1];
-	if (last && last.changed === changed) last.text += text;
-	else segments.push({ text, changed });
-}
-
-// intraLineSegments token-diffs two lines via LCS and returns the tokens that
-// only exist on one side marked as changed.
-function intraLineSegments(
-	oldText: string,
-	newText: string,
-): { oldSegments: DiffSegment[]; newSegments: DiffSegment[] } {
-	const a = tokenizeLine(oldText);
-	const b = tokenizeLine(newText);
-	const lcs: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
-	for (let x = a.length - 1; x >= 0; x -= 1) {
-		for (let y = b.length - 1; y >= 0; y -= 1) {
-			lcs[x][y] = a[x] === b[y] ? lcs[x + 1][y + 1] + 1 : Math.max(lcs[x + 1][y], lcs[x][y + 1]);
-		}
-	}
-	const oldSegments: DiffSegment[] = [];
-	const newSegments: DiffSegment[] = [];
-	let x = 0;
-	let y = 0;
-	while (x < a.length && y < b.length) {
-		if (a[x] === b[y]) {
-			pushSegment(oldSegments, a[x], false);
-			pushSegment(newSegments, b[y], false);
-			x += 1;
-			y += 1;
-		} else if (lcs[x + 1][y] >= lcs[x][y + 1]) {
-			pushSegment(oldSegments, a[x], true);
-			x += 1;
-		} else {
-			pushSegment(newSegments, b[y], true);
-			y += 1;
-		}
-	}
-	while (x < a.length) pushSegment(oldSegments, a[x++], true);
-	while (y < b.length) pushSegment(newSegments, b[y++], true);
-	return { oldSegments, newSegments };
 }
 
 const diffRowTone: Record<Exclude<DiffRowKind, "hunk">, string> = {
@@ -794,6 +638,85 @@ type DiffViewMenuState = {
 	selectedText: string;
 };
 
+// SessionFilesView has no per-file scroll box — the Files panel is one
+// continuous list, and an expanded file's rows scroll as part of that same
+// shared container (`[data-files-scroll-root]`). Below the threshold every
+// row just renders directly, unchanged from before (the vast majority of
+// diffs never pay for any of this). Above it, only the rows actually
+// scrolled into view are mounted, via @tanstack/react-virtual attached to
+// that SHARED scroll container rather than a container of this file's own —
+// `scrollMargin` is this file's row-list's offset from the top of the shared
+// scrollable content, since the virtualizer needs that to know which of its
+// rows fall inside the current viewport. That offset shifts whenever
+// anything above this file changes height (another file expanding or
+// collapsing, or gaining/losing its own virtualized rows), so it's
+// re-measured via a ResizeObserver on the full file list rather than once.
+// Rows wrap (`whitespace-pre-wrap`) and the panel's available width varies a
+// lot — full window width when the Files view is maximized, much narrower
+// when docked alongside the terminal — so a long line can be one row of
+// height in the maximized view and several wrapped rows tall when docked.
+// ESTIMATED_ROW_HEIGHT is only the initial guess for a row that hasn't
+// rendered yet; `measureElement` corrects it to the row's real height once
+// mounted, which is what keeps rows from overlapping when they wrap.
+const ROW_VIRTUALIZE_THRESHOLD = 150;
+const ESTIMATED_ROW_HEIGHT = 20;
+
+function useSharedScrollRowVirtualizer(
+	scrollContainerRef: RefObject<HTMLElement | null>,
+	count: number,
+	enabled: boolean,
+) {
+	const listRef = useRef<HTMLDivElement>(null);
+	const [scrollElement, setScrollElement] = useState<HTMLElement | null>(null);
+	const [scrollMargin, setScrollMargin] = useState(0);
+
+	useEffect(() => {
+		if (!enabled) return;
+		setScrollElement(scrollContainerRef.current?.closest<HTMLElement>("[data-files-scroll-root]") ?? null);
+	}, [enabled, scrollContainerRef]);
+
+	// A regular effect, not useLayoutEffect: "Expand All" mounts many DiffView
+	// instances in the same commit, and React runs every layout effect from
+	// that commit synchronously, before the browser is allowed to paint
+	// anything. A read (getBoundingClientRect) here forces a synchronous
+	// layout — N of those back to back, all before first paint, is exactly
+	// what made "Expand All" stall. A plain effect still measures almost
+	// immediately (one frame later at worst), which is an imperceptible
+	// one-time cost for something that self-corrects, in exchange for never
+	// blocking paint on how many files just got expanded at once.
+	useEffect(() => {
+		if (!enabled || !scrollElement || !listRef.current) return;
+		const measure = () => {
+			if (!listRef.current) return;
+			const listRect = listRef.current.getBoundingClientRect();
+			const scrollRect = scrollElement.getBoundingClientRect();
+			setScrollMargin(listRect.top - scrollRect.top + scrollElement.scrollTop);
+		};
+		measure();
+		const resizeTarget = scrollElement.querySelector<HTMLElement>(".session-files-review-list") ?? scrollElement;
+		const observer = new ResizeObserver(measure);
+		observer.observe(resizeTarget);
+		return () => observer.disconnect();
+	}, [enabled, scrollElement]);
+
+	const virtualizer = useVirtualizer({
+		count,
+		getScrollElement: () => (enabled ? scrollElement : null),
+		estimateSize: () => ESTIMATED_ROW_HEIGHT,
+		// Every row outside the viewport that overscan pulls in is a row that
+		// still has to pay full first-time cost (render + a real DOM
+		// measurement, see useSharedScrollRowVirtualizer's comment above) the
+		// first time it's scrolled into range. A smaller buffer means fewer
+		// never-before-seen rows get force-measured on each scroll jump,
+		// trading a slightly higher chance of a one-frame blank edge during
+		// very fast scrolling for less of that first-pass cost on big files.
+		overscan: 8,
+		scrollMargin,
+	});
+
+	return { listRef, virtualizer };
+}
+
 function DiffView({
 	annotation,
 	filePath,
@@ -821,6 +744,8 @@ function DiffView({
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [hasSelection, setHasSelection] = useState(false);
 	const [menuState, setMenuState] = useState<DiffViewMenuState | null>(null);
+	const shouldVirtualize = !split && rows.length > ROW_VIRTUALIZE_THRESHOLD;
+	const { listRef, virtualizer } = useSharedScrollRowVirtualizer(containerRef, rows.length, shouldVirtualize);
 
 	useEffect(() => {
 		const onSelectionChange = () => {
@@ -885,53 +810,55 @@ function DiffView({
 				ref={containerRef}
 			>
 				{split ? (
-					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} />
+					<SplitDiff annotation={annotation} path={path} previousPath={previousPath} rows={rows} t={t} />
+				) : shouldVirtualize ? (
+					<div
+						className={cn("relative", !wrap && "min-w-max")}
+						ref={listRef}
+						style={{ height: virtualizer.getTotalSize() }}
+					>
+						{virtualizer.getVirtualItems().map((virtualRow) => {
+							const row = rows[virtualRow.index];
+							return (
+								<div
+									data-index={virtualRow.index}
+									key={virtualRow.index}
+									ref={virtualizer.measureElement}
+									style={{
+										position: "absolute",
+										top: 0,
+										left: 0,
+										width: "100%",
+										transform: `translateY(${virtualRow.start - virtualizer.options.scrollMargin}px)`,
+									}}
+								>
+									<DiffRowContent
+										annotation={annotation}
+										index={virtualRow.index}
+										path={path}
+										previousPath={previousPath}
+										row={row}
+										t={t}
+										wrap={wrap}
+									/>
+								</div>
+							);
+						})}
+					</div>
 				) : (
 					<div className={cn(!wrap && "min-w-max")}>
-						{rows.map((row, index) =>
-							row.kind === "hunk" ? (
-								<HunkBand key={`h${index}`} row={row} />
-							) : (
-								<div key={`r${index}`}>
-									<div
-										className={cn("group/line relative flex", diffRowTone[row.kind])}
-										data-diff-row=""
-										data-kind={row.kind}
-										data-new-no={row.newNo ?? ""}
-										data-old-no={row.oldNo ?? ""}
-										data-row-index={index}
-									>
-										<LineFeedbackButton
-											active={isAnnotationRow(annotation.target, path, index)}
-											onClick={() => annotation.begin(lineAnnotationTarget(path, previousPath, row, index))}
-											target={lineAnnotationTarget(path, previousPath, row, index)}
-										/>
-										<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
-											{row.newNo ?? row.oldNo ?? ""}
-										</span>
-										<span
-											className={cn(
-												"w-4 shrink-0 select-none text-center",
-												row.kind === "add" && "text-success",
-												row.kind === "del" && "text-error",
-											)}
-										>
-											{diffMarkerGlyph[row.kind]}
-										</span>
-										<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
-											{row.segments ? (
-												<DiffLineSegments add={row.kind === "add"} segments={row.segments} />
-											) : (
-												row.text || " "
-											)}
-										</span>
-									</div>
-									{isAnnotationRow(annotation.target, path, index) ? (
-										<FileAnnotationComposer annotation={annotation} />
-									) : null}
-								</div>
-							),
-						)}
+						{rows.map((row, index) => (
+							<DiffRowContent
+								annotation={annotation}
+								index={index}
+								key={index}
+								path={path}
+								previousPath={previousPath}
+								row={row}
+								t={t}
+								wrap={wrap}
+							/>
+						))}
 					</div>
 				)}
 			</div>
@@ -948,14 +875,90 @@ function DiffView({
 	);
 }
 
-function HunkBand({ row }: { row: DiffRow }) {
+const HunkBand = memo(function HunkBand({ row }: { row: DiffRow }) {
 	return (
 		<div className="flex select-none items-baseline gap-2 bg-surface-faint px-2.5 py-0.75 text-passive">
 			<span className="shrink-0 text-passive/70">{row.text}</span>
 			{row.section ? <span className="min-w-0 truncate text-passive/90">{row.section}</span> : null}
 		</div>
 	);
+});
+
+type DiffRowContentProps = {
+	annotation: FileAnnotationModel;
+	index: number;
+	path: string;
+	previousPath?: string;
+	row: DiffRow;
+	t: TFunction;
+	wrap: boolean;
+};
+
+// One unified-view diff row, shared between the plain (non-virtualized) and
+// virtualized render paths so they can't drift apart from each other.
+function DiffRowContentInner({ annotation, index, path, previousPath, row, t, wrap }: DiffRowContentProps) {
+	if (row.kind === "hunk") return <HunkBand row={row} />;
+	return (
+		<div>
+			<div
+				className={cn("group/line relative flex", diffRowTone[row.kind])}
+				data-diff-row=""
+				data-kind={row.kind}
+				data-new-no={row.newNo ?? ""}
+				data-old-no={row.oldNo ?? ""}
+				data-row-index={index}
+			>
+				<LineFeedbackButton
+					active={isAnnotationRow(annotation.target, path, index)}
+					onClick={() => annotation.begin(lineAnnotationTarget(path, previousPath, row, index))}
+					t={t}
+					target={lineAnnotationTarget(path, previousPath, row, index)}
+				/>
+				<span className="w-9 shrink-0 select-none border-r border-border/50 bg-terminal px-1.5 text-right text-passive/70 tabular-nums">
+					{row.newNo ?? row.oldNo ?? ""}
+				</span>
+				<span
+					className={cn(
+						"w-4 shrink-0 select-none text-center",
+						row.kind === "add" && "text-success",
+						row.kind === "del" && "text-error",
+					)}
+				>
+					{diffMarkerGlyph[row.kind]}
+				</span>
+				<span className={cn("pr-3", wrap ? "whitespace-pre-wrap break-all" : "whitespace-pre")}>
+					{row.segments ? <DiffLineSegments add={row.kind === "add"} segments={row.segments} /> : row.text || " "}
+				</span>
+			</div>
+			{isAnnotationRow(annotation.target, path, index) ? <FileAnnotationComposer annotation={annotation} /> : null}
+		</div>
+	);
 }
+
+// `annotation` is a fresh object on every SessionFilesView render (its draft
+// text, send status, etc. all live there), so a plain memo would never skip
+// a re-render — every row would see a "changed" prop on every keystroke
+// anywhere in the panel, on top of every scroll tick. Only a row that IS or
+// WAS the active annotation target actually needs to re-render when
+// `annotation` changes; every other row only cares about `row`/`index`/
+// `path`/`previousPath`/`wrap`, which are stable across scroll-driven
+// re-renders. This is what actually lets scrolling skip re-running the
+// i18next calls, cn() calls, and nested Button for rows that are already
+// mounted and unchanged.
+const DiffRowContent = memo(DiffRowContentInner, (prev, next) => {
+	if (
+		prev.row !== next.row ||
+		prev.index !== next.index ||
+		prev.path !== next.path ||
+		prev.previousPath !== next.previousPath ||
+		prev.wrap !== next.wrap
+	) {
+		return false;
+	}
+	const prevActive = isAnnotationRow(prev.annotation.target, prev.path, prev.index);
+	const nextActive = isAnnotationRow(next.annotation.target, next.path, next.index);
+	return !prevActive && !nextActive;
+});
 
 type SplitRow =
 	| { kind: "hunk"; row: DiffRow }
@@ -1007,15 +1010,18 @@ function SplitDiff({
 	path,
 	previousPath,
 	rows,
+	t,
 }: {
 	annotation: FileAnnotationModel;
 	path: string;
 	previousPath?: string;
 	rows: DiffRow[];
+	t: TFunction;
 }) {
+	const splitRows = useMemo(() => toSplitRows(rows), [rows]);
 	return (
 		<div>
-			{toSplitRows(rows).map((splitRow, index) =>
+			{splitRows.map((splitRow, index) =>
 				splitRow.kind === "hunk" ? (
 					<HunkBand key={`sh${index}`} row={splitRow.row} />
 				) : (
@@ -1028,6 +1034,7 @@ function SplitDiff({
 								row={splitRow.left}
 								rowIndex={splitRow.leftIndex}
 								side="old"
+								t={t}
 							/>
 							<SplitSide
 								annotation={annotation}
@@ -1036,6 +1043,7 @@ function SplitDiff({
 								row={splitRow.right}
 								rowIndex={splitRow.rightIndex}
 								side="new"
+								t={t}
 							/>
 						</div>
 						{(splitRow.leftIndex !== null && isAnnotationRow(annotation.target, path, splitRow.leftIndex)) ||
@@ -1056,6 +1064,7 @@ function SplitSide({
 	row,
 	rowIndex,
 	side,
+	t,
 }: {
 	annotation: FileAnnotationModel;
 	path: string;
@@ -1063,6 +1072,7 @@ function SplitSide({
 	row: DiffRow | null;
 	rowIndex: number | null;
 	side: "old" | "new";
+	t: TFunction;
 }) {
 	if (!row || rowIndex === null) return <div className="bg-surface-faint/20" aria-hidden="true" />;
 	const lineNo = side === "old" ? row.oldNo : row.newNo;
@@ -1081,6 +1091,7 @@ function SplitSide({
 				<LineFeedbackButton
 					active={isAnnotationRow(annotation.target, path, rowIndex)}
 					onClick={() => annotation.begin(target)}
+					t={t}
 					target={target}
 				/>
 			) : null}
@@ -1118,16 +1129,22 @@ function isAnnotationRow(target: ActiveFileAnnotationTarget | null, path: string
 	return target?.path === path && target.side !== "file" && target.rowIndex === rowIndex;
 }
 
+// `t` comes from the caller (which already holds one useTranslation()
+// subscription) rather than calling useTranslation() here: this button is
+// invisible until hover on every diff row, and a virtualized file can mount
+// dozens of them per scroll tick — a separate i18n context subscription per
+// row added up on large files.
 function LineFeedbackButton({
 	active,
 	onClick,
+	t,
 	target,
 }: {
 	active: boolean;
 	onClick: () => void;
+	t: TFunction;
 	target: ActiveFileAnnotationTarget;
 }) {
-	const { t } = useTranslation();
 	if (active) return null;
 	const side = t(target.side === "old" ? "files.oldSide" : "files.newSide");
 	const label = t("files.addLineFeedback", { file: target.path, line: target.line, side });
